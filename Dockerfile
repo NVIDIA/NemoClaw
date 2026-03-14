@@ -54,33 +54,16 @@ open('{}','w').write(s)"
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
+# Copy startup script
+COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
+RUN chmod +x /usr/local/bin/nemoclaw-start
+
 WORKDIR /sandbox
 USER sandbox
 
-# Simulate a host OpenClaw installation for migration testing.
-# Uses real OpenClaw config schema (passes `openclaw doctor` validation).
-RUN mkdir -p /sandbox/.openclaw/workspace /sandbox/.openclaw/extensions /sandbox/.openclaw/skills \
-    && chmod 700 /sandbox/.openclaw \
-    && printf '%s\n' \
-        '{' \
-        '  "wizard": {' \
-        '    "lastRunAt": "2026-03-14T00:00:00.000Z",' \
-        '    "lastRunVersion": "2026.3.11",' \
-        '    "lastRunCommand": "doctor",' \
-        '    "lastRunMode": "local"' \
-        '  },' \
-        '  "commands": {' \
-        '    "native": "auto",' \
-        '    "nativeSkills": "auto",' \
-        '    "restart": true' \
-        '  },' \
-        '  "meta": {' \
-        '    "lastTouchedVersion": "2026.3.11",' \
-        '    "lastTouchedAt": "2026-03-14T00:00:00.000Z"' \
-        '  }' \
-        '}' > /sandbox/.openclaw/openclaw.json \
-    && chmod 600 /sandbox/.openclaw/openclaw.json \
-    && echo "test-skill" > /sandbox/.openclaw/skills/test.md \
-    && echo "test-workspace-file" > /sandbox/.openclaw/workspace/project.md
+# Pre-create OpenClaw directories
+RUN mkdir -p /sandbox/.openclaw/agents/main/agent \
+    && chmod 700 /sandbox/.openclaw
 
-ENTRYPOINT ["/bin/bash"]
+ENTRYPOINT ["nemoclaw-start"]
+CMD []
