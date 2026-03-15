@@ -10,7 +10,7 @@ NemoClaw supports both static policy changes that persist across restarts and dy
 
 ## Prerequisites
 
-- A running NemoClaw sandbox (for dynamic changes) or the NemoClaw source repository (for static changes).
+- A running NemoClaw sandbox for dynamic changes, or the NemoClaw source repository for static changes.
 - The OpenShell CLI on your `PATH`.
 
 ## Static Changes

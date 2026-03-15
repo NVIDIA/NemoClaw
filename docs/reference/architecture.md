@@ -7,7 +7,7 @@
 
 NemoClaw has two main components: a TypeScript plugin that integrates with the OpenClaw CLI, and a Python blueprint that orchestrates OpenShell resources.
 
-## Plugin (`nemoclaw/`)
+## NemoClaw Plugin
 
 The plugin is a thin TypeScript package that registers commands under `openclaw nemoclaw`.
 It runs in-process with the OpenClaw gateway and handles user-facing CLI interactions.
@@ -35,7 +35,7 @@ nemoclaw/
 └── package.json                    Commands declared under openclaw.extensions
 ```
 
-## Blueprint (`nemoclaw-blueprint/`)
+## NemoClaw Blueprint
 
 The blueprint is a versioned Python artifact with its own release stream.
 The plugin resolves, verifies, and executes the blueprint as a subprocess.
@@ -63,11 +63,11 @@ flowchart LR
     D --> F[rollback]
 ```
 
-1. **Resolve.** The plugin locates the blueprint artifact and checks the version against `min_openshell_version` and `min_openclaw_version` constraints in `blueprint.yaml`.
-2. **Verify.** The plugin checks the artifact digest against the expected value.
-3. **Plan.** The runner determines what OpenShell resources to create or update (gateway, providers, sandbox, inference route, policy).
-4. **Apply.** The runner executes the plan by calling `openshell` CLI commands.
-5. **Status / Rollback.** The runner reports current state or rolls back to a snapshot.
+1. Resolve. The plugin locates the blueprint artifact and checks the version against `min_openshell_version` and `min_openclaw_version` constraints in `blueprint.yaml`.
+2. Verify. The plugin checks the artifact digest against the expected value.
+3. Plan. The runner determines what OpenShell resources to create or update, such as the gateway, providers, sandbox, inference route, and policy.
+4. Apply. The runner executes the plan by calling `openshell` CLI commands.
+5. Status / Rollback. The runner reports current state or rolls back to a snapshot.
 
 ## Sandbox Environment
 
@@ -78,7 +78,7 @@ container image. Inside the sandbox:
 - OpenClaw runs with the NemoClaw plugin pre-installed.
 - Inference calls are routed through OpenShell to the configured provider.
 - Network egress is restricted by the baseline policy in `openclaw-sandbox.yaml`.
-- Filesystem access is confined to `/sandbox` and `/tmp` (read-write), with system paths read-only.
+- Filesystem access is confined to `/sandbox` and `/tmp` for read-write access, with system paths read-only.
 
 ## Inference Routing
 
@@ -92,4 +92,4 @@ Agent (sandbox)  ──▶  OpenShell gateway  ──▶  Provider
                                                └── vLLM on localhost
 ```
 
-See [Inference Profiles](../reference/inference-profiles.md) for provider configuration details.
+Refer to [Inference Profiles](../reference/inference-profiles.md) for provider configuration details.

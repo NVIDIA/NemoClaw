@@ -10,7 +10,7 @@ The Telegram bridge is an auxiliary service managed by `nemoclaw start`.
 
 ## Prerequisites
 
-- A running NemoClaw sandbox (local or remote).
+- A running NemoClaw sandbox, either local or remote.
 - A Telegram bot token from [BotFather](https://t.me/BotFather).
 
 ## Create a Telegram Bot

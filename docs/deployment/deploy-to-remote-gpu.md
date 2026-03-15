@@ -12,7 +12,7 @@ The deploy command provisions the VM, installs dependencies, and connects you to
 
 - The [Brev CLI](https://brev.nvidia.com) installed and authenticated.
 - An NVIDIA API key from [build.nvidia.com](https://build.nvidia.com).
-- NemoClaw installed locally (`npm install -g nemoclaw`).
+- NemoClaw installed locally. Install with `npm install -g nemoclaw`.
 
 ## Deploy the Instance
 
@@ -26,10 +26,10 @@ Replace `<instance-name>` with a name for your remote instance, for example `my-
 
 The deploy script performs the following steps on the VM:
 
-1. Installs Docker and the NVIDIA Container Toolkit (if a GPU is present).
+1. Installs Docker and the NVIDIA Container Toolkit if a GPU is present.
 2. Installs the OpenShell CLI.
 3. Runs `nemoclaw setup` to create the gateway, register providers, and launch the sandbox.
-4. Starts auxiliary services (Telegram bridge, cloudflared tunnel).
+4. Starts auxiliary services, such as the Telegram bridge and cloudflared tunnel.
 
 ## Connect to the Remote Sandbox
 

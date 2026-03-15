@@ -9,10 +9,10 @@ This guide walks you through installing NemoClaw, creating a sandboxed OpenClaw 
 
 ## Prerequisites
 
-- **Node.js 20+**
-- **Docker** (or [Colima](https://github.com/abiosoft/colima) on macOS)
-- **[OpenShell CLI](https://github.com/NVIDIA/OpenShell/releases)** installed and on your `PATH`
-- **NVIDIA API Key** from [build.nvidia.com](https://build.nvidia.com) (for cloud inference)
+- Node.js 20+
+- Docker or [Colima](https://github.com/abiosoft/colima) on macOS
+- [OpenShell CLI](https://github.com/NVIDIA/OpenShell/releases) installed and on your `PATH`
+- NVIDIA API Key from [build.nvidia.com](https://build.nvidia.com) for cloud inference
 
 ## Install NemoClaw
 
@@ -60,7 +60,7 @@ Switch between them with the OpenShell CLI:
 
 ::::{tab-set}
 
-:::{tab-item} NVIDIA Cloud (default)
+:::{tab-item} NVIDIA Cloud
 
 ```console
 $ openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b
@@ -86,7 +86,7 @@ $ openshell inference set --provider nim-local --model nvidia/nemotron-3-super-1
 
 ::::
 
-See [Inference Profiles](../reference/inference-profiles.md) for full details on each provider.
+Refer to [Inference Profiles](../reference/inference-profiles.md) for full details on each provider.
 
 ## Monitor the Sandbox
 
@@ -100,7 +100,7 @@ When the agent tries to access an endpoint not in the baseline policy, the TUI p
 
 ## Deploy to a Cloud VM
 
-To run on a remote GPU instance via [Brev](https://brev.nvidia.com):
+To run on a remote GPU instance through [Brev](https://brev.nvidia.com):
 
 ```console
 $ nemoclaw deploy my-gpu-box
@@ -115,5 +115,5 @@ $ nemoclaw connect my-gpu-box
 ## Next Steps
 
 - Read about the [Architecture](../about/architecture.md) to understand the plugin and blueprint system.
-- See the [Commands](../reference/commands.md) reference for all available CLI options.
+- Refer to the [Commands](../reference/commands.md) reference for all available CLI options.
 - Review [Network Policies](../reference/network-policies.md) to understand the sandbox security model.

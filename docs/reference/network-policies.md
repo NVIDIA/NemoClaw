@@ -96,11 +96,11 @@ When the agent attempts to reach an endpoint not listed in the policy, OpenShell
 
 1. The agent makes a network request to an unlisted host.
 2. OpenShell blocks the connection and logs the attempt.
-3. The TUI (`openshell term`) displays the blocked request with host, port, and requesting binary.
+3. The TUI command `openshell term` displays the blocked request with host, port, and requesting binary.
 4. The operator approves or denies the request.
 5. If approved, the endpoint is added to the running policy for the session.
 
-To see this in action, run the walkthrough:
+To try this, run the walkthrough:
 
 ```console
 $ ./scripts/walkthrough.sh

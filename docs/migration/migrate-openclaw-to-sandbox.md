@@ -11,9 +11,9 @@ The migration creates a snapshot of your current state so that you can roll back
 ## Prerequisites
 
 - An existing OpenClaw installation on the host.
-- NemoClaw installed (`npm install -g nemoclaw`).
+- NemoClaw installed. Install with `npm install -g nemoclaw`.
 - The OpenShell CLI on your `PATH`.
-- Docker (or [Colima](https://github.com/abiosoft/colima) on macOS) running.
+- Docker, or [Colima](https://github.com/abiosoft/colima) on macOS, running.
 
 ## Preview the Migration
 

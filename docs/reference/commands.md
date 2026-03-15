@@ -76,7 +76,7 @@ $ openclaw nemoclaw logs [-f] [-n <count>] [--run-id <id>]
 ```
 
 `-f, --follow`
-: Follow log output (tail -f behavior).
+: Follow log output, similar to `tail -f`.
 
 `-n, --lines <count>`
 : Number of lines to show. Default: `50`.
@@ -123,8 +123,8 @@ The first run prompts for your NVIDIA API key and saves it to `~/.nemoclaw/crede
 
 ### `nemoclaw deploy`
 
-Deploy NemoClaw to a remote GPU instance via [Brev](https://brev.nvidia.com).
-The deploy script installs Docker, NVIDIA Container Toolkit (if a GPU is present), and OpenShell on the VM, then runs setup and connects to the sandbox.
+Deploy NemoClaw to a remote GPU instance through [Brev](https://brev.nvidia.com).
+The deploy script installs Docker, NVIDIA Container Toolkit if a GPU is present, and OpenShell on the VM, then runs setup and connects to the sandbox.
 
 ```console
 $ nemoclaw deploy <instance-name>
@@ -150,7 +150,7 @@ $ nemoclaw term my-gpu-box       # remote Brev instance
 
 ### `nemoclaw start`
 
-Start auxiliary services (Telegram bridge, cloudflared tunnel).
+Start auxiliary services, such as the Telegram bridge and cloudflared tunnel.
 
 ```console
 $ nemoclaw start

@@ -53,7 +53,7 @@ $ openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-
 
 Routes inference to a NIM container running on the local network.
 
-- **Provider type:** `openai` (OpenAI-compatible API)
+- **Provider type:** `openai`, which uses the OpenAI-compatible API
 - **Endpoint:** `http://nim-service.local:8000/v1`
 - **Model:** `nvidia/nemotron-3-super-120b-a12b`
 - **Credential:** `NIM_API_KEY` environment variable
@@ -68,10 +68,10 @@ $ openshell inference set --provider nim-local --model nvidia/nemotron-3-super-1
 
 Routes inference to a vLLM server running on `localhost:8000`.
 
-- **Provider type:** `openai` (OpenAI-compatible API)
+- **Provider type:** `openai`, which uses the OpenAI-compatible API
 - **Endpoint:** `http://localhost:8000/v1`
 - **Model:** `nvidia/nemotron-3-nano-30b-a3b`
-- **Credential:** `OPENAI_API_KEY` environment variable (defaults to `dummy` for local use)
+- **Credential:** `OPENAI_API_KEY` environment variable. Defaults to `dummy` for local use.
 
 ```console
 $ openshell inference set --provider vllm-local --model nvidia/nemotron-3-nano-30b-a3b

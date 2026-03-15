@@ -28,7 +28,8 @@ content:
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue)](https://github.com/NVIDIA/openshell-openclaw-plugin/blob/main/LICENSE)
 
 NemoClaw is the OpenClaw plugin for [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
-It runs OpenClaw inside a sandboxed environment with NVIDIA inference (Nemotron 3 Super 120B via [build.nvidia.com](https://build.nvidia.com), or local vLLM), strict network policies, and operator-controlled egress approval.
+It runs OpenClaw inside a sandboxed environment with NVIDIA inference, such as Nemotron 3 Super 120B through [build.nvidia.com](https://build.nvidia.com) or local vLLM.
+The sandbox enforces strict network policies and operator-controlled egress approval.
 
 ## Get Started
 
@@ -85,7 +86,7 @@ Install the CLI and launch a sandboxed OpenClaw instance in a few commands.
 </div>
 ```
 
-Run `nemoclaw --help` in your terminal to see the full CLI reference.
+Run `nemoclaw --help` in your terminal to view the full CLI reference.
 You can also clone the [NemoClaw repository](https://github.com/NVIDIA/openshell-openclaw-plugin) to explore the plugin source and blueprint.
 
 Proceed to the [Quickstart](get-started/quickstart.md) for step-by-step instructions.

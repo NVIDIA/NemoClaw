@@ -10,7 +10,7 @@ The `eject` command reverses the migration and returns your system to the exact 
 
 ## Prerequisites
 
-- A NemoClaw sandbox that was created with `openclaw nemoclaw migrate` (with a backup snapshot).
+- A NemoClaw sandbox that was created with `openclaw nemoclaw migrate` and includes a backup snapshot.
 - The OpenShell CLI on your `PATH`.
 
 ## Check the Current State
