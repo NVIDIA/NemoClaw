@@ -84,7 +84,8 @@ $ openshell term
 For a remote sandbox:
 
 ```console
-$ nemoclaw term <instance-name>
+$ ssh <instance-name>
+$ openshell term
 ```
 
 The TUI shows the following information:
@@ -117,7 +118,7 @@ The following table lists common problems and their resolution steps:
 
 | Symptom | Resolution |
 |---|---|
-| Sandbox shows as stopped | Run `nemoclaw setup` to recreate the sandbox. |
+| Sandbox shows as stopped | Run `nemoclaw onboard` to recreate the sandbox. |
 | Inference requests time out | Verify the provider endpoint is reachable. Check `openclaw nemoclaw status` for the active endpoint. |
 | Agent cannot reach an external host | Open the TUI with `openshell term` and approve the blocked request, or add the endpoint to the policy. |
 | Blueprint run failed | Run `openclaw nemoclaw logs --run-id <id>` to view the error output for the failed run. |

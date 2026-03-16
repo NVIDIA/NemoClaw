@@ -37,7 +37,7 @@ $ openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-
 ```
 
 This profile requires the `NVIDIA_API_KEY` environment variable.
-The `nemoclaw setup` command stores this key in `~/.nemoclaw/credentials.json` on first run.
+The `nemoclaw onboard` flow stores this key in `~/.nemoclaw/credentials.json` on first run.
 
 ## Switch to Local vLLM
 

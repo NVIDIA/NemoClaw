@@ -91,15 +91,32 @@ The `/nemoclaw` slash command is available inside the OpenClaw chat interface fo
 
 The `nemoclaw` binary handles host-side operations that run outside the OpenClaw plugin context.
 
+### `nemoclaw onboard`
+
+Run the guided host-side setup flow to configure inference, create a sandbox, and apply policy presets.
+
+```console
+$ nemoclaw onboard
+```
+
+The first run prompts for your NVIDIA API key and saves it to `~/.nemoclaw/credentials.json`.
+
 ### `nemoclaw setup`
 
-Run the full host-side setup: start an OpenShell gateway, register inference providers, build the sandbox image, and create the sandbox.
+Run the legacy host-side setup wrapper.
+This command is deprecated in favor of `nemoclaw onboard`.
 
 ```console
 $ nemoclaw setup
 ```
 
-The first run prompts for your NVIDIA API key and saves it to `~/.nemoclaw/credentials.json`.
+### `nemoclaw setup-spark`
+
+Apply the DGX Spark-specific setup flow, including the cgroup v2 and Docker workarounds used by NemoClaw.
+
+```console
+$ nemoclaw setup-spark
+```
 
 ### `nemoclaw deploy`
 
@@ -110,6 +127,14 @@ The deploy script installs Docker, NVIDIA Container Toolkit if a GPU is present,
 $ nemoclaw deploy <instance-name>
 ```
 
+### `nemoclaw list`
+
+List registered sandboxes on the host.
+
+```console
+$ nemoclaw list
+```
+
 ### `nemoclaw <name> connect`
 
 Connect to a sandbox by name.
@@ -118,14 +143,55 @@ Connect to a sandbox by name.
 $ nemoclaw my-assistant connect
 ```
 
-### `nemoclaw term`
+### `nemoclaw <name> status`
+
+Show the registered sandbox metadata, the current OpenShell sandbox state, and local NIM health.
+
+```console
+$ nemoclaw my-assistant status
+```
+
+### `nemoclaw <name> logs`
+
+View sandbox logs, with optional follow mode.
+
+```console
+$ nemoclaw my-assistant logs [--follow]
+```
+
+### `nemoclaw <name> policy-add`
+
+Interactively apply a policy preset to a sandbox.
+
+```console
+$ nemoclaw my-assistant policy-add
+```
+
+### `nemoclaw <name> policy-list`
+
+List policy presets and show which ones are already applied to the sandbox.
+
+```console
+$ nemoclaw my-assistant policy-list
+```
+
+### `nemoclaw <name> destroy`
+
+Stop the local NIM container for a sandbox and delete the sandbox.
+
+```console
+$ nemoclaw my-assistant destroy
+```
+
+### `openshell term`
 
 Open the OpenShell TUI to monitor sandbox activity and approve network egress requests.
 
 ```console
-$ nemoclaw term                  # local
-$ nemoclaw term my-gpu-box       # remote Brev instance
+$ openshell term
 ```
+
+For remote Brev instances, SSH to the VM first and then run `openshell term`.
 
 ### `nemoclaw start`
 
@@ -147,7 +213,7 @@ $ nemoclaw stop
 
 ### `nemoclaw status`
 
-Show the status of running auxiliary services.
+Show the registered sandboxes and the status of auxiliary services.
 
 ```console
 $ nemoclaw status

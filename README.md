@@ -139,17 +139,23 @@ When the agent tries to reach an unlisted host, OpenShell blocks the request and
 
 ## Key Commands
 
-### Host commands (`nemoclaw`)
+### Host commands
 
 Run these on the host to set up, connect to, and manage sandboxes.
 
-| Command                              | Description                                            |
-|--------------------------------------|--------------------------------------------------------|
-| `nemoclaw setup`                     | Full host-side setup: gateway, providers, sandbox.     |
-| `nemoclaw deploy <instance>`         | Deploy to a remote GPU instance through Brev.          |
-| `nemoclaw <name> connect`            | Open an interactive shell inside the sandbox.          |
-| `nemoclaw term`                      | Launch the OpenShell TUI for monitoring and approvals. |
-| `nemoclaw start` / `stop` / `status` | Manage auxiliary services (Telegram bridge, tunnel).   |
+| Command                              | Description                                                      |
+|--------------------------------------|------------------------------------------------------------------|
+| `nemoclaw onboard`                   | Interactive setup wizard for creating a sandbox.                 |
+| `nemoclaw setup`                     | Legacy setup wrapper. Deprecated in favor of `nemoclaw onboard`. |
+| `nemoclaw deploy <instance>`         | Deploy to a remote GPU instance through Brev.                    |
+| `nemoclaw list`                      | List registered sandboxes.                                       |
+| `nemoclaw <name> connect`            | Open an interactive shell inside the sandbox.                    |
+| `nemoclaw <name> status`             | Show sandbox status, inference provider, and policy presets.     |
+| `nemoclaw <name> logs [--follow]`    | Stream sandbox logs.                                             |
+| `openshell term`                     | Launch the OpenShell TUI for monitoring and approvals.           |
+| `nemoclaw start` / `stop` / `status` | Manage auxiliary services (Telegram bridge, tunnel).             |
+
+For remote Brev instances, SSH to the instance first and then run `openshell term`.
 
 ### Plugin commands (`openclaw nemoclaw`)
 
