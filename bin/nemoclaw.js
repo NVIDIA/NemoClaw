@@ -17,12 +17,13 @@ const {
 const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
+const metrics = require("./lib/metrics");
 
 // ── Global commands ──────────────────────────────────────────────
 
 const GLOBAL_COMMANDS = new Set([
   "onboard", "list", "deploy", "setup", "setup-spark",
-  "start", "stop", "status",
+  "start", "stop", "status", "stats",
   "help", "--help", "-h",
 ]);
 
@@ -30,7 +31,9 @@ const GLOBAL_COMMANDS = new Set([
 
 async function onboard() {
   const { onboard: runOnboard } = require("./lib/onboard");
+  metrics.recordEvent("onboard_start");
   await runOnboard();
+  metrics.recordEvent("onboard_complete");
 }
 
 async function setup() {
@@ -187,6 +190,7 @@ function listSandboxes() {
 // ── Sandbox-scoped actions ───────────────────────────────────────
 
 function sandboxConnect(sandboxName) {
+  metrics.recordEvent("sandbox_connect", { sandbox: sandboxName });
   // Ensure port forward is alive before connecting
   run(`openshell forward start --background 18789 ${sandboxName} 2>/dev/null || true`, { ignoreError: true });
   run(`openshell sandbox connect ${sandboxName}`);
@@ -240,6 +244,7 @@ async function sandboxPolicyAdd(sandboxName) {
   if (confirm.toLowerCase() === "n") return;
 
   policies.applyPreset(sandboxName, answer);
+  metrics.recordEvent("policy_apply", { sandbox: sandboxName, preset: answer });
 }
 
 function sandboxPolicyList(sandboxName) {
@@ -256,6 +261,7 @@ function sandboxPolicyList(sandboxName) {
 }
 
 function sandboxDestroy(sandboxName) {
+  metrics.recordEvent("sandbox_destroy", { sandbox: sandboxName });
   console.log(`  Stopping NIM for '${sandboxName}'...`);
   nim.stopNimContainer(sandboxName);
 
@@ -264,6 +270,81 @@ function sandboxDestroy(sandboxName) {
 
   registry.removeSandbox(sandboxName);
   console.log(`  ✓ Sandbox '${sandboxName}' destroyed`);
+}
+
+// ── Stats ────────────────────────────────────────────────────────
+
+function showStats(opts = {}) {
+  const reset = opts.reset || false;
+
+  if (reset) {
+    metrics.resetMetrics();
+    console.log("  ✓ Metrics cleared.");
+    return;
+  }
+
+  const stats = metrics.getStats();
+
+  console.log("");
+  console.log("  NemoClaw Metrics");
+  console.log("  ================");
+  console.log("");
+
+  if (stats.totalEvents === 0) {
+    console.log("  No events recorded yet. Metrics are collected as you use NemoClaw.");
+    console.log("");
+    return;
+  }
+
+  console.log(`  Total events:  ${stats.totalEvents}`);
+  console.log(`  First event:   ${stats.firstEvent}`);
+  console.log(`  Last event:    ${stats.lastEvent}`);
+  console.log("");
+
+  console.log("  Events by type:");
+  for (const [type, count] of Object.entries(stats.byType).sort((a, b) => b[1] - a[1])) {
+    console.log(`    ${type.padEnd(24)} ${count}`);
+  }
+  console.log("");
+
+  const sandboxNames = Object.keys(stats.bySandbox);
+  if (sandboxNames.length > 0) {
+    console.log("  Events by sandbox:");
+    for (const name of sandboxNames) {
+      const sb = stats.bySandbox[name];
+      console.log(`    ${name.padEnd(20)} ${sb.events} events`);
+      for (const [type, count] of Object.entries(sb.byType)) {
+        console.log(`      ${type.padEnd(22)} ${count}`);
+      }
+    }
+    console.log("");
+  }
+}
+
+function sandboxStats(sandboxName) {
+  const stats = metrics.getStats(sandboxName);
+
+  console.log("");
+  console.log(`  Metrics for sandbox '${sandboxName}'`);
+  console.log("  " + "=".repeat(30 + sandboxName.length));
+  console.log("");
+
+  if (stats.totalEvents === 0) {
+    console.log("  No events recorded for this sandbox.");
+    console.log("");
+    return;
+  }
+
+  console.log(`  Total events:  ${stats.totalEvents}`);
+  console.log(`  First event:   ${stats.firstEvent}`);
+  console.log(`  Last event:    ${stats.lastEvent}`);
+  console.log("");
+
+  console.log("  Events by type:");
+  for (const [type, count] of Object.entries(stats.byType).sort((a, b) => b[1] - a[1])) {
+    console.log(`    ${type.padEnd(24)} ${count}`);
+  }
+  console.log("");
 }
 
 // ── Help ─────────────────────────────────────────────────────────
@@ -287,6 +368,11 @@ function help() {
   Policy Presets:
     nemoclaw <name> policy-add       Add a policy preset to a sandbox
     nemoclaw <name> policy-list      List presets (● = applied)
+
+  Metrics:
+    nemoclaw stats                   Show aggregate usage metrics
+    nemoclaw stats --reset           Clear all recorded metrics
+    nemoclaw <name> stats            Show metrics for a specific sandbox
 
   Deploy:
     nemoclaw deploy <instance>       Deploy to a Brev VM and start services
@@ -323,6 +409,7 @@ const [cmd, ...args] = process.argv.slice(2);
       case "stop":        stop(); break;
       case "status":      showStatus(); break;
       case "list":        listSandboxes(); break;
+      case "stats":       showStats({ reset: args.includes("--reset") }); break;
       default:            help(); break;
     }
     return;
@@ -340,10 +427,11 @@ const [cmd, ...args] = process.argv.slice(2);
       case "logs":        sandboxLogs(cmd, actionArgs.includes("--follow")); break;
       case "policy-add":  await sandboxPolicyAdd(cmd); break;
       case "policy-list": sandboxPolicyList(cmd); break;
+      case "stats":       sandboxStats(cmd); break;
       case "destroy":     sandboxDestroy(cmd); break;
       default:
         console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, destroy`);
+        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, stats, destroy`);
         process.exit(1);
     }
     return;
