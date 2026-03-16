@@ -1,5 +1,31 @@
 # Contributing
 
+## Updating pinned asset checksums
+
+Any PR that bumps the version of an external binary downloaded by `install.sh`
+(nvm, Ollama, etc.) **must** update the corresponding `URL_*` and `CHECKSUM_*`
+variables in `scripts/verify-checksums.sh` in the same commit.
+
+The easiest way is to let the script regenerate the digests automatically:
+
+```bash
+# 1. Update the URL_* variable in scripts/verify-checksums.sh to the new version URL
+# 2. Re-pin all digests in one command:
+bash scripts/verify-checksums.sh --regenerate
+
+# 3. Review and commit both the URL and checksum change together:
+git diff scripts/verify-checksums.sh
+git add scripts/verify-checksums.sh
+```
+
+Checksums are computed with `sha3sum -a 256` (install: `brew install sha3sum`).
+If `sha3sum` is not available the script falls back to `shasum -a 256` (built into macOS)
+or `sha256sum` (Linux) — note these are different algorithms, so always regenerate
+with the same tool that is present on your machine.
+
+PRs that change a download URL without updating the matching `CHECKSUM_*` variable
+will be rejected.
+
 ## Signing Your Work
 
 * We require that all contributors "sign-off" on their commits. This certifies

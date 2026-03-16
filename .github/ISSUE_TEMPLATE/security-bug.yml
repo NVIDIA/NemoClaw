@@ -1,0 +1,91 @@
+name: Security Bug Report
+description: Report a security vulnerability or hardening gap (non-sensitive disclosures only — for exploitable vulnerabilities use SECURITY.md)
+title: "[Security] "
+labels: ["security", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **Sensitive vulnerabilities** — use the private disclosure path in [SECURITY.md](../../SECURITY.md) instead of this form.
+        > This template is for hardening gaps, missing defensive controls, and non-exploitable security findings.
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How severe is this issue if exploited?
+      options:
+        - Critical — arbitrary code execution / full compromise
+        - High — significant privilege escalation or data exposure
+        - Medium — limited impact with mitigating factors
+        - Low — defence-in-depth / best-practice improvement
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      options:
+        - install.sh / scripts
+        - nemoclaw CLI (TypeScript)
+        - nemoclaw-blueprint (Python)
+        - Dockerfile
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: affected-files
+    attributes:
+      label: Affected file(s)
+      placeholder: "e.g. install.sh, nemoclaw/src/commands/connect.ts"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What is the security issue? What does it allow an attacker to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Clone the repo
+        2. Run ./install.sh with a network proxy intercepting traffic
+        3. Observe that the Node.js tarball is executed without checksum verification
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: What can an attacker achieve? What is the blast radius?
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggested-fix
+    attributes:
+      label: Suggested fix (optional)
+      description: If you have a concrete fix in mind, describe it here.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have checked that this is not a sensitive/exploitable vulnerability requiring private disclosure
+          required: true
+        - label: I have searched existing issues and this has not been reported before
+          required: true
+        - label: I am willing to submit a PR with a fix

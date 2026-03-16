@@ -7,6 +7,14 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
+# Checksum verification
+# ---------------------------------------------------------------------------
+# Source pinned SHA-256 digests and the verify_file helper.
+# Every external download must be gated on verify_file before execution.
+# shellcheck source=scripts/verify-checksums.sh
+source "$(dirname "$0")/scripts/verify-checksums.sh"
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 info()  { printf '\033[1;34m[INFO]\033[0m  %s\n' "$*"; }
@@ -37,7 +45,12 @@ install_nodejs() {
   fi
 
   info "Node.js not found — installing via nvm…"
-  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
+  local _nvm_installer
+  _nvm_installer=$(mktemp /tmp/nvm-install-XXXXXX.sh)
+  curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh" -o "$_nvm_installer"
+  verify_file "nvm-install.sh" "$_nvm_installer"
+  bash "$_nvm_installer"
+  rm -f "$_nvm_installer"
   \. "$HOME/.nvm/nvm.sh"
   nvm install 24
   info "Node.js installed: $(node --version)"
@@ -86,14 +99,24 @@ install_or_upgrade_ollama() {
       info "Ollama v${current} meets minimum requirement (>= v${OLLAMA_MIN_VERSION})"
     else
       info "Ollama v${current:-unknown} is below v${OLLAMA_MIN_VERSION} — upgrading…"
-      curl -fsSL https://ollama.com/install.sh | sh
+      local _ollama_installer
+      _ollama_installer=$(mktemp /tmp/ollama-install-XXXXXX.sh)
+      curl -fsSL "https://ollama.com/install.sh" -o "$_ollama_installer"
+      verify_file "ollama-install.sh" "$_ollama_installer"
+      sh "$_ollama_installer"
+      rm -f "$_ollama_installer"
       info "Ollama upgraded to $(get_ollama_version)"
     fi
   else
     # No ollama — only install if a GPU is present
     if detect_gpu; then
       info "GPU detected — installing Ollama…"
-      curl -fsSL https://ollama.com/install.sh | sh
+      local _ollama_installer
+      _ollama_installer=$(mktemp /tmp/ollama-install-XXXXXX.sh)
+      curl -fsSL "https://ollama.com/install.sh" -o "$_ollama_installer"
+      verify_file "ollama-install.sh" "$_ollama_installer"
+      sh "$_ollama_installer"
+      rm -f "$_ollama_installer"
       info "Ollama installed: v$(get_ollama_version)"
     else
       warn "No GPU detected — skipping Ollama installation."
