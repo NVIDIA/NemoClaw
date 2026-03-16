@@ -10,6 +10,7 @@ profiles:
   - default
   - ncp
   - nim-local
+  - azure-nim
   - vllm
 
 description: |
@@ -46,6 +47,14 @@ components:
         model: "nvidia/nemotron-3-super-120b-a12b"
         credential_env: "NIM_API_KEY"
 
+      azure-nim:
+        provider_type: "openai"
+        provider_name: "azure-nim"
+        endpoint: ""  # User-provided Microsoft Foundry endpoint URL
+        model: "nvidia/nemotron-3-super-120b-a12b"
+        credential_env: "AZURE_NIM_API_KEY"
+        dynamic_endpoint: true
+
       vllm:
         provider_type: "openai"
         provider_name: "vllm-local"
@@ -62,4 +71,13 @@ components:
         endpoints:
           - host: "nim-service.local"
             port: 8000
+            protocol: rest
+      azure_nim:
+        name: azure_nim
+        endpoints:
+          - host: "*.inference.ml.azure.com"
+            port: 443
+            protocol: rest
+          - host: "*.services.ai.azure.com"
+            port: 443
             protocol: rest

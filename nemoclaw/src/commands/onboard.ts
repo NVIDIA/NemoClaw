@@ -22,7 +22,7 @@ export interface OnboardOptions {
   pluginConfig: NemoClawConfig;
 }
 
-const ENDPOINT_TYPES: EndpointType[] = ["build", "ncp", "nim-local", "vllm", "ollama", "custom"];
+const ENDPOINT_TYPES: EndpointType[] = ["build", "ncp", "nim-local", "azure-nim", "vllm", "ollama", "custom"];
 
 const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const HOST_GATEWAY_URL = "http://host.openshell.internal";
@@ -43,6 +43,8 @@ function resolveProfile(endpointType: EndpointType): string {
       return "ncp";
     case "nim-local":
       return "nim-local";
+    case "azure-nim":
+      return "azure-nim";
     case "vllm":
       return "vllm";
     case "ollama":
@@ -59,6 +61,8 @@ function resolveProviderName(endpointType: EndpointType): string {
       return "nvidia-ncp";
     case "nim-local":
       return "nim-local";
+    case "azure-nim":
+      return "azure-nim";
     case "vllm":
       return "vllm-local";
     case "ollama":
@@ -74,6 +78,8 @@ function resolveCredentialEnv(endpointType: EndpointType): string {
       return "NVIDIA_API_KEY";
     case "nim-local":
       return "NIM_API_KEY";
+    case "azure-nim":
+      return "AZURE_NIM_API_KEY";
     case "vllm":
     case "ollama":
       return "OPENAI_API_KEY";
@@ -84,7 +90,7 @@ function isNonInteractive(opts: OnboardOptions): boolean {
   if (!opts.endpoint || !opts.model) return false;
   const ep = opts.endpoint as EndpointType;
   if (endpointRequiresApiKey(ep) && !opts.apiKey) return false;
-  if ((ep === "ncp" || ep === "nim-local" || ep === "custom") && !opts.endpointUrl) return false;
+  if ((ep === "ncp" || ep === "nim-local" || ep === "azure-nim" || ep === "custom") && !opts.endpointUrl) return false;
   if (ep === "ncp" && !opts.ncpPartner) return false;
   return true;
 }
@@ -94,6 +100,7 @@ function endpointRequiresApiKey(endpointType: EndpointType): boolean {
     endpointType === "build" ||
     endpointType === "ncp" ||
     endpointType === "nim-local" ||
+    endpointType === "azure-nim" ||
     endpointType === "custom"
   );
 }
@@ -199,6 +206,11 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
           hint: "your own NIM container deployment",
         },
         {
+          label: "Azure-hosted NIM",
+          value: "azure-nim",
+          hint: "NIM on Microsoft Foundry",
+        },
+        {
           label: "Local vLLM",
           value: "vllm",
           hint: "local development",
@@ -231,6 +243,11 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
         opts.endpointUrl ??
         (await promptInput("NIM endpoint URL", "http://nim-service.local:8000/v1"));
       break;
+    case "azure-nim":
+      endpointUrl =
+        opts.endpointUrl ??
+        (await promptInput("Azure NIM endpoint URL (e.g., https://<deployment>.services.ai.azure.com/v1)"));
+      break;
     case "vllm":
       endpointUrl = `${HOST_GATEWAY_URL}:8000/v1`;
       break;
@@ -255,6 +272,16 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
   if (requiresApiKey) {
     if (opts.apiKey) {
       apiKey = opts.apiKey;
+    } else if (endpointType === "azure-nim") {
+      const envKey = process.env.AZURE_NIM_API_KEY;
+      if (envKey) {
+        logger.info(`Detected AZURE_NIM_API_KEY in environment (${maskApiKey(envKey)})`);
+        const useEnv = nonInteractive ? true : await promptConfirm("Use this key?");
+        apiKey = useEnv ? envKey : await promptInput("Enter your Azure NIM API key");
+      } else {
+        logger.info("Get an API key from your Microsoft Foundry endpoint or use an Entra ID token.");
+        apiKey = await promptInput("Enter your Azure NIM API key");
+      }
     } else {
       const envKey = process.env.NVIDIA_API_KEY;
       if (envKey) {

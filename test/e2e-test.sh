@@ -44,8 +44,9 @@ profiles = bp['components']['inference']['profiles']
 assert 'default' in profiles, 'Missing default profile'
 assert 'vllm' in profiles, 'Missing vllm profile'
 assert 'nim-local' in profiles, 'Missing nim-local profile'
+assert 'azure-nim' in profiles, 'Missing azure-nim profile'
 print(f'Profiles: {list(profiles.keys())}')
-" && pass "Blueprint YAML valid with all 3 profiles" || fail "Blueprint YAML invalid"
+" && pass "Blueprint YAML valid with all 4 profiles" || fail "Blueprint YAML invalid"
 
 # -------------------------------------------------------
 info "4. Verify blueprint runner plan command"

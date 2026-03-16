@@ -1,11 +1,11 @@
 ---
 title:
-  page: "NemoClaw Inference Profiles — NVIDIA Cloud, NIM, and vLLM"
+  page: "NemoClaw Inference Profiles — NVIDIA Cloud, NIM, Azure, and vLLM"
   nav: "Inference Profiles"
-description: "Configuration reference for NVIDIA cloud, local NIM, and vLLM profiles."
-keywords: ["nemoclaw inference profiles", "nemoclaw nvidia nim vllm provider"]
+description: "Configuration reference for NVIDIA cloud, local NIM, Azure-hosted NIM, and vLLM profiles."
+keywords: ["nemoclaw inference profiles", "nemoclaw nvidia nim vllm provider", "azure nim", "microsoft foundry"]
 topics: ["generative_ai", "ai_agents"]
-tags: ["openclaw", "openshell", "inference_routing", "nim", "vllm", "llms"]
+tags: ["openclaw", "openshell", "inference_routing", "nim", "vllm", "llms", "azure-nim"]
 content:
   type: reference
   difficulty: intermediate
@@ -20,7 +20,7 @@ status: published
 
 # Inference Profiles
 
-NemoClaw ships with three inference profiles defined in `blueprint.yaml`.
+NemoClaw ships with four inference profiles defined in `blueprint.yaml`.
 Each profile configures an OpenShell inference provider and model route.
 The agent inside the sandbox uses whichever profile is active.
 Inference requests are routed transparently through the OpenShell gateway.
@@ -31,6 +31,7 @@ Inference requests are routed transparently through the OpenShell gateway.
 |---|---|---|---|---|
 | `default` | NVIDIA cloud | `nvidia/nemotron-3-super-120b-a12b` | `integrate.api.nvidia.com` | Production. Requires an NVIDIA API key. |
 | `nim-local` | Local NIM service | `nvidia/nemotron-3-super-120b-a12b` | `nim-service.local:8000` | On-premises. NIM deployed as a local pod. |
+| `azure-nim` | Azure-hosted NIM | `nvidia/nemotron-3-super-120b-a12b` | User-provided Azure endpoint | Enterprise. NIM on Microsoft Foundry. |
 | `vllm` | vLLM | `nvidia/nemotron-3-nano-30b-a3b` | `host.openshell.internal:8000` | Local development. vLLM on the host. |
 
 ## Available Models
@@ -78,6 +79,25 @@ The sandbox network policy includes a `nim_service` entry that allows traffic to
 ```console
 $ openshell inference set --provider nim-local --model nvidia/nemotron-3-super-120b-a12b
 ```
+
+## `azure-nim` -- Azure-Hosted NIM
+
+Routes inference to an NVIDIA NIM deployment hosted on Microsoft Foundry.
+
+- **Provider type:** `openai`, which uses the OpenAI-compatible API
+- **Endpoint:** User-provided Microsoft Foundry endpoint URL (e.g., `https://<deployment>.services.ai.azure.com/v1`)
+- **Model:** `nvidia/nemotron-3-super-120b-a12b`
+- **Credential:** `AZURE_NIM_API_KEY` environment variable
+
+Deploy a NIM model through the Microsoft Foundry model catalog.
+Set the `AZURE_NIM_API_KEY` to your endpoint API key.
+
+```console
+$ export AZURE_NIM_API_KEY=<your-azure-endpoint-key>
+$ openshell inference set --provider azure-nim --model nvidia/nemotron-3-super-120b-a12b
+```
+
+The sandbox network policy includes an `azure_nim` entry that allows egress to `*.inference.ml.azure.com` and `*.services.ai.azure.com` on port 443 (Microsoft Foundry endpoints).
 
 ## `vllm` -- Local vLLM
 
