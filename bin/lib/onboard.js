@@ -5,7 +5,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { ROOT, SCRIPTS, run, runCapture } = require("./runner");
+const { ROOT, SCRIPTS, COLIMA_PROFILE, COLIMA_SOCKET, run, runCapture } = require("./runner");
 const { prompt, ensureApiKey, getCredential } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
@@ -109,9 +109,8 @@ async function startGateway(gpu) {
   }
 
   // CoreDNS fix — always run. k3s-inside-Docker has broken DNS on all platforms.
-  const colimaSocket = path.join(process.env.HOME || "/tmp", ".colima/default/docker.sock");
-  if (fs.existsSync(colimaSocket)) {
-    console.log("  Patching CoreDNS for Colima...");
+  if (fs.existsSync(COLIMA_SOCKET)) {
+    console.log(`  Patching CoreDNS for Colima profile '${COLIMA_PROFILE}'...`);
     run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" 2>&1 || true`, { ignoreError: true });
   }
   // Give DNS a moment to propagate
@@ -165,7 +164,15 @@ async function createSandbox(gpu) {
   if (process.env.NVIDIA_API_KEY) {
     envArgs.push(`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`);
   }
-  run(`openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`);
+
+  try {
+    run(`openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`);
+  } catch (err) {
+    // Clean up build context even on failure
+    run(`rm -rf "${buildCtx}"`, { ignoreError: true });
+    console.error(`  Sandbox creation failed. Run 'nemoclaw onboard' to retry.`);
+    throw err;
+  }
 
   // Forward dashboard port separately
   run(`openshell forward start --background 18789 ${sandboxName}`, { ignoreError: true });
@@ -173,7 +180,7 @@ async function createSandbox(gpu) {
   // Clean up build context
   run(`rm -rf "${buildCtx}"`, { ignoreError: true });
 
-  // Register in registry
+  // Register in registry only after successful creation
   registry.registerSandbox({
     name: sandboxName,
     gpuEnabled: !!gpu,

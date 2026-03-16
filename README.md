@@ -36,6 +36,10 @@ Check the prerequisites before you start to ensure you have the necessary softwa
 - Docker installed and running
 - [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) installed
 
+:::{note}
+On macOS with Colima, NemoClaw uses the `default` Colima profile unless you set `COLIMA_PROFILE`. If your existing `default` profile is busy or unhealthy, export a dedicated profile first, for example `export COLIMA_PROFILE=nemoclaw`.
+:::
+
 ### Install NemoClaw and Onboard OpenClaw Agent
 
 Download and run the installer script.

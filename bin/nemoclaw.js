@@ -24,6 +24,7 @@ const GLOBAL_COMMANDS = new Set([
   "onboard", "list", "deploy", "setup", "setup-spark",
   "start", "stop", "status",
   "help", "--help", "-h",
+  "--version", "-v", "version",
 ]);
 
 // ── Commands ─────────────────────────────────────────────────────
@@ -312,6 +313,13 @@ const [cmd, ...args] = process.argv.slice(2);
     return;
   }
 
+  // Version flag
+  if (cmd === "--version" || cmd === "-v" || cmd === "version") {
+    const pkg = require("../package.json");
+    console.log(`nemoclaw ${pkg.version}`);
+    return;
+  }
+
   // Global commands
   if (GLOBAL_COMMANDS.has(cmd)) {
     switch (cmd) {
@@ -363,4 +371,7 @@ const [cmd, ...args] = process.argv.slice(2);
 
   console.error(`  Run 'nemoclaw help' for usage.`);
   process.exit(1);
-})();
+})().catch((err) => {
+  console.error(`  ${err.message || err}`);
+  process.exit(1);
+});

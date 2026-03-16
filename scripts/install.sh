@@ -33,7 +33,12 @@ case "$ARCH" in
   *)             fail "Unsupported architecture: $ARCH" ;;
 esac
 
+COLIMA_PROFILE="${COLIMA_PROFILE:-default}"
+
 info "Detected $OS_LABEL ($ARCH_LABEL)"
+if [ "$OS" = "Darwin" ]; then
+  info "Colima profile: $COLIMA_PROFILE"
+fi
 
 # ── Detect Node.js version manager ──────────────────────────────
 
@@ -120,8 +125,10 @@ install_docker() {
     # Docker installed but not running
     if [ "$OS" = "Darwin" ]; then
       if command -v colima > /dev/null 2>&1; then
-        info "Starting Colima..."
-        colima start
+        info "Starting Colima profile '$COLIMA_PROFILE'..."
+        if ! colima start --profile "$COLIMA_PROFILE"; then
+          fail "Failed to start Colima profile '$COLIMA_PROFILE'. If your default profile is busy or unhealthy, try: export COLIMA_PROFILE=nemoclaw"
+        fi
         return 0
       fi
     fi
@@ -137,8 +144,10 @@ install_docker() {
       fi
       info "Installing Colima + Docker CLI via Homebrew..."
       brew install colima docker
-      info "Starting Colima..."
-      colima start
+      info "Starting Colima profile '$COLIMA_PROFILE'..."
+      if ! colima start --profile "$COLIMA_PROFILE"; then
+        fail "Failed to start Colima profile '$COLIMA_PROFILE'. If your default profile is busy or unhealthy, try: export COLIMA_PROFILE=nemoclaw"
+      fi
       ;;
     Linux)
       sudo apt-get update -qq > /dev/null 2>&1
@@ -194,10 +203,16 @@ install_openshell() {
 
   tar xzf "$tmpdir/$ASSET" -C "$tmpdir"
 
-  if [ -w /usr/local/bin ]; then
-    install -m 755 "$tmpdir/openshell" /usr/local/bin/openshell
+  local install_dir="/usr/local/bin"
+  if [ "$OS" = "Darwin" ] && command -v brew > /dev/null 2>&1; then
+    install_dir="$(brew --prefix)/bin"
+  fi
+
+  mkdir -p "$install_dir"
+  if [ -w "$install_dir" ]; then
+    install -m 755 "$tmpdir/openshell" "$install_dir/openshell"
   else
-    sudo install -m 755 "$tmpdir/openshell" /usr/local/bin/openshell
+    sudo install -m 755 "$tmpdir/openshell" "$install_dir/openshell"
   fi
 
   rm -rf "$tmpdir"
@@ -208,8 +223,8 @@ install_openshell
 
 # ── Install NemoClaw CLI ─────────────────────────────────────────
 
-info "Installing nemoclaw CLI..."
-npm install -g nemoclaw
+info "Installing nemoclaw CLI from GitHub..."
+npm install -g github:NVIDIA/NemoClaw
 
 if [ "$NEED_RESHIM" = true ]; then
   info "Reshimming asdf..."

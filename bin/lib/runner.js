@@ -7,17 +7,18 @@ const fs = require("fs");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const SCRIPTS = path.join(ROOT, "scripts");
+const COLIMA_PROFILE = process.env.COLIMA_PROFILE || "default";
+const COLIMA_SOCKET = path.join(process.env.HOME || "/tmp", `.colima/${COLIMA_PROFILE}/docker.sock`);
 
 // Auto-detect Colima Docker socket
 if (!process.env.DOCKER_HOST) {
-  const colimaSocket = path.join(process.env.HOME || "/tmp", ".colima/default/docker.sock");
-  if (fs.existsSync(colimaSocket)) {
-    process.env.DOCKER_HOST = `unix://${colimaSocket}`;
+  if (fs.existsSync(COLIMA_SOCKET)) {
+    process.env.DOCKER_HOST = `unix://${COLIMA_SOCKET}`;
   }
 }
 
 function run(cmd, opts = {}) {
-  const result = spawnSync("bash", ["-c", cmd], {
+  const result = spawnSync("bash", ["-o", "pipefail", "-c", cmd], {
     stdio: "inherit",
     cwd: ROOT,
     env: { ...process.env, ...opts.env },
@@ -45,4 +46,4 @@ function runCapture(cmd, opts = {}) {
   }
 }
 
-module.exports = { ROOT, SCRIPTS, run, runCapture };
+module.exports = { ROOT, SCRIPTS, COLIMA_PROFILE, COLIMA_SOCKET, run, runCapture };

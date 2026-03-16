@@ -19,7 +19,8 @@
 set -euo pipefail
 
 GATEWAY_NAME="${1:-}"
-COLIMA_SOCKET="$HOME/.colima/default/docker.sock"
+COLIMA_PROFILE="${COLIMA_PROFILE:-default}"
+COLIMA_SOCKET="$HOME/.colima/$COLIMA_PROFILE/docker.sock"
 
 if [ -z "${DOCKER_HOST:-}" ]; then
   if [ -S "$COLIMA_SOCKET" ]; then

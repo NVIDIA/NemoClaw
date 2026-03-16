@@ -33,6 +33,9 @@ info() { echo -e "${GREEN}>>>${NC} $1"; }
 warn() { echo -e "${YELLOW}>>>${NC} $1"; }
 fail() { echo -e "${RED}>>>${NC} $1"; exit 1; }
 
+COLIMA_PROFILE="${COLIMA_PROFILE:-default}"
+COLIMA_SOCKET="$HOME/.colima/$COLIMA_PROFILE/docker.sock"
+
 upsert_provider() {
   local name="$1"
   local type="$2"
@@ -53,9 +56,9 @@ upsert_provider() {
 
 # Resolve DOCKER_HOST for Colima if needed
 if [ -z "${DOCKER_HOST:-}" ]; then
-  if [ -S "$HOME/.colima/default/docker.sock" ]; then
-    export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
-    warn "Using Colima Docker socket"
+  if [ -S "$COLIMA_SOCKET" ]; then
+    export DOCKER_HOST="unix://$COLIMA_SOCKET"
+    warn "Using Colima Docker socket (profile: $COLIMA_PROFILE)"
   fi
 fi
 
@@ -85,7 +88,7 @@ done
 info "Gateway is healthy"
 
 # 2. CoreDNS fix (Colima only)
-if [ -S "$HOME/.colima/default/docker.sock" ]; then
+if [ -S "$COLIMA_SOCKET" ]; then
   info "Patching CoreDNS for Colima..."
   bash "$SCRIPT_DIR/fix-coredns.sh" 2>&1 || warn "CoreDNS patch failed (may not be needed)"
 fi
