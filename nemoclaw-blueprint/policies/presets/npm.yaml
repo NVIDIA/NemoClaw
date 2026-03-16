@@ -11,15 +11,7 @@ network_policies:
     endpoints:
       - host: registry.npmjs.org
         port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
+        access: full
       - host: registry.yarnpkg.com
         port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
+        access: full

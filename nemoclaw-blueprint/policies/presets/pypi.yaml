@@ -11,15 +11,7 @@ network_policies:
     endpoints:
       - host: pypi.org
         port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
+        access: full
       - host: files.pythonhosted.org
         port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
+        access: full
