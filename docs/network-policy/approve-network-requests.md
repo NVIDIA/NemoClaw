@@ -39,7 +39,8 @@ $ openshell term
 For a remote sandbox, pass the instance name:
 
 ```console
-$ nemoclaw term my-gpu-box
+$ ssh my-gpu-box
+$ openshell term
 ```
 
 The TUI displays the sandbox state, active inference provider, and a live feed of network activity.

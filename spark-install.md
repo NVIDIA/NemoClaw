@@ -118,7 +118,7 @@ openshell sandbox connect nemoclaw
 nemoclaw-start openclaw agent --agent main --local -m 'hello' --session-id test
 
 # Monitor network egress (separate terminal)
-nemoclaw term
+openshell term
 ```
 
 ## Architecture Notes

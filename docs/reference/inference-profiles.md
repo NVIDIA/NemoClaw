@@ -58,7 +58,7 @@ The default profile routes inference to NVIDIA's hosted API through [build.nvidi
 - **Credential:** `NVIDIA_API_KEY` environment variable
 
 Get an API key from [build.nvidia.com](https://build.nvidia.com).
-The `nemoclaw setup` command prompts for this key and stores it in `~/.nemoclaw/credentials.json`.
+The `nemoclaw onboard` flow prompts for this key and stores it in `~/.nemoclaw/credentials.json`.
 
 ```console
 $ openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b

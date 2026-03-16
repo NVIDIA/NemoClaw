@@ -49,13 +49,14 @@ Each entry in the `network` section defines an endpoint group with the following
 
 ### Re-Run Setup
 
-Apply the updated policy by re-running setup:
+Apply the updated policy by re-running the host setup flow:
 
 ```console
-$ nemoclaw setup
+$ nemoclaw onboard
 ```
 
-Setup picks up the modified policy file and applies it to the sandbox.
+If you are following the legacy wrapper workflow, use `nemoclaw setup` instead.
+The setup flow picks up the modified policy file and applies it to the sandbox.
 
 ### Verify the Policy
 
