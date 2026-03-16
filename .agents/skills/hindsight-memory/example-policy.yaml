@@ -11,7 +11,7 @@
 #   Add this block to nemoclaw-blueprint/policies/openclaw-sandbox.yaml
 #   and run `openclaw nemoclaw migrate`, or apply dynamically:
 #
-#     $ openshell policy set --sandbox my-assistant --file example-policy.yaml
+#     $ openshell policy set example-policy.yaml
 #
 # For self-hosted Hindsight instances, change the host and port and add
 # allowed_ips for private IP ranges. See SKILL.md for examples.

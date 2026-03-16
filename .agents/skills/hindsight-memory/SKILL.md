@@ -44,8 +44,11 @@ $ openclaw nemoclaw migrate
 
 **Option B — Apply dynamically after launch**
 
+Connect to the sandbox first, then apply from inside:
+
 ```console
-$ openshell policy set --sandbox my-assistant --file hindsight-policy.yaml
+$ nemoclaw my-assistant connect
+sandbox@my-assistant:~$ openshell policy set hindsight-policy.yaml
 ```
 
 See `example-policy.yaml` in this skill directory for a ready-to-use policy template.
@@ -178,7 +181,7 @@ Adopt this pattern for every sandbox session:
 
 ## Network Policy
 
-The sandbox must have a network policy allowing egress to the Hindsight API. Add this block to `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` or apply it with `openshell policy set`:
+The sandbox must have a network policy allowing egress to the Hindsight API. Add this block to `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` or apply it dynamically with `openshell policy set`:
 
 ```yaml
   hindsight_memory:
