@@ -45,4 +45,23 @@ function runCapture(cmd, opts = {}) {
   }
 }
 
-module.exports = { ROOT, SCRIPTS, run, runCapture };
+/**
+ * Validate a sandbox or instance name to prevent shell injection.
+ * Names must start with an alphanumeric character and contain only
+ * alphanumerics, hyphens, underscores, and dots (max 63 characters).
+ * Throws if the name is invalid.
+ */
+function validateName(name, label = "Name") {
+  if (!name || typeof name !== "string") {
+    throw new Error(`${label} is required.`);
+  }
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$/.test(name)) {
+    throw new Error(
+      `Invalid ${label.toLowerCase()}: "${name}". ` +
+      `Names must start with a letter or digit, contain only [a-zA-Z0-9._-], ` +
+      `and be at most 63 characters.`
+    );
+  }
+}
+
+module.exports = { ROOT, SCRIPTS, run, runCapture, validateName };

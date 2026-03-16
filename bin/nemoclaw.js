@@ -7,7 +7,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
-const { ROOT, SCRIPTS, run, runCapture } = require("./lib/runner");
+const { ROOT, SCRIPTS, run, runCapture, validateName } = require("./lib/runner");
 const {
   ensureApiKey,
   ensureGithubToken,
@@ -57,6 +57,13 @@ async function deploy(instanceName) {
     console.error("    nemoclaw deploy nemoclaw-test");
     process.exit(1);
   }
+  try {
+    validateName(instanceName, "Instance name");
+  } catch (err) {
+    console.error(`  ${err.message}`);
+    process.exit(1);
+  }
+
   await ensureApiKey();
   if (isRepoPrivate("NVIDIA/OpenShell")) {
     await ensureGithubToken();
@@ -329,6 +336,11 @@ const [cmd, ...args] = process.argv.slice(2);
   }
 
   // Sandbox-scoped commands: nemoclaw <name> <action>
+  try {
+    validateName(cmd, "Sandbox name");
+  } catch {
+    // Not a valid name — fall through to "unknown command" below
+  }
   const sandbox = registry.getSandbox(cmd);
   if (sandbox) {
     const action = args[0] || "connect";
