@@ -34,7 +34,8 @@ Check the prerequisites before you start to ensure you have the necessary softwa
 
 - Linux Ubuntu 22.04 LTS releases and later
 - Docker installed and running
-- [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) installed
+
+The `nemoclaw onboard` flow installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) CLI automatically if it is not already present.
 
 ### Install NemoClaw and Onboard OpenClaw Agent
 
