@@ -184,6 +184,9 @@ if ! echo "$SANDBOX_LINE" | grep -q "Ready"; then
   fail "Sandbox created but not Ready (phase: ${SANDBOX_PHASE:-unknown}). Check 'openshell sandbox get nemoclaw'."
 fi
 
+info "Bootstrapping OpenClaw inside sandbox..."
+bash "$SCRIPT_DIR/bootstrap-sandbox-openclaw.sh" nemoclaw
+
 # 6. Done
 echo ""
 info "Setup complete!"

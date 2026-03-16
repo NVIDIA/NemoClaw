@@ -129,7 +129,7 @@ async function deploy(instanceName) {
   console.log("");
   console.log("  Connecting to sandbox...");
   console.log("");
-  run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw'`);
+  run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw -- nemoclaw-shell'`);
 }
 
 async function start() {
@@ -229,7 +229,7 @@ function egg(instanceName) {
 function sandboxConnect(sandboxName) {
   // Ensure port forward is alive before connecting
   run(`openshell forward start --background 18789 ${sandboxName} 2>/dev/null || true`, { ignoreError: true });
-  run(`openshell sandbox connect ${sandboxName}`);
+  run(`openshell sandbox connect ${sandboxName} -- nemoclaw-shell`);
 }
 
 function sandboxStatus(sandboxName) {

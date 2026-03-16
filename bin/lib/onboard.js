@@ -360,12 +360,11 @@ async function setupInference(sandboxName, model, provider) {
 async function setupOpenclaw(sandboxName) {
   step(6, 7, "Setting up OpenClaw inside sandbox");
 
-  // sandbox create with a command runs it inside the sandbox then exits.
-  // Since the sandbox already exists, we create a throwaway connect + command
-  // by using sandbox create --no-keep with the same image to exec into it.
-  // Simpler: just use sandbox connect which opens a shell — but it doesn't
-  // support passing commands. So we run the setup on next connect instead.
-  console.log("  ✓ OpenClaw gateway launched inside sandbox");
+  // `openshell sandbox create ... -- <cmd>` only helps during allocation.
+  // Once the sandbox already exists, use the post-create bootstrap helper to
+  // initialize OpenClaw and seed the Gateway before first connect.
+  run(`bash "${path.join(SCRIPTS, "bootstrap-sandbox-openclaw.sh")}" "${sandboxName}"`);
+  console.log("  ✓ OpenClaw configured");
 }
 
 // ── Step 7: Policy presets ───────────────────────────────────────
