@@ -91,7 +91,7 @@ function applyPreset(sandboxName, presetName) {
     );
   } catch {}
 
-  const currentPolicy = parseCurrentPolicy(rawPolicy);
+  let currentPolicy = parseCurrentPolicy(rawPolicy);
 
   // Merge: inject preset entries under the existing network_policies key
   let merged;
