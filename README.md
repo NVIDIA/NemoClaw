@@ -109,13 +109,14 @@ When something goes wrong, errors may originate from either NemoClaw or the Open
 
 ## Inference Profiles
 
-Inference requests from the agent never leave the sandbox directly. OpenShell intercepts every call and routes it to the configured provider. NemoClaw ships with three profiles:
+Inference requests from the agent never leave the sandbox directly. OpenShell intercepts every call and routes it to the configured provider. NemoClaw ships with four profiles:
 
-| Profile     | Provider     | Model                               | Use Case                                       |
-|-------------|--------------|--------------------------------------|-------------------------------------------------|
-| `default`   | NVIDIA cloud | `nvidia/nemotron-3-super-120b-a12b` | Production. Requires an NVIDIA API key.         |
-| `nim-local` | Local NIM    | `nvidia/nemotron-3-super-120b-a12b` | On-premises. NIM deployed as a local container. |
-| `vllm`      | vLLM         | `nvidia/nemotron-3-nano-30b-a3b`    | Local development. vLLM on the host.            |
+| Profile     | Provider         | Model                               | Use Case                                             |
+|-------------|------------------|--------------------------------------|------------------------------------------------------|
+| `default`   | NVIDIA cloud     | `nvidia/nemotron-3-super-120b-a12b` | Production. Requires an NVIDIA API key.               |
+| `nim-local` | Local NIM        | `nvidia/nemotron-3-super-120b-a12b` | On-premises. NIM deployed as a local container.       |
+| `azure-nim` | Azure-hosted NIM | `nvidia/nemotron-3-super-120b-a12b` | Enterprise. NIM on Microsoft Foundry.                 |
+| `vllm`      | vLLM             | `nvidia/nemotron-3-nano-30b-a3b`    | Local development. vLLM on the host.                  |
 
 Select a profile at launch with `--profile`, or switch at runtime without restarting the sandbox:
 
