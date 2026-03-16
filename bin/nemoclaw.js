@@ -363,4 +363,7 @@ const [cmd, ...args] = process.argv.slice(2);
 
   console.error(`  Run 'nemoclaw help' for usage.`);
   process.exit(1);
-})();
+})().catch((err) => {
+  console.error(`  ${err.message || err}`);
+  process.exit(1);
+});

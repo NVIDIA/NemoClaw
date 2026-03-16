@@ -165,7 +165,13 @@ async function createSandbox(gpu) {
   if (process.env.NVIDIA_API_KEY) {
     envArgs.push(`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`);
   }
-  run(`openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`);
+  try {
+    run(`openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`);
+  } catch (err) {
+    run(`rm -rf "${buildCtx}"`, { ignoreError: true });
+    console.error(`  Sandbox creation failed. Run 'nemoclaw onboard' to retry.`);
+    throw err;
+  }
 
   // Forward dashboard port separately
   run(`openshell forward start --background 18789 ${sandboxName}`, { ignoreError: true });
@@ -173,7 +179,7 @@ async function createSandbox(gpu) {
   // Clean up build context
   run(`rm -rf "${buildCtx}"`, { ignoreError: true });
 
-  // Register in registry
+  // Register only after successful creation
   registry.registerSandbox({
     name: sandboxName,
     gpuEnabled: !!gpu,
