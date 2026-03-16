@@ -5,7 +5,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { ROOT, SCRIPTS, run, runCapture } = require("./runner");
+const { ROOT, SCRIPTS, run, runCapture, validateName } = require("./runner");
 const { prompt, ensureApiKey, getCredential } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
@@ -125,6 +125,7 @@ async function createSandbox(gpu) {
 
   const nameAnswer = await prompt("  Sandbox name [my-assistant]: ");
   const sandboxName = nameAnswer || "my-assistant";
+  validateName(sandboxName);
 
   // Check if sandbox already exists in registry
   const existing = registry.getSandbox(sandboxName);

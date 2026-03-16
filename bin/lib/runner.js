@@ -45,4 +45,17 @@ function runCapture(cmd, opts = {}) {
   }
 }
 
-module.exports = { ROOT, SCRIPTS, run, runCapture };
+/**
+ * Validate a sandbox or instance name to prevent shell injection.
+ * Names must be 1–63 chars, alphanumeric with hyphens and underscores,
+ * and must start with a letter or digit.
+ */
+function validateName(name) {
+  if (!name || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$/.test(name)) {
+    console.error(`  Invalid name: '${String(name).slice(0, 40)}'`);
+    console.error("  Names must be 1–63 characters: letters, digits, hyphens, underscores, dots.");
+    process.exit(1);
+  }
+}
+
+module.exports = { ROOT, SCRIPTS, run, runCapture, validateName };
