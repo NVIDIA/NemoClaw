@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { execSync, spawnSync } = require("child_process");
+const { execFileSync, spawnSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
@@ -69,7 +69,7 @@ async function deploy(instanceName) {
   console.log("");
 
   try {
-    execSync("which brev", { stdio: "ignore" });
+    execFileSync("which", ["brev"], { stdio: "ignore" });
   } catch {
     console.error("brev CLI not found. Install: https://brev.nvidia.com");
     process.exit(1);
@@ -77,9 +77,12 @@ async function deploy(instanceName) {
 
   let exists = false;
   try {
-    const out = execSync("brev ls 2>&1", { encoding: "utf-8" });
+    const out = execFileSync("brev", ["ls"], { encoding: "utf-8" });
     exists = out.includes(name);
-  } catch {}
+  } catch (err) {
+    if (err.stdout && err.stdout.includes(name)) exists = true;
+    if (err.stderr && err.stderr.includes(name)) exists = true;
+  }
 
   if (!exists) {
     console.log(`  Creating Brev instance '${name}' (${gpu})...`);
@@ -93,7 +96,7 @@ async function deploy(instanceName) {
   console.log("  Waiting for SSH...");
   for (let i = 0; i < 60; i++) {
     try {
-      execSync(`ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no ${name} 'echo ok' 2>/dev/null`, { encoding: "utf-8", stdio: "pipe" });
+      execFileSync("ssh", ["-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no", name, "echo ok"], { encoding: "utf-8", stdio: "ignore" });
       break;
     } catch {
       if (i === 59) {
