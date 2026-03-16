@@ -5,6 +5,7 @@
 
 const { run, runCapture } = require("./runner");
 const nimImages = require("./nim-images.json");
+const registry = require("./registry");
 
 function containerName(sandboxName) {
   return `nemoclaw-nim-${sandboxName}`;
@@ -140,6 +141,14 @@ function startNimContainer(sandboxName, model, port = 8000) {
   run(
     `docker run -d --gpus all -p ${port}:8000 --name ${name} --shm-size 16g ${image}`
   );
+
+  // Persist the chosen host port so nimStatus() can resolve it later,
+  // even for callers that do not go through onboard.js.
+  // updateSandbox is a no-op if the sandbox is not yet registered (e.g. first
+  // call during onboarding before registerSandbox). onboard.js also stores
+  // nimPort explicitly in its own updateSandbox call, so nothing is lost.
+  registry.updateSandbox(sandboxName, { nimPort: port });
+
   return name;
 }
 
@@ -181,9 +190,12 @@ function nimStatus(sandboxName) {
     );
     if (!state) return { running: false, container: name };
 
+    const sb = registry.getSandbox(sandboxName);
+    const port = (sb && sb.nimPort) ? parseInt(sb.nimPort, 10) : 8000;
+
     let healthy = false;
     if (state === "running") {
-      const health = runCapture(`curl -sf http://localhost:8000/v1/models 2>/dev/null`, {
+      const health = runCapture(`curl -sf http://localhost:${port}/v1/models 2>/dev/null`, {
         ignoreError: true,
       });
       healthy = !!health;

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it } = require("node:test");
+const { describe, it, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 
 const nim = require("../bin/lib/nim");
@@ -72,6 +72,109 @@ describe("nim", () => {
     it("returns not running for nonexistent container", () => {
       const st = nim.nimStatus("nonexistent-test-xyz");
       assert.equal(st.running, false);
+    });
+  });
+
+  describe("nimStatus (stubbed runner + registry)", () => {
+    let nimStubbed;
+    let captureImpl;
+    const runnerPath = require.resolve("../bin/lib/runner");
+    const registryPath = require.resolve("../bin/lib/registry");
+    const nimPath = require.resolve("../bin/lib/nim");
+    let savedRunner;
+    let savedRegistry;
+    let savedNim;
+
+    before(() => {
+      savedRunner = require.cache[runnerPath];
+      savedRegistry = require.cache[registryPath];
+      savedNim = require.cache[nimPath];
+
+      // Inject mock runner — captureImpl is a shared variable so tests can swap it
+      require.cache[runnerPath] = {
+        id: runnerPath,
+        filename: runnerPath,
+        loaded: true,
+        exports: {
+          run: () => {},
+          runCapture: (...args) => (captureImpl ? captureImpl(...args) : null),
+          ROOT: "",
+          SCRIPTS: "",
+        },
+      };
+
+      // Inject mock registry — default: nimPort 9000
+      require.cache[registryPath] = {
+        id: registryPath,
+        filename: registryPath,
+        loaded: true,
+        exports: {
+          getSandbox: () => ({ nimPort: 9000 }),
+        },
+      };
+
+      // Force nim.js to reload and destructure from our mocked runner
+      delete require.cache[nimPath];
+      nimStubbed = require("../bin/lib/nim");
+    });
+
+    after(() => {
+      require.cache[runnerPath] = savedRunner;
+      require.cache[registryPath] = savedRegistry;
+      // Restore original nim so other test suites are unaffected
+      delete require.cache[nimPath];
+      if (savedNim) require.cache[nimPath] = savedNim;
+    });
+
+    it("returns running+healthy when container running and health check succeeds on port 9000", () => {
+      captureImpl = (cmd) => {
+        if (cmd.includes("docker inspect")) return "running";
+        if (cmd.includes("curl")) return '{"data":[]}';
+        return null;
+      };
+
+      const st = nimStubbed.nimStatus("test-sandbox");
+      assert.equal(st.running, true);
+      assert.equal(st.healthy, true);
+    });
+
+    it("health check URL uses port from registry (port 9000)", () => {
+      let curlCmd = null;
+      captureImpl = (cmd) => {
+        if (cmd.includes("docker inspect")) return "running";
+        if (cmd.includes("curl")) {
+          curlCmd = cmd;
+          return '{"data":[]}';
+        }
+        return null;
+      };
+
+      nimStubbed.nimStatus("test-sandbox");
+      assert.ok(curlCmd, "curl should have been called");
+      assert.ok(curlCmd.includes(":9000/"), `Expected :9000/ in curl URL, got: ${curlCmd}`);
+    });
+
+    it("defaults to port 8000 when no nimPort stored in registry (backwards compat)", () => {
+      // Override getSandbox to simulate no stored port
+      require.cache[registryPath].exports.getSandbox = () => null;
+
+      let curlCmd = null;
+      captureImpl = (cmd) => {
+        if (cmd.includes("docker inspect")) return "running";
+        if (cmd.includes("curl")) {
+          curlCmd = cmd;
+          return '{"data":[]}';
+        }
+        return null;
+      };
+
+      const st = nimStubbed.nimStatus("test-sandbox");
+      assert.equal(st.running, true);
+      assert.equal(st.healthy, true);
+      assert.ok(curlCmd && curlCmd.includes(":8000/"), `Expected :8000/ in curl URL, got: ${curlCmd}`);
+
+      // Restore default getSandbox for subsequent tests
+      require.cache[registryPath].exports.getSandbox = () => ({ nimPort: 9000 });
     });
   });
 });

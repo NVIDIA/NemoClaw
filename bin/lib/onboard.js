@@ -191,6 +191,7 @@ async function setupNim(sandboxName, gpu) {
   let model = null;
   let provider = "nvidia-nim";
   let nimContainer = null;
+  let nimPort = 8000;
 
   // Detect local inference options
   const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
@@ -266,10 +267,10 @@ async function setupNim(sandboxName, gpu) {
         nim.pullNimImage(model);
 
         console.log("  Starting NIM container...");
-        nimContainer = nim.startNimContainer(sandboxName, model);
+        nimContainer = nim.startNimContainer(sandboxName, model, nimPort);
 
         console.log("  Waiting for NIM to become healthy...");
-        if (!nim.waitForNimHealth()) {
+        if (!nim.waitForNimHealth(nimPort)) {
           console.error("  NIM failed to start. Falling back to cloud API.");
           model = null;
           nimContainer = null;
@@ -309,7 +310,7 @@ async function setupNim(sandboxName, gpu) {
     console.log(`  Using NVIDIA Cloud API with model: ${model}`);
   }
 
-  registry.updateSandbox(sandboxName, { model, provider, nimContainer });
+  registry.updateSandbox(sandboxName, { model, provider, nimContainer, nimPort });
 
   return { model, provider };
 }
@@ -332,12 +333,14 @@ async function setupInference(sandboxName, model, provider) {
       { ignoreError: true }
     );
   } else if (provider === "vllm-local") {
+    const sb = registry.getSandbox(sandboxName);
+    const vllmPort = (sb && sb.nimPort) ? sb.nimPort : 8000;
     run(
       `openshell provider create --name vllm-local --type openai ` +
       `--credential "OPENAI_API_KEY=dummy" ` +
-      `--config "OPENAI_BASE_URL=${HOST_GATEWAY_URL}:8000/v1" 2>&1 || ` +
+      `--config "OPENAI_BASE_URL=${HOST_GATEWAY_URL}:${vllmPort}/v1" 2>&1 || ` +
       `openshell provider update vllm-local --credential "OPENAI_API_KEY=dummy" ` +
-      `--config "OPENAI_BASE_URL=${HOST_GATEWAY_URL}:8000/v1" 2>&1 || true`,
+      `--config "OPENAI_BASE_URL=${HOST_GATEWAY_URL}:${vllmPort}/v1" 2>&1 || true`,
       { ignoreError: true }
     );
     run(
