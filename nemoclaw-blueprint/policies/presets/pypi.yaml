@@ -16,6 +16,8 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+          - allow: { method: HEAD, path: "/**" }
+          - allow: { method: POST, path: "/simple/**" }
       - host: files.pythonhosted.org
         port: 443
         protocol: rest
@@ -23,3 +25,4 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+          - allow: { method: HEAD, path: "/**" }
