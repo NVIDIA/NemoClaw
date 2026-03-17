@@ -10,6 +10,7 @@ const { prompt, ensureApiKey, getCredential } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
 const policies = require("./policies");
+const { checkPortAvailable } = require("./preflight");
 const HOST_GATEWAY_URL = "http://host.openshell.internal";
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 
@@ -67,6 +68,35 @@ async function preflight() {
     }
   }
   console.log(`  ✓ openshell CLI: ${runCapture("openshell --version 2>/dev/null || echo unknown", { ignoreError: true })}`);
+
+  // Gateway port
+  const portCheck = await checkPortAvailable(18789);
+  if (!portCheck.ok) {
+    console.error("");
+    console.error("  !! Port 18789 is not available.");
+    console.error("     The OpenShell gateway dashboard needs this port.");
+    console.error("");
+    if (portCheck.process && portCheck.process !== "unknown") {
+      console.error(`     Blocked by: ${portCheck.process}${portCheck.pid ? ` (PID ${portCheck.pid})` : ""}`);
+      console.error("");
+      console.error("     To fix, stop the conflicting process:");
+      console.error("");
+      if (portCheck.pid) {
+        console.error(`       sudo kill ${portCheck.pid}`);
+      } else {
+        console.error("       lsof -i :18789 -sTCP:LISTEN -P -n");
+      }
+      console.error("       # or, if it's a systemd service:");
+      console.error("       systemctl --user stop openclaw-gateway.service");
+    } else {
+      console.error("     Could not identify the process using port 18789.");
+      console.error("     Run: lsof -i :18789 -sTCP:LISTEN");
+    }
+    console.error("");
+    console.error(`     Detail: ${portCheck.reason}`);
+    process.exit(1);
+  }
+  console.log("  ✓ Port 18789 available");
 
   // GPU
   const gpu = nim.detectGpu();
