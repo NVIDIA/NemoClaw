@@ -20,13 +20,39 @@ function step(n, total, msg) {
   console.log(`  ${"─".repeat(50)}`);
 }
 
-function isDockerRunning() {
+/**
+ * Check whether the Docker daemon is reachable.
+ * Returns an object: { running: boolean, permissionDenied: boolean }
+ *
+ * On Fedora and other distros the user may not be in the `docker` group,
+ * so `docker info` fails with a permission error even though the daemon is
+ * running. We distinguish "daemon not running" from "running but
+ * inaccessible" so the caller can print a targeted hint.
+ */
+function checkDocker() {
   try {
-    runCapture("docker info", { ignoreError: false });
-    return true;
+    runCapture("docker info 2>&1", { ignoreError: false });
+    return { running: true, permissionDenied: false };
   } catch {
-    return false;
+    // docker info failed — could be permission denied or daemon not running.
+    // Check for the daemon via systemctl (Linux) or socket existence.
+    const daemonActive = isDaemonRunning();
+    return { running: false, permissionDenied: daemonActive };
   }
+}
+
+function isDaemonRunning() {
+  // systemctl-based check (Fedora, Ubuntu, RHEL, etc.)
+  try {
+    const status = runCapture("systemctl is-active docker 2>/dev/null", { ignoreError: true });
+    if (status === "active") return true;
+  } catch {}
+  // Socket check fallback (works on any Linux)
+  try {
+    const sock = runCapture("ls /var/run/docker.sock 2>/dev/null", { ignoreError: true });
+    if (sock) return true;
+  } catch {}
+  return false;
 }
 
 function isOpenshellInstalled() {
@@ -50,8 +76,15 @@ async function preflight() {
   step(1, 7, "Preflight checks");
 
   // Docker
-  if (!isDockerRunning()) {
-    console.error("  Docker is not running. Please start Docker and try again.");
+  const docker = checkDocker();
+  if (!docker.running) {
+    if (docker.permissionDenied) {
+      console.error("  Docker daemon is running but your user cannot access it.");
+      console.error("  Fix: sudo usermod -aG docker $USER && newgrp docker");
+      console.error("  Then retry the installer.");
+    } else {
+      console.error("  Docker is not running. Please start Docker and try again.");
+    }
     process.exit(1);
   }
   console.log("  ✓ Docker is running");
