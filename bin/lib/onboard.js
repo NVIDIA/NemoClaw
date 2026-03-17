@@ -16,6 +16,36 @@ const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 
 // ── Helpers ──────────────────────────────────────────────────────
 
+/**
+ * Validates sandbox name - only alphanumeric characters and hyphens allowed.
+ * Returns { valid: boolean, error?: string }
+ */
+function validateSandboxName(name) {
+  if (!name || typeof name !== "string") {
+    return { valid: false, error: "Sandbox name is required" };
+  }
+  if (!/^[a-zA-Z0-9-]+$/.test(name)) {
+    return { valid: false, error: "Sandbox name must contain only letters, numbers, and hyphens" };
+  }
+  if (name.length > 64) {
+    return { valid: false, error: "Sandbox name must be 64 characters or less" };
+  }
+  return { valid: true };
+}
+
+/**
+ * Escapes a string for safe use in shell commands.
+ * Wraps in single quotes and handles embedded single quotes.
+ */
+function shellEscape(str) {
+  if (typeof str !== "string") {
+    throw new Error("shellEscape: expected string argument");
+  }
+  // Use single quotes and escape any embedded single quotes
+  // by ending the quote, adding an escaped quote, and starting a new quote
+  return "'" + str.replace(/'/g, "'\"'\"'") + "'";
+}
+
 function step(n, total, msg) {
   console.log("");
   console.log(`  [${n}/${total}] ${msg}`);
@@ -153,6 +183,13 @@ async function createSandbox(gpu) {
   const nameAnswer = await prompt("  Sandbox name [my-assistant]: ");
   const sandboxName = nameAnswer || "my-assistant";
 
+  // Validate sandbox name
+  const validation = validateSandboxName(sandboxName);
+  if (!validation.valid) {
+    console.error(`  Error: ${validation.error}`);
+    process.exit(1);
+  }
+
   // Check if sandbox already exists in registry
   const existing = registry.getSandbox(sandboxName);
   if (existing) {
@@ -162,7 +199,7 @@ async function createSandbox(gpu) {
       return sandboxName;
     }
     // Destroy old sandbox
-    run(`openshell sandbox delete ${sandboxName} 2>/dev/null || true`, { ignoreError: true });
+    run(`openshell sandbox delete ${shellEscape(sandboxName)} 2>/dev/null || true`, { ignoreError: true });
     registry.removeSandbox(sandboxName);
   }
 
@@ -181,7 +218,7 @@ async function createSandbox(gpu) {
   const basePolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
   const createArgs = [
     `--from "${buildCtx}/Dockerfile"`,
-    `--name ${sandboxName}`,
+    `--name ${shellEscape(sandboxName)}`,
     `--policy "${basePolicyPath}"`,
   ];
   if (gpu && gpu.nimCapable) createArgs.push("--gpu");
@@ -195,7 +232,7 @@ async function createSandbox(gpu) {
   run(`openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`);
 
   // Forward dashboard port separately
-  run(`openshell forward start --background 18789 ${sandboxName}`, { ignoreError: true });
+  run(`openshell forward start --background 18789 ${shellEscape(sandboxName)}`, { ignoreError: true });
 
   // Clean up build context
   run(`rm -rf "${buildCtx}"`, { ignoreError: true });
