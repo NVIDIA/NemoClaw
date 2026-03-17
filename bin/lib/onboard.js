@@ -464,11 +464,12 @@ async function createSandbox(gpu) {
   for (let i = 0; i < 30; i++) {
     const list = runCapture("openshell sandbox list 2>&1", { ignoreError: true });
     const clean = list.replace(/\x1b\[[0-9;]*m/g, "");
-    if (clean.split("\n").some((l) => l.includes(sandboxName) && l.includes("Ready"))) {
+    // Match "Ready" as a whole word — l.includes("Ready") would also match
+    // "NotReady", defeating the entire readiness gate.
+    if (clean.split("\n").some((l) => l.includes(sandboxName) && /\bReady\b/.test(l) && !/NotReady/.test(l))) {
       ready = true;
       break;
     }
-    if (i === 29) break;
     require("child_process").spawnSync("sleep", ["2"]);
   }
 
