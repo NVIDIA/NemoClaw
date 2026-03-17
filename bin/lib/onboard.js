@@ -148,6 +148,17 @@ async function startGateway(gpu) {
   // Give DNS a moment to propagate
   require("child_process").spawnSync("sleep", ["5"]);
 
+  // WSL2 GPU fix — CDI mode + libdxcore.so + node label
+  if (gpu && gpu.nimCapable && fs.existsSync("/dev/dxg")) {
+    console.log("  WSL2 detected — applying GPU CDI fixes...");
+    const fixScript = path.join(ROOT, "wsl2-gpu-fix.sh");
+    if (fs.existsSync(fixScript)) {
+      run(`bash "${fixScript}" nemoclaw`, { ignoreError: true });
+    } else {
+      console.log("  Warning: wsl2-gpu-fix.sh not found at " + fixScript);
+      console.log("  GPU sandbox creation may fail on WSL2. See: https://github.com/NVIDIA/OpenShell/issues/404");
+    }
+  }
 }
 
 // ── Step 3: Sandbox ──────────────────────────────────────────────
