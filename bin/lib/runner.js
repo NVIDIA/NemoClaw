@@ -37,6 +37,18 @@ function runInteractive(cmd, opts = {}) {
     env: { ...process.env, ...opts.env },
   });
   if (result.status !== 0 && !opts.ignoreError) {
+    if (cmd.includes("openshell") && (result.status === 127 || result.status === 1)) {
+      try {
+        execSync("which openshell", { stdio: "ignore" });
+      } catch {
+        console.error("");
+        console.error("  [!] OpenShell CLI not found.");
+        console.error("      NemoClaw requires OpenShell to manage sandboxes and policies.");
+        console.error("      Install: curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/install.sh | bash");
+        console.error("");
+        process.exit(1);
+      }
+    }
     console.error(`  Command failed (exit ${result.status}): ${cmd.slice(0, 80)}`);
     process.exit(result.status || 1);
   }
