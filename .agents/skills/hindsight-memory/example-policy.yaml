@@ -1,0 +1,83 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Example network policy for Hindsight memory service.
+#
+# Two modes:
+#   1. Local: Hindsight runs on the host, sandbox connects via host network
+#   2. External: Hindsight runs as a cloud service, sandbox connects externally
+#
+# Usage:
+#   - Copy relevant section to openclaw-sandbox.yaml network_policies
+#   - Or apply dynamically: openshell policy set --file example-policy.yaml
+
+# ── Mode 1: Local Hindsight (host network) ───────────────────────────────
+# Use when hindsight-embed runs on the host machine.
+
+hindsight_local:
+  name: hindsight_local
+  description: Local Hindsight memory service on host
+  endpoints:
+    - host: host.docker.internal
+      port: 8080
+      protocol: rest
+      enforcement: enforce
+      tls: false
+      rules:
+        - allow: { method: "*", path: "/**" }
+  binaries:
+    - { path: /usr/local/bin/hindsight }
+
+# ── Mode 2: External Hindsight (cloud service) ───────────────────────────
+# Use when connecting to a hosted Hindsight service (Hindsight Cloud, etc.)
+
+hindsight_external:
+  name: hindsight_external
+  description: External Hindsight memory service
+  endpoints:
+    # Default Hindsight Cloud endpoint
+    - host: api.hindsight.vectorize.io
+      port: 443
+      protocol: rest
+      enforcement: enforce
+      tls: terminate
+      rules:
+        - allow: { method: "*", path: "/**" }
+  binaries:
+    - { path: /usr/local/bin/hindsight }
+
+# ── Alternative: Self-hosted on custom host ───────────────────────────────
+# Use when Hindsight is self-hosted at a custom URL.
+
+hindsight_custom:
+  name: hindsight_custom
+  description: Self-hosted Hindsight at custom URL
+  endpoints:
+    # Replace <your-hindsight-host> with your instance
+    - host: <your-hindsight-host>
+      port: 443
+      protocol: rest
+      enforcement: enforce
+      tls: terminate
+      rules:
+        - allow: { method: "*", path: "/**" }
+  binaries:
+    - { path: /usr/local/bin/hindsight }
+
+# ── Environment Variables ──────────────────────────────────────────────────
+# Add to your sandbox environment via openshell policy set or blueprint:
+#
+# environment:
+#   HINDSIGHT_URL: "http://host.docker.internal:8080"  # local
+#   # or
+#   HINDSIGHT_URL: "https://api.hindsight.vectorize.io"  # cloud
+#   # Optional: for external service with auth
+#   HINDSIGHT_API_KEY: "<your-api-key>"
+
+# ── Quick Apply ───────────────────────────────────────────────────────────
+# To add local Hindsight to existing policy:
+#   1. Add hindsight_local entry to network_policies in openclaw-sandbox.yaml
+#   2. Run: openclaw nemoclaw migrate --profile default
+#
+# Or apply dynamically without migration:
+#   openshell policy set --file example-policy.yaml --policy-name hindsight_local
