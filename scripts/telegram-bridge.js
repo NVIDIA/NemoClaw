@@ -19,6 +19,28 @@
 const https = require("https");
 const { execSync, spawn } = require("child_process");
 
+function resolveOpenshell() {
+  try {
+    return execSync("command -v openshell", { encoding: "utf-8" }).trim();
+  } catch {}
+  const home = process.env.HOME || "/tmp";
+  const candidates = [
+    `${home}/.local/bin/openshell`,
+    "/usr/local/bin/openshell",
+    "/usr/bin/openshell",
+  ];
+  for (const p of candidates) {
+    try {
+      require("fs").accessSync(p, require("fs").constants.X_OK);
+      return p;
+    } catch {}
+  }
+  console.error("openshell not found on PATH or in common locations");
+  process.exit(1);
+}
+
+const OPENSHELL = resolveOpenshell();
+
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API_KEY = process.env.NVIDIA_API_KEY;
 const SANDBOX = process.env.SANDBOX_NAME || "nemoclaw";
@@ -85,7 +107,7 @@ async function sendTyping(chatId) {
 
 function runAgentInSandbox(message, sessionId) {
   return new Promise((resolve) => {
-    const sshConfig = execSync(`openshell sandbox ssh-config ${SANDBOX}`, { encoding: "utf-8" });
+    const sshConfig = execSync(`"${OPENSHELL}" sandbox ssh-config "${SANDBOX}"`, { encoding: "utf-8" });
 
     // Write temp ssh config
     const confPath = `/tmp/nemoclaw-tg-ssh-${sessionId}.conf`;
