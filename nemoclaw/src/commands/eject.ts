@@ -3,6 +3,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { execSync } from "node:child_process";
 import type { PluginLogger, NemoClawConfig } from "../index.js";
 import { execBlueprint } from "../blueprint/exec.js";
 import { loadState, clearState } from "../blueprint/state.js";
@@ -53,6 +54,16 @@ export async function cliEject(opts: EjectOptions): Promise<void> {
     logger.info("");
     logger.info("Run with --confirm to proceed, or cancel now.");
     return;
+  }
+
+  // Step 0: Ensure sandbox is stopped before restoration
+  if (state.sandboxName) {
+    logger.info(`Ensuring sandbox '${state.sandboxName}' is stopped...`);
+    try {
+      execSync(`openshell sandbox stop ${state.sandboxName}`, { stdio: "ignore" });
+    } catch {
+      // Best effort — sandbox might already be stopped
+    }
   }
 
   // Step 1: Rollback blueprint
