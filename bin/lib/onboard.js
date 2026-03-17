@@ -192,15 +192,44 @@ async function createSandbox(gpu) {
   if (process.env.NVIDIA_API_KEY) {
     envArgs.push(`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`);
   }
-  run(`openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`);
+
+  // Use pipefail so the pipe preserves the openshell exit code instead of
+  // silently succeeding because awk always exits 0.
+  const createResult = run(
+    `set -o pipefail; openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`,
+    { ignoreError: true }
+  );
+
+  // Clean up build context regardless of outcome
+  run(`rm -rf "${buildCtx}"`, { ignoreError: true });
+
+  if (createResult.status !== 0) {
+    console.error(`  Sandbox creation failed (exit ${createResult.status}).`);
+    console.error("  Run 'openshell sandbox list' to check the underlying state.");
+    process.exit(createResult.status || 1);
+  }
+
+  // Verify the sandbox is actually running before registering it
+  const verifyStatus = runCapture(
+    `openshell sandbox status ${sandboxName} --json 2>/dev/null`,
+    { ignoreError: true }
+  );
+  let sandboxRunning = false;
+  try {
+    const parsed = JSON.parse(verifyStatus);
+    sandboxRunning = parsed.state === "running";
+  } catch {}
+
+  if (!sandboxRunning) {
+    console.error(`  Sandbox '${sandboxName}' was created but is not running.`);
+    console.error("  Run 'openshell sandbox list' and 'openshell sandbox logs " + sandboxName + "' to diagnose.");
+    process.exit(1);
+  }
 
   // Forward dashboard port separately
   run(`openshell forward start --background 18789 ${sandboxName}`, { ignoreError: true });
 
-  // Clean up build context
-  run(`rm -rf "${buildCtx}"`, { ignoreError: true });
-
-  // Register in registry
+  // Register in registry only after confirmed running
   registry.registerSandbox({
     name: sandboxName,
     gpuEnabled: !!gpu,
