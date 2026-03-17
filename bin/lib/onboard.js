@@ -130,15 +130,32 @@ async function createSandbox(gpu) {
   const nameAnswer = await prompt("  Sandbox name [my-assistant]: ");
   const sandboxName = nameAnswer || "my-assistant";
 
-  // Check if sandbox already exists in registry
-  const existing = registry.getSandbox(sandboxName);
-  if (existing) {
-    const recreate = await prompt(`  Sandbox '${sandboxName}' already exists. Recreate? [y/N]: `);
+  // Check if sandbox already exists — look at both the registry and the
+  // actual OpenShell state.  A previous failed onboard may have created a
+  // sandbox in OpenShell without registering it (see #22), or vice-versa.
+  const existsInRegistry = !!registry.getSandbox(sandboxName);
+  const existsInOpenshell = !!runCapture(
+    `openshell sandbox status ${sandboxName} --json 2>/dev/null`,
+    { ignoreError: true }
+  );
+
+  if (existsInRegistry || existsInOpenshell) {
+    const where = existsInRegistry && existsInOpenshell
+      ? "registered and running"
+      : existsInRegistry
+        ? "registered (but not found in OpenShell)"
+        : "found in OpenShell (but not registered)";
+    const recreate = await prompt(`  Sandbox '${sandboxName}' already exists (${where}). Recreate? [y/N]: `);
     if (recreate.toLowerCase() !== "y") {
       console.log("  Keeping existing sandbox.");
+      // Sync: if it exists in OpenShell but not in the registry, register it
+      if (existsInOpenshell && !existsInRegistry) {
+        registry.registerSandbox({ name: sandboxName, gpuEnabled: !!gpu });
+        console.log(`  ✓ Re-registered '${sandboxName}' in local registry.`);
+      }
       return sandboxName;
     }
-    // Destroy old sandbox
+    // Clean up both sides before recreating
     run(`openshell sandbox delete ${sandboxName} 2>/dev/null || true`, { ignoreError: true });
     registry.removeSandbox(sandboxName);
   }
