@@ -13,6 +13,25 @@ const DEFAULT_PLUGIN_CONFIG = {
     sandboxName: "openclaw",
     inferenceProvider: "nvidia",
 };
+/**
+ * Normalizes a sandbox name to lowercase and validates it.
+ * Returns the normalized name or the default if invalid.
+ */
+function normalizeSandboxName(name, defaultName) {
+    if (typeof name !== "string" || !name) {
+        return defaultName;
+    }
+    // Normalize to lowercase
+    const normalized = name.toLowerCase();
+    // Validate: only lowercase letters, numbers, and hyphens allowed
+    if (!/^[a-z0-9-]+$/.test(normalized)) {
+        return defaultName;
+    }
+    if (normalized.length > 64) {
+        return defaultName;
+    }
+    return normalized;
+}
 function getPluginConfig(api) {
     const raw = api.pluginConfig ?? {};
     return {
@@ -22,9 +41,7 @@ function getPluginConfig(api) {
         blueprintRegistry: typeof raw["blueprintRegistry"] === "string"
             ? raw["blueprintRegistry"]
             : DEFAULT_PLUGIN_CONFIG.blueprintRegistry,
-        sandboxName: typeof raw["sandboxName"] === "string"
-            ? raw["sandboxName"]
-            : DEFAULT_PLUGIN_CONFIG.sandboxName,
+        sandboxName: normalizeSandboxName(raw["sandboxName"], DEFAULT_PLUGIN_CONFIG.sandboxName),
         inferenceProvider: typeof raw["inferenceProvider"] === "string"
             ? raw["inferenceProvider"]
             : DEFAULT_PLUGIN_CONFIG.inferenceProvider,

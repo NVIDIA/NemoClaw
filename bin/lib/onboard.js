@@ -17,20 +17,23 @@ const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 // ── Helpers ──────────────────────────────────────────────────────
 
 /**
- * Validates sandbox name - only alphanumeric characters and hyphens allowed.
- * Returns { valid: boolean, error?: string }
+ * Validates sandbox name - only lowercase alphanumeric characters and hyphens allowed.
+ * Names are normalized to lowercase.
+ * Returns { valid: boolean, normalized?: string, error?: string }
  */
 function validateSandboxName(name) {
   if (!name || typeof name !== "string") {
     return { valid: false, error: "Sandbox name is required" };
   }
-  if (!/^[a-zA-Z0-9-]+$/.test(name)) {
-    return { valid: false, error: "Sandbox name must contain only letters, numbers, and hyphens" };
+  // Normalize to lowercase
+  const normalized = name.toLowerCase();
+  if (!/^[a-z0-9-]+$/.test(normalized)) {
+    return { valid: false, error: "Sandbox name must contain only lowercase letters, numbers, and hyphens" };
   }
-  if (name.length > 64) {
+  if (normalized.length > 64) {
     return { valid: false, error: "Sandbox name must be 64 characters or less" };
   }
-  return { valid: true };
+  return { valid: true, normalized };
 }
 
 /**
@@ -180,15 +183,17 @@ async function startGateway(gpu) {
 async function createSandbox(gpu) {
   step(3, 7, "Creating sandbox");
 
+  console.log("  Naming rules: lowercase letters, numbers, and hyphens only (e.g., my-assistant)");
   const nameAnswer = await prompt("  Sandbox name [my-assistant]: ");
-  const sandboxName = nameAnswer || "my-assistant";
+  let sandboxName = nameAnswer || "my-assistant";
 
-  // Validate sandbox name
+  // Validate and normalize sandbox name
   const validation = validateSandboxName(sandboxName);
   if (!validation.valid) {
     console.error(`  Error: ${validation.error}`);
     process.exit(1);
   }
+  sandboxName = validation.normalized;
 
   // Check if sandbox already exists in registry
   const existing = registry.getSandbox(sandboxName);
