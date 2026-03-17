@@ -160,6 +160,36 @@ install_nemoclaw() {
 }
 
 # ---------------------------------------------------------------------------
+# 3b. Verify nemoclaw is on PATH
+# ---------------------------------------------------------------------------
+verify_on_path() {
+  if command_exists nemoclaw; then
+    info "nemoclaw is on PATH: $(command -v nemoclaw)"
+    return
+  fi
+
+  # Determine where npm put the binary
+  local npm_bin
+  npm_bin="$(npm prefix -g 2>/dev/null)/bin"
+
+  if [[ -x "${npm_bin}/nemoclaw" ]]; then
+    warn "nemoclaw was installed to ${npm_bin} but that directory is not on your PATH."
+    warn "Add it by running:"
+    warn ""
+    warn "  export PATH=\"${npm_bin}:\$PATH\""
+    warn ""
+    warn "To make this permanent, append the line above to your shell profile (~/.bashrc, ~/.zshrc, etc.)."
+
+    # Temporarily add to PATH so onboard can proceed
+    export PATH="${npm_bin}:${PATH}"
+    info "Temporarily added ${npm_bin} to PATH for this session."
+  else
+    warn "Could not locate the nemoclaw binary after installation."
+    warn "Try running: npm bin -g"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # 4. Onboard
 # ---------------------------------------------------------------------------
 run_onboard() {
@@ -177,6 +207,7 @@ main() {
   ensure_supported_runtime
   # install_or_upgrade_ollama
   install_nemoclaw
+  verify_on_path
   run_onboard
 
   info "=== Installation complete ==="
