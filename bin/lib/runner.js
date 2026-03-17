@@ -24,28 +24,44 @@ if (!process.env.DOCKER_HOST) {
 }
 
 function run(cmd, opts = {}) {
-  const result = spawnSync("bash", ["-c", cmd], {
+  const isArray = Array.isArray(cmd);
+  const exe = isArray ? cmd[0] : "bash";
+  const args = isArray ? cmd.slice(1) : ["-c", cmd];
+
+  const result = spawnSync(exe, args, {
     stdio: "inherit",
     cwd: ROOT,
     env: { ...process.env, ...opts.env },
     ...opts,
   });
+
   if (result.status !== 0 && !opts.ignoreError) {
-    console.error(`  Command failed (exit ${result.status}): ${cmd.slice(0, 80)}`);
+    const cmdStr = isArray ? cmd.join(" ") : cmd;
+    console.error(`  Command failed (exit ${result.status}): ${cmdStr.slice(0, 80)}`);
     process.exit(result.status || 1);
   }
   return result;
 }
 
 function runCapture(cmd, opts = {}) {
+  const isArray = Array.isArray(cmd);
+  const exe = isArray ? cmd[0] : "bash";
+  const args = isArray ? cmd.slice(1) : ["-c", cmd];
+
   try {
-    return execSync(cmd, {
+    const result = spawnSync(exe, args, {
       encoding: "utf-8",
       cwd: ROOT,
       env: { ...process.env, ...opts.env },
       stdio: ["pipe", "pipe", "pipe"],
       ...opts,
-    }).trim();
+    });
+
+    if (result.status !== 0 && !opts.ignoreError) {
+      throw new Error(`Command failed with status ${result.status}`);
+    }
+
+    return (result.stdout || "").trim();
   } catch (err) {
     if (opts.ignoreError) return "";
     throw err;
