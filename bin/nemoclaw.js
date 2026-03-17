@@ -44,7 +44,9 @@ async function setup() {
 
 async function setupSpark() {
   await ensureApiKey();
-  run(`sudo -E NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}" bash "${SCRIPTS}/setup-spark.sh"`);
+  // -E preserves the caller's environment (including NVIDIA_API_KEY).
+  // Do not pass the key on the command line — it would be visible in `ps`.
+  run(`sudo -E bash "${SCRIPTS}/setup-spark.sh"`);
 }
 
 async function deploy(instanceName) {
@@ -83,7 +85,7 @@ async function deploy(instanceName) {
 
   if (!exists) {
     console.log(`  Creating Brev instance '${name}' (${gpu})...`);
-    run(`brev create ${name} --gpu "${gpu}"`);
+    run(`brev create "${name}" --gpu "${gpu}"`);
   } else {
     console.log(`  Brev instance '${name}' already exists.`);
   }
@@ -93,7 +95,7 @@ async function deploy(instanceName) {
   console.log("  Waiting for SSH...");
   for (let i = 0; i < 60; i++) {
     try {
-      execSync(`ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no ${name} 'echo ok' 2>/dev/null`, { encoding: "utf-8", stdio: "pipe" });
+      execSync(`ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "${name}" 'echo ok' 2>/dev/null`, { encoding: "utf-8", stdio: "pipe" });
       break;
     } catch {
       if (i === 59) {
@@ -105,8 +107,8 @@ async function deploy(instanceName) {
   }
 
   console.log("  Syncing NemoClaw to VM...");
-  run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'mkdir -p /home/ubuntu/nemoclaw'`);
-  run(`rsync -az --delete --exclude node_modules --exclude .git --exclude src -e "ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR" "${ROOT}/scripts" "${ROOT}/Dockerfile" "${ROOT}/nemoclaw" "${ROOT}/nemoclaw-blueprint" "${ROOT}/bin" "${ROOT}/package.json" ${name}:/home/ubuntu/nemoclaw/`);
+  run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "${name}" 'mkdir -p /home/ubuntu/nemoclaw'`);
+  run(`rsync -az --delete --exclude node_modules --exclude .git --exclude src -e "ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR" "${ROOT}/scripts" "${ROOT}/Dockerfile" "${ROOT}/nemoclaw" "${ROOT}/nemoclaw-blueprint" "${ROOT}/bin" "${ROOT}/package.json" "${name}":/home/ubuntu/nemoclaw/`);
 
   const envLines = [`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`];
   const ghToken = process.env.GITHUB_TOKEN;
@@ -115,21 +117,21 @@ async function deploy(instanceName) {
   if (tgToken) envLines.push(`TELEGRAM_BOT_TOKEN=${tgToken}`);
   const envTmp = path.join(os.tmpdir(), `nemoclaw-env-${Date.now()}`);
   fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
-  run(`scp -q -o StrictHostKeyChecking=no -o LogLevel=ERROR "${envTmp}" ${name}:/home/ubuntu/nemoclaw/.env`);
+  run(`scp -q -o StrictHostKeyChecking=no -o LogLevel=ERROR "${envTmp}" "${name}":/home/ubuntu/nemoclaw/.env`);
   fs.unlinkSync(envTmp);
 
   console.log("  Running setup...");
-  run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh'`);
+  run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR "${name}" 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh'`);
 
   if (tgToken) {
     console.log("  Starting services...");
-    run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/start-services.sh'`);
+    run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "${name}" 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/start-services.sh'`);
   }
 
   console.log("");
   console.log("  Connecting to sandbox...");
   console.log("");
-  run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw'`);
+  run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR "${name}" 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw'`);
 }
 
 async function start() {
@@ -188,8 +190,8 @@ function listSandboxes() {
 
 function sandboxConnect(sandboxName) {
   // Ensure port forward is alive before connecting
-  run(`openshell forward start --background 18789 ${sandboxName} 2>/dev/null || true`, { ignoreError: true });
-  run(`openshell sandbox connect ${sandboxName}`);
+  run(`openshell forward start --background 18789 "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+  run(`openshell sandbox connect "${sandboxName}"`);
 }
 
 function sandboxStatus(sandboxName) {
@@ -204,7 +206,7 @@ function sandboxStatus(sandboxName) {
   }
 
   // openshell info
-  run(`openshell sandbox get ${sandboxName} 2>/dev/null || true`, { ignoreError: true });
+  run(`openshell sandbox get "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
 
   // NIM health
   const nimStat = nim.nimStatus(sandboxName);
@@ -217,7 +219,7 @@ function sandboxStatus(sandboxName) {
 
 function sandboxLogs(sandboxName, follow) {
   const followFlag = follow ? " --follow" : "";
-  run(`openshell sandbox logs ${sandboxName}${followFlag}`);
+  run(`openshell sandbox logs "${sandboxName}"${followFlag}`);
 }
 
 async function sandboxPolicyAdd(sandboxName) {
@@ -260,7 +262,7 @@ function sandboxDestroy(sandboxName) {
   nim.stopNimContainer(sandboxName);
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
-  run(`openshell sandbox delete ${sandboxName} 2>/dev/null || true`, { ignoreError: true });
+  run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
 
   registry.removeSandbox(sandboxName);
   console.log(`  ✓ Sandbox '${sandboxName}' destroyed`);
