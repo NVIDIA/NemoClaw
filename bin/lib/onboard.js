@@ -444,8 +444,6 @@ async function createSandbox(gpu) {
   }
 
   // Stage build context
-  const { mkdtempSync } = require("fs");
-  const os = require("os");
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
   fs.copyFileSync(path.join(ROOT, "Dockerfile"), path.join(buildCtx, "Dockerfile"));
   run(`cp -r "${path.join(ROOT, "nemoclaw")}" "${buildCtx}/nemoclaw"`);
@@ -922,6 +920,18 @@ async function setupPolicies(sandboxName) {
 
 // ── Dashboard ────────────────────────────────────────────────────
 
+/**
+ * Parse dashboard URL with token from openclaw dashboard --no-open output.
+ * Returns URL with 127.0.0.1 normalized to localhost, or null if not found.
+ * Exported for unit tests.
+ */
+function parseDashboardUrlFromOutput(output) {
+  if (!output || typeof output !== "string") return null;
+  const match = output.match(/https?:\/\/[^\s]+#token=[^\s]+/);
+  if (!match) return null;
+  return match[0].replace(/127\.0\.0\.1/, "localhost").trim();
+}
+
 function getDashboardUrlWithToken(sandboxName) {
   let tmpConf = null;
   try {
@@ -933,11 +943,7 @@ function getDashboardUrlWithToken(sandboxName) {
       `ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -F "${tmpConf}" openshell-${sandboxName} "openclaw dashboard --no-open" 2>/dev/null`,
       { ignoreError: true }
     );
-    const match = out.match(/https?:\/\/[^\s]+#token=[^\s]+/);
-    if (match) {
-      return match[0].replace(/127\.0\.0\.1/, "localhost").trim();
-    }
-    return null;
+    return parseDashboardUrlFromOutput(out);
   } catch {
     return null;
   } finally {
@@ -992,4 +998,4 @@ async function onboard(opts = {}) {
   printDashboard(sandboxName, model, provider);
 }
 
-module.exports = { buildSandboxConfigSyncScript, hasStaleGateway, isSandboxReady, onboard, setupNim };
+module.exports = { buildSandboxConfigSyncScript, hasStaleGateway, isSandboxReady, onboard, parseDashboardUrlFromOutput, setupNim };

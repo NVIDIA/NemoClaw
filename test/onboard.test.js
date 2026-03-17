@@ -4,7 +4,7 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { buildSandboxConfigSyncScript } = require("../bin/lib/onboard");
+const { buildSandboxConfigSyncScript, parseDashboardUrlFromOutput } = require("../bin/lib/onboard");
 
 describe("onboard helpers", () => {
   it("builds a sandbox sync script that writes config and updates the selected model", () => {
@@ -27,5 +27,36 @@ describe("onboard helpers", () => {
     assert.match(script, /json\.loads\("\{\\\"baseUrl\\\":\\\"https:\/\/inference\.local\/v1\\\",\\\"apiKey\\\":\\\"unused\\\"/);
     assert.match(script, /inference\/nemotron-3-nano:30b/);
     assert.match(script, /^exit$/m);
+  });
+
+  describe("parseDashboardUrlFromOutput", () => {
+    it("returns URL with token when output contains http URL with #token=", () => {
+      const out = "some text\nhttp://127.0.0.1:18789/#token=961dc4bc7ae8237e6835f45863ee8da482aaec0efa9766f1\n";
+      assert.equal(
+        parseDashboardUrlFromOutput(out),
+        "http://localhost:18789/#token=961dc4bc7ae8237e6835f45863ee8da482aaec0efa9766f1"
+      );
+    });
+
+    it("normalizes 127.0.0.1 to localhost", () => {
+      const out = "http://127.0.0.1:18789/#token=abc123";
+      assert.equal(parseDashboardUrlFromOutput(out), "http://localhost:18789/#token=abc123");
+    });
+
+    it("returns URL as-is when already localhost", () => {
+      const out = "http://localhost:18789/#token=xyz";
+      assert.equal(parseDashboardUrlFromOutput(out), "http://localhost:18789/#token=xyz");
+    });
+
+    it("returns null when output has no URL with #token=", () => {
+      assert.equal(parseDashboardUrlFromOutput("Dashboard at http://localhost:18789/"), null);
+      assert.equal(parseDashboardUrlFromOutput("no url here"), null);
+    });
+
+    it("returns null for empty or non-string input", () => {
+      assert.equal(parseDashboardUrlFromOutput(""), null);
+      assert.equal(parseDashboardUrlFromOutput(null), null);
+      assert.equal(parseDashboardUrlFromOutput(undefined), null);
+    });
   });
 });
