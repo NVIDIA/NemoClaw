@@ -23,11 +23,25 @@ const policies = require("./lib/policies");
 
 const GLOBAL_COMMANDS = new Set([
   "onboard", "list", "deploy", "setup", "setup-spark",
-  "start", "stop", "status",
+  "start", "stop", "status", "default",
   "help", "--help", "-h",
 ]);
 
 // ── Commands ─────────────────────────────────────────────────────
+
+async function setDefaultSandbox(name) {
+  if (!name) {
+    const { defaultSandbox } = registry.listSandboxes();
+    console.log(`  Current default sandbox: ${defaultSandbox || "none"}`);
+    return;
+  }
+  if (registry.setDefault(name)) {
+    console.log(`  ✓ Default sandbox set to: ${name}`);
+  } else {
+    console.error(`  Error: Sandbox '${name}' not found in registry.`);
+    process.exit(1);
+  }
+}
 
 async function onboard() {
   const { onboard: runOnboard } = require("./lib/onboard");
@@ -317,6 +331,7 @@ function help() {
 
   Sandbox Management:
     nemoclaw list                    List all sandboxes
+    nemoclaw default <name>          Set the default sandbox
     nemoclaw <name> connect          Connect to a sandbox
     nemoclaw <name> status           Show sandbox status and health
     nemoclaw <name> logs [--follow]  View sandbox logs
@@ -361,6 +376,7 @@ const [cmd, ...args] = process.argv.slice(2);
       case "stop":        stop(); break;
       case "status":      showStatus(); break;
       case "list":        listSandboxes(); break;
+      case "default":     await setDefaultSandbox(args[0]); break;
       default:            help(); break;
     }
     return;
