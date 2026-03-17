@@ -3,6 +3,7 @@
 //
 // NIM container management — pull, start, stop, health-check NIM images.
 
+const fs = require("fs");
 const { run, runCapture } = require("./runner");
 const nimImages = require("./nim-images.json");
 
@@ -23,7 +24,21 @@ function listModels() {
   }));
 }
 
+function isWSL2() {
+  // WSL2 exposes nvidia-smi at the host layer but cannot pass the GPU
+  // through to containers managed by Docker Desktop (k3s inside the
+  // gateway container never gets the device).
+  try {
+    const version = fs.readFileSync("/proc/version", "utf-8");
+    return /microsoft|wsl/i.test(version);
+  } catch {
+    return false;
+  }
+}
+
 function detectGpu() {
+  const wsl2 = isWSL2();
+
   // Try NVIDIA first — query VRAM
   try {
     const output = runCapture(
@@ -40,7 +55,8 @@ function detectGpu() {
           count: perGpuMB.length,
           totalMemoryMB,
           perGpuMB: perGpuMB[0],
-          nimCapable: true,
+          nimCapable: !wsl2,
+          wsl2,
         };
       }
     }
@@ -64,8 +80,9 @@ function detectGpu() {
         count: 1,
         totalMemoryMB,
         perGpuMB: totalMemoryMB,
-        nimCapable: true,
+        nimCapable: !wsl2,
         spark: true,
+        wsl2,
       };
     }
   } catch {}
@@ -199,6 +216,7 @@ module.exports = {
   getImageForModel,
   listModels,
   detectGpu,
+  isWSL2,
   pullNimImage,
   startNimContainer,
   waitForNimHealth,
