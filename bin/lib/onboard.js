@@ -81,10 +81,49 @@ async function preflight() {
   return gpu;
 }
 
+// ── Helpers: port checks ─────────────────────────────────────────
+
+const REQUIRED_PORTS = [
+  { port: 8080, label: "OpenShell gateway" },
+  { port: 18789, label: "NemoClaw dashboard" },
+];
+
+function checkPortAvailable(port) {
+  // lsof is available on Linux and macOS
+  const pid = runCapture(`lsof -i :${port} -t 2>/dev/null | head -1`, { ignoreError: true });
+  if (!pid) return null;
+  const processInfo = runCapture(`ps -p ${pid} -o comm= 2>/dev/null`, { ignoreError: true });
+  return { pid, process: processInfo || "unknown" };
+}
+
+function checkRequiredPorts() {
+  const conflicts = [];
+  for (const { port, label } of REQUIRED_PORTS) {
+    const occupant = checkPortAvailable(port);
+    if (occupant) {
+      conflicts.push({ port, label, ...occupant });
+    }
+  }
+  return conflicts;
+}
+
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
 async function startGateway(gpu) {
   step(2, 7, "Starting OpenShell gateway");
+
+  // Check for port conflicts before attempting to start
+  const conflicts = checkRequiredPorts();
+  if (conflicts.length > 0) {
+    console.error("");
+    console.error("  Port conflict detected:");
+    for (const c of conflicts) {
+      console.error(`    Port ${c.port} (${c.label}) is in use by ${c.process} (PID ${c.pid})`);
+    }
+    console.error("");
+    console.error("  Free the ports and rerun 'nemoclaw onboard'.");
+    process.exit(1);
+  }
 
   // Destroy old gateway
   run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
