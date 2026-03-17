@@ -139,6 +139,7 @@ do_start() {
   fi
 
   mkdir -p "$PIDDIR"
+  export SANDBOX_NAME
 
   # Telegram bridge (only if token provided)
   if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then

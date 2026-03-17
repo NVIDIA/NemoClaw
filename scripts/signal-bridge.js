@@ -29,17 +29,30 @@ const ALLOWED_IDS = process.env.ALLOWED_IDS || process.env.ALLOWED_NUMBERS
 if (!PHONE) { console.error("SIGNAL_PHONE_NUMBER required"); process.exit(1); }
 if (!API_KEY) { console.error("NVIDIA_API_KEY required"); process.exit(1); }
 
-// ── Signal CLI helpers ──────────────────────────────────────────
+let rpcId = 1;
+let signalProcess = null;
+
+// ── Signal JSON-RPC helpers ──────────────────────────────────────
 
 function sendSignalMessage(recipient, text) {
-  try {
-    // Escape single quotes for shell
-    const escapedText = text.replace(/'/g, "'\\''");
-    // Recipient can be phone number or UUID
-    execSync(`signal-cli -u "${PHONE}" send -m '${escapedText}' "${recipient}"`, { stdio: "inherit" });
-  } catch (err) {
-    console.error(`Failed to send Signal message to ${recipient}:`, err.message);
+  if (!signalProcess || signalProcess.killed) {
+    console.error("Signal process not running, cannot send message.");
+    return;
   }
+
+  const rpc = {
+    jsonrpc: "2.0",
+    method: "send",
+    params: {
+      message: text,
+      recipient: [recipient],
+    },
+    id: rpcId++,
+  };
+
+  const rpcStr = JSON.stringify(rpc);
+  console.log(`[signal] Sending RPC: ${rpcStr}`);
+  signalProcess.stdin.write(rpcStr + "\n");
 }
 
 // ── Run agent inside sandbox ──────────────────────────────────────
@@ -55,11 +68,12 @@ function runAgentInSandbox(message, sessionId) {
     }
 
     // Write temp ssh config
-    const confPath = `/tmp/nemoclaw-signal-ssh-${sessionId.replace(/\+/g, '')}.conf`;
+    const cleanSessionId = sessionId.replace(/[^a-zA-Z0-9]/g, '');
+    const confPath = `/tmp/nemoclaw-signal-ssh-${cleanSessionId}.conf`;
     fs.writeFileSync(confPath, sshConfig);
 
     const escaped = message.replace(/'/g, "'\\''");
-    const cmd = `export NVIDIA_API_KEY='${API_KEY}' && nemoclaw-start openclaw agent --agent main --local -m '${escaped}' --session-id 'signal-${sessionId}'`;
+    const cmd = `export NVIDIA_API_KEY='${API_KEY}' && nemoclaw-start openclaw agent --agent main --local -m '${escaped}' --session-id 'signal-${cleanSessionId}'`;
 
     const proc = spawn("ssh", ["-T", "-F", confPath, `openshell-${SANDBOX}`, cmd], {
       timeout: 120000,
@@ -111,23 +125,35 @@ function runAgentInSandbox(message, sessionId) {
 // ── Listen loop ───────────────────────────────────────────────────
 
 function listen() {
-  console.log(`[signal] Listening for messages on ${PHONE}...`);
+  console.log(`[signal] Starting JSON-RPC daemon for ${PHONE}...`);
   
-  const receiver = spawn("signal-cli", ["-u", PHONE, "receive", "--json"]);
+  signalProcess = spawn("signal-cli", ["-u", PHONE, "jsonRpc"]);
 
-  receiver.stdout.on("data", async (data) => {
-    const lines = data.toString().split("\n");
+  let buffer = "";
+
+  signalProcess.stdout.on("data", (data) => {
+    buffer += data.toString();
+    const lines = buffer.split("\n");
+    buffer = lines.pop(); // Keep partial line in buffer
+
     for (const line of lines) {
       if (!line.trim()) continue;
       
       try {
         const json = JSON.parse(line);
-        const envelope = json.envelope;
-        if (!envelope || !envelope.dataMessage) continue;
+        console.log(`[signal] Received RPC: ${line}`);
 
-        const source = envelope.source; // phone number
-        const uuid = envelope.sourceUuid; // uuid
-        const username = envelope.sourceUsername; // username (if set)
+        // We only care about the "receive" method (incoming messages)
+        if (json.method !== "receive" || !json.params || !json.params.envelope) {
+          continue;
+        }
+
+        const envelope = json.params.envelope;
+        if (!envelope.dataMessage) continue;
+
+        const source = envelope.source; // raw identifier (phone or uuid)
+        const uuid = envelope.sourceUuid; 
+        const username = envelope.sourceUsername; 
         
         let sender = uuid ? `uuid:${uuid}` : source;
         if (username) sender = `username:${username}`;
@@ -135,8 +161,7 @@ function listen() {
         const messageText = envelope.dataMessage.message;
         if (!messageText) continue;
 
-        // Access control: check against allowed IDs
-        // Can match "username:<user>", "uuid:<id>", "+123...", or just raw uuid/phone if user provided it that way
+        // Access control
         if (ALLOWED_IDS) {
           const isAllowed = ALLOWED_IDS.some(id => 
             id === sender || id === source || id === uuid || id === username ||
@@ -152,7 +177,7 @@ function listen() {
 
         // Handle special commands
         if (messageText === "/start") {
-          sendSignalMessage(sender, 
+          sendSignalMessage(source, 
             "🦀 NemoClaw Signal Bridge\n\n" +
             "Send me a message and I'll run it through the OpenClaw agent " +
             "inside your sandbox."
@@ -161,26 +186,26 @@ function listen() {
         }
 
         // Run agent
-        const response = await runAgentInSandbox(messageText, sender);
-        console.log(`[${sender}] agent: ${response.slice(0, 100)}...`);
-        sendSignalMessage(sender, response);
+        runAgentInSandbox(messageText, sender).then(response => {
+          console.log(`[${sender}] agent: ${response.slice(0, 100)}...`);
+          sendSignalMessage(source, response);
+        });
 
       } catch (err) {
-        console.error("Error parsing Signal message:", err.message);
+        console.error("Error parsing Signal JSON-RPC line:", err.message);
       }
     }
   });
 
-  receiver.stderr.on("data", (data) => {
-    // signal-cli is quite chatty on stderr
+  signalProcess.stderr.on("data", (data) => {
     const msg = data.toString().trim();
     if (msg.includes("ERROR") || msg.includes("Exception")) {
       console.error(`[signal-cli stderr] ${msg}`);
     }
   });
 
-  receiver.on("close", (code) => {
-    console.log(`Signal receiver exited with code ${code}. Restarting in 5s...`);
+  signalProcess.on("close", (code) => {
+    console.log(`Signal process exited with code ${code}. Restarting in 5s...`);
     setTimeout(listen, 5000);
   });
 }
