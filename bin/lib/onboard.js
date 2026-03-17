@@ -355,15 +355,15 @@ async function startGateway(gpu) {
     env: gatewayEnv,
   });
 
-  // Verify health
-  for (let i = 0; i < 5; i++) {
+  // Verify health (increased retries to handle slow connection establishment)
+  for (let i = 0; i < 10; i++) {
     const status = runCapture("openshell status 2>&1", { ignoreError: true });
     if (status.includes("Connected")) {
       console.log("  ✓ Gateway is healthy");
       break;
     }
-    if (i === 4) {
-      console.error("  Gateway failed to start. Run: openshell gateway info");
+    if (i === 9) {
+      console.error("  Gateway failed to start. Check 'openshell gateway info' for details.");
       process.exit(1);
     }
     sleep(2);
@@ -447,7 +447,6 @@ async function createSandbox(gpu) {
   if (process.env.NVIDIA_API_KEY) {
     envArgs.push(`NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY)}`);
   }
-
   // Run without piping through awk — the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
@@ -480,7 +479,7 @@ async function createSandbox(gpu) {
       ready = true;
       break;
     }
-    require("child_process").spawnSync("sleep", ["2"]);
+    sleep(2);
   }
 
   if (!ready) {
@@ -497,6 +496,23 @@ async function createSandbox(gpu) {
     }
     console.error("  Retry: nemoclaw onboard");
     process.exit(1);
+  }
+
+  // Wait for NemoClaw dashboard to become fully ready (web server live)
+  // This prevents port forwards from connecting to a non-existent port
+  // or seeing 502/503 errors during initial load.
+  console.log("  Waiting for NemoClaw dashboard to become ready...");
+  for (let i = 0; i < 15; i++) {
+    const readyMatch = runCapture(`openshell sandbox exec ${sandboxName} curl -sf http://localhost:18789/ 2>/dev/null || echo "no"`, { ignoreError: true });
+    if (readyMatch && !readyMatch.includes("no")) {
+      console.log("  ✓ Dashboard is live");
+      break;
+    }
+    if (i === 14) {
+      console.warn("  Dashboard taking longer than expected to start. Continuing...");
+    } else {
+      sleep(2);
+    }
   }
 
   // Release any stale forward on port 18789 before claiming it for the new sandbox.
