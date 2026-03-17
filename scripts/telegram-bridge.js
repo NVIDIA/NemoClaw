@@ -28,13 +28,30 @@ if (!OPENSHELL) {
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API_KEY = process.env.NVIDIA_API_KEY;
-const SANDBOX = process.env.SANDBOX_NAME || "nemoclaw";
 const ALLOWED_CHATS = process.env.ALLOWED_CHAT_IDS
   ? process.env.ALLOWED_CHAT_IDS.split(",").map((s) => s.trim())
   : null;
 
 if (!TOKEN) { console.error("TELEGRAM_BOT_TOKEN required"); process.exit(1); }
 if (!API_KEY) { console.error("NVIDIA_API_KEY required"); process.exit(1); }
+
+/**
+ * Resolve the sandbox name.  Priority:
+ * 1. SANDBOX_NAME env var (explicit override)
+ * 2. The default sandbox from the NemoClaw registry
+ * 3. Fallback to "my-assistant" (matches onboard default)
+ */
+function resolveSandboxName() {
+  if (process.env.SANDBOX_NAME) return process.env.SANDBOX_NAME;
+  try {
+    const registry = require("../bin/lib/registry");
+    const def = registry.getDefault();
+    if (def) return def;
+  } catch {}
+  return "my-assistant";
+}
+
+const SANDBOX = resolveSandboxName();
 
 let offset = 0;
 const activeSessions = new Map(); // chatId → message history
