@@ -1,12 +1,3 @@
-/**
- * NemoClaw — OpenClaw Plugin for OpenShell
- *
- * Uses the real OpenClaw plugin API. Types defined locally are minimal stubs
- * that match the OpenClaw SDK interfaces available at runtime via
- * `openclaw/plugin-sdk`. We define them here because the SDK package is only
- * available inside the OpenClaw host process and cannot be imported at build
- * time.
- */
 import type { Command } from "commander";
 /** Subset of OpenClawConfig that we actually read. */
 export interface OpenClawConfig {

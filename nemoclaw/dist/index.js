@@ -4,6 +4,16 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getPluginConfig = getPluginConfig;
 exports.default = register;
+/**
+ * NemoClaw — OpenClaw Plugin for OpenShell
+ *
+ * Uses the real OpenClaw plugin API. Types defined locally are minimal stubs
+ * that match the OpenClaw SDK interfaces available at runtime via
+ * `openclaw/plugin-sdk`. We define them here because the SDK package is only
+ * available inside the OpenClaw host process and cannot be imported at build
+ * time.
+ */
+const node_child_process_1 = require("node:child_process");
 const cli_js_1 = require("./cli.js");
 const slash_js_1 = require("./commands/slash.js");
 const config_js_1 = require("./onboard/config.js");
@@ -94,8 +104,31 @@ function register(api) {
             },
         ],
     });
-    const bannerEndpoint = onboardCfg?.endpointType ?? "build.nvidia.com";
-    const bannerModel = onboardCfg?.model ?? "nvidia/nemotron-3-super-120b-a12b";
+    // Resolve banner values: prefer onboard config, fall back to live
+    // OpenShell inference state, then to hardcoded defaults.
+    let bannerEndpoint = onboardCfg?.endpointType ?? "";
+    let bannerModel = onboardCfg?.model ?? "";
+    if (!bannerEndpoint || !bannerModel) {
+        try {
+            const raw = (0, node_child_process_1.execFileSync)("openshell", ["inference", "get", "--json"], {
+                encoding: "utf-8",
+                timeout: 3000,
+                stdio: ["pipe", "pipe", "pipe"],
+            });
+            const parsed = JSON.parse(raw);
+            if (!bannerEndpoint)
+                bannerEndpoint = parsed.endpoint ?? parsed.provider ?? "";
+            if (!bannerModel)
+                bannerModel = parsed.model ?? "";
+        }
+        catch {
+            // openshell not available or not configured — use defaults
+        }
+    }
+    if (!bannerEndpoint)
+        bannerEndpoint = "build.nvidia.com";
+    if (!bannerModel)
+        bannerModel = "nvidia/nemotron-3-super-120b-a12b";
     api.logger.info("");
     api.logger.info("  ┌─────────────────────────────────────────────────────┐");
     api.logger.info("  │  NemoClaw registered                                │");

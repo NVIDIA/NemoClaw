@@ -11,6 +11,7 @@
  * time.
  */
 
+import { execFileSync } from "node:child_process";
 import type { Command } from "commander";
 import { registerCliCommands } from "./cli.js";
 import { handleSlashCommand } from "./commands/slash.js";
@@ -244,8 +245,28 @@ export default function register(api: OpenClawPluginApi): void {
     ],
   });
 
-  const bannerEndpoint = onboardCfg?.endpointType ?? "build.nvidia.com";
-  const bannerModel = onboardCfg?.model ?? "nvidia/nemotron-3-super-120b-a12b";
+  // Resolve banner values: prefer onboard config, fall back to live
+  // OpenShell inference state, then to hardcoded defaults.
+  let bannerEndpoint: string = onboardCfg?.endpointType ?? "";
+  let bannerModel: string = onboardCfg?.model ?? "";
+
+  if (!bannerEndpoint || !bannerModel) {
+    try {
+      const raw = execFileSync("openshell", ["inference", "get", "--json"], {
+        encoding: "utf-8",
+        timeout: 3000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      const parsed = JSON.parse(raw) as { provider?: string; model?: string; endpoint?: string };
+      if (!bannerEndpoint) bannerEndpoint = parsed.endpoint ?? parsed.provider ?? "";
+      if (!bannerModel) bannerModel = parsed.model ?? "";
+    } catch {
+      // openshell not available or not configured — use defaults
+    }
+  }
+
+  if (!bannerEndpoint) bannerEndpoint = "build.nvidia.com";
+  if (!bannerModel) bannerModel = "nvidia/nemotron-3-super-120b-a12b";
 
   api.logger.info("");
   api.logger.info("  ┌─────────────────────────────────────────────────────┐");
