@@ -249,8 +249,15 @@ function showStatus() {
   run(`bash "${SCRIPTS}/start-services.sh" --status`);
 }
 
-function listSandboxes() {
+function listSandboxes(args = []) {
+  const json = args.includes("--json");
   const { sandboxes, defaultSandbox } = registry.listSandboxes();
+
+  if (json) {
+    console.log(JSON.stringify({ sandboxes, defaultSandbox }, null, 2));
+    return;
+  }
+
   if (sandboxes.length === 0) {
     console.log("");
     console.log("  No sandboxes registered. Run `nemoclaw onboard` to get started.");
@@ -427,7 +434,7 @@ const [cmd, ...args] = process.argv.slice(2);
       case "status":      showStatus(); break;
       case "debug":       debug(args); break;
       case "uninstall":   uninstall(args); break;
-      case "list":        listSandboxes(); break;
+      case "list":        listSandboxes(args); break;
       default:            help(); break;
     }
     return;
