@@ -57,7 +57,7 @@ function sendSignalMessage(recipient, text) {
 
 // ── Run agent inside sandbox ──────────────────────────────────────
 
-function runAgentInSandbox(message, sessionId) {
+function runAgentInSandbox(message, sessionId, retryCount = 0) {
   return new Promise((resolve) => {
     let sshConfig;
     try {
@@ -89,6 +89,14 @@ function runAgentInSandbox(message, sessionId) {
     proc.on("close", (code) => {
       try { fs.unlinkSync(confPath); } catch {}
 
+      if (code === 255 && retryCount < 2) {
+        console.warn(`[signal] SSH connection failed (code 255), retrying (${retryCount + 1}/2)...`);
+        setTimeout(() => {
+          resolve(runAgentInSandbox(message, sessionId, retryCount + 1));
+        }, 1000);
+        return;
+      }
+
       // Extract the actual agent response — skip setup lines
       const lines = stdout.split("\n");
       const responseLines = lines.filter(
@@ -110,7 +118,9 @@ function runAgentInSandbox(message, sessionId) {
       if (response) {
         resolve(response);
       } else if (code !== 0) {
-        resolve(`Agent exited with code ${code}. ${stderr.trim().slice(0, 500)}`);
+        const errorMsg = `Agent exited with code ${code}. ${stderr.trim().slice(0, 1000)}`;
+        console.error(`[signal] ${errorMsg}`);
+        resolve(errorMsg);
       } else {
         resolve("(no response)");
       }
