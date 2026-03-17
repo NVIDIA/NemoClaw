@@ -76,8 +76,7 @@ Availability is not limited to these entries, but untested configurations may ha
 
 ### Install NemoClaw and Onboard OpenClaw Agent
 
-Download and run the installer script.
-The script installs Node.js if it is not already present, then runs the guided onboard wizard to create a sandbox, configure inference, and apply security policies.
+**Option A — Run installer script (recommended):**
 
 > **ℹ️ Note**
 >
@@ -93,6 +92,17 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 If you use nvm or fnm to manage Node.js, the installer may not update your current shell's PATH.
 If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
+
+**Option B — One-line install (installs Node.js 22, Docker/Colima, OpenShell, then NemoClaw):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/install.sh | bash
+nemoclaw onboard
+```
+
+If `https://nvidia.com/nemoclaw.sh` is documented elsewhere but returns 404, use the one-line command above until that endpoint is live (see [issue #32](https://github.com/NVIDIA/NemoClaw/issues/32)).
+
+The installer installs Node.js if it is not already present. After the installer completes, run `nemoclaw onboard` to create a sandbox, configure inference, and apply security policies.
 
 When the install completes, a summary confirms the running environment:
 
