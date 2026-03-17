@@ -62,6 +62,13 @@ describe("registry", () => {
     expect(sb.model).toBe("new-model");
   });
 
+  it("registerSandbox and updateSandbox store nimPort", () => {
+    registry.registerSandbox({ name: "nim-sb", nimPort: 9000 });
+    expect(registry.getSandbox("nim-sb").nimPort).toBe(9000);
+    registry.updateSandbox("nim-sb", { nimPort: 9001 });
+    expect(registry.getSandbox("nim-sb").nimPort).toBe(9001);
+  });
+
   it("updateSandbox returns false for nonexistent sandbox", () => {
     expect(registry.updateSandbox("nope", {})).toBe(false);
   });
@@ -113,6 +120,40 @@ describe("registry", () => {
     // Should not throw, returns empty
     const { sandboxes } = registry.listSandboxes();
     expect(sandboxes.length).toBe(0);
+  });
+});
+
+describe("registry + nim port", () => {
+  const nim = require("../bin/lib/nim");
+
+  it("getNimPortForSandbox falls back to default for invalid stored nimPort values", () => {
+    registry.registerSandbox({ name: "bad-port-zero", nimPort: 0 });
+    registry.registerSandbox({ name: "bad-port-high", nimPort: 70000 });
+    registry.registerSandbox({ name: "bad-port-text", nimPort: "abc" });
+    expect(nim.getNimPortForSandbox("bad-port-zero")).toBe(nim.DEFAULT_NIM_PORT);
+    expect(nim.getNimPortForSandbox("bad-port-high")).toBe(nim.DEFAULT_NIM_PORT);
+    expect(nim.getNimPortForSandbox("bad-port-text")).toBe(nim.DEFAULT_NIM_PORT);
+  });
+
+  it("getNimPortForSandbox accepts valid boundary ports", () => {
+    registry.registerSandbox({ name: "port-min", nimPort: 1 });
+    registry.registerSandbox({ name: "port-max", nimPort: 65535 });
+    expect(nim.getNimPortForSandbox("port-min")).toBe(1);
+    expect(nim.getNimPortForSandbox("port-max")).toBe(65535);
+  });
+
+  it("getNimPortForSandbox returns default when sandbox has no nimPort", () => {
+    registry.registerSandbox({ name: "no-port" });
+    expect(nim.getNimPortForSandbox("no-port")).toBe(nim.DEFAULT_NIM_PORT);
+  });
+
+  it("getNimPortForSandbox returns stored nimPort", () => {
+    registry.registerSandbox({ name: "with-port", nimPort: 9000 });
+    expect(nim.getNimPortForSandbox("with-port")).toBe(9000);
+  });
+
+  it("getNimPortForSandbox returns default for nonexistent sandbox", () => {
+    expect(nim.getNimPortForSandbox("nonexistent-xyz")).toBe(nim.DEFAULT_NIM_PORT);
   });
 });
 

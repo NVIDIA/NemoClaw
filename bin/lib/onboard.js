@@ -2637,11 +2637,16 @@ async function setupNim(gpu) {
           console.log(`  Pulling NIM image for ${model}...`);
           nim.pullNimImage(model);
 
+          const nimPort = nim.DEFAULT_NIM_PORT;
           console.log("  Starting NIM container...");
-          nimContainer = nim.startNimContainerByName(nim.containerName(GATEWAY_NAME), model);
+          nimContainer = nim.startNimContainerByName(
+            nim.containerName(GATEWAY_NAME),
+            model,
+            nimPort,
+          );
 
           console.log("  Waiting for NIM to become healthy...");
-          if (!nim.waitForNimHealth()) {
+          if (!nim.waitForNimHealth(nimPort)) {
             console.error("  NIM failed to start. Falling back to cloud API.");
             model = null;
             nimContainer = null;
@@ -3615,7 +3620,10 @@ async function onboard(opts = {}) {
       if (resumeInference) {
         skippedStepMessage("inference", `${provider} / ${model}`);
         if (nimContainer) {
-          registry.updateSandbox(sandboxName, { nimContainer });
+          registry.updateSandbox(sandboxName, {
+            nimContainer,
+            nimPort: nim.DEFAULT_NIM_PORT,
+          });
         }
         onboardSession.markStepComplete("inference", {
           sandboxName,
@@ -3640,7 +3648,10 @@ async function onboard(opts = {}) {
         continue;
       }
       if (nimContainer) {
-        registry.updateSandbox(sandboxName, { nimContainer });
+        registry.updateSandbox(sandboxName, {
+          nimContainer,
+          nimPort: nim.DEFAULT_NIM_PORT,
+        });
       }
       onboardSession.markStepComplete("inference", { sandboxName, provider, model, nimContainer });
       break;
@@ -3667,6 +3678,12 @@ async function onboard(opts = {}) {
       }
       startRecordedStep("sandbox", { sandboxName, provider, model });
       sandboxName = await createSandbox(gpu, model, provider, preferredInferenceApi, sandboxName);
+      if (nimContainer) {
+        registry.updateSandbox(sandboxName, {
+          nimContainer,
+          nimPort: nim.DEFAULT_NIM_PORT,
+        });
+      }
       onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
     }
 
