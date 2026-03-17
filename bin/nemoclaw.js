@@ -167,11 +167,15 @@ async function start() {
     }
   }
 
-  run(`bash "${SCRIPTS}/start-services.sh"`);
+  const { defaultSandbox } = registry.listSandboxes();
+  const sandboxArg = defaultSandbox ? ` --sandbox ${defaultSandbox}` : "";
+  run(`bash "${SCRIPTS}/start-services.sh"${sandboxArg}`);
 }
 
 function stop() {
-  run(`bash "${SCRIPTS}/start-services.sh" --stop`);
+  const { defaultSandbox } = registry.listSandboxes();
+  const sandboxArg = defaultSandbox ? ` --sandbox ${defaultSandbox}` : "";
+  run(`bash "${SCRIPTS}/start-services.sh"${sandboxArg} --stop`);
 }
 
 function showStatus() {
@@ -189,7 +193,8 @@ function showStatus() {
   }
 
   // Show service status
-  run(`bash "${SCRIPTS}/start-services.sh" --status`);
+  const sandboxArg = defaultSandbox ? ` --sandbox ${defaultSandbox}` : "";
+  run(`bash "${SCRIPTS}/start-services.sh"${sandboxArg} --status`);
 }
 
 function listSandboxes() {
