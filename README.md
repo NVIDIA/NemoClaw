@@ -46,6 +46,9 @@ The script installs Node.js if it is not already present, then runs the guided o
 ```console
 $ curl -fsSL https://nvidia.com/nemoclaw.sh | bash
 ```
+```
+$ nemoclaw onboard
+```
 
 When the install completes, a summary confirms the running environment:
 
