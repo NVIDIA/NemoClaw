@@ -61,7 +61,7 @@ Explore the following pages to learn more about NemoClaw.
 
 - [How It Works](../about/how-it-works.md) to understand the key concepts behind NemoClaw.
 - [Quickstart](../get-started/quickstart.md) to install NemoClaw and run your first agent.
-- [Inference Profiles](../inference/inference-profiles.md) to configure the inference provider.
-- [Network Policy](../network-policy/network-policy.md) to configure the network policy.
-- [Deployment](../deployment/deployment.md) to deploy NemoClaw to a remote GPU instance.
-- [Monitoring](../monitoring/monitoring.md) to monitor the sandbox activity.
+- [Switch Inference Providers](../inference/switch-inference-providers.md) to configure the inference provider.
+- [Approve or Deny Network Requests](../network-policy/approve-network-requests.md) to manage egress approvals.
+- [Deploy to a Remote GPU Instance](../deployment/deploy-to-remote-gpu.md) for persistent operation.
+- [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity.md) to observe agent behavior.
