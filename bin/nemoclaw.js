@@ -17,6 +17,7 @@ const {
 const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
+const backup = require("./lib/backup");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ const GLOBAL_COMMANDS = new Set([
   "onboard", "list", "deploy", "setup", "setup-spark",
   "start", "stop", "status",
   "uninstall",
+  "backups",
   "completion",
   "help", "--help", "-h",
 ]);
@@ -63,7 +65,7 @@ function exitWithSpawnResult(result) {
 }
 
 const SANDBOX_ACTIONS = [
-  "connect", "status", "logs", "policy-add", "policy-list", "destroy"
+  "connect", "status", "logs", "policy-add", "policy-list", "destroy", "export"
 ];
 
 const SHELL_TYPES = ["bash", "zsh", "fish"];
@@ -346,6 +348,43 @@ function sandboxDestroy(sandboxName) {
   console.log(`  ✓ Sandbox '${sandboxName}' destroyed`);
 }
 
+// ── Backup functions ─────────────────────────────────────────────
+
+function listBackups() {
+  const backups = backup.listBackups();
+  if (backups.length === 0) {
+    console.log("");
+    console.log("  No backups found.");
+    console.log(`  Backups are stored in: ${backup.BACKUP_DIR}`);
+    console.log("");
+    return;
+  }
+  console.log("");
+  console.log("  Backups:");
+  for (const b of backups) {
+    const size = (b.size / 1024).toFixed(1);
+    console.log(`    ${b.name}`);
+    console.log(`      Created: ${new Date(b.createdAt).toLocaleString()}`);
+    console.log(`      Size:    ${size} KB`);
+    console.log(`      Path:    ${b.path}`);
+    console.log("");
+  }
+}
+
+function sandboxExport(sandboxName, outputPath) {
+  const result = backup.exportSandbox(sandboxName, outputPath);
+  if (!result) {
+    process.exit(1);
+  }
+}
+
+function importBackup(backupPath, newName) {
+  const result = backup.importSandbox(backupPath, newName);
+  if (!result) {
+    process.exit(1);
+  }
+}
+
 // ── Shell Completion ─────────────────────────────────────────────
 
 function printCompletion(shell) {
@@ -456,6 +495,11 @@ function help() {
     nemoclaw <name> status           Show sandbox status and health
     nemoclaw <name> logs [--follow]  View sandbox logs
     nemoclaw <name> destroy          Stop NIM + delete sandbox
+    nemoclaw <name> export [path]    Export sandbox backup
+
+  Backup & Restore:
+    nemoclaw backups                 List all backups
+    nemoclaw import <path> [name]    Import a sandbox from backup
 
   Policy Presets:
     nemoclaw <name> policy-add       Add a policy preset to a sandbox
@@ -506,9 +550,22 @@ const [cmd, ...args] = process.argv.slice(2);
       case "status":      showStatus(); break;
       case "uninstall":   uninstall(args); break;
       case "list":        listSandboxes(); break;
+      case "backups":     listBackups(); break;
       case "completion":  printCompletion(args[0]); break;
       default:            help(); break;
     }
+    return;
+  }
+
+  // Import command (special case - not a sandbox name)
+  if (cmd === "import") {
+    const backupPath = args[0];
+    const newName = args[1];
+    if (!backupPath) {
+      console.error("  Usage: nemoclaw import <backup-file> [new-sandbox-name]");
+      process.exit(1);
+    }
+    importBackup(backupPath, newName);
     return;
   }
 
@@ -525,9 +582,10 @@ const [cmd, ...args] = process.argv.slice(2);
       case "policy-add":  await sandboxPolicyAdd(cmd); break;
       case "policy-list": sandboxPolicyList(cmd); break;
       case "destroy":     sandboxDestroy(cmd); break;
+      case "export":      sandboxExport(cmd, actionArgs[0]); break;
       default:
         console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, destroy`);
+        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, destroy, export`);
         process.exit(1);
     }
     return;
