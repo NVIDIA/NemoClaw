@@ -11,6 +11,7 @@ const { ROOT, SCRIPTS, run, runCapture } = require("./lib/runner");
 const {
   ensureApiKey,
   ensureGithubToken,
+  ensureSignalPhone,
   getCredential,
   isRepoPrivate,
 } = require("./lib/credentials");
@@ -113,6 +114,9 @@ async function deploy(instanceName) {
   if (ghToken) envLines.push(`GITHUB_TOKEN=${ghToken}`);
   const tgToken = getCredential("TELEGRAM_BOT_TOKEN");
   if (tgToken) envLines.push(`TELEGRAM_BOT_TOKEN=${tgToken}`);
+  const signalPhone = getCredential("SIGNAL_PHONE_NUMBER");
+  if (signalPhone) envLines.push(`SIGNAL_PHONE_NUMBER=${signalPhone}`);
+
   const envTmp = path.join(os.tmpdir(), `nemoclaw-env-${Date.now()}`);
   fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
   run(`scp -q -o StrictHostKeyChecking=no -o LogLevel=ERROR "${envTmp}" ${name}:/home/ubuntu/nemoclaw/.env`);
@@ -121,7 +125,7 @@ async function deploy(instanceName) {
   console.log("  Running setup...");
   run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh'`);
 
-  if (tgToken) {
+  if (tgToken || signalPhone) {
     console.log("  Starting services...");
     run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/start-services.sh'`);
   }
@@ -134,6 +138,35 @@ async function deploy(instanceName) {
 
 async function start() {
   await ensureApiKey();
+
+  // If no bridges are configured, ask if user wants to set one up
+  if (!getCredential("TELEGRAM_BOT_TOKEN") && !getCredential("SIGNAL_PHONE_NUMBER")) {
+    const { prompt: askPrompt } = require("./lib/credentials");
+    console.log("");
+    console.log("  No bridges configured. You can interact with your agent via:");
+    console.log("    1) Telegram (requires Bot Token)");
+    console.log("    2) Signal   (requires registered phone number)");
+    console.log("    3) Skip     (use 'nemoclaw <name> connect' later)");
+    console.log("");
+    const choice = await askPrompt("  Choose [3]: ");
+    if (choice === "1") {
+      const { ensureTelegramToken } = require("./lib/credentials");
+      if (typeof ensureTelegramToken === "function") {
+        await ensureTelegramToken();
+      } else {
+        // Fallback if not yet implemented
+        const token = await askPrompt("  Telegram Bot Token: ");
+        if (token) {
+          const { saveCredential } = require("./lib/credentials");
+          saveCredential("TELEGRAM_BOT_TOKEN", token);
+          process.env.TELEGRAM_BOT_TOKEN = token;
+        }
+      }
+    } else if (choice === "2") {
+      await ensureSignalPhone();
+    }
+  }
+
   run(`bash "${SCRIPTS}/start-services.sh"`);
 }
 

@@ -417,6 +417,10 @@ async function setupPolicies(sandboxName) {
     suggestions.push("telegram");
     console.log("  Auto-detected: TELEGRAM_BOT_TOKEN → suggesting telegram preset");
   }
+  if (getCredential("SIGNAL_PHONE_NUMBER")) {
+    suggestions.push("signal");
+    console.log("  Auto-detected: SIGNAL_PHONE_NUMBER → suggesting signal preset");
+  }
   if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) {
     suggestions.push("slack");
     console.log("  Auto-detected: SLACK_BOT_TOKEN → suggesting slack preset");

@@ -120,6 +120,67 @@ async function ensureGithubToken() {
   console.log("");
 }
 
+async function ensureTelegramToken() {
+  let token = getCredential("TELEGRAM_BOT_TOKEN");
+  if (token) {
+    process.env.TELEGRAM_BOT_TOKEN = token;
+    return;
+  }
+
+  console.log("");
+  console.log("  ┌──────────────────────────────────────────────────┐");
+  console.log("  │  Telegram Bot Token required                     │");
+  console.log("  │                                                  │");
+  console.log("  │  1. Message @BotFather on Telegram               │");
+  console.log("  │  2. /newbot to create a bot                      │");
+  console.log("  │  3. Paste the API token below                    │");
+  console.log("  └──────────────────────────────────────────────────┘");
+  console.log("");
+
+  token = await prompt("  Telegram Bot Token: ");
+
+  if (!token) {
+    console.error("  Token required for Telegram bridge.");
+    return;
+  }
+
+  saveCredential("TELEGRAM_BOT_TOKEN", token);
+  process.env.TELEGRAM_BOT_TOKEN = token;
+  console.log("");
+  console.log("  Token saved to ~/.nemoclaw/credentials.json");
+  console.log("");
+}
+
+async function ensureSignalPhone() {
+  let phone = getCredential("SIGNAL_PHONE_NUMBER");
+  if (phone) {
+    process.env.SIGNAL_PHONE_NUMBER = phone;
+    return;
+  }
+
+  console.log("");
+  console.log("  ┌──────────────────────────────────────────────────┐");
+  console.log("  │  Signal Phone Number required                   │");
+  console.log("  │                                                  │");
+  console.log("  │  Example: +1234567890                            │");
+  console.log("  │  The number must be registered with signal-cli. │");
+  console.log("  └──────────────────────────────────────────────────┘");
+  console.log("");
+
+  phone = await prompt("  Signal Phone Number: ");
+
+  if (!phone || !phone.startsWith("+")) {
+    console.error("  Invalid phone number. Must start with + (e.g. +1234567890)");
+    return;
+  }
+
+  saveCredential("SIGNAL_PHONE_NUMBER", phone);
+  process.env.SIGNAL_PHONE_NUMBER = phone;
+  console.log("");
+  console.log("  Phone number saved to ~/.nemoclaw/credentials.json");
+  console.log("");
+}
+
 module.exports = {
   CREDS_DIR,
   CREDS_FILE,
@@ -129,5 +190,6 @@ module.exports = {
   prompt,
   ensureApiKey,
   ensureGithubToken,
+  ensureSignalPhone,
   isRepoPrivate,
 };
