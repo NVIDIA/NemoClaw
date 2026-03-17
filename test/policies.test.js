@@ -96,6 +96,41 @@ describe("policies", () => {
     });
   });
 
+  describe("mergePresetIntoPolicy", () => {
+    const sampleEntries = "  - host: example.com\n    allow: true";
+
+    it("appends network_policies when current policy has content but no version header", () => {
+      const versionless = "some_key:\n  foo: bar";
+      const merged = policies.mergePresetIntoPolicy(versionless, sampleEntries);
+      assert.ok(merged.startsWith("version: 1\n"), "merged must start with version header");
+      assert.ok(merged.includes("some_key:"), "merged must preserve existing content");
+      assert.ok(merged.includes("network_policies:"), "merged must include network_policies section");
+      assert.ok(merged.includes("example.com"), "merged must include preset entries");
+    });
+
+    it("appends preset entries when current policy has network_policies but no version", () => {
+      const versionlessWithNp =
+        "network_policies:\n  - host: existing.com\n    allow: true";
+      const merged = policies.mergePresetIntoPolicy(versionlessWithNp, sampleEntries);
+      assert.ok(merged.trimStart().startsWith("version: 1\n"), "merged must have version header");
+      assert.ok(merged.includes("existing.com"), "merged must preserve existing entries");
+      assert.ok(merged.includes("example.com"), "merged must include new preset entries");
+    });
+
+    it("keeps existing version when present", () => {
+      const withVersion = "version: 2\n\nnetwork_policies:\n  - host: old.com";
+      const merged = policies.mergePresetIntoPolicy(withVersion, sampleEntries);
+      assert.ok(merged.includes("version: 2"), "merged must keep existing version");
+      assert.ok(merged.includes("example.com"), "merged must include preset entries");
+    });
+
+    it("returns version + network_policies when current policy is empty", () => {
+      const merged = policies.mergePresetIntoPolicy("", sampleEntries);
+      assert.ok(merged.startsWith("version: 1\n\nnetwork_policies:"), "empty policy gets version and section");
+      assert.ok(merged.includes("example.com"), "merged must include preset entries");
+    });
+  });
+
   describe("preset YAML schema", () => {
     it("no preset has rules at NetworkPolicyRuleDef level", () => {
       // rules must be inside endpoints, not as sibling of endpoints/binaries
