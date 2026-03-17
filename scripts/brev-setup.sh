@@ -76,10 +76,6 @@ fi
 # --- 3. openshell CLI (binary release, not pip) ---
 if ! command -v openshell > /dev/null 2>&1; then
   info "Installing openshell CLI from GitHub release..."
-  if ! command -v gh > /dev/null 2>&1; then
-    sudo apt-get update -qq > /dev/null 2>&1
-    sudo apt-get install -y -qq gh > /dev/null 2>&1
-  fi
   ARCH="$(uname -m)"
   case "$ARCH" in
     x86_64|amd64) ASSET="openshell-x86_64-unknown-linux-musl.tar.gz" ;;
@@ -87,8 +83,11 @@ if ! command -v openshell > /dev/null 2>&1; then
     *) fail "Unsupported architecture: $ARCH" ;;
   esac
   tmpdir="$(mktemp -d)"
-  GH_TOKEN="${GITHUB_TOKEN:-}" gh release download --repo NVIDIA/OpenShell \
-    --pattern "$ASSET" --dir "$tmpdir"
+  # Download from GitHub releases using curl (no gh auth required for public repos)
+  RELEASE_URL="$(curl -fsSL https://api.github.com/repos/NVIDIA/OpenShell/releases/latest \
+    | grep "browser_download_url.*${ASSET}" | head -1 | cut -d '"' -f 4)"
+  [ -n "$RELEASE_URL" ] || fail "Could not find release asset $ASSET"
+  curl -fsSL "$RELEASE_URL" -o "$tmpdir/$ASSET"
   tar xzf "$tmpdir/$ASSET" -C "$tmpdir"
   sudo install -m 755 "$tmpdir/openshell" /usr/local/bin/openshell
   rm -rf "$tmpdir"

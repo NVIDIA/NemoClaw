@@ -75,39 +75,55 @@ async function deploy(instanceName) {
     process.exit(1);
   }
 
+  // Check if instance is already reachable via SSH (brev ls has an interactive
+  // spinner that hangs in non-interactive contexts, so we avoid it).
   let exists = false;
   try {
-    const out = execSync("brev ls 2>&1", { encoding: "utf-8" });
-    exists = out.includes(name);
+    execSync(`ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no ${name} 'echo ok' 2>/dev/null`, { encoding: "utf-8", stdio: "pipe" });
+    exists = true;
   } catch {}
 
   if (!exists) {
+    // Also try brev ls with a timeout as a fallback
+    try {
+      const out = execSync("timeout 10 brev ls 2>&1", { encoding: "utf-8" });
+      exists = out.includes(name);
+    } catch {}
+  }
+
+  if (!exists) {
     console.log(`  Creating Brev instance '${name}' (${gpu})...`);
-    run(`brev create ${name} --gpu "${gpu}"`);
+    run(`brev create ${name} --type "${gpu}"`);
+    console.log("  Refreshing Brev...");
+    try { execSync("timeout 15 brev refresh 2>&1", { encoding: "utf-8" }); } catch {}
   } else {
     console.log(`  Brev instance '${name}' already exists.`);
   }
 
-  run(`brev refresh`, { ignoreError: true });
-
-  console.log("  Waiting for SSH...");
+  console.log("  [1/6] Waiting for SSH...");
   for (let i = 0; i < 60; i++) {
     try {
       execSync(`ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no ${name} 'echo ok' 2>/dev/null`, { encoding: "utf-8", stdio: "pipe" });
+      console.log("  [1/6] SSH connected.");
       break;
     } catch {
       if (i === 59) {
         console.error(`  Timed out waiting for SSH to ${name}`);
         process.exit(1);
       }
+      if (i % 5 === 0) console.log(`  [1/6] Still waiting for SSH... (${i * 3}s)`);
       spawnSync("sleep", ["3"]);
     }
   }
 
-  console.log("  Syncing NemoClaw to VM...");
-  run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'mkdir -p /home/ubuntu/nemoclaw'`);
-  run(`rsync -az --delete --exclude node_modules --exclude .git --exclude src -e "ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR" "${ROOT}/scripts" "${ROOT}/Dockerfile" "${ROOT}/nemoclaw" "${ROOT}/nemoclaw-blueprint" "${ROOT}/bin" "${ROOT}/package.json" ${name}:/home/ubuntu/nemoclaw/`);
+  console.log("  [2/6] Creating remote directory...");
+  run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'mkdir -p ~/nemoclaw'`);
 
+  console.log("  [3/6] Syncing NemoClaw files to VM (rsync)...");
+  run(`rsync -az --progress --delete --exclude node_modules --exclude .git --exclude src -e "ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR" "${ROOT}/scripts" "${ROOT}/Dockerfile" "${ROOT}/nemoclaw" "${ROOT}/nemoclaw-blueprint" "${ROOT}/bin" "${ROOT}/package.json" ${name}:~/nemoclaw/`);
+  console.log("  [3/6] Sync complete.");
+
+  console.log("  [4/6] Writing environment config...");
   const envLines = [`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`];
   const ghToken = process.env.GITHUB_TOKEN;
   if (ghToken) envLines.push(`GITHUB_TOKEN=${ghToken}`);
@@ -115,21 +131,23 @@ async function deploy(instanceName) {
   if (tgToken) envLines.push(`TELEGRAM_BOT_TOKEN=${tgToken}`);
   const envTmp = path.join(os.tmpdir(), `nemoclaw-env-${Date.now()}`);
   fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
-  run(`scp -q -o StrictHostKeyChecking=no -o LogLevel=ERROR "${envTmp}" ${name}:/home/ubuntu/nemoclaw/.env`);
+  run(`scp -q -o StrictHostKeyChecking=no -o LogLevel=ERROR "${envTmp}" ${name}:~/nemoclaw/.env`);
   fs.unlinkSync(envTmp);
+  console.log("  [4/6] Environment config written.");
 
-  console.log("  Running setup...");
-  run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh'`);
+  console.log("  [5/6] Running setup (this may take several minutes)...");
+  run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd ~/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh'`);
+  console.log("  [5/6] Setup complete.");
 
   if (tgToken) {
     console.log("  Starting services...");
-    run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/start-services.sh'`);
+    run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd ~/nemoclaw && set -a && . .env && set +a && bash scripts/start-services.sh'`);
   }
 
   console.log("");
-  console.log("  Connecting to sandbox...");
+  console.log("  [6/6] Connecting to sandbox...");
   console.log("");
-  run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw'`);
+  run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd ~/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw'`);
 }
 
 async function start() {
