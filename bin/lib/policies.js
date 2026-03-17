@@ -91,11 +91,39 @@ function applyPreset(sandboxName, presetName) {
     );
   } catch {}
 
-  const currentPolicy = parseCurrentPolicy(rawPolicy);
+  let currentPolicy = parseCurrentPolicy(rawPolicy);
 
-  // Merge: inject preset entries under the existing network_policies key
+  // Merge: inject preset entries under the existing network_policies key.
+  // Skip entries whose top-level key already exists in the current policy
+  // to avoid duplicating endpoints (e.g. npm preset vs base npm_registry).
   let merged;
   if (currentPolicy && currentPolicy.includes("network_policies:")) {
+    // Filter out preset entries whose key already exists in the policy.
+    // Preset entries look like "  key_name:\n    name: ..."
+    const filteredEntries = presetEntries
+      .split(/\n(?=  \S)/)
+      .filter((block) => {
+        const keyMatch = block.match(/^\s{2}(\S+):/);
+        if (!keyMatch) return true;
+        const key = keyMatch[1];
+        // Check if this key already exists in current policy
+        const keyRegex = new RegExp(`^\\s{2}${key}:`, "m");
+        return !keyRegex.test(currentPolicy);
+      })
+      .join("\n");
+
+    if (!filteredEntries.trim()) {
+      console.log(`  Preset '${presetName}' endpoints already present in policy — skipping merge.`);
+      // Still record it in the registry
+      const sandbox = registry.getSandbox(sandboxName);
+      if (sandbox) {
+        const pols = sandbox.policies || [];
+        if (!pols.includes(presetName)) pols.push(presetName);
+        registry.updateSandbox(sandboxName, { policies: pols });
+      }
+      return true;
+    }
+
     // Find the network_policies: line and append the new entries after it
     // We need to insert before the next top-level key or end of file
     const lines = currentPolicy.split("\n");
@@ -115,7 +143,7 @@ function applyPreset(sandboxName, presetName) {
 
       if (inNetworkPolicies && isTopLevel && !inserted) {
         // We hit the next top-level key — insert preset entries before it
-        result.push(presetEntries);
+        result.push(filteredEntries);
         inserted = true;
         inNetworkPolicies = false;
       }
@@ -125,7 +153,7 @@ function applyPreset(sandboxName, presetName) {
 
     // If network_policies was the last section, append at end
     if (inNetworkPolicies && !inserted) {
-      result.push(presetEntries);
+      result.push(filteredEntries);
     }
 
     merged = result.join("\n");
