@@ -8,6 +8,8 @@
 # Optional env:
 #   NVIDIA_API_KEY   API key for NVIDIA-hosted inference
 #   CHAT_UI_URL      Browser origin that will access the forwarded dashboard
+#   NEMOCLAW_SKIP_AUTO_PAIR     Set to 1/true/yes to disable auto-pair watcher
+#   NEMOCLAW_AUTO_PAIR_TIMEOUT  Auto-pair timeout in seconds (default: 120)
 
 set -euo pipefail
 
@@ -108,14 +110,28 @@ PYTOKEN
 }
 
 start_auto_pair() {
+  case "${NEMOCLAW_SKIP_AUTO_PAIR:-}" in
+    1|true|yes|TRUE|YES)
+      echo "[gateway] auto-pair watcher skipped (NEMOCLAW_SKIP_AUTO_PAIR is set)"
+      return
+      ;;
+  esac
   nohup python3 - <<'PYAUTOPAIR' >> /tmp/gateway.log 2>&1 &
 import json
+import os
 import subprocess
 import time
 
-DEADLINE = time.time() + 600
+try:
+    timeout = int(os.environ.get('NEMOCLAW_AUTO_PAIR_TIMEOUT', '120'))
+    if timeout < 0:
+        timeout = 120
+except ValueError:
+    timeout = 120
+DEADLINE = time.time() + timeout
 QUIET_POLLS = 0
 APPROVED = 0
+print(f'[auto-pair] watcher launched (timeout={timeout}s)')
 
 def run(*args):
     proc = subprocess.run(args, capture_output=True, text=True)
