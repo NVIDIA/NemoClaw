@@ -1,0 +1,66 @@
+# OpenShell Gateway on K8s using Docker-in-Docker
+# OpenShell runs k3s inside Docker, so we need DinD to run it on K8s
+apiVersion: v1
+kind: Pod
+metadata:
+  name: openshell-gateway
+  namespace: default
+  labels:
+    app: openshell-gateway
+spec:
+  containers:
+    # Docker daemon (DinD) - runs the actual Docker that OpenShell needs
+    - name: dind
+      image: docker:24-dind
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - name: docker-storage
+          mountPath: /var/lib/docker
+        - name: docker-socket
+          mountPath: /var/run
+      env:
+        - name: DOCKER_TLS_CERTDIR
+          value: ""
+      resources:
+        requests:
+          memory: "2Gi"
+          cpu: "1"
+        limits:
+          memory: "8Gi"
+          cpu: "4"
+
+    # Workspace container - run openshell commands here
+    - name: workspace
+      image: node:22
+      command: ["sleep", "infinity"]
+      workingDir: /workspace
+      env:
+        - name: DOCKER_HOST
+          value: unix:///var/run/docker.sock
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: openshell-state
+          mountPath: /root/.openshell
+        - name: docker-socket
+          mountPath: /var/run
+      resources:
+        requests:
+          memory: "1Gi"
+          cpu: "500m"
+        limits:
+          memory: "4Gi"
+          cpu: "2"
+
+  volumes:
+    - name: docker-storage
+      emptyDir: {}
+    - name: docker-socket
+      emptyDir: {}
+    - name: workspace
+      emptyDir: {}
+    - name: openshell-state
+      emptyDir: {}
+
+  restartPolicy: Never
