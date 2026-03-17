@@ -1,8 +1,10 @@
 # NVIDIA NemoClaw: OpenClaw Plugin for OpenShell
 
+<!-- start-badges -->
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue)](LICENSE)
 [![Security Policy](https://img.shields.io/badge/Security-Report%20a%20Vulnerability-red)](SECURITY.md)
 [![Project Status](https://img.shields.io/badge/status-alpha-orange)](docs/about/release-notes.md)
+<!-- end-badges -->
 
 NVIDIA NemoClaw is an open source stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants safely. It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of [NVIDIA Agent Toolkit](https://docs.nvidia.com/nemo/agent-toolkit/latest), a secure environment for running autonomous agents, with inference routed through [NVIDIA cloud](https://build.nvidia.com).
 
@@ -42,9 +44,7 @@ Download and run the installer script.
 The script installs Node.js if it is not already present, then runs the guided onboard wizard to create a sandbox, configure inference, and apply security policies.
 
 ```console
-$ git clone https://github.com/NVIDIA/NemoClaw.git
-$ cd NemoClaw
-$ ./install.sh
+$ curl -fsSL https://nvidia.com/nemoclaw.sh | bash
 ```
 
 When the install completes, a summary confirms the running environment:

@@ -23,6 +23,70 @@ status: published
 NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox.
 This page explains the key concepts at a high level.
 
+## How It Fits Together
+
+NemoClaw is a thin TypeScript plugin that registers commands under the `openclaw nemoclaw` namespace.
+It delegates heavy lifting to a versioned blueprint, a Python artifact that orchestrates sandbox creation, policy application, and inference provider setup through the OpenShell CLI.
+
+```{mermaid}
+flowchart TB
+    subgraph Host
+        CMD["openclaw nemoclaw launch"]
+        PLUGIN[nemoclaw plugin]
+        BLUEPRINT[blueprint runner]
+        CLI["openshell CLI sandbox · gateway · inference · policy"]
+
+        CMD --> PLUGIN
+        PLUGIN --> BLUEPRINT
+        BLUEPRINT --> CLI
+    end
+
+    subgraph Sandbox["OpenShell Sandbox"]
+        AGENT[OpenClaw agent]
+        INF[NVIDIA inference, routed]
+        NET[strict network policy]
+        FS[filesystem isolation]
+
+        AGENT --- INF
+        AGENT --- NET
+        AGENT --- FS
+    end
+
+    PLUGIN --> AGENT
+
+    classDef nv fill:#76b900,stroke:#333,color:#fff
+    classDef nvLight fill:#e6f2cc,stroke:#76b900,color:#1a1a1a
+    classDef nvDark fill:#333,stroke:#76b900,color:#fff
+
+    class CMD,PLUGIN,BLUEPRINT nvDark
+    class CLI nv
+    class AGENT nv
+    class INF,NET,FS nvLight
+
+    style Host fill:none,stroke:#76b900,stroke-width:2px,color:#1a1a1a
+    style Sandbox fill:#f5faed,stroke:#76b900,stroke-width:2px,color:#1a1a1a
+```
+
+## Design Principles
+
+NemoClaw architecture follows the following principles.
+
+Thin plugin, versioned blueprint
+: The plugin stays small and stable. Orchestration logic lives in the blueprint and evolves on its own release cadence.
+
+Respect CLI boundaries
+: Plugin commands live under the `nemoclaw` namespace and never override built-in OpenClaw commands.
+
+Supply chain safety
+: Blueprint artifacts are immutable, versioned, and digest-verified before execution.
+
+OpenShell-native for new installs
+: For users without an existing OpenClaw installation, NemoClaw recommends `openshell sandbox create` directly
+  rather than forcing a plugin-driven bootstrap.
+
+Reproducible setup
+: Running setup again recreates the sandbox from the same blueprint and policy definitions.
+
 ## Plugin and Blueprint
 
 NemoClaw is split into two parts:
