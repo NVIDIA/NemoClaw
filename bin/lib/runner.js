@@ -26,6 +26,8 @@ function detectContainerSocket(opts) {
     // Colima (preferred — existing behavior)
     path.join(home, ".colima/default/docker.sock"),
     path.join(home, ".config/colima/default/docker.sock"),
+    // Docker Desktop (macOS)
+    path.join(home, ".docker/run/docker.sock"),
     // Podman machine
     path.join(home, ".local/share/containers/podman/machine/podman.sock"),
     `/run/user/${uid}/podman/podman.sock`,

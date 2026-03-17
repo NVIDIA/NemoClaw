@@ -17,6 +17,41 @@ describe("detectContainerSocket", () => {
     assert.equal(result, null);
   });
 
+  it("detects Docker Desktop socket", () => {
+    const dockerDesktopPath = "/home/test/.docker/run/docker.sock";
+
+    const result = detectContainerSocket({
+      home: "/home/test",
+      existsSync: (p) => p === dockerDesktopPath,
+      uid: 1000,
+    });
+    assert.equal(result, dockerDesktopPath);
+  });
+
+  it("prefers Colima over Docker Desktop", () => {
+    const colimaPath = "/home/test/.colima/default/docker.sock";
+    const dockerDesktopPath = "/home/test/.docker/run/docker.sock";
+
+    const result = detectContainerSocket({
+      home: "/home/test",
+      existsSync: (p) => p === colimaPath || p === dockerDesktopPath,
+      uid: 1000,
+    });
+    assert.equal(result, colimaPath);
+  });
+
+  it("prefers Docker Desktop over Podman", () => {
+    const dockerDesktopPath = "/home/test/.docker/run/docker.sock";
+    const podmanPath = "/home/test/.local/share/containers/podman/machine/podman.sock";
+
+    const result = detectContainerSocket({
+      home: "/home/test",
+      existsSync: (p) => p === dockerDesktopPath || p === podmanPath,
+      uid: 1000,
+    });
+    assert.equal(result, dockerDesktopPath);
+  });
+
   it("prefers Colima over Podman when both exist", () => {
     const colimaPath = "/home/test/.colima/default/docker.sock";
     const podmanPath = "/home/test/.local/share/containers/podman/machine/podman.sock";
