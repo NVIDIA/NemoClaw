@@ -51,15 +51,24 @@ upsert_provider() {
   fi
 }
 
-# Resolve DOCKER_HOST for Colima if needed (legacy ~/.colima or XDG ~/.config/colima)
+# Resolve DOCKER_HOST when unset:
+# 1) active Docker context host (e.g. Docker Desktop on macOS)
+# 2) Colima socket fallback (legacy ~/.colima or XDG ~/.config/colima)
 if [ -z "${DOCKER_HOST:-}" ]; then
-  for _sock in "$HOME/.colima/default/docker.sock" "$HOME/.config/colima/default/docker.sock"; do
-    if [ -S "$_sock" ]; then
-      export DOCKER_HOST="unix://$_sock"
-      warn "Using Colima Docker socket: $_sock"
-      break
-    fi
-  done
+  _ctx_host="$(docker context inspect --format '{{ (index . 0).Endpoints.docker.Host }}' 2>/dev/null || true)"
+  if [ -n "$_ctx_host" ] && [ "${_ctx_host#unix://}" != "$_ctx_host" ] && [ -S "${_ctx_host#unix://}" ]; then
+    export DOCKER_HOST="$_ctx_host"
+    warn "Using Docker context host: ${_ctx_host#unix://}"
+  else
+    for _sock in "$HOME/.colima/default/docker.sock" "$HOME/.config/colima/default/docker.sock"; do
+      if [ -S "$_sock" ]; then
+        export DOCKER_HOST="unix://$_sock"
+        warn "Using Colima Docker socket: $_sock"
+        break
+      fi
+    done
+  fi
+  unset _ctx_host
   unset _sock
 fi
 

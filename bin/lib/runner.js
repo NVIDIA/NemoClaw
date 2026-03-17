@@ -8,17 +8,38 @@ const fs = require("fs");
 const ROOT = path.resolve(__dirname, "..", "..");
 const SCRIPTS = path.join(ROOT, "scripts");
 
-// Auto-detect Colima Docker socket (legacy ~/.colima or XDG ~/.config/colima)
+function resolveDockerHostFromContext() {
+  try {
+    const host = execSync("docker context inspect --format '{{ (index . 0).Endpoints.docker.Host }}'", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
+    if (!host.startsWith("unix://")) return "";
+    const socketPath = host.replace("unix://", "");
+    return fs.existsSync(socketPath) ? host : "";
+  } catch {
+    return "";
+  }
+}
+
+// Auto-detect Docker socket when DOCKER_HOST is unset.
 if (!process.env.DOCKER_HOST) {
-  const home = process.env.HOME || "/tmp";
-  const candidates = [
-    path.join(home, ".colima/default/docker.sock"),
-    path.join(home, ".config/colima/default/docker.sock"),
-  ];
-  for (const sock of candidates) {
-    if (fs.existsSync(sock)) {
-      process.env.DOCKER_HOST = `unix://${sock}`;
-      break;
+  // 1) Active Docker context (e.g. Docker Desktop on macOS).
+  const contextHost = resolveDockerHostFromContext();
+  if (contextHost) {
+    process.env.DOCKER_HOST = contextHost;
+  } else {
+    // 2) Colima socket fallback (legacy ~/.colima or XDG ~/.config/colima).
+    const home = process.env.HOME || "/tmp";
+    const candidates = [
+      path.join(home, ".colima/default/docker.sock"),
+      path.join(home, ".config/colima/default/docker.sock"),
+    ];
+    for (const sock of candidates) {
+      if (fs.existsSync(sock)) {
+        process.env.DOCKER_HOST = `unix://${sock}`;
+        break;
+      }
     }
   }
 }
