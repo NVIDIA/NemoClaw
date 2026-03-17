@@ -37,7 +37,7 @@ export async function execBlueprint(
   logger: PluginLogger,
 ): Promise<BlueprintRunResult> {
   return observeLatency(
-    "blueprint_exec",
+    "blueprint_execution",
     { action: options.action, profile: options.profile },
     () => execBlueprintInternal(options, logger),
   );

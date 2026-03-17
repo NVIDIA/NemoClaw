@@ -206,19 +206,19 @@ curl http://localhost:9090/metrics
 ### Example Output
 
 ```text
-# HELP blueprint_exec_total Total count of blueprint_exec
-# TYPE blueprint_exec_total counter
-blueprint_exec_total{action="apply",profile="default",status="success"} 1
+# HELP blueprint_execution_total Total count of blueprint_execution
+# TYPE blueprint_execution_total counter
+blueprint_execution_total{action="apply",profile="default",status="success"} 1
 
-# HELP blueprint_exec_latency_seconds Latency histogram for blueprint_exec
-# TYPE blueprint_exec_latency_seconds histogram
-blueprint_exec_latency_seconds_bucket{action="apply",profile="default",status="success",le="0.1"} 0
-blueprint_exec_latency_seconds_bucket{action="apply",profile="default",status="success",le="0.5"} 0
-blueprint_exec_latency_seconds_bucket{action="apply",profile="default",status="success",le="1"} 0
-blueprint_exec_latency_seconds_bucket{action="apply",profile="default",status="success",le="5"} 1
-blueprint_exec_latency_seconds_bucket{action="apply",profile="default",status="success",le="+Inf"} 1
-blueprint_exec_latency_seconds_sum{action="apply",profile="default",status="success"} 3.42
-blueprint_exec_latency_seconds_count{action="apply",profile="default",status="success"} 1
+# HELP blueprint_execution_latency_seconds Latency histogram for blueprint_execution
+# TYPE blueprint_execution_latency_seconds histogram
+blueprint_execution_latency_seconds_bucket{action="apply",profile="default",status="success",le="0.1"} 0
+blueprint_execution_latency_seconds_bucket{action="apply",profile="default",status="success",le="0.5"} 0
+blueprint_execution_latency_seconds_bucket{action="apply",profile="default",status="success",le="1"} 0
+blueprint_execution_latency_seconds_bucket{action="apply",profile="default",status="success",le="5"} 1
+blueprint_execution_latency_seconds_bucket{action="apply",profile="default",status="success",le="+Inf"} 1
+blueprint_execution_latency_seconds_sum{action="apply",profile="default",status="success"} 3.42
+blueprint_execution_latency_seconds_count{action="apply",profile="default",status="success"} 1
 ```
 
 ---
