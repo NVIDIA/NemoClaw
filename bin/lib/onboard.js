@@ -5,7 +5,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { ROOT, SCRIPTS, run, runCapture } = require("./runner");
+const { ROOT, SCRIPTS, run, runArgv, runCapture, runCaptureArgv, assertSafeName } = require("./runner");
 const { prompt, ensureApiKey, getCredential } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
@@ -88,16 +88,16 @@ async function startGateway(gpu) {
   step(2, 7, "Starting OpenShell gateway");
 
   // Destroy old gateway
-  run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
+  runArgv("openshell", ["gateway", "destroy", "-g", "nemoclaw"], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
 
-  const gwArgs = ["--name", "nemoclaw"];
+  const gwArgs = ["gateway", "start", "--name", "nemoclaw"];
   // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
   // routed through a host-side provider (Ollama, vLLM, or cloud API) — the
   // sandbox itself does not need direct GPU access. Passing --gpu causes
   // FailedPrecondition errors when the gateway's k3s device plugin cannot
   // allocate GPUs. See: https://build.nvidia.com/spark/nemoclaw/instructions
 
-  run(`openshell gateway start ${gwArgs.join(" ")}`, { ignoreError: false });
+  runArgv("openshell", gwArgs, { ignoreError: false });
 
   // Verify health
   for (let i = 0; i < 5; i++) {
@@ -135,15 +135,7 @@ async function createSandbox(gpu) {
 
   const nameAnswer = await prompt("  Sandbox name (lowercase, numbers, hyphens) [my-assistant]: ");
   const sandboxName = (nameAnswer || "my-assistant").trim().toLowerCase();
-
-  // Validate: RFC 1123 subdomain — lowercase alphanumeric and hyphens,
-  // must start and end with alphanumeric (required by Kubernetes/OpenShell)
-  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName)) {
-    console.error(`  Invalid sandbox name: '${sandboxName}'`);
-    console.error("  Names must be lowercase, contain only letters, numbers, and hyphens,");
-    console.error("  and must start and end with a letter or number.");
-    process.exit(1);
-  }
+  assertSafeName(sandboxName, "sandbox name");
 
   // Check if sandbox already exists in registry
   const existing = registry.getSandbox(sandboxName);
@@ -154,49 +146,54 @@ async function createSandbox(gpu) {
       return sandboxName;
     }
     // Destroy old sandbox
-    run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+    runArgv("openshell", ["sandbox", "delete", sandboxName], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
     registry.removeSandbox(sandboxName);
   }
 
   // Stage build context
-  const { mkdtempSync } = require("fs");
   const os = require("os");
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
   fs.copyFileSync(path.join(ROOT, "Dockerfile"), path.join(buildCtx, "Dockerfile"));
-  run(`cp -r "${path.join(ROOT, "nemoclaw")}" "${buildCtx}/nemoclaw"`);
-  run(`cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`);
-  run(`cp -r "${path.join(ROOT, "scripts")}" "${buildCtx}/scripts"`);
-  run(`rm -rf "${buildCtx}/nemoclaw/node_modules" "${buildCtx}/nemoclaw/src"`, { ignoreError: true });
+  fs.cpSync(path.join(ROOT, "nemoclaw"), path.join(buildCtx, "nemoclaw"), { recursive: true });
+  fs.cpSync(path.join(ROOT, "nemoclaw-blueprint"), path.join(buildCtx, "nemoclaw-blueprint"), { recursive: true });
+  fs.cpSync(path.join(ROOT, "scripts"), path.join(buildCtx, "scripts"), { recursive: true });
+  fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), { recursive: true, force: true });
+  fs.rmSync(path.join(buildCtx, "nemoclaw", "src"), { recursive: true, force: true });
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
   const basePolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
-  const createArgs = [
-    `--from "${buildCtx}/Dockerfile"`,
-    `--name "${sandboxName}"`,
-    `--policy "${basePolicyPath}"`,
+  const createArgv = [
+    "sandbox", "create",
+    "--from", path.join(buildCtx, "Dockerfile"),
+    "--name", sandboxName,
+    "--policy", basePolicyPath,
   ];
   // --gpu is intentionally omitted. See comment in startGateway().
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const chatUiUrl = process.env.CHAT_UI_URL || 'http://127.0.0.1:18789';
-  const envArgs = [`CHAT_UI_URL=${chatUiUrl}`];
+  // Pass secrets via environment, not command-line arguments
+  const sandboxEnv = { CHAT_UI_URL: chatUiUrl };
   if (process.env.NVIDIA_API_KEY) {
-    envArgs.push(`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`);
+    sandboxEnv.NVIDIA_API_KEY = process.env.NVIDIA_API_KEY;
   }
-  // set -o pipefail ensures the openshell exit code propagates through the awk pipe.
-  // Without it, awk's exit code (always 0) would mask a failed sandbox create.
-  run(`set -o pipefail; openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`);
+  createArgv.push("--", "env",
+    `CHAT_UI_URL=${chatUiUrl}`,
+    ...(process.env.NVIDIA_API_KEY ? [`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`] : []),
+    "nemoclaw-start",
+  );
+  runArgv("openshell", createArgv);
 
   // Release any stale forward on port 18789 before claiming it for the new sandbox.
   // A previous onboard run may have left the port forwarded to a different sandbox,
   // which would silently prevent the new sandbox's dashboard from being reachable.
-  run(`openshell forward stop 18789 2>/dev/null || true`, { ignoreError: true });
+  runArgv("openshell", ["forward", "stop", "18789"], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
   // Forward dashboard port to the new sandbox
-  run(`openshell forward start --background 18789 "${sandboxName}"`, { ignoreError: true });
+  runArgv("openshell", ["forward", "start", "--background", "18789", sandboxName], { ignoreError: true });
 
   // Clean up build context
-  run(`rm -rf "${buildCtx}"`, { ignoreError: true });
+  fs.rmSync(buildCtx, { recursive: true, force: true });
 
   // Register in registry
   registry.registerSandbox({
@@ -348,42 +345,32 @@ async function setupInference(sandboxName, model, provider) {
 
   if (provider === "nvidia-nim") {
     // Create nvidia-nim provider
-    run(
-      `openshell provider create --name nvidia-nim --type openai ` +
-      `--credential "NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}" ` +
-      `--config "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1" 2>&1 || true`,
-      { ignoreError: true }
-    );
-    run(
-      `openshell inference set --no-verify --provider nvidia-nim --model ${model} 2>/dev/null || true`,
-      { ignoreError: true }
-    );
+    runArgv("openshell", [
+      "provider", "create", "--name", "nvidia-nim", "--type", "openai",
+      "--credential", `NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`,
+      "--config", "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1",
+    ], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
+    runArgv("openshell", [
+      "inference", "set", "--no-verify", "--provider", "nvidia-nim", "--model", model,
+    ], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
   } else if (provider === "vllm-local") {
-    run(
-      `openshell provider create --name vllm-local --type openai ` +
-      `--credential "OPENAI_API_KEY=dummy" ` +
-      `--config "OPENAI_BASE_URL=${HOST_GATEWAY_URL}:8000/v1" 2>&1 || ` +
-      `openshell provider update vllm-local --credential "OPENAI_API_KEY=dummy" ` +
-      `--config "OPENAI_BASE_URL=${HOST_GATEWAY_URL}:8000/v1" 2>&1 || true`,
-      { ignoreError: true }
-    );
-    run(
-      `openshell inference set --no-verify --provider vllm-local --model ${model} 2>/dev/null || true`,
-      { ignoreError: true }
-    );
+    runArgv("openshell", [
+      "provider", "create", "--name", "vllm-local", "--type", "openai",
+      "--credential", "OPENAI_API_KEY=dummy",
+      "--config", `OPENAI_BASE_URL=${HOST_GATEWAY_URL}:8000/v1`,
+    ], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
+    runArgv("openshell", [
+      "inference", "set", "--no-verify", "--provider", "vllm-local", "--model", model,
+    ], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
   } else if (provider === "ollama-local") {
-    run(
-      `openshell provider create --name ollama-local --type openai ` +
-      `--credential "OPENAI_API_KEY=ollama" ` +
-      `--config "OPENAI_BASE_URL=${HOST_GATEWAY_URL}:11434/v1" 2>&1 || ` +
-      `openshell provider update ollama-local --credential "OPENAI_API_KEY=ollama" ` +
-      `--config "OPENAI_BASE_URL=${HOST_GATEWAY_URL}:11434/v1" 2>&1 || true`,
-      { ignoreError: true }
-    );
-    run(
-      `openshell inference set --no-verify --provider ollama-local --model ${model} 2>/dev/null || true`,
-      { ignoreError: true }
-    );
+    runArgv("openshell", [
+      "provider", "create", "--name", "ollama-local", "--type", "openai",
+      "--credential", "OPENAI_API_KEY=ollama",
+      "--config", `OPENAI_BASE_URL=${HOST_GATEWAY_URL}:11434/v1`,
+    ], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
+    runArgv("openshell", [
+      "inference", "set", "--no-verify", "--provider", "ollama-local", "--model", model,
+    ], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
   }
 
   registry.updateSandbox(sandboxName, { model, provider });

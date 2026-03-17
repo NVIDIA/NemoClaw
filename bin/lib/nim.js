@@ -3,7 +3,7 @@
 //
 // NIM container management — pull, start, stop, health-check NIM images.
 
-const { run, runCapture } = require("./runner");
+const { run, runArgv, runCapture, runCaptureArgv, assertSafeName } = require("./runner");
 const nimImages = require("./nim-images.json");
 
 function containerName(sandboxName) {
@@ -121,11 +121,12 @@ function pullNimImage(model) {
     process.exit(1);
   }
   console.log(`  Pulling NIM image: ${image}`);
-  run(`docker pull ${image}`);
+  runArgv("docker", ["pull", image]);
   return image;
 }
 
 function startNimContainer(sandboxName, model, port = 8000) {
+  assertSafeName(sandboxName, "sandbox name");
   const name = containerName(sandboxName);
   const image = getImageForModel(model);
   if (!image) {
@@ -134,12 +135,16 @@ function startNimContainer(sandboxName, model, port = 8000) {
   }
 
   // Stop any existing container with same name
-  run(`docker rm -f ${name} 2>/dev/null || true`, { ignoreError: true });
+  runArgv("docker", ["rm", "-f", name], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
 
   console.log(`  Starting NIM container: ${name}`);
-  run(
-    `docker run -d --gpus all -p ${port}:8000 --name ${name} --shm-size 16g ${image}`
-  );
+  runArgv("docker", [
+    "run", "-d", "--gpus", "all",
+    "-p", `${port}:8000`,
+    "--name", name,
+    "--shm-size", "16g",
+    image,
+  ]);
   return name;
 }
 
@@ -166,26 +171,29 @@ function waitForNimHealth(port = 8000, timeout = 300) {
 }
 
 function stopNimContainer(sandboxName) {
+  assertSafeName(sandboxName, "sandbox name");
   const name = containerName(sandboxName);
   console.log(`  Stopping NIM container: ${name}`);
-  run(`docker stop ${name} 2>/dev/null || true`, { ignoreError: true });
-  run(`docker rm ${name} 2>/dev/null || true`, { ignoreError: true });
+  runArgv("docker", ["stop", name], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
+  runArgv("docker", ["rm", name], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
 }
 
 function nimStatus(sandboxName) {
+  assertSafeName(sandboxName, "sandbox name");
   const name = containerName(sandboxName);
   try {
-    const state = runCapture(
-      `docker inspect --format '{{.State.Status}}' ${name} 2>/dev/null`,
+    const state = runCaptureArgv(
+      "docker", ["inspect", "--format", "{{.State.Status}}", name],
       { ignoreError: true }
     );
     if (!state) return { running: false, container: name };
 
     let healthy = false;
     if (state === "running") {
-      const health = runCapture(`curl -sf http://localhost:8000/v1/models 2>/dev/null`, {
-        ignoreError: true,
-      });
+      const health = runCaptureArgv(
+        "curl", ["-sf", "http://localhost:8000/v1/models"],
+        { ignoreError: true }
+      );
       healthy = !!health;
     }
     return { running: state === "running", healthy, container: name, state };
