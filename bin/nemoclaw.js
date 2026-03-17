@@ -23,8 +23,15 @@ const policies = require("./lib/policies");
 const GLOBAL_COMMANDS = new Set([
   "onboard", "list", "deploy", "setup", "setup-spark",
   "start", "stop", "status",
+  "completion",
   "help", "--help", "-h",
 ]);
+
+const SANDBOX_ACTIONS = [
+  "connect", "status", "logs", "policy-add", "policy-list", "destroy"
+];
+
+const SHELL_TYPES = ["bash", "zsh", "fish"];
 
 // ── Commands ─────────────────────────────────────────────────────
 
@@ -266,6 +273,99 @@ function sandboxDestroy(sandboxName) {
   console.log(`  ✓ Sandbox '${sandboxName}' destroyed`);
 }
 
+// ── Shell Completion ─────────────────────────────────────────────
+
+function printCompletion(shell) {
+  if (!shell || !SHELL_TYPES.includes(shell)) {
+    console.log("  Usage: nemoclaw completion <shell>");
+    console.log("");
+    console.log("  Generate shell completion scripts.");
+    console.log("");
+    console.log("  Shells supported: bash, zsh, fish");
+    console.log("");
+    console.log("  Example:");
+    console.log("    # Bash:");
+    console.log("    nemoclaw completion bash >> ~/.bashrc");
+    console.log("");
+    console.log("    # Zsh:");
+    console.log("    nemoclaw completion zsh >> ~/.zshrc");
+    console.log("");
+    console.log("    # Fish:");
+    console.log("    nemoclaw completion fish > ~/.config/fish/completions/nemoclaw.fish");
+    return;
+  }
+
+  const globalCmds = Array.from(GLOBAL_COMMANDS).filter(c => !c.startsWith("-"));
+  let sandboxNames = [];
+  try {
+    sandboxNames = registry.listSandboxes().sandboxes.map(s => s.name);
+  } catch {
+    sandboxNames = [];
+  }
+
+  const sandboxNamesStr = sandboxNames.length > 0 ? sandboxNames.join(" ") : "";
+  const sandboxNamesZsh = sandboxNames.length > 0 ? sandboxNames.map(s => `"${s}"`).join(" ") : "";
+  const sandboxNamesFish = sandboxNames.length > 0 ? sandboxNames.map(s => `'${s}'`).join(" ") : "";
+
+  if (shell === "bash") {
+    console.log(`_nemoclaw_completions() {
+  local cur prev opts
+  COMPREPLY=()
+  cur="\${COMP_WORDS[COMP_CWORD]}"
+  prev="\${COMP_WORDS[COMP_CWORD-1]}"
+
+  # Global commands
+  opts="${globalCmds.join(" ")}"
+
+  # Sandbox names (if previous word is a known sandbox)
+  if [[ " ${sandboxNamesStr} " =~ " $prev " ]]; then
+    opts="${SANDBOX_ACTIONS.join(" ")}"
+  fi
+
+  # Also add sandbox names as possible first argument
+  opts="$opts ${sandboxNamesStr}"
+
+  COMPREPLY=(\$(compgen -W "\$opts" -- \$cur))
+  return 0
+}
+
+complete -F _nemoclaw_completions nemoclaw`);
+  } else if (shell === "zsh") {
+    console.log(`# nemoclaw zsh completion
+
+local -a global_cmds
+global_cmds=(${globalCmds.map(c => `"${c}"`).join(" ")})
+
+local -a sandbox_actions
+sandbox_actions=(${SANDBOX_ACTIONS.map(a => `"${a}"`).join(" ")})
+
+local -a sandbox_names
+sandbox_names=(${sandboxNamesZsh})
+
+_nemoclaw() {
+  local -a cmd
+  cmd=(\${words[1,CURRENT-1]})
+
+  # Check if first word is a sandbox name
+  if [[ " \${sandbox_names[@]} " =~ " \${cmd[1]} " ]]; then
+    _describe 'sandbox actions' sandbox_actions
+  else
+    _describe 'commands' global_cmds
+    _describe 'sandboxes' sandbox_names
+  fi
+}
+
+compdef _nemoclaw nemoclaw`);
+  } else if (shell === "fish") {
+    console.log(`# nemoclaw fish completion
+
+complete -c nemoclaw -f -a "${globalCmds.join(" ")} ${sandboxNamesStr}" -n "test (count (commandline -opc)) -eq 1"
+
+complete -c nemoclaw -f -a "${SANDBOX_ACTIONS.join(" ")}" -n "test (count (commandline -opc)) -ge 2; and contains (commandline -opc | head -1) ${sandboxNamesFish}"
+`);
+  }
+}
+
 // ── Help ─────────────────────────────────────────────────────────
 
 function help() {
@@ -296,6 +396,9 @@ function help() {
     nemoclaw stop                    Stop all services
     nemoclaw status                  Show sandbox list and service status
 
+  Shell Completion:
+    nemoclaw completion <shell>      Generate shell completion script
+
   Credentials are prompted on first use, then saved securely
   in ~/.nemoclaw/credentials.json (mode 600).
 `);
@@ -323,6 +426,7 @@ const [cmd, ...args] = process.argv.slice(2);
       case "stop":        stop(); break;
       case "status":      showStatus(); break;
       case "list":        listSandboxes(); break;
+      case "completion":  printCompletion(args[0]); break;
       default:            help(); break;
     }
     return;
