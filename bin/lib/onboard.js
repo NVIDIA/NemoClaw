@@ -434,9 +434,51 @@ async function createSandbox(gpu) {
   if (process.env.NVIDIA_API_KEY) {
     envArgs.push(`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`);
   }
-  // set -o pipefail ensures the openshell exit code propagates through the awk pipe.
-  // Without it, awk's exit code (always 0) would mask a failed sandbox create.
-  run(`set -o pipefail; openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`);
+
+  // Run without piping through awk — the pipe masked non-zero exit codes
+  // from openshell because bash returns the status of the last pipeline
+  // command (awk, always 0) unless pipefail is set. Removing the pipe
+  // lets the real exit code flow through to run().
+  const createResult = run(
+    `openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1`,
+    { ignoreError: true }
+  );
+
+  // Clean up build context regardless of outcome
+  run(`rm -rf "${buildCtx}"`, { ignoreError: true });
+
+  if (createResult.status !== 0) {
+    console.error("");
+    console.error(`  Sandbox creation failed (exit ${createResult.status}).`);
+    console.error("  Try:  openshell sandbox list        # check gateway state");
+    console.error("  Try:  nemoclaw onboard              # retry from scratch");
+    process.exit(createResult.status || 1);
+  }
+
+  // Wait for sandbox to reach Ready state in k3s before registering.
+  // On WSL2 + Docker Desktop the pod can take longer to initialize;
+  // without this gate, NemoClaw registers a phantom sandbox that
+  // causes "sandbox not found" on every subsequent connect/status call.
+  console.log("  Waiting for sandbox to become ready...");
+  let ready = false;
+  for (let i = 0; i < 30; i++) {
+    const list = runCapture("openshell sandbox list 2>&1", { ignoreError: true });
+    const clean = list.replace(/\x1b\[[0-9;]*m/g, "");
+    if (clean.split("\n").some((l) => l.includes(sandboxName) && l.includes("Ready"))) {
+      ready = true;
+      break;
+    }
+    if (i === 29) break;
+    require("child_process").spawnSync("sleep", ["2"]);
+  }
+
+  if (!ready) {
+    console.error("");
+    console.error(`  Sandbox '${sandboxName}' was created but did not become ready within 60s.`);
+    console.error("  Check: openshell sandbox list");
+    console.error(`  Logs:  openshell sandbox logs ${sandboxName}`);
+    process.exit(1);
+  }
 
   // Release any stale forward on port 18789 before claiming it for the new sandbox.
   // A previous onboard run may have left the port forwarded to a different sandbox,
@@ -445,10 +487,7 @@ async function createSandbox(gpu) {
   // Forward dashboard port to the new sandbox
   run(`openshell forward start --background 18789 "${sandboxName}"`, { ignoreError: true });
 
-  // Clean up build context
-  run(`rm -rf "${buildCtx}"`, { ignoreError: true });
-
-  // Register in registry
+  // Register only after confirmed ready — prevents phantom entries
   registry.registerSandbox({
     name: sandboxName,
     gpuEnabled: !!gpu,
