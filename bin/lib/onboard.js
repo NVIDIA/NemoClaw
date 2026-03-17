@@ -789,7 +789,12 @@ async function setupOpenclaw(sandboxName, model, provider) {
     }
   }
 
-  console.log("  ✓ OpenClaw gateway launched inside sandbox");
+  // sandbox create with a command runs it inside the sandbox then exits.
+  // Since the sandbox already exists, we create a throwaway connect + command
+  // by using sandbox create --no-keep with the same image to exec into it.
+  // Simpler: just use sandbox connect which opens a shell — but it doesn't
+  // support passing commands. So we run the setup on next connect instead.
+  console.log("  ⓘ OpenClaw setup deferred — run 'openclaw nemoclaw launch' after connecting");
 }
 
 // ── Step 7: Policy presets ───────────────────────────────────────
