@@ -134,13 +134,25 @@ if [ "$NEEDS_RESTART" = true ]; then
 fi
 
 # ── 4. Install and start vLLM (local inference on Spark GPU) ──────
+#
+# Use a virtual environment to avoid conflicts with apt-managed Python
+# packages (e.g. packaging, jsonschema) that pip cannot uninstall.
 
-if ! python3 -c "import vllm" 2>/dev/null; then
-  info "Installing vLLM..."
-  pip3 install --break-system-packages vllm 2>&1 | tail -1
+REAL_HOME=$(eval echo "~${REAL_USER:-root}")
+VLLM_VENV="${VLLM_VENV:-$REAL_HOME/venv}"
+VLLM_PYTHON="$VLLM_VENV/bin/python3"
+
+if [ ! -f "$VLLM_PYTHON" ]; then
+  info "Creating vLLM virtual environment at $VLLM_VENV..."
+  python3 -m venv "$VLLM_VENV"
+fi
+
+if ! "$VLLM_PYTHON" -c "import vllm" 2>/dev/null; then
+  info "Installing vLLM into $VLLM_VENV..."
+  "$VLLM_VENV/bin/pip" install vllm 2>&1 | tail -1
   info "vLLM installed"
 else
-  info "vLLM already installed"
+  info "vLLM already installed in $VLLM_VENV"
 fi
 
 # Start vLLM if not already running
@@ -148,9 +160,9 @@ VLLM_MODEL="nvidia/nemotron-3-nano-30b-a3b"
 if curl -s http://localhost:8000/v1/models > /dev/null 2>&1; then
   info "vLLM already running on :8000"
 else
-  if python3 -c "import vllm" 2>/dev/null && command -v nvidia-smi > /dev/null 2>&1; then
+  if "$VLLM_PYTHON" -c "import vllm" 2>/dev/null && command -v nvidia-smi > /dev/null 2>&1; then
     info "Starting vLLM with $VLLM_MODEL..."
-    nohup python3 -m vllm.entrypoints.openai.api_server \
+    nohup "$VLLM_PYTHON" -m vllm.entrypoints.openai.api_server \
       --model "$VLLM_MODEL" \
       --port 8000 \
       --host 0.0.0.0 \

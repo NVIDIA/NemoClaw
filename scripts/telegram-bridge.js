@@ -83,7 +83,14 @@ async function sendTyping(chatId) {
 
 // ── Run agent inside sandbox ──────────────────────────────────────
 
-function runAgentInSandbox(message, sessionId) {
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 2000;
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function runAgentOnce(message, sessionId) {
   return new Promise((resolve) => {
     const sshConfig = execSync(`openshell sandbox ssh-config ${SANDBOX}`, { encoding: "utf-8" });
 
@@ -108,7 +115,7 @@ function runAgentInSandbox(message, sessionId) {
     proc.on("close", (code) => {
       try { require("fs").unlinkSync(confPath); } catch {}
 
-      // Extract the actual agent response — skip setup lines
+      // Extract the actual agent response — skip setup lines and error noise
       const lines = stdout.split("\n");
       const responseLines = lines.filter(
         (l) =>
@@ -118,6 +125,8 @@ function runAgentInSandbox(message, sessionId) {
           !l.includes("NemoClaw ready") &&
           !l.includes("NemoClaw registered") &&
           !l.includes("openclaw agent") &&
+          !l.includes("sandbox not found") &&
+          !l.includes("Agent exited with code") &&
           !l.includes("┌─") &&
           !l.includes("│ ") &&
           !l.includes("└─") &&
@@ -125,20 +134,41 @@ function runAgentInSandbox(message, sessionId) {
       );
 
       const response = responseLines.join("\n").trim();
-
-      if (response) {
-        resolve(response);
-      } else if (code !== 0) {
-        resolve(`Agent exited with code ${code}. ${stderr.trim().slice(0, 500)}`);
-      } else {
-        resolve("(no response)");
-      }
+      resolve({ code, response, stderr: stderr.trim() });
     });
 
     proc.on("error", (err) => {
-      resolve(`Error: ${err.message}`);
+      resolve({ code: -1, response: "", stderr: err.message });
     });
   });
+}
+
+async function runAgentInSandbox(message, sessionId) {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const { code, response, stderr } = await runAgentOnce(message, sessionId);
+
+    // code 255 = sandbox unreachable — retry before giving up
+    if (code === 255) {
+      console.error(`[retry] attempt ${attempt + 1}/${MAX_RETRIES} — sandbox not reachable (code 255)`);
+      if (attempt < MAX_RETRIES - 1) {
+        await sleep(RETRY_DELAY);
+        continue;
+      }
+      return `Sandbox unreachable after ${MAX_RETRIES} attempts. ${stderr.slice(0, 500)}`;
+    }
+
+    if (response) {
+      return response;
+    }
+
+    if (code !== 0) {
+      return `Agent exited with code ${code}. ${stderr.slice(0, 500)}`;
+    }
+
+    return "(no response)";
+  }
+
+  return "(no response after retries)";
 }
 
 // ── Poll loop ─────────────────────────────────────────────────────
