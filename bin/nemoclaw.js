@@ -18,6 +18,16 @@ const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
 
+// ── Helpers ─────────────────────────────────────────────────────
+
+function resolveSandboxFlag(flagArgs) {
+  const idx = flagArgs.indexOf("--sandbox");
+  if (idx !== -1 && flagArgs[idx + 1]) {
+    return flagArgs[idx + 1];
+  }
+  return registry.getDefault();
+}
+
 // ── Global commands ──────────────────────────────────────────────
 
 const GLOBAL_COMMANDS = new Set([
@@ -132,13 +142,21 @@ async function deploy(instanceName) {
   run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw'`);
 }
 
-async function start() {
+async function start(flagArgs) {
   await ensureApiKey();
-  run(`bash "${SCRIPTS}/start-services.sh"`);
+  const sandbox = resolveSandboxFlag(flagArgs);
+  if (sandbox) {
+    process.env.NEMOCLAW_SANDBOX = sandbox;
+  }
+  run(`bash "${SCRIPTS}/start-services.sh"${sandbox ? ` --sandbox "${sandbox}"` : ""}`);
 }
 
-function stop() {
-  run(`bash "${SCRIPTS}/start-services.sh" --stop`);
+function stop(flagArgs) {
+  const sandbox = resolveSandboxFlag(flagArgs);
+  if (sandbox) {
+    process.env.NEMOCLAW_SANDBOX = sandbox;
+  }
+  run(`bash "${SCRIPTS}/start-services.sh" --stop${sandbox ? ` --sandbox "${sandbox}"` : ""}`);
 }
 
 function showStatus() {
@@ -292,9 +310,9 @@ function help() {
     nemoclaw deploy <instance>       Deploy to a Brev VM and start services
 
   Services:
-    nemoclaw start                   Start services (Telegram, tunnel)
-    nemoclaw stop                    Stop all services
-    nemoclaw status                  Show sandbox list and service status
+    nemoclaw start [--sandbox <name>]  Start services (Telegram, tunnel)
+    nemoclaw stop  [--sandbox <name>]  Stop all services
+    nemoclaw status                    Show sandbox list and service status
 
   Credentials are prompted on first use, then saved securely
   in ~/.nemoclaw/credentials.json (mode 600).
@@ -319,8 +337,8 @@ const [cmd, ...args] = process.argv.slice(2);
       case "setup":       await setup(); break;
       case "setup-spark": await setupSpark(); break;
       case "deploy":      await deploy(args[0]); break;
-      case "start":       await start(); break;
-      case "stop":        stop(); break;
+      case "start":       await start(args); break;
+      case "stop":        stop(args); break;
       case "status":      showStatus(); break;
       case "list":        listSandboxes(); break;
       default:            help(); break;

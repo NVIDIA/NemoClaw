@@ -19,7 +19,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DASHBOARD_PORT="${DASHBOARD_PORT:-18789}"
 
 # ── Parse flags ──────────────────────────────────────────────────
-SANDBOX_NAME="${NEMOCLAW_SANDBOX:-default}"
+export SANDBOX_NAME="${NEMOCLAW_SANDBOX:-default}"
 ACTION="start"
 
 while [ $# -gt 0 ]; do
