@@ -21,7 +21,7 @@ const policies = require("./lib/policies");
 // ── Global commands ──────────────────────────────────────────────
 
 const GLOBAL_COMMANDS = new Set([
-  "onboard", "list", "deploy", "setup", "setup-spark",
+  "onboard", "list", "deploy", "setup", "setup-spark", "setup-docker",
   "start", "stop", "status",
   "help", "--help", "-h",
 ]);
@@ -275,7 +275,8 @@ function help() {
   Getting Started:
     nemoclaw onboard                 Interactive setup wizard (recommended)
     nemoclaw setup                   Legacy setup (deprecated, use onboard)
-    nemoclaw setup-spark             Set up on DGX Spark (fixes cgroup v2 + Docker)
+    sudo nemoclaw setup-docker       Fix Docker cgroup v2 config (any Linux: Spark, cloud VMs, bare-metal)
+    sudo nemoclaw setup-spark        Alias for setup-docker (kept for backwards compatibility)
 
   Sandbox Management:
     nemoclaw list                    List all sandboxes
@@ -317,6 +318,7 @@ const [cmd, ...args] = process.argv.slice(2);
     switch (cmd) {
       case "onboard":     await onboard(); break;
       case "setup":       await setup(); break;
+      case "setup-docker": // generic alias — works on any Linux (Spark, cloud GPU VMs, bare-metal)
       case "setup-spark": await setupSpark(); break;
       case "deploy":      await deploy(args[0]); break;
       case "start":       await start(); break;

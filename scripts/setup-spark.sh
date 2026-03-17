@@ -2,15 +2,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# NemoClaw setup for DGX Spark devices.
+# Fix Docker cgroup v2 configuration for NemoClaw on any Linux host.
 #
-# Spark ships Ubuntu 24.04 (cgroup v2) + Docker 28.x but no k3s.
+# Required on any Linux system running cgroup v2 with Docker Engine:
+# DGX Spark, cloud GPU VMs (Shadeform, AWS, GCP, Azure), bare-metal.
+#
 # OpenShell's gateway starts k3s inside a Docker container, which
 # needs cgroup host namespace access. This script configures Docker
 # for that.
 #
 # Usage:
-#   sudo nemoclaw setup-spark
+#   sudo nemoclaw setup-docker    # recommended (platform-agnostic name)
+#   sudo nemoclaw setup-spark     # alias, kept for backwards compatibility
 #   # or directly:
 #   sudo bash scripts/setup-spark.sh
 #
@@ -35,11 +38,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # ── Pre-flight checks ─────────────────────────────────────────────
 
 if [ "$(uname -s)" != "Linux" ]; then
-  fail "This script is for DGX Spark (Linux). Use 'nemoclaw setup' for macOS."
+  fail "This script is for Linux only. Use 'nemoclaw setup' for macOS."
 fi
 
 if [ "$(id -u)" -ne 0 ]; then
-  fail "Must run as root: sudo nemoclaw setup-spark"
+  fail "Must run as root: sudo nemoclaw setup-docker"
 fi
 
 # Detect the real user (not root) for docker group add
@@ -135,7 +138,7 @@ fi
 # ── 4. Run normal setup ──────────────────────────────────────────
 
 echo ""
-info "DGX Spark Docker configuration complete."
+info "Docker cgroup configuration complete."
 info ""
 info "Next step: run 'nemoclaw onboard' to set up your sandbox."
 info "  nemoclaw onboard"

@@ -245,9 +245,19 @@ verify_nemoclaw() {
 # ---------------------------------------------------------------------------
 # 5. Onboard
 # ---------------------------------------------------------------------------
+
+# Absolute path to the nemoclaw binary, resolved at install time.
+# Stored here so post_install_message can reference it even if the
+# interactive shell's PATH isn't updated yet.
+NEMOCLAW_BIN=""
+
 run_onboard() {
   info "Running nemoclaw onboard…"
-  nemoclaw onboard
+  NEMOCLAW_BIN="$(command -v nemoclaw 2>/dev/null || true)"
+  # Run onboard without propagating a non-zero exit — if it fails (e.g. cgroup
+  # preflight), post_install_message still runs so the user sees PATH guidance
+  # immediately after the failure message, not before it.
+  nemoclaw onboard || ONBOARD_FAILED=true
 }
 
 # ---------------------------------------------------------------------------
@@ -273,11 +283,30 @@ post_install_message() {
   echo "  ──────────────────────────────────────────────────"
   warn "Your current shell may not have the updated PATH."
   echo ""
-  echo "  To use nemoclaw now, run:"
+  echo "  To use nemoclaw in a new terminal, run:"
   echo ""
   echo "    source $profile"
   echo ""
   echo "  Or open a new terminal window."
+
+  # If onboarding didn't complete (e.g. cgroup preflight failure), give the
+  # user a copy-pasteable absolute path so they can run follow-up commands
+  # (like `setup-docker`) without needing to source their profile first.
+  if [[ "${ONBOARD_FAILED:-}" == "true" && -n "$NEMOCLAW_BIN" ]]; then
+    echo ""
+    warn "Onboarding did not complete. After fixing the issue above, retry with:"
+    echo ""
+    echo "    nemoclaw onboard"
+    echo ""
+    echo "  If nemoclaw is not found in your shell, use the full path:"
+    echo ""
+    echo "    $NEMOCLAW_BIN onboard"
+    echo ""
+    echo "  For example, to fix a Docker cgroup issue and then re-onboard:"
+    echo ""
+    echo "    sudo $NEMOCLAW_BIN setup-docker && $NEMOCLAW_BIN onboard"
+  fi
+
   echo "  ──────────────────────────────────────────────────"
   echo ""
 }
@@ -293,8 +322,8 @@ main() {
   # install_or_upgrade_ollama
   install_nemoclaw
   verify_nemoclaw
-  post_install_message
   run_onboard
+  post_install_message
 
   info "=== Installation complete ==="
 }

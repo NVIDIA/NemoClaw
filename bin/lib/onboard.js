@@ -80,10 +80,13 @@ async function preflight() {
     console.error("");
     console.error("     To fix, run:");
     console.error("");
-    console.error("       nemoclaw setup-spark");
+    console.error("       sudo nemoclaw setup-docker");
     console.error("");
     console.error("     This adds \"default-cgroupns-mode\": \"host\" to /etc/docker/daemon.json");
     console.error("     (preserving any existing settings) and restarts Docker.");
+    console.error("");
+    console.error("     Works on any Linux host: DGX Spark, cloud GPU VMs (Shadeform, AWS, GCP),");
+    console.error("     bare-metal. `nemoclaw setup-spark` is an alias for the same command.");
     console.error("");
     console.error(`     Detail: ${cgroup.reason}`);
     process.exit(1);
