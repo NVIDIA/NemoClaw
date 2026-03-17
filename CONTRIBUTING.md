@@ -9,8 +9,6 @@ ensure every submission includes the context maintainers need to triage and
 review efficiently. Security findings should use the **Security Bug Report**
 issue template.
 
-## Signing Your Work
-
 ## Before You Open an Issue
 
 Open an issue when you encounter one of the following situations.
