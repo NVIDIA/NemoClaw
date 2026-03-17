@@ -20,13 +20,15 @@ export function verifyBlueprintDigest(
   const errors: string[] = [];
   const actualDigest = computeDirectoryDigest(blueprintPath);
 
-  if (manifest.digest && manifest.digest !== actualDigest) {
+  if (!manifest.digest) {
+    errors.push("Security Error: Blueprint manifest is missing a 'digest'. Verification required.");
+  } else if (manifest.digest !== actualDigest) {
     errors.push(`Digest mismatch: expected ${manifest.digest}, got ${actualDigest}`);
   }
 
   return {
     valid: errors.length === 0,
-    expectedDigest: manifest.digest,
+    expectedDigest: manifest.digest || "missing",
     actualDigest,
     errors,
   };
@@ -78,16 +80,29 @@ function computeDirectoryDigest(dirPath: string): string {
   return hash.digest("hex");
 }
 
+const IGNORE_PATTERNS = [
+  ".git",
+  "node_modules",
+  "__pycache__",
+  ".DS_Store",
+  "dist",
+];
+
 function collectFiles(dirPath: string, prefix = ""): string[] {
   const entries = readdirSync(dirPath);
   const files: string[] = [];
   for (const entry of entries) {
+    if (IGNORE_PATTERNS.includes(entry)) continue;
+
     const fullPath = join(dirPath, entry);
     const relativePath = prefix ? `${prefix}/${entry}` : entry;
     const stat = statSync(fullPath);
     if (stat.isDirectory()) {
       files.push(...collectFiles(fullPath, relativePath));
     } else {
+      // Don't include the blueprint manifest itself in the digest calculation
+      // to avoid chicken-and-egg problem during release computation.
+      if (entry === "blueprint.yaml") continue;
       files.push(relativePath);
     }
   }
