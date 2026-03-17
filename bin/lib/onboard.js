@@ -10,7 +10,6 @@ const { prompt, ensureApiKey, getCredential } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
 const policies = require("./policies");
-const { checkCgroupConfig } = require("./preflight");
 const HOST_GATEWAY_URL = "http://host.openshell.internal";
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 
@@ -68,27 +67,6 @@ async function preflight() {
     }
   }
   console.log(`  ✓ openshell CLI: ${runCapture("openshell --version 2>/dev/null || echo unknown", { ignoreError: true })}`);
-
-  // cgroup v2 + Docker cgroupns
-  const cgroup = checkCgroupConfig();
-  if (!cgroup.ok) {
-    console.error("");
-    console.error("  !! cgroup v2 detected but Docker is not configured for cgroupns=host.");
-    console.error("     OpenShell's gateway runs k3s inside Docker, which will fail with:");
-    console.error("");
-    console.error("       openat2 /sys/fs/cgroup/kubepods/pids.max: no such file or directory");
-    console.error("");
-    console.error("     To fix, run:");
-    console.error("");
-    console.error("       nemoclaw setup-spark");
-    console.error("");
-    console.error("     This adds \"default-cgroupns-mode\": \"host\" to /etc/docker/daemon.json");
-    console.error("     (preserving any existing settings) and restarts Docker.");
-    console.error("");
-    console.error(`     Detail: ${cgroup.reason}`);
-    process.exit(1);
-  }
-  console.log("  ✓ cgroup configuration OK");
 
   // GPU
   const gpu = nim.detectGpu();
