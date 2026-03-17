@@ -49,14 +49,11 @@ async function ensureApiKey() {
   }
 
   console.log("");
-  console.log("  ┌─────────────────────────────────────────────────────────────────┐");
-  console.log("  │  NVIDIA API Key required                                        │");
-  console.log("  │                                                                 │");
-  console.log("  │  1. Go to https://build.nvidia.com/settings/api-keys            │");
-  console.log("  │  2. Sign in with your NVIDIA account                            │");
-  console.log("  │  3. Click 'Generate API Key' button                             │");
-  console.log("  │  4. Paste the key below (starts with nvapi-)                    │");
-  console.log("  └─────────────────────────────────────────────────────────────────┘");
+  console.log("  NVIDIA API Key required");
+  console.log("  1. Go to https://build.nvidia.com/settings/api-keys");
+  console.log("  2. Sign in with your NVIDIA account");
+  console.log("  3. Click 'Generate API Key' button");
+  console.log("  4. Paste the key below (starts with nvapi-)");
   console.log("");
 
   key = await prompt("  NVIDIA API Key: ");
@@ -68,6 +65,32 @@ async function ensureApiKey() {
 
   saveCredential("NVIDIA_API_KEY", key);
   process.env.NVIDIA_API_KEY = key;
+  console.log("");
+  console.log("  Key saved to ~/.nemoclaw/credentials.json (mode 600)");
+  console.log("");
+}
+
+async function ensureNgcApiKey() {
+  let key = getCredential("NGC_API_KEY");
+  if (key) {
+    process.env.NGC_API_KEY = key;
+    return;
+  }
+
+  console.log("");
+  console.log("  NGC API Key required for Local NIM.");
+  console.log("  Get one from https://org.ngc.nvidia.com/setup/api-key and paste it below.");
+  console.log("");
+
+  key = await prompt("  NGC API Key: ");
+
+  if (!key) {
+    console.error("  NGC API key is required for Local NIM.");
+    process.exit(1);
+  }
+
+  saveCredential("NGC_API_KEY", key);
+  process.env.NGC_API_KEY = key;
   console.log("");
   console.log("  Key saved to ~/.nemoclaw/credentials.json (mode 600)");
   console.log("");
@@ -98,12 +121,9 @@ async function ensureGithubToken() {
   } catch {}
 
   console.log("");
-  console.log("  ┌──────────────────────────────────────────────────┐");
-  console.log("  │  GitHub token required (private repo detected)   │");
-  console.log("  │                                                  │");
-  console.log("  │  Option A: gh auth login (if you have gh CLI)    │");
-  console.log("  │  Option B: Paste a PAT with read:packages scope  │");
-  console.log("  └──────────────────────────────────────────────────┘");
+  console.log("  GitHub token required (private repo detected)");
+  console.log("  Option A: gh auth login (if you have gh CLI)");
+  console.log("  Option B: Paste a PAT with read:packages scope");
   console.log("");
 
   token = await prompt("  GitHub Token: ");
@@ -128,6 +148,7 @@ module.exports = {
   getCredential,
   prompt,
   ensureApiKey,
+  ensureNgcApiKey,
   ensureGithubToken,
   isRepoPrivate,
 };

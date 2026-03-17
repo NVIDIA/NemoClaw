@@ -4,6 +4,7 @@
 // NIM container management — pull, start, stop, health-check NIM images.
 
 const { run, runCapture } = require("./runner");
+const { getCredential } = require("./credentials");
 const nimImages = require("./nim-images.json");
 
 function containerName(sandboxName) {
@@ -128,22 +129,41 @@ function pullNimImage(model) {
 function startNimContainer(sandboxName, model, port = 8000) {
   const name = containerName(sandboxName);
   const image = getImageForModel(model);
+  const ngcApiKey = process.env.NGC_API_KEY || getCredential("NGC_API_KEY");
   if (!image) {
     console.error(`  Unknown model: ${model}`);
     process.exit(1);
+  }
+
+  if (ngcApiKey) {
+    process.env.NGC_API_KEY = ngcApiKey;
   }
 
   // Stop any existing container with same name
   run(`docker rm -f ${name} 2>/dev/null || true`, { ignoreError: true });
 
   console.log(`  Starting NIM container: ${name}`);
+  const envArgs = [];
+  if (ngcApiKey) envArgs.push("-e NGC_API_KEY");
+
+  // Consumer GPUs under WSL need the generic vLLM profile and a smaller
+  // context window for this model to fit KV cache allocation reliably.
+  if (model === "meta/llama-3.1-8b-instruct") {
+    envArgs.push(
+      "-e NIM_MODEL_PROFILE=default",
+      "-e NIM_RELAX_MEM_CONSTRAINTS=1",
+      "-e NIM_MAX_GPU_MEMORY_UTILIZATION_STARTUP=1.0",
+      "-e NIM_MAX_MODEL_LEN=32768"
+    );
+  }
+
   run(
-    `docker run -d --gpus all -p ${port}:8000 --name ${name} --shm-size 16g ${image}`
+    `docker run -d --gpus all -p ${port}:8000 --name ${name} --shm-size 16g ${envArgs.join(" ")} ${image}`.trim()
   );
   return name;
 }
 
-function waitForNimHealth(port = 8000, timeout = 300) {
+function waitForNimHealth(port = 8000, timeout = 900) {
   const start = Date.now();
   const interval = 5000;
   console.log(`  Waiting for NIM health on port ${port} (timeout: ${timeout}s)...`);

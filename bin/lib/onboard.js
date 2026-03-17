@@ -6,7 +6,7 @@
 const fs = require("fs");
 const path = require("path");
 const { ROOT, SCRIPTS, run, runCapture } = require("./runner");
-const { prompt, ensureApiKey, getCredential } = require("./credentials");
+const { prompt, ensureApiKey, ensureNgcApiKey, getCredential } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
 const policies = require("./policies");
@@ -104,7 +104,7 @@ async function preflight() {
   return gpu;
 }
 
-// ── Step 2: Gateway ──────────────────────────────────────────────
+// ── Step 2: Gateway ─────────────────────────────────────────────
 
 async function startGateway(gpu) {
   step(2, 7, "Starting OpenShell gateway");
@@ -145,7 +145,7 @@ async function startGateway(gpu) {
   require("child_process").spawnSync("sleep", ["5"]);
 }
 
-// ── Step 3: Sandbox ──────────────────────────────────────────────
+// ── Step 3: Sandbox ─────────────────────────────────────────────
 
 async function createSandbox(gpu) {
   step(3, 7, "Creating sandbox");
@@ -193,7 +193,6 @@ async function createSandbox(gpu) {
     `--name "${sandboxName}"`,
     `--policy "${basePolicyPath}"`,
   ];
-  if (gpu && gpu.nimCapable) createArgs.push("--gpu");
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const chatUiUrl = process.env.CHAT_UI_URL || 'http://127.0.0.1:18789';
@@ -219,7 +218,7 @@ async function createSandbox(gpu) {
   return sandboxName;
 }
 
-// ── Step 4: NIM ──────────────────────────────────────────────────
+// ── Step 4: NIM ─────────────────────────────────────────────────
 
 async function setupNim(sandboxName, gpu) {
   step(4, 7, "Configuring inference (NIM)");
@@ -303,6 +302,7 @@ async function setupNim(sandboxName, gpu) {
         console.log(`  Pulling NIM image for ${model}...`);
         nim.pullNimImage(model);
 
+        await ensureNgcApiKey();
         console.log("  Starting NIM container...");
         nimContainer = nim.startNimContainer(sandboxName, model);
 
@@ -352,7 +352,7 @@ async function setupNim(sandboxName, gpu) {
   return { model, provider };
 }
 
-// ── Step 5: Inference provider ───────────────────────────────────
+// ── Step 5: Inference provider ──────────────────────────────────
 
 async function setupInference(sandboxName, model, provider) {
   step(5, 7, "Setting up inference provider");
@@ -401,7 +401,7 @@ async function setupInference(sandboxName, model, provider) {
   console.log(`  ✓ Inference route set: ${provider} / ${model}`);
 }
 
-// ── Step 6: OpenClaw ─────────────────────────────────────────────
+// ── Step 6: OpenClaw ────────────────────────────────────────────
 
 async function setupOpenclaw(sandboxName) {
   step(6, 7, "Setting up OpenClaw inside sandbox");
@@ -414,7 +414,7 @@ async function setupOpenclaw(sandboxName) {
   console.log("  ✓ OpenClaw gateway launched inside sandbox");
 }
 
-// ── Step 7: Policy presets ───────────────────────────────────────
+// ── Step 7: Policy presets ──────────────────────────────────────
 
 async function setupPolicies(sandboxName) {
   step(7, 7, "Policy presets");
@@ -471,7 +471,7 @@ async function setupPolicies(sandboxName) {
   console.log("  ✓ Policies applied");
 }
 
-// ── Dashboard ────────────────────────────────────────────────────
+// ── Dashboard ───────────────────────────────────────────────────
 
 function printDashboard(sandboxName, model, provider) {
   const nimStat = nim.nimStatus(sandboxName);
@@ -495,7 +495,7 @@ function printDashboard(sandboxName, model, provider) {
   console.log("");
 }
 
-// ── Main ─────────────────────────────────────────────────────────
+// ── Main ────────────────────────────────────────────────────────
 
 async function onboard() {
   console.log("");
