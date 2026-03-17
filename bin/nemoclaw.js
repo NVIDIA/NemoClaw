@@ -76,15 +76,15 @@ async function setup() {
   console.log("  ⚠  `nemoclaw setup` is deprecated. Use `nemoclaw onboard` instead.");
   console.log("     Running legacy setup.sh for backwards compatibility...");
   console.log("");
-  await ensureApiKey();
+  const key = await ensureApiKey();
   const { defaultSandbox } = registry.listSandboxes();
   const safeName = defaultSandbox && /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(defaultSandbox) ? defaultSandbox : "";
-  run(`bash "${SCRIPTS}/setup.sh" ${shellQuote(safeName)}`);
+  run(`bash "${SCRIPTS}/setup.sh" ${shellQuote(safeName)}`, { env: { NVIDIA_API_KEY: key } });
 }
 
 async function setupSpark() {
-  await ensureApiKey();
-  run(`sudo -E NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY)} bash "${SCRIPTS}/setup-spark.sh"`);
+  const key = await ensureApiKey();
+  run(`sudo -E bash "${SCRIPTS}/setup-spark.sh"`, { env: { NVIDIA_API_KEY: key } });
 }
 
 async function deploy(instanceName) {
@@ -97,9 +97,12 @@ async function deploy(instanceName) {
     console.error("    nemoclaw deploy nemoclaw-test");
     process.exit(1);
   }
-  await ensureApiKey();
+
+  const env = { ...process.env };
+  env.NVIDIA_API_KEY = await ensureApiKey();
+
   if (isRepoPrivate("NVIDIA/OpenShell")) {
-    await ensureGithubToken();
+    env.GITHUB_TOKEN = await ensureGithubToken();
   }
   validateName(instanceName, "instance name");
   const name = instanceName;
@@ -128,12 +131,12 @@ async function deploy(instanceName) {
 
   if (!exists) {
     console.log(`  Creating Brev instance '${name}' (${gpu})...`);
-    run(`brev create ${qname} --gpu ${shellQuote(gpu)}`);
+    run(`brev create ${qname} --gpu ${shellQuote(gpu)}`, { env });
   } else {
     console.log(`  Brev instance '${name}' already exists.`);
   }
 
-  run(`brev refresh`, { ignoreError: true });
+  run(`brev refresh`, { ignoreError: true, env });
 
   console.log("  Waiting for SSH...");
   for (let i = 0; i < 60; i++) {

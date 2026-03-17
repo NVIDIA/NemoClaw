@@ -52,8 +52,7 @@ function prompt(question) {
 async function ensureApiKey() {
   let key = getCredential("NVIDIA_API_KEY");
   if (key) {
-    process.env.NVIDIA_API_KEY = key;
-    return;
+    return key;
   }
 
   console.log("");
@@ -75,10 +74,10 @@ async function ensureApiKey() {
   }
 
   saveCredential("NVIDIA_API_KEY", key);
-  process.env.NVIDIA_API_KEY = key;
   console.log("");
   console.log("  Key saved to ~/.nemoclaw/credentials.json (mode 600)");
   console.log("");
+  return key;
 }
 
 function isRepoPrivate(repo) {
@@ -93,15 +92,13 @@ function isRepoPrivate(repo) {
 async function ensureGithubToken() {
   let token = getCredential("GITHUB_TOKEN");
   if (token) {
-    process.env.GITHUB_TOKEN = token;
-    return;
+    return token;
   }
 
   try {
     token = execSync("gh auth token 2>/dev/null", { encoding: "utf-8" }).trim();
     if (token) {
-      process.env.GITHUB_TOKEN = token;
-      return;
+      return token;
     }
   } catch {}
 
@@ -122,10 +119,10 @@ async function ensureGithubToken() {
   }
 
   saveCredential("GITHUB_TOKEN", token);
-  process.env.GITHUB_TOKEN = token;
   console.log("");
   console.log("  Token saved to ~/.nemoclaw/credentials.json (mode 600)");
   console.log("");
+  return token;
 }
 
 module.exports = {
