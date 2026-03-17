@@ -2,11 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { exec } from "node:child_process";
+import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import type { PluginLogger, NemoClawConfig } from "../index.js";
 import { loadState } from "../blueprint/state.js";
 
 const execAsync = promisify(exec);
+
+/**
+ * Detect whether we are running inside an OpenShell sandbox.
+ * Inside the sandbox the filesystem is restricted to /sandbox and /tmp,
+ * and the openshell CLI cannot query its own container status.
+ */
+function isInsideSandbox(): boolean {
+  return existsSync("/sandbox") || process.env.OPENSHELL_SANDBOX === "1";
+}
 
 export interface StatusOptions {
   json: boolean;
@@ -96,6 +106,13 @@ interface SandboxStatusResponse {
 }
 
 async function getSandboxStatus(sandboxName: string): Promise<SandboxStatus> {
+  // When running inside the sandbox, openshell cannot query its own
+  // container.  The fact that this code is executing proves the sandbox
+  // is running, so report that directly.
+  if (isInsideSandbox()) {
+    return { name: sandboxName, running: true, uptime: null };
+  }
+
   try {
     const { stdout } = await execAsync(`openshell sandbox status ${sandboxName} --json`, {
       timeout: 5000,

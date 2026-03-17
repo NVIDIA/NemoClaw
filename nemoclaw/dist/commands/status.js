@@ -4,9 +4,18 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.cliStatus = cliStatus;
 const node_child_process_1 = require("node:child_process");
+const node_fs_1 = require("node:fs");
 const node_util_1 = require("node:util");
 const state_js_1 = require("../blueprint/state.js");
 const execAsync = (0, node_util_1.promisify)(node_child_process_1.exec);
+/**
+ * Detect whether we are running inside an OpenShell sandbox.
+ * Inside the sandbox the filesystem is restricted to /sandbox and /tmp,
+ * and the openshell CLI cannot query its own container status.
+ */
+function isInsideSandbox() {
+    return (0, node_fs_1.existsSync)("/sandbox") || process.env.OPENSHELL_SANDBOX === "1";
+}
 async function cliStatus(opts) {
     const { json: jsonOutput, logger } = opts;
     const state = (0, state_js_1.loadState)();
@@ -72,6 +81,12 @@ async function cliStatus(opts) {
     }
 }
 async function getSandboxStatus(sandboxName) {
+    // When running inside the sandbox, openshell cannot query its own
+    // container.  The fact that this code is executing proves the sandbox
+    // is running, so report that directly.
+    if (isInsideSandbox()) {
+        return { name: sandboxName, running: true, uptime: null };
+    }
     try {
         const { stdout } = await execAsync(`openshell sandbox status ${sandboxName} --json`, {
             timeout: 5000,
