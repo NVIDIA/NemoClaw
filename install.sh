@@ -15,6 +15,44 @@ error() { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*"; exit 1; }
 
 command_exists() { command -v "$1" &>/dev/null; }
 
+# Download a remote script to a temp file and verify its SHA-256 digest
+# before executing it.  Falls back to execution without verification when
+# the expected hash is empty (opt-in verification).
+#   $1 — URL
+#   $2 — expected SHA-256 hex digest (empty string to skip verification)
+#   $3… — interpreter and extra args (default: bash)
+fetch_and_verify() {
+  local url="$1" expected_hash="$2"
+  shift 2
+  local interpreter=("${@:-bash}")
+
+  local tmp
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' RETURN
+
+  curl -fsSL --retry 3 "$url" -o "$tmp" || error "Failed to download $url"
+
+  if [[ -n "$expected_hash" ]]; then
+    local actual_hash
+    if command_exists sha256sum; then
+      actual_hash="$(sha256sum "$tmp" | awk '{print $1}')"
+    elif command_exists shasum; then
+      actual_hash="$(shasum -a 256 "$tmp" | awk '{print $1}')"
+    else
+      warn "Neither sha256sum nor shasum found — skipping integrity check for $url"
+      "${interpreter[@]}" "$tmp"
+      return
+    fi
+
+    if [[ "$actual_hash" != "$expected_hash" ]]; then
+      error "Integrity check failed for $url\n  Expected: $expected_hash\n  Actual:   $actual_hash"
+    fi
+    info "Integrity verified for $(basename "$url") (SHA-256: ${actual_hash:0:16}…)"
+  fi
+
+  "${interpreter[@]}" "$tmp"
+}
+
 MIN_NODE_MAJOR=20
 MIN_NPM_MAJOR=10
 RECOMMENDED_NODE_MAJOR=22
@@ -89,7 +127,14 @@ install_nodejs() {
   fi
 
   info "Node.js not found — installing via nvm…"
-  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
+  # Pin nvm installer to a known version and verify its checksum.
+  # Update the hash when bumping NVM_VERSION.
+  local NVM_VERSION="v0.40.4"
+  local NVM_SHA256="4b7412c49960c7d31e8df72da90c1fb5b8cccb419ac99537b737028d497aba4f"
+  fetch_and_verify \
+    "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh" \
+    "$NVM_SHA256" \
+    bash
   ensure_nvm_loaded
   nvm install 24
   info "Node.js installed: $(node --version)"
@@ -138,14 +183,14 @@ install_or_upgrade_ollama() {
       info "Ollama v${current} meets minimum requirement (>= v${OLLAMA_MIN_VERSION})"
     else
       info "Ollama v${current:-unknown} is below v${OLLAMA_MIN_VERSION} — upgrading…"
-      curl -fsSL https://ollama.com/install.sh | sh
+      fetch_and_verify "https://ollama.com/install.sh" "" sh
       info "Ollama upgraded to $(get_ollama_version)"
     fi
   else
     # No ollama — only install if a GPU is present
     if detect_gpu; then
       info "GPU detected — installing Ollama…"
-      curl -fsSL https://ollama.com/install.sh | sh
+      fetch_and_verify "https://ollama.com/install.sh" "" sh
       info "Ollama installed: v$(get_ollama_version)"
     else
       warn "No GPU detected — skipping Ollama installation."
