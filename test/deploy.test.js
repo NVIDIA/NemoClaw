@@ -3,13 +3,15 @@
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
+const { spawnSync } = require("child_process");
 
 const {
   validateInstanceName,
-  buildSshCommand,
-  buildRsyncCommand,
   shellQuote,
+  SSH_OPTS,
 } = require("../bin/lib/deploy");
+
+const { runCaptureArgv } = require("../bin/lib/runner");
 
 describe("deploy helpers", () => {
   describe("validateInstanceName", () => {
@@ -52,40 +54,6 @@ describe("deploy helpers", () => {
     });
   });
 
-  describe("buildSshCommand", () => {
-    it("uses StrictHostKeyChecking=accept-new", () => {
-      const cmd = buildSshCommand("myhost", "ls");
-      assert.ok(cmd.includes("StrictHostKeyChecking=accept-new"));
-      assert.ok(!cmd.includes("StrictHostKeyChecking=no"));
-    });
-
-    it("quotes host and remote command", () => {
-      const cmd = buildSshCommand("myhost", "echo hello");
-      assert.ok(cmd.includes("'myhost'"));
-      assert.ok(cmd.includes("'echo hello'"));
-    });
-
-    it("works without remote command", () => {
-      const cmd = buildSshCommand("myhost");
-      assert.ok(cmd.includes("'myhost'"));
-      assert.ok(cmd.startsWith("ssh "));
-    });
-  });
-
-  describe("buildRsyncCommand", () => {
-    it("quotes source paths and destination", () => {
-      const cmd = buildRsyncCommand(["/tmp/a", "/tmp/b"], "host", "/dest/");
-      assert.ok(cmd.includes("'/tmp/a'"));
-      assert.ok(cmd.includes("'/tmp/b'"));
-      assert.ok(cmd.includes("'host:/dest/'"));
-    });
-
-    it("uses accept-new in ssh option", () => {
-      const cmd = buildRsyncCommand(["/tmp/a"], "host", "/dest/");
-      assert.ok(cmd.includes("accept-new"));
-    });
-  });
-
   describe("shellQuote", () => {
     it("wraps in single quotes", () => {
       assert.equal(shellQuote("hello"), "'hello'");
@@ -93,6 +61,66 @@ describe("deploy helpers", () => {
 
     it("escapes embedded single quotes", () => {
       assert.equal(shellQuote("it's"), "'it'\\''s'");
+    });
+  });
+
+  describe("SSH_OPTS", () => {
+    it("uses StrictHostKeyChecking=accept-new (TOFU)", () => {
+      assert.ok(SSH_OPTS.includes("StrictHostKeyChecking=accept-new"));
+    });
+
+    it("does not contain StrictHostKeyChecking=no", () => {
+      assert.ok(!SSH_OPTS.some((o) => o.includes("StrictHostKeyChecking=no")));
+    });
+  });
+
+  // ── Injection PoC ──────────────────────────────────────────────
+  // Prove that argv arrays (spawnSync without shell) treat shell
+  // metacharacters as literal text. These are the 5 injection methods
+  // that bash -c would execute but argv arrays do not.
+
+  describe("argv injection proof-of-concept", () => {
+    it("$() subshell is literal, not expanded", () => {
+      const r = spawnSync("echo", ["$(echo PWNED)"], { encoding: "utf-8", stdio: "pipe" });
+      assert.ok(r.stdout.includes("$(echo PWNED)"), "subshell must be literal");
+      assert.ok(!r.stdout.includes("PWNED\n"), "subshell must not expand");
+    });
+
+    it("backtick substitution is literal, not executed", () => {
+      const r = spawnSync("echo", ["`echo HACKED`"], { encoding: "utf-8", stdio: "pipe" });
+      assert.ok(r.stdout.includes("`echo HACKED`"), "backtick must be literal");
+    });
+
+    it("semicolon chaining is literal, not split", () => {
+      const r = spawnSync("echo", ["hello; echo INJECTED"], { encoding: "utf-8", stdio: "pipe" });
+      assert.ok(r.stdout.includes("hello; echo INJECTED"), "semicolon must be literal");
+    });
+
+    it("pipe is literal, not interpreted", () => {
+      const r = spawnSync("echo", ["data | cat /etc/passwd"], { encoding: "utf-8", stdio: "pipe" });
+      assert.ok(r.stdout.includes("data | cat /etc/passwd"), "pipe must be literal");
+    });
+
+    it("&& chaining is literal, not executed", () => {
+      const r = spawnSync("echo", ["ok && echo PWNED"], { encoding: "utf-8", stdio: "pipe" });
+      assert.ok(r.stdout.includes("ok && echo PWNED"), "&& must be literal");
+    });
+  });
+
+  describe("runCaptureArgv", () => {
+    it("captures stdout without shell interpretation", () => {
+      const out = runCaptureArgv("echo", ["hello", "world"]);
+      assert.equal(out, "hello world");
+    });
+
+    it("returns empty string on failure with ignoreError", () => {
+      const out = runCaptureArgv("false", [], { ignoreError: true });
+      assert.equal(out, "");
+    });
+
+    it("passes $() literally through argv", () => {
+      const out = runCaptureArgv("echo", ["$(whoami)"]);
+      assert.equal(out, "$(whoami)");
     });
   });
 });

@@ -37,6 +37,45 @@ function run(cmd, opts = {}) {
   return result;
 }
 
+/**
+ * Shell-free alternative to run(). Executes prog with an argv array via
+ * spawnSync(prog, args) — no bash, no string interpolation, no injection.
+ * Use this for any command that includes user-controlled values.
+ */
+function runArgv(prog, args, opts = {}) {
+  const result = spawnSync(prog, args, {
+    stdio: "inherit",
+    cwd: ROOT,
+    env: { ...process.env, ...opts.env },
+    ...opts,
+  });
+  if (result.status !== 0 && !opts.ignoreError) {
+    console.error(`  Command failed (exit ${result.status}): ${prog} ${args.join(" ").slice(0, 60)}`);
+    process.exit(result.status || 1);
+  }
+  return result;
+}
+
+/**
+ * Shell-free alternative to runCapture(). Uses execFileSync(prog, args)
+ * with no shell. Returns trimmed stdout.
+ */
+function runCaptureArgv(prog, args, opts = {}) {
+  const { execFileSync } = require("child_process");
+  try {
+    return execFileSync(prog, args, {
+      encoding: "utf-8",
+      cwd: ROOT,
+      env: { ...process.env, ...opts.env },
+      stdio: ["pipe", "pipe", "pipe"],
+      ...opts,
+    }).trim();
+  } catch (err) {
+    if (opts.ignoreError) return "";
+    throw err;
+  }
+}
+
 function runCapture(cmd, opts = {}) {
   try {
     return execSync(cmd, {
@@ -52,4 +91,4 @@ function runCapture(cmd, opts = {}) {
   }
 }
 
-module.exports = { ROOT, SCRIPTS, run, runCapture };
+module.exports = { ROOT, SCRIPTS, run, runCapture, runArgv, runCaptureArgv };

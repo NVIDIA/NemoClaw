@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Deploy helpers — input validation and shell-safe command builders.
+// Deploy helpers — input validation and shell-free command builders.
+//
+// SSH/rsync/scp use runArgv() (argv arrays, no shell) to eliminate command
+// injection at the root cause. shellQuote() is retained for call sites that
+// still need run() (e.g. brev CLI with shell features).
+
+const { runArgv } = require("./runner");
 
 const INSTANCE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
@@ -14,32 +20,44 @@ function validateInstanceName(name) {
   }
 }
 
-function buildSshCommand(host, remoteCmd) {
-  const args = [
-    "ssh",
-    "-o", "StrictHostKeyChecking=accept-new",
-    "-o", "LogLevel=ERROR",
-  ];
-  args.push(shellQuote(host));
-  if (remoteCmd) args.push(shellQuote(remoteCmd));
-  return args.join(" ");
+const SSH_OPTS = ["-o", "StrictHostKeyChecking=accept-new", "-o", "LogLevel=ERROR"];
+
+function runSsh(host, remoteCmd, opts = {}) {
+  const args = [...SSH_OPTS];
+  if (opts.tty) args.unshift("-t");
+  args.push(host);
+  if (remoteCmd) args.push(remoteCmd);
+  return runArgv("ssh", args, opts);
 }
 
-function buildRsyncCommand(sources, host, dest) {
-  const sshOpt = '"ssh -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR"';
-  const quotedSources = sources.map(shellQuote).join(" ");
-  return `rsync -az --delete --exclude node_modules --exclude .git --exclude src -e ${sshOpt} ${quotedSources} ${shellQuote(host + ":" + dest)}`;
+function runScp(src, destHostPath, opts = {}) {
+  const args = ["-q", ...SSH_OPTS, src, destHostPath];
+  return runArgv("scp", args, opts);
+}
+
+function runRsync(sources, host, dest, opts = {}) {
+  const args = [
+    "-az", "--delete",
+    "--exclude", "node_modules",
+    "--exclude", ".git",
+    "--exclude", "src",
+    "-e", "ssh " + SSH_OPTS.join(" "),
+    ...sources,
+    `${host}:${dest}`,
+  ];
+  return runArgv("rsync", args, opts);
 }
 
 function shellQuote(s) {
-  // Simple single-quote wrapping — escape any embedded single quotes
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
 module.exports = {
   INSTANCE_NAME_RE,
   validateInstanceName,
-  buildSshCommand,
-  buildRsyncCommand,
+  runSsh,
+  runScp,
+  runRsync,
   shellQuote,
+  SSH_OPTS,
 };
