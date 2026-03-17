@@ -123,6 +123,24 @@ $ ./scripts/walkthrough.sh
 
 This opens a split tmux session with the TUI on the left and the agent on the right.
 
+## Policy Presets
+
+Presets extend the baseline network policy with additional endpoints for common services.
+Apply a preset with `nemoclaw <name> policy-add` and list available presets with `nemoclaw <name> policy-list`.
+
+| Preset | Endpoints | Use case |
+|---|---|---|
+| `discord` | `discord.com`, `discordapp.com` | Discord bot and webhook access |
+| `docker` | `registry-1.docker.io`, `auth.docker.io`, `index.docker.io` | Docker Hub image pulls |
+| `github` | `api.github.com`, `github.com`, `raw.githubusercontent.com`, `uploads.github.com` | GitHub REST API, raw file content, and asset uploads |
+| `huggingface` | `huggingface.co`, `cdn-lfs.huggingface.co`, `api-inference.huggingface.co` | Hugging Face Hub and Inference API |
+| `jira` | `*.atlassian.net` | Jira issue tracking |
+| `npm` | `registry.npmjs.org` | npm package registry |
+| `outlook` | `graph.microsoft.com`, `login.microsoftonline.com`, `outlook.office365.com`, `outlook.office.com` | Microsoft Graph and Outlook |
+| `pypi` | `pypi.org`, `files.pythonhosted.org` | Python package index |
+| `slack` | `slack.com`, `api.slack.com`, `hooks.slack.com` | Slack API and webhooks |
+| `telegram` | `api.telegram.org` | Telegram Bot API |
+
 ## Modifying the Policy
 
 ### Static Changes
