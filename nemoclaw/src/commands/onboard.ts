@@ -143,7 +143,7 @@ function showConfig(config: NemoClawOnboardConfig, logger: PluginLogger): void {
 async function promptEndpoint(
   ollama: { installed: boolean; running: boolean },
 ): Promise<EndpointType> {
-  return (await promptSelect("Select your inference endpoint:", [
+  const options = [
     {
       label: "NVIDIA Build (build.nvidia.com)",
       value: "build",
@@ -154,22 +154,29 @@ async function promptEndpoint(
       value: "ncp",
       hint: "dedicated capacity, SLA-backed",
     },
-    {
-      label: "Self-hosted NIM [experimental]",
-      value: "nim-local",
-      hint: "experimental — your own NIM container deployment",
-    },
-    {
-      label: "Local vLLM [experimental]",
-      value: "vllm",
-      hint: "experimental — local development",
-    },
-    {
-      label: "Local Ollama [experimental]",
-      value: "ollama",
-      hint: `experimental — ${ollama.installed ? "installed locally" : "localhost:11434"}`,
-    },
-  ])) as EndpointType;
+  ];
+
+  if (isExperimentalEnabled()) {
+    options.push(
+      {
+        label: "Self-hosted NIM [experimental]",
+        value: "nim-local",
+        hint: "experimental — your own NIM container deployment",
+      },
+      {
+        label: "Local vLLM [experimental]",
+        value: "vllm",
+        hint: "experimental — local development",
+      },
+      {
+        label: "Local Ollama [experimental]",
+        value: "ollama",
+        hint: `experimental — ${ollama.installed ? "installed locally" : "localhost:11434"}`,
+      },
+    );
+  }
+
+  return (await promptSelect("Select your inference endpoint:", options)) as EndpointType;
 }
 
 function execOpenShell(args: string[]): string {

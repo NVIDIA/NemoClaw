@@ -188,8 +188,8 @@ function listSandboxes() {
 
 function sandboxConnect(sandboxName) {
   // Ensure port forward is alive before connecting
-  run(`openshell forward start --background 18789 ${sandboxName} 2>/dev/null || true`, { ignoreError: true });
-  run(`openshell sandbox connect ${sandboxName}`);
+  run(`openshell forward start --background 18789 "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+  run(`openshell sandbox connect "${sandboxName}"`);
 }
 
 function sandboxStatus(sandboxName) {
@@ -204,7 +204,7 @@ function sandboxStatus(sandboxName) {
   }
 
   // openshell info
-  run(`openshell sandbox get ${sandboxName} 2>/dev/null || true`, { ignoreError: true });
+  run(`openshell sandbox get "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
 
   // NIM health
   const nimStat = nim.nimStatus(sandboxName);
@@ -217,7 +217,7 @@ function sandboxStatus(sandboxName) {
 
 function sandboxLogs(sandboxName, follow) {
   const followFlag = follow ? " --follow" : "";
-  run(`openshell sandbox logs ${sandboxName}${followFlag}`);
+  run(`openshell sandbox logs "${sandboxName}"${followFlag}`);
 }
 
 async function sandboxPolicyAdd(sandboxName) {
@@ -260,7 +260,7 @@ function sandboxDestroy(sandboxName) {
   nim.stopNimContainer(sandboxName);
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
-  run(`openshell sandbox delete ${sandboxName} 2>/dev/null || true`, { ignoreError: true });
+  run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
 
   registry.removeSandbox(sandboxName);
   console.log(`  ✓ Sandbox '${sandboxName}' destroyed`);

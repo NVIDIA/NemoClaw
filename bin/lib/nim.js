@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// NIM container management ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â pull, start, stop, health-check NIM images.
+// NIM container management — pull, start, stop, health-check NIM images.
 
 const { run, runCapture } = require("./runner");
 const { getCredential } = require("./credentials");
@@ -25,7 +25,7 @@ function listModels() {
 }
 
 function detectGpu() {
-  // Try NVIDIA first ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â query VRAM
+  // Try NVIDIA first — query VRAM
   try {
     const output = runCapture(
       "nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits",
@@ -47,14 +47,14 @@ function detectGpu() {
     }
   } catch {}
 
-  // Fallback: DGX Spark (GB10) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â VRAM not queryable due to unified memory architecture
+  // Fallback: DGX Spark (GB10) — VRAM not queryable due to unified memory architecture
   try {
     const nameOutput = runCapture(
       "nvidia-smi --query-gpu=name --format=csv,noheader,nounits",
       { ignoreError: true }
     );
     if (nameOutput && nameOutput.includes("GB10")) {
-      // GB10 has 128GB unified memory shared with Grace CPU ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â use system RAM
+      // GB10 has 128GB unified memory shared with Grace CPU — use system RAM
       let totalMemoryMB = 0;
       try {
         const memLine = runCapture("free -m | awk '/Mem:/ {print $2}'", { ignoreError: true });
@@ -91,7 +91,7 @@ function detectGpu() {
             memoryMB = parseInt(vramMatch[1], 10);
             if (vramMatch[2].toUpperCase() === "GB") memoryMB *= 1024;
           } else {
-            // Apple Silicon shares system RAM ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â read total memory
+            // Apple Silicon shares system RAM — read total memory
             try {
               const memBytes = runCapture("sysctl -n hw.memsize", { ignoreError: true });
               if (memBytes) memoryMB = Math.floor(parseInt(memBytes, 10) / 1024 / 1024);

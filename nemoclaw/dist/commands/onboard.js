@@ -116,7 +116,7 @@ function showConfig(config, logger) {
     logger.info(`  Onboarded:   ${config.onboardedAt}`);
 }
 async function promptEndpoint(ollama) {
-    return (await (0, prompt_js_1.promptSelect)("Select your inference endpoint:", [
+    const options = [
         {
             label: "NVIDIA Build (build.nvidia.com)",
             value: "build",
@@ -127,22 +127,23 @@ async function promptEndpoint(ollama) {
             value: "ncp",
             hint: "dedicated capacity, SLA-backed",
         },
-        {
+    ];
+    if (isExperimentalEnabled()) {
+        options.push({
             label: "Self-hosted NIM [experimental]",
             value: "nim-local",
             hint: "experimental — your own NIM container deployment",
-        },
-        {
+        }, {
             label: "Local vLLM [experimental]",
             value: "vllm",
             hint: "experimental — local development",
-        },
-        {
+        }, {
             label: "Local Ollama [experimental]",
             value: "ollama",
             hint: `experimental — ${ollama.installed ? "installed locally" : "localhost:11434"}`,
-        },
-    ]));
+        });
+    }
+    return (await (0, prompt_js_1.promptSelect)("Select your inference endpoint:", options));
 }
 function execOpenShell(args) {
     return (0, node_child_process_1.execFileSync)("openshell", args, {
