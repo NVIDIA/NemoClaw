@@ -639,11 +639,12 @@ async function setupNim(sandboxName, gpu) {
         console.log(`  Pulling NIM image for ${model}...`);
         nim.pullNimImage(model);
 
+        const nimPort = nim.DEFAULT_NIM_PORT;
         console.log("  Starting NIM container...");
-        nimContainer = nim.startNimContainer(sandboxName, model);
+        nimContainer = nim.startNimContainer(sandboxName, model, nimPort);
 
         console.log("  Waiting for NIM to become healthy...");
-        if (!nim.waitForNimHealth()) {
+        if (!nim.waitForNimHealth(nimPort)) {
           console.error("  NIM failed to start. Falling back to cloud API.");
           model = null;
           nimContainer = null;
@@ -701,7 +702,10 @@ async function setupNim(sandboxName, gpu) {
     console.log(`  Using NVIDIA Endpoint API with model: ${model}`);
   }
 
-  registry.updateSandbox(sandboxName, { model, provider, nimContainer });
+  const nimPort = selected && selected.key === "nim" && nimContainer ? nim.DEFAULT_NIM_PORT : null;
+  const updates = { model, provider, nimContainer };
+  if (nimPort != null) updates.nimPort = nimPort;
+  registry.updateSandbox(sandboxName, updates);
 
   return { model, provider };
 }
