@@ -21,6 +21,8 @@
     "nemoclaw-blueprint/",
     "scripts/",
     "Dockerfile",
+    "Dockerfile.nullclaw",
+    "Dockerfile.nullhub",
     ".dockerignore"
   ],
   "engines": {

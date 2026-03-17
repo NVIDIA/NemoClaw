@@ -47,6 +47,19 @@ The script installs Node.js if it is not already present, then runs the guided o
 $ curl -fsSL https://nvidia.com/nemoclaw.sh | bash
 ```
 
+To launch the experimental NullClaw runtime inside the sandbox instead of OpenClaw:
+
+```console
+$ nemoclaw onboard --runtime nullclaw
+```
+
+This keeps OpenShell-managed inference routing in place and, by default, forwards the NullHub surface on port `19800`.
+If you want a headless NullClaw sandbox without NullHub, use:
+
+```console
+$ nemoclaw onboard --runtime nullclaw --surface none
+```
+
 When the install completes, a summary confirms the running environment:
 
 ```
@@ -68,6 +81,14 @@ Connect to the sandbox, then chat with the agent through the TUI or the CLI.
 
 ```console
 $ nemoclaw my-assistant connect
+```
+
+If you onboarded with `--runtime nullclaw`, NemoClaw uses NullHub by default as the local UI surface and keeps the managed NullClaw instance wired to `inference.local`.
+After connecting, you can inspect the local hub or use the NullClaw CLI directly:
+
+```console
+sandbox@my-assistant:~$ nullhub status
+sandbox@my-assistant:~$ nullclaw agent -m "hello" -s test
 ```
 
 #### OpenClaw TUI
