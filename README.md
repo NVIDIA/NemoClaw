@@ -180,6 +180,49 @@ Refer to the documentation for more information on NemoClaw.
 - [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html): egress control and policy customization
 - [CLI Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html): full command reference
 
+---
+
+## Observability
+
+NemoClaw includes an optional observability layer for tracking agent execution and blueprint performance.
+
+### Enabling Metrics
+
+Metrics are disabled by default. To enable them, set the `NEMOCLAW_METRICS_ENABLED` environment variable:
+
+```bash
+export NEMOCLAW_METRICS_ENABLED=true
+export NEMOCLAW_METRICS_PORT=9090  # Optional, defaults to 9090
+```
+
+### Accessing Metrics
+
+When enabled, NemoClaw starts a lightweight Prometheus-compatible metrics server. You can view the metrics by curling the `/metrics` endpoint:
+
+```bash
+curl http://localhost:9090/metrics
+```
+
+### Example Output
+
+```text
+# HELP blueprint_exec_total Total count of blueprint_exec
+# TYPE blueprint_exec_total counter
+blueprint_exec_total{action="apply",profile="default",status="success"} 1
+
+# HELP blueprint_exec_latency_seconds Latency histogram for blueprint_exec
+# TYPE blueprint_exec_latency_seconds histogram
+blueprint_exec_latency_seconds_bucket{action="apply",profile="default",status="success",le="0.1"} 0
+blueprint_exec_latency_seconds_bucket{action="apply",profile="default",status="success",le="0.5"} 0
+blueprint_exec_latency_seconds_bucket{action="apply",profile="default",status="success",le="1"} 0
+blueprint_exec_latency_seconds_bucket{action="apply",profile="default",status="success",le="5"} 1
+blueprint_exec_latency_seconds_bucket{action="apply",profile="default",status="success",le="+Inf"} 1
+blueprint_exec_latency_seconds_sum{action="apply",profile="default",status="success"} 3.42
+blueprint_exec_latency_seconds_count{action="apply",profile="default",status="success"} 1
+```
+
+---
+
 ## License
 
 This project is licensed under the [Apache License 2.0](LICENSE).
