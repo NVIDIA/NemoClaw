@@ -26,7 +26,7 @@ describe("nim", () => {
     it("returns correct image for known model", () => {
       assert.equal(
         nim.getImageForModel("nvidia/nemotron-3-nano-30b-a3b"),
-        "nvcr.io/nim/nvidia/nemotron-3-nano-30b-a3b:latest"
+        "nvcr.io/nim/nvidia/nemotron-3-nano:latest"
       );
     });
 
