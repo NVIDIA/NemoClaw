@@ -21,7 +21,8 @@ const { execSync, spawn } = require("child_process");
 
 function resolveOpenshell() {
   try {
-    return execSync("command -v openshell", { encoding: "utf-8" }).trim();
+    const found = execSync("command -v openshell", { encoding: "utf-8" }).trim();
+    if (found.startsWith("/")) return found;
   } catch {}
   const home = process.env.HOME || "/tmp";
   const candidates = [
