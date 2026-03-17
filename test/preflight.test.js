@@ -8,9 +8,36 @@ const net = require("net");
 const { checkPortAvailable } = require("../bin/lib/preflight");
 
 describe("checkPortAvailable", () => {
-  it("returns ok when lsof output is empty", async () => {
-    const result = await checkPortAvailable(18789, { lsofOutput: "" });
+  it("falls through to net probe when lsof output is empty", async () => {
+    // Empty lsof output is not authoritative (non-root can't see root-owned
+    // listeners), so the function must fall through to the net probe.
+    // Use a guaranteed-free port so the net probe confirms availability.
+    const freePort = await new Promise((resolve) => {
+      const srv = net.createServer();
+      srv.listen(0, "127.0.0.1", () => {
+        const port = srv.address().port;
+        srv.close(() => resolve(port));
+      });
+    });
+    const result = await checkPortAvailable(freePort, { lsofOutput: "" });
     assert.deepEqual(result, { ok: true });
+  });
+
+  it("net probe catches occupied port even when lsof returns empty", async () => {
+    // Simulates the non-root-can't-see-root-listener scenario:
+    // lsof returns empty, but net probe detects the port is taken.
+    const srv = net.createServer();
+    const port = await new Promise((resolve) => {
+      srv.listen(0, "127.0.0.1", () => resolve(srv.address().port));
+    });
+    try {
+      const result = await checkPortAvailable(port, { lsofOutput: "" });
+      assert.equal(result.ok, false);
+      assert.equal(result.process, "unknown");
+      assert.ok(result.reason.includes("EADDRINUSE"));
+    } finally {
+      srv.close();
+    }
   });
 
   it("parses process and PID from lsof output", async () => {
