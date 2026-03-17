@@ -139,7 +139,7 @@ install_nodejs() {
   bash "$nvm_tmp"
   rm -f "$nvm_tmp"
   ensure_nvm_loaded
-  nvm install 22
+  nvm install "$RECOMMENDED_NODE_MAJOR"
   info "Node.js installed: $(node --version)"
 }
 
@@ -319,7 +319,7 @@ verify_nemoclaw() {
     return 0
   else
     warn "Could not locate the nemoclaw executable."
-    warn "Try running:  npm install -g git+https://github.com/NVIDIA/NemoClaw.git"
+    warn "Try running:  npm install -g \"git+https://github.com/NVIDIA/NemoClaw.git\""
   fi
 
   error "Installation failed: nemoclaw binary not found."
