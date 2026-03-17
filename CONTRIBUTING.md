@@ -2,6 +2,15 @@
 
 Thank you for your interest in contributing to NVIDIA NemoClaw. This guide covers how to set up your development environment, run tests, and submit changes.
 
+## Reporting issues and submitting PRs
+
+Use the GitHub issue and pull request templates provided in `.github/` — they
+ensure every submission includes the context maintainers need to triage and
+review efficiently. Security findings should use the **Security Bug Report**
+issue template.
+
+## Signing Your Work
+
 ## Before You Open an Issue
 
 Open an issue when you encounter one of the following situations.
