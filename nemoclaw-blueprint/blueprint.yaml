@@ -11,6 +11,7 @@ profiles:
   - ncp
   - nim-local
   - vllm
+  - ollama
 
 description: |
   NemoClaw blueprint: orchestrates OpenClaw sandbox creation, migration,
@@ -53,6 +54,20 @@ components:
         model: "nvidia/nemotron-3-nano-30b-a3b"
         credential_env: "OPENAI_API_KEY"
         credential_default: "dummy"
+
+      # Ollama: local (http://host.openshell.internal:11434/v1) or cloud
+      # (https://ollama.com/v1). dynamic_endpoint: true lets the runner accept
+      # an --endpoint-url override so the same profile serves both cases.
+      # Local instances use credential_default "ollama"; cloud requires a real
+      # OLLAMA_API_KEY from ollama.com/settings/api-keys.
+      ollama:
+        provider_type: "openai"
+        provider_name: "ollama-local"
+        endpoint: "http://host.openshell.internal:11434/v1"
+        model: "llama3.2"
+        credential_env: "OLLAMA_API_KEY"
+        credential_default: "ollama"
+        dynamic_endpoint: true
 
   policy:
     base: "sandboxes/openclaw/policy.yaml"

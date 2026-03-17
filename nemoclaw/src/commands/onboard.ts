@@ -80,8 +80,9 @@ function resolveCredentialEnv(endpointType: EndpointType): string {
     case "nim-local":
       return "NIM_API_KEY";
     case "vllm":
-    case "ollama":
       return "OPENAI_API_KEY";
+    case "ollama":
+      return "OLLAMA_API_KEY";
   }
 }
 
@@ -89,7 +90,7 @@ function isNonInteractive(opts: OnboardOptions): boolean {
   if (!opts.endpoint || !opts.model) return false;
   const ep = opts.endpoint as EndpointType;
   if (endpointRequiresApiKey(ep) && !opts.apiKey) return false;
-  if ((ep === "ncp" || ep === "nim-local" || ep === "custom") && !opts.endpointUrl) return false;
+  if ((ep === "ncp" || ep === "nim-local" || ep === "custom" || ep === "ollama") && !opts.endpointUrl) return false;
   if (ep === "ncp" && !opts.ncpPartner) return false;
   return true;
 }
@@ -165,9 +166,9 @@ async function promptEndpoint(
       hint: "experimental — local development",
     },
     {
-      label: "Local Ollama [experimental]",
+      label: "Ollama (local or cloud) [experimental]",
       value: "ollama",
-      hint: `experimental — ${ollama.installed ? "installed locally" : "localhost:11434"}`,
+      hint: `experimental — localhost:11434 or any remote Ollama endpoint`,
     },
   ])) as EndpointType;
 }
@@ -252,7 +253,12 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
       endpointUrl = `${HOST_GATEWAY_URL}:8000/v1`;
       break;
     case "ollama":
-      endpointUrl = opts.endpointUrl ?? `${HOST_GATEWAY_URL}:11434/v1`;
+      endpointUrl =
+        opts.endpointUrl ??
+        (await promptInput(
+          "Ollama endpoint URL (local or remote cloud instance)",
+          `${HOST_GATEWAY_URL}:11434/v1`,
+        ));
       break;
     case "custom":
       endpointUrl = opts.endpointUrl ?? (await promptInput("Custom endpoint URL"));
@@ -265,13 +271,25 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
   }
 
   const credentialEnv = resolveCredentialEnv(endpointType);
-  const requiresApiKey = endpointRequiresApiKey(endpointType);
+  // Cloud Ollama (https://) requires an API key; local Ollama (http://) does not.
+  const isCloudOllama = endpointType === "ollama" && endpointUrl.startsWith("https://");
+  const requiresApiKey = endpointRequiresApiKey(endpointType) || isCloudOllama;
 
   // Step 3: Credential
   let apiKey = defaultCredentialForEndpoint(endpointType);
   if (requiresApiKey) {
     if (opts.apiKey) {
       apiKey = opts.apiKey;
+    } else if (isCloudOllama) {
+      const envKey = process.env.OLLAMA_API_KEY;
+      if (envKey) {
+        logger.info(`Detected OLLAMA_API_KEY in environment (${maskApiKey(envKey)})`);
+        const useEnv = nonInteractive ? true : await promptConfirm("Use this key?");
+        apiKey = useEnv ? envKey : await promptInput("Enter your Ollama Cloud API key");
+      } else {
+        logger.info("Get an API key from: https://ollama.com/settings/api-keys");
+        apiKey = await promptInput("Enter your Ollama Cloud API key");
+      }
     } else {
       const envKey = process.env.NVIDIA_API_KEY;
       if (envKey) {
@@ -324,14 +342,29 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
   if (opts.model) {
     model = opts.model;
   } else {
-    // Build model options: prefer Nemotron models from the endpoint, fall back to defaults
-    const nemotronModels = validation.models.filter((m) => m.includes("nemotron"));
-    const modelOptions =
-      nemotronModels.length > 0
-        ? nemotronModels.map((id) => ({ label: id, value: id }))
-        : DEFAULT_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }));
+    const isCloudOllamaEndpoint = endpointType === "ollama" && endpointUrl.startsWith("https://");
 
-    model = await promptSelect("Select your primary model:", modelOptions);
+    if (isCloudOllamaEndpoint) {
+      // For Ollama Cloud: show cloud-aware model list (including Nemotron Super cloud variant)
+      const cloudModels = validation.models.length > 0
+        ? validation.models.map((id) => ({ label: id, value: id }))
+        : [
+            { label: "Nemotron 3 Super 120B — cloud (nemotron-3-super:cloud)", value: "nemotron-3-super:cloud" },
+            { label: "GPT-OSS 120B — cloud (gpt-oss:120b)", value: "gpt-oss:120b" },
+            { label: "Llama 3.1 70B (llama3.1:70b)", value: "llama3.1:70b" },
+            { label: "Llama 3.2 3B (llama3.2)", value: "llama3.2" },
+          ];
+      model = await promptSelect("Select your primary model:", cloudModels);
+    } else {
+      // Build model options: prefer Nemotron models from the endpoint, fall back to defaults
+      const nemotronModels = validation.models.filter((m) => m.includes("nemotron"));
+      const modelOptions =
+        nemotronModels.length > 0
+          ? nemotronModels.map((id) => ({ label: id, value: id }))
+          : DEFAULT_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }));
+
+      model = await promptSelect("Select your primary model:", modelOptions);
+    }
   }
 
   // Step 6: Resolve profile

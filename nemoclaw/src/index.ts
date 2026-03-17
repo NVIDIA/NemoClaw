@@ -244,6 +244,65 @@ export default function register(api: OpenClawPluginApi): void {
     ],
   });
 
+  // Register Ollama provider when onboarded to an Ollama endpoint (local or cloud).
+  // Uses the OpenAI-compatible /v1 API. Cloud endpoint: https://ollama.com/v1.
+  if (onboardCfg?.endpointType === "ollama") {
+    const isCloud = onboardCfg.endpointUrl.startsWith("https://");
+    const ollamaEndpointLabel = isCloud ? `cloud (${onboardCfg.endpointUrl})` : "local";
+    api.registerProvider({
+      id: "ollama",
+      label: `Ollama (${ollamaEndpointLabel})`,
+      docsPath: "https://ollama.com/library",
+      aliases: ["ollama"],
+      envVars: ["OLLAMA_API_KEY"],
+      models: {
+        chat: [
+          // Cloud-only models (offloaded to Ollama's cloud service)
+          ...(isCloud
+            ? [
+                {
+                  id: "nemotron-3-super:cloud",
+                  label: "Nemotron 3 Super 120B (Ollama Cloud)",
+                  contextWindow: 131072,
+                  maxOutput: 8192,
+                },
+                {
+                  id: "gpt-oss:120b",
+                  label: "GPT-OSS 120B (Ollama Cloud)",
+                  contextWindow: 131072,
+                  maxOutput: 8192,
+                },
+              ]
+            : []),
+          // Models available on both local and cloud
+          { id: "llama3.2", label: "Llama 3.2 3B", contextWindow: 131072, maxOutput: 8192 },
+          { id: "llama3.2:1b", label: "Llama 3.2 1B", contextWindow: 131072, maxOutput: 8192 },
+          { id: "llama3.1", label: "Llama 3.1 8B", contextWindow: 131072, maxOutput: 8192 },
+          { id: "llama3.1:70b", label: "Llama 3.1 70B", contextWindow: 131072, maxOutput: 8192 },
+          { id: "mistral", label: "Mistral 7B", contextWindow: 32768, maxOutput: 4096 },
+          { id: "mistral-nemo", label: "Mistral Nemo 12B", contextWindow: 131072, maxOutput: 4096 },
+          { id: "gemma3", label: "Gemma 3 4B", contextWindow: 131072, maxOutput: 8192 },
+          { id: "gemma3:27b", label: "Gemma 3 27B", contextWindow: 131072, maxOutput: 8192 },
+          { id: "qwen2.5", label: "Qwen 2.5 7B", contextWindow: 131072, maxOutput: 8192 },
+          { id: "qwen2.5:72b", label: "Qwen 2.5 72B", contextWindow: 131072, maxOutput: 8192 },
+          { id: "phi4", label: "Phi-4 14B", contextWindow: 16384, maxOutput: 4096 },
+          { id: "deepseek-r1", label: "DeepSeek R1 7B", contextWindow: 131072, maxOutput: 8192 },
+          { id: "deepseek-r1:70b", label: "DeepSeek R1 70B", contextWindow: 131072, maxOutput: 8192 },
+        ],
+      },
+      auth: [
+        {
+          type: "bearer",
+          envVar: "OLLAMA_API_KEY",
+          headerName: "Authorization",
+          label: isCloud
+            ? "Ollama Cloud API key (OLLAMA_API_KEY) — from ollama.com/settings/api-keys"
+            : "Ollama API key (OLLAMA_API_KEY) — use 'ollama' for local instances",
+        },
+      ],
+    });
+  }
+
   const bannerEndpoint = onboardCfg?.endpointType ?? "build.nvidia.com";
   const bannerModel = onboardCfg?.model ?? "nvidia/nemotron-3-super-120b-a12b";
 
