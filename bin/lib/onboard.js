@@ -196,25 +196,16 @@ async function setupNim(sandboxName, gpu) {
   let provider = "nvidia-nim";
   let nimContainer = null;
 
-  // Detect local inference options
+  // Detect local inference options (inform, but never auto-select)
   const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
   const ollamaRunning = !!runCapture("curl -sf http://localhost:11434/api/tags 2>/dev/null", { ignoreError: true });
   const vllmRunning = !!runCapture("curl -sf http://localhost:8000/v1/models 2>/dev/null", { ignoreError: true });
 
-  // Auto-select if a local inference engine is already running
   if (vllmRunning) {
-    console.log("  ✓ vLLM detected on localhost:8000 — using it");
-    provider = "vllm-local";
-    model = "vllm-local";
-    registry.updateSandbox(sandboxName, { model, provider, nimContainer });
-    return { model, provider };
+    console.log("  ⓘ Detected vLLM running on localhost:8000");
   }
   if (ollamaRunning) {
-    console.log("  ✓ Ollama detected on localhost:11434 — using it");
-    provider = "ollama-local";
-    model = "nemotron-3-nano";
-    registry.updateSandbox(sandboxName, { model, provider, nimContainer });
-    return { model, provider };
+    console.log("  ⓘ Detected Ollama running on localhost:11434");
   }
 
   // Build options list dynamically

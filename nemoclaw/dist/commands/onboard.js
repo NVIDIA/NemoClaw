@@ -149,38 +149,35 @@ async function cliOnboard(opts) {
     else {
         const ollama = detectOllama();
         if (ollama.running) {
-            logger.info("Detected Ollama on localhost:11434. Using it for onboarding.");
-            endpointType = "ollama";
+            logger.info("Detected Ollama running on localhost:11434.");
         }
-        else {
-            endpointType = (await (0, prompt_js_1.promptSelect)("Select your inference endpoint:", [
-                {
-                    label: "NVIDIA Build (build.nvidia.com)",
-                    value: "build",
-                    hint: "recommended — zero infra, free credits",
-                },
-                {
-                    label: "NVIDIA Cloud Partner (NCP)",
-                    value: "ncp",
-                    hint: "dedicated capacity, SLA-backed",
-                },
-                {
-                    label: "Self-hosted NIM",
-                    value: "nim-local",
-                    hint: "your own NIM container deployment",
-                },
-                {
-                    label: "Local vLLM",
-                    value: "vllm",
-                    hint: "local development",
-                },
-                {
-                    label: "Local Ollama",
-                    value: "ollama",
-                    hint: ollama.installed ? "installed locally" : "localhost:11434",
-                },
-            ]));
-        }
+        endpointType = (await (0, prompt_js_1.promptSelect)("Select your inference endpoint:", [
+            {
+                label: "NVIDIA Build (build.nvidia.com)",
+                value: "build",
+                hint: "recommended — zero infra, free credits",
+            },
+            {
+                label: "NVIDIA Cloud Partner (NCP)",
+                value: "ncp",
+                hint: "dedicated capacity, SLA-backed",
+            },
+            {
+                label: "Self-hosted NIM",
+                value: "nim-local",
+                hint: "your own NIM container deployment",
+            },
+            {
+                label: "Local vLLM",
+                value: "vllm",
+                hint: "local development",
+            },
+            {
+                label: "Local Ollama",
+                value: "ollama",
+                hint: ollama.running ? "detected — running on localhost:11434" : ollama.installed ? "installed locally" : "localhost:11434",
+            },
+        ]));
     }
     // Step 2: Endpoint URL resolution
     let endpointUrl;
