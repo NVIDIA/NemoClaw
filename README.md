@@ -45,7 +45,7 @@ Download and run the installer script.
 The script installs Node.js if it is not already present, then runs the guided onboard wizard to create a sandbox, configure inference, and apply security policies.
 
 ```console
-$ curl -fsSL https://nvidia.com/nemoclaw.sh | bash
+$ curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/install.sh | bash
 ```
 
 When the install completes, a summary confirms the running environment:
