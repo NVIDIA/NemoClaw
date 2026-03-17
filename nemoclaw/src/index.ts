@@ -197,11 +197,13 @@ export default function register(api: OpenClawPluginApi): void {
 
   // 3. Register Metrics Service if enabled
   if (metrics.isEnabled()) {
+    let server: ReturnType<typeof createServer> | undefined;
+
     api.registerService({
       id: "nemoclaw-metrics",
       start: ({ logger }) => {
         const port = Number(process.env.NEMOCLAW_METRICS_PORT || 9090);
-        const server = createServer((req, res) => {
+        server = createServer((req, res) => {
           if (req.url === "/metrics") {
             res.writeHead(200, { "Content-Type": "text/plain" });
             res.end(metrics.getPrometheusMetrics());
@@ -213,13 +215,12 @@ export default function register(api: OpenClawPluginApi): void {
         server.listen(port, "0.0.0.0", () => {
           logger.info(`NemoClaw metrics server listening on port ${port}`);
         });
-        (server as any)._nemoclaw_server = server;
       },
       stop: ({ logger }) => {
-        // Since we can't easily get the server instance back from registerService's start
-        // unless we store it somewhere globally or use a closure.
-        // For simplicity in this plugin context, we'll just log.
-        logger.info("NemoClaw metrics server stopping");
+        if (server) {
+          server.close();
+          logger.info("NemoClaw metrics server stopped");
+        }
       },
     });
   }

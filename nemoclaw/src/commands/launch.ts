@@ -8,6 +8,7 @@ import { verifyBlueprintDigest, checkCompatibility } from "../blueprint/verify.j
 import { execBlueprint } from "../blueprint/exec.js";
 import { loadState, saveState } from "../blueprint/state.js";
 import { detectHostOpenClaw } from "./migrate.js";
+import { metrics } from "../observability/metrics.js";
 
 export interface LaunchOptions {
   force: boolean;
@@ -105,6 +106,8 @@ export async function cliLaunch(opts: LaunchOptions): Promise<void> {
     logger.error(`Blueprint apply failed: ${applyResult.output}`);
     return;
   }
+
+  metrics.incrementCounter("sandbox_operation_total", { operation: "launch" });
 
   // Save state
   saveState({
