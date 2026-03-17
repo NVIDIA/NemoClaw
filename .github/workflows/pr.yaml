@@ -68,6 +68,10 @@ jobs:
           npm install
           npm run build
 
+      - name: Install MCP docs server dependencies
+        working-directory: mcp-docs-server
+        run: npm install
+
       - name: Run all unit tests with coverage
         run: npx vitest run --coverage
 
