@@ -27,6 +27,29 @@ version_gte() {
   return 0
 }
 
+# Ensure nvm environment is loaded in the current shell.
+ensure_nvm_loaded() {
+  if [[ -z "${NVM_DIR:-}" ]]; then
+    export NVM_DIR="$HOME/.nvm"
+  fi
+  if [[ -s "$NVM_DIR/nvm.sh" ]]; then
+    \. "$NVM_DIR/nvm.sh"
+  fi
+}
+
+# Refresh PATH so that npm global bin is discoverable.
+# After nvm installs Node.js the global bin lives under the nvm prefix,
+# which may not yet be on PATH in the current session.
+refresh_path() {
+  ensure_nvm_loaded
+
+  local npm_bin
+  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  if [[ -n "$npm_bin" && -d "$npm_bin" && ":$PATH:" != *":$npm_bin:"* ]]; then
+    export PATH="$npm_bin:$PATH"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # 1. Node.js
 # ---------------------------------------------------------------------------
@@ -38,7 +61,7 @@ install_nodejs() {
 
   info "Node.js not found — installing via nvm…"
   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
-  \. "$HOME/.nvm/nvm.sh"
+  ensure_nvm_loaded
   nvm install 24
   info "Node.js installed: $(node --version)"
 }
@@ -127,14 +150,49 @@ install_nemoclaw() {
     info "Installing NemoClaw from npm…"
     npm install -g nemoclaw
   fi
+
+  refresh_path
 }
 
 # ---------------------------------------------------------------------------
-# 4. Onboard
+# 4. Verify
+# ---------------------------------------------------------------------------
+verify_nemoclaw() {
+  if command_exists nemoclaw; then
+    info "Verified: nemoclaw is available at $(command -v nemoclaw)"
+    return 0
+  fi
+
+  # nemoclaw not on PATH — try to diagnose and suggest a fix
+  warn "nemoclaw is not on PATH after installation."
+
+  local npm_bin
+  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+
+  if [[ -n "$npm_bin" && -x "$npm_bin/nemoclaw" ]]; then
+    warn "Found nemoclaw at $npm_bin/nemoclaw but that directory is not on PATH."
+    warn ""
+    warn "Add it to your shell profile:"
+    warn "  echo 'export PATH=\"$npm_bin:\$PATH\"' >> ~/.bashrc"
+    warn "  source ~/.bashrc"
+    warn ""
+    warn "Or for zsh:"
+    warn "  echo 'export PATH=\"$npm_bin:\$PATH\"' >> ~/.zshrc"
+    warn "  source ~/.zshrc"
+  else
+    warn "Could not locate the nemoclaw executable."
+    warn "Try running:  npm install -g nemoclaw"
+  fi
+
+  error "Installation failed: nemoclaw --help could not be executed."
+}
+
+# ---------------------------------------------------------------------------
+# 5. Onboard
 # ---------------------------------------------------------------------------
 run_onboard() {
   info "Running nemoclaw onboard…"
-  npx nemoclaw onboard
+  nemoclaw onboard
 }
 
 # ---------------------------------------------------------------------------
@@ -146,6 +204,7 @@ main() {
   install_nodejs
   # install_or_upgrade_ollama
   install_nemoclaw
+  verify_nemoclaw
   run_onboard
 
   info "=== Installation complete ==="
