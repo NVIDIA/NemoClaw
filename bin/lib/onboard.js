@@ -464,9 +464,13 @@ async function createSandbox(gpu) {
   for (let i = 0; i < 30; i++) {
     const list = runCapture("openshell sandbox list 2>&1", { ignoreError: true });
     const clean = list.replace(/\x1b\[[0-9;]*m/g, "");
-    // Match "Ready" as a whole word — l.includes("Ready") would also match
-    // "NotReady", defeating the entire readiness gate.
-    if (clean.split("\n").some((l) => l.includes(sandboxName) && /\bReady\b/.test(l) && !/NotReady/.test(l))) {
+    // Exact-match sandbox name in the first column and "Ready" as a whole
+    // word. includes() would false-positive on substring names ("my" in
+    // "my-assistant") and on "NotReady" containing "Ready".
+    if (clean.split("\n").some((l) => {
+      const cols = l.trim().split(/\s+/);
+      return cols[0] === sandboxName && cols.includes("Ready") && !cols.includes("NotReady");
+    })) {
       ready = true;
       break;
     }
