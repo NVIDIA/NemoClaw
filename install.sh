@@ -45,13 +45,27 @@ ensure_nvm_loaded() {
 # Refresh PATH so that npm global bin is discoverable.
 # After nvm installs Node.js the global bin lives under the nvm prefix,
 # which may not yet be on PATH in the current session.
+# Also persists the PATH entry to the user's shell profile so that new
+# terminal sessions can find globally-installed npm binaries (e.g. nemoclaw).
 refresh_path() {
   ensure_nvm_loaded
 
   local npm_bin
   npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
-  if [[ -n "$npm_bin" && -d "$npm_bin" && ":$PATH:" != *":$npm_bin:"* ]]; then
-    export PATH="$npm_bin:$PATH"
+  if [[ -n "$npm_bin" && -d "$npm_bin" ]]; then
+    if [[ ":$PATH:" != *":$npm_bin:"* ]]; then
+      export PATH="$npm_bin:$PATH"
+    fi
+
+    # Persist to shell profile so new terminal sessions inherit the PATH.
+    local export_line="export PATH=\"$npm_bin:\$PATH\""
+    local marker="# Added by NemoClaw installer"
+    for profile in "$HOME/.bashrc" "$HOME/.zshrc"; do
+      if [[ -f "$profile" ]] && ! grep -qF "$npm_bin" "$profile" 2>/dev/null; then
+        printf '\n%s\n%s\n' "$marker" "$export_line" >> "$profile"
+        info "Added npm bin to PATH in $profile"
+      fi
+    done
   fi
 }
 
