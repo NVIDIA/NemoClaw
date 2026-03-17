@@ -6,8 +6,12 @@ Thank you for your interest in contributing to NVIDIA NemoClaw. This guide cover
 
 Use the GitHub issue and pull request templates provided in `.github/` — they
 ensure every submission includes the context maintainers need to triage and
-review efficiently. Security findings should use the **Security Bug Report**
-issue template.
+Use the GitHub issue and pull request templates provided in `.github/` — they
+ensure every submission includes the context maintainers need to triage and
+review efficiently. Non-exploitable security hardening issues (e.g., missing
+input validation, weak defaults) should use the **Security Bug Report** issue
+template. **Exploitable vulnerabilities** must follow [SECURITY.md](SECURITY.md)
+and should **never** be reported via public GitHub issues.
 
 ## Before You Open an Issue
 
