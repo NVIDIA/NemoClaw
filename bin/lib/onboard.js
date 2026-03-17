@@ -471,7 +471,7 @@ function printDashboard(sandboxName, model, provider) {
 
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
-  console.log(`  Dashboard    http://localhost:18789/`);
+  // console.log(`  Dashboard    http://localhost:18789/`);
   console.log(`  Sandbox      ${sandboxName} (Landlock + seccomp + netns)`);
   console.log(`  Model        ${model} (${providerLabel})`);
   console.log(`  NIM          ${nimLabel}`);
