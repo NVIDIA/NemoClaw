@@ -103,6 +103,33 @@ sandbox@my-assistant:~$ openclaw agent --agent main --local -m "hello" --session
 
 <!-- end-quickstart-guide -->
 
+### Unattended / CI Install
+
+For automated deployments, CI pipelines, or containerized environments, NemoClaw supports non-interactive mode:
+
+```console
+$ export NVIDIA_API_KEY=nvapi-xxx
+$ export NEMOCLAW_NONINTERACTIVE=1
+$ export NEMOCLAW_SANDBOX_NAME=my-sandbox  # optional, defaults to "my-assistant"
+$ curl -fsSL https://nvidia.com/nemoclaw.sh | bash
+```
+
+> **For CI pipelines:** Pin to a specific version by cloning and checking out a tag:
+> ```console
+> $ git clone --depth 1 --branch v1.0.0 https://github.com/NVIDIA/NemoClaw.git
+> $ cd NemoClaw && bash install.sh
+> ```
+
+| Environment Variable | Description |
+|---------------------|-------------|
+| `NEMOCLAW_NONINTERACTIVE` | Set to `1` to skip all interactive prompts and use defaults |
+| `NEMOCLAW_SANDBOX_NAME` | Custom sandbox name (default: `my-assistant`) |
+| `NEMOCLAW_RECREATE_SANDBOX` | Set to `0` to keep existing sandbox instead of recreating |
+| `NVIDIA_API_KEY` | Required for cloud inference in non-interactive mode |
+| `NEMOCLAW_DYNAMO_ENDPOINT` | External vLLM/Dynamo endpoint URL (e.g., `http://vllm.svc:8000/v1`) |
+| `NEMOCLAW_DYNAMO_MODEL` | Model name for Dynamo endpoint (default: `meta-llama/Llama-3.1-8B-Instruct`) |
+| `CI` | Automatically enables non-interactive mode when set to `true` |
+
 ---
 
 ## How It Works

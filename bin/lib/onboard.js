@@ -6,7 +6,7 @@
 const fs = require("fs");
 const path = require("path");
 const { ROOT, SCRIPTS, run, runCapture } = require("./runner");
-const { prompt, ensureApiKey, getCredential } = require("./credentials");
+const { prompt, ensureApiKey, getCredential, isNonInteractive } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
 const policies = require("./policies");
@@ -133,7 +133,9 @@ async function startGateway(gpu) {
 async function createSandbox(gpu) {
   step(3, 7, "Creating sandbox");
 
-  const nameAnswer = await prompt("  Sandbox name (lowercase, numbers, hyphens) [my-assistant]: ");
+  // Support NEMOCLAW_SANDBOX_NAME env var for unattended installs
+  const envSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
+  const nameAnswer = envSandboxName || await prompt("  Sandbox name (lowercase, numbers, hyphens) [my-assistant]: ", "");
   const sandboxName = (nameAnswer || "my-assistant").trim().toLowerCase();
 
   // Validate: RFC 1123 subdomain — lowercase alphanumeric and hyphens,
@@ -145,15 +147,24 @@ async function createSandbox(gpu) {
     process.exit(1);
   }
 
+  if (isNonInteractive()) {
+    console.log(`  Using sandbox name: ${sandboxName}`);
+  }
+
   // Check if sandbox already exists in registry
   const existing = registry.getSandbox(sandboxName);
   if (existing) {
-    const recreate = await prompt(`  Sandbox '${sandboxName}' already exists. Recreate? [y/N]: `);
-    if (recreate.toLowerCase() !== "y") {
+    // In non-interactive mode, recreate by default (use NEMOCLAW_RECREATE_SANDBOX=0 to keep)
+    const shouldRecreate = isNonInteractive()
+      ? process.env.NEMOCLAW_RECREATE_SANDBOX !== "0"
+      : (await prompt(`  Sandbox '${sandboxName}' already exists. Recreate? [y/N]: `)).toLowerCase() === "y";
+
+    if (!shouldRecreate) {
       console.log("  Keeping existing sandbox.");
       return sandboxName;
     }
     // Destroy old sandbox
+    console.log(`  Recreating sandbox '${sandboxName}'...`);
     run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
     registry.removeSandbox(sandboxName);
   }
@@ -217,6 +228,25 @@ async function setupNim(sandboxName, gpu) {
   let provider = "nvidia-nim";
   let nimContainer = null;
 
+  // Check for Dynamo/external vLLM endpoint (for K8s/cloud deployments)
+  const dynamoEndpoint = process.env.NEMOCLAW_DYNAMO_ENDPOINT;
+  const dynamoModel = process.env.NEMOCLAW_DYNAMO_MODEL;
+  if (dynamoEndpoint) {
+    // Validate URL format
+    try {
+      new URL(dynamoEndpoint);
+    } catch {
+      console.error(`  Invalid NEMOCLAW_DYNAMO_ENDPOINT URL: ${dynamoEndpoint}`);
+      process.exit(1);
+    }
+    console.log(`  Using Dynamo endpoint: ${dynamoEndpoint}`);
+    console.log(`  Model: ${dynamoModel || "default"}`);
+    provider = "dynamo";
+    model = dynamoModel || "meta-llama/Llama-3.1-8B-Instruct";
+    registry.updateSandbox(sandboxName, { model, provider, nimContainer, dynamoEndpoint });
+    return { model, provider, dynamoEndpoint };
+  }
+
   // Detect local inference options
   const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
   const ollamaRunning = !!runCapture("curl -sf http://localhost:11434/api/tags 2>/dev/null", { ignoreError: true });
@@ -259,17 +289,25 @@ async function setupNim(sandboxName, gpu) {
   }
 
   if (options.length > 1) {
-    console.log("");
-    console.log("  Inference options:");
-    options.forEach((o, i) => {
-      console.log(`    ${i + 1}) ${o.label}`);
-    });
-    console.log("");
-
     const defaultIdx = options.findIndex((o) => o.key === "cloud") + 1;
-    const choice = await prompt(`  Choose [${defaultIdx}]: `);
-    const idx = parseInt(choice || String(defaultIdx), 10) - 1;
-    const selected = options[idx] || options[defaultIdx - 1];
+    let selected;
+
+    if (isNonInteractive()) {
+      // In non-interactive mode, use cloud inference by default
+      selected = options[defaultIdx - 1];
+      console.log(`  Using default inference: ${selected.label}`);
+    } else {
+      console.log("");
+      console.log("  Inference options:");
+      options.forEach((o, i) => {
+        console.log(`    ${i + 1}) ${o.label}`);
+      });
+      console.log("");
+
+      const choice = await prompt(`  Choose [${defaultIdx}]: `);
+      const idx = parseInt(choice || String(defaultIdx), 10) - 1;
+      selected = options[idx] || options[defaultIdx - 1];
+    }
 
     if (selected.key === "nim") {
       // List models that fit GPU VRAM
@@ -384,6 +422,21 @@ async function setupInference(sandboxName, model, provider) {
       `openshell inference set --no-verify --provider ollama-local --model ${model} 2>/dev/null || true`,
       { ignoreError: true }
     );
+  } else if (provider === "dynamo") {
+    // Dynamo/external vLLM endpoint (e.g., K8s Dynamo deployment)
+    const dynamoEndpoint = registry.getSandbox(sandboxName)?.dynamoEndpoint || process.env.NEMOCLAW_DYNAMO_ENDPOINT;
+    run(
+      `openshell provider create --name dynamo --type openai ` +
+      `--credential "OPENAI_API_KEY=dummy" ` +
+      `--config "OPENAI_BASE_URL=${dynamoEndpoint}" 2>&1 || ` +
+      `openshell provider update dynamo --credential "OPENAI_API_KEY=dummy" ` +
+      `--config "OPENAI_BASE_URL=${dynamoEndpoint}" 2>&1 || true`,
+      { ignoreError: true }
+    );
+    run(
+      `openshell inference set --no-verify --provider dynamo --model ${model} 2>/dev/null || true`,
+      { ignoreError: true }
+    );
   }
 
   registry.updateSandbox(sandboxName, { model, provider });
@@ -427,33 +480,41 @@ async function setupPolicies(sandboxName) {
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
 
-  console.log("");
-  console.log("  Available policy presets:");
-  allPresets.forEach((p) => {
-    const marker = applied.includes(p.name) ? "●" : "○";
-    const suggested = suggestions.includes(p.name) ? " (suggested)" : "";
-    console.log(`    ${marker} ${p.name} — ${p.description}${suggested}`);
-  });
-  console.log("");
-
-  const answer = await prompt(`  Apply suggested presets (${suggestions.join(", ")})? [Y/n/list]: `);
-
-  if (answer.toLowerCase() === "n") {
-    console.log("  Skipping policy presets.");
-    return;
-  }
-
-  if (answer.toLowerCase() === "list") {
-    // Let user pick
-    const picks = await prompt("  Enter preset names (comma-separated): ");
-    const selected = picks.split(",").map((s) => s.trim()).filter(Boolean);
-    for (const name of selected) {
+  if (isNonInteractive()) {
+    // In non-interactive mode, apply suggested presets automatically
+    console.log(`  Applying suggested presets: ${suggestions.join(", ")}`);
+    for (const name of suggestions) {
       policies.applyPreset(sandboxName, name);
     }
   } else {
-    // Apply suggested
-    for (const name of suggestions) {
-      policies.applyPreset(sandboxName, name);
+    console.log("");
+    console.log("  Available policy presets:");
+    allPresets.forEach((p) => {
+      const marker = applied.includes(p.name) ? "●" : "○";
+      const suggested = suggestions.includes(p.name) ? " (suggested)" : "";
+      console.log(`    ${marker} ${p.name} — ${p.description}${suggested}`);
+    });
+    console.log("");
+
+    const answer = await prompt(`  Apply suggested presets (${suggestions.join(", ")})? [Y/n/list]: `);
+
+    if (answer.toLowerCase() === "n") {
+      console.log("  Skipping policy presets.");
+      return;
+    }
+
+    if (answer.toLowerCase() === "list") {
+      // Let user pick
+      const picks = await prompt("  Enter preset names (comma-separated): ");
+      const selected = picks.split(",").map((s) => s.trim()).filter(Boolean);
+      for (const name of selected) {
+        policies.applyPreset(sandboxName, name);
+      }
+    } else {
+      // Apply suggested
+      for (const name of suggestions) {
+        policies.applyPreset(sandboxName, name);
+      }
     }
   }
 
@@ -490,6 +551,12 @@ async function onboard() {
   console.log("");
   console.log("  NemoClaw Onboarding");
   console.log("  ===================");
+
+  if (isNonInteractive()) {
+    console.log("");
+    console.log("  Running in non-interactive mode (NEMOCLAW_NONINTERACTIVE=1 or CI=true)");
+    console.log("  Using defaults for all prompts. Set NEMOCLAW_SANDBOX_NAME to customize.");
+  }
 
   const gpu = await preflight();
   await startGateway(gpu);

@@ -9,6 +9,14 @@ const { execSync } = require("child_process");
 const CREDS_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
 const CREDS_FILE = path.join(CREDS_DIR, "credentials.json");
 
+// Non-interactive mode: skip prompts and use defaults
+// Enabled via NEMOCLAW_NONINTERACTIVE=1 or CI=true
+function isNonInteractive() {
+  return process.env.NEMOCLAW_NONINTERACTIVE === "1" ||
+         process.env.NEMOCLAW_NONINTERACTIVE === "true" ||
+         process.env.CI === "true";
+}
+
 function loadCredentials() {
   try {
     if (fs.existsSync(CREDS_FILE)) {
@@ -31,7 +39,17 @@ function getCredential(key) {
   return creds[key] || null;
 }
 
-function prompt(question) {
+/**
+ * Prompt for user input. In non-interactive mode, returns defaultValue or empty string.
+ * @param {string} question - The prompt text
+ * @param {string} [defaultValue] - Value to return in non-interactive mode
+ * @returns {Promise<string>}
+ */
+function prompt(question, defaultValue = "") {
+  if (isNonInteractive()) {
+    // In non-interactive mode, return default without prompting
+    return Promise.resolve(defaultValue);
+  }
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
     rl.question(question, (answer) => {
@@ -46,6 +64,13 @@ async function ensureApiKey() {
   if (key) {
     process.env.NVIDIA_API_KEY = key;
     return;
+  }
+
+  // In non-interactive mode, fail if no key is available
+  if (isNonInteractive()) {
+    console.error("  NVIDIA_API_KEY environment variable required for non-interactive mode.");
+    console.error("  Set it via: export NVIDIA_API_KEY=nvapi-xxx");
+    process.exit(1);
   }
 
   console.log("");
@@ -130,4 +155,5 @@ module.exports = {
   ensureApiKey,
   ensureGithubToken,
   isRepoPrivate,
+  isNonInteractive,
 };
