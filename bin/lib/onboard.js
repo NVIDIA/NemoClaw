@@ -22,6 +22,10 @@ function step(n, total, msg) {
   console.log(`  ${"─".repeat(50)}`);
 }
 
+function isValidSandboxName(name) {
+  return /^[a-z0-9][a-z0-9-]*$/.test(name);
+}
+
 function isDockerRunning() {
   try {
     runCapture("docker info", { ignoreError: false });
@@ -153,6 +157,12 @@ async function createSandbox(gpu) {
   const nameAnswer = await prompt("  Sandbox name [my-assistant]: ");
   const sandboxName = nameAnswer || "my-assistant";
 
+  if (!isValidSandboxName(sandboxName)) {
+    console.error(`  Invalid sandbox name: '${sandboxName}'`);
+    console.error("  Names must start with a lowercase letter or digit and contain only lowercase letters, digits, and hyphens.");
+    process.exit(1);
+  }
+
   // Check if sandbox already exists in registry
   const existing = registry.getSandbox(sandboxName);
   if (existing) {
@@ -162,7 +172,7 @@ async function createSandbox(gpu) {
       return sandboxName;
     }
     // Destroy old sandbox
-    run(`openshell sandbox delete ${sandboxName} 2>/dev/null || true`, { ignoreError: true });
+    run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
     registry.removeSandbox(sandboxName);
   }
 
@@ -181,7 +191,7 @@ async function createSandbox(gpu) {
   const basePolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
   const createArgs = [
     `--from "${buildCtx}/Dockerfile"`,
-    `--name ${sandboxName}`,
+    `--name "${sandboxName}"`,
     `--policy "${basePolicyPath}"`,
   ];
   if (gpu && gpu.nimCapable) createArgs.push("--gpu");
@@ -195,7 +205,7 @@ async function createSandbox(gpu) {
   run(`openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`);
 
   // Forward dashboard port separately
-  run(`openshell forward start --background 18789 ${sandboxName}`, { ignoreError: true });
+  run(`openshell forward start --background 18789 "${sandboxName}"`, { ignoreError: true });
 
   // Clean up build context
   run(`rm -rf "${buildCtx}"`, { ignoreError: true });
