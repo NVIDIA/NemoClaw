@@ -439,6 +439,36 @@ async function setupPolicies(sandboxName) {
 
 // ── Dashboard ────────────────────────────────────────────────────
 
+function getDashboardToken() {
+  // The gateway auth token is stored in the OpenShell config.
+  // Try openshell gateway info first, then fall back to the config file.
+  try {
+    const info = runCapture("openshell gateway info --json 2>/dev/null", { ignoreError: true });
+    if (info) {
+      const parsed = JSON.parse(info);
+      const token = parsed.auth?.token || parsed.deviceAuth?.token || null;
+      if (token) return token;
+    }
+  } catch {}
+
+  // Fallback: read from the OpenShell config file directly
+  try {
+    const configPaths = [
+      path.join(process.env.HOME || "/tmp", ".openshell", "config.json"),
+      path.join(process.env.HOME || "/tmp", ".config", "openshell", "config.json"),
+    ];
+    for (const cfgPath of configPaths) {
+      if (fs.existsSync(cfgPath)) {
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+        const token = cfg.gateway?.auth?.token || null;
+        if (token) return token;
+      }
+    }
+  } catch {}
+
+  return null;
+}
+
 function printDashboard(sandboxName, model, provider) {
   const nimStat = nim.nimStatus(sandboxName);
   const nimLabel = nimStat.running ? "running" : "not running";
@@ -447,12 +477,20 @@ function printDashboard(sandboxName, model, provider) {
   if (provider === "nvidia-nim") providerLabel = "NVIDIA Cloud API";
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
 
+  const token = getDashboardToken();
+  const dashUrl = token
+    ? `http://localhost:18789/#token=${token}`
+    : "http://localhost:18789/";
+
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
-  console.log(`  Dashboard    http://localhost:18789/`);
+  console.log(`  Dashboard    ${dashUrl}`);
   console.log(`  Sandbox      ${sandboxName} (Landlock + seccomp + netns)`);
   console.log(`  Model        ${model} (${providerLabel})`);
   console.log(`  NIM          ${nimLabel}`);
+  if (token) {
+    console.log(`  Token        ${token}`);
+  }
   console.log(`  ${"─".repeat(50)}`);
   console.log(`  Run:         nemoclaw ${sandboxName} connect`);
   console.log(`  Status:      nemoclaw ${sandboxName} status`);
