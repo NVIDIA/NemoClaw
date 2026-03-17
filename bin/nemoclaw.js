@@ -44,7 +44,9 @@ async function setup() {
 
 async function setupSpark() {
   await ensureApiKey();
-  run(`sudo -E NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}" bash "${SCRIPTS}/setup-spark.sh"`);
+  runArgv("sudo", ["-E", "bash", `${SCRIPTS}/setup-spark.sh`], {
+    env: { ...process.env, NVIDIA_API_KEY: process.env.NVIDIA_API_KEY },
+  });
 }
 
 async function deploy(instanceName) {
@@ -64,7 +66,10 @@ async function deploy(instanceName) {
   }
   const name = instanceName;
   const gpu = process.env.NEMOCLAW_GPU || "a2-highgpu-1g:nvidia-tesla-a100:1";
-  assertSafeName(gpu.replace(/[:.]/g, "-"), "NEMOCLAW_GPU");
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/.test(gpu)) {
+    console.error(`  Invalid NEMOCLAW_GPU: "${gpu}". Only alphanumerics, hyphens, underscores, dots, and colons are allowed.`);
+    process.exit(1);
+  }
 
   console.log("");
   console.log(`  Deploying NemoClaw to Brev instance: ${name}`);
@@ -96,11 +101,8 @@ async function deploy(instanceName) {
 
   console.log("  Waiting for SSH...");
   for (let i = 0; i < 60; i++) {
-    try {
-      execSync("echo ok", { encoding: "utf-8", stdio: "pipe", timeout: 10000 });
-      const r = spawnSync("ssh", [...sshOpts, name, "echo ok"], { encoding: "utf-8", stdio: "pipe", timeout: 10000 });
-      if (r.status === 0) break;
-    } catch {}
+    const r = spawnSync("ssh", [...sshOpts, name, "echo ok"], { encoding: "utf-8", stdio: "pipe", timeout: 10000 });
+    if (r.status === 0) break;
     if (i === 59) {
       console.error(`  Timed out waiting for SSH to ${name}`);
       process.exit(1);
@@ -345,6 +347,9 @@ const [cmd, ...args] = process.argv.slice(2);
   }
 
   // Sandbox-scoped commands: nemoclaw <name> <action>
+  // Validate the name early — before any lookup or use — to block
+  // shell metacharacters regardless of whether the sandbox exists.
+  assertSafeName(cmd, "sandbox name");
   const sandbox = registry.getSandbox(cmd);
   if (sandbox) {
     const action = args[0] || "connect";

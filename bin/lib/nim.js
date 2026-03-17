@@ -155,7 +155,7 @@ function waitForNimHealth(port = 8000, timeout = 300) {
 
   while ((Date.now() - start) / 1000 < timeout) {
     try {
-      const result = runCapture(`curl -sf http://localhost:${port}/v1/models`, {
+      const result = runCaptureArgv("curl", ["-sf", `http://localhost:${port}/v1/models`], {
         ignoreError: true,
       });
       if (result) {

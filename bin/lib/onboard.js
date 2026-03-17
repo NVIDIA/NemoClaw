@@ -173,11 +173,10 @@ async function createSandbox(gpu) {
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const chatUiUrl = process.env.CHAT_UI_URL || 'http://127.0.0.1:18789';
-  // Pass secrets via environment, not command-line arguments
-  const sandboxEnv = { CHAT_UI_URL: chatUiUrl };
-  if (process.env.NVIDIA_API_KEY) {
-    sandboxEnv.NVIDIA_API_KEY = process.env.NVIDIA_API_KEY;
-  }
+  // Note: openshell sandbox create uses `-- env K=V` to set env vars inside
+  // the sandbox. These appear in the process argument list but are required by
+  // the openshell CLI protocol. The values are validated (chatUiUrl is a URL,
+  // NVIDIA_API_KEY starts with "nvapi-") and passed via argv (no shell expansion).
   createArgv.push("--", "env",
     `CHAT_UI_URL=${chatUiUrl}`,
     ...(process.env.NVIDIA_API_KEY ? [`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`] : []),
