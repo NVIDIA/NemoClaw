@@ -86,7 +86,7 @@ function applyPreset(sandboxName, presetName) {
   let rawPolicy = "";
   try {
     rawPolicy = runCapture(
-      `openshell policy get --full ${sandboxName} 2>/dev/null`,
+      `openshell policy get --full "${sandboxName}" 2>/dev/null`,
       { ignoreError: true }
     );
   } catch {}
@@ -146,7 +146,7 @@ function applyPreset(sandboxName, presetName) {
   fs.writeFileSync(tmpFile, merged, "utf-8");
 
   try {
-    run(`openshell policy set --policy "${tmpFile}" --wait ${sandboxName}`);
+    run(`openshell policy set --policy "${tmpFile}" --wait "${sandboxName}"`);
     console.log(`  Applied preset: ${presetName}`);
   } finally {
     fs.unlinkSync(tmpFile);
