@@ -1,5 +1,6 @@
 node_modules
 /dist
+!nemoclaw/dist
 .git
 *.pyc
 __pycache__
