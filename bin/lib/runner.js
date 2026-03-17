@@ -8,18 +8,43 @@ const fs = require("fs");
 const ROOT = path.resolve(__dirname, "..", "..");
 const SCRIPTS = path.join(ROOT, "scripts");
 
-// Auto-detect Colima Docker socket (legacy ~/.colima or XDG ~/.config/colima)
-if (!process.env.DOCKER_HOST) {
-  const home = process.env.HOME || "/tmp";
+/**
+ * Detect a container runtime socket (Colima first, then Podman).
+ * Returns the socket path or null.
+ *
+ * @param {object} [opts] — DI overrides for testing
+ * @param {string} [opts.home] — HOME directory override
+ * @param {function} [opts.existsSync] — fs.existsSync override
+ * @param {number} [opts.uid] — process UID override for rootless Podman
+ */
+function detectContainerSocket(opts) {
+  const home = (opts && opts.home) || process.env.HOME || "/tmp";
+  const exists = (opts && opts.existsSync) || fs.existsSync;
+  const uid = (opts && opts.uid !== undefined) ? opts.uid : (process.getuid ? process.getuid() : 1000);
+
   const candidates = [
+    // Colima (preferred — existing behavior)
     path.join(home, ".colima/default/docker.sock"),
     path.join(home, ".config/colima/default/docker.sock"),
+    // Podman machine
+    path.join(home, ".local/share/containers/podman/machine/podman.sock"),
+    `/run/user/${uid}/podman/podman.sock`,
+    path.join(home, ".local/share/containers/podman/machine/qemu/podman.sock"),
   ];
+
   for (const sock of candidates) {
-    if (fs.existsSync(sock)) {
-      process.env.DOCKER_HOST = `unix://${sock}`;
-      break;
+    if (exists(sock)) {
+      return sock;
     }
+  }
+  return null;
+}
+
+// Auto-detect container socket if DOCKER_HOST not already set
+if (!process.env.DOCKER_HOST) {
+  const sock = detectContainerSocket();
+  if (sock) {
+    process.env.DOCKER_HOST = `unix://${sock}`;
   }
 }
 
@@ -52,4 +77,4 @@ function runCapture(cmd, opts = {}) {
   }
 }
 
-module.exports = { ROOT, SCRIPTS, run, runCapture };
+module.exports = { ROOT, SCRIPTS, run, runCapture, detectContainerSocket };

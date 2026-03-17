@@ -27,7 +27,14 @@ function isDockerRunning() {
     runCapture("docker info", { ignoreError: false });
     return true;
   } catch {
-    return false;
+    // Podman fallback — rootless Podman can substitute for Docker
+    try {
+      runCapture("podman info", { ignoreError: false });
+      console.log("  ⓘ Using Podman (note: --add-host=host-gateway may not resolve, see issue #116)");
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 
