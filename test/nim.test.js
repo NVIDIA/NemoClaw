@@ -74,4 +74,108 @@ describe("nim", () => {
       assert.equal(st.running, false);
     });
   });
+
+  describe("detectGpu (injected)", () => {
+    function mockRunCapture(responses) {
+      return function (cmd) {
+        for (const [pattern, response] of responses) {
+          if (cmd.includes(pattern)) {
+            if (response instanceof Error) throw response;
+            return response;
+          }
+        }
+        throw new Error("mock: no match for " + cmd);
+      };
+    }
+
+    it("detects standard NVIDIA GPU", () => {
+      const gpu = nim.detectGpu({
+        runCapture: mockRunCapture([
+          ["memory.total", "8192"],
+        ]),
+      });
+      assert.equal(gpu.type, "nvidia");
+      assert.equal(gpu.count, 1);
+      assert.equal(gpu.totalMemoryMB, 8192);
+      assert.equal(gpu.perGpuMB, 8192);
+      assert.equal(gpu.nimCapable, true);
+      assert.equal(gpu.spark, undefined);
+    });
+
+    it("detects multiple NVIDIA GPUs", () => {
+      const gpu = nim.detectGpu({
+        runCapture: mockRunCapture([
+          ["memory.total", "8192\n8192"],
+        ]),
+      });
+      assert.equal(gpu.type, "nvidia");
+      assert.equal(gpu.count, 2);
+      assert.equal(gpu.totalMemoryMB, 16384);
+      assert.equal(gpu.perGpuMB, 8192);
+    });
+
+    it("detects DGX Spark GB10", () => {
+      const gpu = nim.detectGpu({
+        runCapture: mockRunCapture([
+          ["memory.total", ""],
+          ["name", "NVIDIA GB10"],
+          ["free -m", "122880"],
+        ]),
+      });
+      assert.equal(gpu.type, "nvidia");
+      assert.equal(gpu.spark, true);
+      assert.equal(gpu.count, 1);
+      assert.equal(gpu.totalMemoryMB, 122880);
+    });
+
+    it("handles Spark with free -m failure", () => {
+      const gpu = nim.detectGpu({
+        runCapture: mockRunCapture([
+          ["memory.total", ""],
+          ["name", "NVIDIA GB10"],
+          ["free -m", new Error("command failed")],
+        ]),
+      });
+      assert.equal(gpu.type, "nvidia");
+      assert.equal(gpu.spark, true);
+      assert.equal(gpu.totalMemoryMB, 0);
+    });
+
+    it("detects Apple Silicon", () => {
+      const gpu = nim.detectGpu({
+        platform: "darwin",
+        runCapture: mockRunCapture([
+          ["memory.total", new Error("no nvidia-smi")],
+          ["name", new Error("no nvidia-smi")],
+          ["system_profiler", "Chipset Model: Apple M2 Pro\n      VRAM (Total): 16 GB\n      Total Number of Cores: 19"],
+        ]),
+      });
+      assert.equal(gpu.type, "apple");
+      assert.equal(gpu.name, "Apple M2 Pro");
+      assert.equal(gpu.nimCapable, false);
+      assert.equal(gpu.totalMemoryMB, 16384);
+      assert.equal(gpu.cores, 19);
+    });
+
+    it("returns null when no GPU detected", () => {
+      const gpu = nim.detectGpu({
+        platform: "linux",
+        runCapture: mockRunCapture([
+          ["memory.total", new Error("no nvidia-smi")],
+          ["name", new Error("no nvidia-smi")],
+        ]),
+      });
+      assert.equal(gpu, null);
+    });
+
+    it("non-GB10 NVIDIA has no spark property", () => {
+      const gpu = nim.detectGpu({
+        runCapture: mockRunCapture([
+          ["memory.total", "24576"],
+        ]),
+      });
+      assert.equal(gpu.type, "nvidia");
+      assert.equal(gpu.spark, undefined);
+    });
+  });
 });

@@ -23,10 +23,13 @@ function listModels() {
   }));
 }
 
-function detectGpu() {
+function detectGpu(opts) {
+  const runCmd = (opts && opts.runCapture) || runCapture;
+  const platform = (opts && opts.platform) || process.platform;
+
   // Try NVIDIA first — query VRAM
   try {
-    const output = runCapture(
+    const output = runCmd(
       "nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits",
       { ignoreError: true }
     );
@@ -48,7 +51,7 @@ function detectGpu() {
 
   // Fallback: DGX Spark (GB10) — VRAM not queryable due to unified memory architecture
   try {
-    const nameOutput = runCapture(
+    const nameOutput = runCmd(
       "nvidia-smi --query-gpu=name --format=csv,noheader,nounits",
       { ignoreError: true }
     );
@@ -56,7 +59,7 @@ function detectGpu() {
       // GB10 has 128GB unified memory shared with Grace CPU — use system RAM
       let totalMemoryMB = 0;
       try {
-        const memLine = runCapture("free -m | awk '/Mem:/ {print $2}'", { ignoreError: true });
+        const memLine = runCmd("free -m | awk '/Mem:/ {print $2}'", { ignoreError: true });
         if (memLine) totalMemoryMB = parseInt(memLine.trim(), 10) || 0;
       } catch {}
       return {
@@ -71,9 +74,9 @@ function detectGpu() {
   } catch {}
 
   // macOS: detect Apple Silicon or discrete GPU
-  if (process.platform === "darwin") {
+  if (platform === "darwin") {
     try {
-      const spOutput = runCapture(
+      const spOutput = runCmd(
         "system_profiler SPDisplaysDataType 2>/dev/null",
         { ignoreError: true }
       );
@@ -92,7 +95,7 @@ function detectGpu() {
           } else {
             // Apple Silicon shares system RAM — read total memory
             try {
-              const memBytes = runCapture("sysctl -n hw.memsize", { ignoreError: true });
+              const memBytes = runCmd("sysctl -n hw.memsize", { ignoreError: true });
               if (memBytes) memoryMB = Math.floor(parseInt(memBytes, 10) / 1024 / 1024);
             } catch {}
           }
