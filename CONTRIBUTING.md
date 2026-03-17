@@ -1,5 +1,45 @@
 # Contributing
 
+Thank you for your interest in NemoClaw! This guide helps you get started.
+
+## Development Setup
+
+```bash
+git clone https://github.com/NVIDIA/NemoClaw.git
+cd NemoClaw
+npm install                    # host CLI dependencies
+cd nemoclaw && npm install     # TypeScript plugin dependencies
+npm run build                  # compile TypeScript
+cd ..
+```
+
+## Running Tests
+
+```bash
+node --test test/*.test.js
+```
+
+All tests use the Node.js built-in test runner (Node.js 20+). No additional test framework is needed.
+
+## Project Layout
+
+| Directory | Contents |
+|-----------|----------|
+| `bin/` | Host CLI entry point and modules (JavaScript) |
+| `nemoclaw/src/` | OpenClaw plugin commands (TypeScript) |
+| `nemoclaw-blueprint/` | Python blueprint for sandbox orchestration |
+| `scripts/` | Shell scripts for setup, services, and testing |
+| `test/` | Unit and integration tests |
+| `docs/` | Sphinx documentation source |
+
+## Pull Request Guidelines
+
+1. **One fix per PR.** Keep changes focused and reviewable.
+2. **Reference the issue** in the PR description (e.g., `Fixes #42`).
+3. **Run tests** before opening the PR.
+4. **Follow existing code style** — SPDX headers on all new files, 2-space indentation for JS/TS, `set -euo pipefail` in shell scripts.
+5. **Use conventional commit prefixes** in the PR title: `fix:`, `feat:`, `docs:`, `test:`, `chore:`, `ci:`, `security:`.
+
 ## Signing Your Work
 
 * We require that all contributors "sign-off" on their commits. This certifies
