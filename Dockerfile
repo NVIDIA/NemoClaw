@@ -147,5 +147,10 @@ RUN chown root:root /sandbox/.openclaw \
     && chmod 444 /sandbox/.openclaw/openclaw.json
 USER sandbox
 
+# Health check for the dashboard
+HEALTHCHECK --interval=5s --timeout=3s --start-period=30s --retries=3 \
+  CMD curl -f http://localhost:18789/ || exit 1
+
+
 ENTRYPOINT ["/bin/bash"]
 CMD []
