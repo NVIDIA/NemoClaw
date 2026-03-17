@@ -40,6 +40,8 @@ async function cliLaunch(opts) {
     const verification = (0, verify_js_1.verifyBlueprintDigest)(blueprint.localPath, blueprint.manifest);
     if (!verification.valid) {
         logger.error(`Blueprint verification failed: ${verification.errors.join(", ")}`);
+        logger.error("This may indicate a corrupted or outdated OpenShell deployment.");
+        logger.error("Docs: https://github.com/NVIDIA/OpenShell");
         return;
     }
     // Check version compatibility
@@ -48,6 +50,8 @@ async function cliLaunch(opts) {
     const compat = (0, verify_js_1.checkCompatibility)(blueprint.manifest, openshellVersion, openclawVersion);
     if (compat.length > 0) {
         logger.error(`Compatibility check failed:\n  ${compat.join("\n  ")}`);
+        logger.error("Check OpenShell version: openshell --version");
+        logger.error("Upgrade: https://github.com/NVIDIA/OpenShell/releases");
         return;
     }
     // Plan
@@ -73,6 +77,7 @@ async function cliLaunch(opts) {
     }, logger);
     if (!applyResult.success) {
         logger.error(`Blueprint apply failed: ${applyResult.output}`);
+        logger.error("Debug: openshell sandbox list && openshell gateway info");
         return;
     }
     // Save state

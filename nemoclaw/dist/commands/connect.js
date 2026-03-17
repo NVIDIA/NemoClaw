@@ -18,9 +18,11 @@ async function cliConnect(opts) {
         proc.on("error", (err) => {
             if (err.message.includes("ENOENT")) {
                 logger.error("openshell CLI not found. Is OpenShell installed?");
+                logger.error("Install: https://github.com/NVIDIA/OpenShell/releases");
             }
             else {
-                logger.error(`Connection failed: ${err.message}`);
+                logger.error(`Connection failed (OpenShell): ${err.message}`);
+                logger.error("Docs: https://github.com/NVIDIA/OpenShell");
             }
             resolve(1);
         });
@@ -28,6 +30,7 @@ async function cliConnect(opts) {
     if (exitCode !== 0 && exitCode !== null) {
         logger.error(`Sandbox '${sandboxName}' exited with code ${String(exitCode)}.`);
         logger.info("Run 'openclaw nemoclaw status' to check available sandboxes.");
+        logger.info("Debug: openshell sandbox list");
     }
 }
 //# sourceMappingURL=connect.js.map

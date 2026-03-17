@@ -59,6 +59,8 @@ export async function cliLaunch(opts: LaunchOptions): Promise<void> {
   const verification = verifyBlueprintDigest(blueprint.localPath, blueprint.manifest);
   if (!verification.valid) {
     logger.error(`Blueprint verification failed: ${verification.errors.join(", ")}`);
+    logger.error("This may indicate a corrupted or outdated OpenShell deployment.");
+    logger.error("Docs: https://github.com/NVIDIA/OpenShell");
     return;
   }
 
@@ -68,6 +70,8 @@ export async function cliLaunch(opts: LaunchOptions): Promise<void> {
   const compat = checkCompatibility(blueprint.manifest, openshellVersion, openclawVersion);
   if (compat.length > 0) {
     logger.error(`Compatibility check failed:\n  ${compat.join("\n  ")}`);
+    logger.error("Check OpenShell version: openshell --version");
+    logger.error("Upgrade: https://github.com/NVIDIA/OpenShell/releases");
     return;
   }
 
@@ -103,6 +107,7 @@ export async function cliLaunch(opts: LaunchOptions): Promise<void> {
 
   if (!applyResult.success) {
     logger.error(`Blueprint apply failed: ${applyResult.output}`);
+    logger.error("Debug: openshell sandbox list && openshell gateway info");
     return;
   }
 

@@ -37,7 +37,8 @@ async function cliLogs(opts) {
     await new Promise((resolve) => {
         proc.on("close", () => resolve());
         proc.on("error", (err) => {
-            logger.error(`Failed to stream logs: ${err.message}`);
+            logger.error(`Failed to stream logs (OpenShell): ${err.message}`);
+            logger.error("Debug: openshell sandbox list");
             resolve();
         });
     });

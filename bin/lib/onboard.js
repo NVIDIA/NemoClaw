@@ -102,7 +102,9 @@ async function startGateway(gpu) {
       break;
     }
     if (i === 4) {
-      console.error("  Gateway failed to start. Run: openshell gateway info");
+      console.error("  Gateway failed to start (OpenShell runtime error).");
+      console.error("  Debug:  openshell gateway info");
+      console.error("  Docs:   https://github.com/NVIDIA/OpenShell");
       process.exit(1);
     }
     require("child_process").spawnSync("sleep", ["2"]);
