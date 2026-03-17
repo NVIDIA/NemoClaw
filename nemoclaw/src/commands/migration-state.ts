@@ -683,7 +683,21 @@ export function restoreSnapshotToHost(snapshotDir: string, logger: PluginLogger)
       logger.info(`Restored external config to ${manifest.configPath}`);
     }
 
-    logger.info("Host OpenClaw state restored.");
+    for (const root of manifest.externalRoots) {
+      const rootSnapshotPath = path.join(snapshotDir, root.snapshotRelativePath);
+      if (existsSync(rootSnapshotPath)) {
+        if (existsSync(root.sourcePath)) {
+          const rootArchiveName = `${root.sourcePath}.nemoclaw-archived-${String(Date.now())}`;
+          renameSync(root.sourcePath, rootArchiveName);
+          logger.info(`Archived host ${root.kind} directory to ${rootArchiveName}`);
+        }
+        mkdirSync(path.dirname(root.sourcePath), { recursive: true });
+        copyDirectory(rootSnapshotPath, root.sourcePath);
+        logger.info(`Restored external ${root.kind} to ${root.sourcePath}`);
+      }
+    }
+
+    logger.info("Host OpenClaw state and external roots restored.");
     return true;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
