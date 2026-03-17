@@ -89,3 +89,4 @@ body:
         - label: I have searched existing issues and this has not been reported before
           required: true
         - label: I am willing to submit a PR with a fix
+          required: false
