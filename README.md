@@ -7,12 +7,37 @@
 NVIDIA NemoClaw is an open source stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants safely. It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of [NVIDIA Agent Toolkit](https://docs.nvidia.com/nemo/agent-toolkit/latest), a secure environment for running autonomous agents, with inference routed through [NVIDIA cloud](https://build.nvidia.com).
 
 > **Alpha software**
-> 
+>
 > NemoClaw is early-stage. Expect rough edges. We are building toward production-ready sandbox orchestration, but the starting point is getting your own environment up and running.
 > Interfaces, APIs, and behavior may change without notice as we iterate on the design.
 > The project is shared to gather feedback and enable early experimentation, but it
 > should not yet be considered production-ready.
 > We welcome issues and discussion from the community while the project evolves.
+
+---
+
+## Components
+
+NemoClaw sits at the intersection of three projects. Understanding which layer does what makes troubleshooting and contribution much easier.
+
+| Component | What it is | Repository |
+|-----------|-----------|------------|
+| **[OpenClaw](https://openclaw.ai)** | The AI coding assistant (agent runtime). It provides the TUI, CLI, tool use, and model orchestration that power the always-on assistant. | [openclaw.ai](https://openclaw.ai) |
+| **[OpenShell](https://github.com/NVIDIA/OpenShell)** | The sandboxing runtime. It creates isolated containers with Landlock, seccomp, and network namespace policies, manages the gateway, and routes inference calls. Errors mentioning `openshell` originate here. | [NVIDIA/OpenShell](https://github.com/NVIDIA/OpenShell) |
+| **NemoClaw** (this repo) | The glue layer. It provides the `nemoclaw` CLI, the `openclaw nemoclaw` plugin commands, an onboarding wizard, and versioned blueprints that wire OpenClaw into OpenShell with NVIDIA inference. | [NVIDIA/NemoClaw](https://github.com/NVIDIA/NemoClaw) |
+
+**How they relate:** NemoClaw installs and configures OpenShell, then deploys OpenClaw inside the sandbox that OpenShell creates. The `nemoclaw` CLI orchestrates the full stack so the user does not need to interact with OpenShell directly during normal use.
+
+```
+┌─────────────────────────────────────────────┐
+│  nemoclaw CLI / openclaw nemoclaw plugin    │  ← NemoClaw (this repo)
+├─────────────────────────────────────────────┤
+│  OpenShell gateway + sandbox runtime        │  ← NVIDIA/OpenShell
+│  (Landlock, seccomp, netns, inference route)│
+├─────────────────────────────────────────────┤
+│  OpenClaw agent (TUI, CLI, tools)           │  ← openclaw.ai
+└─────────────────────────────────────────────┘
+```
 
 ---
 
@@ -106,7 +131,7 @@ NemoClaw installs the NVIDIA OpenShell runtime and Nemotron models, then uses a 
 
 The blueprint lifecycle follows four stages: resolve the artifact, verify its digest, plan the resources, and apply through the OpenShell CLI.
 
-When something goes wrong, errors may originate from either NemoClaw or the OpenShell layer underneath. Run `nemoclaw <name> status` for NemoClaw-level health and `openshell sandbox list` to check the underlying sandbox state.
+When something goes wrong, errors may originate from NemoClaw, OpenShell, or OpenClaw (see [Components](#components) above). Run `nemoclaw <name> status` for NemoClaw-level health and `openshell sandbox list` to check the underlying sandbox state. Errors prefixed with `openshell` point to the [OpenShell](https://github.com/NVIDIA/OpenShell) runtime layer.
 
 ---
 
