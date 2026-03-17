@@ -183,7 +183,29 @@ install_or_upgrade_ollama() {
 }
 
 # ---------------------------------------------------------------------------
-# 3. NemoClaw
+# 3. Shell profile sanity check
+# ---------------------------------------------------------------------------
+# OpenShell's installer has a known bug where it writes the fish-shell variant
+# of its env script (env.fish) into bash profiles instead of the POSIX variant
+# (env). Sourcing a fish script from bash produces a syntax error at startup.
+# Detect and fix this automatically before proceeding.
+fix_fish_in_bash_profiles() {
+  for profile in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile"; do
+    [[ -f "$profile" ]] || continue
+    if grep -qF 'env.fish' "$profile" 2>/dev/null; then
+      warn "Detected fish shell script sourced from bash profile: $profile"
+      warn "This is a known OpenShell installer bug. Fixing automatically…"
+      # Replace `. .../env.fish` with `. .../env` (POSIX-compatible version).
+      sed -i 's|\. *"\(.*\)/env\.fish"|\. "\1/env"|g; s|\. *'"'"'\(.*\)/env\.fish'"'"'|\. '"'"'\1/env'"'"'|g' "$profile"
+      # Remove bare (unquoted) sourcing of env.fish as well.
+      sed -i '/[[:space:]]env\.fish/d' "$profile"
+      info "Fixed: $profile no longer sources env.fish"
+    fi
+  done
+}
+
+# ---------------------------------------------------------------------------
+# 4. NemoClaw
 # ---------------------------------------------------------------------------
 install_nemoclaw() {
   if [[ -f "./package.json" ]] && grep -q '"name": "nemoclaw"' ./package.json 2>/dev/null; then
@@ -199,7 +221,7 @@ install_nemoclaw() {
 }
 
 # ---------------------------------------------------------------------------
-# 4. Verify
+# 5. Verify
 # ---------------------------------------------------------------------------
 verify_nemoclaw() {
   if command_exists nemoclaw; then
@@ -232,7 +254,7 @@ verify_nemoclaw() {
 }
 
 # ---------------------------------------------------------------------------
-# 5. Onboard
+# 6. Onboard
 # ---------------------------------------------------------------------------
 run_onboard() {
   info "Running nemoclaw onboard…"
@@ -245,6 +267,7 @@ run_onboard() {
 main() {
   info "=== NemoClaw Installer ==="
 
+  fix_fish_in_bash_profiles
   install_nodejs
   ensure_supported_runtime
   # install_or_upgrade_ollama
