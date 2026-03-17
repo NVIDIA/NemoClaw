@@ -74,21 +74,29 @@ if command -v nvidia-smi > /dev/null 2>&1; then
 fi
 
 # --- 3. openshell CLI (binary release, not pip) ---
+OPENSHELL_VERSION="v0.0.8"
 if ! command -v openshell > /dev/null 2>&1; then
-  info "Installing openshell CLI from GitHub release..."
+  info "Installing openshell CLI (${OPENSHELL_VERSION})..."
   if ! command -v gh > /dev/null 2>&1; then
     sudo apt-get update -qq > /dev/null 2>&1
     sudo apt-get install -y -qq gh > /dev/null 2>&1
   fi
   ARCH="$(uname -m)"
   case "$ARCH" in
-    x86_64|amd64) ASSET="openshell-x86_64-unknown-linux-musl.tar.gz" ;;
-    aarch64|arm64) ASSET="openshell-aarch64-unknown-linux-musl.tar.gz" ;;
+    x86_64|amd64)
+      ASSET="openshell-x86_64-unknown-linux-musl.tar.gz"
+      EXPECTED_SHA="203a4732b8a8974c4f612132ea0325f2a1b298dff0fe639dc8f9aff4f26f8cc3"
+      ;;
+    aarch64|arm64)
+      ASSET="openshell-aarch64-unknown-linux-musl.tar.gz"
+      EXPECTED_SHA="e5efa57bf80bbc8fce4d47cc7f7fc7ccaaa65d57e9cca8094e1cd72c0a7ff72e"
+      ;;
     *) fail "Unsupported architecture: $ARCH" ;;
   esac
   tmpdir="$(mktemp -d)"
-  GH_TOKEN="${GITHUB_TOKEN:-}" gh release download --repo NVIDIA/OpenShell \
+  GH_TOKEN="${GITHUB_TOKEN:-}" gh release download "$OPENSHELL_VERSION" --repo NVIDIA/OpenShell \
     --pattern "$ASSET" --dir "$tmpdir"
+  echo "${EXPECTED_SHA}  $tmpdir/$ASSET" | sha256sum -c -
   tar xzf "$tmpdir/$ASSET" -C "$tmpdir"
   sudo install -m 755 "$tmpdir/openshell" /usr/local/bin/openshell
   rm -rf "$tmpdir"
@@ -98,15 +106,23 @@ else
 fi
 
 # --- 3b. cloudflared (for public tunnel) ---
+CLOUDFLARED_VERSION="2025.2.0"
 if ! command -v cloudflared > /dev/null 2>&1; then
-  info "Installing cloudflared..."
+  info "Installing cloudflared (${CLOUDFLARED_VERSION})..."
   CF_ARCH="$(uname -m)"
   case "$CF_ARCH" in
-    x86_64|amd64) CF_ARCH="amd64" ;;
-    aarch64|arm64) CF_ARCH="arm64" ;;
+    x86_64|amd64)
+      CF_BIN_ARCH="amd64"
+      EXPECTED_SHA="cbd18c5a6dee084db7a55d761b91202e47e63ddbd18d0faff04ca96e56739b3f"
+      ;;
+    aarch64|arm64)
+      CF_BIN_ARCH="arm64"
+      EXPECTED_SHA="92b8917aeb655ef8b9e90176dd9475b40ea85ec54b21bcafbdf57d9a68b72d15"
+      ;;
     *) fail "Unsupported architecture for cloudflared: $CF_ARCH" ;;
   esac
-  curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}" -o /tmp/cloudflared
+  curl -fsSL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-${CF_BIN_ARCH}" -o /tmp/cloudflared
+  echo "${EXPECTED_SHA}  /tmp/cloudflared" | sha256sum -c -
   sudo install -m 755 /tmp/cloudflared /usr/local/bin/cloudflared
   rm -f /tmp/cloudflared
   info "cloudflared $(cloudflared --version 2>&1 | head -1) installed"
