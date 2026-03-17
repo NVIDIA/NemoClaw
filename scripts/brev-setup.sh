@@ -33,7 +33,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export NEEDRESTART_MODE=a
 export DEBIAN_FRONTEND=noninteractive
 
-# --- 0. Node.js (needed for JensenClaw and services) ---
+# --- 0. Node.js (needed for services) ---
 if ! command -v node > /dev/null 2>&1; then
   info "Installing Node.js..."
   curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - > /dev/null 2>&1

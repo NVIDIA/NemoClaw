@@ -8,11 +8,18 @@ const fs = require("fs");
 const ROOT = path.resolve(__dirname, "..", "..");
 const SCRIPTS = path.join(ROOT, "scripts");
 
-// Auto-detect Colima Docker socket
+// Auto-detect Colima Docker socket (legacy ~/.colima or XDG ~/.config/colima)
 if (!process.env.DOCKER_HOST) {
-  const colimaSocket = path.join(process.env.HOME || "/tmp", ".colima/default/docker.sock");
-  if (fs.existsSync(colimaSocket)) {
-    process.env.DOCKER_HOST = `unix://${colimaSocket}`;
+  const home = process.env.HOME || "/tmp";
+  const candidates = [
+    path.join(home, ".colima/default/docker.sock"),
+    path.join(home, ".config/colima/default/docker.sock"),
+  ];
+  for (const sock of candidates) {
+    if (fs.existsSync(sock)) {
+      process.env.DOCKER_HOST = `unix://${sock}`;
+      break;
+    }
   }
 }
 

@@ -26,7 +26,7 @@ It moves OpenClaw into a sandboxed environment where every network request, file
 ## What NemoClaw Does
 
 - Sandboxes OpenClaw. Creates an OpenShell sandbox pre-configured for OpenClaw, with strict filesystem and network policies applied from the first boot.
-- Routes inference through NVIDIA. Configures OpenShell inference routing so agent traffic flows through cloud-hosted Nemotron 3 Super 120B, a local NIM service, or vLLM, depending on the selected profile.
+- Routes inference through NVIDIA cloud. Configures OpenShell inference routing so agent traffic flows through cloud-hosted Nemotron 3 Super 120B via [build.nvidia.com](https://build.nvidia.com).
 - Manages the lifecycle. Handles blueprint versioning, digest verification, and sandbox setup.
 
 ## How It Fits Together

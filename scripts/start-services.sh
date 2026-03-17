@@ -16,7 +16,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-JENSENCLAW_PORT="${JENSENCLAW_PORT:-18789}"
+DASHBOARD_PORT="${DASHBOARD_PORT:-18789}"
 
 # ── Parse flags ──────────────────────────────────────────────────
 SANDBOX_NAME="${NEMOCLAW_SANDBOX:-default}"
@@ -116,7 +116,6 @@ do_stop() {
   mkdir -p "$PIDDIR"
   stop_service cloudflared
   stop_service telegram-bridge
-  stop_service jensenclaw
   info "All services stopped."
 }
 
@@ -139,10 +138,6 @@ do_start() {
 
   mkdir -p "$PIDDIR"
 
-  # Easter egg web UI (runs silently)
-  start_service jensenclaw \
-    node "$REPO_DIR/.jensenclaw/server.js"
-
   # Telegram bridge (only if token provided)
   if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
     start_service telegram-bridge \
@@ -152,7 +147,7 @@ do_start() {
   # 3. cloudflared tunnel
   if command -v cloudflared > /dev/null 2>&1; then
     start_service cloudflared \
-      cloudflared tunnel --url "http://localhost:$JENSENCLAW_PORT"
+      cloudflared tunnel --url "http://localhost:$DASHBOARD_PORT"
   else
     warn "cloudflared not found — no public URL. Install: brev-setup.sh or manually."
   fi

@@ -49,13 +49,7 @@ After the sandbox starts, the agent runs inside it with all network, filesystem,
 
 Inference requests from the agent never leave the sandbox directly.
 OpenShell intercepts every inference call and routes it to the configured provider.
-NemoClaw ships with three inference profiles:
-
-- NVIDIA cloud, which routes to Nemotron 3 Super 120B through [build.nvidia.com](https://build.nvidia.com).
-- Local NIM, which routes to a NIM container on your local network.
-- Local vLLM, which routes to a vLLM server on localhost for offline development.
-
-You can switch providers at runtime without restarting the sandbox.
+NemoClaw routes inference to NVIDIA cloud, specifically Nemotron 3 Super 120B through [build.nvidia.com](https://build.nvidia.com). You can switch models at runtime without restarting the sandbox.
 
 ## Network and Filesystem Policy
 

@@ -22,7 +22,7 @@ const policies = require("./lib/policies");
 
 const GLOBAL_COMMANDS = new Set([
   "onboard", "list", "deploy", "setup", "setup-spark",
-  "start", "stop", "status", "egg", "claw", "jensen",
+  "start", "stop", "status",
   "help", "--help", "-h",
 ]);
 
@@ -106,7 +106,7 @@ async function deploy(instanceName) {
 
   console.log("  Syncing NemoClaw to VM...");
   run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'mkdir -p /home/ubuntu/nemoclaw'`);
-  run(`rsync -az --delete --exclude node_modules --exclude .git --exclude src -e "ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR" "${ROOT}/scripts" "${ROOT}/Dockerfile" "${ROOT}/nemoclaw" "${ROOT}/nemoclaw-blueprint" "${ROOT}/.jensenclaw" "${ROOT}/bin" "${ROOT}/package.json" ${name}:/home/ubuntu/nemoclaw/`);
+  run(`rsync -az --delete --exclude node_modules --exclude .git --exclude src -e "ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR" "${ROOT}/scripts" "${ROOT}/Dockerfile" "${ROOT}/nemoclaw" "${ROOT}/nemoclaw-blueprint" "${ROOT}/bin" "${ROOT}/package.json" ${name}:/home/ubuntu/nemoclaw/`);
 
   const envLines = [`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`];
   const ghToken = process.env.GITHUB_TOKEN;
@@ -182,46 +182,6 @@ function listSandboxes() {
   console.log("");
   console.log("  * = default sandbox");
   console.log("");
-}
-
-function egg(instanceName) {
-  const sshPrefix = instanceName
-    ? `ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${instanceName} `
-    : "";
-
-  if (instanceName) {
-    const ssh = `ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${instanceName}`;
-    const env = `cd /home/ubuntu/nemoclaw && set -a && . .env && set +a`;
-
-    console.log("  Starting JensenClaw...");
-    run(`${ssh} '${env} && nohup node .jensenclaw/server.js > /tmp/jensenclaw.log 2>&1 & nohup cloudflared tunnel --url http://localhost:18789 > /tmp/jensenclaw-tunnel.log 2>&1 & sleep 1'`, { ignoreError: true });
-
-    console.log("  Waiting for public URL...");
-    for (let i = 0; i < 20; i++) {
-      try {
-        const log = execSync(`${ssh} 'cat /tmp/jensenclaw-tunnel.log 2>/dev/null'`, { encoding: "utf-8", stdio: "pipe" });
-        const match = log.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
-        if (match) {
-          console.log("");
-          console.log(`  ${"=".repeat(58)}`);
-          console.log(`  YOU FOUND THE EASTER EGG`);
-          console.log(`  ${"=".repeat(58)}`);
-          console.log("");
-          console.log(`  Open this in your browser:`);
-          console.log(`  ${match[0]}`);
-          console.log("");
-          return;
-        }
-      } catch {}
-      spawnSync("sleep", ["2"]);
-    }
-    console.error("  Tunnel didn't start in time. Check /tmp/jensenclaw-tunnel.log on the VM.");
-  } else {
-    // Kill anything already on the port
-    run(`lsof -ti:18789 | xargs kill -9 2>/dev/null || true`, { ignoreError: true });
-    console.log("  Starting JensenClaw locally on http://localhost:18789");
-    run(`NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY || ""}" node "${ROOT}/.jensenclaw/server.js"`);
-  }
 }
 
 // ── Sandbox-scoped actions ───────────────────────────────────────
@@ -336,9 +296,6 @@ function help() {
     nemoclaw stop                    Stop all services
     nemoclaw status                  Show sandbox list and service status
 
-  Legacy:
-    nemoclaw egg|claw|jensen [name]  Easter egg
-
   Credentials are prompted on first use, then saved securely
   in ~/.nemoclaw/credentials.json (mode 600).
 `);
@@ -366,9 +323,6 @@ const [cmd, ...args] = process.argv.slice(2);
       case "stop":        stop(); break;
       case "status":      showStatus(); break;
       case "list":        listSandboxes(); break;
-      case "egg":
-      case "claw":
-      case "jensen":      egg(args[0]); break;
       default:            help(); break;
     }
     return;

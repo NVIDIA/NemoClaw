@@ -81,11 +81,7 @@ Open the OpenShell terminal UI for a live view of sandbox network activity and e
 $ openshell term
 ```
 
-For a remote sandbox:
-
-```console
-$ nemoclaw term <instance-name>
-```
+For a remote sandbox, SSH to the instance and run `openshell term` there.
 
 The TUI shows the following information:
 
@@ -109,7 +105,6 @@ If the request fails, check the following:
 1. Run `openclaw nemoclaw status` to confirm the active provider and endpoint.
 2. Run `openclaw nemoclaw logs -f` to view error messages from the blueprint runner.
 3. Verify that the inference endpoint is reachable from the host.
-   For local vLLM or NIM, confirm that the server is running.
 
 ## Common Issues
 
@@ -117,7 +112,7 @@ The following table lists common problems and their resolution steps:
 
 | Symptom | Resolution |
 |---|---|
-| Sandbox shows as stopped | Run `nemoclaw setup` to recreate the sandbox. |
+| Sandbox shows as stopped | Run `nemoclaw onboard` to recreate the sandbox. |
 | Inference requests time out | Verify the provider endpoint is reachable. Check `openclaw nemoclaw status` for the active endpoint. |
 | Agent cannot reach an external host | Open the TUI with `openshell term` and approve the blocked request, or add the endpoint to the policy. |
 | Blueprint run failed | Run `openclaw nemoclaw logs --run-id <id>` to view the error output for the failed run. |

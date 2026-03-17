@@ -51,12 +51,16 @@ upsert_provider() {
   fi
 }
 
-# Resolve DOCKER_HOST for Colima if needed
+# Resolve DOCKER_HOST for Colima if needed (legacy ~/.colima or XDG ~/.config/colima)
 if [ -z "${DOCKER_HOST:-}" ]; then
-  if [ -S "$HOME/.colima/default/docker.sock" ]; then
-    export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
-    warn "Using Colima Docker socket"
-  fi
+  for _sock in "$HOME/.colima/default/docker.sock" "$HOME/.config/colima/default/docker.sock"; do
+    if [ -S "$_sock" ]; then
+      export DOCKER_HOST="unix://$_sock"
+      warn "Using Colima Docker socket: $_sock"
+      break
+    fi
+  done
+  unset _sock
 fi
 
 # Check prerequisites

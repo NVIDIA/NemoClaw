@@ -169,7 +169,7 @@ async function poll() {
         if (msg.text === "/start") {
           await sendMessage(
             chatId,
-            "🦀 *JensenClaw* — NemoClaw powered by Nemotron 3 Super 120B\n\n" +
+            "🦀 *NemoClaw* — powered by Nemotron 3 Super 120B\n\n" +
               "Send me a message and I'll run it through the OpenClaw agent " +
               "inside an OpenShell sandbox.\n\n" +
               "If the agent needs external access, the TUI will prompt for approval.",

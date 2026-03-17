@@ -20,7 +20,6 @@
     "nemoclaw/package.json",
     "nemoclaw-blueprint/",
     "scripts/",
-    ".jensenclaw/",
     "Dockerfile",
     ".dockerignore"
   ],

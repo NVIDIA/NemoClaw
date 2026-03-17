@@ -24,7 +24,6 @@ extensions = [
     "sphinx_copybutton",
     "sphinx_design",
     "sphinxcontrib.mermaid",
-    "sphinx_llm.txt",
     "json_output",
     "search_assets",
 ]

@@ -19,13 +19,22 @@
 set -euo pipefail
 
 GATEWAY_NAME="${1:-}"
-COLIMA_SOCKET="$HOME/.colima/default/docker.sock"
+
+# Find Colima socket (legacy or XDG path)
+COLIMA_SOCKET=""
+for _sock in "$HOME/.colima/default/docker.sock" "$HOME/.config/colima/default/docker.sock"; do
+  if [ -S "$_sock" ]; then
+    COLIMA_SOCKET="$_sock"
+    break
+  fi
+done
+unset _sock
 
 if [ -z "${DOCKER_HOST:-}" ]; then
-  if [ -S "$COLIMA_SOCKET" ]; then
+  if [ -n "$COLIMA_SOCKET" ]; then
     export DOCKER_HOST="unix://$COLIMA_SOCKET"
   else
-    echo "Skipping CoreDNS patch: Colima socket not found at $COLIMA_SOCKET."
+    echo "Skipping CoreDNS patch: Colima socket not found."
     exit 0
   fi
 fi

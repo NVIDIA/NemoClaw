@@ -15,6 +15,11 @@ error() { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*"; exit 1; }
 
 command_exists() { command -v "$1" &>/dev/null; }
 
+MIN_NODE_MAJOR=20
+MIN_NPM_MAJOR=10
+RECOMMENDED_NODE_MAJOR=22
+RUNTIME_REQUIREMENT_MSG="NemoClaw requires Node.js >=${MIN_NODE_MAJOR} and npm >=${MIN_NPM_MAJOR} (recommended Node.js ${RECOMMENDED_NODE_MAJOR})."
+
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
 version_gte() {
   local IFS=.
@@ -48,6 +53,30 @@ refresh_path() {
   if [[ -n "$npm_bin" && -d "$npm_bin" && ":$PATH:" != *":$npm_bin:"* ]]; then
     export PATH="$npm_bin:$PATH"
   fi
+}
+
+version_major() {
+  printf '%s\n' "${1#v}" | cut -d. -f1
+}
+
+ensure_supported_runtime() {
+  command_exists node || error "${RUNTIME_REQUIREMENT_MSG} Node.js was not found on PATH."
+  command_exists npm || error "${RUNTIME_REQUIREMENT_MSG} npm was not found on PATH."
+
+  local node_version npm_version node_major npm_major
+  node_version="$(node --version 2>/dev/null || true)"
+  npm_version="$(npm --version 2>/dev/null || true)"
+  node_major="$(version_major "$node_version")"
+  npm_major="$(version_major "$npm_version")"
+
+  [[ "$node_major" =~ ^[0-9]+$ ]] || error "Could not determine Node.js version from '${node_version}'. ${RUNTIME_REQUIREMENT_MSG}"
+  [[ "$npm_major" =~ ^[0-9]+$ ]] || error "Could not determine npm version from '${npm_version}'. ${RUNTIME_REQUIREMENT_MSG}"
+
+  if (( node_major < MIN_NODE_MAJOR || npm_major < MIN_NPM_MAJOR )); then
+    error "Unsupported runtime detected: Node.js ${node_version:-unknown}, npm ${npm_version:-unknown}. ${RUNTIME_REQUIREMENT_MSG} Upgrade Node.js and rerun the installer."
+  fi
+
+  info "Runtime OK: Node.js ${node_version}, npm ${npm_version}"
 }
 
 # ---------------------------------------------------------------------------
@@ -148,7 +177,8 @@ install_nemoclaw() {
     npm install && npm link
   else
     info "Installing NemoClaw from npm…"
-    npm install -g nemoclaw
+    # Revert once https://github.com/NVIDIA/NemoClaw/issues/71 is complete and the package is published
+    npm install -g git+ssh://git@github.com/nvidia/NemoClaw.git
   fi
 
   refresh_path
@@ -202,6 +232,7 @@ main() {
   info "=== NemoClaw Installer ==="
 
   install_nodejs
+  ensure_supported_runtime
   # install_or_upgrade_ollama
   install_nemoclaw
   verify_nemoclaw

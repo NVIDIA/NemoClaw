@@ -30,7 +30,7 @@ NemoClaw supports both static policy changes that persist across restarts and dy
 
 ## Static Changes
 
-Static changes modify the baseline policy file and take effect after the next setup.
+Static changes modify the baseline policy file and take effect after the next sandbox creation.
 
 ### Edit the Policy File
 
@@ -47,15 +47,15 @@ Each entry in the `network` section defines an endpoint group with the following
 `rules`
 : HTTP methods and paths that are permitted.
 
-### Re-Run Setup
+### Re-Run Onboard
 
-Apply the updated policy by re-running setup:
+Apply the updated policy by re-running the onboard wizard:
 
 ```console
-$ nemoclaw setup
+$ nemoclaw onboard
 ```
 
-Setup picks up the modified policy file and applies it to the sandbox.
+The wizard picks up the modified policy file and applies it to the sandbox.
 
 ### Verify the Policy
 
