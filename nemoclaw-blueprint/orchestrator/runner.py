@@ -130,6 +130,11 @@ def action_plan(
         "dry_run": dry_run,
     }
 
+    progress(85, "Saving plan")
+    state_dir = Path.home() / ".nemoclaw" / "state" / "runs" / rid
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "plan.json").write_text(json.dumps(plan, indent=2))
+
     progress(100, "Plan complete")
     log(json.dumps(plan, indent=2))
     return plan
@@ -142,23 +147,34 @@ def action_apply(
     endpoint_url: str | None = None,
 ) -> None:
     """Apply the plan: create sandbox, configure provider, set inference route."""
-    rid = emit_run_id()
-
-    # Load plan if provided, otherwise generate one
+    # Reuse plan ID if provided, otherwise generate one
     if plan_path:
-        # In a real implementation, load the saved plan
-        pass
+        rid = plan_path
+        # The TS layer needs to see the RUN_ID line to confirm tracking
+        print(f"RUN_ID:{rid}", flush=True)
+    else:
+        rid = emit_run_id()
 
     inference_profiles: dict[str, Any] = (
         blueprint.get("components", {}).get("inference", {}).get("profiles", {})
     )
     inference_cfg: dict[str, Any] = inference_profiles.get(profile, {})
+    sandbox_cfg: dict[str, Any] = blueprint.get("components", {}).get("sandbox", {})
 
-    # Override endpoint if provided (e.g., NCP dynamic endpoint)
+    # Load plan if provided to get resolved values
+    if plan_path:
+        plan_file = Path.home() / ".nemoclaw" / "state" / "runs" / plan_path / "plan.json"
+        if plan_file.exists():
+            plan_data = json.loads(plan_file.read_text())
+            # Overlay plan values onto defaults
+            if "inference" in plan_data:
+                inference_cfg = {**inference_cfg, **plan_data["inference"]}
+            if "sandbox" in plan_data:
+                sandbox_cfg = {**sandbox_cfg, **plan_data["sandbox"]}
+
+    # Override endpoint if provided (e.g., NCP dynamic endpoint override during apply)
     if endpoint_url:
         inference_cfg = {**inference_cfg, "endpoint": endpoint_url}
-
-    sandbox_cfg: dict[str, Any] = blueprint.get("components", {}).get("sandbox", {})
 
     sandbox_name: str = sandbox_cfg.get("name", "openclaw")
     sandbox_image: str = sandbox_cfg.get("image", "openclaw")
