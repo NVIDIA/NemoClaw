@@ -100,9 +100,23 @@ Install the CLI and launch a sandboxed OpenClaw instance in a few commands.
       aria-label="Copy install command"
       title="Copy"
       onclick="
-        navigator.clipboard.writeText(this.closest('.nc-term').querySelector('.nc-cmd').textContent);
-        this.classList.add('copied');
-        setTimeout(() => this.classList.remove('copied'), 1200);
+        const button = this;
+        const text = button.closest('.nc-term').querySelector('.nc-cmd').textContent;
+        const show = (label, copied = false) => {
+          button.classList.toggle('copied', copied);
+          button.setAttribute('aria-label', label);
+          button.title = label;
+          setTimeout(() => {
+            button.classList.remove('copied');
+            button.setAttribute('aria-label', 'Copy install command');
+            button.title = 'Copy';
+          }, 1200);
+        };
+        if (!navigator.clipboard) {
+          show('Copy failed');
+          return;
+        }
+        navigator.clipboard.writeText(text).then(() => show('Copied', true)).catch(() => show('Copy failed'));
       "
     >
       <svg viewBox="0 0 16 16" aria-hidden="true">
