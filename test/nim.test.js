@@ -141,7 +141,7 @@ describe("nim", () => {
       assert.equal(gpu.totalMemoryMB, 0);
     });
 
-    it("detects Apple Silicon", () => {
+    it("detects macOS discrete GPU via VRAM", () => {
       const gpu = nim.detectGpu({
         platform: "darwin",
         runCapture: mockRunCapture([
@@ -155,6 +155,23 @@ describe("nim", () => {
       assert.equal(gpu.nimCapable, false);
       assert.equal(gpu.totalMemoryMB, 16384);
       assert.equal(gpu.cores, 19);
+    });
+
+    it("detects Apple Silicon with unified memory", () => {
+      const gpu = nim.detectGpu({
+        platform: "darwin",
+        runCapture: mockRunCapture([
+          ["memory.total", new Error("no nvidia-smi")],
+          ["query-gpu=name", new Error("no nvidia-smi")],
+          ["system_profiler", "Chipset Model: Apple M4\n      Total Number of Cores: 10"],
+          ["hw.memsize", "17179869184"],
+        ]),
+      });
+      assert.equal(gpu.type, "apple");
+      assert.equal(gpu.name, "Apple M4");
+      assert.equal(gpu.nimCapable, false);
+      assert.equal(gpu.totalMemoryMB, 16384);
+      assert.equal(gpu.cores, 10);
     });
 
     it("returns null when no GPU detected", () => {
