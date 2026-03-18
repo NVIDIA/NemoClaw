@@ -209,13 +209,19 @@ rm -f "$CREATE_LOG"
 
 # Verify sandbox is Ready (not just that a record exists)
 # Strip ANSI color codes before checking phase
-# Use awk for exact name match to avoid substring collisions, with || true to prevent
-# set -euo pipefail from aborting on no match
-SANDBOX_LINE=$(
-  openshell sandbox list 2>&1 \
-    | sed 's/\x1b\[[0-9;]*m//g' \
-    | awk -v name="$SANDBOX_NAME" '$1 == name { print; exit }' || true
-)
+# Separate command failures from "sandbox not found" — don't let || true hide errors
+set +e
+SANDBOX_LIST_RAW="$(
+  openshell sandbox list 2>&1 | sed 's/\x1b\[[0-9;]*m//g'
+)"
+SANDBOX_LIST_RC=$?
+set -e
+if [ "$SANDBOX_LIST_RC" -ne 0 ]; then
+  fail "Failed to query sandboxes via 'openshell sandbox list': ${SANDBOX_LIST_RAW}"
+fi
+
+# Use awk for exact name match to avoid substring collisions
+SANDBOX_LINE="$(printf '%s\n' "$SANDBOX_LIST_RAW" | awk -v name="$SANDBOX_NAME" '$1 == name { print; exit }')"
 if [ -z "$SANDBOX_LINE" ]; then
   fail "Sandbox '${SANDBOX_NAME}' not found in 'openshell sandbox list'."
 fi
