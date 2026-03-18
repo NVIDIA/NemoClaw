@@ -11,7 +11,12 @@ network_policies:
     endpoints:
       - host: ghcr.io
         port: 443
-        access: full
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/v2/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/bin/docker }
