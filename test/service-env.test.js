@@ -4,62 +4,36 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const { execSync } = require("child_process");
-const fs = require("fs");
-const path = require("path");
+const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 
 describe("service environment", () => {
   describe("resolveOpenshell logic", () => {
-    // Extract and test the resolution algorithm without requiring openshell installed
-
-    function resolveOpenshellTestable(opts = {}) {
-      const commandVResult = opts.commandVResult; // string or null (throws)
-      const existingPaths = opts.existingPaths || [];
-      const home = opts.home || "/fakehome";
-
-      // Step 1: command -v result
-      if (commandVResult && commandVResult.startsWith("/")) {
-        return commandVResult;
-      }
-
-      // Step 2: fallback candidates
-      const candidates = [
-        `${home}/.local/bin/openshell`,
-        "/usr/local/bin/openshell",
-        "/usr/bin/openshell",
-      ];
-      for (const p of candidates) {
-        if (existingPaths.includes(p)) return p;
-      }
-
-      return null; // not found
-    }
-
     it("returns command -v result when absolute path", () => {
       assert.equal(
-        resolveOpenshellTestable({ commandVResult: "/usr/bin/openshell" }),
+        resolveOpenshell({ commandVResult: "/usr/bin/openshell" }),
         "/usr/bin/openshell"
       );
     });
 
     it("rejects non-absolute command -v result (alias)", () => {
       assert.equal(
-        resolveOpenshellTestable({ commandVResult: "openshell" }),
+        resolveOpenshell({ commandVResult: "openshell", checkExecutable: () => false }),
         null
       );
     });
 
     it("rejects alias definition from command -v", () => {
       assert.equal(
-        resolveOpenshellTestable({ commandVResult: "alias openshell='echo pwned'" }),
+        resolveOpenshell({ commandVResult: "alias openshell='echo pwned'", checkExecutable: () => false }),
         null
       );
     });
 
     it("falls back to ~/.local/bin when command -v fails", () => {
       assert.equal(
-        resolveOpenshellTestable({
+        resolveOpenshell({
           commandVResult: null,
-          existingPaths: ["/fakehome/.local/bin/openshell"],
+          checkExecutable: (p) => p === "/fakehome/.local/bin/openshell",
           home: "/fakehome",
         }),
         "/fakehome/.local/bin/openshell"
@@ -68,9 +42,9 @@ describe("service environment", () => {
 
     it("falls back to /usr/local/bin", () => {
       assert.equal(
-        resolveOpenshellTestable({
+        resolveOpenshell({
           commandVResult: null,
-          existingPaths: ["/usr/local/bin/openshell"],
+          checkExecutable: (p) => p === "/usr/local/bin/openshell",
         }),
         "/usr/local/bin/openshell"
       );
@@ -78,9 +52,9 @@ describe("service environment", () => {
 
     it("falls back to /usr/bin", () => {
       assert.equal(
-        resolveOpenshellTestable({
+        resolveOpenshell({
           commandVResult: null,
-          existingPaths: ["/usr/bin/openshell"],
+          checkExecutable: (p) => p === "/usr/bin/openshell",
         }),
         "/usr/bin/openshell"
       );
@@ -88,9 +62,9 @@ describe("service environment", () => {
 
     it("prefers ~/.local/bin over /usr/local/bin", () => {
       assert.equal(
-        resolveOpenshellTestable({
+        resolveOpenshell({
           commandVResult: null,
-          existingPaths: ["/fakehome/.local/bin/openshell", "/usr/local/bin/openshell"],
+          checkExecutable: (p) => p === "/fakehome/.local/bin/openshell" || p === "/usr/local/bin/openshell",
           home: "/fakehome",
         }),
         "/fakehome/.local/bin/openshell"
@@ -99,9 +73,9 @@ describe("service environment", () => {
 
     it("returns null when openshell not found anywhere", () => {
       assert.equal(
-        resolveOpenshellTestable({
+        resolveOpenshell({
           commandVResult: null,
-          existingPaths: [],
+          checkExecutable: () => false,
         }),
         null
       );
@@ -110,8 +84,6 @@ describe("service environment", () => {
 
   describe("SANDBOX_NAME defaulting", () => {
     it("start-services.sh preserves existing SANDBOX_NAME", () => {
-      // Verify the bash variable expansion logic:
-      // SANDBOX_NAME="${NEMOCLAW_SANDBOX:-${SANDBOX_NAME:-default}}"
       const result = execSync(
         'SANDBOX_NAME=my-box bash -c \'SANDBOX_NAME="${NEMOCLAW_SANDBOX:-${SANDBOX_NAME:-default}}" && echo $SANDBOX_NAME\'',
         { encoding: "utf-8" }

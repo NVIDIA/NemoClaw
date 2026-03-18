@@ -18,29 +18,13 @@
 
 const https = require("https");
 const { execSync, spawn } = require("child_process");
+const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 
-function resolveOpenshell() {
-  try {
-    const found = execSync("command -v openshell", { encoding: "utf-8" }).trim();
-    if (found.startsWith("/")) return found;
-  } catch {}
-  const home = process.env.HOME || "/tmp";
-  const candidates = [
-    `${home}/.local/bin/openshell`,
-    "/usr/local/bin/openshell",
-    "/usr/bin/openshell",
-  ];
-  for (const p of candidates) {
-    try {
-      require("fs").accessSync(p, require("fs").constants.X_OK);
-      return p;
-    } catch {}
-  }
+const OPENSHELL = resolveOpenshell();
+if (!OPENSHELL) {
   console.error("openshell not found on PATH or in common locations");
   process.exit(1);
 }
-
-const OPENSHELL = resolveOpenshell();
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API_KEY = process.env.NVIDIA_API_KEY;

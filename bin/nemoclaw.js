@@ -135,7 +135,8 @@ async function deploy(instanceName) {
 async function start() {
   await ensureApiKey();
   const { defaultSandbox } = registry.listSandboxes();
-  const sandboxEnv = defaultSandbox ? `SANDBOX_NAME="${defaultSandbox}"` : "";
+  const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
+  const sandboxEnv = safeName ? `SANDBOX_NAME="${safeName}"` : "";
   run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh"`);
 }
 
