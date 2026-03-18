@@ -57,10 +57,11 @@ function listOllamaModels() {
 function createChatVariant(baseModel) {
   const variantName = baseModel.replace(/:.*$/, "") + "-chat";
   try {
-    // Write Modelfile to a temp file to avoid shell interpolation risks
     const os = require("os");
     const modelfile = `FROM ${baseModel}`;
-    const tmpFile = path.join(os.tmpdir(), `nemoclaw-modelfile-${Date.now()}`);
+    // Use mkdtempSync for a cryptographically random temp directory
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-"));
+    const tmpFile = path.join(tempDir, "Modelfile");
     fs.writeFileSync(tmpFile, modelfile, "utf-8");
     try {
       require("child_process").execFileSync(
@@ -69,7 +70,7 @@ function createChatVariant(baseModel) {
         { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 120000 }
       );
     } finally {
-      try { fs.unlinkSync(tmpFile); } catch {}
+      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
     }
     return variantName;
   } catch (err) {
@@ -317,14 +318,12 @@ async function setupNim(sandboxName, gpu) {
           }
         }
       } else {
-        // nemotron-3-nano is a reasoning model — default to its chat variant
-        // to avoid blank responses (see issue #246). The user still needs to
-        // pull the base model and create the variant after onboarding.
-        model = "nemotron-3-nano-chat";
-        console.log("  No Ollama models found. Defaulting to nemotron-3-nano-chat.");
-        console.log("  After onboarding, run:");
-        console.log("    ollama pull nemotron-3-nano");
-        console.log("    echo 'FROM nemotron-3-nano' | ollama create nemotron-3-nano-chat");
+        // No models pulled yet — default to a common non-reasoning model.
+        // The user still needs to pull it after onboarding.
+        model = "llama3.2";
+        console.log("  No Ollama models found. Defaulting to llama3.2.");
+        console.log("  After onboarding, pull the model:");
+        console.log("    ollama pull llama3.2");
       }
       registry.updateSandbox(sandboxName, { model, provider, nimContainer });
       return { model, provider };

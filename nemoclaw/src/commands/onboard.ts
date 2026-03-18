@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, execSync } from "node:child_process";
-import { writeFileSync, unlinkSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PluginLogger, NemoClawConfig } from "../index.js";
@@ -63,8 +63,9 @@ function createOllamaChatVariant(baseModel: string, logger: PluginLogger): strin
   const variantName = baseModel.replace(/:.*$/, "") + "-chat";
   try {
     const modelfile = `FROM ${baseModel}`;
-    // Write Modelfile to a temp file to avoid shell interpolation risks
-    const tmpFile = join(tmpdir(), `nemoclaw-modelfile-${Date.now()}`);
+    // Use mkdtempSync for a cryptographically random temp directory
+    const tempDir = mkdtempSync(join(tmpdir(), "nemoclaw-"));
+    const tmpFile = join(tempDir, "Modelfile");
     writeFileSync(tmpFile, modelfile, "utf-8");
     try {
       execFileSync("ollama", ["create", variantName, "-f", tmpFile], {
@@ -74,7 +75,7 @@ function createOllamaChatVariant(baseModel: string, logger: PluginLogger): strin
       });
     } finally {
       try {
-        unlinkSync(tmpFile);
+        rmSync(tempDir, { recursive: true, force: true });
       } catch {
         // ignore cleanup errors
       }
@@ -416,14 +417,19 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
       }));
       model = await promptSelect("Select your Ollama model:", modelOptions);
     } else {
-      // No models pulled yet — default to nemotron-3-nano-chat (non-reasoning variant)
-      // to avoid blank responses. The user still needs to pull the base model and
-      // create the variant after onboarding.
-      model = "nemotron-3-nano-chat";
-      logger.warn("No models found in local Ollama. Defaulting to nemotron-3-nano-chat.");
-      logger.warn("After onboarding, run:");
-      logger.warn("  ollama pull nemotron-3-nano");
-      logger.warn("  echo 'FROM nemotron-3-nano' | ollama create nemotron-3-nano-chat");
+      // No models pulled yet — prompt user to pull one first
+      logger.warn("No models found in local Ollama.");
+      logger.warn("Pull a model first, then enter its name.");
+      logger.warn("  Example: ollama pull llama3.2");
+      logger.warn("  Example: ollama pull nemotron-3-nano");
+      if (!nonInteractive) {
+        model = await promptInput("Enter a local Ollama model ID (or press Enter for llama3.2):");
+        model = model.trim() || "llama3.2";
+      } else {
+        model = "llama3.2";
+        logger.warn("Non-interactive mode: defaulting to llama3.2. Pull it after onboarding:");
+        logger.warn("  ollama pull llama3.2");
+      }
     }
   } else {
     // Build model options: prefer Nemotron models from the endpoint, fall back to defaults
