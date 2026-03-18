@@ -49,8 +49,18 @@ function detectGpu(opts) {
       const perGpuMB = lines.map((l) => parseInt(l.trim(), 10)).filter((n) => !isNaN(n));
       if (perGpuMB.length > 0) {
         const totalMemoryMB = perGpuMB.reduce((a, b) => a + b, 0);
+        // Query GPU name for display
+        let name;
+        try {
+          name = runCmd(
+            "nvidia-smi --query-gpu=name --format=csv,noheader,nounits",
+            { ignoreError: true }
+          );
+          if (name) name = name.split("\n")[0].trim();
+        } catch {}
         return {
           type: "nvidia",
+          name,
           count: perGpuMB.length,
           totalMemoryMB,
           perGpuMB: perGpuMB[0],
@@ -126,6 +136,30 @@ function detectGpu(opts) {
   }
 
   return null;
+}
+
+/**
+ * Suggest NIM models ranked by fit for a given GPU.
+ * Returns models sorted by VRAM requirement (descending), with the largest
+ * model that uses ≤90% of available VRAM marked as recommended.
+ * @param {{ totalMemoryMB: number, nimCapable: boolean } | null} gpu
+ * @returns {Array<{ name: string, image: string, minGpuMemoryMB: number, recommended: boolean }>}
+ */
+function suggestModelsForGpu(gpu) {
+  if (!gpu || !gpu.nimCapable) return [];
+  const vram = gpu.totalMemoryMB;
+  const fits = listModels()
+    .filter((m) => m.minGpuMemoryMB <= vram)
+    .sort((a, b) => b.minGpuMemoryMB - a.minGpuMemoryMB);
+
+  // Mark the largest model that fits within 90% VRAM as recommended
+  const threshold = vram * 0.9;
+  let recommended = false;
+  return fits.map((m) => {
+    const rec = !recommended && m.minGpuMemoryMB <= threshold;
+    if (rec) recommended = true;
+    return { ...m, recommended: rec };
+  });
 }
 
 /** @param {string} model - Model name to pull. @returns {string} Image tag. */
@@ -218,6 +252,7 @@ module.exports = {
   getImageForModel,
   listModels,
   detectGpu,
+  suggestModelsForGpu,
   pullNimImage,
   startNimContainer,
   waitForNimHealth,

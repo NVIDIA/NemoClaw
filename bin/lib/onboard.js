@@ -314,7 +314,8 @@ async function preflight() {
   // GPU
   const gpu = nim.detectGpu();
   if (gpu && gpu.type === "nvidia") {
-    console.log(`  ✓ NVIDIA GPU detected: ${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`);
+    const label = gpu.name ? `${gpu.name}, ` : "";
+    console.log(`  ✓ NVIDIA GPU detected: ${label}${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`);
   } else if (gpu && gpu.type === "apple") {
     console.log(`  ✓ Apple GPU detected: ${gpu.name}${gpu.cores ? ` (${gpu.cores} cores)` : ""}, ${gpu.totalMemoryMB} MB unified memory`);
     console.log("  ⓘ NIM requires NVIDIA GPU — will use cloud inference");
@@ -539,8 +540,8 @@ async function setupNim(sandboxName, gpu) {
     }
 
     if (selected.key === "nim") {
-      // List models that fit GPU VRAM
-      const models = nim.listModels().filter((m) => m.minGpuMemoryMB <= gpu.totalMemoryMB);
+      // List models that fit GPU VRAM, ranked with recommendation
+      const models = nim.suggestModelsForGpu(gpu);
       if (models.length === 0) {
         console.log("  No NIM models fit your GPU VRAM. Falling back to cloud API.");
       } else {
@@ -560,7 +561,8 @@ async function setupNim(sandboxName, gpu) {
           console.log("");
           console.log("  Models that fit your GPU:");
           models.forEach((m, i) => {
-            console.log(`    ${i + 1}) ${m.name} (min ${m.minGpuMemoryMB} MB)`);
+            const tag = m.recommended ? " (recommended)" : "";
+            console.log(`    ${i + 1}) ${m.name} (min ${m.minGpuMemoryMB} MB)${tag}`);
           });
           console.log("");
 
