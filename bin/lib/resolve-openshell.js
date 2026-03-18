@@ -17,7 +17,7 @@ const fs = require("fs");
  * @returns {string|null} Absolute path to openshell, or null if not found
  */
 function resolveOpenshell(opts = {}) {
-  const home = opts.home || process.env.HOME || "/tmp";
+  const home = opts.home ?? process.env.HOME;
 
   // Step 1: command -v
   if (opts.commandVResult === undefined) {
@@ -35,7 +35,7 @@ function resolveOpenshell(opts = {}) {
   });
 
   const candidates = [
-    `${home}/.local/bin/openshell`,
+    ...(home && home.startsWith("/") ? [`${home}/.local/bin/openshell`] : []),
     "/usr/local/bin/openshell",
     "/usr/bin/openshell",
   ];

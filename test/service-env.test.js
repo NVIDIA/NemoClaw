@@ -85,24 +85,33 @@ describe("service environment", () => {
   describe("SANDBOX_NAME defaulting", () => {
     it("start-services.sh preserves existing SANDBOX_NAME", () => {
       const result = execSync(
-        'SANDBOX_NAME=my-box bash -c \'SANDBOX_NAME="${NEMOCLAW_SANDBOX:-${SANDBOX_NAME:-default}}" && echo $SANDBOX_NAME\'',
-        { encoding: "utf-8" }
+        'bash -c \'SANDBOX_NAME="${NEMOCLAW_SANDBOX:-${SANDBOX_NAME:-default}}"; export SANDBOX_NAME; bash -c "echo \\$SANDBOX_NAME"\'',
+        {
+          encoding: "utf-8",
+          env: { ...process.env, NEMOCLAW_SANDBOX: "", SANDBOX_NAME: "my-box" },
+        }
       ).trim();
       assert.equal(result, "my-box");
     });
 
     it("start-services.sh uses NEMOCLAW_SANDBOX over SANDBOX_NAME", () => {
       const result = execSync(
-        'NEMOCLAW_SANDBOX=from-env SANDBOX_NAME=old bash -c \'SANDBOX_NAME="${NEMOCLAW_SANDBOX:-${SANDBOX_NAME:-default}}" && echo $SANDBOX_NAME\'',
-        { encoding: "utf-8" }
+        'bash -c \'SANDBOX_NAME="${NEMOCLAW_SANDBOX:-${SANDBOX_NAME:-default}}"; export SANDBOX_NAME; bash -c "echo \\$SANDBOX_NAME"\'',
+        {
+          encoding: "utf-8",
+          env: { ...process.env, NEMOCLAW_SANDBOX: "from-env", SANDBOX_NAME: "old" },
+        }
       ).trim();
       assert.equal(result, "from-env");
     });
 
     it("start-services.sh falls back to default when both unset", () => {
       const result = execSync(
-        'bash -c \'SANDBOX_NAME="${NEMOCLAW_SANDBOX:-${SANDBOX_NAME:-default}}" && echo $SANDBOX_NAME\'',
-        { encoding: "utf-8" }
+        'bash -c \'SANDBOX_NAME="${NEMOCLAW_SANDBOX:-${SANDBOX_NAME:-default}}"; export SANDBOX_NAME; bash -c "echo \\$SANDBOX_NAME"\'',
+        {
+          encoding: "utf-8",
+          env: { ...process.env, NEMOCLAW_SANDBOX: "", SANDBOX_NAME: "" },
+        }
       ).trim();
       assert.equal(result, "default");
     });
