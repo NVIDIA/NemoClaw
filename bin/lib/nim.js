@@ -6,15 +6,18 @@
 const { run, runCapture } = require("./runner");
 const nimImages = require("./nim-images.json");
 
+/** @param {string} sandboxName @returns {string} Docker container name. */
 function containerName(sandboxName) {
   return `nemoclaw-nim-${sandboxName}`;
 }
 
+/** @param {string} modelName @returns {string|null} NIM container image or null. */
 function getImageForModel(modelName) {
   const entry = nimImages.models.find((m) => m.name === modelName);
   return entry ? entry.image : null;
 }
 
+/** @returns {Array<{name: string, image: string, minGpuMemoryMB: number}>} */
 function listModels() {
   return nimImages.models.map((m) => ({
     name: m.name,
@@ -125,6 +128,7 @@ function detectGpu(opts) {
   return null;
 }
 
+/** @param {string} model - Model name to pull. @returns {string} Image tag. */
 function pullNimImage(model) {
   const image = getImageForModel(model);
   if (!image) {
@@ -136,6 +140,7 @@ function pullNimImage(model) {
   return image;
 }
 
+/** @param {string} sandboxName @param {string} model @param {number} [port=8000] @returns {string} Container name. */
 function startNimContainer(sandboxName, model, port = 8000) {
   const name = containerName(sandboxName);
   const image = getImageForModel(model);
@@ -154,6 +159,7 @@ function startNimContainer(sandboxName, model, port = 8000) {
   return name;
 }
 
+/** @param {number} [port=8000] @param {number} [timeout=300] @returns {boolean} True if healthy. */
 function waitForNimHealth(port = 8000, timeout = 300) {
   const start = Date.now();
   const interval = 5000;
@@ -176,6 +182,7 @@ function waitForNimHealth(port = 8000, timeout = 300) {
   return false;
 }
 
+/** @param {string} sandboxName - Stop and remove the NIM container. */
 function stopNimContainer(sandboxName) {
   const name = containerName(sandboxName);
   console.log(`  Stopping NIM container: ${name}`);
@@ -183,6 +190,7 @@ function stopNimContainer(sandboxName) {
   run(`docker rm ${name} 2>/dev/null || true`, { ignoreError: true });
 }
 
+/** @param {string} sandboxName @returns {{running: boolean, healthy?: boolean, container: string, state?: string}} */
 function nimStatus(sandboxName) {
   const name = containerName(sandboxName);
   try {
