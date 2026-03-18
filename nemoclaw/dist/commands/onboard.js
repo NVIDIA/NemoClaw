@@ -145,10 +145,11 @@ async function promptEndpoint(ollama) {
     }
     return (await (0, prompt_js_1.promptSelect)("Select your inference endpoint:", options));
 }
-function execOpenShell(args) {
+function execOpenShell(args, options) {
     return (0, node_child_process_1.execFileSync)("openshell", args, {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, ...options?.env },
     });
 }
 async function cliOnboard(opts) {
@@ -313,6 +314,11 @@ async function cliOnboard(opts) {
     // Step 8: Apply
     logger.info("");
     logger.info("Applying configuration...");
+    // SECURITY: Pass the credential via per-call env (openshell env-lookup form).
+    // The key value is passed as { env: { [credentialEnv]: apiKey } } to
+    // execOpenShell so it never appears in openshell's argv (visible via `ps aux`).
+    // This avoids permanently mutating process.env.
+    const credentialEnvMap = { [credentialEnv]: apiKey };
     // 7a: Create/update provider
     try {
         execOpenShell([
@@ -323,10 +329,10 @@ async function cliOnboard(opts) {
             "--type",
             "openai",
             "--credential",
-            `${credentialEnv}=${apiKey}`,
+            credentialEnv,
             "--config",
             `OPENAI_BASE_URL=${endpointUrl}`,
-        ]);
+        ], { env: credentialEnvMap });
         logger.info(`Created provider: ${providerName}`);
     }
     catch (err) {
@@ -338,10 +344,10 @@ async function cliOnboard(opts) {
                     "update",
                     providerName,
                     "--credential",
-                    `${credentialEnv}=${apiKey}`,
+                    credentialEnv,
                     "--config",
                     `OPENAI_BASE_URL=${endpointUrl}`,
-                ]);
+                ], { env: credentialEnvMap });
                 logger.info(`Updated provider: ${providerName}`);
             }
             catch (updateErr) {

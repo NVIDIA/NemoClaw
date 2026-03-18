@@ -193,12 +193,17 @@ def action_apply(
     endpoint: str = inference_cfg.get("endpoint", "")
     model: str = inference_cfg.get("model", "")
 
-    # Resolve credential from environment
-    credential_env = inference_cfg.get("credential_env")
+    # Resolve the env-var name that holds the credential.
+    # Prefer an explicit credential_env from the profile; fall back to a
+    # type-based default so that profiles without credential_env still work
+    # (supersedes PR #191 approach).
+    target_cred_env: str | None = inference_cfg.get("credential_env")
+    if not target_cred_env:
+        provider_type_str = inference_cfg.get("provider_type", "openai")
+        target_cred_env = "NVIDIA_API_KEY" if provider_type_str == "nvidia" else "OPENAI_API_KEY"
+
     credential_default: str = inference_cfg.get("credential_default", "")
-    credential = ""
-    if credential_env:
-        credential = os.environ.get(credential_env, credential_default)
+    credential = os.environ.get(target_cred_env, credential_default)
 
     provider_args = [
         "openshell",
@@ -210,7 +215,11 @@ def action_apply(
         provider_type,
     ]
     if credential:
-        provider_args.extend(["--credential", f"OPENAI_API_KEY={credential}"])
+        # SECURITY: set the secret in this process's env so openshell can read
+        # it via env-lookup form.  We pass only the env-var NAME to --credential
+        # so the key value never appears in openshell's argv (visible to `ps aux`).
+        os.environ[target_cred_env] = credential
+        provider_args.extend(["--credential", target_cred_env])
     if endpoint:
         provider_args.extend(["--config", f"OPENAI_BASE_URL={endpoint}"])
 

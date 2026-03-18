@@ -179,10 +179,11 @@ async function promptEndpoint(
   return (await promptSelect("Select your inference endpoint:", options)) as EndpointType;
 }
 
-function execOpenShell(args: string[]): string {
+function execOpenShell(args: string[], options?: { env?: Record<string, string> }): string {
   return execFileSync("openshell", args, {
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, ...options?.env },
   });
 }
 
@@ -373,6 +374,12 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
   logger.info("");
   logger.info("Applying configuration...");
 
+  // SECURITY: Pass the credential via per-call env (openshell env-lookup form).
+  // The key value is passed as { env: { [credentialEnv]: apiKey } } to
+  // execOpenShell so it never appears in openshell's argv (visible via `ps aux`).
+  // This avoids permanently mutating process.env.
+  const credentialEnvMap = { [credentialEnv]: apiKey };
+
   // 7a: Create/update provider
   try {
     execOpenShell([
@@ -383,10 +390,10 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
       "--type",
       "openai",
       "--credential",
-      `${credentialEnv}=${apiKey}`,
+      credentialEnv,
       "--config",
       `OPENAI_BASE_URL=${endpointUrl}`,
-    ]);
+    ], { env: credentialEnvMap });
     logger.info(`Created provider: ${providerName}`);
   } catch (err) {
     const stderr =
@@ -398,10 +405,10 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
           "update",
           providerName,
           "--credential",
-          `${credentialEnv}=${apiKey}`,
+          credentialEnv,
           "--config",
           `OPENAI_BASE_URL=${endpointUrl}`,
-        ]);
+        ], { env: credentialEnvMap });
         logger.info(`Updated provider: ${providerName}`);
       } catch (updateErr) {
         const updateStderr =
