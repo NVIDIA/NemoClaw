@@ -132,6 +132,28 @@ do_stop() {
   stop_service telegram-bridge
   stop_service gateway-forward
   stop_service openclaw-gateway
+
+  # Stop the gateway process inside the sandbox (the local PID is just
+  # the SSH wrapper; the actual process runs inside the sandbox).
+  if command -v openshell > /dev/null 2>&1; then
+    local sandbox gateway_name
+    if [ "$SANDBOX_NAME" != "default" ]; then
+      sandbox="$SANDBOX_NAME"
+    else
+      sandbox="$(openshell sandbox list --names 2>/dev/null | head -1)"
+    fi
+    gateway_name="$(openshell gateway info 2>/dev/null | grep -oP 'Gateway:\s+\K\S+' || echo 'openshell')"
+    if [ -n "$sandbox" ]; then
+      info "Stopping gateway inside sandbox '$sandbox'..."
+      ssh -o "ProxyCommand=openshell ssh-proxy --gateway-name $gateway_name --name $sandbox" \
+          -o StrictHostKeyChecking=accept-new \
+          -o UserKnownHostsFile="$PIDDIR/openshell-known_hosts" \
+          -o LogLevel=ERROR \
+          -o ConnectTimeout=10 \
+          sandbox@"openshell-$sandbox" \
+          'openclaw gateway stop 2>/dev/null; true' 2>/dev/null || true
+    fi
+  fi
   info "All services stopped."
 }
 
@@ -175,14 +197,19 @@ do_start() {
       # Start gateway inside sandbox (idempotent — skips if already running)
       if ! is_running "openclaw-gateway"; then
         info "Starting OpenClaw gateway inside sandbox '$sandbox'..."
-        # Deliver token via stdin to avoid leaking it in the process list
+        # Write token to a temp file readable only by us, pipe it to ssh stdin
+        local token_file
+        token_file="$(mktemp "$PIDDIR/gw-token.XXXXXX")"
+        chmod 600 "$token_file"
+        printf '%s\n' "$gw_token" > "$token_file"
         start_service openclaw-gateway \
-          bash -c "echo '$gw_token' | ssh -o 'ProxyCommand=$proxy_cmd' \
+          sh -c "ssh -o 'ProxyCommand=$proxy_cmd' \
               -o StrictHostKeyChecking=accept-new \
-              -o UserKnownHostsFile='$known_hosts_file' \
+              -o 'UserKnownHostsFile=$known_hosts_file' \
               -o LogLevel=ERROR \
               sandbox@openshell-$sandbox \
-              'read token && export OPENCLAW_GATEWAY_TOKEN=\$token && exec openclaw gateway run'"
+              'read -r token; export OPENCLAW_GATEWAY_TOKEN=\"\$token\"; exec openclaw gateway run' \
+              < '$token_file'; rm -f '$token_file'"
         sleep 5
       fi
 
