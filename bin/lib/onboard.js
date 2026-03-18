@@ -55,6 +55,56 @@ async function promptOrDefault(question, envVar, defaultValue) {
   return prompt(question);
 }
 
+// Known Ollama reasoning models that output to `reasoning` field instead of `content`.
+// See: https://github.com/NVIDIA/NemoClaw/issues/246
+const KNOWN_REASONING_MODEL_PATTERNS = [
+  /^nemotron.*nano/i,
+  /^deepseek-r1/i,
+  /^qwq/i,
+];
+
+function isReasoningModel(modelName) {
+  // Exclude chat variants (e.g. nemotron-3-nano-chat) — they don't use reasoning mode
+  if (/-chat$/i.test(modelName)) return false;
+  return KNOWN_REASONING_MODEL_PATTERNS.some((p) => p.test(modelName));
+}
+
+function listOllamaModels() {
+  try {
+    const { execSync } = require("child_process");
+    const raw = execSync("curl -sf http://localhost:11434/api/tags", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 5000,
+    });
+    const data = JSON.parse(raw);
+    return (data.models || []).map((m) => m.name);
+  } catch {
+    return [];
+  }
+}
+
+function createOllamaChatVariant(baseModel) {
+  const { execFileSync } = require("child_process");
+  const os = require("os");
+  const variantName = baseModel.replace(/:.*$/, "") + "-chat";
+  const modelfilePath = path.join(os.tmpdir(), `nemoclaw-modelfile-${Date.now()}`);
+  try {
+    fs.writeFileSync(modelfilePath, `FROM ${baseModel}\n`, "utf-8");
+    execFileSync("ollama", ["create", variantName, "-f", modelfilePath], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 120000,
+    });
+    return variantName;
+  } catch (err) {
+    console.log(`  ⚠ Could not create chat variant '${variantName}': ${err.message || err}`);
+    return null;
+  } finally {
+    try { fs.unlinkSync(modelfilePath); } catch { /* ignore */ }
+  }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────
 
 function step(n, total, msg) {
@@ -591,12 +641,38 @@ async function setupNim(sandboxName, gpu) {
         run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
         sleep(2);
       }
-      console.log("  ✓ Using Ollama on localhost:11434");
+      // List available models and let the user pick
+      const ollamaModels = listOllamaModels();
+      if (ollamaModels.length > 0) {
+        console.log("");
+        console.log("  Available Ollama models:");
+        ollamaModels.forEach((m, i) => {
+          console.log(`    ${i + 1}) ${m}`);
+        });
+        console.log("");
+        const modelChoice = await prompt(`  Choose model [1]: `);
+        const midx = parseInt(modelChoice || "1", 10) - 1;
+        model = ollamaModels[midx] || ollamaModels[0];
+      } else {
+        model = "nemotron-3-nano";
+      }
+      console.log(`  ✓ Using Ollama on localhost:11434 with model: ${model}`);
       provider = "ollama-local";
       if (isNonInteractive()) {
         model = requestedModel || getDefaultOllamaModel(runCapture);
       } else {
         model = await promptOllamaModel();
+      }
+      // If the model is a reasoning model, create a chat variant to avoid blank responses
+      if (isReasoningModel(model)) {
+        console.log(`  ⚠ '${model}' is a reasoning model — creating chat variant...`);
+        const chatVariant = createOllamaChatVariant(model);
+        if (chatVariant) {
+          console.log(`  ✓ Using chat variant: ${chatVariant}`);
+          model = chatVariant;
+        } else {
+          console.log("  ⚠ Could not create chat variant. Model may return empty responses.");
+        }
       }
     } else if (selected.key === "install-ollama") {
       console.log("  Installing Ollama via Homebrew...");
@@ -610,6 +686,17 @@ async function setupNim(sandboxName, gpu) {
         model = requestedModel || getDefaultOllamaModel(runCapture);
       } else {
         model = await promptOllamaModel();
+      }
+      // If the model is a reasoning model, create a chat variant to avoid blank responses
+      if (isReasoningModel(model)) {
+        console.log(`  ⚠ '${model}' is a reasoning model — creating chat variant...`);
+        const chatVariant = createOllamaChatVariant(model);
+        if (chatVariant) {
+          console.log(`  ✓ Using chat variant: ${chatVariant}`);
+          model = chatVariant;
+        } else {
+          console.log("  ⚠ Could not create chat variant. Model may return empty responses.");
+        }
       }
     } else if (selected.key === "vllm") {
       console.log("  ✓ Using existing vLLM on localhost:8000");
