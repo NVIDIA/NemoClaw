@@ -30,6 +30,47 @@ function isDockerRunning() {
   }
 }
 
+/**
+ * Check if the host uses cgroup v2 and Docker is missing cgroupns=host.
+ * Without this, k3s inside Docker fails to initialize on cgroup v2 hosts
+ * (e.g., Ubuntu 24.04, DGX Spark), causing "namespace not found" errors.
+ * Returns { needsFix: boolean, isCgroupV2: boolean }.
+ */
+function checkDockerCgroupCompat() {
+  if (process.platform !== "linux") return { needsFix: false, isCgroupV2: false };
+
+  // Check if cgroup v2 (unified hierarchy)
+  let isCgroupV2 = false;
+  try {
+    const mountInfo = fs.readFileSync("/proc/mounts", "utf-8");
+    // cgroup v2 mounts as "cgroup2" type on /sys/fs/cgroup
+    isCgroupV2 = mountInfo.includes("cgroup2");
+  } catch {
+    return { needsFix: false, isCgroupV2: false };
+  }
+
+  if (!isCgroupV2) return { needsFix: false, isCgroupV2: false };
+
+  // Check Docker daemon config for default-cgroupns-mode
+  try {
+    // Check daemon.json directly for the cgroupns setting
+    let cgroupnsHost = false;
+    try {
+      const daemonJson = JSON.parse(fs.readFileSync("/etc/docker/daemon.json", "utf-8"));
+      cgroupnsHost = daemonJson["default-cgroupns-mode"] === "host";
+    } catch {
+      // No daemon.json or parse error — not configured
+    }
+
+    if (cgroupnsHost) return { needsFix: false, isCgroupV2: true };
+
+    // Cgroup v2 without cgroupns=host — this will break k3s-in-Docker
+    return { needsFix: true, isCgroupV2: true };
+  } catch {
+    return { needsFix: false, isCgroupV2 };
+  }
+}
+
 function isOpenshellInstalled() {
   try {
     runCapture("command -v openshell");
@@ -57,6 +98,32 @@ async function preflight() {
   }
   console.log("  ✓ Docker is running");
 
+  // Docker cgroup v2 compatibility (Linux only)
+  // k3s-in-Docker requires cgroupns=host on cgroup v2 hosts (Ubuntu 24.04, DGX Spark).
+  // Without it, kubelet fails and the gateway namespace never gets created.
+  const cgroupCheck = checkDockerCgroupCompat();
+  if (cgroupCheck.needsFix) {
+    console.error("");
+    console.error("  ⚠ Cgroup v2 detected but Docker is not configured for cgroupns=host.");
+    console.error("    The OpenShell gateway runs k3s inside Docker, which requires");
+    console.error("    host cgroup namespace access on cgroup v2 systems.");
+    console.error("");
+    console.error("    Without this fix, gateway startup will fail with:");
+    console.error('      "timed out waiting for namespace \'openshell\' to exist"');
+    console.error("");
+    console.error("    To fix automatically (DGX Spark or Ubuntu 24.04):");
+    console.error("      sudo nemoclaw setup-spark");
+    console.error("");
+    console.error("    Or manually add to /etc/docker/daemon.json:");
+    console.error('      { "default-cgroupns-mode": "host" }');
+    console.error("    Then: sudo systemctl restart docker");
+    console.error("");
+    process.exit(1);
+  }
+  if (cgroupCheck.isCgroupV2) {
+    console.log("  ✓ Cgroup v2 — Docker cgroupns=host configured");
+  }
+
   // OpenShell CLI
   if (!isOpenshellInstalled()) {
     console.log("  openshell CLI not found. Attempting to install...");
@@ -70,7 +137,9 @@ async function preflight() {
 
   // GPU
   const gpu = nim.detectGpu();
-  if (gpu && gpu.type === "nvidia") {
+  if (gpu && gpu.type === "nvidia" && gpu.spark) {
+    console.log(`  ✓ NVIDIA GPU detected (DGX Spark): ${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB unified memory`);
+  } else if (gpu && gpu.type === "nvidia") {
     console.log(`  ✓ NVIDIA GPU detected: ${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`);
   } else if (gpu && gpu.type === "apple") {
     console.log(`  ✓ Apple GPU detected: ${gpu.name}${gpu.cores ? ` (${gpu.cores} cores)` : ""}, ${gpu.totalMemoryMB} MB unified memory`);
