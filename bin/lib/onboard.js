@@ -63,13 +63,30 @@ const KNOWN_REASONING_MODEL_PATTERNS = [
   /^qwq/i,
 ];
 
+/**
+ * Parse an Ollama model reference into its components.
+ * Handles fully-qualified refs like "ghcr.io/org/deepseek-r1:8b" as well as
+ * simple refs like "deepseek-r1:8b" or "deepseek-r1".
+ */
+function parseOllamaModelRef(modelRef) {
+  // Strip @digest if present
+  const ref = String(modelRef).split("@", 1)[0];
+  // Strip :tag suffix (only the last one, after the last /)
+  const withoutTag = ref.replace(/:(?=[^/]*$).*/, "");
+  return {
+    withoutTag,
+    baseName: withoutTag.slice(withoutTag.lastIndexOf("/") + 1),
+  };
+}
+
 function isReasoningModel(modelName) {
   if (typeof modelName !== "string" || modelName.length === 0) return false;
-  // Exclude chat variants — strip optional :tag suffix before checking
-  // Handles both "model-chat" and tagged forms like "deepseek-r1-chat:8b"
-  const baseName = modelName.replace(/:.*$/, "");
+  // Extract base model name — strips registry, namespace, and tag
+  // so "ghcr.io/org/deepseek-r1:8b" → baseName "deepseek-r1"
+  const { baseName } = parseOllamaModelRef(modelName);
+  // Exclude chat variants
   if (/-chat$/i.test(baseName)) return false;
-  return KNOWN_REASONING_MODEL_PATTERNS.some((p) => p.test(modelName));
+  return KNOWN_REASONING_MODEL_PATTERNS.some((p) => p.test(baseName));
 }
 
 function listOllamaModels() {
@@ -102,9 +119,15 @@ function buildChatVariantName(baseModel) {
 function createOllamaChatVariant(baseModel, variantName) {
   const { execFileSync } = require("child_process");
   const os = require("os");
-  const modelfilePath = path.join(os.tmpdir(), `nemoclaw-modelfile-${Date.now()}`);
+  // Use mkdtempSync for atomic temp directory creation — avoids TOCTOU races
+  // with predictable filenames on multi-user systems
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-modelfile-"));
+  const modelfilePath = path.join(tempDir, "Modelfile");
   try {
-    fs.writeFileSync(modelfilePath, `FROM ${baseModel}\n`, "utf-8");
+    fs.writeFileSync(modelfilePath, `FROM ${baseModel}\n`, {
+      encoding: "utf-8",
+      flag: "wx", // exclusive creation — fails if file already exists
+    });
     execFileSync("ollama", ["create", variantName, "-f", modelfilePath], {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
@@ -115,7 +138,7 @@ function createOllamaChatVariant(baseModel, variantName) {
     console.log(`  ⚠ Could not create chat variant '${variantName}': ${err.message || err}`);
     return null;
   } finally {
-    try { fs.unlinkSync(modelfilePath); } catch { /* ignore */ }
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 }
 
