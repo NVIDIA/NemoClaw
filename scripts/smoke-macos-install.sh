@@ -33,7 +33,8 @@ INSTALL_LOG=""
 UNINSTALL_LOG=""
 INSTALL_STATUS=1
 UNINSTALL_STATUS=1
-ANSWERS_FILE=""
+ANSWERS_PIPE=""
+ANSWER_WRITER_PID=""
 
 usage() {
   cat <<'EOF'
@@ -148,19 +149,31 @@ ensure_clean_start() {
   fi
 }
 
-write_answers_file() {
-  local answers_file="$1"
-  cat > "$answers_file" <<EOF
-$SANDBOX_NAME
-n
-EOF
+feed_install_answers() {
+  local answers_pipe="$1"
+  local install_log="$2"
+
+  (
+    printf '%s\n' "$SANDBOX_NAME"
+
+    while :; do
+      if [ -f "$install_log" ] && grep -q "OpenClaw gateway launched inside sandbox" "$install_log"; then
+        break
+      fi
+      sleep 1
+    done
+
+    printf 'n\n'
+  ) > "$answers_pipe"
 }
 
 run_install() {
-  local answers_file="$1"
+  local answers_pipe="$1"
   info "Running install.sh with sandbox '$SANDBOX_NAME'"
+  feed_install_answers "$answers_pipe" "$INSTALL_LOG" &
+  ANSWER_WRITER_PID=$!
   set +e
-  bash "$REPO_DIR/install.sh" < "$answers_file" > >(tee "$INSTALL_LOG") 2>&1
+  bash "$REPO_DIR/install.sh" < "$answers_pipe" > >(tee "$INSTALL_LOG") 2>&1
   INSTALL_STATUS=$?
   set -e
   return 0
@@ -217,8 +230,12 @@ verify_cleanup() {
 }
 
 cleanup() {
-  if [ -n "$ANSWERS_FILE" ] && [ -f "$ANSWERS_FILE" ]; then
-    rm -f "$ANSWERS_FILE"
+  if [ -n "$ANSWER_WRITER_PID" ] && kill -0 "$ANSWER_WRITER_PID" 2>/dev/null; then
+    kill "$ANSWER_WRITER_PID" 2>/dev/null || true
+  fi
+
+  if [ -n "$ANSWERS_PIPE" ] && [ -p "$ANSWERS_PIPE" ]; then
+    rm -f "$ANSWERS_PIPE"
   fi
 
   if [ -n "$UNINSTALL_LOG" ]; then
@@ -253,12 +270,12 @@ main() {
   INSTALL_LOG="$LOG_DIR/install-$stamp.log"
   UNINSTALL_LOG="$LOG_DIR/uninstall-$stamp.log"
 
-  ANSWERS_FILE="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-smoke-answers-XXXXXX")"
+  ANSWERS_PIPE="$(mktemp -u "${TMPDIR:-/tmp}/nemoclaw-smoke-answers-XXXXXX")"
+  mkfifo "$ANSWERS_PIPE"
   trap cleanup EXIT
-  write_answers_file "$ANSWERS_FILE"
 
   info "Logs will be written under $LOG_DIR"
-  run_install "$ANSWERS_FILE"
+  run_install "$ANSWERS_PIPE"
 
   if [ "$INSTALL_STATUS" -ne 0 ]; then
     fail "install.sh failed with status $INSTALL_STATUS. See $INSTALL_LOG"

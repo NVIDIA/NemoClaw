@@ -67,15 +67,25 @@ describe("macOS smoke install script guardrails", () => {
     assert.match(`${result.stdout}${result.stderr}`, /no Docker Desktop socket was found/);
   });
 
-  it("feeds an explicit no answer to the policy preset prompt", () => {
+  it("stages the policy preset no answer after sandbox setup", () => {
     const script = `
       set -euo pipefail
       source "${SMOKE_SCRIPT}"
-      answers_file="$(mktemp)"
-      trap 'rm -f "$answers_file"' EXIT
+      answers_pipe="$(mktemp -u)"
+      install_log="$(mktemp)"
+      mkfifo "$answers_pipe"
+      trap 'rm -f "$answers_pipe" "$install_log"' EXIT
       SANDBOX_NAME="smoke-test"
-      write_answers_file "$answers_file"
-      cat "$answers_file"
+      feed_install_answers "$answers_pipe" "$install_log" &
+      feeder_pid="$!"
+      {
+        IFS= read -r first_line
+        printf '%s\\n' "$first_line"
+        printf '  ✓ OpenClaw gateway launched inside sandbox\\n' >> "$install_log"
+        IFS= read -r second_line
+        printf '%s\\n' "$second_line"
+      } < "$answers_pipe"
+      wait "$feeder_pid"
     `;
 
     const result = spawnSync("bash", ["-lc", script], {
