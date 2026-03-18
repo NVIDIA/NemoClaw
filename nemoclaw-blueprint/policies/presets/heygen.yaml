@@ -15,18 +15,14 @@ network_policies:
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-          - allow: { method: DELETE, path: "/**" }
+          - allow: { method: "*", path: "/**" }
       - host: upload.heygen.com
         port: 443
         protocol: rest
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-          - allow: { method: PUT, path: "/**" }
+          - allow: { method: "*", path: "/**" }
       - host: files.heygen.com
         port: 443
         protocol: rest
