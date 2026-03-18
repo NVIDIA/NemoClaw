@@ -30,6 +30,7 @@ INSTALL_LOG=""
 UNINSTALL_LOG=""
 INSTALL_STATUS=1
 UNINSTALL_STATUS=1
+ANSWERS_FILE=""
 
 usage() {
   cat <<'EOF'
@@ -183,6 +184,10 @@ verify_cleanup() {
 }
 
 cleanup() {
+  if [ -n "$ANSWERS_FILE" ] && [ -f "$ANSWERS_FILE" ]; then
+    rm -f "$ANSWERS_FILE"
+  fi
+
   if [ -n "$UNINSTALL_LOG" ]; then
     run_uninstall
     if [ "$UNINSTALL_STATUS" -ne 0 ]; then
@@ -214,13 +219,12 @@ main() {
   INSTALL_LOG="$LOG_DIR/install-$stamp.log"
   UNINSTALL_LOG="$LOG_DIR/uninstall-$stamp.log"
 
-  local answers_file
-  answers_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-smoke-answers-XXXXXX")"
-  trap 'rm -f "$answers_file"; cleanup' EXIT
-  write_answers_file "$answers_file"
+  ANSWERS_FILE="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-smoke-answers-XXXXXX")"
+  trap cleanup EXIT
+  write_answers_file "$ANSWERS_FILE"
 
   info "Logs will be written under $LOG_DIR"
-  run_install "$answers_file"
+  run_install "$ANSWERS_FILE"
 
   if [ "$INSTALL_STATUS" -ne 0 ]; then
     fail "install.sh failed with status $INSTALL_STATUS. See $INSTALL_LOG"
