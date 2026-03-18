@@ -123,6 +123,7 @@ describe("nim", () => {
         ]),
       });
       assert.equal(gpu.type, "nvidia");
+      assert.equal(gpu.name, "NVIDIA GB10");
       assert.equal(gpu.spark, true);
       assert.equal(gpu.count, 1);
       assert.equal(gpu.totalMemoryMB, 122880);

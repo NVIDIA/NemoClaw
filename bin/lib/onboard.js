@@ -546,6 +546,7 @@ async function setupNim(sandboxName, gpu) {
         console.log("  No NIM models fit your GPU VRAM. Falling back to cloud API.");
       } else {
         let sel;
+        const defaultModelIndex = Math.max(0, models.findIndex((m) => m.recommended));
         if (isNonInteractive()) {
           if (requestedModel) {
             sel = models.find((m) => m.name === requestedModel);
@@ -554,7 +555,7 @@ async function setupNim(sandboxName, gpu) {
               process.exit(1);
             }
           } else {
-            sel = models[0];
+            sel = models[defaultModelIndex];
           }
           console.log(`  [non-interactive] NIM model: ${sel.name}`);
         } else {
@@ -566,9 +567,10 @@ async function setupNim(sandboxName, gpu) {
           });
           console.log("");
 
-          const modelChoice = await prompt(`  Choose model [1]: `);
-          const midx = parseInt(modelChoice || "1", 10) - 1;
-          sel = models[midx] || models[0];
+          const defaultChoice = String(defaultModelIndex + 1);
+          const modelChoice = await prompt(`  Choose model [${defaultChoice}]: `);
+          const midx = parseInt(modelChoice || defaultChoice, 10) - 1;
+          sel = models[midx] || models[defaultModelIndex];
         }
         model = sel.name;
 

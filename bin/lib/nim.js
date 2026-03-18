@@ -77,6 +77,7 @@ function detectGpu(opts) {
       { ignoreError: true }
     );
     if (nameOutput && nameOutput.includes("GB10")) {
+      const name = nameOutput.split("\n")[0].trim();
       // GB10 has 128GB unified memory shared with Grace CPU — use system RAM
       let totalMemoryMB = 0;
       try {
@@ -85,6 +86,7 @@ function detectGpu(opts) {
       } catch {}
       return {
         type: "nvidia",
+        name,
         count: 1,
         totalMemoryMB,
         perGpuMB: totalMemoryMB,
@@ -138,7 +140,6 @@ function detectGpu(opts) {
   return null;
 }
 
-/** @param {string} model - Model name to pull. @returns {string} Image tag. */
 /**
  * Suggest NIM models ranked by fit for a given GPU.
  * Returns models sorted by VRAM requirement (descending), with the largest
