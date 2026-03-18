@@ -572,14 +572,22 @@ async function setupNim(sandboxName, gpu) {
         }
         model = sel.name;
 
+        const nimPort = 8000;
+        const nimPortCheck = await checkPortAvailable(nimPort);
+        if (!nimPortCheck.ok) {
+          console.error(`  Port ${nimPort} is already in use (${nimPortCheck.process || "unknown"}).`);
+          console.error("  Stop the existing service or choose a different provider.");
+          process.exit(1);
+        }
+
         console.log(`  Pulling NIM image for ${model}...`);
         nim.pullNimImage(model);
 
         console.log("  Starting NIM container...");
-        nimContainer = nim.startNimContainer(sandboxName, model);
+        nimContainer = nim.startNimContainer(sandboxName, model, nimPort);
 
         console.log("  Waiting for NIM to become healthy...");
-        if (!nim.waitForNimHealth()) {
+        if (!nim.waitForNimHealth(nimPort)) {
           console.error("  NIM failed to start. Falling back to cloud API.");
           model = null;
           nimContainer = null;
