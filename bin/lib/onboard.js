@@ -107,6 +107,22 @@ function createOllamaChatVariant(baseModel) {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
+/**
+ * If the model is a known reasoning model, create a chat variant and return it.
+ * Otherwise return the original model unchanged.
+ */
+function handleReasoningModel(model) {
+  if (!isReasoningModel(model)) return model;
+  console.log(`  ⚠ '${model}' is a reasoning model — creating chat variant...`);
+  const chatVariant = createOllamaChatVariant(model);
+  if (chatVariant) {
+    console.log(`  ✓ Using chat variant: ${chatVariant}`);
+    return chatVariant;
+  }
+  console.log("  ⚠ Could not create chat variant. Model may return empty responses.");
+  return model;
+}
+
 function step(n, total, msg) {
   console.log("");
   console.log(`  [${n}/${total}] ${msg}`);
@@ -663,17 +679,7 @@ async function setupNim(sandboxName, gpu) {
       } else {
         model = await promptOllamaModel();
       }
-      // If the model is a reasoning model, create a chat variant to avoid blank responses
-      if (isReasoningModel(model)) {
-        console.log(`  ⚠ '${model}' is a reasoning model — creating chat variant...`);
-        const chatVariant = createOllamaChatVariant(model);
-        if (chatVariant) {
-          console.log(`  ✓ Using chat variant: ${chatVariant}`);
-          model = chatVariant;
-        } else {
-          console.log("  ⚠ Could not create chat variant. Model may return empty responses.");
-        }
-      }
+      model = handleReasoningModel(model);
     } else if (selected.key === "install-ollama") {
       console.log("  Installing Ollama via Homebrew...");
       run("brew install ollama", { ignoreError: true });
@@ -687,17 +693,7 @@ async function setupNim(sandboxName, gpu) {
       } else {
         model = await promptOllamaModel();
       }
-      // If the model is a reasoning model, create a chat variant to avoid blank responses
-      if (isReasoningModel(model)) {
-        console.log(`  ⚠ '${model}' is a reasoning model — creating chat variant...`);
-        const chatVariant = createOllamaChatVariant(model);
-        if (chatVariant) {
-          console.log(`  ✓ Using chat variant: ${chatVariant}`);
-          model = chatVariant;
-        } else {
-          console.log("  ⚠ Could not create chat variant. Model may return empty responses.");
-        }
-      }
+      model = handleReasoningModel(model);
     } else if (selected.key === "vllm") {
       console.log("  ✓ Using existing vLLM on localhost:8000");
       provider = "vllm-local";
