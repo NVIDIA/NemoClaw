@@ -52,7 +52,7 @@ fi
 
 # Wait for device plugin to come up
 echo "Waiting for device plugin pods..."
-for i in $(seq 1 30); do
+for _ in $(seq 1 30); do
   status=$(openshell doctor exec -- kubectl get pods -n nvidia-device-plugin -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
   if [ "$status" = "Running" ]; then
     echo "✓ nvidia-device-plugin is running"

@@ -57,10 +57,11 @@ function listOllamaModels() {
 function createChatVariant(baseModel) {
   const variantName = baseModel.replace(/:.*$/, "") + "-chat";
   try {
-    // Write Modelfile to a temp file to avoid shell interpolation risks
     const os = require("os");
     const modelfile = `FROM ${baseModel}`;
-    const tmpFile = path.join(os.tmpdir(), `nemoclaw-modelfile-${Date.now()}`);
+    // Use mkdtempSync for a cryptographically random temp directory
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-"));
+    const tmpFile = path.join(tempDir, "Modelfile");
     fs.writeFileSync(tmpFile, modelfile, "utf-8");
     try {
       require("child_process").execFileSync(
@@ -69,7 +70,7 @@ function createChatVariant(baseModel) {
         { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 120000 }
       );
     } finally {
-      try { fs.unlinkSync(tmpFile); } catch {}
+      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
     }
     return variantName;
   } catch (err) {
