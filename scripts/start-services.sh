@@ -170,6 +170,7 @@ do_start() {
     if [ -n "$sandbox" ]; then
       local gw_token="${OPENCLAW_GATEWAY_TOKEN:-$(head -c 24 /dev/urandom | xxd -p)}"
       local proxy_cmd="openshell ssh-proxy --gateway-name $gateway_name --name $sandbox"
+      local known_hosts_file="$PIDDIR/openshell-known_hosts"
 
       # Start gateway inside sandbox (idempotent — skips if already running)
       if ! is_running "openclaw-gateway"; then
@@ -178,7 +179,7 @@ do_start() {
         start_service openclaw-gateway \
           bash -c "echo '$gw_token' | ssh -o 'ProxyCommand=$proxy_cmd' \
               -o StrictHostKeyChecking=accept-new \
-              -o UserKnownHostsFile=/dev/null \
+              -o UserKnownHostsFile='$known_hosts_file' \
               -o LogLevel=ERROR \
               sandbox@openshell-$sandbox \
               'read token && export OPENCLAW_GATEWAY_TOKEN=\$token && exec openclaw gateway run'"
@@ -193,7 +194,7 @@ do_start() {
           ssh -N -L "127.0.0.1:$DASHBOARD_PORT:127.0.0.1:$DASHBOARD_PORT" \
               -o "ProxyCommand=$proxy_cmd" \
               -o StrictHostKeyChecking=accept-new \
-              -o UserKnownHostsFile=/dev/null \
+              -o UserKnownHostsFile="$known_hosts_file" \
               -o LogLevel=ERROR \
               -o ServerAliveInterval=15 \
               -o ServerAliveCountMax=3 \
