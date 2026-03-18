@@ -31,6 +31,9 @@ Follow these steps to get started with NemoClaw and your first sandboxed OpenCla
 
 Check the prerequisites before you start to ensure you have the necessary software and hardware to run NemoClaw.
 
+> [!NOTE]
+> **DGX Spark users:** Follow the [DGX Spark installation guide](docs/spark-install.md) instead of the steps below.
+
 #### Hardware
 
 | Resource | Minimum        | Recommended      |
