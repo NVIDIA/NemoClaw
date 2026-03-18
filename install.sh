@@ -59,6 +59,47 @@ version_major() {
   printf '%s\n' "${1#v}" | cut -d. -f1
 }
 
+# ── Port availability preflight ──────────────────────────────────────
+# NemoClaw requires two ports to be free before setup starts:
+#   NEMOCLAW_GATEWAY_PORT   (default 8080)  – OpenShell gateway
+#   NEMOCLAW_DASHBOARD_PORT (default 18789) – OpenClaw dashboard
+# Override via env var to avoid killing existing services.
+NEMOCLAW_GATEWAY_PORT="${NEMOCLAW_GATEWAY_PORT:-8080}"
+NEMOCLAW_DASHBOARD_PORT="${NEMOCLAW_DASHBOARD_PORT:-18789}"
+
+_port_in_use() {
+  local p="$1"
+  if command -v ss &>/dev/null; then
+    ss -tlnH 2>/dev/null | awk '{print $4}' | grep -q ":${p}$"
+    return $?
+  elif command -v netstat &>/dev/null; then
+    netstat -tlnH 2>/dev/null | awk '{print $4}' | grep -q ":${p}$"
+    return $?
+  fi
+  return 1
+}
+
+check_required_ports() {
+  local failed=0
+  for spec in "${NEMOCLAW_GATEWAY_PORT}:gateway" "${NEMOCLAW_DASHBOARD_PORT}:dashboard"; do
+    local port="${spec%%:*}" label="${spec##*:}"
+    if _port_in_use "$port"; then
+      echo "[ERROR] Port $port ($label) is already in use."                      >&2
+      echo "[ERROR]   Find the process : ss -tlnp | grep :$port"                 >&2
+      echo "[ERROR]   Or override      : export NEMOCLAW_${label^^}_PORT=<free>" >&2
+      failed=1
+    fi
+  done
+  if [ "$failed" -eq 1 ]; then
+    echo "" >&2
+    echo "[ERROR] Free the ports above (or set override env vars), then re-run." >&2
+    exit 1
+  fi
+  echo "[INFO]  Ports ${NEMOCLAW_GATEWAY_PORT} (gateway) and ${NEMOCLAW_DASHBOARD_PORT} (dashboard) are free."
+}
+# ─────────────────────────────────────────────────────────────────────
+
+
 ensure_supported_runtime() {
   command_exists node || error "${RUNTIME_REQUIREMENT_MSG} Node.js was not found on PATH."
   command_exists npm || error "${RUNTIME_REQUIREMENT_MSG} npm was not found on PATH."
@@ -98,6 +139,7 @@ install_nodejs() {
     || { rm -f "$nvm_tmp"; error "Failed to download nvm installer"; }
   local actual_hash
   if command_exists sha256sum; then
+check_required_ports
     actual_hash="$(sha256sum "$nvm_tmp" | awk '{print $1}')"
   elif command_exists shasum; then
     actual_hash="$(shasum -a 256 "$nvm_tmp" | awk '{print $1}')"
