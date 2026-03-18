@@ -41,7 +41,7 @@ fi
 
 ARCH="$(uname -m)"
 if [ "$ARCH" != "arm64" ] && [ "$ARCH" != "aarch64" ]; then
-  warn "Expected Apple Silicon (arm64) but detected ${ARCH}. Proceeding anyway."
+  fail "This script is for Apple Silicon Macs (arm64). Detected: ${ARCH}. Use 'nemoclaw onboard' for other platforms."
 fi
 
 step "1/5  Checking macOS environment"
@@ -116,8 +116,21 @@ if [ "$OLLAMA_INSTALLED" = true ]; then
     OLLAMA_RUNNING=true
     info "Ollama is running on port 11434"
   else
-    info "Starting Ollama service..."
-    OLLAMA_HOST=0.0.0.0:11434 ollama serve &>/dev/null &
+    # Prefer brew services (managed, survives reboots)
+    if brew services list 2>/dev/null | grep -q "ollama.*started"; then
+      OLLAMA_RUNNING=true
+      info "Ollama managed by brew services (already running)"
+    else
+      info "Starting Ollama via brew services..."
+      if brew services start ollama &>/dev/null 2>&1; then
+        info "Ollama started via brew services"
+      else
+        info "brew services unavailable — starting directly..."
+        OLLAMA_HOST=0.0.0.0:11434 ollama serve &>/dev/null &
+        OLLAMA_BG_PID=$!
+        trap 'kill $OLLAMA_BG_PID 2>/dev/null || true' EXIT INT TERM
+      fi
+    fi
     sleep 3
     if curl -s --max-time 3 http://localhost:11434/api/tags &>/dev/null; then
       OLLAMA_RUNNING=true
@@ -129,7 +142,7 @@ if [ "$OLLAMA_INSTALLED" = true ]; then
 
   # Suggest pulling a model if none present
   if [ "$OLLAMA_RUNNING" = true ]; then
-    MODEL_COUNT=$(curl -s http://localhost:11434/api/tags 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('models',[])))" 2>/dev/null || echo "0")
+    MODEL_COUNT=$(curl -s http://localhost:11434/api/tags 2>/dev/null | grep -co '"name"' 2>/dev/null || echo "0")
     if [ "$MODEL_COUNT" = "0" ]; then
       info "No models found. For local inference, pull a model:"
       echo "    ollama pull llama3.1:8b     # 4.7GB, good balance"
