@@ -15,6 +15,15 @@ error() { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*"; exit 1; }
 
 command_exists() { command -v "$1" &>/dev/null; }
 
+# Use sudo for npm global installs when the prefix is not writable by the current user.
+needs_sudo_for_npm() {
+  local prefix
+  prefix="$(npm config get prefix 2>/dev/null)"
+  [[ -n "$prefix" ]] && [[ ! -w "$prefix" ]]
+}
+
+SUDO_NPM=""
+
 MIN_NODE_MAJOR=20
 MIN_NPM_MAJOR=10
 RECOMMENDED_NODE_MAJOR=22
@@ -194,13 +203,18 @@ install_or_upgrade_ollama() {
 # 3. NemoClaw
 # ---------------------------------------------------------------------------
 install_nemoclaw() {
+  if needs_sudo_for_npm; then
+    info "npm global prefix is not writable — will use sudo for global installs."
+    SUDO_NPM="sudo"
+  fi
+
   if [[ -f "./package.json" ]] && grep -q '"name": "nemoclaw"' ./package.json 2>/dev/null; then
     info "NemoClaw package.json found in current directory — installing from source…"
-    npm install && npm link
+    npm install && $SUDO_NPM npm link
   else
     info "Installing NemoClaw from npm…"
     # Revert once https://github.com/NVIDIA/NemoClaw/issues/71 is complete and the package is published
-    npm install -g git+ssh://git@github.com/nvidia/NemoClaw.git
+    $SUDO_NPM npm install -g git+ssh://git@github.com/nvidia/NemoClaw.git
   fi
 
   refresh_path
