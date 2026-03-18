@@ -111,14 +111,14 @@ sandbox@my-assistant:~$ openclaw agent --agent main --local -m "hello" --session
 ### Docker Permission Denied
 If the installer or `onboard` command reports that Docker is not running, ensure your user has permission to access the Docker socket:
 ```console
-$ sudo usermod -aG docker $USER
-$ newgrp docker
+sudo usermod -aG docker $USER
+newgrp docker
 ```
 
 ### cgroup v2 Issues
 On systems with cgroup v2 (like Ubuntu 22.04+), Docker must be configured for host cgroup namespace sharing to run the OpenShell gateway. If prompted, run:
 ```console
-$ nemoclaw setup-spark
+nemoclaw setup-spark
 ```
 This will update `/etc/docker/daemon.json` and restart the Docker service.
 
@@ -179,7 +179,7 @@ Run these on the host to set up, connect to, and manage sandboxes.
 | `nemoclaw onboard`                  | Interactive setup wizard: gateway, providers, sandbox. |
 | `nemoclaw list`                     | List all registered sandboxes and their status.         |
 | `nemoclaw status`                   | Show global status of auxiliary services.              |
-| `nemoclaw start` / `stop`           | Start or stop auxiliary services (Telegram, tunnel).   |
+| `nemoclaw start` / `nemoclaw stop`  | Start or stop auxiliary services (Telegram, tunnel).   |
 | `nemoclaw deploy <instance>` (**experimental**)         | Deploy to a remote GPU instance through Brev.          |
 
 ### Sandbox commands (`nemoclaw <name>`)
