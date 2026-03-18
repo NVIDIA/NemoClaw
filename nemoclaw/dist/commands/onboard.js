@@ -8,7 +8,7 @@ const config_js_1 = require("../onboard/config.js");
 const prompt_js_1 = require("../onboard/prompt.js");
 const validate_js_1 = require("../onboard/validate.js");
 const ENDPOINT_TYPES = ["build", "ncp", "nim-local", "vllm", "ollama", "custom"];
-const SUPPORTED_ENDPOINT_TYPES = ["build", "ncp"];
+const SUPPORTED_ENDPOINT_TYPES = ["build", "ncp", "ollama"];
 function isExperimentalEnabled() {
     return process.env.NEMOCLAW_EXPERIMENTAL === "1";
 }
@@ -91,6 +91,16 @@ function defaultCredentialForEndpoint(endpointType) {
             return "";
     }
 }
+function resolveProviderType(endpointType) {
+    return endpointType === "ollama" ? "ollama" : "openai";
+}
+function resolveBaseUrlConfigKey(endpointType) {
+    return endpointType === "ollama" ? "OLLAMA_BASE_URL" : "OPENAI_BASE_URL";
+}
+function normalizeV1(url) {
+    const trimmed = url.replace(/\/+$/, "");
+    return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
+}
 function detectOllama() {
     const installed = testCommand("command -v ollama >/dev/null 2>&1");
     const running = testCommand("curl -sf http://localhost:11434/api/tags >/dev/null 2>&1");
@@ -128,6 +138,11 @@ async function promptEndpoint(ollama) {
             hint: "dedicated capacity, SLA-backed",
         },
     ];
+    options.push({
+        label: "Ollama",
+        value: "ollama",
+        hint: `local or remote — ${ollama.installed ? "installed locally" : "any Ollama endpoint"}`,
+    });
     if (isExperimentalEnabled()) {
         options.push({
             label: "Self-hosted NIM [experimental]",
@@ -137,10 +152,6 @@ async function promptEndpoint(ollama) {
             label: "Local vLLM [experimental]",
             value: "vllm",
             hint: "experimental — local development",
-        }, {
-            label: "Local Ollama [experimental]",
-            value: "ollama",
-            hint: `experimental — ${ollama.installed ? "installed locally" : "localhost:11434"}`,
         });
     }
     return (await (0, prompt_js_1.promptSelect)("Select your inference endpoint:", options));
@@ -186,7 +197,7 @@ async function cliOnboard(opts) {
     }
     else {
         const ollama = detectOllama();
-        if (ollama.running && isExperimentalEnabled()) {
+        if (ollama.running) {
             logger.info("Detected Ollama on localhost:11434. Using it for onboarding.");
             endpointType = "ollama";
         }
@@ -215,9 +226,15 @@ async function cliOnboard(opts) {
         case "vllm":
             endpointUrl = `${HOST_GATEWAY_URL}:8000/v1`;
             break;
-        case "ollama":
-            endpointUrl = opts.endpointUrl ?? `${HOST_GATEWAY_URL}:11434/v1`;
+        case "ollama": {
+            const rawUrl = opts.endpointUrl ??
+                process.env.OLLAMA_BASE_URL ??
+                (nonInteractive
+                    ? "http://localhost:11434"
+                    : await (0, prompt_js_1.promptInput)("Ollama endpoint URL", "http://localhost:11434"));
+            endpointUrl = normalizeV1(rawUrl);
             break;
+        }
         case "custom":
             endpointUrl = opts.endpointUrl ?? (await (0, prompt_js_1.promptInput)("Custom endpoint URL"));
             break;
@@ -280,12 +297,23 @@ async function cliOnboard(opts) {
         model = opts.model;
     }
     else {
-        // Build model options: prefer Nemotron models from the endpoint, fall back to defaults
-        const nemotronModels = validation.models.filter((m) => m.includes("nemotron"));
-        const modelOptions = nemotronModels.length > 0
-            ? nemotronModels.map((id) => ({ label: id, value: id }))
-            : DEFAULT_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }));
-        model = await (0, prompt_js_1.promptSelect)("Select your primary model:", modelOptions);
+        if (endpointType === "ollama") {
+            // Ollama: use all discovered models; free-text fallback if endpoint was unreachable
+            if (validation.models.length > 0) {
+                model = await (0, prompt_js_1.promptSelect)("Select your primary model:", validation.models.map((id) => ({ label: id, value: id })));
+            }
+            else {
+                model = await (0, prompt_js_1.promptInput)("Enter a model name (e.g. llama3, mistral)", "llama3");
+            }
+        }
+        else {
+            // NVIDIA endpoints: prefer Nemotron models from the endpoint, fall back to defaults
+            const nemotronModels = validation.models.filter((m) => m.includes("nemotron"));
+            const modelOptions = nemotronModels.length > 0
+                ? nemotronModels.map((id) => ({ label: id, value: id }))
+                : DEFAULT_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }));
+            model = await (0, prompt_js_1.promptSelect)("Select your primary model:", modelOptions);
+        }
     }
     // Step 6: Resolve profile
     const profile = resolveProfile(endpointType);
@@ -321,11 +349,11 @@ async function cliOnboard(opts) {
             "--name",
             providerName,
             "--type",
-            "openai",
+            resolveProviderType(endpointType),
             "--credential",
             `${credentialEnv}=${apiKey}`,
             "--config",
-            `OPENAI_BASE_URL=${endpointUrl}`,
+            `${resolveBaseUrlConfigKey(endpointType)}=${endpointUrl}`,
         ]);
         logger.info(`Created provider: ${providerName}`);
     }
@@ -340,7 +368,7 @@ async function cliOnboard(opts) {
                     "--credential",
                     `${credentialEnv}=${apiKey}`,
                     "--config",
-                    `OPENAI_BASE_URL=${endpointUrl}`,
+                    `${resolveBaseUrlConfigKey(endpointType)}=${endpointUrl}`,
                 ]);
                 logger.info(`Updated provider: ${providerName}`);
             }
