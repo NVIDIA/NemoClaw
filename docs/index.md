@@ -109,17 +109,22 @@ Install the CLI and launch a sandboxed OpenClaw instance in a few commands.
           button.classList.toggle('copied', copied);
           button.setAttribute('aria-label', label);
           button.title = label;
-          setTimeout(() => {
+          clearTimeout(button._copyResetTimer);
+          button._copyResetTimer = setTimeout(() => {
             button.classList.remove('copied');
             button.setAttribute('aria-label', 'Copy install command');
             button.title = 'Copy';
+            button._copyResetTimer = null;
           }, 1200);
         };
         if (!navigator.clipboard) {
           show('Copy failed');
           return;
         }
-        navigator.clipboard.writeText(text).then(() => show('Copied', true)).catch(() => show('Copy failed'));
+        navigator.clipboard.writeText(text).then(() => show('Copied', true)).catch((err) => {
+          console.error('Failed to copy install command:', err);
+          show('Copy failed');
+        });
       "
     >
       <svg viewBox="0 0 16 16" aria-hidden="true">
