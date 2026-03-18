@@ -45,6 +45,7 @@ function registerSandbox(entry) {
     createdAt: entry.createdAt || new Date().toISOString(),
     model: entry.model || null,
     nimContainer: entry.nimContainer || null,
+    nimPort: entry.nimPort || null,
     provider: entry.provider || null,
     gpuEnabled: entry.gpuEnabled || false,
     policies: entry.policies || [],
