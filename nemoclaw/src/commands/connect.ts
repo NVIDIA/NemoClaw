@@ -24,9 +24,15 @@ export async function cliConnect(opts: ConnectOptions): Promise<void> {
     proc.on("close", resolve);
     proc.on("error", (err) => {
       if (err.message.includes("ENOENT")) {
-        logger.error("openshell CLI not found. Is OpenShell installed?");
+        logger.error(
+          "OpenShell CLI not found. Is OpenShell installed?\n" +
+            "  Install guide: https://docs.nvidia.com/nemoclaw/openshell/install",
+        );
       } else {
-        logger.error(`Connection failed: ${err.message}`);
+        logger.error(
+          `OpenShell error running 'openshell sandbox connect': ${err.message}\n` +
+            "  Troubleshooting: https://docs.nvidia.com/nemoclaw/openshell/troubleshooting",
+        );
       }
       resolve(1);
     });

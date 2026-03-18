@@ -53,7 +53,17 @@ export async function cliLogs(opts: LogsOptions): Promise<void> {
   await new Promise<void>((resolve) => {
     proc.on("close", () => resolve());
     proc.on("error", (err) => {
-      logger.error(`Failed to stream logs: ${err.message}`);
+      if (err.message.includes("ENOENT")) {
+        logger.error(
+          "OpenShell CLI not found. Is OpenShell installed?\n" +
+            "  Install guide: https://docs.nvidia.com/nemoclaw/openshell/install",
+        );
+      } else {
+        logger.error(
+          `OpenShell error running 'openshell sandbox connect': ${err.message}\n` +
+            "  Troubleshooting: https://docs.nvidia.com/nemoclaw/openshell/troubleshooting",
+        );
+      }
       resolve();
     });
   });

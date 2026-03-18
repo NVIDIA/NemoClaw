@@ -86,6 +86,9 @@ export async function cliStatus(opts: StatusOptions): Promise<void> {
     logger.info(`  Name:    ${sandbox.name}`);
     logger.info("  Status:  active (inside sandbox)");
     logger.info("  Note:    Cannot query host sandbox state from within the sandbox.");
+  } else if (sandbox.openshellError) {
+    logger.info(`  Name:    ${sandbox.name}`);
+    logger.info(`  Status:  unknown — ${sandbox.openshellError}`);
   } else {
     logger.info("  Status:  not running");
   }
@@ -116,6 +119,7 @@ interface SandboxStatus {
   running: boolean;
   uptime: string | null;
   insideSandbox: boolean;
+  openshellError: string | null;
 }
 
 interface SandboxStatusResponse {
@@ -125,7 +129,7 @@ interface SandboxStatusResponse {
 
 async function getSandboxStatus(sandboxName: string, insideSandbox: boolean): Promise<SandboxStatus> {
   if (insideSandbox) {
-    return { name: sandboxName, running: false, uptime: null, insideSandbox: true };
+    return { name: sandboxName, running: false, uptime: null, insideSandbox: true, openshellError: null };
   }
   try {
     const { stdout } = await execAsync(`openshell sandbox status ${sandboxName} --json`, {
@@ -137,9 +141,14 @@ async function getSandboxStatus(sandboxName: string, insideSandbox: boolean): Pr
       running: parsed.state === "running",
       uptime: parsed.uptime ?? null,
       insideSandbox: false,
+      openshellError: null,
     };
-  } catch {
-    return { name: sandboxName, running: false, uptime: null, insideSandbox: false };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const openshellError = msg.includes("ENOENT")
+      ? "OpenShell CLI not found — see https://docs.nvidia.com/nemoclaw/openshell/install"
+      : `OpenShell error: ${msg} — see https://docs.nvidia.com/nemoclaw/openshell/troubleshooting`;
+    return { name: sandboxName, running: false, uptime: null, insideSandbox: false, openshellError };
   }
 }
 

@@ -178,11 +178,35 @@ async function promptEndpoint(ollama) {
     }
     return (await (0, prompt_js_1.promptSelect)("Select your inference endpoint:", options));
 }
+const OPENSHELL_DOCS_URL = "https://docs.nvidia.com/nemoclaw/openshell";
+/**
+ * Wraps an error thrown by execFileSync("openshell", ...) with a human-readable
+ * message that names OpenShell as the source and points to the docs.
+ * Closes: https://github.com/NVIDIA/NemoClaw/issues/60
+ */
+function wrapOpenShellError(err, args) {
+    const subcommand = args[0] ?? "unknown";
+    const stderr = err instanceof Error && "stderr" in err
+        ? String(err.stderr).trim()
+        : "";
+    const detail = stderr || (err instanceof Error ? err.message : String(err));
+    if (err instanceof Error && err.message.includes("ENOENT")) {
+        return new Error(`OpenShell CLI not found. Is OpenShell installed?\n` +
+            `  Install guide: ${OPENSHELL_DOCS_URL}/install`);
+    }
+    return new Error(`OpenShell error running 'openshell ${subcommand}': ${detail}\n` +
+        `  Troubleshooting: ${OPENSHELL_DOCS_URL}/troubleshooting`);
+}
 function execOpenShell(args) {
-    return (0, node_child_process_1.execFileSync)("openshell", args, {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-    });
+    try {
+        return (0, node_child_process_1.execFileSync)("openshell", args, {
+            encoding: "utf-8",
+            stdio: ["pipe", "pipe", "pipe"],
+        });
+    }
+    catch (err) {
+        throw wrapOpenShellError(err, args);
+    }
 }
 async function cliOnboard(opts) {
     const { logger } = opts;
@@ -386,8 +410,8 @@ async function cliOnboard(opts) {
         logger.info(`Created provider: ${providerName}`);
     }
     catch (err) {
-        const stderr = err instanceof Error && "stderr" in err ? String(err.stderr) : "";
-        if (stderr.includes("AlreadyExists") || stderr.includes("already exists")) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("AlreadyExists") || msg.includes("already exists")) {
             try {
                 execOpenShell([
                     "provider",
@@ -401,15 +425,12 @@ async function cliOnboard(opts) {
                 logger.info(`Updated provider: ${providerName}`);
             }
             catch (updateErr) {
-                const updateStderr = updateErr instanceof Error && "stderr" in updateErr
-                    ? String(updateErr.stderr)
-                    : "";
-                logger.error(`Failed to update provider: ${updateStderr || String(updateErr)}`);
+                logger.error(updateErr instanceof Error ? updateErr.message : String(updateErr));
                 return;
             }
         }
         else {
-            logger.error(`Failed to create provider: ${stderr || String(err)}`);
+            logger.error(msg);
             return;
         }
     }
@@ -419,8 +440,7 @@ async function cliOnboard(opts) {
         logger.info(`Inference route set: ${providerName} -> ${model}`);
     }
     catch (err) {
-        const stderr = err instanceof Error && "stderr" in err ? String(err.stderr) : "";
-        logger.error(`Failed to set inference route: ${stderr || String(err)}`);
+        logger.error(err instanceof Error ? err.message : String(err));
         return;
     }
     // 7c: Save config

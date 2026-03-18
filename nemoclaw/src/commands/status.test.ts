@@ -123,13 +123,16 @@ describe("cliStatus", () => {
   // Scenario 1: Host — no openshell, blank state
   // =========================================================================
   describe("host — no openshell, blank state", () => {
-    it("shows 'not running' and 'Not configured' in text output", async () => {
+    it("shows OpenShell error context and 'Not configured' in text output", async () => {
       const { lines, logger } = captureLogger();
 
       await cliStatus({ json: false, logger, pluginConfig: defaultConfig });
 
       const output = lines.join("\n");
-      expect(output).toContain("Status:  not running");
+      // When openshell is not installed, status shows an actionable error with a docs link
+      // rather than a silent "not running" — see https://github.com/NVIDIA/NemoClaw/issues/60
+      expect(output).toContain("Status:  unknown —");
+      expect(output).toContain("https://docs.nvidia.com/nemoclaw/openshell/troubleshooting");
       expect(output).toContain("Not configured");
       expect(output).not.toContain("inside sandbox");
       expect(output).not.toContain("active (inside sandbox)");
