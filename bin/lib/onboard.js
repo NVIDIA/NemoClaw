@@ -22,18 +22,18 @@ function step(n, total, msg) {
   console.log(`  ${"─".repeat(50)}`);
 }
 
-function isDockerRunning() {
+/** Detect which container runtime is available. Returns "docker", "podman", or null. */
+function detectContainerRuntime() {
   try {
     runCapture("docker info", { ignoreError: false });
-    return true;
+    return "docker";
   } catch {
     // Podman fallback — rootless Podman can substitute for Docker
     try {
       runCapture("podman info", { ignoreError: false });
-      console.log("  ⓘ Using Podman (note: --add-host=host-gateway may not resolve, see issue #116)");
-      return true;
+      return "podman";
     } catch {
-      return false;
+      return null;
     }
   }
 }
@@ -58,12 +58,17 @@ function installOpenshell() {
 async function preflight() {
   step(1, 7, "Preflight checks");
 
-  // Docker
-  if (!isDockerRunning()) {
-    console.error("  Docker is not running. Please start Docker and try again.");
+  // Container runtime
+  const runtime = detectContainerRuntime();
+  if (!runtime) {
+    console.error("  No container runtime found. Please install Docker or Podman and try again.");
     process.exit(1);
   }
-  console.log("  ✓ Docker is running");
+  if (runtime === "podman") {
+    console.log("  ✓ Podman is running (note: --add-host=host-gateway may not resolve, see issue #116)");
+  } else {
+    console.log("  ✓ Docker is running");
+  }
 
   // OpenShell CLI
   if (!isOpenshellInstalled()) {

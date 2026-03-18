@@ -9,7 +9,7 @@ const ROOT = path.resolve(__dirname, "..", "..");
 const SCRIPTS = path.join(ROOT, "scripts");
 
 /**
- * Detect a container runtime socket (Colima first, then Podman).
+ * Detect a container runtime socket (Colima first, then Docker Desktop, then Podman).
  * Returns the socket path or null.
  *
  * @param {object} [opts] — DI overrides for testing
@@ -50,6 +50,7 @@ if (!process.env.DOCKER_HOST) {
   }
 }
 
+/** Run a shell command with inherited stdio, exiting on failure unless opts.ignoreError is set. */
 function run(cmd, opts = {}) {
   const result = spawnSync("bash", ["-c", cmd], {
     stdio: "inherit",
@@ -64,6 +65,7 @@ function run(cmd, opts = {}) {
   return result;
 }
 
+/** Run a shell command and return its trimmed stdout. Returns "" on error when opts.ignoreError is set. */
 function runCapture(cmd, opts = {}) {
   try {
     return execSync(cmd, {
