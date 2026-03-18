@@ -80,6 +80,13 @@ function waitForSandboxReady(sandboxName, attempts = 10, delaySeconds = 2) {
   return false;
 }
 
+function parsePolicyPresetEnv(value) {
+  return (value || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 // ── Step 1: Preflight ────────────────────────────────────────────
 
 async function preflight() {
@@ -529,12 +536,44 @@ async function setupPolicies(sandboxName) {
   console.log("");
 
   if (isNonInteractive()) {
+    const policyMode = (process.env.NEMOCLAW_POLICY_MODE || "suggested").trim().toLowerCase();
+    let selectedPresets = suggestions;
+
+    if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
+      console.log("  [non-interactive] Skipping policy presets.");
+      return;
+    }
+
+    if (policyMode === "custom" || policyMode === "list") {
+      selectedPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS);
+      if (selectedPresets.length === 0) {
+        console.error("  NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom.");
+        process.exit(1);
+      }
+    } else if (policyMode === "suggested" || policyMode === "default" || policyMode === "auto") {
+      const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS);
+      if (envPresets.length > 0) {
+        selectedPresets = envPresets;
+      }
+    } else {
+      console.error(`  Unsupported NEMOCLAW_POLICY_MODE: ${policyMode}`);
+      console.error("  Valid values: suggested, custom, skip");
+      process.exit(1);
+    }
+
+    const knownPresets = new Set(allPresets.map((p) => p.name));
+    const invalidPresets = selectedPresets.filter((name) => !knownPresets.has(name));
+    if (invalidPresets.length > 0) {
+      console.error(`  Unknown policy preset(s): ${invalidPresets.join(", ")}`);
+      process.exit(1);
+    }
+
     if (!waitForSandboxReady(sandboxName)) {
       console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
       process.exit(1);
     }
-    console.log(`  [non-interactive] Applying suggested presets: ${suggestions.join(", ")}`);
-    for (const name of suggestions) {
+    console.log(`  [non-interactive] Applying policy presets: ${selectedPresets.join(", ")}`);
+    for (const name of selectedPresets) {
       let appliedOk = false;
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
