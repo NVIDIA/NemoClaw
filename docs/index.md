@@ -219,6 +219,7 @@ Customize the Network Policy <network-policy/customize-network-policy>
 
 Deploy to a Remote GPU Instance <deployment/deploy-to-remote-gpu>
 Set Up the Telegram Bridge <deployment/set-up-telegram-bridge>
+Set Up the Signal Bridge <deployment/set-up-signal-bridge>
 ```
 
 ```{toctree}

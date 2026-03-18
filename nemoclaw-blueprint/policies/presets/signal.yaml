@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: signal
+  description: "Signal Protocol communication"
+
+network_policies:
+  signal_service:
+    name: signal_service
+    endpoints:
+      - host: textsecure-service.whispersystems.org
+        port: 443
+        protocol: rest
+      - host: storage.signal.org
+        port: 443
+        protocol: rest
+      - host: cdn.signal.org
+        port: 443
+        protocol: rest
+      - host: cdn2.signal.org
+        port: 443
+        protocol: rest
+      - host: directory.signal.org
+        port: 443
+        protocol: rest

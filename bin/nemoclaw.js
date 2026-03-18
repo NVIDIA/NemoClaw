@@ -11,6 +11,7 @@ const { ROOT, SCRIPTS, run, runCapture } = require("./lib/runner");
 const {
   ensureApiKey,
   ensureGithubToken,
+  ensureSignalPhone,
   getCredential,
   isRepoPrivate,
 } = require("./lib/credentials");
@@ -22,11 +23,25 @@ const policies = require("./lib/policies");
 
 const GLOBAL_COMMANDS = new Set([
   "onboard", "list", "deploy", "setup", "setup-spark",
-  "start", "stop", "status",
+  "start", "stop", "status", "default",
   "help", "--help", "-h",
 ]);
 
 // ── Commands ─────────────────────────────────────────────────────
+
+async function setDefaultSandbox(name) {
+  if (!name) {
+    const { defaultSandbox } = registry.listSandboxes();
+    console.log(`  Current default sandbox: ${defaultSandbox || "none"}`);
+    return;
+  }
+  if (registry.setDefault(name)) {
+    console.log(`  ✓ Default sandbox set to: ${name}`);
+  } else {
+    console.error(`  Error: Sandbox '${name}' not found in registry.`);
+    process.exit(1);
+  }
+}
 
 async function onboard() {
   const { onboard: runOnboard } = require("./lib/onboard");
@@ -113,6 +128,9 @@ async function deploy(instanceName) {
   if (ghToken) envLines.push(`GITHUB_TOKEN=${ghToken}`);
   const tgToken = getCredential("TELEGRAM_BOT_TOKEN");
   if (tgToken) envLines.push(`TELEGRAM_BOT_TOKEN=${tgToken}`);
+  const signalPhone = getCredential("SIGNAL_PHONE_NUMBER");
+  if (signalPhone) envLines.push(`SIGNAL_PHONE_NUMBER=${signalPhone}`);
+
   const envTmp = path.join(os.tmpdir(), `nemoclaw-env-${Date.now()}`);
   fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
   run(`scp -q -o StrictHostKeyChecking=no -o LogLevel=ERROR "${envTmp}" ${name}:/home/ubuntu/nemoclaw/.env`);
@@ -121,7 +139,7 @@ async function deploy(instanceName) {
   console.log("  Running setup...");
   run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh'`);
 
-  if (tgToken) {
+  if (tgToken || signalPhone) {
     console.log("  Starting services...");
     run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/start-services.sh'`);
   }
@@ -134,11 +152,44 @@ async function deploy(instanceName) {
 
 async function start() {
   await ensureApiKey();
-  run(`bash "${SCRIPTS}/start-services.sh"`);
+
+  // If no bridges are configured, ask if user wants to set one up
+  if (!getCredential("TELEGRAM_BOT_TOKEN") && !getCredential("SIGNAL_PHONE_NUMBER")) {
+    const { prompt: askPrompt } = require("./lib/credentials");
+    console.log("");
+    console.log("  No bridges configured. You can interact with your agent via:");
+    console.log("    1) Telegram (requires Bot Token)");
+    console.log("    2) Signal   (requires registered phone number)");
+    console.log("    3) Skip     (use 'nemoclaw <name> connect' later)");
+    console.log("");
+    const choice = await askPrompt("  Choose [3]: ");
+    if (choice === "1") {
+      const { ensureTelegramToken } = require("./lib/credentials");
+      if (typeof ensureTelegramToken === "function") {
+        await ensureTelegramToken();
+      } else {
+        // Fallback if not yet implemented
+        const token = await askPrompt("  Telegram Bot Token: ");
+        if (token) {
+          const { saveCredential } = require("./lib/credentials");
+          saveCredential("TELEGRAM_BOT_TOKEN", token);
+          process.env.TELEGRAM_BOT_TOKEN = token;
+        }
+      }
+    } else if (choice === "2") {
+      await ensureSignalPhone();
+    }
+  }
+
+  const { defaultSandbox } = registry.listSandboxes();
+  const sandboxArg = defaultSandbox ? ` --sandbox ${defaultSandbox}` : "";
+  run(`bash "${SCRIPTS}/start-services.sh"${sandboxArg}`);
 }
 
 function stop() {
-  run(`bash "${SCRIPTS}/start-services.sh" --stop`);
+  const { defaultSandbox } = registry.listSandboxes();
+  const sandboxArg = defaultSandbox ? ` --sandbox ${defaultSandbox}` : "";
+  run(`bash "${SCRIPTS}/start-services.sh"${sandboxArg} --stop`);
 }
 
 function showStatus() {
@@ -156,7 +207,8 @@ function showStatus() {
   }
 
   // Show service status
-  run(`bash "${SCRIPTS}/start-services.sh" --status`);
+  const sandboxArg = defaultSandbox ? ` --sandbox ${defaultSandbox}` : "";
+  run(`bash "${SCRIPTS}/start-services.sh"${sandboxArg} --status`);
 }
 
 function listSandboxes() {
@@ -279,6 +331,7 @@ function help() {
 
   Sandbox Management:
     nemoclaw list                    List all sandboxes
+    nemoclaw default <name>          Set the default sandbox
     nemoclaw <name> connect          Connect to a sandbox
     nemoclaw <name> status           Show sandbox status and health
     nemoclaw <name> logs [--follow]  View sandbox logs
@@ -323,6 +376,7 @@ const [cmd, ...args] = process.argv.slice(2);
       case "stop":        stop(); break;
       case "status":      showStatus(); break;
       case "list":        listSandboxes(); break;
+      case "default":     await setDefaultSandbox(args[0]); break;
       default:            help(); break;
     }
     return;
