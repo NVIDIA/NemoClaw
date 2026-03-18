@@ -23,6 +23,9 @@ function listModels() {
   }));
 }
 
+// Chip names that use unified memory (VRAM not separately queryable)
+const UNIFIED_MEMORY_CHIPS = ["GB10", "Thor", "Orin", "Xavier"];
+
 function detectGpu() {
   // Try NVIDIA first — query VRAM
   try {
@@ -46,14 +49,14 @@ function detectGpu() {
     }
   } catch {}
 
-  // Fallback: DGX Spark (GB10) — VRAM not queryable due to unified memory architecture
+  // Fallback: unified memory GPUs (DGX Spark GB10, Jetson Thor/Orin/Xavier)
+  // VRAM is not separately queryable — use system RAM instead
   try {
     const nameOutput = runCapture(
       "nvidia-smi --query-gpu=name --format=csv,noheader,nounits",
       { ignoreError: true }
     );
-    if (nameOutput && nameOutput.includes("GB10")) {
-      // GB10 has 128GB unified memory shared with Grace CPU — use system RAM
+    if (nameOutput && UNIFIED_MEMORY_CHIPS.some((chip) => nameOutput.includes(chip))) {
       let totalMemoryMB = 0;
       try {
         const memLine = runCapture("free -m | awk '/Mem:/ {print $2}'", { ignoreError: true });
@@ -65,7 +68,9 @@ function detectGpu() {
         totalMemoryMB,
         perGpuMB: totalMemoryMB,
         nimCapable: true,
-        spark: true,
+        spark: nameOutput.includes("GB10"),
+        unifiedMemory: true,
+        name: nameOutput.split("\n")[0].trim(),
       };
     }
   } catch {}
@@ -204,4 +209,5 @@ module.exports = {
   waitForNimHealth,
   stopNimContainer,
   nimStatus,
+  UNIFIED_MEMORY_CHIPS,
 };
