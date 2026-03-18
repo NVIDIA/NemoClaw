@@ -12,7 +12,7 @@
  * Env:
  *   TELEGRAM_BOT_TOKEN  — from @BotFather
  *   NVIDIA_API_KEY      — for inference
- *   SANDBOX_NAME        — sandbox name (default: nemoclaw)
+ *   NEMOCLAW_SANDBOX    — sandbox name (default: nemoclaw; legacy SANDBOX_NAME also accepted)
  *   ALLOWED_CHAT_IDS    — comma-separated Telegram chat IDs to accept (optional, accepts all if unset)
  */
 
@@ -21,7 +21,7 @@ const { execSync, spawn } = require("child_process");
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API_KEY = process.env.NVIDIA_API_KEY;
-const SANDBOX = process.env.SANDBOX_NAME || "nemoclaw";
+const SANDBOX = process.env.NEMOCLAW_SANDBOX || process.env.SANDBOX_NAME || "nemoclaw";
 const ALLOWED_CHATS = process.env.ALLOWED_CHAT_IDS
   ? process.env.ALLOWED_CHAT_IDS.split(",").map((s) => s.trim())
   : null;

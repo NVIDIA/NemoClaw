@@ -140,6 +140,7 @@ do_start() {
 
   # Telegram bridge (only if token provided)
   if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+    export NEMOCLAW_SANDBOX="$SANDBOX_NAME"
     start_service telegram-bridge \
       node "$REPO_DIR/scripts/telegram-bridge.js"
   fi
