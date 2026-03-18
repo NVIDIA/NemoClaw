@@ -7,6 +7,8 @@
 
 const fs = require("fs");
 const path = require("path");
+const { execSync, execFileSync } = require("child_process");
+const os = require("os");
 const { ROOT, SCRIPTS, run, runCapture } = require("./runner");
 const {
   getDefaultOllamaModel,
@@ -71,7 +73,6 @@ function isReasoningModel(modelName) {
 
 function listOllamaModels() {
   try {
-    const { execSync } = require("child_process");
     const raw = execSync("curl -sf http://localhost:11434/api/tags", {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
@@ -85,8 +86,6 @@ function listOllamaModels() {
 }
 
 function createOllamaChatVariant(baseModel) {
-  const { execFileSync } = require("child_process");
-  const os = require("os");
   const variantName = baseModel.replace(/:.*$/, "") + "-chat";
   const modelfilePath = path.join(os.tmpdir(), `nemoclaw-modelfile-${Date.now()}`);
   try {
