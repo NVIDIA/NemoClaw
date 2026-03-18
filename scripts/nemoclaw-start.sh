@@ -114,8 +114,8 @@ PYTOKEN
 
 # Launch a background watcher that auto-approves pending device-pair requests.
 start_auto_pair() {
-  case "${NEMOCLAW_SKIP_AUTO_PAIR:-}" in
-    1|true|yes|TRUE|YES)
+  case "$(echo "${NEMOCLAW_SKIP_AUTO_PAIR:-}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes)
       echo "[gateway] auto-pair watcher skipped (NEMOCLAW_SKIP_AUTO_PAIR is set)"
       return
       ;;
@@ -128,7 +128,7 @@ import time
 
 try:
     timeout = int(os.environ.get('NEMOCLAW_AUTO_PAIR_TIMEOUT', '120'))
-    if timeout < 0:
+    if timeout <= 0:
         timeout = 120
 except ValueError:
     timeout = 120
