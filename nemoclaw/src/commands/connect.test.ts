@@ -54,7 +54,7 @@ describe("cliConnect", () => {
     );
   });
 
-  it("logs ENOENT error when openshell is not installed", async () => {
+  it("logs ENOENT error and exit guidance when openshell is not installed", async () => {
     mockSpawnProc(vi.mocked(spawn), null, new Error("ENOENT: spawn openshell not found"));
 
     const { lines, logger } = captureLogger();
@@ -62,9 +62,12 @@ describe("cliConnect", () => {
 
     const output = lines.join("\n");
     expect(output).toContain("openshell CLI not found");
+    // After spawn error, resolve(1) triggers the exit code guidance
+    expect(output).toContain("exited with code 1");
+    expect(output).toContain("openclaw nemoclaw status");
   });
 
-  it("logs generic error on non-ENOENT spawn failure", async () => {
+  it("logs generic error and exit guidance on non-ENOENT spawn failure", async () => {
     mockSpawnProc(vi.mocked(spawn), null, new Error("permission denied"));
 
     const { lines, logger } = captureLogger();
@@ -72,6 +75,9 @@ describe("cliConnect", () => {
 
     const output = lines.join("\n");
     expect(output).toContain("Connection failed: permission denied");
+    // After spawn error, resolve(1) triggers the exit code guidance
+    expect(output).toContain("exited with code 1");
+    expect(output).toContain("openclaw nemoclaw status");
   });
 
   it("logs exit code error on non-zero exit", async () => {
