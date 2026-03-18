@@ -79,14 +79,13 @@ describe("vLLM smoke", () => {
 
     it("policies directory contains sandbox config", () => {
       const policiesDir = path.join(__dirname, "..", "nemoclaw-blueprint", "policies");
-      if (fs.existsSync(policiesDir)) {
-        const files = fs.readdirSync(policiesDir);
-        assert.ok(files.length > 0, "policies dir should have at least one policy");
-        assert.ok(
-          files.some((f) => f.includes("sandbox") || f.includes("openclaw")),
-          "should have a sandbox/openclaw policy file"
-        );
-      }
+      assert.ok(fs.existsSync(policiesDir), "policies directory should exist at nemoclaw-blueprint/policies");
+      const files = fs.readdirSync(policiesDir);
+      assert.ok(files.length > 0, "policies dir should have at least one policy");
+      assert.ok(
+        files.some((f) => f.includes("sandbox") || f.includes("openclaw")),
+        "should have a sandbox/openclaw policy file"
+      );
     });
   });
 });

@@ -70,7 +70,7 @@ fi
 section "Phase 2: Start vLLM container"
 
 info "Starting vLLM with model ${MODEL} on port ${VLLM_PORT}..."
-docker run -d \
+CONTAINER_OUTPUT=$(docker run -d \
   --gpus all \
   --name "$CONTAINER_NAME" \
   -p "${VLLM_PORT}:8000" \
@@ -78,9 +78,11 @@ docker run -d \
   vllm/vllm-openai:latest \
   --model "$MODEL" \
   --max-model-len 512 \
-  --dtype float16 2>&1 | tail -1
+  --dtype float16 2>&1)
+CONTAINER_RC=$?
+CONTAINER_ID=$(echo "$CONTAINER_OUTPUT" | tail -1)
 
-[ $? -eq 0 ] \
+[ $CONTAINER_RC -eq 0 ] \
   && pass "vLLM container started" \
   || { fail "Failed to start vLLM container"; exit 1; }
 
