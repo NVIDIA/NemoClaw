@@ -114,6 +114,7 @@ export function registerCliCommands(ctx: PluginCliContext, api: OpenClawPluginAp
     .option("--ncp-partner <name>", "NCP partner name (when endpoint is ncp)")
     .option("--endpoint-url <url>", "Endpoint URL (for ncp, nim-local, ollama, or custom)")
     .option("--model <model>", "Model ID to use")
+    .option("--non-interactive", "Bypass interactive prompts and fail if required config is missing", false)
     .action(
       async (opts: {
         apiKey?: string;
@@ -121,6 +122,7 @@ export function registerCliCommands(ctx: PluginCliContext, api: OpenClawPluginAp
         ncpPartner?: string;
         endpointUrl?: string;
         model?: string;
+        nonInteractive: boolean;
       }) => {
         await cliOnboard({
           apiKey: opts.apiKey,
@@ -128,6 +130,7 @@ export function registerCliCommands(ctx: PluginCliContext, api: OpenClawPluginAp
           ncpPartner: opts.ncpPartner,
           endpointUrl: opts.endpointUrl,
           model: opts.model,
+          nonInteractive: opts.nonInteractive,
           logger,
           pluginConfig,
         });

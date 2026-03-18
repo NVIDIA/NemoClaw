@@ -122,6 +122,12 @@ By default, the onboard menu shows NVIDIA cloud inference options only. To enabl
 $ NEMOCLAW_EXPERIMENTAL=1 nemoclaw onboard
 ```
 
+To bypass interactive prompts entirely, use the `--non-interactive` flag or set the `NEMOCLAW_NON_INTERACTIVE=1` environment variable. When using this mode, you must provide all required configuration via environment variables (e.g., `NEMOCLAW_ENDPOINT`, `NEMOCLAW_MODEL`, and `NEMOCLAW_API_KEY`).
+
+```console
+$ NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ENDPOINT=ollama NEMOCLAW_MODEL=nvidia/nemotron-3-nano-30b-a3b nemoclaw onboard
+```
+
 ### `nemoclaw list`
 
 List all registered sandboxes with their model, provider, and policy presets.

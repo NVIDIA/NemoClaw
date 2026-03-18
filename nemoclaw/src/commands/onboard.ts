@@ -18,6 +18,7 @@ export interface OnboardOptions {
   ncpPartner?: string;
   endpointUrl?: string;
   model?: string;
+  nonInteractive?: boolean;
   logger: PluginLogger;
   pluginConfig: NemoClawConfig;
 }
@@ -86,12 +87,7 @@ function resolveCredentialEnv(endpointType: EndpointType): string {
 }
 
 function isNonInteractive(opts: OnboardOptions): boolean {
-  if (!opts.endpoint || !opts.model) return false;
-  const ep = opts.endpoint as EndpointType;
-  if (endpointRequiresApiKey(ep) && !opts.apiKey) return false;
-  if ((ep === "ncp" || ep === "nim-local" || ep === "custom") && !opts.endpointUrl) return false;
-  if (ep === "ncp" && !opts.ncpPartner) return false;
-  return true;
+  return opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
 }
 
 function endpointRequiresApiKey(endpointType: EndpointType): boolean {
@@ -212,14 +208,15 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
 
   // Step 1: Endpoint Selection
   let endpointType: EndpointType;
-  if (opts.endpoint) {
-    if (!ENDPOINT_TYPES.includes(opts.endpoint as EndpointType)) {
+  const endpointArg = opts.endpoint || process.env.NEMOCLAW_ENDPOINT;
+  if (endpointArg) {
+    if (!ENDPOINT_TYPES.includes(endpointArg as EndpointType)) {
       logger.error(
-        `Invalid endpoint type: ${opts.endpoint}. Must be one of: ${ENDPOINT_TYPES.join(", ")}`,
+        `Invalid endpoint type: ${endpointArg}. Must be one of: ${ENDPOINT_TYPES.join(", ")}`,
       );
       return;
     }
-    const ep = opts.endpoint as EndpointType;
+    const ep = endpointArg as EndpointType;
     if (!SUPPORTED_ENDPOINT_TYPES.includes(ep)) {
       logger.warn(
         `Note: '${ep}' is experimental and may not work reliably.`,
@@ -227,6 +224,10 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
     }
     endpointType = ep;
   } else {
+    if (nonInteractive) {
+      logger.error("Missing required configuration: endpoint. Cannot proceed in non-interactive mode.");
+      return;
+    }
     const ollama = detectOllama();
     if (ollama.running && isExperimentalEnabled()) {
       logger.info("Detected Ollama on localhost:11434. Using it for onboarding.");
@@ -239,30 +240,55 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
   // Step 2: Endpoint URL resolution
   let endpointUrl: string;
   let ncpPartner: string | null = null;
+  const urlArg = opts.endpointUrl || process.env.NEMOCLAW_ENDPOINT_URL;
 
   switch (endpointType) {
     case "build":
       endpointUrl = BUILD_ENDPOINT_URL;
       break;
     case "ncp":
-      ncpPartner = opts.ncpPartner ?? (await promptInput("NCP partner name"));
-      endpointUrl =
-        opts.endpointUrl ??
-        (await promptInput("NCP endpoint URL (e.g., https://partner.api.nvidia.com/v1)"));
+      ncpPartner = opts.ncpPartner || process.env.NEMOCLAW_NCP_PARTNER || null;
+      if (!ncpPartner) {
+        if (nonInteractive) {
+          logger.error("Missing required configuration: ncp partner. Cannot proceed in non-interactive mode.");
+          return;
+        }
+        ncpPartner = await promptInput("NCP partner name");
+      }
+      endpointUrl = urlArg || "";
+      if (!endpointUrl) {
+        if (nonInteractive) {
+          logger.error("Missing required configuration: endpoint URL. Cannot proceed in non-interactive mode.");
+          return;
+        }
+        endpointUrl = await promptInput("NCP endpoint URL (e.g., https://partner.api.nvidia.com/v1)");
+      }
       break;
     case "nim-local":
-      endpointUrl =
-        opts.endpointUrl ??
-        (await promptInput("NIM endpoint URL", "http://nim-service.local:8000/v1"));
+      endpointUrl = urlArg || "";
+      if (!endpointUrl) {
+        if (nonInteractive) {
+          logger.error("Missing required configuration: endpoint URL. Cannot proceed in non-interactive mode.");
+          return;
+        }
+        endpointUrl = await promptInput("NIM endpoint URL", "http://nim-service.local:8000/v1");
+      }
       break;
     case "vllm":
       endpointUrl = `${HOST_GATEWAY_URL}:8000/v1`;
       break;
     case "ollama":
-      endpointUrl = opts.endpointUrl ?? `${HOST_GATEWAY_URL}:11434/v1`;
+      endpointUrl = urlArg || `${HOST_GATEWAY_URL}:11434/v1`;
       break;
     case "custom":
-      endpointUrl = opts.endpointUrl ?? (await promptInput("Custom endpoint URL"));
+      endpointUrl = urlArg || "";
+      if (!endpointUrl) {
+        if (nonInteractive) {
+          logger.error("Missing required configuration: endpoint URL. Cannot proceed in non-interactive mode.");
+          return;
+        }
+        endpointUrl = await promptInput("Custom endpoint URL");
+      }
       break;
   }
 
@@ -277,15 +303,24 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
   // Step 3: Credential
   let apiKey = defaultCredentialForEndpoint(endpointType);
   if (requiresApiKey) {
-    if (opts.apiKey) {
-      apiKey = opts.apiKey;
+    const keyArg = opts.apiKey || process.env.NEMOCLAW_API_KEY;
+    if (keyArg) {
+      apiKey = keyArg;
     } else {
       const envKey = process.env.NVIDIA_API_KEY;
       if (envKey) {
         logger.info(`Detected NVIDIA_API_KEY in environment (${maskApiKey(envKey)})`);
         const useEnv = nonInteractive ? true : await promptConfirm("Use this key?");
+        if (!useEnv && nonInteractive) {
+           logger.error("Cannot prompt for API key in non-interactive mode.");
+           return;
+        }
         apiKey = useEnv ? envKey : await promptInput("Enter your NVIDIA API key");
       } else {
+        if (nonInteractive) {
+          logger.error("Missing required configuration: API key. Cannot proceed in non-interactive mode.");
+          return;
+        }
         logger.info("Get an API key from: https://build.nvidia.com/settings/api-keys");
         apiKey = await promptInput("Enter your NVIDIA API key");
       }
@@ -328,9 +363,14 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
 
   // Step 5: Model Selection
   let model: string;
-  if (opts.model) {
-    model = opts.model;
+  const modelArg = opts.model || process.env.NEMOCLAW_MODEL;
+  if (modelArg) {
+    model = modelArg;
   } else {
+    if (nonInteractive) {
+      logger.error("Missing required configuration: model. Cannot proceed in non-interactive mode.");
+      return;
+    }
     // Build model options: prefer Nemotron models from the endpoint, fall back to defaults
     const nemotronModels = validation.models.filter((m) => m.includes("nemotron"));
     const modelOptions =

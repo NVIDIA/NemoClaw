@@ -246,8 +246,14 @@ verify_nemoclaw() {
 # 5. Onboard
 # ---------------------------------------------------------------------------
 run_onboard() {
-  info "Running nemoclaw onboard…"
-  nemoclaw onboard
+  local onboard_cmd=(nemoclaw onboard)
+  
+  if [[ "${NON_INTERACTIVE:-0}" == "1" || "${NEMOCLAW_NON_INTERACTIVE:-0}" == "1" ]]; then
+    onboard_cmd+=("--non-interactive")
+  fi
+
+  info "Running ${onboard_cmd[*]}…"
+  "${onboard_cmd[@]}"
 }
 
 # ---------------------------------------------------------------------------
@@ -286,6 +292,19 @@ post_install_message() {
 # Main
 # ---------------------------------------------------------------------------
 main() {
+  NON_INTERACTIVE=0
+  for arg in "$@"; do
+    case $arg in
+      --non-interactive)
+        NON_INTERACTIVE=1
+        shift
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+
   info "=== NemoClaw Installer ==="
 
   install_nodejs

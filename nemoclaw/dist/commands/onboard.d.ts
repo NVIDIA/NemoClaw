@@ -5,6 +5,7 @@ export interface OnboardOptions {
     ncpPartner?: string;
     endpointUrl?: string;
     model?: string;
+    nonInteractive?: boolean;
     logger: PluginLogger;
     pluginConfig: NemoClawConfig;
 }

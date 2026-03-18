@@ -100,6 +100,7 @@ function registerCliCommands(ctx, api) {
         .option("--ncp-partner <name>", "NCP partner name (when endpoint is ncp)")
         .option("--endpoint-url <url>", "Endpoint URL (for ncp, nim-local, ollama, or custom)")
         .option("--model <model>", "Model ID to use")
+        .option("--non-interactive", "Bypass interactive prompts and fail if required config is missing", false)
         .action(async (opts) => {
         await (0, onboard_js_1.cliOnboard)({
             apiKey: opts.apiKey,
@@ -107,6 +108,7 @@ function registerCliCommands(ctx, api) {
             ncpPartner: opts.ncpPartner,
             endpointUrl: opts.endpointUrl,
             model: opts.model,
+            nonInteractive: opts.nonInteractive,
             logger,
             pluginConfig,
         });
