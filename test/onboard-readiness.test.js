@@ -4,6 +4,8 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
+const { buildPolicySetCommand, buildPolicyGetCommand } = require("../bin/lib/policies");
+
 // Test the readiness parsing logic extracted for testability
 // These validate the exact matching algorithm from onboard.js createSandbox()
 
@@ -76,5 +78,59 @@ describe("sandbox readiness parsing", () => {
 
   it("handles tab-separated output", () => {
     assert.ok(isSandboxReady("my-assistant\tReady\t2m ago", "my-assistant"));
+  });
+});
+
+// Regression tests for issue #21: WSL truncates hyphenated sandbox names
+// during shell argument parsing (e.g. "my-assistant" → "m").
+describe("WSL sandbox name handling (issue #21)", () => {
+  it("buildPolicySetCommand preserves hyphenated sandbox name", () => {
+    const cmd = buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
+    assert.ok(cmd.includes('"my-assistant"'), `Expected quoted name in: ${cmd}`);
+    assert.ok(!cmd.includes(' my-assistant '), "Name must be quoted, not bare");
+  });
+
+  it("buildPolicyGetCommand preserves hyphenated sandbox name", () => {
+    const cmd = buildPolicyGetCommand("my-assistant");
+    assert.ok(cmd.includes('"my-assistant"'), `Expected quoted name in: ${cmd}`);
+  });
+
+  it("buildPolicySetCommand preserves multi-hyphen names", () => {
+    const cmd = buildPolicySetCommand("/tmp/p.yaml", "my-dev-assistant-v2");
+    assert.ok(cmd.includes('"my-dev-assistant-v2"'));
+  });
+
+  it("buildPolicySetCommand preserves single-char name", () => {
+    // If WSL truncates "my-assistant" to "m", the single-char name should
+    // still be quoted and passed through unchanged
+    const cmd = buildPolicySetCommand("/tmp/p.yaml", "m");
+    assert.ok(cmd.includes('"m"'));
+  });
+
+  it("applyPreset rejects truncated/invalid sandbox name", () => {
+    const policies = require("../bin/lib/policies");
+    // Empty name
+    assert.throws(
+      () => policies.applyPreset("", "npm"),
+      /Invalid or truncated sandbox name/
+    );
+    // Name with uppercase (not valid per RFC 1123)
+    assert.throws(
+      () => policies.applyPreset("My-Assistant", "npm"),
+      /Invalid or truncated sandbox name/
+    );
+    // Name starting with hyphen
+    assert.throws(
+      () => policies.applyPreset("-broken", "npm"),
+      /Invalid or truncated sandbox name/
+    );
+  });
+
+  it("readiness check uses exact match preventing truncated name false-positive", () => {
+    // If "my-assistant" was truncated to "m", the readiness check should
+    // NOT match a sandbox named "my-assistant" when searching for "m"
+    assert.ok(!isSandboxReady("my-assistant   Ready   2m ago", "m"));
+    assert.ok(!isSandboxReady("my-assistant   Ready   2m ago", "my"));
+    assert.ok(!isSandboxReady("my-assistant   Ready   2m ago", "my-"));
   });
 });

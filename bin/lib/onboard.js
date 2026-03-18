@@ -481,7 +481,7 @@ async function createSandbox(gpu) {
     console.error("");
     console.error(`  Sandbox '${sandboxName}' was created but did not become ready within 60s.`);
     console.error("  Check: openshell sandbox list");
-    console.error(`  Logs:  openshell sandbox logs ${sandboxName}`);
+    console.error(`  Logs:  openshell sandbox logs "${sandboxName}"`);
     process.exit(1);
   }
 
