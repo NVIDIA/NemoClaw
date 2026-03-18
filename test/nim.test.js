@@ -39,6 +39,18 @@ describe("nim", () => {
     it("prefixes with nemoclaw-nim-", () => {
       assert.equal(nim.containerName("my-sandbox"), "nemoclaw-nim-my-sandbox");
     });
+
+    it("rejects names with shell metacharacters", () => {
+      assert.throws(() => nim.containerName("foo;rm -rf /"), /Invalid sandbox name/);
+    });
+
+    it("rejects empty string", () => {
+      assert.throws(() => nim.containerName(""), /Invalid sandbox name/);
+    });
+
+    it("accepts alphanumeric with dots and underscores", () => {
+      assert.equal(nim.containerName("my_sandbox.1"), "nemoclaw-nim-my_sandbox.1");
+    });
   });
 
   describe("detectGpu", () => {
@@ -113,6 +125,12 @@ describe("nim", () => {
       for (const m of models) {
         assert.equal(typeof m.recommended, "boolean");
       }
+    });
+  });
+
+  describe("pullNimImage", () => {
+    it("throws for unknown model instead of process.exit", () => {
+      assert.throws(() => nim.pullNimImage("bogus/nonexistent"), /Unknown model/);
     });
   });
 

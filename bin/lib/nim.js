@@ -8,6 +8,9 @@ const nimImages = require("./nim-images.json");
 
 /** @param {string} sandboxName @returns {string} Docker container name. */
 function containerName(sandboxName) {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(sandboxName)) {
+    throw new Error(`Invalid sandbox name: ${sandboxName}`);
+  }
   return `nemoclaw-nim-${sandboxName}`;
 }
 
@@ -166,8 +169,7 @@ function suggestModelsForGpu(gpu) {
 function pullNimImage(model) {
   const image = getImageForModel(model);
   if (!image) {
-    console.error(`  Unknown model: ${model}`);
-    process.exit(1);
+    throw new Error(`Unknown model: ${model}`);
   }
   console.log(`  Pulling NIM image: ${image}`);
   run(`docker pull ${image}`);
@@ -179,8 +181,7 @@ function startNimContainer(sandboxName, model, port = 8000) {
   const name = containerName(sandboxName);
   const image = getImageForModel(model);
   if (!image) {
-    console.error(`  Unknown model: ${model}`);
-    process.exit(1);
+    throw new Error(`Unknown model: ${model}`);
   }
 
   // Stop any existing container with same name
@@ -224,8 +225,8 @@ function stopNimContainer(sandboxName) {
   run(`docker rm ${name} 2>/dev/null || true`, { ignoreError: true });
 }
 
-/** @param {string} sandboxName @returns {{running: boolean, healthy?: boolean, container: string, state?: string}} */
-function nimStatus(sandboxName) {
+/** @param {string} sandboxName @param {number} [port=8000] @returns {{running: boolean, healthy?: boolean, container: string, state?: string}} */
+function nimStatus(sandboxName, port = 8000) {
   const name = containerName(sandboxName);
   try {
     const state = runCapture(
@@ -236,7 +237,7 @@ function nimStatus(sandboxName) {
 
     let healthy = false;
     if (state === "running") {
-      const health = runCapture(`curl -sf http://localhost:8000/v1/models 2>/dev/null`, {
+      const health = runCapture(`curl -sf http://localhost:${port}/v1/models 2>/dev/null`, {
         ignoreError: true,
       });
       healthy = !!health;
