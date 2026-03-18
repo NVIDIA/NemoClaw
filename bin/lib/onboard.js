@@ -538,7 +538,7 @@ async function createSandbox(gpu) {
     console.log("  Configuring inference.local DNS for macOS...");
     run(
       `openshell sandbox connect "${sandboxName}" -- sh -c ` +
-      `'grep -q inference.local /etc/hosts || echo "$(cat /etc/resolv.conf | grep nameserver | head -1 | awk "{print \\$2}") inference.local" >> /etc/hosts'`,
+      `'grep -q inference.local /etc/hosts || { IP=$(grep -m1 "^nameserver" /etc/resolv.conf | awk "{print \\$2}"); [ -n "$IP" ] && echo "$IP inference.local" >> /etc/hosts || echo "WARN: no nameserver found, skipping inference.local"; }'`,
       { ignoreError: true },
     );
   }

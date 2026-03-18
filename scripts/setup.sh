@@ -226,7 +226,7 @@ fi
 if [ "$(uname -s)" = "Darwin" ]; then
   info "Configuring inference.local DNS inside sandbox for macOS..."
   openshell sandbox connect nemoclaw -- sh -c \
-    'grep -q inference.local /etc/hosts || echo "$(grep nameserver /etc/resolv.conf | head -1 | awk "{print \$2}") inference.local" >> /etc/hosts' \
+    'grep -q inference.local /etc/hosts || { IP=$(grep -m1 "^nameserver" /etc/resolv.conf | awk "{print \$2}"); [ -n "$IP" ] && echo "$IP inference.local" >> /etc/hosts || echo "WARN: no nameserver found in /etc/resolv.conf, skipping"; }' \
     2>/dev/null || warn "Could not patch sandbox /etc/hosts (sandbox may not be ready yet)"
 fi
 
