@@ -181,6 +181,15 @@ async function startGateway(gpu) {
   // Give DNS a moment to propagate
   require("child_process").spawnSync("sleep", ["5"]);
 
+  // GPU device plugin fix — the Helm repo URL for nvidia-device-plugin is
+  // dead (returns 404), so GPU-enabled gateways fail to install the plugin.
+  // Patch the HelmChart to use a direct chart URL instead.
+  // See: https://github.com/NVIDIA/NemoClaw/issues/241
+  if (gpu) {
+    console.log("  Patching GPU device plugin (workaround for dead Helm repo)...");
+    run(`bash "${path.join(SCRIPTS, "fix-gpu-device-plugin.sh")}" 2>&1 || true`, { ignoreError: true });
+  }
+
 }
 
 // ── Step 3: Sandbox ──────────────────────────────────────────────

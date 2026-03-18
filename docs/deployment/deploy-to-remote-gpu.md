@@ -86,6 +86,29 @@ $ export NEMOCLAW_GPU="a2-highgpu-1g:nvidia-tesla-a100:2"
 $ nemoclaw deploy <instance-name>
 ```
 
+## Troubleshooting
+
+### GPU sandbox creation fails: "no allocatable GPUs"
+
+If you see this error during onboarding:
+
+```
+Error: × status: FailedPrecondition, message: "GPU sandbox requested,
+but the active gateway has no allocatable GPUs."
+```
+
+This is caused by a dead Helm chart repository URL for the NVIDIA device
+plugin (`https://nvidia.github.io/k8s-device-plugin` returns 404).
+The `nemoclaw onboard` command patches this automatically on GPU hosts.
+
+If you're running an older NemoClaw version, apply the fix manually:
+
+```console
+$ bash scripts/fix-gpu-device-plugin.sh
+```
+
+See [issue #241](https://github.com/NVIDIA/NemoClaw/issues/241) for details.
+
 ## Related Topics
 
 - [Set Up the Telegram Bridge](set-up-telegram-bridge.md) to interact with the remote agent through Telegram.
