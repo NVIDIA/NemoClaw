@@ -238,6 +238,21 @@ exit 97
 `,
     );
 
+    writeExecutable(
+      path.join(fakeBin, "uname"),
+      `#!/usr/bin/env bash
+if [ "$1" = "-s" ]; then
+  echo "Darwin"
+  exit 0
+fi
+if [ "$1" = "-m" ]; then
+  echo "arm64"
+  exit 0
+fi
+echo "Darwin"
+`,
+    );
+
     const result = spawnSync("bash", [CURL_PIPE_INSTALLER], {
       cwd: path.join(__dirname, ".."),
       encoding: "utf-8",
