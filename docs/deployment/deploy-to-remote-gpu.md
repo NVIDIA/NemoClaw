@@ -86,6 +86,36 @@ $ export NEMOCLAW_GPU="a2-highgpu-1g:nvidia-tesla-a100:2"
 $ nemoclaw deploy <instance-name>
 ```
 
+### Choosing a cost-effective instance for experimentation
+
+The default A100 instance (`a2-highgpu-1g:nvidia-tesla-a100:1`) costs approximately $4.41/hr on GCP.
+Since the default inference path routes through the NVIDIA cloud API (not a local model), the GPU on the VM is mostly idle.
+For experimentation and testing with cloud inference, a smaller, cheaper instance is sufficient:
+
+```console
+$ export NEMOCLAW_GPU="hyperstack_A4000"
+$ nemoclaw deploy <instance-name>
+```
+
+Use `brev search --sort price` to list available instance types and pricing.
+
+| Instance | GPU | VRAM | Approx. $/hr | Notes |
+|---|---|---|---|---|
+| `hyperstack_A4000` | A4000 | 16 GB | $0.18 | Cheapest option, sufficient for cloud inference |
+| `g4dn.xlarge` | T4 | 16 GB | $0.63 | AWS, stoppable and rebootable |
+| `a2-highgpu-1g:nvidia-tesla-a100:1` | A100 | 40 GB | $4.41 | Default, needed only for local NIM inference |
+
+:::{note}
+A GPU is only required on the VM if you plan to run local inference via NIM or vLLM.
+When using NVIDIA cloud inference (the default), the GPU is not used for model serving.
+:::
+
+Remember to delete the instance when you are finished to avoid ongoing charges:
+
+```console
+$ brev delete <instance-name>
+```
+
 ## Related Topics
 
 - [Set Up the Telegram Bridge](set-up-telegram-bridge.md) to interact with the remote agent through Telegram.
