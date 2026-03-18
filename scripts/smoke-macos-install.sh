@@ -16,7 +16,7 @@ info() { echo -e "${GREEN}[smoke]${NC} $1"; }
 warn() { echo -e "${YELLOW}[smoke]${NC} $1"; }
 fail() { echo -e "${RED}[smoke]${NC} $1"; exit 1; }
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=./lib/runtime.sh
 . "$SCRIPT_DIR/lib/runtime.sh"
@@ -152,7 +152,6 @@ write_answers_file() {
   local answers_file="$1"
   cat > "$answers_file" <<EOF
 $SANDBOX_NAME
-
 n
 EOF
 }
@@ -268,4 +267,6 @@ main() {
   info "install.sh completed successfully"
 }
 
-main "$@"
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi

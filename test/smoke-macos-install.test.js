@@ -66,4 +66,25 @@ describe("macOS smoke install script guardrails", () => {
     assert.notEqual(result.status, 0);
     assert.match(`${result.stdout}${result.stderr}`, /no Docker Desktop socket was found/);
   });
+
+  it("feeds an explicit no answer to the policy preset prompt", () => {
+    const script = `
+      set -euo pipefail
+      source "${SMOKE_SCRIPT}"
+      answers_file="$(mktemp)"
+      trap 'rm -f "$answers_file"' EXIT
+      SANDBOX_NAME="smoke-test"
+      write_answers_file "$answers_file"
+      cat "$answers_file"
+    `;
+
+    const result = spawnSync("bash", ["-lc", script], {
+      cwd: path.join(__dirname, ".."),
+      encoding: "utf-8",
+      env: { ...process.env, NVIDIA_API_KEY: "nvapi-test" },
+    });
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, "smoke-test\nn\n");
+  });
 });
