@@ -32,6 +32,8 @@ function isExperimentalEnabled(): boolean {
 const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const HOST_GATEWAY_URL = "http://host.openshell.internal";
 
+const BASETEN_DEFAULT_MODEL = { id: "zai-org/GLM-5", label: "GLM-5" };
+
 const DEFAULT_MODELS = [
   { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
   { id: "nvidia/llama-3.1-nemotron-ultra-253b-v1", label: "Nemotron Ultra 253B" },
@@ -94,7 +96,8 @@ function resolveCredentialEnv(endpointType: EndpointType): string {
 function isNonInteractive(opts: OnboardOptions): boolean {
   if (!opts.endpoint || !opts.model) return false;
   const ep = opts.endpoint as EndpointType;
-  if (endpointRequiresApiKey(ep) && !opts.apiKey) return false;
+  const envApiKey = process.env[resolveCredentialEnv(ep)];
+  if (endpointRequiresApiKey(ep) && !opts.apiKey && !envApiKey) return false;
   if ((ep === "ncp" || ep === "nim-local" || ep === "custom") && !opts.endpointUrl) return false;
   if (ep === "ncp" && !opts.ncpPartner) return false;
   return true;
@@ -295,10 +298,9 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
     if (opts.apiKey) {
       apiKey = opts.apiKey;
     } else {
-      const isBaseten = endpointType === "baseten";
-      const envKey = isBaseten ? process.env.BASETEN_API_KEY : process.env.NVIDIA_API_KEY;
-      const envKeyName = isBaseten ? "BASETEN_API_KEY" : "NVIDIA_API_KEY";
-      const keySource = isBaseten ? "https://app.baseten.co" : "https://build.nvidia.com/settings/api-keys";
+      const envKeyName = resolveCredentialEnv(endpointType);
+      const envKey = process.env[envKeyName];
+      const keySource = endpointType === "baseten" ? "https://app.baseten.co" : "https://build.nvidia.com/settings/api-keys";
       if (envKey) {
         logger.info(`Detected ${envKeyName} in environment (${maskApiKey(envKey)})`);
         const useEnv = nonInteractive ? true : await promptConfirm("Use this key?");
@@ -349,12 +351,20 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
   if (opts.model) {
     model = opts.model;
   } else {
-    // Build model options: prefer Nemotron models from the endpoint, fall back to defaults
-    const nemotronModels = validation.models.filter((m) => m.includes("nemotron"));
-    const modelOptions =
-      nemotronModels.length > 0
-        ? nemotronModels.map((id) => ({ label: id, value: id }))
+    // Build model options: for Baseten show all discovered models or GLM-5 fallback;
+    // for other providers prefer Nemotron models, falling back to DEFAULT_MODELS.
+    const preferredModels =
+      endpointType === "baseten"
+        ? validation.models
+        : validation.models.filter((m) => m.includes("nemotron"));
+    const fallbackModels =
+      endpointType === "baseten"
+        ? [{ label: `${BASETEN_DEFAULT_MODEL.label} (${BASETEN_DEFAULT_MODEL.id})`, value: BASETEN_DEFAULT_MODEL.id }]
         : DEFAULT_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }));
+    const modelOptions =
+      preferredModels.length > 0
+        ? preferredModels.map((id) => ({ label: id, value: id }))
+        : fallbackModels;
 
     model = await promptSelect("Select your primary model:", modelOptions);
   }
