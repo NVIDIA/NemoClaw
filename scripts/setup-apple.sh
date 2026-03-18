@@ -52,19 +52,26 @@ elif [ ! -d "$HOME" ]; then
   fail "HOME directory does not exist: $HOME"
 fi
 
-# Check architecture
+# Check architecture - detect hardware first, then process translation
 ARCH="$(uname -m)"
-if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
-  # Check if running under Rosetta 2 translation
-  if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" = "1" ]; then
-    warn "Running under Rosetta 2 translation. Use native ARM64 binaries for best performance:"
+# Detect Apple Silicon hardware regardless of Rosetta translation
+HAS_ARM64_HW=$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)
+IS_ROSETTA=$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)
+
+if [ "$HAS_ARM64_HW" = "1" ]; then
+  # This is Apple Silicon hardware
+  if [ "$IS_ROSETTA" = "1" ]; then
+    warn "Running under Rosetta 2 translation (uname reports $ARCH on ARM64 hardware)"
+    warn "Use native ARM64 binaries for best performance:"
     warn "  Node.js: brew install node@20"
     warn "  Docker: Download Apple Silicon version from docker.com"
   fi
-  info "Apple Silicon detected ($ARCH)"
-else
+  info "Apple Silicon detected (hardware: ARM64)"
+elif [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then
   warn "Intel Mac detected ($ARCH). This script is optimized for Apple Silicon."
   warn "Note: Local Ollama inference requires Apple Silicon. Use cloud inference (build.nvidia.com) instead."
+else
+  warn "Unknown architecture: $ARCH"
 fi
 
 # Node.js 20+
@@ -96,7 +103,8 @@ if [ -z "$DOCKER_SOCKET" ]; then
   fail "No Docker socket found. Install and start Docker Desktop or Colima."
 fi
 
-if ! docker info > /dev/null 2>&1; then
+# Use the detected socket for all docker commands
+if ! DOCKER_HOST="unix://$DOCKER_SOCKET" docker info > /dev/null 2>&1; then
   fail "Docker is installed but not responding. Start Docker Desktop (or 'colima start')."
 fi
 
@@ -108,8 +116,8 @@ else
   info "Docker Desktop detected (socket: $DOCKER_SOCKET)"
 fi
 
-# Check Docker memory allocation
-DOCKER_MEM_BYTES=$(docker info --format '{{.MemTotal}}' 2>/dev/null || echo "0")
+# Check Docker memory allocation (using detected socket)
+DOCKER_MEM_BYTES=$(DOCKER_HOST="unix://$DOCKER_SOCKET" docker info --format '{{.MemTotal}}' 2>/dev/null || echo "0")
 
 if ! [[ "$DOCKER_MEM_BYTES" =~ ^[0-9]+$ ]] || [ "$DOCKER_MEM_BYTES" = "0" ]; then
   warn "Could not determine Docker memory allocation. Ensure Docker is running properly."
@@ -150,7 +158,17 @@ else
 
   # Check OLLAMA_HOST binding
   if [ -n "${OLLAMA_HOST:-}" ]; then
-    info "OLLAMA_HOST=$OLLAMA_HOST"
+    # Parse host from OLLAMA_HOST (strip port if present)
+    OLLAMA_HOST_PARSED="${OLLAMA_HOST%%:*}"
+    # Check if it's a loopback address
+    if [[ "$OLLAMA_HOST_PARSED" == "localhost" ]] || [[ "$OLLAMA_HOST_PARSED" =~ ^127\. ]] || [[ "$OLLAMA_HOST_PARSED" == "::1" ]]; then
+      warn "OLLAMA_HOST=$OLLAMA_HOST uses loopback address (not reachable from containers)"
+      warn "For Docker containers to reach Ollama, use:"
+      warn "  export OLLAMA_HOST=0.0.0.0:11434"
+      warn "  ollama serve"
+    else
+      info "OLLAMA_HOST=$OLLAMA_HOST (container-reachable)"
+    fi
   else
     warn "OLLAMA_HOST is not set. For Docker containers to reach Ollama:"
     warn "  export OLLAMA_HOST=0.0.0.0:11434"
@@ -180,8 +198,15 @@ info "openshell CLI: $(openshell --version 2>/dev/null || echo 'installed')"
 
 echo ""
 info "Detecting Apple GPU (this may take a few seconds)..."
-# Use timeout to prevent system_profiler from hanging (can take 5-10s normally)
-GPU_INFO=$(timeout 15s system_profiler SPDisplaysDataType 2>/dev/null || true)
+# Use portable timeout (try gtimeout from coreutils, fall back to Perl)
+if command -v gtimeout > /dev/null 2>&1; then
+  GPU_INFO=$(gtimeout 15s system_profiler SPDisplaysDataType 2>/dev/null || true)
+elif command -v perl > /dev/null 2>&1; then
+  GPU_INFO=$(perl -e 'alarm shift; exec @ARGV' 15 system_profiler SPDisplaysDataType 2>/dev/null || true)
+else
+  # No timeout available, run without it (may hang on some systems)
+  GPU_INFO=$(system_profiler SPDisplaysDataType 2>/dev/null || true)
+fi
 
 if [ -z "$GPU_INFO" ]; then
   warn "Could not detect GPU information (system_profiler timed out or unavailable)"
