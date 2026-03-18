@@ -207,6 +207,9 @@ rm -f "$CREATE_LOG"
 # Verify sandbox is Ready (not just that a record exists)
 # Strip ANSI color codes before checking phase
 SANDBOX_LINE=$(openshell sandbox list 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | awk -v name="$SANDBOX_NAME" '$1 == name { print; exit }')
+if [ -z "$SANDBOX_LINE" ]; then
+  fail "Sandbox '$SANDBOX_NAME' not found in 'openshell sandbox list'."
+fi
 if ! echo "$SANDBOX_LINE" | grep -q "Ready"; then
   SANDBOX_PHASE=$(echo "$SANDBOX_LINE" | awk '{print $NF}')
   echo ""
