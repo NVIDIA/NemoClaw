@@ -96,9 +96,9 @@ function registerCliCommands(ctx, api) {
         .command("onboard")
         .description("Interactive setup: configure inference endpoint, credential, and model")
         .option("--api-key <key>", "API key for endpoints that require one (skips prompt)")
-        .option("--endpoint <type>", "Endpoint type: build, ncp, nim-local, vllm, ollama, custom (local options are experimental)")
+        .option("--endpoint <type>", "Endpoint type: build, ncp, nim-local, vllm, ollama, lmstudio, custom (local options are experimental)")
         .option("--ncp-partner <name>", "NCP partner name (when endpoint is ncp)")
-        .option("--endpoint-url <url>", "Endpoint URL (for ncp, nim-local, ollama, or custom)")
+        .option("--endpoint-url <url>", "Endpoint URL (for ncp, nim-local, ollama, lmstudio, or custom)")
         .option("--model <model>", "Model ID to use")
         .action(async (opts) => {
         await (0, onboard_js_1.cliOnboard)({

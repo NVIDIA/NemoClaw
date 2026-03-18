@@ -22,7 +22,7 @@ export interface OnboardOptions {
   pluginConfig: NemoClawConfig;
 }
 
-const ENDPOINT_TYPES: EndpointType[] = ["build", "ncp", "nim-local", "vllm", "ollama", "custom"];
+const ENDPOINT_TYPES: EndpointType[] = ["build", "ncp", "nim-local", "vllm", "ollama", "lmstudio", "custom"];
 const SUPPORTED_ENDPOINT_TYPES: EndpointType[] = ["build", "ncp"];
 
 function isExperimentalEnabled(): boolean {
@@ -52,6 +52,8 @@ function resolveProfile(endpointType: EndpointType): string {
       return "vllm";
     case "ollama":
       return "ollama";
+    case "lmstudio":
+      return "lmstudio";
   }
 }
 
@@ -68,6 +70,8 @@ function resolveProviderName(endpointType: EndpointType): string {
       return "vllm-local";
     case "ollama":
       return "ollama-local";
+    case "lmstudio":
+      return "lmstudio-local";
   }
 }
 
@@ -81,6 +85,7 @@ function resolveCredentialEnv(endpointType: EndpointType): string {
       return "NIM_API_KEY";
     case "vllm":
     case "ollama":
+    case "lmstudio":
       return "OPENAI_API_KEY";
   }
 }
@@ -106,6 +111,7 @@ function endpointRequiresApiKey(endpointType: EndpointType): boolean {
 function defaultCredentialForEndpoint(endpointType: EndpointType): string {
   switch (endpointType) {
     case "vllm":
+    case "lmstudio":
       return "dummy";
     case "ollama":
       return "ollama";
@@ -172,6 +178,11 @@ async function promptEndpoint(
         label: "Local Ollama [experimental]",
         value: "ollama",
         hint: `experimental — ${ollama.installed ? "installed locally" : "localhost:11434"}`,
+      },
+      {
+        label: "Local LM Studio [experimental]",
+        value: "lmstudio",
+        hint: "experimental — localhost:1234",
       },
     );
   }
@@ -261,6 +272,9 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
     case "ollama":
       endpointUrl = opts.endpointUrl ?? `${HOST_GATEWAY_URL}:11434/v1`;
       break;
+    case "lmstudio":
+      endpointUrl = opts.endpointUrl ?? `${HOST_GATEWAY_URL}:1234/v1`;
+      break;
     case "custom":
       endpointUrl = opts.endpointUrl ?? (await promptInput("Custom endpoint URL"));
       break;
@@ -302,10 +316,10 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
   }
 
   // Step 4: Validate API Key
-  // For local endpoints (vllm, ollama, nim-local), validation is best-effort since the
+  // For local endpoints (vllm, ollama, lmstudio, nim-local), validation is best-effort since the
   // service may not be running yet during onboarding.
   const isLocalEndpoint =
-    endpointType === "vllm" || endpointType === "ollama" || endpointType === "nim-local";
+    endpointType === "vllm" || endpointType === "ollama" || endpointType === "lmstudio" || endpointType === "nim-local";
   logger.info("");
   logger.info(`Validating ${requiresApiKey ? "credential" : "endpoint"} against ${endpointUrl}...`);
   const validation = await validateApiKey(apiKey, endpointUrl);

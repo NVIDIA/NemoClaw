@@ -11,6 +11,7 @@ profiles:
   - ncp
   - nim-local
   - vllm
+  - lmstudio
 
 description: |
   NemoClaw blueprint: orchestrates OpenClaw sandbox creation, migration,
@@ -51,6 +52,14 @@ components:
         provider_name: "vllm-local"
         endpoint: "http://localhost:8000/v1"
         model: "nvidia/nemotron-3-nano-30b-a3b"
+        credential_env: "OPENAI_API_KEY"
+        credential_default: "dummy"
+
+      lmstudio:
+        provider_type: "openai"
+        provider_name: "lmstudio-local"
+        endpoint: "http://localhost:1234/v1"
+        model: "lmstudio-local"
         credential_env: "OPENAI_API_KEY"
         credential_default: "dummy"
 

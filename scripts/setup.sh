@@ -113,6 +113,15 @@ if curl -s http://localhost:8000/v1/models > /dev/null 2>&1 || python3 -c "impor
     "OPENAI_BASE_URL=http://host.openshell.internal:8000/v1"
 fi
 
+# lmstudio-local (if LM Studio is running)
+if curl -s http://localhost:1234/v1/models > /dev/null 2>&1; then
+  upsert_provider \
+    "lmstudio-local" \
+    "openai" \
+    "OPENAI_API_KEY=dummy" \
+    "OPENAI_BASE_URL=http://host.openshell.internal:1234/v1"
+fi
+
 # 4a. Ollama (macOS local inference)
 if [ "$(uname -s)" = "Darwin" ]; then
   if ! command -v ollama > /dev/null 2>&1; then

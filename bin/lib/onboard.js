@@ -249,6 +249,13 @@ async function setupNim(sandboxName, gpu) {
       registry.updateSandbox(sandboxName, { model, provider, nimContainer });
       return { model, provider };
     }
+    if (lmstudioRunning) {
+      console.log("  ✓ LM Studio detected on localhost:1234 — using it [experimental]");
+      provider = "lmstudio-local";
+      model = "lmstudio-local";
+      registry.updateSandbox(sandboxName, { model, provider, nimContainer });
+      return { model, provider };
+    }
   }
 
   // Build options list — only show local options with NEMOCLAW_EXPERIMENTAL=1

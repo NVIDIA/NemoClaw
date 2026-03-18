@@ -1,4 +1,4 @@
-export type EndpointType = "build" | "ncp" | "nim-local" | "vllm" | "ollama" | "custom";
+export type EndpointType = "build" | "ncp" | "nim-local" | "vllm" | "ollama" | "lmstudio" | "custom";
 export interface NemoClawOnboardConfig {
     endpointType: EndpointType;
     endpointUrl: string;
