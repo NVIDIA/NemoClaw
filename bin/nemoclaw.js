@@ -288,6 +288,7 @@ function sandboxStatus(sandboxName) {
 }
 
 function sandboxLogs(sandboxName, follow) {
+  // `openshell logs` is the correct subcommand (not `openshell sandbox logs`)
   const followFlag = follow ? " --tail" : "";
   run(`openshell logs "${sandboxName}"${followFlag}`);
 }
