@@ -282,6 +282,7 @@ async function setupNim(sandboxName, gpu) {
     options.push({ key: "nim", label: "Local NIM container (NVIDIA GPU) [experimental]" });
   }
   options.push({ key: "cloud", label: "NVIDIA Cloud API (build.nvidia.com)" });
+  options.push({ key: "baseten", label: "Baseten (inference.baseten.co)" });
   if (EXPERIMENTAL && (hasOllama || ollamaRunning)) {
     options.push({ key: "ollama", label: `Local Ollama (localhost:11434)${ollamaRunning ? " — running" : ""} [experimental]` });
   }
@@ -362,8 +363,27 @@ async function setupNim(sandboxName, gpu) {
       console.log("  ✓ Using existing vLLM on localhost:8000");
       provider = "vllm-local";
       model = "vllm-local";
+    } else if (selected.key === "baseten") {
+      provider = "baseten";
     }
     // else: cloud — fall through to default below
+  }
+
+  if (provider === "baseten") {
+    const envKey = process.env.BASETEN_API_KEY;
+    if (envKey) {
+      console.log(`  Detected BASETEN_API_KEY in environment.`);
+    } else {
+      console.log("  Get an API key from: https://app.baseten.co");
+      const enteredKey = (await prompt("  Enter your Baseten API key: ")).trim();
+      if (!enteredKey) {
+        console.error("  BASETEN_API_KEY is required for Baseten provider.");
+        process.exit(1);
+      }
+      process.env.BASETEN_API_KEY = enteredKey;
+    }
+    model = model || "zai-org/GLM-5";
+    console.log(`  Using Baseten with model: ${model}`);
   }
 
   if (provider === "nvidia-nim") {
@@ -418,6 +438,21 @@ async function setupInference(sandboxName, model, provider) {
     );
     run(
       `openshell inference set --no-verify --provider ollama-local --model ${model} 2>/dev/null || true`,
+      { ignoreError: true }
+    );
+  } else if (provider === "baseten") {
+    const shellEscape = (v) => String(v ?? "").replace(/(["\\$`])/g, "\\$1");
+    const basetenApiKey = shellEscape(process.env.BASETEN_API_KEY);
+    run(
+      `openshell provider create --name baseten --type openai ` +
+      `--credential "OPENAI_API_KEY=${basetenApiKey}" ` +
+      `--config "OPENAI_BASE_URL=https://inference.baseten.co/v1" 2>&1 || ` +
+      `openshell provider update baseten --credential "OPENAI_API_KEY=${basetenApiKey}" ` +
+      `--config "OPENAI_BASE_URL=https://inference.baseten.co/v1" 2>&1 || true`,
+      { ignoreError: true }
+    );
+    run(
+      `openshell inference set --provider baseten --model ${model} 2>/dev/null || true`,
       { ignoreError: true }
     );
   }
@@ -505,6 +540,7 @@ function printDashboard(sandboxName, model, provider) {
   let providerLabel = provider;
   if (provider === "nvidia-nim") providerLabel = "NVIDIA Cloud API";
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
+  else if (provider === "baseten") providerLabel = "Baseten";
 
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
@@ -532,6 +568,35 @@ async function onboard() {
   const sandboxName = await createSandbox(gpu);
   const { model, provider } = await setupNim(sandboxName, gpu);
   await setupInference(sandboxName, model, provider);
+  if (provider === "baseten") {
+    step(5.5, 7, "Applying Baseten network policy");
+    const basetenPreset = [
+      "preset:",
+      "  name: baseten",
+      '  description: "Baseten inference API access"',
+      "",
+      "network_policies:",
+      "  baseten:",
+      "    name: baseten",
+      "    endpoints:",
+      "      - host: inference.baseten.co",
+      "        port: 443",
+      "        protocol: rest",
+      "        enforcement: enforce",
+      "        tls: terminate",
+      "        rules:",
+      '          - allow: { method: "*", path: "/**" }',
+    ].join("\n");
+    const presetDir = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
+    const tmpPreset = path.join(presetDir, "_baseten_tmp.yaml");
+    require("fs").writeFileSync(tmpPreset, basetenPreset, "utf-8");
+    try {
+      policies.applyPreset(sandboxName, "_baseten_tmp");
+      console.log("  ✓ Baseten network policy applied");
+    } finally {
+      require("fs").unlinkSync(tmpPreset);
+    }
+  }
   await setupOpenclaw(sandboxName);
   await setupPolicies(sandboxName);
   printDashboard(sandboxName, model, provider);
