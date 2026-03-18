@@ -29,11 +29,13 @@ const GLOBAL_COMMANDS = new Set([
 
 // ── Commands ─────────────────────────────────────────────────────
 
+/** Launch the interactive onboarding wizard. */
 async function onboard() {
   const { onboard: runOnboard } = require("./lib/onboard");
   await runOnboard();
 }
 
+/** Run the deprecated legacy setup.sh (advises user to use onboard instead). */
 async function setup() {
   console.log("");
   console.log("  ⚠  `nemoclaw setup` is deprecated. Use `nemoclaw onboard` instead.");
@@ -43,11 +45,13 @@ async function setup() {
   run(`bash "${SCRIPTS}/setup.sh"`);
 }
 
+/** Run the DGX Spark setup script (fixes cgroup v2 + Docker config). */
 async function setupSpark() {
   await ensureApiKey();
   run(`sudo -E NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}" bash "${SCRIPTS}/setup-spark.sh"`);
 }
 
+/** Deploy NemoClaw to a remote Brev VM: provision, sync, configure, and connect. */
 async function deploy(instanceName) {
   if (!instanceName) {
     console.error("  Usage: nemoclaw deploy <instance-name>");
@@ -143,15 +147,18 @@ async function deploy(instanceName) {
   runSsh(name, "cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw", { tty: true });
 }
 
+/** Start background services (Telegram bot, tunnel, etc.). */
 async function start() {
   await ensureApiKey();
   run(`bash "${SCRIPTS}/start-services.sh"`);
 }
 
+/** Stop all running NemoClaw services. */
 function stop() {
   run(`bash "${SCRIPTS}/start-services.sh" --stop`);
 }
 
+/** Display sandbox registry and service status. */
 function showStatus() {
   // Show sandbox registry
   const { sandboxes, defaultSandbox } = registry.listSandboxes();
@@ -170,6 +177,7 @@ function showStatus() {
   run(`bash "${SCRIPTS}/start-services.sh" --status`);
 }
 
+/** List all registered sandboxes with their model, provider, and policy info. */
 function listSandboxes() {
   const { sandboxes, defaultSandbox } = registry.listSandboxes();
   if (sandboxes.length === 0) {
@@ -197,6 +205,7 @@ function listSandboxes() {
 
 // ── Sandbox-scoped actions ───────────────────────────────────────
 
+/** Ensure port-forward is alive and open an interactive shell in the sandbox. */
 function sandboxConnect(sandboxName) {
   // Ensure port forward is alive before connecting
   run(`openshell forward start --background 18789 ${shellQuote(sandboxName)} 2>/dev/null || true`, { ignoreError: true });
@@ -204,6 +213,7 @@ function sandboxConnect(sandboxName) {
 
 }
 
+/** Show detailed status for a single sandbox (registry + openshell + NIM health). */
 function sandboxStatus(sandboxName) {
   const sb = registry.getSandbox(sandboxName);
   if (sb) {
@@ -227,11 +237,13 @@ function sandboxStatus(sandboxName) {
   console.log("");
 }
 
+/** Stream or display sandbox logs, optionally following in real time. */
 function sandboxLogs(sandboxName, follow) {
   const followFlag = follow ? " --follow" : "";
   run(`openshell sandbox logs ${shellQuote(sandboxName)}${followFlag}`);
 }
 
+/** Interactively select and apply a policy preset to a sandbox. */
 async function sandboxPolicyAdd(sandboxName) {
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
@@ -254,6 +266,7 @@ async function sandboxPolicyAdd(sandboxName) {
   policies.applyPreset(sandboxName, answer);
 }
 
+/** List all available policy presets and mark which are applied to the sandbox. */
 function sandboxPolicyList(sandboxName) {
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
@@ -267,6 +280,7 @@ function sandboxPolicyList(sandboxName) {
   console.log("");
 }
 
+/** Stop NIM, delete the sandbox, and remove it from the registry. */
 function sandboxDestroy(sandboxName) {
   console.log(`  Stopping NIM for '${sandboxName}'...`);
   nim.stopNimContainer(sandboxName);
@@ -280,6 +294,7 @@ function sandboxDestroy(sandboxName) {
 
 // ── Help ─────────────────────────────────────────────────────────
 
+/** Print CLI usage information. */
 function help() {
   console.log(`
   nemoclaw — NemoClaw CLI

@@ -10,6 +10,7 @@ const path = require("path");
 const { isCgroupV2, readDaemonJson, checkCgroupConfig } = require("../bin/lib/preflight");
 
 // Helper: create a temp daemon.json with given content and return its path.
+/** Create a temporary daemon.json with the given content and return its path. */
 function writeTempDaemon(content) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preflight-"));
   const p = path.join(dir, "daemon.json");

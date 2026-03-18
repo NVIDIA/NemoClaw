@@ -16,12 +16,14 @@ const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 
 // ── Helpers ──────────────────────────────────────────────────────
 
+/** Print a numbered step banner to the console. */
 function step(n, total, msg) {
   console.log("");
   console.log(`  [${n}/${total}] ${msg}`);
   console.log(`  ${"─".repeat(50)}`);
 }
 
+/** Return true if `docker info` succeeds (Docker daemon is reachable). */
 function isDockerRunning() {
   try {
     runCapture("docker info", { ignoreError: false });
@@ -31,6 +33,7 @@ function isDockerRunning() {
   }
 }
 
+/** Return true if the `openshell` CLI is on PATH. */
 function isOpenshellInstalled() {
   try {
     runCapture("command -v openshell");
@@ -40,6 +43,7 @@ function isOpenshellInstalled() {
   }
 }
 
+/** Attempt to install the openshell CLI; returns true on success. */
 function installOpenshell() {
   console.log("  Installing openshell CLI...");
   run(`bash "${path.join(SCRIPTS, "install-openshell.sh")}"`, { ignoreError: true });
@@ -48,6 +52,7 @@ function installOpenshell() {
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
+/** Step 1: run preflight checks (Docker, openshell, cgroup, GPU). */
 async function preflight() {
   step(1, 7, "Preflight checks");
 
@@ -106,6 +111,7 @@ async function preflight() {
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
+/** Step 2: destroy any previous gateway and start a fresh one. */
 async function startGateway(gpu) {
   step(2, 7, "Starting OpenShell gateway");
 
@@ -152,6 +158,7 @@ async function startGateway(gpu) {
 
 // ── Step 3: Sandbox ──────────────────────────────────────────────
 
+/** Step 3: prompt for a name, build the image, and create the sandbox. */
 async function createSandbox(gpu) {
   step(3, 7, "Creating sandbox");
 
@@ -232,6 +239,7 @@ async function createSandbox(gpu) {
 
 // ── Step 4: NIM ──────────────────────────────────────────────────
 
+/** Step 4: detect or prompt for an inference provider (NIM/Ollama/vLLM/cloud). */
 async function setupNim(sandboxName, gpu) {
   step(4, 7, "Configuring inference (NIM)");
 
@@ -365,6 +373,7 @@ async function setupNim(sandboxName, gpu) {
 
 // ── Step 5: Inference provider ───────────────────────────────────
 
+/** Step 5: register the chosen inference provider with openshell. */
 async function setupInference(sandboxName, model, provider) {
   step(5, 7, "Setting up inference provider");
 
@@ -414,6 +423,7 @@ async function setupInference(sandboxName, model, provider) {
 
 // ── Step 6: OpenClaw ─────────────────────────────────────────────
 
+/** Step 6: mark OpenClaw as launched inside the sandbox. */
 async function setupOpenclaw(sandboxName) {
   step(6, 7, "Setting up OpenClaw inside sandbox");
 
@@ -427,6 +437,7 @@ async function setupOpenclaw(sandboxName) {
 
 // ── Step 7: Policy presets ───────────────────────────────────────
 
+/** Step 7: offer and apply policy presets (pypi, npm, Telegram, etc.). */
 async function setupPolicies(sandboxName) {
   step(7, 7, "Policy presets");
 
@@ -484,6 +495,7 @@ async function setupPolicies(sandboxName) {
 
 // ── Dashboard ────────────────────────────────────────────────────
 
+/** Print a summary dashboard with sandbox, model, and NIM status. */
 function printDashboard(sandboxName, model, provider) {
   const nimStat = nim.nimStatus(sandboxName);
   const nimLabel = nimStat.running ? "running" : "not running";
@@ -508,6 +520,7 @@ function printDashboard(sandboxName, model, provider) {
 
 // ── Main ─────────────────────────────────────────────────────────
 
+/** Run the full 7-step interactive onboarding wizard. */
 async function onboard() {
   console.log("");
   console.log("  NemoClaw Onboarding");

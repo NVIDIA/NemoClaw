@@ -23,6 +23,7 @@ if (!process.env.DOCKER_HOST) {
   }
 }
 
+/** Execute a shell command via `bash -c`; exits the process on failure unless opts.ignoreError is set. */
 function run(cmd, opts = {}) {
   const result = spawnSync("bash", ["-c", cmd], {
     stdio: "inherit",
@@ -110,6 +111,7 @@ function runCaptureArgv(prog, args, opts = {}) {
   }
 }
 
+/** Execute a shell command and return its trimmed stdout; returns "" on failure if opts.ignoreError is set. */
 function runCapture(cmd, opts = {}) {
   try {
     return execSync(cmd, {
