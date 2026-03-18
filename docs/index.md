@@ -69,7 +69,10 @@ Install the CLI and launch a sandboxed OpenClaw instance in a few commands.
   position: absolute; 
   right: 100%; 
   top: 50%; 
-  font-size: 11px; 
+  transform: translate(-8px, -50%);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
 }
 .nc-term-dot { width: 12px; height: 12px; border-radius: 50%; }
 .nc-term-dot-r { background: #ff5f56; }
