@@ -478,10 +478,14 @@ async function createSandbox(gpu) {
   }
 
   if (!ready) {
+    // Clean up the orphaned sandbox so the next onboard retry with the same
+    // name doesn't fail on "sandbox already exists".
+    run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
     console.error("");
     console.error(`  Sandbox '${sandboxName}' was created but did not become ready within 60s.`);
-    console.error("  Check: openshell sandbox list");
+    console.error("  The orphaned sandbox has been removed — you can safely retry.");
     console.error(`  Logs:  openshell sandbox logs "${sandboxName}"`);
+    console.error("  Retry: nemoclaw onboard");
     process.exit(1);
   }
 
