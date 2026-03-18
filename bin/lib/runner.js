@@ -40,6 +40,7 @@ function run(cmd, opts = {}) {
 // Env vars that must never be overridden by callers — they enable code
 // execution, library injection, or trust-store hijacking in subprocesses.
 const BLOCKED_ENV_VARS = new Set([
+  "PATH",
   "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
   "NODE_OPTIONS", "BASH_ENV", "ENV",
   "GIT_SSH_COMMAND", "SSH_AUTH_SOCK",
@@ -89,15 +90,18 @@ function runArgv(prog, args, opts = {}) {
  * with no shell. Returns trimmed stdout.
  */
 function runCaptureArgv(prog, args, opts = {}) {
-  const { env, ...execOpts } = opts;
+  const { env, encoding, stdio, ...execOpts } = opts;
+  if (encoding !== undefined || stdio !== undefined) {
+    throw new Error("runCaptureArgv() does not allow overriding encoding or stdio");
+  }
   const { execFileSync } = require("child_process");
   try {
     return execFileSync(prog, args, {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
       ...execOpts,
       cwd: ROOT,
       env: { ...process.env, ...sanitizeEnv(env) },
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
       shell: false,
     }).trim();
   } catch (err) {

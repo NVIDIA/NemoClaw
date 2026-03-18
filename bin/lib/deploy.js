@@ -30,6 +30,7 @@ const SSH_OPTS = ["-o", "StrictHostKeyChecking=accept-new", "-o", "LogLevel=ERRO
 /** @param remoteCmd — executed by the remote shell. Use only constant strings
  *  or values wrapped in shellQuote(). Never interpolate unsanitized input. */
 function runSsh(host, remoteCmd, opts = {}) {
+  validateInstanceName(host);
   const args = [...SSH_OPTS];
   if (opts.tty) args.unshift("-t");
   args.push(host);
@@ -44,6 +45,8 @@ function runSsh(host, remoteCmd, opts = {}) {
  * @param {object} [opts] - Options forwarded to runArgv.
  */
 function runScp(src, destHostPath, opts = {}) {
+  const [host] = destHostPath.split(":");
+  validateInstanceName(host);
   const args = ["-q", ...SSH_OPTS, src, destHostPath];
   return runArgv("scp", args, opts);
 }
@@ -56,6 +59,7 @@ function runScp(src, destHostPath, opts = {}) {
  * @param {object} [opts] - Options forwarded to runArgv.
  */
 function runRsync(sources, host, dest, opts = {}) {
+  validateInstanceName(host);
   const args = [
     "-az", "--delete",
     "--exclude", "node_modules",
