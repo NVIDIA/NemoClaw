@@ -53,7 +53,7 @@ function sampleConfig(): NemoClawOnboardConfig {
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-  vi.resetAllMocks();
+  vi.clearAllMocks();
   // Clear in-memory filesystem
   for (const key of Object.keys(fsStore)) {
     delete fsStore[key];

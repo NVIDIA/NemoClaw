@@ -32,12 +32,12 @@ function mockResponse(status: number, body: unknown, ok?: boolean): Response {
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-  vi.resetAllMocks();
+  vi.clearAllMocks();
 });
 
 describe("validateApiKey", () => {
   const endpoint = "https://integrate.api.nvidia.com/v1";
-  const apiKey = "nvapi-testapikey1234567890";
+  const apiKey = "test-placeholder-not-a-real-key";
 
   it("returns valid with model list on successful response", async () => {
     mockFetch.mockResolvedValue(

@@ -26,17 +26,28 @@ CHART_URL="https://github.com/NVIDIA/k8s-device-plugin/releases/download/v${CHAR
 CHART_TGZ="/tmp/nvidia-device-plugin-${CHART_VERSION}.tgz"
 
 echo "Downloading nvidia-device-plugin chart v${CHART_VERSION}..."
-curl -sL "$CHART_URL" -o "$CHART_TGZ"
+if ! curl -sfL "$CHART_URL" -o "$CHART_TGZ"; then
+  echo "✗ Failed to download chart from ${CHART_URL}"
+  exit 1
+fi
+
+# Verify the download produced a non-empty file
+if [ ! -s "$CHART_TGZ" ]; then
+  echo "✗ Downloaded chart file is empty"
+  exit 1
+fi
 
 echo "Encoding chart..."
 CHART_B64=$(base64 -w0 "$CHART_TGZ" 2>/dev/null || base64 "$CHART_TGZ" | tr -d '\n')
 
 echo "Patching HelmChart in gateway cluster..."
-openshell doctor exec -- kubectl patch helmchart nvidia-device-plugin \
+if ! openshell doctor exec -- kubectl patch helmchart nvidia-device-plugin \
   -n kube-system \
   --type merge \
-  --patch "{\"spec\":{\"chartContent\":\"${CHART_B64}\",\"repo\":\"\"}}" \
-  2>/dev/null || true
+  --patch "{\"spec\":{\"chartContent\":\"${CHART_B64}\",\"repo\":\"\"}}"; then
+  echo "✗ Failed to patch HelmChart — is the gateway running with GPU support?"
+  exit 1
+fi
 
 # Wait for device plugin to come up
 echo "Waiting for device plugin pods..."

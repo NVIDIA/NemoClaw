@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, execSync } from "node:child_process";
+import { writeFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { PluginLogger, NemoClawConfig } from "../index.js";
 import {
   loadOnboardConfig,
@@ -58,12 +61,22 @@ function createOllamaChatVariant(baseModel: string, logger: PluginLogger): strin
   const variantName = baseModel.replace(/:.*$/, "") + "-chat";
   try {
     const modelfile = `FROM ${baseModel}`;
-    execSync(`echo '${modelfile}' | ollama create ${variantName}`, {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 120000,
-      shell: "/bin/bash",
-    });
+    // Write Modelfile to a temp file to avoid shell interpolation risks
+    const tmpFile = join(tmpdir(), `nemoclaw-modelfile-${Date.now()}`);
+    writeFileSync(tmpFile, modelfile, "utf-8");
+    try {
+      execFileSync("ollama", ["create", variantName, "-f", tmpFile], {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 120000,
+      });
+    } finally {
+      try {
+        unlinkSync(tmpFile);
+      } catch {
+        // ignore cleanup errors
+      }
+    }
     return variantName;
   } catch (err) {
     logger.warn(
@@ -401,12 +414,10 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
       }));
       model = await promptSelect("Select your Ollama model:", modelOptions);
     } else {
-      // No models pulled yet — fall back to defaults
-      const modelOptions = DEFAULT_MODELS.map((m) => ({
-        label: `${m.label} (${m.id})`,
-        value: m.id,
-      }));
-      model = await promptSelect("Select your primary model:", modelOptions);
+      // No models pulled yet — suggest common Ollama models to pull
+      logger.warn("No models found in local Ollama. You need to pull a model first.");
+      logger.warn("Suggested: ollama pull llama3.2  or  ollama pull nemotron-3-nano");
+      model = "llama3.2";
     }
   } else {
     // Build model options: prefer Nemotron models from the endpoint, fall back to defaults
