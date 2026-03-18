@@ -37,7 +37,7 @@ const { parseGatewayInference } = require("./lib/inference-config");
 // ── Global commands ──────────────────────────────────────────────
 
 const GLOBAL_COMMANDS = new Set([
-  "onboard", "list", "deploy", "setup", "setup-spark",
+  "onboard", "list", "deploy", "setup", "setup-spark", "setup-apple",
   "start", "stop", "status", "debug", "uninstall",
   "help", "--help", "-h", "--version", "-v",
 ]);
@@ -360,6 +360,10 @@ async function setup() {
 async function setupSpark() {
   // setup-spark.sh configures Docker cgroups — it does not use NVIDIA_API_KEY.
   run(`sudo bash "${SCRIPTS}/setup-spark.sh"`);
+}
+
+async function setupApple() {
+  run(`bash "${SCRIPTS}/setup-apple.sh"`);
 }
 
 // eslint-disable-next-line complexity
@@ -725,6 +729,7 @@ function help() {
   ${G}Getting Started:${R}
     ${B}nemoclaw onboard${R}                 Configure inference endpoint and credentials
     nemoclaw setup-spark             Set up on DGX Spark ${D}(fixes cgroup v2 + Docker)${R}
+    nemoclaw setup-apple             Set up on macOS / Apple Silicon
 
   ${G}Sandbox Management:${R}
     ${B}nemoclaw list${R}                    List all sandboxes
@@ -781,6 +786,7 @@ const [cmd, ...args] = process.argv.slice(2);
       case "onboard":     await onboard(args); break;
       case "setup":       await setup(); break;
       case "setup-spark": await setupSpark(); break;
+      case "setup-apple": await setupApple(); break;
       case "deploy":      await deploy(args[0]); break;
       case "start":       await start(); break;
       case "stop":        stop(); break;
