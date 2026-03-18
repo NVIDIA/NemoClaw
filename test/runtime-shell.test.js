@@ -73,4 +73,20 @@ describe("shell runtime helpers", () => {
     assert.equal(result.stdout.trim(), xdgColimaSocket);
     fs.rmSync(home, { recursive: true, force: true });
   });
+
+  it("detects podman from docker info output", () => {
+    const result = runShell(`source "${RUNTIME_SH}"; infer_container_runtime_from_info "podman version 5.4.1"`);
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout.trim(), "podman");
+  });
+
+  it("flags podman on macOS as unsupported", () => {
+    const result = runShell(`source "${RUNTIME_SH}"; is_unsupported_macos_runtime Darwin podman`);
+    assert.equal(result.status, 0);
+  });
+
+  it("does not flag podman on Linux", () => {
+    const result = runShell(`source "${RUNTIME_SH}"; is_unsupported_macos_runtime Linux podman`);
+    assert.notEqual(result.status, 0);
+  });
 });

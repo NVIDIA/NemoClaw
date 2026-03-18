@@ -71,6 +71,14 @@ command -v openshell > /dev/null || fail "openshell CLI not found. Install the b
 command -v docker > /dev/null || fail "docker not found"
 [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY not set. Get one from build.nvidia.com"
 
+CONTAINER_RUNTIME="$(infer_container_runtime_from_info "$(docker info 2>/dev/null || true)")"
+if is_unsupported_macos_runtime "$(uname -s)" "$CONTAINER_RUNTIME"; then
+  fail "Podman on macOS is not supported yet. NemoClaw currently depends on OpenShell support for Podman on macOS. Use Colima or Docker Desktop instead."
+fi
+if [ "$CONTAINER_RUNTIME" != "unknown" ]; then
+  info "Container runtime: $CONTAINER_RUNTIME"
+fi
+
 # 1. Gateway — always start fresh to avoid stale state
 info "Starting OpenShell gateway..."
 openshell gateway destroy -g nemoclaw > /dev/null 2>&1 || true

@@ -20,6 +20,21 @@ function isWsl(opts = {}) {
   );
 }
 
+function inferContainerRuntime(info = "") {
+  const normalized = String(info).toLowerCase();
+  if (!normalized.trim()) return "unknown";
+  if (normalized.includes("podman")) return "podman";
+  if (normalized.includes("colima")) return "colima";
+  if (normalized.includes("docker desktop")) return "docker-desktop";
+  if (normalized.includes("docker")) return "docker";
+  return "unknown";
+}
+
+function isUnsupportedMacosRuntime(runtime, opts = {}) {
+  const platform = opts.platform ?? process.platform;
+  return platform === "darwin" && runtime === "podman";
+}
+
 function getColimaDockerSocketCandidates(opts = {}) {
   const home = opts.home ?? process.env.HOME ?? "/tmp";
   return [
@@ -76,5 +91,7 @@ module.exports = {
   findColimaDockerSocket,
   getColimaDockerSocketCandidates,
   getDockerSocketCandidates,
+  inferContainerRuntime,
+  isUnsupportedMacosRuntime,
   isWsl,
 };

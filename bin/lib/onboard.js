@@ -8,7 +8,11 @@
 const fs = require("fs");
 const path = require("path");
 const { ROOT, SCRIPTS, run, runCapture } = require("./runner");
-const { findColimaDockerSocket } = require("./platform");
+const {
+  findColimaDockerSocket,
+  inferContainerRuntime,
+  isUnsupportedMacosRuntime,
+} = require("./platform");
 const { prompt, ensureApiKey, getCredential } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
@@ -52,6 +56,11 @@ function isDockerRunning() {
   } catch {
     return false;
   }
+}
+
+function getContainerRuntime() {
+  const info = runCapture("docker info 2>/dev/null", { ignoreError: true });
+  return inferContainerRuntime(info);
 }
 
 function isOpenshellInstalled() {
@@ -133,6 +142,17 @@ async function preflight() {
     process.exit(1);
   }
   console.log("  ✓ Docker is running");
+
+  const runtime = getContainerRuntime();
+  if (isUnsupportedMacosRuntime(runtime)) {
+    console.error("  Podman on macOS is not supported by NemoClaw at this time.");
+    console.error("  OpenShell currently depends on Docker host-gateway behavior that Podman on macOS does not provide.");
+    console.error("  Use Colima or Docker Desktop on macOS instead.");
+    process.exit(1);
+  }
+  if (runtime !== "unknown") {
+    console.log(`  ✓ Container runtime: ${runtime}`);
+  }
 
   // OpenShell CLI
   if (!isOpenshellInstalled()) {

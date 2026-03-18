@@ -9,6 +9,8 @@ const {
   detectDockerHost,
   findColimaDockerSocket,
   getDockerSocketCandidates,
+  inferContainerRuntime,
+  isUnsupportedMacosRuntime,
   isWsl,
 } = require("../bin/lib/platform");
 
@@ -125,6 +127,30 @@ describe("platform helpers", () => {
         }),
         null,
       );
+    });
+  });
+
+  describe("inferContainerRuntime", () => {
+    it("detects podman", () => {
+      assert.equal(inferContainerRuntime("podman version 5.4.1"), "podman");
+    });
+
+    it("detects Docker Desktop", () => {
+      assert.equal(inferContainerRuntime("Docker Desktop 4.42.0 (190636)"), "docker-desktop");
+    });
+
+    it("detects Colima", () => {
+      assert.equal(inferContainerRuntime("Server: Colima\n Docker Engine - Community"), "colima");
+    });
+  });
+
+  describe("isUnsupportedMacosRuntime", () => {
+    it("flags podman on macOS", () => {
+      assert.equal(isUnsupportedMacosRuntime("podman", { platform: "darwin" }), true);
+    });
+
+    it("does not flag podman on Linux", () => {
+      assert.equal(isUnsupportedMacosRuntime("podman", { platform: "linux" }), false);
     });
   });
 });

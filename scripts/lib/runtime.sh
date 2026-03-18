@@ -64,3 +64,30 @@ detect_docker_host() {
 
   return 1
 }
+
+infer_container_runtime_from_info() {
+  local info="${1:-}"
+  local normalized
+  normalized="$(printf '%s' "$info" | tr '[:upper:]' '[:lower:]')"
+
+  if [[ -z "${normalized// }" ]]; then
+    printf 'unknown\n'
+  elif [[ "$normalized" == *podman* ]]; then
+    printf 'podman\n'
+  elif [[ "$normalized" == *colima* ]]; then
+    printf 'colima\n'
+  elif [[ "$normalized" == *"docker desktop"* ]]; then
+    printf 'docker-desktop\n'
+  elif [[ "$normalized" == *docker* ]]; then
+    printf 'docker\n'
+  else
+    printf 'unknown\n'
+  fi
+}
+
+is_unsupported_macos_runtime() {
+  local platform="${1:-$(uname -s)}"
+  local runtime="${2:-unknown}"
+
+  [ "$platform" = "Darwin" ] && [ "$runtime" = "podman" ]
+}
