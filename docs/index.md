@@ -220,6 +220,7 @@ Customize the Network Policy <network-policy/customize-network-policy>
 :hidden:
 
 Deploy to a Remote GPU Instance <deployment/deploy-to-remote-gpu>
+Set Up on Jetson <deployment/jetson-setup>
 Set Up the Telegram Bridge <deployment/set-up-telegram-bridge>
 ```
 

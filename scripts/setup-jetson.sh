@@ -4,25 +4,25 @@
 #
 # NemoClaw setup for Jetson devices (Orin Nano, Orin NX, AGX Orin, etc.)
 #
-# Jetson's L4T kernel ships the iptables/netfilter modules that k3s needs
-# (xt_comment, xt_conntrack, etc.) but doesn't load them by default.
-# Without them, OpenShell's k3s gateway panics on network policy setup.
-#
-# This script loads the missing modules, configures Docker for cgroup v2
-# (same as setup-spark.sh), sets up Ollama for local inference, then
-# hands off to the normal setup.sh for the full OpenShell/k3s path.
+# Unlike setup.sh, this script is run as a NORMAL USER (not sudo).
+# It uses sudo internally only for kernel module loading and Docker
+# daemon configuration. All openshell commands run as the user so
+# gateway metadata and mTLS certs land in the user's home dir.
 #
 # Usage:
-#   sudo bash scripts/setup-jetson.sh
+#   export NVIDIA_API_KEY=nvapi-...
+#   bash scripts/setup-jetson.sh
 #
-# What it does (beyond setup.sh):
+# What it does:
 #   1. Autodetects Jetson (Tegra/L4T)
-#   2. Loads required kernel modules for k3s (iptables + ipset)
-#   3. Configures Docker daemon for cgroupns=host (if cgroup v2)
-#   4. Patches OpenShell gateway image: iptables-nft → iptables-legacy
-#   5. Ensures Ollama is running with a suitable model
-#   6. Runs the normal setup.sh (full OpenShell/k3s path)
-#   7. Fixes CoreDNS forwarding (same issue as Colima)
+#   2. Loads required kernel modules for k3s (sudo)
+#   3. Configures Docker daemon for cgroupns=host (sudo)
+#   4. Starts the OpenShell gateway
+#   5. Patches gateway image: iptables-nft → iptables-legacy, restarts
+#   6. Sets up inference providers
+#   7. Creates NemoClaw sandbox (with network policy)
+#   8. Ensures Ollama is available for local inference
+#   9. Fixes CoreDNS forwarding (same issue as Colima)
 
 set -euo pipefail
 
@@ -36,6 +36,7 @@ warn() { echo -e "${YELLOW}>>>${NC} $1"; }
 fail() { echo -e "${RED}>>>${NC} $1"; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ── Pre-flight checks ────────────────────────────────────────────
 
@@ -43,8 +44,8 @@ if [ "$(uname -s)" != "Linux" ]; then
   fail "This script is for Jetson (Linux). Use 'nemoclaw setup' for macOS."
 fi
 
-if [ "$(id -u)" -ne 0 ]; then
-  fail "Must run as root: sudo bash scripts/setup-jetson.sh"
+if [ "$(id -u)" -eq 0 ]; then
+  fail "Do not run as root. Run as your normal user: bash scripts/setup-jetson.sh"
 fi
 
 # Autodetect Jetson (L4T / Tegra)
@@ -60,37 +61,25 @@ else
 fi
 
 command -v docker > /dev/null || fail "Docker not found."
+command -v openshell > /dev/null || fail "openshell CLI not found. Install from https://github.com/NVIDIA/OpenShell/releases"
+[ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY not set. Get one from build.nvidia.com"
 
-# Detect the real user (not root) for docker group / handoff
-REAL_USER="${SUDO_USER:-$(logname 2>/dev/null || echo "")}"
-if [ -z "$REAL_USER" ]; then
-  warn "Could not detect non-root user. Docker group will not be configured."
+# Check docker group membership
+if ! id -nG | grep -qw docker; then
+  info "Adding you to the docker group (requires sudo)..."
+  sudo usermod -aG docker "$USER"
+  fail "Added to docker group. Please log out and back in (or 'newgrp docker'), then re-run this script."
 fi
 
-# ── 1. Docker group ──────────────────────────────────────────────
-
-if [ -n "$REAL_USER" ]; then
-  if id -nG "$REAL_USER" | grep -qw docker; then
-    info "User '$REAL_USER' already in docker group"
-  else
-    info "Adding '$REAL_USER' to docker group..."
-    usermod -aG docker "$REAL_USER"
-    info "Added. Group will take effect on next login (or use 'newgrp docker')."
-  fi
-fi
-
-# ── 2. Kernel modules for k3s iptables ──────────────────────────
+# ── 1. Kernel modules (requires sudo) ────────────────────────────
 #
 # L4T builds xt_comment, xt_conntrack, nf_conntrack etc. as modules
 # but doesn't load them at boot.  k3s's kube-router panics without
 # them because it can't insert iptables rules.
 
 MODULES=(
-  # Bridge netfilter — required for pod-to-pod and ClusterIP routing
   br_netfilter
-  # iptables matches for kube-router / kube-proxy
   xt_comment xt_conntrack nf_conntrack xt_mark xt_nat xt_MASQUERADE
-  # ipset types for kube-router network policy (load what's available)
   ip_set_hash_net ip_set_hash_ip ip_set_hash_ipport
   ip_set_hash_ipportnet ip_set_hash_ipportip ip_set_bitmap_port
 )
@@ -98,7 +87,7 @@ LOADED_ANY=false
 
 for mod in "${MODULES[@]}"; do
   if ! lsmod | grep -qw "$mod"; then
-    if modprobe "$mod" 2>/dev/null; then
+    if sudo modprobe "$mod" 2>/dev/null; then
       info "Loaded kernel module: $mod"
       LOADED_ANY=true
     else
@@ -108,19 +97,16 @@ for mod in "${MODULES[@]}"; do
 done
 
 if [ "$LOADED_ANY" = true ]; then
-  # Persist across reboots
   for mod in "${MODULES[@]}"; do
     if ! grep -qx "$mod" /etc/modules-load.d/k3s-netfilter.conf 2>/dev/null; then
-      echo "$mod" >> /etc/modules-load.d/k3s-netfilter.conf
+      echo "$mod" | sudo tee -a /etc/modules-load.d/k3s-netfilter.conf > /dev/null
     fi
   done
   info "Modules persisted to /etc/modules-load.d/k3s-netfilter.conf"
 fi
 info "Kernel modules OK"
 
-# ── 3. Docker cgroup namespace (same as setup-spark.sh) ──────────
-#
-# If cgroup v2, k3s-in-Docker needs cgroupns=host.
+# ── 2. Docker cgroup namespace (requires sudo) ───────────────────
 
 if [ "$(stat -fc %T /sys/fs/cgroup/ 2>/dev/null)" = "cgroup2fs" ]; then
   DAEMON_JSON="/etc/docker/daemon.json"
@@ -131,8 +117,8 @@ if [ "$(stat -fc %T /sys/fs/cgroup/ 2>/dev/null)" = "cgroup2fs" ]; then
     if [ "$CURRENT_MODE" = "host" ]; then
       info "Docker daemon already configured for cgroupns=host"
     else
-      info "Setting Docker daemon cgroupns=host..."
-      python3 -c "
+      info "Setting Docker daemon cgroupns=host (requires sudo)..."
+      sudo python3 -c "
 import json
 with open('$DAEMON_JSON') as f:
     d = json.load(f)
@@ -143,15 +129,15 @@ with open('$DAEMON_JSON', 'w') as f:
       NEEDS_RESTART=true
     fi
   else
-    info "Creating Docker daemon config with cgroupns=host..."
-    mkdir -p "$(dirname "$DAEMON_JSON")"
-    echo '{ "default-cgroupns-mode": "host" }' > "$DAEMON_JSON"
+    info "Creating Docker daemon config with cgroupns=host (requires sudo)..."
+    sudo mkdir -p "$(dirname "$DAEMON_JSON")"
+    echo '{ "default-cgroupns-mode": "host" }' | sudo tee "$DAEMON_JSON" > /dev/null
     NEEDS_RESTART=true
   fi
 
   if [ "$NEEDS_RESTART" = true ]; then
     info "Restarting Docker daemon..."
-    systemctl restart docker
+    sudo systemctl restart docker
     for i in 1 2 3 4 5 6 7 8 9 10; do
       if docker info > /dev/null 2>&1; then
         break
@@ -165,34 +151,38 @@ else
   info "cgroup v1 — no Docker changes needed"
 fi
 
-# ── 4. Patch gateway image: iptables-nft → iptables-legacy ───────
+# ── No more sudo needed from here on ─────────────────────────────
+
+# ── 3. Start gateway ─────────────────────────────────────────────
+
+info "Starting OpenShell gateway..."
+openshell gateway destroy -g nemoclaw > /dev/null 2>&1 || true
+GATEWAY_ARGS=(--name nemoclaw)
+command -v nvidia-smi > /dev/null 2>&1 && GATEWAY_ARGS+=(--gpu)
+openshell gateway start "${GATEWAY_ARGS[@]}" 2>&1 | grep -E "Gateway|✓|Error|error" || true
+
+# The gateway container will crash because of iptables-nft.
+# That's expected — we patch and restart it in the next step.
+sleep 3
+
+# ── 4. Patch gateway image: iptables-nft → iptables-legacy ──────
 #
 # The OpenShell gateway image ships iptables v1.8.10 defaulting to
 # the nf_tables backend. L4T's kernel uses iptables-legacy on the
 # host and the nf_tables compat layer is incomplete (xt_addrtype
 # etc.). k3s's kube-router panics when nft RULE_INSERT fails.
 #
-# Fix: build a one-layer wrapper that switches the alternative to
-# iptables-legacy, then tag it over the upstream image name so
-# `openshell gateway start` uses it. The upstream layers are
-# preserved — `docker pull` restores the original at any time.
+# We patch AFTER `openshell gateway start` because that command
+# pulls the upstream image from the registry, which would overwrite
+# any earlier patch.
 
 GATEWAY_IMAGE="ghcr.io/nvidia/openshell/cluster:0.0.8"
 
-# Pull upstream image if not present
-if ! docker image inspect "$GATEWAY_IMAGE" > /dev/null 2>&1; then
-  info "Pulling OpenShell gateway image..."
-  docker pull "$GATEWAY_IMAGE"
-fi
-
-# Check if already patched (iptables-legacy inside the image)
 CURRENT_IPT=$(docker run --rm --entrypoint iptables "$GATEWAY_IMAGE" --version 2>&1 || true)
 if echo "$CURRENT_IPT" | grep -q "legacy"; then
   info "Gateway image already using iptables-legacy"
 else
   info "Patching gateway image to use iptables-legacy..."
-  # Save upstream image ID so we can verify we're wrapping the right thing
-  UPSTREAM_ID=$(docker image inspect --format='{{.Id}}' "$GATEWAY_IMAGE")
 
   PATCH_CTX="$(mktemp -d)"
   cat > "$PATCH_CTX/Dockerfile" <<'DOCKERFILE'
@@ -206,8 +196,9 @@ RUN update-alternatives --set iptables /usr/sbin/iptables-legacy \
 
 # L4T kernel only ships ip_set_hash_net — kube-router's network policy
 # controller needs additional ipset types (hash:ip, hash:ipport, etc.)
-# that don't exist. Disable the controller so it doesn't block pod traffic.
-# Wrap the original entrypoint to inject --disable-network-policy.
+# that don't exist. Disable the controller to avoid ipset panics.
+# Egress policy enforcement still works via OpenShell's HTTP proxy
+# (HTTP_PROXY/HTTPS_PROXY injected into the sandbox).
 RUN mv /usr/local/bin/cluster-entrypoint.sh /usr/local/bin/cluster-entrypoint-orig.sh
 COPY entrypoint-jetson.sh /usr/local/bin/cluster-entrypoint.sh
 RUN chmod +x /usr/local/bin/cluster-entrypoint.sh
@@ -215,9 +206,9 @@ DOCKERFILE
 
   cat > "$PATCH_CTX/entrypoint-jetson.sh" <<'WRAPPER'
 #!/bin/sh
-# Jetson wrapper: inject --disable-network-policy then call original entrypoint.
-# The original entrypoint ends with: exec /bin/k3s "$@" ...
-# We append our flag to the args passed through.
+# Jetson wrapper: disable kube-router network policy controller to avoid
+# ipset panics (L4T lacks hash:ip, hash:ipport kernel modules).
+# Egress is still enforced by OpenShell's HTTP proxy layer.
 exec /usr/local/bin/cluster-entrypoint-orig.sh "$@" --disable-network-policy
 WRAPPER
 
@@ -235,46 +226,133 @@ WRAPPER
   fi
 fi
 
-# ── 5. Ollama (optional local inference) ──────────────────────────
-#
-# Ollama is installed if not present but no model is pulled by default.
-# To use local inference after setup, pull a model and switch:
-#   ollama pull nemotron-3-nano:4b
-#   openshell inference set --provider vllm-local --model nemotron-3-nano:4b
+# Restart the gateway container with the patched image
+CLUSTER_CONTAINER="openshell-cluster-nemoclaw"
+info "Restarting gateway with patched image..."
+docker rm -f "$CLUSTER_CONTAINER" > /dev/null 2>&1 || true
+openshell gateway destroy -g nemoclaw > /dev/null 2>&1 || true
+openshell gateway start "${GATEWAY_ARGS[@]}" 2>&1 | grep -E "Gateway|✓|Error|error" || true
+
+# Verify gateway is healthy
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  if openshell status 2>&1 | grep -q "Connected"; then
+    break
+  fi
+  [ "$i" -eq 10 ] && fail "Gateway failed to start. Check 'docker logs $CLUSTER_CONTAINER'."
+  sleep 3
+done
+info "Gateway is healthy"
+
+# ── 5. Inference providers ───────────────────────────────────────
+
+upsert_provider() {
+  local name="$1"
+  local type="$2"
+  local credential="$3"
+  local config="$4"
+
+  if openshell provider create --name "$name" --type "$type" \
+    --credential "$credential" \
+    --config "$config" 2>&1 | grep -q "AlreadyExists"; then
+    openshell provider update "$name" \
+      --credential "$credential" \
+      --config "$config" > /dev/null
+    info "Updated $name provider"
+  else
+    info "Created $name provider"
+  fi
+}
+
+info "Setting up inference providers..."
+
+upsert_provider \
+  "nvidia-nim" \
+  "openai" \
+  "NVIDIA_API_KEY=$NVIDIA_API_KEY" \
+  "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1"
+
+# Ollama provider (Jetson local inference)
+if command -v ollama > /dev/null 2>&1; then
+  upsert_provider \
+    "ollama-local" \
+    "openai" \
+    "OPENAI_API_KEY=ollama" \
+    "OPENAI_BASE_URL=http://host.openshell.internal:11434/v1"
+fi
+
+# vllm-local (if vLLM is running)
+if curl -s http://localhost:8000/v1/models > /dev/null 2>&1; then
+  upsert_provider \
+    "vllm-local" \
+    "openai" \
+    "OPENAI_API_KEY=dummy" \
+    "OPENAI_BASE_URL=http://host.openshell.internal:8000/v1"
+fi
+
+info "Setting inference route to nvidia-nim / Nemotron 3 Super..."
+openshell inference set --no-verify --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b > /dev/null 2>&1
+
+# ── 6. Create sandbox (with network policy) ─────────────────────
+
+info "Deleting old nemoclaw sandbox (if any)..."
+openshell sandbox delete nemoclaw > /dev/null 2>&1 || true
+
+info "Building and creating NemoClaw sandbox (this takes a few minutes on first run)..."
+
+# Stage a clean build context (openshell doesn't honor .dockerignore)
+BUILD_CTX="$(mktemp -d)"
+cp "$REPO_DIR/Dockerfile" "$BUILD_CTX/"
+cp -r "$REPO_DIR/nemoclaw" "$BUILD_CTX/nemoclaw"
+cp -r "$REPO_DIR/nemoclaw-blueprint" "$BUILD_CTX/nemoclaw-blueprint"
+cp -r "$REPO_DIR/scripts" "$BUILD_CTX/scripts"
+rm -rf "$BUILD_CTX/nemoclaw/node_modules" "$BUILD_CTX/nemoclaw/src"
+
+# Verify nemoclaw/dist/ exists (TypeScript must be pre-built)
+if [ ! -d "$BUILD_CTX/nemoclaw/dist" ] || [ -z "$(ls -A "$BUILD_CTX/nemoclaw/dist" 2>/dev/null)" ]; then
+  rm -rf "$BUILD_CTX"
+  fail "nemoclaw/dist/ is missing or empty. Run 'cd nemoclaw && npm install && npm run build' first."
+fi
+
+CREATE_LOG=$(mktemp /tmp/nemoclaw-create-XXXXXX.log)
+set +e
+openshell sandbox create --from "$BUILD_CTX/Dockerfile" --name nemoclaw \
+  --provider nvidia-nim \
+  --policy "$REPO_DIR/nemoclaw-blueprint/policies/openclaw-sandbox.yaml" \
+  -- env NVIDIA_API_KEY="$NVIDIA_API_KEY" > "$CREATE_LOG" 2>&1
+CREATE_RC=$?
+set -e
+rm -rf "$BUILD_CTX"
+
+grep -E "^  (Step |Building |Built |Pushing |\[progress\]|Successfully |Created sandbox|Image )|✓" "$CREATE_LOG" || true
+
+if [ "$CREATE_RC" != "0" ]; then
+  echo ""
+  warn "Last 20 lines of build output:"
+  tail -20 "$CREATE_LOG" | grep -v "NVIDIA_API_KEY"
+  echo ""
+  fail "Sandbox creation failed (exit $CREATE_RC). Full log: $CREATE_LOG"
+fi
+rm -f "$CREATE_LOG"
+
+# Verify sandbox is Ready
+SANDBOX_LINE=$(openshell sandbox list 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep "nemoclaw")
+if ! echo "$SANDBOX_LINE" | grep -q "Ready"; then
+  SANDBOX_PHASE=$(echo "$SANDBOX_LINE" | awk '{print $NF}')
+  fail "Sandbox created but not Ready (phase: ${SANDBOX_PHASE:-unknown}). Check 'openshell sandbox get nemoclaw'."
+fi
+
+# ── 7. Ollama (optional local inference) ──────────────────────────
 
 if ! command -v ollama > /dev/null 2>&1; then
-  info "Installing Ollama..."
-  curl -fsSL https://ollama.com/install.sh | sh
+  info "Installing Ollama (requires sudo)..."
+  curl -fsSL https://ollama.com/install.sh | sudo sh
 fi
 
 if command -v ollama > /dev/null 2>&1; then
   info "Ollama available (no model pulled — use 'ollama pull <model>' for local inference)"
 fi
 
-# ── 6. Run normal setup.sh ───────────────────────────────────────
-
-info "Running NemoClaw setup..."
-echo ""
-
-if [ -n "$REAL_USER" ]; then
-  sudo -u "$REAL_USER" -E \
-    NVIDIA_API_KEY="${NVIDIA_API_KEY:-}" \
-    DOCKER_HOST="${DOCKER_HOST:-}" \
-    bash "$SCRIPT_DIR/setup.sh"
-else
-  bash "$SCRIPT_DIR/setup.sh"
-fi
-
-# ── 7. Fix CoreDNS (Jetson-specific) ────────────────────────────
-#
-# Same problem as Colima: k3s CoreDNS forwards to /etc/resolv.conf
-# which contains 127.0.0.11 (Docker's internal DNS), unreachable
-# from k3s pods. The entrypoint sets up a DNS proxy on the
-# container's eth0 IP — point CoreDNS there instead.
-#
-# setup.sh only runs fix-coredns.sh for Colima. On Jetson the
-# Docker engine also uses 127.0.0.11 in /etc/resolv.conf, so
-# the same fix is needed.
+# ── 8. Fix CoreDNS (Jetson-specific) ────────────────────────────
 
 CLUSTER=$(docker ps --filter "name=openshell-cluster" --format '{{.Names}}' | head -1)
 if [ -n "$CLUSTER" ]; then
@@ -282,7 +360,6 @@ if [ -n "$CLUSTER" ]; then
     | grep nameserver | awk '{print $2}')
 
   if [ -n "$DNS_IP" ] && [[ "$DNS_IP" != 127.* ]]; then
-    # Check if CoreDNS is already forwarding to the right IP
     CURRENT_FWD=$(docker exec "$CLUSTER" kubectl get configmap coredns -n kube-system \
       -o jsonpath='{.data.Corefile}' 2>/dev/null | grep -oP 'forward \. \K\S+' || true)
 
@@ -294,11 +371,23 @@ if [ -n "$CLUSTER" ]; then
       docker exec "$CLUSTER" kubectl rollout status deploy/coredns -n kube-system --timeout=30s > /dev/null 2>&1
       info "CoreDNS patched"
 
-      # Bounce the sandbox pod so it picks up working DNS immediately
-      # instead of waiting for CrashLoopBackOff to expire
       docker exec "$CLUSTER" kubectl delete pod -n openshell -l app=nemoclaw --ignore-not-found > /dev/null 2>&1 || true
     else
       info "CoreDNS already forwarding to $DNS_IP"
     fi
   fi
 fi
+
+# ── Done ─────────────────────────────────────────────────────────
+
+echo ""
+info "Jetson setup complete!"
+echo ""
+echo "  Next steps:"
+echo "    1. Run 'openshell term' and approve the pending network policy rules."
+echo "       (The sandbox blocks all egress until you approve.)"
+echo "    2. Connect to the sandbox:"
+echo "       openshell sandbox connect nemoclaw"
+echo "    3. Test the agent:"
+echo "       openclaw agent --agent main --local -m 'hello' --session-id s1"
+echo ""
