@@ -94,7 +94,7 @@ stop_service() {
 show_status() {
   mkdir -p "$PIDDIR"
   echo ""
-  for svc in telegram-bridge cloudflared; do
+  for svc in openclaw-gateway gateway-forward telegram-bridge cloudflared; do
     if is_running "$svc"; then
       echo -e "  ${GREEN}●${NC} $svc  (PID $(cat "$PIDDIR/$svc.pid"))"
     else
@@ -116,6 +116,8 @@ do_stop() {
   mkdir -p "$PIDDIR"
   stop_service cloudflared
   stop_service telegram-bridge
+  stop_service gateway-forward
+  stop_service openclaw-gateway
   info "All services stopped."
 }
 
@@ -137,6 +139,48 @@ do_start() {
   fi
 
   mkdir -p "$PIDDIR"
+
+  # ── OpenClaw gateway inside sandbox ──────────────────────────────
+  # Start the OpenClaw gateway inside the sandbox and forward
+  # port 18789 to the host so external dashboards (e.g. Mission
+  # Control) can connect via WebSocket.
+  if command -v openshell > /dev/null 2>&1; then
+    local sandbox
+    sandbox="$(openshell sandbox list --names 2>/dev/null | head -1)"
+    if [ -n "$sandbox" ]; then
+      local gw_token="${OPENCLAW_GATEWAY_TOKEN:-$(head -c 24 /dev/urandom | xxd -p)}"
+
+      # Start gateway inside sandbox (idempotent — skips if already running)
+      if ! is_running "openclaw-gateway"; then
+        info "Starting OpenClaw gateway inside sandbox '$sandbox'..."
+        start_service openclaw-gateway \
+          ssh -o "ProxyCommand=openshell ssh-proxy --name $sandbox" \
+              -o StrictHostKeyChecking=accept-new \
+              -o UserKnownHostsFile=/dev/null \
+              -o LogLevel=ERROR \
+              sandbox@"openshell-$sandbox" \
+              "OPENCLAW_GATEWAY_TOKEN=$gw_token openclaw gateway run"
+        sleep 5
+      fi
+
+      # Forward port 18789 from sandbox to host (idempotent)
+      if ! is_running "gateway-forward"; then
+        info "Forwarding port $DASHBOARD_PORT from sandbox..."
+        start_service gateway-forward \
+          ssh -N -L "0.0.0.0:$DASHBOARD_PORT:127.0.0.1:$DASHBOARD_PORT" \
+              -o "ProxyCommand=openshell ssh-proxy --name $sandbox" \
+              -o StrictHostKeyChecking=accept-new \
+              -o UserKnownHostsFile=/dev/null \
+              -o LogLevel=ERROR \
+              -o ServerAliveInterval=15 \
+              -o ServerAliveCountMax=3 \
+              sandbox@"openshell-$sandbox"
+        sleep 3
+      fi
+    else
+      warn "No sandbox found. Gateway and port forwarding skipped."
+    fi
+  fi
 
   # Telegram bridge (only if token provided)
   if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
@@ -178,6 +222,16 @@ do_start() {
 
   if [ -n "$tunnel_url" ]; then
     printf "  │  Public URL:  %-40s│\n" "$tunnel_url"
+  fi
+
+  if is_running openclaw-gateway; then
+    echo "  │  Gateway:     running (port $DASHBOARD_PORT)          │"
+  else
+    echo "  │  Gateway:     not started                             │"
+  fi
+
+  if is_running gateway-forward; then
+    echo "  │  Port fwd:    $DASHBOARD_PORT → sandbox                      │"
   fi
 
   if is_running telegram-bridge; then
