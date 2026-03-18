@@ -11,7 +11,10 @@
 #
 # Usage:
 #   export NVIDIA_API_KEY=nvapi-...
-#   ./scripts/setup.sh
+#   ./scripts/setup.sh [sandbox-name]
+#
+#   The sandbox name can also be set via the onboard wizard's
+#   ~/.nemoclaw/sandboxes.json registry. Defaults to "nemoclaw".
 #
 # What it does:
 #   1. Starts an OpenShell gateway (or reuses existing)
@@ -71,10 +74,24 @@ command -v docker > /dev/null || fail "docker not found"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Sandbox name — can be passed as $1, read from onboard config, or defaults to "nemoclaw".
+# This ensures setup.sh respects the name chosen during `nemoclaw onboard`.
+if [ -n "${1:-}" ]; then
+  SANDBOX_NAME="$1"
+elif [ -f "$HOME/.nemoclaw/sandboxes.json" ]; then
+  # Read the first sandbox name from the onboard registry
+  _sb_name=$(node -e "const s=require('$HOME/.nemoclaw/sandboxes.json');console.log(Object.keys(s)[0]||'nemoclaw')" 2>/dev/null || echo "nemoclaw")
+  SANDBOX_NAME="${_sb_name}"
+  unset _sb_name
+else
+  SANDBOX_NAME="nemoclaw"
+fi
+info "Using sandbox name: ${SANDBOX_NAME}"
+
 # 1. Gateway — always start fresh to avoid stale state
 info "Starting OpenShell gateway..."
-openshell gateway destroy -g nemoclaw > /dev/null 2>&1 || true
-GATEWAY_ARGS=(--name nemoclaw)
+openshell gateway destroy -g "$SANDBOX_NAME" > /dev/null 2>&1 || true
+GATEWAY_ARGS=(--name "$SANDBOX_NAME")
 command -v nvidia-smi > /dev/null 2>&1 && GATEWAY_ARGS+=(--gpu)
 openshell gateway start "${GATEWAY_ARGS[@]}" 2>&1 | grep -E "Gateway|✓|Error|error" || true
 
@@ -139,8 +156,8 @@ info "Setting inference route to nvidia-nim / Nemotron 3 Super..."
 openshell inference set --no-verify --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b > /dev/null 2>&1
 
 # 5. Build and create sandbox
-info "Deleting old nemoclaw sandbox (if any)..."
-openshell sandbox delete nemoclaw > /dev/null 2>&1 || true
+info "Deleting old ${SANDBOX_NAME} sandbox (if any)..."
+openshell sandbox delete "$SANDBOX_NAME" > /dev/null 2>&1 || true
 
 info "Building and creating NemoClaw sandbox (this takes a few minutes on first run)..."
 
@@ -162,7 +179,7 @@ fi
 # detect failures. The raw log is kept on failure for debugging.
 CREATE_LOG=$(mktemp /tmp/nemoclaw-create-XXXXXX.log)
 set +e
-openshell sandbox create --from "$BUILD_CTX/Dockerfile" --name nemoclaw \
+openshell sandbox create --from "$BUILD_CTX/Dockerfile" --name "$SANDBOX_NAME" \
   --provider nvidia-nim \
   -- env NVIDIA_API_KEY="$NVIDIA_API_KEY" > "$CREATE_LOG" 2>&1
 CREATE_RC=$?
@@ -183,20 +200,20 @@ rm -f "$CREATE_LOG"
 
 # Verify sandbox is Ready (not just that a record exists)
 # Strip ANSI color codes before checking phase
-SANDBOX_LINE=$(openshell sandbox list 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep "nemoclaw")
+SANDBOX_LINE=$(openshell sandbox list 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep "$SANDBOX_NAME")
 if ! echo "$SANDBOX_LINE" | grep -q "Ready"; then
   SANDBOX_PHASE=$(echo "$SANDBOX_LINE" | awk '{print $NF}')
   echo ""
   warn "Sandbox phase: ${SANDBOX_PHASE:-unknown}"
   # Check for common failure modes
-  SB_DETAIL=$(openshell sandbox get nemoclaw 2>&1 || true)
+  SB_DETAIL=$(openshell sandbox get "$SANDBOX_NAME" 2>&1 || true)
   if echo "$SB_DETAIL" | grep -qi "ImagePull\|ErrImagePull\|image.*not found"; then
     warn "Image pull failure detected. The sandbox image was built inside the"
     warn "gateway but k3s can't find it. This is a known openshell issue."
     warn "Workaround: run 'openshell gateway destroy && openshell gateway start'"
     warn "and re-run this script."
   fi
-  fail "Sandbox created but not Ready (phase: ${SANDBOX_PHASE:-unknown}). Check 'openshell sandbox get nemoclaw'."
+  fail "Sandbox created but not Ready (phase: ${SANDBOX_PHASE:-unknown}). Check 'openshell sandbox get ${SANDBOX_NAME}'."
 fi
 
 # 6. Done
