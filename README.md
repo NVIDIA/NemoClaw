@@ -31,12 +31,25 @@ Follow these steps to get started with NemoClaw and your first sandboxed OpenCla
 
 Check the prerequisites before you start to ensure you have the necessary software and hardware to run NemoClaw.
 
+#### Hardware
+
+| Resource | Minimum        | Recommended      |
+|----------|----------------|------------------|
+| CPU      | 4 vCPU         | 4+ vCPU          |
+| RAM      | 8 GB           | 16 GB            |
+| Disk     | 20 GB free     | 40 GB free       |
+
+The sandbox image is approximately 2.4 GB compressed. During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline, which buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer. If you cannot add memory, configuring at least 8 GB of swap can work around the issue at the cost of slower performance.
+
 #### Software
 
-- Linux Ubuntu 22.04 LTS releases and later
-- Node.js 20+ and npm 10+ (the installer recommends Node.js 22)
-- Docker installed and running
-- [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) installed
+| Dependency | Version                          |
+|------------|----------------------------------|
+| Linux      | Ubuntu 22.04 LTS or later |
+| Node.js    | 20 or later |
+| npm        | 10 or later |
+| Docker     | Installed and running |
+| [OpenShell](https://github.com/NVIDIA/OpenShell) | Installed |
 
 ### Install NemoClaw and Onboard OpenClaw Agent
 
@@ -160,7 +173,7 @@ Run these inside the OpenClaw CLI. These commands are under active development a
 | `openclaw nemoclaw status`                 | Show sandbox health, blueprint state, and inference.     |
 | `openclaw nemoclaw logs [-f]`              | Stream blueprint execution and sandbox logs.             |
 
-See the full [CLI reference](https://docs.nvidia.com/nemoclaw/latest/reference/commands.md) for all commands, flags, and options.
+See the full [CLI reference](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html) for all commands, flags, and options.
 
 > **Known limitations:**
 > - The `openclaw nemoclaw` plugin commands are under active development. Use the `nemoclaw` host CLI as the primary interface.
