@@ -190,20 +190,18 @@ describe("deploy helpers", () => {
       assert.equal(out, outWithCwd);
     });
 
-    it("LD_PRELOAD in caller env is stripped", () => {
-      const out = runCaptureArgv("printenv", ["LD_PRELOAD"], {
-        env: { LD_PRELOAD: "/tmp/evil.so" },
-        ignoreError: true,
-      });
-      assert.equal(out, "");
+    it("LD_PRELOAD in caller env throws", () => {
+      assert.throws(
+        () => runCaptureArgv("echo", ["x"], { env: { LD_PRELOAD: "/tmp/evil.so" } }),
+        /does not allow overriding: LD_PRELOAD/
+      );
     });
 
-    it("NODE_OPTIONS in caller env is stripped", () => {
-      const out = runCaptureArgv("printenv", ["NODE_OPTIONS"], {
-        env: { NODE_OPTIONS: "--require=/tmp/evil.js" },
-        ignoreError: true,
-      });
-      assert.equal(out, "");
+    it("NODE_OPTIONS in caller env throws", () => {
+      assert.throws(
+        () => runCaptureArgv("echo", ["x"], { env: { NODE_OPTIONS: "--require=/tmp/evil.js" } }),
+        /does not allow overriding: NODE_OPTIONS/
+      );
     });
 
     it("safe caller env vars pass through", () => {

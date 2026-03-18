@@ -50,11 +50,11 @@ const BLOCKED_ENV_VARS = new Set([
 
 function sanitizeEnv(callerEnv) {
   if (!callerEnv) return {};
-  const clean = {};
-  for (const [k, v] of Object.entries(callerEnv)) {
-    if (!BLOCKED_ENV_VARS.has(k)) clean[k] = v;
+  const blocked = Object.keys(callerEnv).filter((k) => BLOCKED_ENV_VARS.has(k));
+  if (blocked.length > 0) {
+    throw new Error(`runArgv() does not allow overriding: ${blocked.join(", ")}`);
   }
-  return clean;
+  return { ...callerEnv };
 }
 
 /**

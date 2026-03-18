@@ -22,6 +22,8 @@ function validateInstanceName(name) {
 
 const SSH_OPTS = ["-o", "StrictHostKeyChecking=accept-new", "-o", "LogLevel=ERROR"];
 
+/** @param remoteCmd — executed by the remote shell. Use only constant strings
+ *  or values wrapped in shellQuote(). Never interpolate unsanitized input. */
 function runSsh(host, remoteCmd, opts = {}) {
   const args = [...SSH_OPTS];
   if (opts.tty) args.unshift("-t");
