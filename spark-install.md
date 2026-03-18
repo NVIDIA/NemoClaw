@@ -3,8 +3,10 @@
 ## Quick Start
 
 ```bash
-# One-command install
-curl -fsSL https://nvidia.com/nemoclaw.sh | sudo bash
+# Download and review the installer before running
+curl -fsSL https://nvidia.com/nemoclaw.sh -o nemoclaw-install.sh
+less nemoclaw-install.sh  # review the script
+sudo bash nemoclaw-install.sh
 
 # Or clone and install manually
 git clone https://github.com/NVIDIA/NemoClaw.git
@@ -124,6 +126,18 @@ nemoclaw-start openclaw agent --agent main --local -m 'hello' --session-id test
 # Monitor network egress (separate terminal)
 openshell term
 ```
+
+## Web Dashboard
+
+The OpenClaw gateway includes a built-in web UI. Access it at:
+
+```
+http://127.0.0.1:18789/#token=<your-gateway-token>
+```
+
+Find your gateway token in `~/.openclaw/openclaw.json` under `gateway.auth.token` inside the sandbox.
+
+> **Important**: Use `127.0.0.1` (not `localhost`) — the gateway's origin check requires an exact match. External dashboards like Mission Control cannot currently connect due to the gateway resetting `controlUi.allowedOrigins` on every config reload (see [openclaw#49950](https://github.com/openclaw/openclaw/issues/49950)).
 
 ## Using Local LLMs
 
