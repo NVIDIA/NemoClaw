@@ -72,10 +72,13 @@ function parseOllamaModelRef(modelRef) {
   // Strip @digest if present
   const ref = String(modelRef).split("@", 1)[0];
   // Strip :tag suffix (only the last one, after the last /)
-  const withoutTag = ref.replace(/:(?=[^/]*$).*/, "");
+  const tagMatch = ref.match(/:([^/]*)$/);
+  const tag = tagMatch ? tagMatch[1] : "";
+  const withoutTag = tagMatch ? ref.slice(0, tagMatch.index) : ref;
   return {
     withoutTag,
     baseName: withoutTag.slice(withoutTag.lastIndexOf("/") + 1),
+    tag,
   };
 }
 
@@ -109,11 +112,12 @@ function listOllamaModels() {
 /**
  * Build a tag-safe chat variant name that preserves the Ollama tag to avoid
  * collisions (e.g. deepseek-r1:8b → deepseek-r1-8b-chat, deepseek-r1:14b → deepseek-r1-14b-chat).
+ * Correctly handles registry refs with ports (e.g. localhost:5000/ns/model:tag).
  */
 function buildChatVariantName(baseModel) {
-  const [name, tag] = String(baseModel).split(":", 2);
+  const { withoutTag, tag } = parseOllamaModelRef(baseModel);
   const safeTag = tag ? `-${tag.replace(/[^a-z0-9._-]/gi, "-")}` : "";
-  return `${name}${safeTag}-chat`;
+  return `${withoutTag}${safeTag}-chat`;
 }
 
 function createOllamaChatVariant(baseModel, variantName) {
