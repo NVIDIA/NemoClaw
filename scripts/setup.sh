@@ -113,12 +113,13 @@ upsert_provider \
   "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1"
 
 # vllm-local (if vLLM is installed or running)
-if curl -s http://localhost:8000/v1/models > /dev/null 2>&1 || python3 -c "import vllm" 2>/dev/null; then
+if check_local_provider_health "vllm-local" || python3 -c "import vllm" 2>/dev/null; then
+  VLLM_LOCAL_BASE_URL="$(get_local_provider_base_url "vllm-local")"
   upsert_provider \
     "vllm-local" \
     "openai" \
     "OPENAI_API_KEY=dummy" \
-    "OPENAI_BASE_URL=http://host.openshell.internal:8000/v1"
+    "OPENAI_BASE_URL=$VLLM_LOCAL_BASE_URL"
 fi
 
 # 4a. Ollama (macOS local inference)
@@ -129,16 +130,17 @@ if [ "$(uname -s)" = "Darwin" ]; then
   fi
   if command -v ollama > /dev/null 2>&1; then
     # Start Ollama service if not running
-    if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+    if ! check_local_provider_health "ollama-local"; then
       info "Starting Ollama service..."
       OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &
       sleep 2
     fi
+    OLLAMA_LOCAL_BASE_URL="$(get_local_provider_base_url "ollama-local")"
     upsert_provider \
       "ollama-local" \
       "openai" \
       "OPENAI_API_KEY=ollama" \
-      "OPENAI_BASE_URL=http://host.openshell.internal:11434/v1"
+      "OPENAI_BASE_URL=$OLLAMA_LOCAL_BASE_URL"
   fi
 fi
 

@@ -150,6 +150,8 @@ Inference requests from the agent never leave the sandbox directly. OpenShell in
 
 Get an API key from [build.nvidia.com](https://build.nvidia.com). The `nemoclaw onboard` command prompts for this key during setup.
 
+Local inference options such as Ollama and vLLM are still experimental. On macOS, they also depend on OpenShell host-routing support in addition to the local service itself being reachable on the host.
+
 ---
 
 ## Protection Layers

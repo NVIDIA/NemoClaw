@@ -9,6 +9,10 @@ const fs = require("fs");
 const path = require("path");
 const { ROOT, SCRIPTS, run, runCapture } = require("./runner");
 const {
+  getLocalProviderBaseUrl,
+  validateLocalProvider,
+} = require("./local-inference");
+const {
   findColimaDockerSocket,
   inferContainerRuntime,
   isUnsupportedMacosRuntime,
@@ -18,7 +22,6 @@ const registry = require("./registry");
 const nim = require("./nim");
 const policies = require("./policies");
 const { checkPortAvailable } = require("./preflight");
-const HOST_GATEWAY_URL = "http://host.openshell.internal";
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 
 // Non-interactive mode: set by --non-interactive flag or env var.
@@ -570,12 +573,18 @@ async function setupInference(sandboxName, model, provider) {
       { ignoreError: true }
     );
   } else if (provider === "vllm-local") {
+    const validation = validateLocalProvider(provider, runCapture);
+    if (!validation.ok) {
+      console.error(`  ${validation.message}`);
+      process.exit(1);
+    }
+    const baseUrl = getLocalProviderBaseUrl(provider);
     run(
       `openshell provider create --name vllm-local --type openai ` +
       `--credential "OPENAI_API_KEY=dummy" ` +
-      `--config "OPENAI_BASE_URL=${HOST_GATEWAY_URL}:8000/v1" 2>&1 || ` +
+      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
       `openshell provider update vllm-local --credential "OPENAI_API_KEY=dummy" ` +
-      `--config "OPENAI_BASE_URL=${HOST_GATEWAY_URL}:8000/v1" 2>&1 || true`,
+      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
       { ignoreError: true }
     );
     run(
@@ -583,12 +592,19 @@ async function setupInference(sandboxName, model, provider) {
       { ignoreError: true }
     );
   } else if (provider === "ollama-local") {
+    const validation = validateLocalProvider(provider, runCapture);
+    if (!validation.ok) {
+      console.error(`  ${validation.message}`);
+      console.error("  On macOS, local inference also depends on OpenShell host routing support.");
+      process.exit(1);
+    }
+    const baseUrl = getLocalProviderBaseUrl(provider);
     run(
       `openshell provider create --name ollama-local --type openai ` +
       `--credential "OPENAI_API_KEY=ollama" ` +
-      `--config "OPENAI_BASE_URL=${HOST_GATEWAY_URL}:11434/v1" 2>&1 || ` +
+      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
       `openshell provider update ollama-local --credential "OPENAI_API_KEY=ollama" ` +
-      `--config "OPENAI_BASE_URL=${HOST_GATEWAY_URL}:11434/v1" 2>&1 || true`,
+      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
       { ignoreError: true }
     );
     run(
