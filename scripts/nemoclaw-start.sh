@@ -17,6 +17,7 @@ NEMOCLAW_CMD=("$@")
 CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:18789}"
 PUBLIC_PORT=18789
 
+# Patch the OpenClaw JSON config with sandbox-safe gateway defaults.
 fix_openclaw_config() {
   python3 - <<'PYCFG'
 import json
@@ -59,6 +60,7 @@ os.chmod(config_path, 0o600)
 PYCFG
 }
 
+# Write an NVIDIA auth-profile if NVIDIA_API_KEY is set.
 write_auth_profile() {
   if [ -z "${NVIDIA_API_KEY:-}" ]; then
     return
@@ -81,6 +83,7 @@ os.chmod(path, 0o600)
 PYAUTH
 }
 
+# Print the local and remote dashboard URLs, appending the auth token if present.
 print_dashboard_urls() {
   local token chat_ui_base local_url remote_url
 
@@ -109,6 +112,7 @@ PYTOKEN
   echo "[gateway] Remote UI: ${remote_url}"
 }
 
+# Launch a background watcher that auto-approves pending device-pair requests.
 start_auto_pair() {
   case "${NEMOCLAW_SKIP_AUTO_PAIR:-}" in
     1|true|yes|TRUE|YES)
