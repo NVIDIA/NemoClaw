@@ -29,9 +29,9 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-info() { printf "${GREEN}>>>${NC} %s\n" "$1"; }
-warn() { printf "${YELLOW}>>>${NC} %s\n" "$1"; }
-fail() { printf "${RED}>>>${NC} %s\n" "$1" >&2; exit 1; }
+info() { echo -e "${GREEN}>>>${NC} $1"; }
+warn() { echo -e "${YELLOW}>>>${NC} $1" >&2; }
+fail() { echo -e "${RED}>>>${NC} $1" >&2; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -44,8 +44,12 @@ fi
 info "macOS detected: $(sw_vers -productVersion 2>/dev/null || echo 'unknown version')"
 
 # Validate HOME environment variable
-if [ -z "${HOME:-}" ] || [[ ! "$HOME" =~ ^/ ]]; then
-  fail "Invalid HOME environment variable: $HOME"
+if [ -z "${HOME:-}" ]; then
+  fail "HOME environment variable is not set"
+elif [[ ! "$HOME" =~ ^/ ]]; then
+  fail "HOME must be an absolute path, got: $HOME"
+elif [ ! -d "$HOME" ]; then
+  fail "HOME directory does not exist: $HOME"
 fi
 
 # Check architecture
@@ -106,19 +110,22 @@ fi
 
 # Check Docker memory allocation
 DOCKER_MEM_BYTES=$(docker info --format '{{.MemTotal}}' 2>/dev/null || echo "0")
-DOCKER_MEM_GB=$(( DOCKER_MEM_BYTES / 1073741824 ))
 
-if ! [[ "$DOCKER_MEM_GB" =~ ^[0-9]+$ ]]; then
+if ! [[ "$DOCKER_MEM_BYTES" =~ ^[0-9]+$ ]] || [ "$DOCKER_MEM_BYTES" = "0" ]; then
   warn "Could not determine Docker memory allocation. Ensure Docker is running properly."
-elif [ "$DOCKER_MEM_GB" -lt 8 ]; then
-  warn "Docker has ${DOCKER_MEM_GB}GB memory allocated. Recommend >= 8GB for sandbox."
-  if echo "$DOCKER_SOCKET" | grep -q colima; then
-    warn "Increase in Colima: colima stop && colima start --memory 8"
-  else
-    warn "Increase in Docker Desktop: Settings > Resources > Memory"
-  fi
 else
-  info "Docker memory: ${DOCKER_MEM_GB}GB (>= 8GB OK)"
+  DOCKER_MEM_GB=$(( DOCKER_MEM_BYTES / 1073741824 ))
+
+  if [ "$DOCKER_MEM_GB" -lt 8 ]; then
+    warn "Docker has ${DOCKER_MEM_GB}GB memory allocated. Recommend >= 8GB for sandbox."
+    if echo "$DOCKER_SOCKET" | grep -qF colima; then
+      warn "Increase in Colima: colima stop && colima start --memory 8"
+    else
+      warn "Increase in Docker Desktop: Settings > Resources > Memory"
+    fi
+  else
+    info "Docker memory: ${DOCKER_MEM_GB}GB (>= 8GB OK)"
+  fi
 fi
 
 # ── 3. Ollama ────────────────────────────────────────────────────

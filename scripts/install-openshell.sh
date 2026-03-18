@@ -94,6 +94,7 @@ fi
 # Verify checksum if available (fail-closed)
 CHECKSUM_URL="https://github.com/NVIDIA/OpenShell/releases/latest/download/SHA256SUMS"
 if curl -fsSL "$CHECKSUM_URL" -o "$tmpdir/SHA256SUMS" 2>/dev/null; then
+  # Use grep -F for literal string matching (prevents regex injection)
   if ! grep -qF "$ASSET" "$tmpdir/SHA256SUMS"; then
     fail "Checksum entry not found for $ASSET in SHA256SUMS"
   fi
