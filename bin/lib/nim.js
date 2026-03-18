@@ -23,6 +23,14 @@ function listModels() {
   }));
 }
 
+/**
+ * Detect GPU hardware. Returns an object describing the GPU (type, count,
+ * memory, capabilities) or null if no GPU is found.
+ * @param {object} [opts] - Optional overrides for dependency injection.
+ * @param {Function} [opts.runCapture] - Command runner (default: runner.runCapture).
+ * @param {string} [opts.platform] - OS platform (default: process.platform).
+ * @returns {{ type: string, count: number, totalMemoryMB: number, perGpuMB: number, nimCapable: boolean, spark?: boolean, name?: string, cores?: number } | null}
+ */
 function detectGpu(opts) {
   const runCmd = (opts && opts.runCapture) || runCapture;
   const platform = (opts && opts.platform) || process.platform;
