@@ -80,6 +80,15 @@ sandbox@my-assistant:~$ openclaw tui
 
 Send a test message to the agent and verify you receive a response.
 
+> [!NOTE]
+> The TUI is best for interactive back-and-forth. If you need the full text of a long response (for example, large code generation output), use the CLI instead:
+>
+> ```console
+> sandbox@my-assistant:~$ openclaw agent --agent main --local -m "<prompt>" --session-id <id>
+> ```
+>
+> This prints the complete response directly in the terminal and avoids relying on the TUI view for long output.
+
 #### OpenClaw CLI
 
 Use the OpenClaw CLI to send a single message and print the response:

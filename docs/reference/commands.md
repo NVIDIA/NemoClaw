@@ -52,6 +52,14 @@ Use this after launch to connect and chat with the agent through the TUI or CLI.
 $ nemoclaw my-assistant connect
 ```
 
+If the TUI view is not a good fit for very long responses, use the CLI form instead:
+
+```console
+$ openclaw agent --agent main --local -m "<prompt>" --session-id <id>
+```
+
+This is the recommended workaround when you need the full response printed directly in the terminal.
+
 ### `openclaw nemoclaw status`
 
 Display sandbox health, blueprint run state, and inference configuration.
