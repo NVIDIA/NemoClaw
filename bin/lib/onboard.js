@@ -251,7 +251,12 @@ async function setupNim(sandboxName, gpu) {
     }
     // Use sanitized URL string from parser
     const dynamoEndpoint = parsedUrl.toString();
-    console.log(`  Using Dynamo endpoint: ${dynamoEndpoint}`);
+    // Log sanitized URL (omit credentials and query params for security)
+    const safeLogUrl = `${parsedUrl.protocol}//${parsedUrl.host}${parsedUrl.pathname}`;
+    const redacted = [];
+    if (parsedUrl.username || parsedUrl.password) redacted.push("credentials");
+    if (parsedUrl.search) redacted.push("query");
+    console.log(`  Using Dynamo endpoint: ${safeLogUrl}${redacted.length ? ` [REDACTED: ${redacted.join(", ")}]` : ""}`);
     console.log(`  Model: ${dynamoModel || "default"}`);
     provider = "dynamo";
     model = dynamoModel || "meta-llama/Llama-3.1-8B-Instruct";
@@ -437,6 +442,11 @@ async function setupInference(sandboxName, model, provider) {
   } else if (provider === "dynamo") {
     // Dynamo/external vLLM endpoint (e.g., K8s Dynamo deployment)
     const dynamoEndpoint = registry.getSandbox(sandboxName)?.dynamoEndpoint || process.env.NEMOCLAW_DYNAMO_ENDPOINT;
+    if (!dynamoEndpoint) {
+      console.error("  Dynamo provider selected but no endpoint configured.");
+      console.error("  Set NEMOCLAW_DYNAMO_ENDPOINT or re-run onboard.");
+      process.exit(1);
+    }
     // Shell-escape values to prevent injection attacks
     const configArg = shQuote(`OPENAI_BASE_URL=${dynamoEndpoint}`);
     const modelArg = shQuote(model);
@@ -496,10 +506,15 @@ async function setupPolicies(sandboxName) {
   const applied = policies.getAppliedPresets(sandboxName);
 
   if (isNonInteractive()) {
-    // In non-interactive mode, apply suggested presets automatically
-    console.log(`  Applying suggested presets: ${suggestions.join(", ")}`);
-    for (const name of suggestions) {
-      policies.applyPreset(sandboxName, name);
+    // In non-interactive mode, apply suggested presets automatically (skip already-applied)
+    const toApply = suggestions.filter((name) => !applied.includes(name));
+    if (toApply.length > 0) {
+      console.log(`  Applying suggested presets: ${toApply.join(", ")}`);
+      for (const name of toApply) {
+        policies.applyPreset(sandboxName, name);
+      }
+    } else if (suggestions.length > 0) {
+      console.log(`  Suggested presets already applied: ${suggestions.join(", ")}`);
     }
   } else {
     console.log("");
