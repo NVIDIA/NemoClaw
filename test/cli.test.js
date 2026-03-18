@@ -4,16 +4,19 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const { execSync } = require("child_process");
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const CLI = path.join(__dirname, "..", "bin", "nemoclaw.js");
 
-function run(args) {
+function run(args, extraEnv = {}) {
+  const home = extraEnv.HOME || fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-"));
   try {
     const out = execSync(`node "${CLI}" ${args}`, {
       encoding: "utf-8",
       timeout: 10000,
-      env: { ...process.env, HOME: "/tmp/nemoclaw-cli-test-" + Date.now() },
+      env: { ...process.env, ...extraEnv, HOME: home },
     });
     return { code: 0, out };
   } catch (err) {
@@ -61,5 +64,46 @@ describe("CLI dispatch", () => {
     const r = run("onboard --non-interactiv");
     assert.equal(r.code, 1);
     assert.ok(r.out.includes("Unknown onboard option"));
+  });
+
+  it("logs dispatch uses openshell logs with tail follow mode", () => {
+    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-bin-"));
+    const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-home-"));
+    const fakeOpenShell = path.join(fakeBin, "openshell");
+    const registryDir = path.join(fakeHome, ".nemoclaw");
+
+    fs.writeFileSync(
+      fakeOpenShell,
+      "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HOME/openshell-args.txt\"\n",
+      { mode: 0o755 },
+    );
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          "my-assistant": {
+            name: "my-assistant",
+            model: "test-model",
+            provider: "nvidia-nim",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "my-assistant",
+      }),
+    );
+
+    const r = run("my-assistant logs --follow", {
+      HOME: fakeHome,
+      PATH: `${fakeBin}:${process.env.PATH}`,
+    });
+
+    assert.equal(r.code, 0);
+    const args = fs
+      .readFileSync(path.join(fakeHome, "openshell-args.txt"), "utf-8")
+      .trim()
+      .split("\n");
+    assert.deepEqual(args, ["logs", "my-assistant", "--tail"]);
   });
 });

@@ -227,8 +227,8 @@ function sandboxStatus(sandboxName) {
 }
 
 function sandboxLogs(sandboxName, follow) {
-  const followFlag = follow ? " --follow" : "";
-  run(`openshell sandbox logs "${sandboxName}"${followFlag}`);
+  const tailFlag = follow ? " --tail" : "";
+  run(`openshell logs "${sandboxName}"${tailFlag}`);
 }
 
 async function sandboxPolicyAdd(sandboxName) {
