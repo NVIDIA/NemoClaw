@@ -202,8 +202,9 @@ function waitForNimHealth(port = 8000, timeout = 300) {
 
   while ((Date.now() - start) / 1000 < timeout) {
     try {
-      const result = runCapture(`curl -sf http://localhost:${port}/v1/models`, {
+      const result = runCapture(`curl -sf --max-time 10 http://localhost:${port}/v1/models`, {
         ignoreError: true,
+        timeout: 15000,
       });
       if (result) {
         console.log("  NIM is healthy.");
