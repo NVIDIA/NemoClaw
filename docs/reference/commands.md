@@ -77,6 +77,7 @@ $ nemoclaw deploy <instance-name>
 ### `nemoclaw <name> connect`
 
 Connect to a sandbox by name.
+This command also refreshes the local dashboard port forward on `127.0.0.1:18789`.
 
 ```console
 $ nemoclaw my-assistant connect
