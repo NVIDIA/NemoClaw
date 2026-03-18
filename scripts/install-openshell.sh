@@ -60,6 +60,9 @@ case "$OS" in
     ;;
 esac
 
+# Verify required tools
+command -v file >/dev/null 2>&1 || fail "Required command 'file' not found. Install via: brew install file (macOS) or apt-get install file (Linux)"
+
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
@@ -76,7 +79,7 @@ else
 fi
 
 # Validate the downloaded file is actually a gzip tarball
-if ! file "$tmpdir/$ASSET" 2>/dev/null | grep -q "gzip compressed data"; then
+if ! file "$tmpdir/$ASSET" | grep -q "gzip compressed data"; then
   fail "Downloaded file is not a valid gzip tarball. GitHub may be unavailable or the release may be missing."
 fi
 
