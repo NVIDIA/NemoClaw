@@ -11,6 +11,7 @@ profiles:
   - ncp
   - nim-local
   - vllm
+  - bitdeer-ai
 
 description: |
   NemoClaw blueprint: orchestrates OpenClaw sandbox creation, migration,
@@ -54,6 +55,13 @@ components:
         credential_env: "OPENAI_API_KEY"
         credential_default: "dummy"
 
+      bitdeer-ai:
+        provider_type: "openai"
+        provider_name: "bitdeer-ai"
+        endpoint: "https://api-inference.bitdeer.ai/v1"
+        model: "nvidia/nemotron-3-super-120b-a12b"
+        credential_env: "BITDEERAI_API_KEY"
+
   policy:
     base: "sandboxes/openclaw/policy.yaml"
     additions:
@@ -62,4 +70,10 @@ components:
         endpoints:
           - host: "nim-service.local"
             port: 8000
+            protocol: rest
+      bitdeer-ai:
+        name: bitdeer-ai
+        endpoints:
+          - host: "api-inference.bitdeer.ai"
+            port: 443
             protocol: rest

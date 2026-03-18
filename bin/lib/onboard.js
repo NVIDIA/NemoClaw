@@ -246,6 +246,7 @@ async function setupNim(sandboxName, gpu) {
     options.push({ key: "nim", label: "Local NIM container (NVIDIA GPU) [experimental]" });
   }
   options.push({ key: "cloud", label: "NVIDIA Cloud API (build.nvidia.com)" });
+  options.push({ key: "bitdeer-ai", label: "Bitdeer AI (api-inference.bitdeer.ai)" });
   if (EXPERIMENTAL && (hasOllama || ollamaRunning)) {
     options.push({ key: "ollama", label: `Local Ollama (localhost:11434)${ollamaRunning ? " — running" : ""} [experimental]` });
   }
@@ -326,8 +327,27 @@ async function setupNim(sandboxName, gpu) {
       console.log("  ✓ Using existing vLLM on localhost:8000");
       provider = "vllm-local";
       model = "vllm-local";
+    } else if (selected.key === "bitdeer-ai") {
+      provider = "bitdeer-ai";
     }
     // else: cloud — fall through to default below
+  }
+
+  if (provider === "bitdeer-ai") {
+    const envKey = process.env.BITDEERAI_API_KEY;
+    if (envKey) {
+      console.log(`  Detected BITDEERAI_API_KEY in environment.`);
+    } else {
+      console.log("  Get an API key from: https://www.bitdeer.ai/en/model/apikeys");
+      const enteredKey = (await prompt("  Enter your Bitdeer AI API key: ")).trim();
+      if (!enteredKey) {
+        console.error("  BITDEERAI_API_KEY is required for Bitdeer AI provider.");
+        process.exit(1);
+      }
+      process.env.BITDEERAI_API_KEY = enteredKey;
+    }
+    model = model || "nvidia/nemotron-3-super-120b-a12b";
+    console.log(`  Using Bitdeer AI with model: ${model}`);
   }
 
   if (provider === "nvidia-nim") {
@@ -369,6 +389,21 @@ async function setupInference(sandboxName, model, provider) {
     );
     run(
       `openshell inference set --no-verify --provider vllm-local --model ${model} 2>/dev/null || true`,
+      { ignoreError: true }
+    );
+  } else if (provider === "bitdeer-ai") {
+    const shellEscape = (v) => String(v ?? "").replace(/(["\\$`])/g, "\\$1");
+    const bitdeerApiKey = shellEscape(process.env.BITDEERAI_API_KEY);
+    run(
+      `openshell provider create --name bitdeer-ai --type openai ` +
+      `--credential "OPENAI_API_KEY=${bitdeerApiKey}" ` +
+      `--config "OPENAI_BASE_URL=https://api-inference.bitdeer.ai/v1" 2>&1 || ` +
+      `openshell provider update bitdeer-ai --credential "OPENAI_API_KEY=${bitdeerApiKey}" ` +
+      `--config "OPENAI_BASE_URL=https://api-inference.bitdeer.ai/v1" 2>&1 || true`,
+      { ignoreError: true }
+    );
+    run(
+      `openshell inference set --provider bitdeer-ai --model ${model} 2>/dev/null || true`,
       { ignoreError: true }
     );
   } else if (provider === "ollama-local") {
@@ -469,6 +504,7 @@ function printDashboard(sandboxName, model, provider) {
   let providerLabel = provider;
   if (provider === "nvidia-nim") providerLabel = "NVIDIA Cloud API";
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
+  else if (provider === "bitdeer-ai") providerLabel = "Bitdeer AI";
 
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
@@ -496,6 +532,35 @@ async function onboard() {
   const sandboxName = await createSandbox(gpu);
   const { model, provider } = await setupNim(sandboxName, gpu);
   await setupInference(sandboxName, model, provider);
+  if (provider === "bitdeer-ai") {
+    step(5.5, 7, "Applying Bitdeer AI network policy");
+    const bitdeerPreset = [
+      "preset:",
+      "  name: bitdeer-ai",
+      '  description: "Bitdeer AI inference API access"',
+      "",
+      "network_policies:",
+      "  bitdeer-ai:",
+      "    name: bitdeer-ai",
+      "    endpoints:",
+      "      - host: api-inference.bitdeer.ai",
+      "        port: 443",
+      "        protocol: rest",
+      "        enforcement: enforce",
+      "        tls: terminate",
+      "        rules:",
+      '          - allow: { method: "*", path: "/**" }',
+    ].join("\n");
+    const presetDir = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
+    const tmpPreset = path.join(presetDir, "_bitdeer_tmp.yaml");
+    require("fs").writeFileSync(tmpPreset, bitdeerPreset, "utf-8");
+    try {
+      policies.applyPreset(sandboxName, "_bitdeer_tmp");
+      console.log("  ✓ Bitdeer AI network policy applied");
+    } finally {
+      require("fs").unlinkSync(tmpPreset);
+    }
+  }
   await setupOpenclaw(sandboxName);
   await setupPolicies(sandboxName);
   printDashboard(sandboxName, model, provider);

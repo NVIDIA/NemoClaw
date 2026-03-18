@@ -7,13 +7,23 @@ const node_child_process_1 = require("node:child_process");
 const config_js_1 = require("../onboard/config.js");
 const prompt_js_1 = require("../onboard/prompt.js");
 const validate_js_1 = require("../onboard/validate.js");
-const ENDPOINT_TYPES = ["build", "ncp", "nim-local", "vllm", "ollama", "custom"];
-const SUPPORTED_ENDPOINT_TYPES = ["build", "ncp"];
+const ENDPOINT_TYPES = ["build", "ncp", "nim-local", "vllm", "ollama", "bitdeer-ai", "custom"];
+const SUPPORTED_ENDPOINT_TYPES = ["build", "ncp", "bitdeer-ai"];
 function isExperimentalEnabled() {
     return process.env.NEMOCLAW_EXPERIMENTAL === "1";
 }
 const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const HOST_GATEWAY_URL = "http://host.openshell.internal";
+const BITDEER_MODELS = [
+    { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
+    { id: "minimaxai/minimax-m2.5", label: "MiniMax M2.5" },
+    { id: "qwen/qwen3.5-397b-a17b", label: "Qwen 3.5 397B" },
+    { id: "z-ai/glm5", label: "GLM-5" },
+    { id: "minimaxai/minimax-m2_1", label: "MiniMax M2.1" },
+    { id: "moonshotai/kimi-k2.5", label: "Kimi K2.5" },
+    { id: "z-ai/glm4_7", label: "GLM-4.7" },
+    { id: "deepseek-ai/deepseek-v3_2", label: "DeepSeek V3.2" },
+];
 const DEFAULT_MODELS = [
     { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
     { id: "nvidia/llama-3.1-nemotron-ultra-253b-v1", label: "Nemotron Ultra 253B" },
@@ -33,6 +43,8 @@ function resolveProfile(endpointType) {
             return "vllm";
         case "ollama":
             return "ollama";
+        case "bitdeer-ai":
+            return "bitdeer-ai";
     }
 }
 function resolveProviderName(endpointType) {
@@ -48,6 +60,8 @@ function resolveProviderName(endpointType) {
             return "vllm-local";
         case "ollama":
             return "ollama-local";
+        case "bitdeer-ai":
+            return "bitdeer-ai";
     }
 }
 function resolveCredentialEnv(endpointType) {
@@ -61,13 +75,16 @@ function resolveCredentialEnv(endpointType) {
         case "vllm":
         case "ollama":
             return "OPENAI_API_KEY";
+        case "bitdeer-ai":
+            return "BITDEERAI_API_KEY";
     }
 }
 function isNonInteractive(opts) {
     if (!opts.endpoint || !opts.model)
         return false;
     const ep = opts.endpoint;
-    if (endpointRequiresApiKey(ep) && !opts.apiKey)
+    const envApiKey = process.env[resolveCredentialEnv(ep)];
+    if (endpointRequiresApiKey(ep) && !opts.apiKey && !envApiKey)
         return false;
     if ((ep === "ncp" || ep === "nim-local" || ep === "custom") && !opts.endpointUrl)
         return false;
@@ -79,6 +96,7 @@ function endpointRequiresApiKey(endpointType) {
     return (endpointType === "build" ||
         endpointType === "ncp" ||
         endpointType === "nim-local" ||
+        endpointType === "bitdeer-ai" ||
         endpointType === "custom");
 }
 function defaultCredentialForEndpoint(endpointType) {
@@ -126,6 +144,11 @@ async function promptEndpoint(ollama) {
             label: "NVIDIA Cloud Partner (NCP)",
             value: "ncp",
             hint: "dedicated capacity, SLA-backed",
+        },
+        {
+            label: "Bitdeer AI",
+            value: "bitdeer-ai",
+            hint: "third-party — api-inference.bitdeer.ai",
         },
     ];
     if (isExperimentalEnabled()) {
@@ -218,6 +241,9 @@ async function cliOnboard(opts) {
         case "ollama":
             endpointUrl = opts.endpointUrl ?? `${HOST_GATEWAY_URL}:11434/v1`;
             break;
+        case "bitdeer-ai":
+            endpointUrl = "https://api-inference.bitdeer.ai/v1";
+            break;
         case "custom":
             endpointUrl = opts.endpointUrl ?? (await (0, prompt_js_1.promptInput)("Custom endpoint URL"));
             break;
@@ -235,15 +261,17 @@ async function cliOnboard(opts) {
             apiKey = opts.apiKey;
         }
         else {
-            const envKey = process.env.NVIDIA_API_KEY;
+            const envKeyName = resolveCredentialEnv(endpointType);
+            const envKey = process.env[envKeyName];
+            const keySource = endpointType === "bitdeer-ai" ? "https://www.bitdeer.ai/en/model/apikeys" : "https://build.nvidia.com/settings/api-keys";
             if (envKey) {
-                logger.info(`Detected NVIDIA_API_KEY in environment (${(0, validate_js_1.maskApiKey)(envKey)})`);
+                logger.info(`Detected ${envKeyName} in environment (${(0, validate_js_1.maskApiKey)(envKey)})`);
                 const useEnv = nonInteractive ? true : await (0, prompt_js_1.promptConfirm)("Use this key?");
-                apiKey = useEnv ? envKey : await (0, prompt_js_1.promptInput)("Enter your NVIDIA API key");
+                apiKey = useEnv ? envKey : await (0, prompt_js_1.promptInput)(`Enter your ${envKeyName}`);
             }
             else {
-                logger.info("Get an API key from: https://build.nvidia.com/settings/api-keys");
-                apiKey = await (0, prompt_js_1.promptInput)("Enter your NVIDIA API key");
+                logger.info(`Get an API key from: ${keySource}`);
+                apiKey = await (0, prompt_js_1.promptInput)(`Enter your ${envKeyName}`);
             }
         }
     }
@@ -280,11 +308,15 @@ async function cliOnboard(opts) {
         model = opts.model;
     }
     else {
-        // Build model options: prefer Nemotron models from the endpoint, fall back to defaults
-        const nemotronModels = validation.models.filter((m) => m.includes("nemotron"));
-        const modelOptions = nemotronModels.length > 0
-            ? nemotronModels.map((id) => ({ label: id, value: id }))
+        const preferredModels = endpointType === "bitdeer-ai"
+            ? validation.models
+            : validation.models.filter((m) => m.includes("nemotron"));
+        const fallbackModels = endpointType === "bitdeer-ai"
+            ? BITDEER_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }))
             : DEFAULT_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }));
+        const modelOptions = preferredModels.length > 0
+            ? preferredModels.map((id) => ({ label: id, value: id }))
+            : fallbackModels;
         model = await (0, prompt_js_1.promptSelect)("Select your primary model:", modelOptions);
     }
     // Step 6: Resolve profile
