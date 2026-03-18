@@ -14,8 +14,9 @@ if (dockerHost) {
 }
 
 function run(cmd, opts = {}) {
+  const stdio = opts.stdio ?? ["ignore", "inherit", "inherit"];
   const result = spawnSync("bash", ["-c", cmd], {
-    stdio: "inherit",
+    stdio,
     cwd: ROOT,
     env: { ...process.env, ...opts.env },
     ...opts,
