@@ -37,7 +37,7 @@ beforeEach(() => {
 
 describe("validateApiKey", () => {
   const endpoint = "https://integrate.api.nvidia.com/v1";
-  const apiKey = "nvapi-testapikey1234567890";
+  const apiKey = "test-api-key-placeholder";
 
   it("returns valid with model list on successful response", async () => {
     mockFetch.mockResolvedValue(
