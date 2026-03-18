@@ -64,8 +64,11 @@ const KNOWN_REASONING_MODEL_PATTERNS = [
 ];
 
 function isReasoningModel(modelName) {
-  // Exclude chat variants (e.g. nemotron-3-nano-chat) — they don't use reasoning mode
-  if (/-chat$/i.test(modelName)) return false;
+  if (typeof modelName !== "string" || modelName.length === 0) return false;
+  // Exclude chat variants — strip optional :tag suffix before checking
+  // Handles both "model-chat" and tagged forms like "deepseek-r1-chat:8b"
+  const baseName = modelName.replace(/:.*$/, "");
+  if (/-chat$/i.test(baseName)) return false;
   return KNOWN_REASONING_MODEL_PATTERNS.some((p) => p.test(modelName));
 }
 
@@ -78,7 +81,9 @@ function listOllamaModels() {
       timeout: 5000,
     });
     const data = JSON.parse(raw);
-    return (data.models || []).map((m) => m.name);
+    return (data.models || [])
+      .map((m) => m && m.name)
+      .filter((name) => typeof name === "string" && name.length > 0);
   } catch {
     return [];
   }
