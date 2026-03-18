@@ -49,6 +49,7 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | Node.js    | 20 or later |
 | npm        | 10 or later |
 | Docker     | Installed and running |
+| [NVIDIA API Key](https://build.nvidia.com) | Required for Cloud inference |
 | [OpenShell](https://github.com/NVIDIA/OpenShell) | Installed |
 
 ### Install NemoClaw and Onboard OpenClaw Agent
@@ -105,6 +106,24 @@ sandbox@my-assistant:~$ openclaw agent --agent main --local -m "hello" --session
 
 ---
 
+## Troubleshooting
+
+### Docker Permission Denied
+If the installer or `onboard` command reports that Docker is not running, ensure your user has permission to access the Docker socket:
+```console
+$ sudo usermod -aG docker $USER
+$ newgrp docker
+```
+
+### cgroup v2 Issues
+On systems with cgroup v2 (like Ubuntu 22.04+), Docker must be configured for host cgroup namespace sharing to run the OpenShell gateway. If prompted, run:
+```console
+$ nemoclaw setup-spark
+```
+This will update `/etc/docker/daemon.json` and restart the Docker service.
+
+---
+
 ## How It Works
 
 NemoClaw installs the NVIDIA OpenShell runtime and Nemotron models, then uses a versioned blueprint to create a sandboxed environment where every network request, file access, and inference call is governed by declarative policy. The `nemoclaw` CLI orchestrates the full stack: OpenShell gateway, sandbox, inference provider, and network policy.
@@ -158,10 +177,19 @@ Run these on the host to set up, connect to, and manage sandboxes.
 | Command                              | Description                                            |
 |--------------------------------------|--------------------------------------------------------|
 | `nemoclaw onboard`                  | Interactive setup wizard: gateway, providers, sandbox. |
+| `nemoclaw list`                     | List all registered sandboxes and their status.         |
+| `nemoclaw status`                   | Show global status of auxiliary services.              |
+| `nemoclaw start` / `stop`           | Start or stop auxiliary services (Telegram, tunnel).   |
 | `nemoclaw deploy <instance>` (**experimental**)         | Deploy to a remote GPU instance through Brev.          |
+
+### Sandbox commands (`nemoclaw <name>`)
+
+| Command                              | Description                                            |
+|--------------------------------------|--------------------------------------------------------|
 | `nemoclaw <name> connect`            | Open an interactive shell inside the sandbox.          |
+| `nemoclaw <name> status`             | Show specific sandbox health and model info.           |
+| `nemoclaw <name> logs [--follow]`    | Stream sandbox and blueprint logs.                     |
 | `openshell term`                     | Launch the OpenShell TUI for monitoring and approvals. |
-| `nemoclaw start` / `stop` / `status` | Manage auxiliary services (Telegram bridge, tunnel).   |
 
 ### Plugin commands (`openclaw nemoclaw`)
 
