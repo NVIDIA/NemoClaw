@@ -65,10 +65,29 @@ const KNOWN_REASONING_MODEL_PATTERNS = [
   /^qwq/i,
 ];
 
+/**
+ * Parse an Ollama model reference into its components.
+ * Handles fully-qualified refs like "ghcr.io/org/deepseek-r1:8b" as well as
+ * simple refs like "deepseek-r1:8b" or "deepseek-r1".
+ */
+function parseOllamaModelRef(modelRef) {
+  const ref = String(modelRef).split("@", 1)[0];
+  const withoutTag = ref.replace(/:(?=[^/]*$).*/, "");
+  return {
+    withoutTag,
+    baseName: withoutTag.slice(withoutTag.lastIndexOf("/") + 1),
+  };
+}
+
 function isReasoningModel(modelName) {
-  // Exclude chat variants (e.g. nemotron-3-nano-chat) — they don't use reasoning mode
-  if (/-chat$/i.test(modelName)) return false;
-  return KNOWN_REASONING_MODEL_PATTERNS.some((p) => p.test(modelName));
+  if (typeof modelName !== "string" || modelName.length === 0) return false;
+  // Extract base model name — strips registry, namespace, and tag
+  // so "ghcr.io/org/deepseek-r1:8b" → baseName "deepseek-r1"
+  // and "nemotron-3-nano-chat:latest" → baseName "nemotron-3-nano-chat"
+  const { baseName } = parseOllamaModelRef(modelName);
+  // Exclude chat variants
+  if (/-chat$/i.test(baseName)) return false;
+  return KNOWN_REASONING_MODEL_PATTERNS.some((p) => p.test(baseName));
 }
 
 function listOllamaModels() {
