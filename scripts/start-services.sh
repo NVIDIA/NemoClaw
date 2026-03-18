@@ -129,6 +129,11 @@ do_start() {
 
   command -v node > /dev/null || fail "node not found. Install Node.js first."
 
+  # Ensure ~/.local/bin is in PATH so child processes can find openshell
+  if [ -d "$HOME/.local/bin" ] && ! echo "$PATH" | tr ':' '\n' | grep -qx "$HOME/.local/bin"; then
+    export PATH="$HOME/.local/bin:$PATH"
+  fi
+
   # Verify sandbox is running
   if command -v openshell > /dev/null 2>&1; then
     if ! openshell sandbox list 2>&1 | grep -q "Ready"; then
@@ -140,6 +145,11 @@ do_start() {
 
   # Telegram bridge (only if token provided)
   if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+    # Resolve openshell absolute path so child processes find it regardless of PATH
+    OPENSHELL_BIN="$(command -v openshell 2>/dev/null || true)"
+    if [ -n "$OPENSHELL_BIN" ]; then
+      export OPENSHELL_BIN
+    fi
     SANDBOX_NAME="$SANDBOX_NAME" start_service telegram-bridge \
       node "$REPO_DIR/scripts/telegram-bridge.js"
   fi
