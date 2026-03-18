@@ -28,6 +28,9 @@ const ALLOWED_CHATS = process.env.ALLOWED_CHAT_IDS
 
 if (!TOKEN) { console.error("TELEGRAM_BOT_TOKEN required"); process.exit(1); }
 if (!API_KEY) { console.error("NVIDIA_API_KEY required"); process.exit(1); }
+if (!/^[a-zA-Z0-9_-]+$/.test(SANDBOX)) {
+  console.error("SANDBOX_NAME contains invalid characters"); process.exit(1);
+}
 
 let offset = 0;
 const activeSessions = new Map(); // chatId → message history
@@ -85,19 +88,40 @@ async function sendTyping(chatId) {
 
 function runAgentInSandbox(message, sessionId) {
   return new Promise((resolve) => {
+    // Validate sessionId — Telegram chat IDs are numeric
+    const safeSessionId = sessionId.replace(/[^0-9a-zA-Z_-]/g, "");
+    if (!safeSessionId) {
+      resolve("Error: invalid session ID");
+      return;
+    }
+
     const sshConfig = execSync(`openshell sandbox ssh-config ${SANDBOX}`, { encoding: "utf-8" });
 
     // Write temp ssh config
-    const confPath = `/tmp/nemoclaw-tg-ssh-${sessionId}.conf`;
+    const confPath = `/tmp/nemoclaw-tg-ssh-${safeSessionId}.conf`;
     require("fs").writeFileSync(confPath, sshConfig);
 
-    const escaped = message.replace(/'/g, "'\\''");
-    const cmd = `export NVIDIA_API_KEY='${API_KEY}' && nemoclaw-start openclaw agent --agent main --local -m '${escaped}' --session-id 'tg-${sessionId}'`;
+    // Pass API key (line 1) and user message (remaining stdin) via stdin
+    // to prevent shell command injection through message content.
+    // Variable expansion inside double quotes ("$VAR") is not subject to
+    // further shell parsing, so the values are treated as literal strings.
+    const remoteScript = [
+      "read -r NVIDIA_API_KEY",
+      "export NVIDIA_API_KEY",
+      "MSG=$(cat)",
+      `exec nemoclaw-start openclaw agent --agent main --local -m "$MSG" --session-id "tg-${safeSessionId}"`,
+    ].join(" && ");
 
-    const proc = spawn("ssh", ["-T", "-F", confPath, `openshell-${SANDBOX}`, cmd], {
+    const proc = spawn("ssh", ["-T", "-F", confPath, `openshell-${SANDBOX}`, remoteScript], {
       timeout: 120000,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
+
+    // Write API key on the first line, then the user message.
+    // This keeps both values out of the shell command string.
+    proc.stdin.write(API_KEY + "\n");
+    proc.stdin.write(message);
+    proc.stdin.end();
 
     let stdout = "";
     let stderr = "";
