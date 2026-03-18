@@ -36,7 +36,7 @@ describe("checkPortAvailable", () => {
       assert.equal(result.process, "unknown");
       assert.ok(result.reason.includes("EADDRINUSE"));
     } finally {
-      srv.close();
+      await new Promise((resolve) => srv.close(resolve));
     }
   });
 
