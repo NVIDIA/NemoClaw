@@ -43,6 +43,7 @@ while [ $# -gt 0 ]; do
 done
 
 PIDDIR="/tmp/nemoclaw-services-${SANDBOX_NAME}"
+SANDBOX_STATE_FILE="$PIDDIR/sandbox.name"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -50,6 +51,26 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 info()  { echo -e "${GREEN}[services]${NC} $1"; }
+
+# Validate identifiers to prevent shell injection in ProxyCommand
+validate_name() {
+  case "$1" in
+    (*[!A-Za-z0-9._-]*|'') fail "Invalid identifier: '$1'" ;;
+  esac
+}
+
+# Resolve sandbox name: explicit flag > persisted state > auto-detect
+resolve_sandbox() {
+  if [ "$SANDBOX_NAME" != "default" ]; then
+    printf '%s\n' "$SANDBOX_NAME"
+    return
+  fi
+  if [ -f "$SANDBOX_STATE_FILE" ]; then
+    cat "$SANDBOX_STATE_FILE"
+    return
+  fi
+  openshell sandbox list --names 2>/dev/null | head -1
+}
 warn()  { echo -e "${YELLOW}[services]${NC} $1"; }
 fail()  { echo -e "${RED}[services]${NC} $1"; exit 1; }
 
@@ -141,15 +162,15 @@ do_stop() {
   # the SSH wrapper; the actual process runs inside the sandbox).
   if command -v openshell > /dev/null 2>&1; then
     local sandbox gateway_name
-    if [ "$SANDBOX_NAME" != "default" ]; then
-      sandbox="$SANDBOX_NAME"
-    else
-      sandbox="$(openshell sandbox list --names 2>/dev/null | head -1)"
-    fi
+    sandbox="$(resolve_sandbox)"
     gateway_name="$(openshell gateway info 2>/dev/null | grep -oP 'Gateway:\s+\K\S+' || echo 'openshell')"
     if [ -n "$sandbox" ]; then
+      validate_name "$sandbox"
+      validate_name "$gateway_name"
+      local proxy_cmd
+      printf -v proxy_cmd 'openshell ssh-proxy --gateway-name %q --name %q' "$gateway_name" "$sandbox"
       info "Stopping gateway inside sandbox '$sandbox'..."
-      ssh -o "ProxyCommand=openshell ssh-proxy --gateway-name $gateway_name --name $sandbox" \
+      ssh -o "ProxyCommand=$proxy_cmd" \
           -o StrictHostKeyChecking=accept-new \
           -o UserKnownHostsFile="$PIDDIR/openshell-known_hosts" \
           -o LogLevel=ERROR \
@@ -186,16 +207,16 @@ do_start() {
   # Control) can connect via WebSocket.
   if command -v openshell > /dev/null 2>&1; then
     local sandbox gateway_name
-    # Honour explicit sandbox from --sandbox / NEMOCLAW_SANDBOX, else auto-detect
-    if [ "$SANDBOX_NAME" != "default" ]; then
-      sandbox="$SANDBOX_NAME"
-    else
-      sandbox="$(openshell sandbox list --names 2>/dev/null | head -1)"
-    fi
+    sandbox="$(resolve_sandbox)"
     gateway_name="$(openshell gateway info 2>/dev/null | grep -oP 'Gateway:\s+\K\S+' || echo 'openshell')"
     if [ -n "$sandbox" ]; then
+      validate_name "$sandbox"
+      validate_name "$gateway_name"
+      # Persist resolved sandbox so stop uses the same target
+      printf '%s\n' "$sandbox" > "$SANDBOX_STATE_FILE"
       local gw_token="${OPENCLAW_GATEWAY_TOKEN:-$(head -c 24 /dev/urandom | xxd -p)}"
-      local proxy_cmd="openshell ssh-proxy --gateway-name $gateway_name --name $sandbox"
+      local proxy_cmd
+      printf -v proxy_cmd 'openshell ssh-proxy --gateway-name %q --name %q' "$gateway_name" "$sandbox"
       local known_hosts_file="$PIDDIR/openshell-known_hosts"
 
       # Start gateway inside sandbox (idempotent — skips if already running)
