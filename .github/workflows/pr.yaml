@@ -29,12 +29,12 @@ jobs:
           cache: npm
 
       - name: Install root dependencies
-        run: npm ci
+        run: npm install
 
       - name: Install and build TypeScript plugin
         working-directory: nemoclaw
         run: |
-          npm ci
+          npm install
           npm run build
 
       - name: Run root unit tests
