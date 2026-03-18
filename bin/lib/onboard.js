@@ -423,6 +423,10 @@ async function setupPolicies(sandboxName) {
     suggestions.push("discord");
     console.log("  Auto-detected: DISCORD_BOT_TOKEN → suggesting discord preset");
   }
+  if (getCredential("HEYGEN_API_KEY") || process.env.HEYGEN_API_KEY) {
+    suggestions.push("heygen");
+    console.log("  Auto-detected: HEYGEN_API_KEY → suggesting heygen preset");
+  }
 
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
