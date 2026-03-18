@@ -51,6 +51,19 @@ describe("deploy helpers", () => {
     it("rejects names starting with dot", () => {
       assert.throws(() => validateInstanceName(".hidden"), /Invalid instance name/);
     });
+
+    it("rejects names longer than 253 characters", () => {
+      assert.throws(() => validateInstanceName("a".repeat(254)), /Invalid instance name/);
+    });
+
+    it("accepts names at the 253 character limit", () => {
+      assert.doesNotThrow(() => validateInstanceName("a".repeat(253)));
+    });
+
+    it("rejects non-string types", () => {
+      assert.throws(() => validateInstanceName(42), /Invalid instance name/);
+      assert.throws(() => validateInstanceName({ toString: () => "valid" }), /Invalid instance name/);
+    });
   });
 
   describe("shellQuote", () => {
@@ -167,10 +180,37 @@ describe("deploy helpers", () => {
     });
 
     it("shell: true in opts cannot override the lock", () => {
-      // Even if a caller mistakenly passes shell: true, runCaptureArgv
-      // forces shell: false after the opts spread
       const out = runCaptureArgv("echo", ["$(echo PWNED)"], { shell: true });
       assert.equal(out, "$(echo PWNED)");
+    });
+
+    it("cwd in opts cannot override ROOT", () => {
+      const out = runCaptureArgv("pwd", []);
+      const outWithCwd = runCaptureArgv("pwd", [], { cwd: "/tmp" });
+      assert.equal(out, outWithCwd);
+    });
+
+    it("LD_PRELOAD in caller env is stripped", () => {
+      const out = runCaptureArgv("printenv", ["LD_PRELOAD"], {
+        env: { LD_PRELOAD: "/tmp/evil.so" },
+        ignoreError: true,
+      });
+      assert.equal(out, "");
+    });
+
+    it("NODE_OPTIONS in caller env is stripped", () => {
+      const out = runCaptureArgv("printenv", ["NODE_OPTIONS"], {
+        env: { NODE_OPTIONS: "--require=/tmp/evil.js" },
+        ignoreError: true,
+      });
+      assert.equal(out, "");
+    });
+
+    it("safe caller env vars pass through", () => {
+      const out = runCaptureArgv("printenv", ["MY_CUSTOM_VAR"], {
+        env: { MY_CUSTOM_VAR: "hello" },
+      });
+      assert.equal(out, "hello");
     });
   });
 });

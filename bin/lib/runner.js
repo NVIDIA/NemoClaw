@@ -37,6 +37,26 @@ function run(cmd, opts = {}) {
   return result;
 }
 
+// Env vars that must never be overridden by callers — they enable code
+// execution, library injection, or trust-store hijacking in subprocesses.
+const BLOCKED_ENV_VARS = new Set([
+  "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
+  "NODE_OPTIONS", "BASH_ENV", "ENV",
+  "GIT_SSH_COMMAND", "SSH_AUTH_SOCK",
+  "DOCKER_HOST", "KUBECONFIG",
+  "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+  "CURL_CA_BUNDLE", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS",
+]);
+
+function sanitizeEnv(callerEnv) {
+  if (!callerEnv) return {};
+  const clean = {};
+  for (const [k, v] of Object.entries(callerEnv)) {
+    if (!BLOCKED_ENV_VARS.has(k)) clean[k] = v;
+  }
+  return clean;
+}
+
 /**
  * Shell-free alternative to run(). Executes prog with an argv array via
  * spawnSync(prog, args) — no bash, no string interpolation, no injection.
@@ -46,9 +66,9 @@ function runArgv(prog, args, opts = {}) {
   const { env, ...spawnOpts } = opts;
   const result = spawnSync(prog, args, {
     stdio: "inherit",
-    cwd: ROOT,
     ...spawnOpts,
-    env: { ...process.env, ...(env || {}) },
+    cwd: ROOT,
+    env: { ...process.env, ...sanitizeEnv(env) },
     shell: false,
   });
   if (result.status !== 0 && !opts.ignoreError) {
@@ -68,10 +88,10 @@ function runCaptureArgv(prog, args, opts = {}) {
   try {
     return execFileSync(prog, args, {
       encoding: "utf-8",
-      cwd: ROOT,
       stdio: ["pipe", "pipe", "pipe"],
       ...execOpts,
-      env: { ...process.env, ...(env || {}) },
+      cwd: ROOT,
+      env: { ...process.env, ...sanitizeEnv(env) },
       shell: false,
     }).trim();
   } catch (err) {

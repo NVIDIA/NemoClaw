@@ -12,10 +12,10 @@ const { runArgv } = require("./runner");
 const INSTANCE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
 function validateInstanceName(name) {
-  if (!name || !INSTANCE_NAME_RE.test(name)) {
+  if (!name || typeof name !== "string" || name.length > 253 || !INSTANCE_NAME_RE.test(name)) {
     throw new Error(
-      `Invalid instance name: ${JSON.stringify(name)}. ` +
-      "Must start with alphanumeric and contain only [a-zA-Z0-9._-]."
+      `Invalid instance name: ${JSON.stringify(String(name).slice(0, 40))}. ` +
+      "Must be a string, 1-253 chars, start with alphanumeric, and contain only [a-zA-Z0-9._-]."
     );
   }
 }
