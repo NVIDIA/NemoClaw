@@ -20,7 +20,9 @@ export function verifyBlueprintDigest(
   const errors: string[] = [];
   const actualDigest = computeDirectoryDigest(blueprintPath);
 
-  if (manifest.digest && manifest.digest !== actualDigest) {
+  if (!manifest.digest) {
+    errors.push("Blueprint manifest is missing a digest — cannot verify integrity");
+  } else if (manifest.digest !== actualDigest) {
     errors.push(`Digest mismatch: expected ${manifest.digest}, got ${actualDigest}`);
   }
 
