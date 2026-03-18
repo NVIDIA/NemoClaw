@@ -11,6 +11,11 @@ const { runArgv } = require("./runner");
 
 const INSTANCE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
+/**
+ * Validate that name is a safe instance/hostname string.
+ * @param {string} name - Instance name to validate.
+ * @throws {Error} If name is invalid, non-string, or too long.
+ */
 function validateInstanceName(name) {
   if (!name || typeof name !== "string" || name.length > 253 || !INSTANCE_NAME_RE.test(name)) {
     throw new Error(
@@ -32,11 +37,24 @@ function runSsh(host, remoteCmd, opts = {}) {
   return runArgv("ssh", args, opts);
 }
 
+/**
+ * Copy a file to a remote host via scp using argv arrays (no shell).
+ * @param {string} src - Local source path.
+ * @param {string} destHostPath - Remote destination in host:path format.
+ * @param {object} [opts] - Options forwarded to runArgv.
+ */
 function runScp(src, destHostPath, opts = {}) {
   const args = ["-q", ...SSH_OPTS, src, destHostPath];
   return runArgv("scp", args, opts);
 }
 
+/**
+ * Sync files to a remote host via rsync using argv arrays (no shell).
+ * @param {string[]} sources - Local paths to sync.
+ * @param {string} host - Remote hostname (must pass validateInstanceName).
+ * @param {string} dest - Remote destination directory.
+ * @param {object} [opts] - Options forwarded to runArgv.
+ */
 function runRsync(sources, host, dest, opts = {}) {
   const args = [
     "-az", "--delete",
@@ -50,6 +68,11 @@ function runRsync(sources, host, dest, opts = {}) {
   return runArgv("rsync", args, opts);
 }
 
+/**
+ * Wrap a string in POSIX single quotes, escaping embedded quotes.
+ * @param {string} s - Value to quote.
+ * @returns {string} Shell-safe single-quoted string.
+ */
 function shellQuote(s) {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }

@@ -48,6 +48,12 @@ const BLOCKED_ENV_VARS = new Set([
   "CURL_CA_BUNDLE", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS",
 ]);
 
+/**
+ * Validate caller-supplied env vars against a blocklist of dangerous keys.
+ * Throws if any blocked key is present; returns a shallow copy otherwise.
+ * @param {object} [callerEnv] - Env overrides from the caller.
+ * @returns {object} Sanitized env entries safe to merge with process.env.
+ */
 function sanitizeEnv(callerEnv) {
   if (!callerEnv) return {};
   const blocked = Object.keys(callerEnv).filter((k) => BLOCKED_ENV_VARS.has(k));
