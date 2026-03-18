@@ -26,6 +26,8 @@ const KNOWN_REASONING_MODEL_PATTERNS = [
  * Check if a model name matches a known reasoning model pattern.
  */
 function isReasoningModel(modelName) {
+  // Chat variants (e.g. nemotron-3-nano-chat) are non-reasoning by design
+  if (/-chat(:|$)/i.test(modelName)) return false;
   return KNOWN_REASONING_MODEL_PATTERNS.some((pattern) => pattern.test(modelName));
 }
 
@@ -319,6 +321,10 @@ async function setupNim(sandboxName, gpu) {
         // to avoid blank responses (see issue #246). The user still needs to
         // pull the base model and create the variant after onboarding.
         model = "nemotron-3-nano-chat";
+        console.log("  No Ollama models found. Defaulting to nemotron-3-nano-chat.");
+        console.log("  After onboarding, run:");
+        console.log("    ollama pull nemotron-3-nano");
+        console.log("    echo 'FROM nemotron-3-nano' | ollama create nemotron-3-nano-chat");
       }
       registry.updateSandbox(sandboxName, { model, provider, nimContainer });
       return { model, provider };
