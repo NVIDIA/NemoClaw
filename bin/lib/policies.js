@@ -6,7 +6,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { ROOT, run, runCapture } = require("./runner");
+const { ROOT, run, runArgv, runCapture, runCaptureArgv, assertSafeName } = require("./runner");
 const registry = require("./registry");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
@@ -84,6 +84,8 @@ function buildPolicyGetCommand(sandboxName) {
 }
 
 function applyPreset(sandboxName, presetName) {
+  assertSafeName(sandboxName, "sandbox name");
+  assertSafeName(presetName, "preset name");
   const presetContent = loadPreset(presetName);
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);
@@ -99,10 +101,10 @@ function applyPreset(sandboxName, presetName) {
   // Get current policy YAML from sandbox
   let rawPolicy = "";
   try {
-    rawPolicy = runCapture(
-      buildPolicyGetCommand(sandboxName),
+    rawPolicy = runCaptureArgv(
+      "openshell", ["policy", "get", "--full", sandboxName],
       { ignoreError: true }
-    );
+    ) || "";
   } catch {}
 
   let currentPolicy = parseCurrentPolicy(rawPolicy);
@@ -155,12 +157,12 @@ function applyPreset(sandboxName, presetName) {
     merged = "version: 1\n\nnetwork_policies:\n" + presetEntries;
   }
 
-  // Write temp file and apply
+  // Write temp file (mode 0o600 — policy YAML may contain sensitive config) and apply
   const tmpFile = path.join(os.tmpdir(), `nemoclaw-policy-${Date.now()}.yaml`);
-  fs.writeFileSync(tmpFile, merged, "utf-8");
+  fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
 
   try {
-    run(buildPolicySetCommand(tmpFile, sandboxName));
+    runArgv("openshell", ["policy", "set", "--policy", tmpFile, "--wait", sandboxName]);
 
     console.log(`  Applied preset: ${presetName}`);
   } finally {

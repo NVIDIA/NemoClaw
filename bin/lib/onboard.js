@@ -7,27 +7,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { ROOT, SCRIPTS, run, runCapture } = require("./runner");
-const {
-  getDefaultOllamaModel,
-  getLocalProviderBaseUrl,
-  getOllamaModelOptions,
-  getOllamaWarmupCommand,
-  validateOllamaModel,
-  validateLocalProvider,
-} = require("./local-inference");
-const {
-  CLOUD_MODEL_OPTIONS,
-  DEFAULT_CLOUD_MODEL,
-  DEFAULT_OLLAMA_MODEL,
-  getOpenClawPrimaryModel,
-  getProviderSelectionConfig,
-} = require("./inference-config");
-const {
-  inferContainerRuntime,
-  isUnsupportedMacosRuntime,
-  shouldPatchCoredns,
-} = require("./platform");
+const { ROOT, SCRIPTS, run, runArgv, runCapture, runCaptureArgv, assertSafeName } = require("./runner");
 const { prompt, ensureApiKey, getCredential } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
@@ -162,7 +142,7 @@ async function promptOllamaModel() {
 
 function isDockerRunning() {
   try {
-    runCapture("docker info", { ignoreError: false });
+    runCaptureArgv("docker", ["info"], { ignoreError: false });
     return true;
   } catch {
     return false;
@@ -176,7 +156,7 @@ function getContainerRuntime() {
 
 function isOpenshellInstalled() {
   try {
-    runCapture("command -v openshell");
+    runCaptureArgv("sh", ["-c", "command -v openshell"]);
     return true;
   } catch {
     return false;
@@ -185,11 +165,7 @@ function isOpenshellInstalled() {
 
 function installOpenshell() {
   console.log("  Installing openshell CLI...");
-  run(`bash "${path.join(SCRIPTS, "install-openshell.sh")}"`, { ignoreError: true });
-  const localBin = process.env.XDG_BIN_HOME || path.join(process.env.HOME || "", ".local", "bin");
-  if (fs.existsSync(path.join(localBin, "openshell")) && !process.env.PATH.split(path.delimiter).includes(localBin)) {
-    process.env.PATH = `${localBin}${path.delimiter}${process.env.PATH}`;
-  }
+  runArgv("bash", [path.join(SCRIPTS, "install-openshell.sh")], { ignoreError: true });
   return isOpenshellInstalled();
 }
 
@@ -331,20 +307,20 @@ async function startGateway(gpu) {
   step(2, 7, "Starting OpenShell gateway");
 
   // Destroy old gateway
-  run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
+  runArgv("openshell", ["gateway", "destroy", "-g", "nemoclaw"], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
 
-  const gwArgs = ["--name", "nemoclaw"];
+  const gwArgs = ["gateway", "start", "--name", "nemoclaw"];
   // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
   // routed through a host-side provider (Ollama, vLLM, or cloud API) — the
   // sandbox itself does not need direct GPU access. Passing --gpu causes
   // FailedPrecondition errors when the gateway's k3s device plugin cannot
   // allocate GPUs. See: https://build.nvidia.com/spark/nemoclaw/instructions
 
-  run(`openshell gateway start ${gwArgs.join(" ")}`, { ignoreError: false });
+  runArgv("openshell", gwArgs, { ignoreError: false });
 
   // Verify health
   for (let i = 0; i < 5; i++) {
-    const status = runCapture("openshell status 2>&1", { ignoreError: true });
+    const status = runCaptureArgv("sh", ["-c", "openshell status 2>&1"], { ignoreError: true });
     if (status.includes("Connected")) {
       console.log("  ✓ Gateway is healthy");
       break;
@@ -360,7 +336,7 @@ async function startGateway(gpu) {
   const runtime = getContainerRuntime();
   if (shouldPatchCoredns(runtime)) {
     console.log("  Patching CoreDNS for Colima...");
-    run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" nemoclaw 2>&1 || true`, { ignoreError: true });
+    runArgv("bash", [path.join(SCRIPTS, "fix-coredns.sh")], { ignoreError: true });
   }
   // Give DNS a moment to propagate
   sleep(5);
@@ -376,15 +352,7 @@ async function createSandbox(gpu) {
     "NEMOCLAW_SANDBOX_NAME", "my-assistant"
   );
   const sandboxName = (nameAnswer || "my-assistant").trim().toLowerCase();
-
-  // Validate: RFC 1123 subdomain — lowercase alphanumeric and hyphens,
-  // must start and end with alphanumeric (required by Kubernetes/OpenShell)
-  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName)) {
-    console.error(`  Invalid sandbox name: '${sandboxName}'`);
-    console.error("  Names must be lowercase, contain only letters, numbers, and hyphens,");
-    console.error("  and must start and end with a letter or number.");
-    process.exit(1);
-  }
+  assertSafeName(sandboxName, "sandbox name");
 
   // Check if sandbox already exists in registry
   const existing = registry.getSandbox(sandboxName);
@@ -404,7 +372,7 @@ async function createSandbox(gpu) {
       }
     }
     // Destroy old sandbox
-    run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+    runArgv("openshell", ["sandbox", "delete", sandboxName], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
     registry.removeSandbox(sandboxName);
   }
 
@@ -413,40 +381,47 @@ async function createSandbox(gpu) {
   const os = require("os");
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
   fs.copyFileSync(path.join(ROOT, "Dockerfile"), path.join(buildCtx, "Dockerfile"));
-  run(`cp -r "${path.join(ROOT, "nemoclaw")}" "${buildCtx}/nemoclaw"`);
-  run(`cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`);
-  run(`cp -r "${path.join(ROOT, "scripts")}" "${buildCtx}/scripts"`);
-  run(`rm -rf "${buildCtx}/nemoclaw/node_modules" "${buildCtx}/nemoclaw/src"`, { ignoreError: true });
+  fs.cpSync(path.join(ROOT, "nemoclaw"), path.join(buildCtx, "nemoclaw"), { recursive: true });
+  fs.cpSync(path.join(ROOT, "nemoclaw-blueprint"), path.join(buildCtx, "nemoclaw-blueprint"), { recursive: true });
+  fs.cpSync(path.join(ROOT, "scripts"), path.join(buildCtx, "scripts"), { recursive: true });
+  fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), { recursive: true, force: true });
+  fs.rmSync(path.join(buildCtx, "nemoclaw", "src"), { recursive: true, force: true });
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
   const basePolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
-  const createArgs = [
-    `--from "${buildCtx}/Dockerfile"`,
-    `--name "${sandboxName}"`,
-    `--policy "${basePolicyPath}"`,
+  const createArgv = [
+    "sandbox", "create",
+    "--from", path.join(buildCtx, "Dockerfile"),
+    "--name", sandboxName,
+    "--policy", basePolicyPath,
   ];
   // --gpu is intentionally omitted. See comment in startGateway().
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const chatUiUrl = process.env.CHAT_UI_URL || 'http://127.0.0.1:18789';
-  const envArgs = [`CHAT_UI_URL=${chatUiUrl}`];
-  if (process.env.NVIDIA_API_KEY) {
-    envArgs.push(`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`);
-  }
-  // set -o pipefail ensures the openshell exit code propagates through the awk pipe.
-  // Without it, awk's exit code (always 0) would mask a failed sandbox create.
-  run(`set -o pipefail; openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`);
+  // The `-- env KEY=VALUE` args are the openshell protocol for injecting env
+  // vars into the sandbox at startup. NVIDIA_API_KEY is passed here so the
+  // sandbox process can use it, but this still appears in argv. The key is
+  // already in process.env (set by ensureApiKey) so the child inherits it;
+  // passing it explicitly here is belt-and-suspenders for the sandbox entrypoint.
+  createArgv.push(
+    "--", "env",
+    `CHAT_UI_URL=${chatUiUrl}`,
+    ...(process.env.NVIDIA_API_KEY ? [`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`] : []),
+    "nemoclaw-start",
+  );
+  runArgv("openshell", createArgv);
 
   // Release any stale forward on port 18789 before claiming it for the new sandbox.
   // A previous onboard run may have left the port forwarded to a different sandbox,
   // which would silently prevent the new sandbox's dashboard from being reachable.
-  run(`openshell forward stop 18789 2>/dev/null || true`, { ignoreError: true });
+  runArgv("openshell", ["forward", "stop", "18789"], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
   // Forward dashboard port to the new sandbox
-  run(`openshell forward start --background 18789 "${sandboxName}"`, { ignoreError: true });
+  runArgv("openshell", ["forward", "start", "--background", "18789", sandboxName], { ignoreError: true });
 
   // Clean up build context
-  run(`rm -rf "${buildCtx}"`, { ignoreError: true });
+  fs.rmSync(buildCtx, { recursive: true, force: true });
 
   // Register in registry
   registry.registerSandbox({
@@ -468,11 +443,28 @@ async function setupNim(sandboxName, gpu) {
   let nimContainer = null;
 
   // Detect local inference options
-  const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
-  const ollamaRunning = !!runCapture("curl -sf http://localhost:11434/api/tags 2>/dev/null", { ignoreError: true });
-  const vllmRunning = !!runCapture("curl -sf http://localhost:8000/v1/models 2>/dev/null", { ignoreError: true });
-  const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
-  const requestedModel = isNonInteractive() ? getNonInteractiveModel(requestedProvider || "cloud") : null;
+  const hasOllama = !!runCaptureArgv("sh", ["-c", "command -v ollama"], { ignoreError: true });
+  const ollamaRunning = !!runCaptureArgv("curl", ["-sf", "http://localhost:11434/api/tags"], { ignoreError: true });
+  const vllmRunning = !!runCaptureArgv("curl", ["-sf", "http://localhost:8000/v1/models"], { ignoreError: true });
+
+  // Auto-select only with NEMOCLAW_EXPERIMENTAL=1 (prevents silent misconfiguration)
+  if (EXPERIMENTAL) {
+    if (vllmRunning) {
+      console.log("  ✓ vLLM detected on localhost:8000 — using it [experimental]");
+      provider = "vllm-local";
+      model = "vllm-local";
+      registry.updateSandbox(sandboxName, { model, provider, nimContainer });
+      return { model, provider };
+    }
+    if (ollamaRunning) {
+      console.log("  ✓ Ollama detected on localhost:11434 — using it [experimental]");
+      provider = "ollama-local";
+      model = "nemotron-3-nano";
+      registry.updateSandbox(sandboxName, { model, provider, nimContainer });
+      return { model, provider };
+    }
+  }
+
   // Build options list — only show local options with NEMOCLAW_EXPERIMENTAL=1
   const options = [];
   if (EXPERIMENTAL && gpu && gpu.nimCapable) {
@@ -588,8 +580,8 @@ async function setupNim(sandboxName, gpu) {
     } else if (selected.key === "ollama") {
       if (!ollamaRunning) {
         console.log("  Starting Ollama...");
-        run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
-        sleep(2);
+        runArgv("sh", ["-c", "OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &"], { ignoreError: true });
+        require("child_process").spawnSync("sleep", ["2"]);
       }
       console.log("  ✓ Using Ollama on localhost:11434");
       provider = "ollama-local";
@@ -600,10 +592,10 @@ async function setupNim(sandboxName, gpu) {
       }
     } else if (selected.key === "install-ollama") {
       console.log("  Installing Ollama via Homebrew...");
-      run("brew install ollama", { ignoreError: true });
+      runArgv("brew", ["install", "ollama"], { ignoreError: true });
       console.log("  Starting Ollama...");
-      run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
-        sleep(2);
+      runArgv("sh", ["-c", "OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &"], { ignoreError: true });
+      require("child_process").spawnSync("sleep", ["2"]);
       console.log("  ✓ Using Ollama on localhost:11434");
       provider = "ollama-local";
       if (isNonInteractive()) {
@@ -645,64 +637,62 @@ async function setupNim(sandboxName, gpu) {
 async function setupInference(sandboxName, model, provider) {
   step(5, 7, "Setting up inference provider");
 
+  // Helper: create-or-update a provider with argv (no shell, no leak).
+  // Credentials are passed as env-var NAME only (openshell env-lookup form).
+  // The actual secret value is set on process.env so the child inherits it,
+  // but it never appears in the argv list visible via `ps aux`.
+  function upsertProvider(name, credentialEnvName, configValue) {
+    const args = [
+      "provider", "create",
+      "--name", name,
+      "--type", "openai",
+      "--credential", credentialEnvName,   // env-lookup: openshell reads from env
+      "--config", `OPENAI_BASE_URL=${configValue}`,
+    ];
+    const updateArgs = [
+      "provider", "update", name,
+      "--credential", credentialEnvName,
+      "--config", `OPENAI_BASE_URL=${configValue}`,
+    ];
+    // Try create first; fall back to update if the provider already exists.
+    const r = runArgv("openshell", args, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] });
+    if (r.status !== 0) {
+      runArgv("openshell", updateArgs, { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
+    }
+  }
+
   if (provider === "nvidia-nim") {
-    // Create nvidia-nim provider
-    run(
-      `openshell provider create --name nvidia-nim --type openai ` +
-      `--credential "NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}" ` +
-      `--config "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1" 2>&1 || true`,
-      { ignoreError: true }
-    );
-    run(
-      `openshell inference set --no-verify --provider nvidia-nim --model ${model} 2>/dev/null || true`,
-      { ignoreError: true }
-    );
+    // SECURITY: set the key in the child's inherited env — NOT in argv.
+    // openshell reads --credential NVIDIA_API_KEY from process.env, not from args.
+    runArgv("openshell", [
+      "provider", "create",
+      "--name", "nvidia-nim",
+      "--type", "openai",
+      "--credential", "NVIDIA_API_KEY",
+      "--config", "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1",
+    ], {
+      env: { NVIDIA_API_KEY: process.env.NVIDIA_API_KEY || "" },
+      ignoreError: true,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    runArgv("openshell", [
+      "inference", "set", "--no-verify", "--provider", "nvidia-nim", "--model", model,
+    ], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
+
   } else if (provider === "vllm-local") {
-    const validation = validateLocalProvider(provider, runCapture);
-    if (!validation.ok) {
-      console.error(`  ${validation.message}`);
-      process.exit(1);
-    }
-    const baseUrl = getLocalProviderBaseUrl(provider);
-    run(
-      `openshell provider create --name vllm-local --type openai ` +
-      `--credential "OPENAI_API_KEY=dummy" ` +
-      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
-      `openshell provider update vllm-local --credential "OPENAI_API_KEY=dummy" ` +
-      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
-      { ignoreError: true }
-    );
-    run(
-      `openshell inference set --no-verify --provider vllm-local --model ${model} 2>/dev/null || true`,
-      { ignoreError: true }
-    );
+    // dummy is not a secret — safe as literal KEY=VALUE
+    upsertProvider("vllm-local", "OPENAI_API_KEY", `${HOST_GATEWAY_URL}:8000/v1`);
+    runArgv("openshell", [
+      "inference", "set", "--no-verify", "--provider", "vllm-local", "--model", model,
+    ], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
+
   } else if (provider === "ollama-local") {
-    const validation = validateLocalProvider(provider, runCapture);
-    if (!validation.ok) {
-      console.error(`  ${validation.message}`);
-      console.error("  On macOS, local inference also depends on OpenShell host routing support.");
-      process.exit(1);
-    }
-    const baseUrl = getLocalProviderBaseUrl(provider);
-    run(
-      `openshell provider create --name ollama-local --type openai ` +
-      `--credential "OPENAI_API_KEY=ollama" ` +
-      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
-      `openshell provider update ollama-local --credential "OPENAI_API_KEY=ollama" ` +
-      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
-      { ignoreError: true }
-    );
-    run(
-      `openshell inference set --no-verify --provider ollama-local --model ${model} 2>/dev/null || true`,
-      { ignoreError: true }
-    );
-    console.log(`  Priming Ollama model: ${model}`);
-    run(getOllamaWarmupCommand(model), { ignoreError: true });
-    const probe = validateOllamaModel(model, runCapture);
-    if (!probe.ok) {
-      console.error(`  ${probe.message}`);
-      process.exit(1);
-    }
+    // "ollama" is not a secret — safe as literal KEY=VALUE
+    process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || "ollama";
+    upsertProvider("ollama-local", "OPENAI_API_KEY", `${HOST_GATEWAY_URL}:11434/v1`);
+    runArgv("openshell", [
+      "inference", "set", "--no-verify", "--provider", "ollama-local", "--model", model,
+    ], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
   }
 
   registry.updateSandbox(sandboxName, { model, provider });

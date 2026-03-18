@@ -7,7 +7,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
-const { ROOT, SCRIPTS, run, runCapture, runInteractive } = require("./lib/runner");
+const { ROOT, SCRIPTS, run, runArgv, runCapture, assertSafeName } = require("./lib/runner");
 const {
   ensureApiKey,
   ensureGithubToken,
@@ -54,7 +54,9 @@ async function setup() {
 
 async function setupSpark() {
   await ensureApiKey();
-  run(`sudo -E NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}" bash "${SCRIPTS}/setup-spark.sh"`);
+  // SECURITY: pass NVIDIA_API_KEY via inherited env (sudo -E), NOT as an inline
+  // shell argument where it would be visible in `ps aux`.
+  runArgv("sudo", ["-E", "bash", `${SCRIPTS}/setup-spark.sh`]);
 }
 
 async function deploy(instanceName) {
@@ -67,6 +69,7 @@ async function deploy(instanceName) {
     console.error("    nemoclaw deploy nemoclaw-test");
     process.exit(1);
   }
+  assertSafeName(instanceName, "instance name");
   await ensureApiKey();
   if (isRepoPrivate("NVIDIA/OpenShell")) {
     await ensureGithubToken();
@@ -201,8 +204,8 @@ function listSandboxes() {
 
 function sandboxConnect(sandboxName) {
   // Ensure port forward is alive before connecting
-  run(`openshell forward start --background 18789 "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
-  runInteractive(`openshell sandbox connect "${sandboxName}"`);
+  runArgv("openshell", ["forward", "start", "--background", "18789", sandboxName], { ignoreError: true });
+  runArgv("openshell", ["sandbox", "connect", sandboxName]);
 }
 
 function sandboxStatus(sandboxName) {
@@ -217,7 +220,7 @@ function sandboxStatus(sandboxName) {
   }
 
   // openshell info
-  run(`openshell sandbox get "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+  runArgv("openshell", ["sandbox", "get", sandboxName], { ignoreError: true });
 
   // NIM health
   const nimStat = nim.nimStatus(sandboxName);
@@ -229,8 +232,9 @@ function sandboxStatus(sandboxName) {
 }
 
 function sandboxLogs(sandboxName, follow) {
-  const followFlag = follow ? " --follow" : "";
-  run(`openshell sandbox logs "${sandboxName}"${followFlag}`);
+  const logArgs = ["sandbox", "logs", sandboxName];
+  if (follow) logArgs.push("--follow");
+  runArgv("openshell", logArgs);
 }
 
 async function sandboxPolicyAdd(sandboxName) {
@@ -273,7 +277,7 @@ function sandboxDestroy(sandboxName) {
   nim.stopNimContainer(sandboxName);
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
-  run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+  runArgv("openshell", ["sandbox", "delete", sandboxName], { ignoreError: true });
 
   registry.removeSandbox(sandboxName);
   console.log(`  ✓ Sandbox '${sandboxName}' destroyed`);
