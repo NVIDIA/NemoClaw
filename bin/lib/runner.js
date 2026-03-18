@@ -28,6 +28,21 @@ function run(cmd, opts = {}) {
   return result;
 }
 
+function runInteractive(cmd, opts = {}) {
+  const stdio = opts.stdio ?? "inherit";
+  const result = spawnSync("bash", ["-c", cmd], {
+    stdio,
+    cwd: ROOT,
+    env: { ...process.env, ...opts.env },
+    ...opts,
+  });
+  if (result.status !== 0 && !opts.ignoreError) {
+    console.error(`  Command failed (exit ${result.status}): ${cmd.slice(0, 80)}`);
+    process.exit(result.status || 1);
+  }
+  return result;
+}
+
 function runCapture(cmd, opts = {}) {
   try {
     return execSync(cmd, {
@@ -43,4 +58,4 @@ function runCapture(cmd, opts = {}) {
   }
 }
 
-module.exports = { ROOT, SCRIPTS, run, runCapture };
+module.exports = { ROOT, SCRIPTS, run, runCapture, runInteractive };
