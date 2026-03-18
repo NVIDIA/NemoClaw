@@ -169,12 +169,6 @@ async function promptEndpoint(ollama) {
     }
     return (await (0, prompt_js_1.promptSelect)("Select your inference endpoint:", options));
 }
-function execOpenShell(args) {
-    return (0, node_child_process_1.execFileSync)("openshell", args, {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-    });
-}
 async function cliOnboard(opts) {
     const { logger } = opts;
     const nonInteractive = isNonInteractive(opts);
@@ -345,64 +339,7 @@ async function cliOnboard(opts) {
             return;
         }
     }
-    // Step 8: Apply
-    logger.info("");
-    logger.info("Applying configuration...");
-    // 7a: Create/update provider
-    try {
-        execOpenShell([
-            "provider",
-            "create",
-            "--name",
-            providerName,
-            "--type",
-            "openai",
-            "--credential",
-            `${credentialEnv}=${apiKey}`,
-            "--config",
-            `OPENAI_BASE_URL=${endpointUrl}`,
-        ]);
-        logger.info(`Created provider: ${providerName}`);
-    }
-    catch (err) {
-        const stderr = err instanceof Error && "stderr" in err ? String(err.stderr) : "";
-        if (stderr.includes("AlreadyExists") || stderr.includes("already exists")) {
-            try {
-                execOpenShell([
-                    "provider",
-                    "update",
-                    providerName,
-                    "--credential",
-                    `${credentialEnv}=${apiKey}`,
-                    "--config",
-                    `OPENAI_BASE_URL=${endpointUrl}`,
-                ]);
-                logger.info(`Updated provider: ${providerName}`);
-            }
-            catch (updateErr) {
-                const updateStderr = updateErr instanceof Error && "stderr" in updateErr
-                    ? String(updateErr.stderr)
-                    : "";
-                logger.error(`Failed to update provider: ${updateStderr || String(updateErr)}`);
-                return;
-            }
-        }
-        else {
-            logger.error(`Failed to create provider: ${stderr || String(err)}`);
-            return;
-        }
-    }
-    // 7b: Set inference route
-    try {
-        execOpenShell(["inference", "set", "--provider", providerName, "--model", model]);
-        logger.info(`Inference route set: ${providerName} -> ${model}`);
-    }
-    catch (err) {
-        const stderr = err instanceof Error && "stderr" in err ? String(err.stderr) : "";
-        logger.error(`Failed to set inference route: ${stderr || String(err)}`);
-        return;
-    }
-    // 7c: Save config
+    // Step 8: Save config
     (0, config_js_1.saveOnboardConfig)({
         endpointType,
         endpointUrl,
@@ -412,16 +349,23 @@ async function cliOnboard(opts) {
         credentialEnv,
         onboardedAt: new Date().toISOString(),
     });
-    // Step 9: Success
+    // Step 9: Success — provider wiring must happen on the HOST, not inside the sandbox.
+    // Print the host commands for the user to run.
     logger.info("");
-    logger.info("Onboarding complete!");
+    logger.info("Configuration saved.");
     logger.info("");
-    logger.info(`  Endpoint:   ${endpointUrl}`);
-    logger.info(`  Model:      ${model}`);
-    logger.info(`  Credential: $${credentialEnv}`);
+    logger.info("Important: provider and inference wiring must be applied from the HOST.");
+    logger.info("Run the following commands in a host terminal (outside this sandbox):");
+    logger.info("");
+    logger.info(`  openshell provider create --name ${providerName} --type openai \\`);
+    logger.info(`    --credential "${credentialEnv}=${(0, validate_js_1.maskApiKey)(apiKey)}" \\`);
+    logger.info(`    --config "OPENAI_BASE_URL=${endpointUrl}"`);
+    logger.info("");
+    logger.info(`  openshell inference set --provider ${providerName} --model ${model}`);
+    logger.info("");
+    logger.info("Or re-run 'nemoclaw onboard' on the host to apply these settings automatically.");
     logger.info("");
     logger.info("Next steps:");
-    logger.info("  openclaw nemoclaw launch     # Bootstrap sandbox");
-    logger.info("  openclaw nemoclaw status     # Check configuration");
+    logger.info("  openclaw nemoclaw status     # Check configuration after host wiring");
 }
 //# sourceMappingURL=onboard.js.map

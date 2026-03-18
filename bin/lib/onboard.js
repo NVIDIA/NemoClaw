@@ -532,6 +532,35 @@ async function onboard() {
   const sandboxName = await createSandbox(gpu);
   const { model, provider } = await setupNim(sandboxName, gpu);
   await setupInference(sandboxName, model, provider);
+  if (provider === "baseten") {
+    step(5.5, 7, "Applying Baseten network policy");
+    const basetenPreset = [
+      "preset:",
+      "  name: baseten",
+      '  description: "Baseten inference API access"',
+      "",
+      "network_policies:",
+      "  baseten:",
+      "    name: baseten",
+      "    endpoints:",
+      "      - host: inference.baseten.co",
+      "        port: 443",
+      "        protocol: rest",
+      "        enforcement: enforce",
+      "        tls: terminate",
+      "        rules:",
+      '          - allow: { method: "*", path: "/**" }',
+    ].join("\n");
+    const presetDir = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
+    const tmpPreset = path.join(presetDir, "_baseten_tmp.yaml");
+    require("fs").writeFileSync(tmpPreset, basetenPreset, "utf-8");
+    try {
+      policies.applyPreset(sandboxName, "_baseten_tmp");
+      console.log("  ✓ Baseten network policy applied");
+    } finally {
+      require("fs").unlinkSync(tmpPreset);
+    }
+  }
   await setupOpenclaw(sandboxName);
   await setupPolicies(sandboxName);
   printDashboard(sandboxName, model, provider);
