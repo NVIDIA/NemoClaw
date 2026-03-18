@@ -92,6 +92,62 @@ is_unsupported_macos_runtime() {
   [ "$platform" = "Darwin" ] && [ "$runtime" = "podman" ]
 }
 
+is_loopback_ip() {
+  local ip="${1:-}"
+  [[ "$ip" == 127.* ]]
+}
+
+first_non_loopback_nameserver() {
+  local resolv_conf="${1:-}"
+
+  if [ -z "$resolv_conf" ]; then
+    return 1
+  fi
+
+  printf '%s\n' "$resolv_conf" \
+    | awk '$1 == "nameserver" && $2 !~ /^127\./ { print $2; exit }'
+}
+
+get_colima_vm_nameserver() {
+  if ! command -v colima > /dev/null 2>&1; then
+    return 1
+  fi
+
+  local profile="${COLIMA_PROFILE:-default}"
+  local resolv_conf
+  resolv_conf="$(colima ssh --profile "$profile" -- cat /etc/resolv.conf 2>/dev/null || true)"
+  first_non_loopback_nameserver "$resolv_conf"
+}
+
+resolve_coredns_upstream() {
+  local container_resolv_conf="${1:-}"
+  local host_resolv_conf="${2:-}"
+  local runtime="${3:-unknown}"
+  local nameserver=""
+
+  nameserver="$(first_non_loopback_nameserver "$container_resolv_conf" || true)"
+  if [ -n "$nameserver" ]; then
+    printf '%s\n' "$nameserver"
+    return 0
+  fi
+
+  if [ "$runtime" = "colima" ]; then
+    nameserver="$(get_colima_vm_nameserver || true)"
+    if [ -n "$nameserver" ]; then
+      printf '%s\n' "$nameserver"
+      return 0
+    fi
+  fi
+
+  nameserver="$(first_non_loopback_nameserver "$host_resolv_conf" || true)"
+  if [ -n "$nameserver" ]; then
+    printf '%s\n' "$nameserver"
+    return 0
+  fi
+
+  return 1
+}
+
 get_local_provider_base_url() {
   local provider="${1:-}"
 

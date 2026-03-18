@@ -106,4 +106,44 @@ describe("shell runtime helpers", () => {
     const result = runShell(`source "${RUNTIME_SH}"; get_local_provider_base_url bogus-provider`);
     assert.notEqual(result.status, 0);
   });
+
+  it("returns the first non-loopback nameserver", () => {
+    const result = runShell(
+      `source "${RUNTIME_SH}"; first_non_loopback_nameserver $'nameserver 127.0.0.11\\nnameserver 10.0.0.2'`,
+    );
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout.trim(), "10.0.0.2");
+  });
+
+  it("prefers the container nameserver when it is not loopback", () => {
+    const result = runShell(
+      `source "${RUNTIME_SH}"; resolve_coredns_upstream $'nameserver 10.0.0.2' $'nameserver 1.1.1.1' colima`,
+    );
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout.trim(), "10.0.0.2");
+  });
+
+  it("falls back to the Colima VM nameserver when the container resolver is loopback", () => {
+    const result = runShell(
+      `source "${RUNTIME_SH}";
+       get_colima_vm_nameserver() { printf '192.168.5.1\\n'; }
+       resolve_coredns_upstream $'nameserver 127.0.0.11' $'nameserver 1.1.1.1' colima`,
+    );
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout.trim(), "192.168.5.1");
+  });
+
+  it("falls back to the host nameserver when no Colima VM nameserver is available", () => {
+    const result = runShell(
+      `source "${RUNTIME_SH}";
+       get_colima_vm_nameserver() { return 1; }
+       resolve_coredns_upstream $'nameserver 127.0.0.11' $'nameserver 9.9.9.9' colima`,
+    );
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout.trim(), "9.9.9.9");
+  });
 });
