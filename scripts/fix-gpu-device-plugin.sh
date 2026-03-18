@@ -23,7 +23,8 @@ set -euo pipefail
 
 CHART_VERSION="0.18.2"
 CHART_URL="https://github.com/NVIDIA/k8s-device-plugin/releases/download/v${CHART_VERSION}/nvidia-device-plugin-${CHART_VERSION}.tgz"
-CHART_TGZ="/tmp/nvidia-device-plugin-${CHART_VERSION}.tgz"
+CHART_TGZ="$(mktemp -t "nvidia-device-plugin-${CHART_VERSION}.XXXXXX.tgz")"
+trap 'rm -f "$CHART_TGZ"' EXIT
 
 echo "Downloading nvidia-device-plugin chart v${CHART_VERSION}..."
 if ! curl -sfL "$CHART_URL" -o "$CHART_TGZ"; then
