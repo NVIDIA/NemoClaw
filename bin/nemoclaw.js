@@ -47,7 +47,9 @@ async function setup() {
   console.log("     Running legacy setup.sh for backwards compatibility...");
   console.log("");
   await ensureApiKey();
-  run(`bash "${SCRIPTS}/setup.sh"`);
+  const { defaultSandbox } = registry.listSandboxes();
+  const safeName = defaultSandbox && /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(defaultSandbox) ? defaultSandbox : "";
+  run(`bash "${SCRIPTS}/setup.sh" ${safeName}`);
 }
 
 async function setupSpark() {
