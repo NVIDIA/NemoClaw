@@ -97,14 +97,23 @@ CHECKSUM_URL="https://github.com/NVIDIA/OpenShell/releases/latest/download/SHA25
 if curl -fsSL "$CHECKSUM_URL" -o "$tmpdir/SHA256SUMS" 2>/dev/null; then
   # Use grep -F for literal string matching (prevents regex injection)
   if ! grep -qF "$ASSET" "$tmpdir/SHA256SUMS"; then
-    fail "Checksum entry not found for $ASSET in SHA256SUMS"
+    if [ "${NEMOCLAW_ALLOW_UNVERIFIED:-0}" = "1" ]; then
+      warn "Checksum not found for $ASSET; continuing due to NEMOCLAW_ALLOW_UNVERIFIED=1"
+    else
+      fail "Checksum not found for $ASSET in SHA256SUMS. Set NEMOCLAW_ALLOW_UNVERIFIED=1 to bypass."
+    fi
+  else
+    if ! (cd "$tmpdir" && grep -F "$ASSET" SHA256SUMS | shasum -a 256 -c -s); then
+      fail "Checksum verification failed for $ASSET. File may be corrupted or tampered with."
+    fi
+    info "Checksum verified"
   fi
-  if ! (cd "$tmpdir" && grep -F "$ASSET" SHA256SUMS | shasum -a 256 -c -s); then
-    fail "Checksum verification failed for $ASSET. File may be corrupted or tampered with."
-  fi
-  info "Checksum verified"
 else
-  fail "No checksum file available; refusing unverified install"
+  if [ "${NEMOCLAW_ALLOW_UNVERIFIED:-0}" = "1" ]; then
+    warn "No checksum file available; continuing due to NEMOCLAW_ALLOW_UNVERIFIED=1"
+  else
+    fail "No checksum file available for verification. Set NEMOCLAW_ALLOW_UNVERIFIED=1 to bypass."
+  fi
 fi
 
 # Extract tarball
