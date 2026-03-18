@@ -48,6 +48,7 @@ if (!process.env.DOCKER_HOST) {
   }
 }
 
+/** @param {string} cmd - Shell command to execute. @param {object} [opts] */
 function run(cmd, opts = {}) {
   const result = spawnSync("bash", ["-c", cmd], {
     stdio: "inherit",
@@ -62,6 +63,7 @@ function run(cmd, opts = {}) {
   return result;
 }
 
+/** @param {string} cmd - Shell command. @returns {string} Trimmed stdout. */
 function runCapture(cmd, opts = {}) {
   try {
     return execSync(cmd, {
