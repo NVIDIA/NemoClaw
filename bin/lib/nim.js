@@ -56,7 +56,7 @@ function detectGpu() {
       "nvidia-smi --query-gpu=name --format=csv,noheader,nounits",
       { ignoreError: true }
     );
-    if (nameOutput && UNIFIED_MEMORY_CHIPS.some((chip) => nameOutput.includes(chip))) {
+    if (nameOutput && UNIFIED_MEMORY_CHIPS.some((chip) => nameOutput.toLowerCase().includes(chip.toLowerCase()))) {
       let totalMemoryMB = 0;
       try {
         const memLine = runCapture("free -m | awk '/Mem:/ {print $2}'", { ignoreError: true });
