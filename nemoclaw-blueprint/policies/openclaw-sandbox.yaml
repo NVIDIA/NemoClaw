@@ -171,6 +171,8 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/bot*/**" }
           - allow: { method: POST, path: "/bot*/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
 
   discord:
     name: discord
@@ -198,3 +200,5 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
