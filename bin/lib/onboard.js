@@ -21,6 +21,11 @@ function step(n, total, msg) {
   console.log(`  ${"─".repeat(50)}`);
 }
 
+// Shell-safe single-quote escaping to prevent injection
+function shQuote(value) {
+  return `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
+}
+
 function isDockerRunning() {
   try {
     runCapture("docker info", { ignoreError: false });
@@ -229,16 +234,23 @@ async function setupNim(sandboxName, gpu) {
   let nimContainer = null;
 
   // Check for Dynamo/external vLLM endpoint (for K8s/cloud deployments)
-  const dynamoEndpoint = process.env.NEMOCLAW_DYNAMO_ENDPOINT;
+  const dynamoEndpointRaw = process.env.NEMOCLAW_DYNAMO_ENDPOINT;
   const dynamoModel = process.env.NEMOCLAW_DYNAMO_MODEL;
-  if (dynamoEndpoint) {
-    // Validate URL format
+  if (dynamoEndpointRaw) {
+    // Validate URL format and protocol (security: prevent shell injection via malformed URLs)
+    let parsedUrl;
     try {
-      new URL(dynamoEndpoint);
+      parsedUrl = new URL(dynamoEndpointRaw);
     } catch {
-      console.error(`  Invalid NEMOCLAW_DYNAMO_ENDPOINT URL: ${dynamoEndpoint}`);
+      console.error(`  Invalid NEMOCLAW_DYNAMO_ENDPOINT URL: ${dynamoEndpointRaw}`);
       process.exit(1);
     }
+    if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+      console.error(`  NEMOCLAW_DYNAMO_ENDPOINT must use http or https: ${dynamoEndpointRaw}`);
+      process.exit(1);
+    }
+    // Use sanitized URL string from parser
+    const dynamoEndpoint = parsedUrl.toString();
     console.log(`  Using Dynamo endpoint: ${dynamoEndpoint}`);
     console.log(`  Model: ${dynamoModel || "default"}`);
     provider = "dynamo";
@@ -425,16 +437,19 @@ async function setupInference(sandboxName, model, provider) {
   } else if (provider === "dynamo") {
     // Dynamo/external vLLM endpoint (e.g., K8s Dynamo deployment)
     const dynamoEndpoint = registry.getSandbox(sandboxName)?.dynamoEndpoint || process.env.NEMOCLAW_DYNAMO_ENDPOINT;
+    // Shell-escape values to prevent injection attacks
+    const configArg = shQuote(`OPENAI_BASE_URL=${dynamoEndpoint}`);
+    const modelArg = shQuote(model);
     run(
       `openshell provider create --name dynamo --type openai ` +
       `--credential "OPENAI_API_KEY=dummy" ` +
-      `--config "OPENAI_BASE_URL=${dynamoEndpoint}" 2>&1 || ` +
+      `--config ${configArg} 2>&1 || ` +
       `openshell provider update dynamo --credential "OPENAI_API_KEY=dummy" ` +
-      `--config "OPENAI_BASE_URL=${dynamoEndpoint}" 2>&1 || true`,
+      `--config ${configArg} 2>&1 || true`,
       { ignoreError: true }
     );
     run(
-      `openshell inference set --no-verify --provider dynamo --model ${model} 2>/dev/null || true`,
+      `openshell inference set --no-verify --provider dynamo --model ${modelArg} 2>/dev/null || true`,
       { ignoreError: true }
     );
   }
