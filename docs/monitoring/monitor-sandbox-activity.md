@@ -49,6 +49,29 @@ Key fields in the output include the following:
 
 If you run `openclaw nemoclaw status` from inside the sandbox, the command detects the sandbox context and reports it. Host-level sandbox and inference details are not available from within the sandbox. Run `openshell sandbox list` on the host to check the underlying sandbox state.
 
+## Open the OpenClaw Dashboard
+
+NemoClaw does not add a separate `openclaw dashboard` wrapper. Instead, it forwards
+the dashboard to local port `18789` on the host that is running the sandbox.
+
+If you already use the connect command, NemoClaw refreshes the port forward for you:
+
+```console
+$ nemoclaw my-assistant connect
+```
+
+To start or refresh the dashboard forward without opening an interactive shell:
+
+```console
+$ openshell forward start --background 18789 my-assistant
+```
+
+Then open `http://127.0.0.1:18789` in your browser.
+
+If the sandbox is running on a remote host, run the forward command on that host and
+open the forwarded address from the same machine, or tunnel port `18789` back to your
+local workstation before opening the URL.
+
 ## View Blueprint and Sandbox Logs
 
 Stream the most recent log output from the blueprint runner and sandbox:
