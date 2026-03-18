@@ -241,7 +241,7 @@ if openshell sandbox ssh-config "$SANDBOX_NAME" > "$ssh_config" 2>/dev/null; the
   command -v timeout > /dev/null 2>&1 && TIMEOUT_CMD="timeout 90"
   command -v gtimeout > /dev/null 2>&1 && TIMEOUT_CMD="gtimeout 90"
   sandbox_response=$($TIMEOUT_CMD ssh -F "$ssh_config" \
-    -o StrictHostKeyChecking=no \
+    -o StrictHostKeyChecking=accept-new \
     -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 \
     -o LogLevel=ERROR \
