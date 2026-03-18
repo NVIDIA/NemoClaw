@@ -21,7 +21,7 @@ const policies = require("./lib/policies");
 // ── Global commands ──────────────────────────────────────────────
 
 const GLOBAL_COMMANDS = new Set([
-  "onboard", "list", "deploy", "setup", "setup-spark",
+  "onboard", "list", "deploy", "setup", "setup-spark", "setup-apple",
   "start", "stop", "status", "uninstall",
   "help", "--help", "-h",
 ]);
@@ -89,6 +89,10 @@ async function setup() {
 async function setupSpark() {
   await ensureApiKey();
   run(`sudo -E NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}" bash "${SCRIPTS}/setup-spark.sh"`);
+}
+
+async function setupApple() {
+  run(`bash "${SCRIPTS}/setup-apple.sh"`);
 }
 
 async function deploy(instanceName) {
@@ -348,6 +352,7 @@ function help() {
     nemoclaw onboard                 Interactive setup wizard (recommended)
     nemoclaw setup                   Legacy setup (deprecated, use onboard)
     nemoclaw setup-spark             Set up on DGX Spark (fixes cgroup v2 + Docker)
+    nemoclaw setup-apple             Set up on macOS / Apple Silicon
 
   Sandbox Management:
     nemoclaw list                    List all sandboxes
@@ -396,6 +401,7 @@ const [cmd, ...args] = process.argv.slice(2);
       case "onboard":     await onboard(args); break;
       case "setup":       await setup(); break;
       case "setup-spark": await setupSpark(); break;
+      case "setup-apple": await setupApple(); break;
       case "deploy":      await deploy(args[0]); break;
       case "start":       await start(); break;
       case "stop":        stop(); break;
