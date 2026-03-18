@@ -527,6 +527,22 @@ async function createSandbox(gpu) {
   // Forward dashboard port to the new sandbox
   run(`openshell forward start --background 18789 "${sandboxName}"`, { ignoreError: true });
 
+  // Clean up build context
+  run(`rm -rf "${buildCtx}"`, { ignoreError: true });
+
+  // macOS: add inference.local to sandbox /etc/hosts so Ollama DNS resolves.
+  // On Linux this is handled by the network namespace, but on macOS (Docker
+  // Desktop) the sandbox can't resolve inference.local without an explicit
+  // hosts entry pointing to the host gateway.
+  if (process.platform === "darwin") {
+    console.log("  Configuring inference.local DNS for macOS...");
+    run(
+      `openshell sandbox connect "${sandboxName}" -- sh -c ` +
+      `'grep -q inference.local /etc/hosts || echo "$(cat /etc/resolv.conf | grep nameserver | head -1 | awk "{print \\$2}") inference.local" >> /etc/hosts'`,
+      { ignoreError: true },
+    );
+  }
+
   // Register only after confirmed ready — prevents phantom entries
   registry.registerSandbox({
     name: sandboxName,
