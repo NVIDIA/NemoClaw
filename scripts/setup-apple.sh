@@ -50,7 +50,7 @@ step "1/5  Checking macOS environment"
 GPU_CORES=""
 UNIFIED_MEM=""
 if command -v system_profiler &>/dev/null; then
-  GPU_CORES=$(system_profiler SPDisplaysDataType 2>/dev/null | grep "Total Number of Cores" | awk -F': ' '{print $2}' | head -1)
+  GPU_CORES=$(system_profiler SPDisplaysDataType 2>/dev/null | grep "Total Number of Cores" | awk -F': ' '{print $2}' | head -1 || true)
   UNIFIED_MEM=$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%.0f", $1/1024/1024/1024}')
 fi
 info "macOS $(sw_vers -productVersion 2>/dev/null || echo 'unknown') on ${ARCH}"
@@ -128,7 +128,7 @@ if [ "$OLLAMA_INSTALLED" = true ]; then
         info "brew services unavailable — starting directly..."
         OLLAMA_HOST=0.0.0.0:11434 ollama serve &>/dev/null &
         OLLAMA_BG_PID=$!
-        trap 'kill $OLLAMA_BG_PID 2>/dev/null || true' EXIT INT TERM
+        trap 'kill $OLLAMA_BG_PID 2>/dev/null || true' INT TERM
       fi
     fi
     sleep 3
@@ -142,7 +142,7 @@ if [ "$OLLAMA_INSTALLED" = true ]; then
 
   # Suggest pulling a model if none present
   if [ "$OLLAMA_RUNNING" = true ]; then
-    MODEL_COUNT=$(curl -s http://localhost:11434/api/tags 2>/dev/null | grep -co '"name"' 2>/dev/null || echo "0")
+    MODEL_COUNT=$(set +o pipefail; curl -s http://localhost:11434/api/tags 2>/dev/null | grep -co '"name"' 2>/dev/null || echo "0")
     if [ "$MODEL_COUNT" = "0" ]; then
       info "No models found. For local inference, pull a model:"
       echo "    ollama pull llama3.1:8b     # 4.7GB, good balance"
