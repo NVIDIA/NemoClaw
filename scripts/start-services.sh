@@ -54,7 +54,17 @@ warn()  { echo -e "${YELLOW}[services]${NC} $1"; }
 fail()  { echo -e "${RED}[services]${NC} $1"; exit 1; }
 
 is_running() {
-  local pidfile="$PIDDIR/$1.pid"
+  local name="$1"
+  local pidfile="$PIDDIR/$name.pid"
+
+  # For openclaw-gateway, check the actual port instead of PID.
+  # The SSH session that started the gateway exits after launch,
+  # but the gateway process inside the sandbox stays alive.
+  if [ "$name" = "openclaw-gateway" ]; then
+    curl -s -o /dev/null -w '' --max-time 2 "http://127.0.0.1:$DASHBOARD_PORT/" 2>/dev/null
+    return $?
+  fi
+
   if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
     return 0
   fi
@@ -96,7 +106,11 @@ show_status() {
   echo ""
   for svc in openclaw-gateway gateway-forward telegram-bridge cloudflared; do
     if is_running "$svc"; then
-      echo -e "  ${GREEN}●${NC} $svc  (PID $(cat "$PIDDIR/$svc.pid"))"
+      if [ "$svc" = "openclaw-gateway" ]; then
+        echo -e "  ${GREEN}●${NC} $svc  (healthy on port $DASHBOARD_PORT)"
+      else
+        echo -e "  ${GREEN}●${NC} $svc  (PID $(cat "$PIDDIR/$svc.pid"))"
+      fi
     else
       echo -e "  ${RED}●${NC} $svc  (stopped)"
     fi
@@ -234,9 +248,9 @@ do_start() {
   fi
 
   if is_running openclaw-gateway; then
-    echo "  │  Gateway:     running (port $DASHBOARD_PORT)          │"
+    echo "  │  Gateway:     healthy (port $DASHBOARD_PORT)          │"
   else
-    echo "  │  Gateway:     not started                             │"
+    echo "  │  Gateway:     offline                                 │"
   fi
 
   if is_running gateway-forward; then
