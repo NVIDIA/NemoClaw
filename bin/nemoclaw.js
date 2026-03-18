@@ -115,15 +115,19 @@ async function deploy(instanceName) {
     "/home/ubuntu/nemoclaw/"
   );
 
-  const envLines = [`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`];
+  const envLines = [`NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY)}`];
   const ghToken = process.env.GITHUB_TOKEN;
-  if (ghToken) envLines.push(`GITHUB_TOKEN=${ghToken}`);
+  if (ghToken) envLines.push(`GITHUB_TOKEN=${shellQuote(ghToken)}`);
   const tgToken = getCredential("TELEGRAM_BOT_TOKEN");
-  if (tgToken) envLines.push(`TELEGRAM_BOT_TOKEN=${tgToken}`);
+  if (tgToken) envLines.push(`TELEGRAM_BOT_TOKEN=${shellQuote(tgToken)}`);
   const envTmp = path.join(os.tmpdir(), `nemoclaw-env-${Date.now()}`);
   fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
-  runScp(envTmp, `${name}:/home/ubuntu/nemoclaw/.env`);
+  const scpResult = runScp(envTmp, `${name}:/home/ubuntu/nemoclaw/.env`, { ignoreError: true });
   fs.unlinkSync(envTmp);
+  if (scpResult.status !== 0) {
+    console.error(`  Failed to copy .env to ${name}`);
+    process.exit(scpResult.status || 1);
+  }
 
   console.log("  Running setup...");
   runSsh(name, "cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh", { tty: true });

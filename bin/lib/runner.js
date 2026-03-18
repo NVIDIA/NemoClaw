@@ -43,11 +43,13 @@ function run(cmd, opts = {}) {
  * Use this for any command that includes user-controlled values.
  */
 function runArgv(prog, args, opts = {}) {
+  const { env, ...spawnOpts } = opts;
   const result = spawnSync(prog, args, {
     stdio: "inherit",
     cwd: ROOT,
-    env: { ...process.env, ...opts.env },
-    ...opts,
+    ...spawnOpts,
+    env: { ...process.env, ...(env || {}) },
+    shell: false,
   });
   if (result.status !== 0 && !opts.ignoreError) {
     console.error(`  Command failed (exit ${result.status}): ${prog} ${args.join(" ").slice(0, 60)}`);
@@ -61,14 +63,16 @@ function runArgv(prog, args, opts = {}) {
  * with no shell. Returns trimmed stdout.
  */
 function runCaptureArgv(prog, args, opts = {}) {
+  const { env, ...execOpts } = opts;
   const { execFileSync } = require("child_process");
   try {
     return execFileSync(prog, args, {
       encoding: "utf-8",
       cwd: ROOT,
-      env: { ...process.env, ...opts.env },
       stdio: ["pipe", "pipe", "pipe"],
-      ...opts,
+      ...execOpts,
+      env: { ...process.env, ...(env || {}) },
+      shell: false,
     }).trim();
   } catch (err) {
     if (opts.ignoreError) return "";
