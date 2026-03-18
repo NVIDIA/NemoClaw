@@ -61,34 +61,67 @@ fi
 
 info "Installing openshell CLI..."
 
-case "$OS" in
-  Darwin)
-    case "$ARCH_LABEL" in
-      x86_64) ASSET="openshell-x86_64-apple-darwin.tar.gz" ;;
-      aarch64) ASSET="openshell-aarch64-apple-darwin.tar.gz" ;;
-    esac
-    ;;
-  Linux)
-    case "$ARCH_LABEL" in
-      x86_64) ASSET="openshell-x86_64-unknown-linux-musl.tar.gz" ;;
-      aarch64) ASSET="openshell-aarch64-unknown-linux-musl.tar.gz" ;;
-    esac
-    ;;
+case "$OS/$ARCH" in
+  Darwin/x86_64|Darwin/amd64)   ASSET="openshell-x86_64-apple-darwin.tar.gz" ;;
+  Darwin/aarch64|Darwin/arm64)  ASSET="openshell-aarch64-apple-darwin.tar.gz" ;;
+  Linux/x86_64|Linux/amd64)     ASSET="openshell-x86_64-unknown-linux-musl.tar.gz" ;;
+  Linux/aarch64|Linux/arm64)    ASSET="openshell-aarch64-unknown-linux-musl.tar.gz" ;;
+  *) fail "Unsupported platform: $OS/$ARCH" ;;
 esac
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
+# Download
 if command -v gh >/dev/null 2>&1; then
   GH_TOKEN="${GITHUB_TOKEN:-}" gh release download --repo NVIDIA/OpenShell \
     --pattern "$ASSET" --dir "$tmpdir"
 else
-  curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/latest/download/$ASSET" \
-    -o "$tmpdir/$ASSET"
+  if ! curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/latest/download/$ASSET" \
+    -o "$tmpdir/$ASSET" 2>"$tmpdir/curl.err"; then
+    cat "$tmpdir/curl.err" >&2
+    fail "Could not download $ASSET"
+  fi
 fi
 
-tar xzf "$tmpdir/$ASSET" -C "$tmpdir"
+# Validate the downloaded file is actually a gzip tarball
+if command -v file >/dev/null 2>&1; then
+  if ! file "$tmpdir/$ASSET" 2>/dev/null | grep -q "gzip compressed data"; then
+    fail "Downloaded file is not a valid gzip tarball. GitHub may be unavailable or the release may be missing."
+  fi
+fi
 
+# Verify checksum if available (fail-closed)
+CHECKSUM_URL="https://github.com/NVIDIA/OpenShell/releases/latest/download/SHA256SUMS"
+if curl -fsSL "$CHECKSUM_URL" -o "$tmpdir/SHA256SUMS" 2>/dev/null; then
+  if ! grep -qF "$ASSET" "$tmpdir/SHA256SUMS"; then
+    fail "Checksum entry not found for $ASSET in SHA256SUMS"
+  fi
+  if ! (cd "$tmpdir" && grep -F "$ASSET" SHA256SUMS | shasum -a 256 -c -s); then
+    fail "Checksum verification failed for $ASSET. File may be corrupted or tampered with."
+  fi
+  info "Checksum verified"
+else
+  fail "No checksum file available; refusing unverified install"
+fi
+
+# Extract tarball
+if ! tar xzf "$tmpdir/$ASSET" -C "$tmpdir" 2>"$tmpdir/tar.err"; then
+  cat "$tmpdir/tar.err" >&2
+  fail "Could not extract $ASSET"
+fi
+
+# Verify the binary was extracted and is executable
+if [ ! -f "$tmpdir/openshell" ]; then
+  fail "Extracted tarball but openshell binary not found"
+fi
+if command -v file >/dev/null 2>&1; then
+  if ! file "$tmpdir/openshell" | grep -qE "executable|Mach-O|ELF"; then
+    fail "Extracted file is not a valid executable"
+  fi
+fi
+
+# Install
 target_dir="/usr/local/bin"
 
 if [ -w "$target_dir" ]; then
@@ -99,7 +132,6 @@ elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
   install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
   warn "Installed openshell to $target_dir/openshell (user-local path)"
   warn "For future shells, run: export PATH=\"$target_dir:\$PATH\""
-  warn "Add that export to your shell profile, or open a new shell before using openshell directly."
 else
   sudo install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
 fi
