@@ -11,6 +11,7 @@ profiles:
   - ncp
   - nim-local
   - vllm
+  - baseten
 
 description: |
   NemoClaw blueprint: orchestrates OpenClaw sandbox creation, migration,
@@ -54,6 +55,13 @@ components:
         credential_env: "OPENAI_API_KEY"
         credential_default: "dummy"
 
+      baseten:
+        provider_type: "openai"
+        provider_name: "baseten"
+        endpoint: "https://inference.baseten.co/v1"
+        model: "zai-org/GLM-5"
+        credential_env: "BASETEN_API_KEY"
+
   policy:
     base: "sandboxes/openclaw/policy.yaml"
     additions:
@@ -62,4 +70,10 @@ components:
         endpoints:
           - host: "nim-service.local"
             port: 8000
+            protocol: rest
+      baseten:
+        name: baseten
+        endpoints:
+          - host: "inference.baseten.co"
+            port: 443
             protocol: rest
