@@ -32,7 +32,17 @@ function isExperimentalEnabled(): boolean {
 const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const HOST_GATEWAY_URL = "http://host.openshell.internal";
 
-const BASETEN_DEFAULT_MODEL = { id: "zai-org/GLM-5", label: "GLM-5" };
+const BASETEN_MODELS = [
+  { id: "zai-org/GLM-5", label: "GLM-5" },
+  { id: "zai-org/GLM-4.7", label: "GLM-4.7" },
+  { id: "zai-org/GLM-4.6", label: "GLM-4.6" },
+  { id: "deepseek-ai/DeepSeek-V3.1", label: "DeepSeek V3.1" },
+  { id: "deepseek-ai/DeepSeek-V3-0324", label: "DeepSeek V3 0324" },
+  { id: "moonshotai/Kimi-K2.5", label: "Kimi K2.5" },
+  { id: "MiniMaxAI/MiniMax-M2.5", label: "MiniMax M2.5" },
+  { id: "nvidia/Nemotron-120B-A12B", label: "Nemotron Super 120B" },
+  { id: "openai/gpt-oss-120b", label: "OpenAI GPT OSS 120B" },
+];
 
 const DEFAULT_MODELS = [
   { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
@@ -359,7 +369,7 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
         : validation.models.filter((m) => m.includes("nemotron"));
     const fallbackModels =
       endpointType === "baseten"
-        ? [{ label: `${BASETEN_DEFAULT_MODEL.label} (${BASETEN_DEFAULT_MODEL.id})`, value: BASETEN_DEFAULT_MODEL.id }]
+        ? BASETEN_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }))
         : DEFAULT_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }));
     const modelOptions =
       preferredModels.length > 0
