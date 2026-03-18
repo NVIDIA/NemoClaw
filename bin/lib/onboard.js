@@ -89,10 +89,19 @@ function listOllamaModels() {
   }
 }
 
-function createOllamaChatVariant(baseModel) {
+/**
+ * Build a tag-safe chat variant name that preserves the Ollama tag to avoid
+ * collisions (e.g. deepseek-r1:8b → deepseek-r1-8b-chat, deepseek-r1:14b → deepseek-r1-14b-chat).
+ */
+function buildChatVariantName(baseModel) {
+  const [name, tag] = String(baseModel).split(":", 2);
+  const safeTag = tag ? `-${tag.replace(/[^a-z0-9._-]/gi, "-")}` : "";
+  return `${name}${safeTag}-chat`;
+}
+
+function createOllamaChatVariant(baseModel, variantName) {
   const { execFileSync } = require("child_process");
   const os = require("os");
-  const variantName = baseModel.replace(/:.*$/, "") + "-chat";
   const modelfilePath = path.join(os.tmpdir(), `nemoclaw-modelfile-${Date.now()}`);
   try {
     fs.writeFileSync(modelfilePath, `FROM ${baseModel}\n`, "utf-8");
@@ -118,8 +127,15 @@ function createOllamaChatVariant(baseModel) {
  */
 function handleReasoningModel(model) {
   if (!isReasoningModel(model)) return model;
+  const variantName = buildChatVariantName(model);
+  // Reuse existing variant — makes the operation idempotent
+  const existingModels = listOllamaModels();
+  if (existingModels.includes(variantName)) {
+    console.log(`  ✓ Using existing chat variant: ${variantName}`);
+    return variantName;
+  }
   console.log(`  ⚠ '${model}' is a reasoning model — creating chat variant...`);
-  const chatVariant = createOllamaChatVariant(model);
+  const chatVariant = createOllamaChatVariant(model, variantName);
   if (chatVariant) {
     console.log(`  ✓ Using chat variant: ${chatVariant}`);
     return chatVariant;
@@ -677,7 +693,6 @@ async function setupNim(sandboxName, gpu) {
       } else {
         model = "nemotron-3-nano";
       }
-      console.log(`  ✓ Using Ollama on localhost:11434 with model: ${model}`);
       provider = "ollama-local";
       if (isNonInteractive()) {
         model = requestedModel || getDefaultOllamaModel(runCapture);
@@ -685,6 +700,7 @@ async function setupNim(sandboxName, gpu) {
         model = await promptOllamaModel();
       }
       model = handleReasoningModel(model);
+      console.log(`  ✓ Using Ollama on localhost:11434 with model: ${model}`);
     } else if (selected.key === "install-ollama") {
       console.log("  Installing Ollama via Homebrew...");
       run("brew install ollama", { ignoreError: true });
