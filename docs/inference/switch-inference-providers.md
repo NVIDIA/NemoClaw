@@ -81,13 +81,13 @@ You can switch to any of these models at runtime.
 Create a non-reasoning chat variant of the model:
 
 ```console
-$ echo "FROM nemotron-3-nano:30b" | ollama create nemotron-nano-chat
+$ echo "FROM nemotron-3-nano:30b" | ollama create nemotron-3-nano-chat
 ```
 
 Then set the inference model to the new variant:
 
 ```console
-$ openshell inference set --no-verify --provider ollama-local --model nemotron-nano-chat
+$ openshell inference set --no-verify --provider ollama-local --model nemotron-3-nano-chat
 ```
 
 The `nemoclaw onboard` command detects reasoning models automatically and

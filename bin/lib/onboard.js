@@ -55,12 +55,20 @@ function listOllamaModels() {
 function createChatVariant(baseModel) {
   const variantName = baseModel.replace(/:.*$/, "") + "-chat";
   try {
-    // Use heredoc-style Modelfile via stdin
+    // Write Modelfile to a temp file to avoid shell interpolation risks
+    const os = require("os");
     const modelfile = `FROM ${baseModel}`;
-    require("child_process").execSync(
-      `echo '${modelfile}' | ollama create ${variantName}`,
-      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 120000 }
-    );
+    const tmpFile = path.join(os.tmpdir(), `nemoclaw-modelfile-${Date.now()}`);
+    fs.writeFileSync(tmpFile, modelfile, "utf-8");
+    try {
+      require("child_process").execFileSync(
+        "ollama",
+        ["create", variantName, "-f", tmpFile],
+        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 120000 }
+      );
+    } finally {
+      try { fs.unlinkSync(tmpFile); } catch {}
+    }
     return variantName;
   } catch (err) {
     console.log(`  ⚠ Could not create chat variant '${variantName}': ${err.message || err}`);
@@ -307,7 +315,10 @@ async function setupNim(sandboxName, gpu) {
           }
         }
       } else {
-        model = "nemotron-3-nano";
+        // nemotron-3-nano is a reasoning model — default to its chat variant
+        // to avoid blank responses (see issue #246). The user still needs to
+        // pull the base model and create the variant after onboarding.
+        model = "nemotron-3-nano-chat";
       }
       registry.updateSandbox(sandboxName, { model, provider, nimContainer });
       return { model, provider };
@@ -411,9 +422,10 @@ async function setupNim(sandboxName, gpu) {
           }
         }
       } else {
-        model = "nemotron-3-nano";
-        console.log("  No models found locally. Defaulting to nemotron-3-nano.");
-        console.log("  Pull it with: ollama pull nemotron-3-nano");
+        model = "nemotron-3-nano-chat";
+        console.log("  No models found locally. Defaulting to nemotron-3-nano-chat.");
+        console.log("  Pull the base model with: ollama pull nemotron-3-nano");
+        console.log("  Then create the chat variant: echo 'FROM nemotron-3-nano' | ollama create nemotron-3-nano-chat");
       }
     } else if (selected.key === "install-ollama") {
       console.log("  Installing Ollama via Homebrew...");
@@ -424,8 +436,9 @@ async function setupNim(sandboxName, gpu) {
       console.log("  ✓ Using Ollama on localhost:11434");
       provider = "ollama-local";
       // Fresh install — no models available yet, suggest pulling one
-      model = "nemotron-3-nano";
+      model = "nemotron-3-nano-chat";
       console.log("  Note: You'll need to pull a model. Run: ollama pull nemotron-3-nano");
+      console.log("  Then create a chat variant: echo 'FROM nemotron-3-nano' | ollama create nemotron-3-nano-chat");
     } else if (selected.key === "vllm") {
       console.log("  ✓ Using existing vLLM on localhost:8000");
       provider = "vllm-local";
