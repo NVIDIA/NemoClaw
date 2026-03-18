@@ -79,10 +79,19 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [ -n "${1:-}" ]; then
   SANDBOX_NAME="$1"
 elif [ -f "$HOME/.nemoclaw/sandboxes.json" ]; then
-  # Read the first sandbox name from the onboard registry
-  _sb_name=$(node -e "const s=require('$HOME/.nemoclaw/sandboxes.json');console.log(Object.keys(s)[0]||'nemoclaw')" 2>/dev/null || echo "nemoclaw")
-  SANDBOX_NAME="${_sb_name}"
-  unset _sb_name
+  if command -v node > /dev/null 2>&1; then
+    _sb_name="$(node -e 'const p=process.argv[1];const s=require(p);process.stdout.write(Object.keys(s)[0]||"")' "$HOME/.nemoclaw/sandboxes.json" 2>/dev/null || true)"
+    if [ -n "${_sb_name}" ]; then
+      SANDBOX_NAME="${_sb_name}"
+    else
+      warn "Could not read sandbox name from ~/.nemoclaw/sandboxes.json; defaulting to \"nemoclaw\""
+      SANDBOX_NAME="nemoclaw"
+    fi
+    unset _sb_name
+  else
+    warn "Node.js not found; cannot read ~/.nemoclaw/sandboxes.json. Defaulting to \"nemoclaw\""
+    SANDBOX_NAME="nemoclaw"
+  fi
 else
   SANDBOX_NAME="nemoclaw"
 fi
@@ -200,7 +209,16 @@ rm -f "$CREATE_LOG"
 
 # Verify sandbox is Ready (not just that a record exists)
 # Strip ANSI color codes before checking phase
-SANDBOX_LINE=$(openshell sandbox list 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep "$SANDBOX_NAME")
+# Use awk for exact name match to avoid substring collisions, with || true to prevent
+# set -euo pipefail from aborting on no match
+SANDBOX_LINE=$(
+  openshell sandbox list 2>&1 \
+    | sed 's/\x1b\[[0-9;]*m//g' \
+    | awk -v name="$SANDBOX_NAME" '$1 == name { print; exit }' || true
+)
+if [ -z "$SANDBOX_LINE" ]; then
+  fail "Sandbox '${SANDBOX_NAME}' not found in 'openshell sandbox list'."
+fi
 if ! echo "$SANDBOX_LINE" | grep -q "Ready"; then
   SANDBOX_PHASE=$(echo "$SANDBOX_LINE" | awk '{print $NF}')
   echo ""
