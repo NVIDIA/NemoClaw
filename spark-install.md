@@ -105,7 +105,7 @@ nemoclaw onboard
 | CoreDNS CrashLoop after setup | Fixed in `fix-coredns.sh` | Uses container gateway IP, not 127.0.0.11 |
 | Image pull failure (k3s can't find built image) | OpenShell bug | `openshell gateway destroy && openshell gateway start`, re-run setup |
 | GPU passthrough | Untested on Spark | Should work with `--gpu` flag if NVIDIA Container Toolkit is configured |
-| `pip install` fails with system packages | Known | Use `--break-system-packages` or a venv for Python packages inside the sandbox |
+| `pip install` fails with system packages | Known | Use a venv (recommended) or `--break-system-packages` (last resort, can break system tools) |
 | Port 3000 conflict with AI Workbench | Known | AI Workbench Traefik proxy uses port 3000 (and 10000); use a different port for other services |
 | Network policy blocks NVIDIA cloud API | By design | Ensure `integrate.api.nvidia.com` is in the sandbox network policy if using cloud inference |
 
@@ -141,13 +141,33 @@ cmake --build build --config Release -j$(nproc)
   --n-gpu-layers 999 --ctx-size 32768
 ```
 
-Then configure your sandbox to use the local model by updating `~/.openclaw/openclaw.json` inside the sandbox with the local provider URL.
+Then configure your sandbox to use the local model by updating `~/.openclaw/openclaw.json` inside the sandbox:
+
+```json
+{
+  "models": {
+    "providers": {
+      "local": {
+        "baseUrl": "http://host.containers.internal:8000/v1",
+        "apiKey": "not-needed",
+        "api": "openai-completions",
+        "models": [{ "id": "my-model", "name": "Local Model" }]
+      }
+    }
+  },
+  "agents": {
+    "defaults": { "model": { "primary": "local/my-model" } }
+  }
+}
+```
+
+> **Note**: The sandbox egress proxy blocks direct access to the host network. Use `inference.local` with `"apiKey": "openshell-managed"` if your model is configured via NIM or `nemoclaw setup-spark`.
 
 > **Note**: Some NIM containers (e.g., Nemotron-3-Super-120B-A12B) ship native arm64 images and run on the Spark. However, many NIM images are amd64-only and will fail with `exec format error`. Check the image architecture before pulling. GGUF models with llama.cpp are a reliable alternative for models without arm64 NIM support.
 
 ## Architecture Notes
 
-```
+```text
 DGX Spark (Ubuntu 24.04, aarch64, cgroup v2, 128 GB unified memory)
   └── Docker (28.x/29.x, cgroupns=host)
   │    └── OpenShell gateway container (k3s embedded)
