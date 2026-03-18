@@ -75,7 +75,11 @@ start_service() {
   local name="$1"
   shift
   if is_running "$name"; then
-    info "$name already running (PID $(cat "$PIDDIR/$name.pid"))"
+    if [ "$name" = "openclaw-gateway" ]; then
+      info "$name already running (port $DASHBOARD_PORT healthy)"
+    else
+      info "$name already running (PID $(cat "$PIDDIR/$name.pid"))"
+    fi
     return 0
   fi
   nohup "$@" > "$PIDDIR/$name.log" 2>&1 &
