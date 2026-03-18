@@ -76,7 +76,7 @@ export function loadOnboardConfig(): NemoClawOnboardConfig | null {
 
 export function saveOnboardConfig(config: NemoClawOnboardConfig): void {
   ensureConfigDir();
-  writeFileSync(configPath(), JSON.stringify(config, null, 2));
+  writeFileSync(configPath(), JSON.stringify(config, null, 2), { mode: 0o600 });
 }
 
 export function clearOnboardConfig(): void {

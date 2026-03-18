@@ -59,7 +59,7 @@ function loadOnboardConfig() {
 }
 function saveOnboardConfig(config) {
     ensureConfigDir();
-    (0, node_fs_1.writeFileSync)(configPath(), JSON.stringify(config, null, 2));
+    (0, node_fs_1.writeFileSync)(configPath(), JSON.stringify(config, null, 2), { mode: 0o600 });
 }
 function clearOnboardConfig() {
     const path = configPath();

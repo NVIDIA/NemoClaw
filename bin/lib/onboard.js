@@ -8,6 +8,26 @@
 const fs = require("fs");
 const path = require("path");
 const { ROOT, SCRIPTS, run, runArgv, runCapture, runCaptureArgv, assertSafeName } = require("./runner");
+const {
+  getDefaultOllamaModel,
+  getLocalProviderBaseUrl,
+  getOllamaModelOptions,
+  getOllamaWarmupCommand,
+  validateOllamaModel,
+  validateLocalProvider,
+} = require("./local-inference");
+const {
+  CLOUD_MODEL_OPTIONS,
+  DEFAULT_CLOUD_MODEL,
+  DEFAULT_OLLAMA_MODEL,
+  getOpenClawPrimaryModel,
+  getProviderSelectionConfig,
+} = require("./inference-config");
+const {
+  inferContainerRuntime,
+  isUnsupportedMacosRuntime,
+  shouldPatchCoredns,
+} = require("./platform");
 const { prompt, ensureApiKey, getCredential } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
@@ -443,9 +463,9 @@ async function setupNim(sandboxName, gpu) {
   let nimContainer = null;
 
   // Detect local inference options
-  const hasOllama = !!runCaptureArgv("sh", ["-c", "command -v ollama"], { ignoreError: true });
-  const ollamaRunning = !!runCaptureArgv("curl", ["-sf", "http://localhost:11434/api/tags"], { ignoreError: true });
-  const vllmRunning = !!runCaptureArgv("curl", ["-sf", "http://localhost:8000/v1/models"], { ignoreError: true });
+  const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
+  const ollamaRunning = !!runCapture("curl -sf http://localhost:11434/api/tags", { ignoreError: true });
+  const vllmRunning = !!runCapture("curl -sf http://localhost:8000/v1/models", { ignoreError: true });
 
   // Auto-select only with NEMOCLAW_EXPERIMENTAL=1 (prevents silent misconfiguration)
   if (EXPERIMENTAL) {
@@ -680,19 +700,39 @@ async function setupInference(sandboxName, model, provider) {
     ], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
 
   } else if (provider === "vllm-local") {
+    const validation = validateLocalProvider(provider, runCapture);
+    if (!validation.ok) {
+      console.error(`  ${validation.message}`);
+      process.exit(1);
+    }
+    const baseUrl = getLocalProviderBaseUrl(provider);
     // dummy is not a secret — safe as literal KEY=VALUE
-    upsertProvider("vllm-local", "OPENAI_API_KEY", `${HOST_GATEWAY_URL}:8000/v1`);
+    upsertProvider("vllm-local", "OPENAI_API_KEY", baseUrl);
     runArgv("openshell", [
       "inference", "set", "--no-verify", "--provider", "vllm-local", "--model", model,
     ], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
 
   } else if (provider === "ollama-local") {
+    const validation = validateLocalProvider(provider, runCapture);
+    if (!validation.ok) {
+      console.error(`  ${validation.message}`);
+      console.error("  On macOS, local inference also depends on OpenShell host routing support.");
+      process.exit(1);
+    }
+    const baseUrl = getLocalProviderBaseUrl(provider);
     // "ollama" is not a secret — safe as literal KEY=VALUE
     process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || "ollama";
-    upsertProvider("ollama-local", "OPENAI_API_KEY", `${HOST_GATEWAY_URL}:11434/v1`);
+    upsertProvider("ollama-local", "OPENAI_API_KEY", baseUrl);
     runArgv("openshell", [
       "inference", "set", "--no-verify", "--provider", "ollama-local", "--model", model,
     ], { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] });
+    console.log(`  Priming Ollama model: ${model}`);
+    runArgv("sh", ["-c", getOllamaWarmupCommand(model)], { ignoreError: true });
+    const probe = validateOllamaModel(model, runCapture);
+    if (!probe.ok) {
+      console.error(`  ${probe.message}`);
+      process.exit(1);
+    }
   }
 
   registry.updateSandbox(sandboxName, { model, provider });
