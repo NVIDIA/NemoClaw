@@ -16,6 +16,13 @@ const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 
 // ── Helpers ──────────────────────────────────────────────────────
 
+/**
+ * Print a numbered step banner to the console.
+ *
+ * @param {number} n Current step number.
+ * @param {number} total Total number of steps.
+ * @param {string} msg Description of the step.
+ */
 function step(n, total, msg) {
   console.log("");
   console.log(`  [${n}/${total}] ${msg}`);
@@ -38,6 +45,11 @@ function detectContainerRuntime() {
   }
 }
 
+/**
+ * Check whether the openshell CLI is available on PATH.
+ *
+ * @returns {boolean} True if `command -v openshell` succeeds.
+ */
 function isOpenshellInstalled() {
   try {
     runCapture("command -v openshell");
@@ -47,6 +59,11 @@ function isOpenshellInstalled() {
   }
 }
 
+/**
+ * Attempt to install the openshell CLI via the bundled install script.
+ *
+ * @returns {boolean} True if openshell is available after installation.
+ */
 function installOpenshell() {
   console.log("  Installing openshell CLI...");
   run(`bash "${path.join(SCRIPTS, "install-openshell.sh")}"`, { ignoreError: true });
@@ -55,6 +72,11 @@ function installOpenshell() {
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
+/**
+ * Step 1: Run preflight checks (container runtime, openshell CLI, cgroup, GPU).
+ *
+ * @returns {Promise<object|null>} Detected GPU descriptor, or null if none found.
+ */
 async function preflight() {
   step(1, 7, "Preflight checks");
 
@@ -118,6 +140,12 @@ async function preflight() {
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
+/**
+ * Step 2: Start (or restart) the OpenShell gateway and verify health.
+ *
+ * @param {object|null} gpu GPU descriptor from preflight (unused but reserved).
+ * @returns {Promise<void>}
+ */
 async function startGateway(gpu) {
   step(2, 7, "Starting OpenShell gateway");
 
@@ -164,6 +192,12 @@ async function startGateway(gpu) {
 
 // ── Step 3: Sandbox ──────────────────────────────────────────────
 
+/**
+ * Step 3: Prompt for a sandbox name, build the image, and create the sandbox.
+ *
+ * @param {object|null} gpu GPU descriptor from preflight.
+ * @returns {Promise<string>} The validated sandbox name.
+ */
 async function createSandbox(gpu) {
   step(3, 7, "Creating sandbox");
 
@@ -244,6 +278,13 @@ async function createSandbox(gpu) {
 
 // ── Step 4: NIM ──────────────────────────────────────────────────
 
+/**
+ * Step 4: Detect or prompt for an inference backend (NIM, Ollama, vLLM, cloud).
+ *
+ * @param {string} sandboxName Name of the active sandbox.
+ * @param {object|null} gpu GPU descriptor from preflight.
+ * @returns {Promise<{model: string, provider: string}>} Selected model and provider.
+ */
 async function setupNim(sandboxName, gpu) {
   step(4, 7, "Configuring inference (NIM)");
 
@@ -377,6 +418,14 @@ async function setupNim(sandboxName, gpu) {
 
 // ── Step 5: Inference provider ───────────────────────────────────
 
+/**
+ * Step 5: Register the selected inference provider with openshell.
+ *
+ * @param {string} sandboxName Name of the active sandbox.
+ * @param {string} model Model identifier (e.g. "nvidia/nemotron-3-super-120b-a12b").
+ * @param {string} provider Provider key ("nvidia-nim", "vllm-local", "ollama-local").
+ * @returns {Promise<void>}
+ */
 async function setupInference(sandboxName, model, provider) {
   step(5, 7, "Setting up inference provider");
 
@@ -426,6 +475,12 @@ async function setupInference(sandboxName, model, provider) {
 
 // ── Step 6: OpenClaw ─────────────────────────────────────────────
 
+/**
+ * Step 6: Launch the OpenClaw agent gateway inside the sandbox.
+ *
+ * @param {string} sandboxName Name of the active sandbox.
+ * @returns {Promise<void>}
+ */
 async function setupOpenclaw(sandboxName) {
   step(6, 7, "Setting up OpenClaw inside sandbox");
 
@@ -439,6 +494,12 @@ async function setupOpenclaw(sandboxName) {
 
 // ── Step 7: Policy presets ───────────────────────────────────────
 
+/**
+ * Step 7: Suggest and apply policy presets (pypi, npm, messaging integrations).
+ *
+ * @param {string} sandboxName Name of the active sandbox.
+ * @returns {Promise<void>}
+ */
 async function setupPolicies(sandboxName) {
   step(7, 7, "Policy presets");
 
@@ -496,6 +557,13 @@ async function setupPolicies(sandboxName) {
 
 // ── Dashboard ────────────────────────────────────────────────────
 
+/**
+ * Print a summary dashboard showing sandbox, model, and NIM status.
+ *
+ * @param {string} sandboxName Name of the active sandbox.
+ * @param {string} model Active model identifier.
+ * @param {string} provider Active provider key.
+ */
 function printDashboard(sandboxName, model, provider) {
   const nimStat = nim.nimStatus(sandboxName);
   const nimLabel = nimStat.running ? "running" : "not running";
@@ -520,6 +588,11 @@ function printDashboard(sandboxName, model, provider) {
 
 // ── Main ─────────────────────────────────────────────────────────
 
+/**
+ * Run the full 7-step interactive onboarding wizard.
+ *
+ * @returns {Promise<void>}
+ */
 async function onboard() {
   console.log("");
   console.log("  NemoClaw Onboarding");

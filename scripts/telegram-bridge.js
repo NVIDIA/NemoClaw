@@ -34,6 +34,13 @@ const activeSessions = new Map(); // chatId → message history
 
 // ── Telegram API helpers ──────────────────────────────────────────
 
+/**
+ * Call a Telegram Bot API method via HTTPS POST.
+ *
+ * @param {string} method Telegram API method name (e.g. "sendMessage").
+ * @param {object} body JSON-serializable request body.
+ * @returns {Promise<object>} Parsed JSON response from Telegram.
+ */
 function tgApi(method, body) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify(body);
@@ -58,6 +65,13 @@ function tgApi(method, body) {
   });
 }
 
+/**
+ * Send a text message to a Telegram chat, splitting into chunks if needed.
+ *
+ * @param {string|number} chatId Target chat ID.
+ * @param {string} text Message text (auto-chunked at 4000 chars).
+ * @param {number} [replyTo] Message ID to reply to.
+ */
 async function sendMessage(chatId, text, replyTo) {
   // Telegram max message length is 4096
   const chunks = [];
@@ -77,12 +91,24 @@ async function sendMessage(chatId, text, replyTo) {
   }
 }
 
+/**
+ * Send a "typing" indicator to a Telegram chat.
+ *
+ * @param {string|number} chatId Target chat ID.
+ */
 async function sendTyping(chatId) {
   await tgApi("sendChatAction", { chat_id: chatId, action: "typing" }).catch(() => {});
 }
 
 // ── Run agent inside sandbox ──────────────────────────────────────
 
+/**
+ * SSH into the sandbox and run the OpenClaw agent with the given message.
+ *
+ * @param {string} message User message to forward to the agent.
+ * @param {string} sessionId Session identifier (typically the Telegram chat ID).
+ * @returns {Promise<string>} Agent response text.
+ */
 function runAgentInSandbox(message, sessionId) {
   return new Promise((resolve) => {
     const sshConfig = execSync(`openshell sandbox ssh-config ${SANDBOX}`, { encoding: "utf-8" });
@@ -143,6 +169,7 @@ function runAgentInSandbox(message, sessionId) {
 
 // ── Poll loop ─────────────────────────────────────────────────────
 
+/** Long-poll Telegram for updates and dispatch each message to the sandbox agent. */
 async function poll() {
   try {
     const res = await tgApi("getUpdates", { offset, timeout: 30 });
@@ -212,6 +239,7 @@ async function poll() {
 
 // ── Main ──────────────────────────────────────────────────────────
 
+/** Verify the bot token, print the startup banner, and begin polling. */
 async function main() {
   const me = await tgApi("getMe", {});
   if (!me.ok) {

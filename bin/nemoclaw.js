@@ -28,11 +28,13 @@ const GLOBAL_COMMANDS = new Set([
 
 // ── Commands ─────────────────────────────────────────────────────
 
+/** Launch the interactive onboarding wizard. */
 async function onboard() {
   const { onboard: runOnboard } = require("./lib/onboard");
   await runOnboard();
 }
 
+/** Run the deprecated legacy setup.sh for backwards compatibility. */
 async function setup() {
   console.log("");
   console.log("  ⚠  `nemoclaw setup` is deprecated. Use `nemoclaw onboard` instead.");
@@ -42,11 +44,17 @@ async function setup() {
   run(`bash "${SCRIPTS}/setup.sh"`);
 }
 
+/** Run the DGX Spark setup script (cgroup v2 fix + Docker restart). */
 async function setupSpark() {
   await ensureApiKey();
   run(`sudo -E NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}" bash "${SCRIPTS}/setup-spark.sh"`);
 }
 
+/**
+ * Deploy NemoClaw to a remote Brev GPU instance, sync files, and connect.
+ *
+ * @param {string} instanceName Brev instance name to create or reuse.
+ */
 async function deploy(instanceName) {
   if (!instanceName) {
     console.error("  Usage: nemoclaw deploy <instance-name>");
@@ -132,15 +140,18 @@ async function deploy(instanceName) {
   run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw'`);
 }
 
+/** Start background services (Telegram bridge, tunnel). */
 async function start() {
   await ensureApiKey();
   run(`bash "${SCRIPTS}/start-services.sh"`);
 }
 
+/** Stop all running NemoClaw services. */
 function stop() {
   run(`bash "${SCRIPTS}/start-services.sh" --stop`);
 }
 
+/** Display registered sandboxes and current service status. */
 function showStatus() {
   // Show sandbox registry
   const { sandboxes, defaultSandbox } = registry.listSandboxes();
@@ -159,6 +170,7 @@ function showStatus() {
   run(`bash "${SCRIPTS}/start-services.sh" --status`);
 }
 
+/** List all registered sandboxes with model, provider, and policy details. */
 function listSandboxes() {
   const { sandboxes, defaultSandbox } = registry.listSandboxes();
   if (sandboxes.length === 0) {
@@ -186,12 +198,22 @@ function listSandboxes() {
 
 // ── Sandbox-scoped actions ───────────────────────────────────────
 
+/**
+ * Ensure the port forward is alive, then open an interactive connection.
+ *
+ * @param {string} sandboxName Target sandbox name.
+ */
 function sandboxConnect(sandboxName) {
   // Ensure port forward is alive before connecting
   run(`openshell forward start --background 18789 "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
   run(`openshell sandbox connect "${sandboxName}"`);
 }
 
+/**
+ * Print detailed status for a sandbox (registry info, openshell state, NIM health).
+ *
+ * @param {string} sandboxName Target sandbox name.
+ */
 function sandboxStatus(sandboxName) {
   const sb = registry.getSandbox(sandboxName);
   if (sb) {
@@ -215,11 +237,22 @@ function sandboxStatus(sandboxName) {
   console.log("");
 }
 
+/**
+ * Stream sandbox logs, optionally following in real time.
+ *
+ * @param {string} sandboxName Target sandbox name.
+ * @param {boolean} follow If true, pass --follow to tail logs.
+ */
 function sandboxLogs(sandboxName, follow) {
   const followFlag = follow ? " --follow" : "";
   run(`openshell sandbox logs "${sandboxName}"${followFlag}`);
 }
 
+/**
+ * Interactively add a policy preset to a sandbox.
+ *
+ * @param {string} sandboxName Target sandbox name.
+ */
 async function sandboxPolicyAdd(sandboxName) {
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
@@ -242,6 +275,11 @@ async function sandboxPolicyAdd(sandboxName) {
   policies.applyPreset(sandboxName, answer);
 }
 
+/**
+ * List all policy presets, marking which are applied to the given sandbox.
+ *
+ * @param {string} sandboxName Target sandbox name.
+ */
 function sandboxPolicyList(sandboxName) {
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
@@ -255,6 +293,11 @@ function sandboxPolicyList(sandboxName) {
   console.log("");
 }
 
+/**
+ * Stop the NIM container, delete the sandbox, and remove it from the registry.
+ *
+ * @param {string} sandboxName Target sandbox name.
+ */
 function sandboxDestroy(sandboxName) {
   console.log(`  Stopping NIM for '${sandboxName}'...`);
   nim.stopNimContainer(sandboxName);
@@ -268,6 +311,7 @@ function sandboxDestroy(sandboxName) {
 
 // ── Help ─────────────────────────────────────────────────────────
 
+/** Print CLI usage information. */
 function help() {
   console.log(`
   nemoclaw — NemoClaw CLI
