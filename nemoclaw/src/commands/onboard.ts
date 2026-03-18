@@ -30,6 +30,8 @@ const KNOWN_REASONING_MODEL_PATTERNS: RegExp[] = [
  * on Ollama's OpenAI-compatible endpoint, which causes blank responses.
  */
 function isReasoningModel(modelName: string): boolean {
+  // Chat variants (e.g. nemotron-3-nano-chat) are non-reasoning by design
+  if (/-chat(:|$)/i.test(modelName)) return false;
   return KNOWN_REASONING_MODEL_PATTERNS.some((pattern) => pattern.test(modelName));
 }
 
@@ -461,6 +463,9 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
       if (variant) {
         logger.info(`Created '${variant}' — using it instead.`);
         model = variant;
+      } else {
+        logger.warn("Variant creation failed. Continuing with reasoning model — responses may be blank.");
+        logger.warn(`Workaround: echo 'FROM ${model}' | ollama create ${model.replace(/:.*$/, "")}-chat`);
       }
     }
   }
