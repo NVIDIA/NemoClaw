@@ -30,7 +30,7 @@ OPENSHELL_CONFIG_DIR="${HOME}/.config/openshell"
 NEMOCLAW_CONFIG_DIR="${HOME}/.config/nemoclaw"
 DEFAULT_GATEWAY="nemoclaw"
 PROVIDERS=("nvidia-nim" "vllm-local" "ollama-local" "nvidia-ncp" "nim-local")
-OPEN_SHELL_INSTALL_PATHS=("/usr/local/bin/openshell")
+OPEN_SHELL_INSTALL_PATHS=("/usr/local/bin/openshell" "${XDG_BIN_HOME:-$HOME/.local/bin}/openshell")
 OLLAMA_MODELS=("nemotron-3-super:120b" "nemotron-3-nano:30b")
 TMP_ROOT="${TMPDIR:-/tmp}"
 
@@ -131,6 +131,9 @@ remove_file_with_optional_sudo() {
 
   if [ -w "$path" ] || [ -w "$(dirname "$path")" ]; then
     rm -f "$path"
+  elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
+    warn "Skipping privileged removal of $path in non-interactive mode."
+    return 0
   else
     sudo rm -f "$path"
   fi

@@ -133,7 +133,7 @@ Install the CLI and launch a sandboxed OpenClaw instance in a few commands.
     </button>
   </div>
   <div class="nc-term-body">
-    <div><span class="nc-ps">$ </span><span class="nc-cmd">curl -fsSL https://nvidia.com/nemoclaw.sh | bash</span></div>
+    <div><span class="nc-ps">$ </span><span class="nc-cmd">curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash</span></div>
   </div>
 </div>
 ```
@@ -292,6 +292,7 @@ Architecture <reference/architecture>
 Commands <reference/commands>
 Inference Profiles <reference/inference-profiles>
 Network Policies <reference/network-policies>
+Troubleshooting <reference/troubleshooting>
 ```
 
 ```{toctree}
