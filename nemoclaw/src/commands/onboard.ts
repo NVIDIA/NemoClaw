@@ -40,7 +40,7 @@ function isReasoningModel(modelName: string): boolean {
  */
 function listOllamaModels(): string[] {
   try {
-    const raw = execSync("curl -sf http://localhost:11434/api/tags", {
+    const raw = execFileSync("curl", ["-sf", "http://localhost:11434/api/tags"], {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
       timeout: 5000,
@@ -416,10 +416,14 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
       }));
       model = await promptSelect("Select your Ollama model:", modelOptions);
     } else {
-      // No models pulled yet — suggest common Ollama models to pull
-      logger.warn("No models found in local Ollama. You need to pull a model first.");
-      logger.warn("Suggested: ollama pull llama3.2  or  ollama pull nemotron-3-nano");
-      model = "llama3.2";
+      // No models pulled yet — default to nemotron-3-nano-chat (non-reasoning variant)
+      // to avoid blank responses. The user still needs to pull the base model and
+      // create the variant after onboarding.
+      model = "nemotron-3-nano-chat";
+      logger.warn("No models found in local Ollama. Defaulting to nemotron-3-nano-chat.");
+      logger.warn("After onboarding, run:");
+      logger.warn("  ollama pull nemotron-3-nano");
+      logger.warn("  echo 'FROM nemotron-3-nano' | ollama create nemotron-3-nano-chat");
     }
   } else {
     // Build model options: prefer Nemotron models from the endpoint, fall back to defaults
