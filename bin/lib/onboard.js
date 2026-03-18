@@ -246,6 +246,7 @@ async function setupNim(sandboxName, gpu) {
     options.push({ key: "nim", label: "Local NIM container (NVIDIA GPU) [experimental]" });
   }
   options.push({ key: "cloud", label: "NVIDIA Cloud API (build.nvidia.com)" });
+  options.push({ key: "baseten", label: "Baseten (inference.baseten.co)" });
   if (EXPERIMENTAL && (hasOllama || ollamaRunning)) {
     options.push({ key: "ollama", label: `Local Ollama (localhost:11434)${ollamaRunning ? " — running" : ""} [experimental]` });
   }
@@ -326,8 +327,22 @@ async function setupNim(sandboxName, gpu) {
       console.log("  ✓ Using existing vLLM on localhost:8000");
       provider = "vllm-local";
       model = "vllm-local";
+    } else if (selected.key === "baseten") {
+      provider = "baseten";
     }
     // else: cloud — fall through to default below
+  }
+
+  if (provider === "baseten") {
+    const envKey = process.env.BASETEN_API_KEY;
+    if (envKey) {
+      console.log(`  Detected BASETEN_API_KEY in environment.`);
+    } else {
+      console.log("  Get an API key from: https://app.baseten.co");
+      process.env.BASETEN_API_KEY = await prompt("  Enter your Baseten API key: ");
+    }
+    model = model || "zai-org/GLM-5";
+    console.log(`  Using Baseten with model: ${model}`);
   }
 
   if (provider === "nvidia-nim") {
@@ -382,6 +397,19 @@ async function setupInference(sandboxName, model, provider) {
     );
     run(
       `openshell inference set --no-verify --provider ollama-local --model ${model} 2>/dev/null || true`,
+      { ignoreError: true }
+    );
+  } else if (provider === "baseten") {
+    run(
+      `openshell provider create --name baseten --type openai ` +
+      `--credential "OPENAI_API_KEY=${process.env.BASETEN_API_KEY}" ` +
+      `--config "OPENAI_BASE_URL=https://inference.baseten.co/v1" 2>&1 || ` +
+      `openshell provider update baseten --credential "OPENAI_API_KEY=${process.env.BASETEN_API_KEY}" ` +
+      `--config "OPENAI_BASE_URL=https://inference.baseten.co/v1" 2>&1 || true`,
+      { ignoreError: true }
+    );
+    run(
+      `openshell inference set --provider baseten --model ${model} 2>/dev/null || true`,
       { ignoreError: true }
     );
   }
@@ -469,6 +497,7 @@ function printDashboard(sandboxName, model, provider) {
   let providerLabel = provider;
   if (provider === "nvidia-nim") providerLabel = "NVIDIA Cloud API";
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
+  else if (provider === "baseten") providerLabel = "Baseten";
 
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
