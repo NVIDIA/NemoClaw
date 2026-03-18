@@ -145,30 +145,39 @@ do_start() {
   # port 18789 to the host so external dashboards (e.g. Mission
   # Control) can connect via WebSocket.
   if command -v openshell > /dev/null 2>&1; then
-    local sandbox
-    sandbox="$(openshell sandbox list --names 2>/dev/null | head -1)"
+    local sandbox gateway_name
+    # Honour explicit sandbox from --sandbox / NEMOCLAW_SANDBOX, else auto-detect
+    if [ "$SANDBOX_NAME" != "default" ]; then
+      sandbox="$SANDBOX_NAME"
+    else
+      sandbox="$(openshell sandbox list --names 2>/dev/null | head -1)"
+    fi
+    gateway_name="$(openshell gateway info 2>/dev/null | grep -oP 'Gateway:\s+\K\S+' || echo 'openshell')"
     if [ -n "$sandbox" ]; then
       local gw_token="${OPENCLAW_GATEWAY_TOKEN:-$(head -c 24 /dev/urandom | xxd -p)}"
+      local proxy_cmd="openshell ssh-proxy --gateway-name $gateway_name --name $sandbox"
 
       # Start gateway inside sandbox (idempotent — skips if already running)
       if ! is_running "openclaw-gateway"; then
         info "Starting OpenClaw gateway inside sandbox '$sandbox'..."
+        # Deliver token via stdin to avoid leaking it in the process list
         start_service openclaw-gateway \
-          ssh -o "ProxyCommand=openshell ssh-proxy --name $sandbox" \
+          bash -c "echo '$gw_token' | ssh -o 'ProxyCommand=$proxy_cmd' \
               -o StrictHostKeyChecking=accept-new \
               -o UserKnownHostsFile=/dev/null \
               -o LogLevel=ERROR \
-              sandbox@"openshell-$sandbox" \
-              "OPENCLAW_GATEWAY_TOKEN=$gw_token openclaw gateway run"
+              sandbox@openshell-$sandbox \
+              'read token && export OPENCLAW_GATEWAY_TOKEN=\$token && exec openclaw gateway run'"
         sleep 5
       fi
 
       # Forward port 18789 from sandbox to host (idempotent)
+      # Bind to loopback only; use cloudflared for external access
       if ! is_running "gateway-forward"; then
         info "Forwarding port $DASHBOARD_PORT from sandbox..."
         start_service gateway-forward \
-          ssh -N -L "0.0.0.0:$DASHBOARD_PORT:127.0.0.1:$DASHBOARD_PORT" \
-              -o "ProxyCommand=openshell ssh-proxy --name $sandbox" \
+          ssh -N -L "127.0.0.1:$DASHBOARD_PORT:127.0.0.1:$DASHBOARD_PORT" \
+              -o "ProxyCommand=$proxy_cmd" \
               -o StrictHostKeyChecking=accept-new \
               -o UserKnownHostsFile=/dev/null \
               -o LogLevel=ERROR \
