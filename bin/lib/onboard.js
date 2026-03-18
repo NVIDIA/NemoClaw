@@ -763,12 +763,19 @@ async function setupInference(sandboxName, model, provider) {
       process.exit(1);
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
+    // OLLAMA_REASONING_EFFORT=none tells the Ollama provider to suppress the
+    // reasoning chain so models write output into `content` (not `reasoning`).
+    // Without this, reasoning models (DeepSeek-R1, Qwen3, Nemotron Nano, …)
+    // produce blank agent responses because OpenClaw only reads `content`.
+    // See: https://github.com/NVIDIA/NemoClaw/issues/247
     run(
       `openshell provider create --name ollama-local --type openai ` +
       `--credential "OPENAI_API_KEY=ollama" ` +
-      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
+      `--config "OPENAI_BASE_URL=${baseUrl}" ` +
+      `--config "OLLAMA_REASONING_EFFORT=none" 2>&1 || ` +
       `openshell provider update ollama-local --credential "OPENAI_API_KEY=ollama" ` +
-      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
+      `--config "OPENAI_BASE_URL=${baseUrl}" ` +
+      `--config "OLLAMA_REASONING_EFFORT=none" 2>&1 || true`,
       { ignoreError: true }
     );
     run(

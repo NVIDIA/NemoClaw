@@ -441,6 +441,22 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
   logger.info("Applying configuration...");
 
   // 7a: Create/update provider
+  //
+  // For Ollama providers, pass OLLAMA_REASONING_EFFORT=none so that reasoning
+  // models (DeepSeek-R1, Qwen3, Nemotron Nano, etc.) write their output into
+  // the standard `content` field rather than the `reasoning` field.  Without
+  // this, OpenClaw reads an empty `content` and renders a blank response.
+  // See: https://github.com/NVIDIA/NemoClaw/issues/247
+  const providerConfig: string[] =
+    endpointType === "ollama"
+      ? [
+          "--config",
+          `OPENAI_BASE_URL=${endpointUrl}`,
+          "--config",
+          "OLLAMA_REASONING_EFFORT=none",
+        ]
+      : ["--config", `OPENAI_BASE_URL=${endpointUrl}`];
+
   try {
     execOpenShell([
       "provider",
@@ -451,8 +467,7 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
       "openai",
       "--credential",
       `${credentialEnv}=${apiKey}`,
-      "--config",
-      `OPENAI_BASE_URL=${endpointUrl}`,
+      ...providerConfig,
     ]);
     logger.info(`Created provider: ${providerName}`);
   } catch (err) {
@@ -466,8 +481,7 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
           providerName,
           "--credential",
           `${credentialEnv}=${apiKey}`,
-          "--config",
-          `OPENAI_BASE_URL=${endpointUrl}`,
+          ...providerConfig,
         ]);
         logger.info(`Updated provider: ${providerName}`);
       } catch (updateErr) {
