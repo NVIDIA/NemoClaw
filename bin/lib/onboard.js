@@ -671,7 +671,6 @@ async function setupNim(sandboxName, gpu) {
       } else {
         model = "nemotron-3-nano";
       }
-      console.log(`  ✓ Using Ollama on localhost:11434 with model: ${model}`);
       provider = "ollama-local";
       if (isNonInteractive()) {
         model = requestedModel || getDefaultOllamaModel(runCapture);
@@ -679,6 +678,7 @@ async function setupNim(sandboxName, gpu) {
         model = await promptOllamaModel();
       }
       model = handleReasoningModel(model);
+      console.log(`  ✓ Using Ollama on localhost:11434 with model: ${model}`);
     } else if (selected.key === "install-ollama") {
       console.log("  Installing Ollama via Homebrew...");
       run("brew install ollama", { ignoreError: true });
