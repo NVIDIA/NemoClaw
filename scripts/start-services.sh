@@ -78,12 +78,25 @@ is_running() {
   local name="$1"
   local pidfile="$PIDDIR/$name.pid"
 
-  # For openclaw-gateway, check the actual port instead of PID.
-  # The SSH session that started the gateway exits after launch,
-  # but the gateway process inside the sandbox stays alive.
+  # For openclaw-gateway, probe inside the sandbox via SSH so the check
+  # is independent of the local port-forward tunnel state.
   if [ "$name" = "openclaw-gateway" ]; then
-    curl -s -o /dev/null -w '' --max-time 2 "http://127.0.0.1:$DASHBOARD_PORT/" 2>/dev/null
-    return $?
+    if command -v openshell > /dev/null 2>&1; then
+      local sandbox gateway_name proxy_cmd
+      sandbox="$(resolve_sandbox)"
+      [ -n "$sandbox" ] || return 1
+      gateway_name="$(openshell gateway info 2>/dev/null | grep -oP 'Gateway:\s+\K\S+' || echo 'openshell')"
+      printf -v proxy_cmd 'openshell ssh-proxy --gateway-name %q --name %q' "$gateway_name" "$sandbox"
+      ssh -o "ProxyCommand=$proxy_cmd" \
+          -o StrictHostKeyChecking=accept-new \
+          -o UserKnownHostsFile="$PIDDIR/openshell-known_hosts" \
+          -o LogLevel=ERROR \
+          -o ConnectTimeout=5 \
+          sandbox@"openshell-$sandbox" \
+          "curl -sf --max-time 2 http://127.0.0.1:$DASHBOARD_PORT/ >/dev/null" 2>/dev/null
+      return $?
+    fi
+    return 1
   fi
 
   if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
@@ -301,13 +314,13 @@ do_start() {
   fi
 
   if is_running openclaw-gateway; then
-    echo "  │  Gateway:     healthy (port $DASHBOARD_PORT)          │"
+    printf "  │  Gateway:     %-40s│\n" "healthy (port $DASHBOARD_PORT)"
   else
-    echo "  │  Gateway:     offline                                 │"
+    printf "  │  Gateway:     %-40s│\n" "offline"
   fi
 
   if is_running gateway-forward; then
-    echo "  │  Port fwd:    $DASHBOARD_PORT → sandbox                      │"
+    printf "  │  Port fwd:    %-40s│\n" "$DASHBOARD_PORT → sandbox"
   fi
 
   if is_running telegram-bridge; then
