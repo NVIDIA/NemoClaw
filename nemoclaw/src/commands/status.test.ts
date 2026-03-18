@@ -16,7 +16,7 @@ vi.mock("node:fs", () => ({
 
 // Mock node:child_process — controls openshell command results
 vi.mock("node:child_process", () => ({
-  exec: vi.fn(),
+  execFile: vi.fn(),
 }));
 
 // Mock state loader — controls plugin state
@@ -26,7 +26,7 @@ vi.mock("../blueprint/state.js", () => ({
 
 // Import after mocks are set up
 const { existsSync } = await import("node:fs");
-const { exec } = await import("node:child_process");
+const { execFile } = await import("node:child_process");
 const { loadState } = await import("../blueprint/state.js");
 const { cliStatus } = await import("./status.js");
 
@@ -82,18 +82,20 @@ function captureLogger(): { lines: string[]; logger: PluginLogger } {
 }
 
 /**
- * Make the exec mock resolve with the given stdout, or reject if error is set.
- * Routes by command substring so sandbox and inference calls can differ.
+ * Make the execFile mock resolve with the given stdout, or reject if error is set.
+ * Routes by argument substring so sandbox and inference calls can differ.
  */
-function mockExec(responses: Record<string, string | Error>): void {
-  vi.mocked(exec).mockImplementation(((
-    cmd: string,
+function mockExecFile(responses: Record<string, string | Error>): void {
+  vi.mocked(execFile).mockImplementation(((
+    _file: string,
+    args: string[],
     _opts: unknown,
     callback?: (err: Error | null, result: { stdout: string; stderr: string }) => void,
   ) => {
-    // promisify(exec)(cmd, opts) calls exec(cmd, opts, callback)
+    // promisify(execFile)(file, args, opts) calls execFile(file, args, opts, callback)
+    const joined = args.join(" ");
     for (const [substring, response] of Object.entries(responses)) {
-      if (cmd.includes(substring)) {
+      if (joined.includes(substring)) {
         if (response instanceof Error) {
           callback?.(response, { stdout: "", stderr: response.message });
         } else {
@@ -103,8 +105,8 @@ function mockExec(responses: Record<string, string | Error>): void {
       }
     }
     // Default: command not found
-    callback?.(new Error(`command not found: ${cmd}`), { stdout: "", stderr: "" });
-  }) as typeof exec);
+    callback?.(new Error(`command not found: ${joined}`), { stdout: "", stderr: "" });
+  }) as typeof execFile);
 }
 
 // ---------------------------------------------------------------------------
@@ -115,7 +117,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(existsSync).mockReturnValue(false);
   vi.mocked(loadState).mockReturnValue(blankState());
-  mockExec({});
+  mockExecFile({});
 });
 
 describe("cliStatus", () => {
@@ -162,7 +164,7 @@ describe("cliStatus", () => {
   // =========================================================================
   describe("host — sandbox running, inference configured", () => {
     beforeEach(() => {
-      mockExec({
+      mockExecFile({
         "sandbox status": JSON.stringify({ state: "running", uptime: "2h 14m" }),
         "inference get": JSON.stringify({
           provider: "nvidia",
@@ -216,7 +218,7 @@ describe("cliStatus", () => {
   // =========================================================================
   describe("host — sandbox running, no inference", () => {
     beforeEach(() => {
-      mockExec({
+      mockExecFile({
         "sandbox status": JSON.stringify({ state: "running", uptime: "45m 12s" }),
         "inference get": new Error("no inference configured"),
       });
@@ -291,7 +293,7 @@ describe("cliStatus", () => {
 
       await cliStatus({ json: false, logger, pluginConfig: defaultConfig });
 
-      expect(exec).not.toHaveBeenCalled();
+      expect(execFile).not.toHaveBeenCalled();
     });
 
     it("JSON output has insideSandbox: true everywhere", async () => {
@@ -367,7 +369,7 @@ describe("cliStatus", () => {
         ...blankState(),
         sandboxName: "custom-sandbox",
       });
-      mockExec({
+      mockExecFile({
         "sandbox status": JSON.stringify({ state: "running", uptime: "1m" }),
         "inference get": new Error("not configured"),
       });
@@ -378,16 +380,17 @@ describe("cliStatus", () => {
       const output = lines.join("\n");
       expect(output).toContain("Name:    custom-sandbox");
 
-      // Verify the exec call used the custom sandbox name
-      expect(exec).toHaveBeenCalledWith(
-        expect.stringContaining("custom-sandbox"),
+      // Verify the execFile call used the custom sandbox name
+      expect(execFile).toHaveBeenCalledWith(
+        "openshell",
+        expect.arrayContaining(["custom-sandbox"]),
         expect.anything(),
         expect.anything(),
       );
     });
 
     it("defaults sandbox name to 'openclaw' when state has none", async () => {
-      mockExec({
+      mockExecFile({
         "sandbox status": new Error("not found"),
         "inference get": new Error("not configured"),
       });
@@ -395,9 +398,10 @@ describe("cliStatus", () => {
       const { lines, logger } = captureLogger();
       await cliStatus({ json: true, logger, pluginConfig: defaultConfig });
 
-      // Verify exec was called with default name
-      expect(exec).toHaveBeenCalledWith(
-        expect.stringContaining("openclaw"),
+      // Verify execFile was called with default name
+      expect(execFile).toHaveBeenCalledWith(
+        "openshell",
+        expect.arrayContaining(["openclaw"]),
         expect.anything(),
         expect.anything(),
       );
@@ -428,7 +432,7 @@ describe("cliStatus", () => {
     });
 
     it("handles sandbox running but with missing uptime field", async () => {
-      mockExec({
+      mockExecFile({
         "sandbox status": JSON.stringify({ state: "running" }),
         "inference get": new Error("not configured"),
       });

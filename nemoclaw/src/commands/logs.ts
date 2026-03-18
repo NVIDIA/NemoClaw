@@ -5,12 +5,12 @@
  * `openclaw nemoclaw logs` — stream or tail blueprint execution and sandbox logs.
  */
 
-import { exec, spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import type { PluginLogger, NemoClawConfig } from "../index.js";
 import { loadState } from "../blueprint/state.js";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface LogsOptions {
   follow: boolean;
@@ -61,9 +61,11 @@ export async function cliLogs(opts: LogsOptions): Promise<void> {
 
 async function isSandboxRunning(sandboxName: string): Promise<boolean> {
   try {
-    const { stdout } = await execAsync(`openshell sandbox get ${sandboxName} --json`, {
-      timeout: 5000,
-    });
+    const { stdout } = await execFileAsync(
+      "openshell",
+      ["sandbox", "get", sandboxName, "--json"],
+      { timeout: 5000 },
+    );
     const parsed = JSON.parse(stdout) as { state?: string };
     return parsed.state === "running";
   } catch {
