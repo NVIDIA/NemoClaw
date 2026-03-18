@@ -11,13 +11,26 @@ network_policies:
     endpoints:
       - host: proxy.golang.org
         port: 443
-        access: full
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
       - host: sum.golang.org
         port: 443
-        access: full
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+      # Module archives are served from Google Cloud Storage
       - host: storage.googleapis.com
         port: 443
-        access: full
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/golang/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/go/bin/go }
