@@ -112,7 +112,7 @@ function detectGpu(opts) {
             type: "apple",
             name,
             count: 1,
-            cores: coresMatch ? parseInt(coresMatch[1], 10) : null,
+            ...(coresMatch ? { cores: parseInt(coresMatch[1], 10) } : {}),
             totalMemoryMB: memoryMB,
             perGpuMB: memoryMB,
             nimCapable: false,
