@@ -9,7 +9,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,8 +16,10 @@ concurrency:
 
 jobs:
   check-pr-limit:
-    if: github.event.action == 'opened'
+    if: github.event.action == 'opened' || github.event.action == 'reopened'
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
     timeout-minutes: 5
     steps:
       - name: Check open PR count for author
