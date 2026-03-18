@@ -81,9 +81,9 @@ describe("sandbox readiness parsing", () => {
   });
 });
 
-// Regression tests for issue #21: WSL truncates hyphenated sandbox names
-// during shell argument parsing (e.g. "my-assistant" → "m").
-describe("WSL sandbox name handling (issue #21)", () => {
+// Regression tests: WSL truncates hyphenated sandbox names during shell
+// argument parsing (e.g. "my-assistant" → "m").
+describe("WSL sandbox name handling", () => {
   it("buildPolicySetCommand preserves hyphenated sandbox name", () => {
     const cmd = buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
     assert.ok(cmd.includes('"my-assistant"'), `Expected quoted name in: ${cmd}`);
