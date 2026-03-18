@@ -9,20 +9,26 @@ import path from "node:path";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 
-function run(args) {
-  return runWithEnv(args);
+function run(args, env = {}) {
+  return runWithEnv(args, env);
 }
 
 function runWithEnv(args, env = {}, timeout = 10000) {
+  const createdHome = !env.HOME;
+  const home = env.HOME || fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-"));
   try {
     const out = execSync(`node "${CLI}" ${args}`, {
       encoding: "utf-8",
       timeout,
-      env: { ...process.env, HOME: "/tmp/nemoclaw-cli-test-" + Date.now(), ...env },
+      env: { ...process.env, ...env, HOME: home },
     });
-    return { code: 0, out };
+    return { code: 0, out, home };
   } catch (err) {
-    return { code: err.status, out: (err.stdout || "") + (err.stderr || "") };
+    return { code: err.status, out: (err.stdout || "") + (err.stderr || ""), home };
+  } finally {
+    if (createdHome) {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   }
 }
 
@@ -97,49 +103,59 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("nemoclaw debug")).toBeTruthy();
   });
 
-  it("passes --follow through to openshell logs", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-follow-"));
-    const localBin = path.join(home, "bin");
-    const registryDir = path.join(home, ".nemoclaw");
-    const markerFile = path.join(home, "logs-args");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          alpha: {
-            name: "alpha",
-            model: "test-model",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
-            policies: [],
+  it("logs dispatch uses openshell logs with tail follow mode", () => {
+    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-bin-"));
+    const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-home-"));
+    const fakeOpenShell = path.join(fakeBin, "openshell");
+    const registryDir = path.join(fakeHome, ".nemoclaw");
+
+    try {
+      fs.writeFileSync(
+        fakeOpenShell,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HOME/openshell-args.txt\"\n",
+        { mode: 0o755 },
+      );
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            "my-assistant": {
+              name: "my-assistant",
+              model: "test-model",
+              provider: "nvidia-nim",
+              gpuEnabled: false,
+              policies: [],
+            },
           },
-        },
-        defaultSandbox: "alpha",
-      }),
-      { mode: 0o600 }
-    );
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        `marker_file=${JSON.stringify(markerFile)}`,
-        "printf '%s ' \"$@\" > \"$marker_file\"",
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 }
-    );
+          defaultSandbox: "my-assistant",
+        }),
+      );
 
-    const r = runWithEnv("alpha logs --follow", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
+      const r = runWithEnv("my-assistant logs --follow", {
+        HOME: fakeHome,
+        PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
+      });
 
-    expect(r.code).toBe(0);
-    expect(fs.readFileSync(markerFile, "utf8")).toContain("logs alpha --follow");
+      expect(r.code).toBe(0);
+      const args = fs
+        .readFileSync(path.join(fakeHome, "openshell-args.txt"), "utf-8")
+        .trim()
+        .split("\n");
+      expect(args).toEqual(["logs", "my-assistant", "--tail"]);
+    } finally {
+      fs.rmSync(fakeBin, { recursive: true, force: true });
+      fs.rmSync(fakeHome, { recursive: true, force: true });
+    }
   });
 
+  it("cleans up internally-created HOME directories after each run", () => {
+    const r = run("help");
+    expect(r.code).toBe(0);
+    expect(r.home).toBeTruthy();
+    expect(fs.existsSync(r.home)).toBe(false);
+  });
+});
   it("removes stale registry entries when connect targets a missing live sandbox", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-stale-connect-"));
     const localBin = path.join(home, "bin");
