@@ -339,7 +339,12 @@ async function setupNim(sandboxName, gpu) {
       console.log(`  Detected BASETEN_API_KEY in environment.`);
     } else {
       console.log("  Get an API key from: https://app.baseten.co");
-      process.env.BASETEN_API_KEY = await prompt("  Enter your Baseten API key: ");
+      const enteredKey = (await prompt("  Enter your Baseten API key: ")).trim();
+      if (!enteredKey) {
+        console.error("  BASETEN_API_KEY is required for Baseten provider.");
+        process.exit(1);
+      }
+      process.env.BASETEN_API_KEY = enteredKey;
     }
     model = model || "zai-org/GLM-5";
     console.log(`  Using Baseten with model: ${model}`);
@@ -400,11 +405,13 @@ async function setupInference(sandboxName, model, provider) {
       { ignoreError: true }
     );
   } else if (provider === "baseten") {
+    const shellEscape = (v) => String(v ?? "").replace(/(["\\$`])/g, "\\$1");
+    const basetenApiKey = shellEscape(process.env.BASETEN_API_KEY);
     run(
       `openshell provider create --name baseten --type openai ` +
-      `--credential "OPENAI_API_KEY=${process.env.BASETEN_API_KEY}" ` +
+      `--credential "OPENAI_API_KEY=${basetenApiKey}" ` +
       `--config "OPENAI_BASE_URL=https://inference.baseten.co/v1" 2>&1 || ` +
-      `openshell provider update baseten --credential "OPENAI_API_KEY=${process.env.BASETEN_API_KEY}" ` +
+      `openshell provider update baseten --credential "OPENAI_API_KEY=${basetenApiKey}" ` +
       `--config "OPENAI_BASE_URL=https://inference.baseten.co/v1" 2>&1 || true`,
       { ignoreError: true }
     );

@@ -23,7 +23,7 @@ export interface OnboardOptions {
 }
 
 const ENDPOINT_TYPES: EndpointType[] = ["build", "ncp", "nim-local", "vllm", "ollama", "baseten", "custom"];
-const SUPPORTED_ENDPOINT_TYPES: EndpointType[] = ["build", "ncp"];
+const SUPPORTED_ENDPOINT_TYPES: EndpointType[] = ["build", "ncp", "baseten"];
 
 function isExperimentalEnabled(): boolean {
   return process.env.NEMOCLAW_EXPERIMENTAL === "1";
