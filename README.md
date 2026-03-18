@@ -23,7 +23,7 @@ NVIDIA NemoClaw is an open source stack that simplifies running [OpenClaw](https
 Follow these steps to get started with NemoClaw and your first sandboxed OpenClaw agent.
 
 > [!NOTE]
-> NemoClaw currently requires a fresh installation of OpenClaw.
+> NemoClaw creates a fresh OpenClaw instance inside the sandbox during onboarding.
 
 <!-- start-quickstart-guide -->
 
@@ -167,7 +167,6 @@ Run these on the host to set up, connect to, and manage sandboxes.
 | Command                              | Description                                            |
 |--------------------------------------|--------------------------------------------------------|
 | `nemoclaw onboard`                  | Interactive setup wizard: gateway, providers, sandbox. |
-| `nemoclaw deploy <instance>` (**experimental**)         | Deploy to a remote GPU instance through Brev.          |
 | `nemoclaw <name> connect`            | Open an interactive shell inside the sandbox.          |
 | `openshell term`                     | Launch the OpenShell TUI for monitoring and approvals. |
 | `nemoclaw start` / `stop` / `status` | Manage auxiliary services (Telegram bridge, tunnel).   |
