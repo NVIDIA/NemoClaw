@@ -40,7 +40,15 @@ info "Installing openshell CLI..."
 case "$OS" in
   Darwin)
     case "$ARCH_LABEL" in
-      x86_64)  ASSET="openshell-x86_64-apple-darwin.tar.gz" ;;
+      x86_64)
+        # No macOS x86_64 binary is published; check if this is Rosetta on Apple Silicon
+        if [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = "1" ]; then
+          ASSET="openshell-aarch64-apple-darwin.tar.gz"
+          info "Rosetta detected on Apple Silicon; using native ARM64 binary"
+        else
+          fail "Unsupported platform: macOS Intel (x86_64). OpenShell requires Apple Silicon."
+        fi
+        ;;
       aarch64) ASSET="openshell-aarch64-apple-darwin.tar.gz" ;;
     esac
     ;;
@@ -59,12 +67,69 @@ if command -v gh > /dev/null 2>&1; then
   GH_TOKEN="${GITHUB_TOKEN:-}" gh release download --repo NVIDIA/OpenShell \
     --pattern "$ASSET" --dir "$tmpdir"
 else
-  curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/latest/download/$ASSET" \
-    -o "$tmpdir/$ASSET"
+  if ! curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/latest/download/$ASSET" \
+    -o "$tmpdir/$ASSET" 2>"$tmpdir/curl.err"; then
+    printf "Failed to download openshell from GitHub:\n" >&2
+    cat "$tmpdir/curl.err" >&2
+    fail "Could not download $ASSET"
+  fi
 fi
 
-tar xzf "$tmpdir/$ASSET" -C "$tmpdir"
+# Validate the downloaded file is actually a gzip tarball
+if ! file "$tmpdir/$ASSET" 2>/dev/null | grep -q "gzip compressed data"; then
+  fail "Downloaded file is not a valid gzip tarball. GitHub may be unavailable or the release may be missing."
+fi
 
+# Try to download and verify checksum if available
+# OpenShell publishes checksums as openshell-checksums-sha256.txt
+CHECKSUM_FILE=""
+for _ckname in openshell-checksums-sha256.txt SHA256SUMS; do
+  _ckurl="https://github.com/NVIDIA/OpenShell/releases/latest/download/$_ckname"
+  if curl -fsSL "$_ckurl" -o "$tmpdir/checksums.txt" 2>/dev/null; then
+    CHECKSUM_FILE="$tmpdir/checksums.txt"
+    break
+  fi
+done
+
+if [ -n "$CHECKSUM_FILE" ]; then
+  if ! grep -qF "$ASSET" "$CHECKSUM_FILE"; then
+    if [ "${NEMOCLAW_ALLOW_UNVERIFIED:-0}" = "1" ]; then
+      warn "Checksum not found for $ASSET; continuing due to NEMOCLAW_ALLOW_UNVERIFIED=1"
+    else
+      fail "Checksum not found for $ASSET in checksum file. Set NEMOCLAW_ALLOW_UNVERIFIED=1 to bypass."
+    fi
+  else
+    if ! (cd "$tmpdir" && grep -F "$ASSET" checksums.txt | shasum -a 256 -c -s); then
+      fail "Checksum verification failed for $ASSET. File may be corrupted or tampered with."
+    fi
+    info "Checksum verified"
+  fi
+else
+  if [ "${NEMOCLAW_ALLOW_UNVERIFIED:-0}" = "1" ]; then
+    warn "No checksum file available; continuing due to NEMOCLAW_ALLOW_UNVERIFIED=1"
+  else
+    fail "No checksum file available for verification. Set NEMOCLAW_ALLOW_UNVERIFIED=1 to bypass."
+  fi
+fi
+
+# Extract tarball
+if ! tar xzf "$tmpdir/$ASSET" -C "$tmpdir" --no-same-owner 2>"$tmpdir/tar.err"; then
+  printf "Failed to extract tarball:\n" >&2
+  cat "$tmpdir/tar.err" >&2
+  fail "Could not extract $ASSET"
+fi
+
+# Verify the binary was extracted
+if [ ! -f "$tmpdir/openshell" ]; then
+  fail "Extracted tarball but openshell binary not found"
+fi
+
+# Verify it's an executable
+if ! file "$tmpdir/openshell" | grep -qE "executable|Mach-O|ELF"; then
+  fail "Extracted file is not a valid executable"
+fi
+
+# Install: prefer /usr/local/bin, fall back to user-local in non-interactive mode
 target_dir="/usr/local/bin"
 
 if [ -w "$target_dir" ]; then
