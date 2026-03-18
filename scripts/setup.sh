@@ -88,6 +88,17 @@ for i in 1 2 3 4 5; do
 done
 info "Gateway is healthy"
 
+# 1b. WSL2 GPU fix — CDI mode + libdxcore.so + node label
+if [ -c /dev/dxg ] && command -v nvidia-smi > /dev/null 2>&1; then
+  info "WSL2 detected — applying GPU CDI fixes..."
+  WSL2_FIX="${REPO_DIR}/wsl2-gpu-fix.sh"
+  if [ -x "$WSL2_FIX" ]; then
+    bash "$WSL2_FIX" nemoclaw
+  else
+    warn "wsl2-gpu-fix.sh not found at $WSL2_FIX — GPU sandbox may fail on WSL2"
+  fi
+fi
+
 # 2. CoreDNS fix (Colima only)
 if [ -S "$HOME/.colima/default/docker.sock" ]; then
   info "Patching CoreDNS for Colima..."
@@ -113,19 +124,24 @@ if curl -s http://localhost:8000/v1/models > /dev/null 2>&1 || python3 -c "impor
     "OPENAI_BASE_URL=http://host.openshell.internal:8000/v1"
 fi
 
-# 4a. Ollama (macOS local inference)
-if [ "$(uname -s)" = "Darwin" ]; then
-  if ! command -v ollama > /dev/null 2>&1; then
-    info "Installing Ollama..."
-    brew install ollama 2>/dev/null || warn "Ollama install failed (brew required). Install manually: https://ollama.com"
+# 4a. Ollama (local inference — macOS or Linux)
+if command -v ollama > /dev/null 2>&1 || curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+  if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+    info "Starting Ollama service..."
+    OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &
+    sleep 2
   fi
+  upsert_provider \
+    "ollama-local" \
+    "openai" \
+    "OPENAI_API_KEY=ollama" \
+    "OPENAI_BASE_URL=http://host.openshell.internal:11434/v1"
+elif [ "$(uname -s)" = "Darwin" ] && ! command -v ollama > /dev/null 2>&1; then
+  info "Installing Ollama..."
+  brew install ollama 2>/dev/null || warn "Ollama install failed. Install manually: https://ollama.com"
   if command -v ollama > /dev/null 2>&1; then
-    # Start Ollama service if not running
-    if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
-      info "Starting Ollama service..."
-      OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &
-      sleep 2
-    fi
+    OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &
+    sleep 2
     upsert_provider \
       "ollama-local" \
       "openai" \
