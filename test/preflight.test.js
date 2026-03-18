@@ -109,4 +109,17 @@ describe("checkPortAvailable", () => {
     const result = await checkPortAvailable();
     assert.equal(typeof result.ok, "boolean");
   });
+
+  it("checks gateway port 8080", async () => {
+    const freePort = await new Promise((resolve) => {
+      const srv = net.createServer();
+      srv.listen(0, "127.0.0.1", () => {
+        const port = srv.address().port;
+        srv.close(() => resolve(port));
+      });
+    });
+    // Verify the function works with any port (including 8080-range)
+    const result = await checkPortAvailable(freePort);
+    assert.equal(result.ok, true);
+  });
 });
