@@ -22,7 +22,7 @@ export interface OnboardOptions {
   pluginConfig: NemoClawConfig;
 }
 
-const ENDPOINT_TYPES: EndpointType[] = ["build", "ncp", "nim-local", "vllm", "ollama", "custom"];
+const ENDPOINT_TYPES: EndpointType[] = ["build", "ncp", "nim-local", "vllm", "ollama", "baseten", "custom"];
 const SUPPORTED_ENDPOINT_TYPES: EndpointType[] = ["build", "ncp"];
 
 function isExperimentalEnabled(): boolean {
@@ -52,6 +52,8 @@ function resolveProfile(endpointType: EndpointType): string {
       return "vllm";
     case "ollama":
       return "ollama";
+    case "baseten":
+      return "baseten";
   }
 }
 
@@ -68,6 +70,8 @@ function resolveProviderName(endpointType: EndpointType): string {
       return "vllm-local";
     case "ollama":
       return "ollama-local";
+    case "baseten":
+      return "baseten";
   }
 }
 
@@ -82,6 +86,8 @@ function resolveCredentialEnv(endpointType: EndpointType): string {
     case "vllm":
     case "ollama":
       return "OPENAI_API_KEY";
+    case "baseten":
+      return "BASETEN_API_KEY";
   }
 }
 
@@ -99,6 +105,7 @@ function endpointRequiresApiKey(endpointType: EndpointType): boolean {
     endpointType === "build" ||
     endpointType === "ncp" ||
     endpointType === "nim-local" ||
+    endpointType === "baseten" ||
     endpointType === "custom"
   );
 }
@@ -153,6 +160,11 @@ async function promptEndpoint(
       label: "NVIDIA Cloud Partner (NCP)",
       value: "ncp",
       hint: "dedicated capacity, SLA-backed",
+    },
+    {
+      label: "Baseten",
+      value: "baseten",
+      hint: "third-party — inference.baseten.co",
     },
   ];
 
@@ -261,6 +273,9 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
     case "ollama":
       endpointUrl = opts.endpointUrl ?? `${HOST_GATEWAY_URL}:11434/v1`;
       break;
+    case "baseten":
+      endpointUrl = "https://inference.baseten.co/v1";
+      break;
     case "custom":
       endpointUrl = opts.endpointUrl ?? (await promptInput("Custom endpoint URL"));
       break;
@@ -280,14 +295,17 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
     if (opts.apiKey) {
       apiKey = opts.apiKey;
     } else {
-      const envKey = process.env.NVIDIA_API_KEY;
+      const isBaseten = endpointType === "baseten";
+      const envKey = isBaseten ? process.env.BASETEN_API_KEY : process.env.NVIDIA_API_KEY;
+      const envKeyName = isBaseten ? "BASETEN_API_KEY" : "NVIDIA_API_KEY";
+      const keySource = isBaseten ? "https://app.baseten.co" : "https://build.nvidia.com/settings/api-keys";
       if (envKey) {
-        logger.info(`Detected NVIDIA_API_KEY in environment (${maskApiKey(envKey)})`);
+        logger.info(`Detected ${envKeyName} in environment (${maskApiKey(envKey)})`);
         const useEnv = nonInteractive ? true : await promptConfirm("Use this key?");
-        apiKey = useEnv ? envKey : await promptInput("Enter your NVIDIA API key");
+        apiKey = useEnv ? envKey : await promptInput(`Enter your ${envKeyName}`);
       } else {
-        logger.info("Get an API key from: https://build.nvidia.com/settings/api-keys");
-        apiKey = await promptInput("Enter your NVIDIA API key");
+        logger.info(`Get an API key from: ${keySource}`);
+        apiKey = await promptInput(`Enter your ${envKeyName}`);
       }
     }
   } else {
