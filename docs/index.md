@@ -52,6 +52,25 @@ Install the CLI and launch a sandboxed OpenClaw instance in a few commands.
   gap: 7px;
   align-items: center;
 }
+.nc-copy-btn { 
+  margin-left: auto; 
+  position: relative; 
+  background: none; 
+  border: 0; 
+  color: #8a8aa3; 
+  cursor: pointer; 
+  padding: 4px;
+  line-height: 0;
+}
+.nc-copy-btn:hover, .nc-copy-btn.copied { color: #76b900; }
+.nc-copy-btn svg { width: 16px; height: 16px; fill: currentColor; }
+.nc-copy-btn.copied::after { 
+  content: 'Copied'; 
+  position: absolute; 
+  right: 100%; 
+  top: 50%; 
+  font-size: 11px; 
+}
 .nc-term-dot { width: 12px; height: 12px; border-radius: 50%; }
 .nc-term-dot-r { background: #ff5f56; }
 .nc-term-dot-y { background: #ffbd2e; }
@@ -75,9 +94,24 @@ Install the CLI and launch a sandboxed OpenClaw instance in a few commands.
     <span class="nc-term-dot nc-term-dot-r"></span>
     <span class="nc-term-dot nc-term-dot-y"></span>
     <span class="nc-term-dot nc-term-dot-g"></span>
+    <button
+      class="nc-copy-btn"
+      type="button"
+      aria-label="Copy install command"
+      title="Copy"
+      onclick="
+        navigator.clipboard.writeText(this.closest('.nc-term').querySelector('.nc-cmd').textContent);
+        this.classList.add('copied');
+        setTimeout(() => this.classList.remove('copied'), 1200);
+      "
+    >
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <path fill-rule="evenodd" d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h1v1a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1v1z"/>
+      </svg>
+    </button>
   </div>
   <div class="nc-term-body">
-    <div><span class="nc-ps">$ </span>curl -fsSL https://nvidia.com/nemoclaw.sh | bash</div>
+    <div><span class="nc-ps">$ </span><span class="nc-cmd">curl -fsSL https://nvidia.com/nemoclaw.sh | bash</span></div>
   </div>
 </div>
 ```
