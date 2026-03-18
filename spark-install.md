@@ -143,7 +143,7 @@ cmake --build build --config Release -j$(nproc)
 
 Then configure your sandbox to use the local model by updating `~/.openclaw/openclaw.json` inside the sandbox with the local provider URL.
 
-> **Note**: NIM containers for most models are amd64-only and will not run on the Spark's aarch64 architecture. Use GGUF models with llama.cpp instead.
+> **Note**: Some NIM containers (e.g., Nemotron-3-Super-120B-A12B) ship native arm64 images and run on the Spark. However, many NIM images are amd64-only and will fail with `exec format error`. Check the image architecture before pulling. GGUF models with llama.cpp are a reliable alternative for models without arm64 NIM support.
 
 ## Architecture Notes
 
