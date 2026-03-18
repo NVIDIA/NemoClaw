@@ -3,7 +3,8 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { NemoClawState } from "../blueprint/state.js";
-import type { PluginLogger, NemoClawConfig } from "../index.js";
+import type { NemoClawConfig } from "../index.js";
+import { captureLogger, mockSpawnProc } from "../test-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -47,19 +48,6 @@ const defaultConfig: NemoClawConfig = {
   inferenceProvider: "nvidia",
 };
 
-function captureLogger(): { lines: string[]; logger: PluginLogger } {
-  const lines: string[] = [];
-  return {
-    lines,
-    logger: {
-      info: (msg: string) => lines.push(msg),
-      warn: (msg: string) => lines.push(`WARN: ${msg}`),
-      error: (msg: string) => lines.push(`ERROR: ${msg}`),
-      debug: (_msg: string) => {},
-    },
-  };
-}
-
 /**
  * Make the exec mock resolve with the given stdout, or reject if error is set.
  * Routes by command substring.
@@ -85,33 +73,6 @@ function mockExec(responses: Record<string, string | Error>): void {
 }
 
 /** Create a mock spawn that emits events. */
-function mockSpawnProc(exitCode: number | null = 0, error?: Error) {
-  const handlers: Record<string, ((...args: unknown[]) => void)[]> = {};
-  const proc = {
-    on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
-      if (!handlers[event]) handlers[event] = [];
-      handlers[event].push(handler);
-      return proc;
-    }),
-    emit: (event: string, ...args: unknown[]) => {
-      for (const h of handlers[event] ?? []) h(...args);
-    },
-  };
-
-  vi.mocked(spawn).mockReturnValue(proc as never);
-
-  // Schedule events asynchronously so the promise in cliLogs can attach listeners
-  setTimeout(() => {
-    if (error) {
-      proc.emit("error", error);
-    } else {
-      proc.emit("close", exitCode);
-    }
-  }, 0);
-
-  return proc;
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -149,7 +110,7 @@ describe("cliLogs", () => {
       mockExec({
         "sandbox get": JSON.stringify({ state: "running" }),
       });
-      mockSpawnProc(0);
+      mockSpawnProc(vi.mocked(spawn), 0);
 
       const { logger } = captureLogger();
       await cliLogs({
@@ -171,7 +132,7 @@ describe("cliLogs", () => {
       mockExec({
         "sandbox get": JSON.stringify({ state: "running" }),
       });
-      mockSpawnProc(0);
+      mockSpawnProc(vi.mocked(spawn), 0);
 
       const { logger } = captureLogger();
       await cliLogs({
@@ -193,7 +154,7 @@ describe("cliLogs", () => {
       mockExec({
         "sandbox get": JSON.stringify({ state: "running" }),
       });
-      mockSpawnProc(0);
+      mockSpawnProc(vi.mocked(spawn), 0);
 
       const { logger } = captureLogger();
       await cliLogs({
@@ -286,7 +247,7 @@ describe("cliLogs", () => {
       mockExec({
         "sandbox get": JSON.stringify({ state: "running" }),
       });
-      mockSpawnProc(0);
+      mockSpawnProc(vi.mocked(spawn), 0);
 
       const { logger } = captureLogger();
       await cliLogs({
@@ -309,7 +270,7 @@ describe("cliLogs", () => {
       mockExec({
         "sandbox get": JSON.stringify({ state: "running" }),
       });
-      mockSpawnProc(null, new Error("ENOENT: openshell not found"));
+      mockSpawnProc(vi.mocked(spawn), null, new Error("ENOENT: openshell not found"));
 
       const { lines, logger } = captureLogger();
       await cliLogs({
