@@ -13,6 +13,61 @@ const policies = require("./policies");
 const HOST_GATEWAY_URL = "http://host.openshell.internal";
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 
+// Known Ollama reasoning models that put output into the `reasoning` field
+// instead of `content`, causing blank responses in OpenClaw.
+// See: https://github.com/NVIDIA/NemoClaw/issues/246
+const KNOWN_REASONING_MODEL_PATTERNS = [
+  /^nemotron.*nano/i,
+  /^deepseek-r1/i,
+  /^qwq/i,
+];
+
+/**
+ * Check if a model name matches a known reasoning model pattern.
+ */
+function isReasoningModel(modelName) {
+  return KNOWN_REASONING_MODEL_PATTERNS.some((pattern) => pattern.test(modelName));
+}
+
+/**
+ * List models available in the local Ollama instance.
+ * Returns an array of model name strings.
+ */
+function listOllamaModels() {
+  try {
+    const raw = runCapture("curl -sf http://localhost:11434/api/tags", { ignoreError: true });
+    if (!raw) return [];
+    const data = JSON.parse(raw);
+    return (data.models || []).map((m) => m.name);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Create a non-reasoning (chat-only) variant of an Ollama reasoning model.
+ * This works by creating a new model with `PARAMETER num_predict -1` and no
+ * system prompt changes — the key is using `ollama create` with a Modelfile
+ * that wraps the base model but doesn't trigger reasoning mode.
+ *
+ * Returns the name of the created variant, or null on failure.
+ */
+function createChatVariant(baseModel) {
+  const variantName = baseModel.replace(/:.*$/, "") + "-chat";
+  try {
+    // Use heredoc-style Modelfile via stdin
+    const modelfile = `FROM ${baseModel}`;
+    require("child_process").execSync(
+      `echo '${modelfile}' | ollama create ${variantName}`,
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 120000 }
+    );
+    return variantName;
+  } catch (err) {
+    console.log(`  ⚠ Could not create chat variant '${variantName}': ${err.message || err}`);
+    return null;
+  }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────
 
 function step(n, total, msg) {
@@ -234,7 +289,26 @@ async function setupNim(sandboxName, gpu) {
     if (ollamaRunning) {
       console.log("  ✓ Ollama detected on localhost:11434 — using it [experimental]");
       provider = "ollama-local";
-      model = "nemotron-3-nano";
+      // List available models and prefer a non-reasoning one
+      const ollamaModels = listOllamaModels();
+      if (ollamaModels.length > 0) {
+        // Pick first non-reasoning model, or fall back to first available
+        const nonReasoning = ollamaModels.find((m) => !isReasoningModel(m));
+        model = nonReasoning || ollamaModels[0];
+        if (!nonReasoning && isReasoningModel(model)) {
+          console.log(`  ⚠ '${model}' is a reasoning model — responses may appear blank.`);
+          console.log("  Creating a non-reasoning chat variant...");
+          const variant = createChatVariant(model);
+          if (variant) {
+            console.log(`  ✓ Created '${variant}' — using it instead.`);
+            model = variant;
+          } else {
+            console.log("  ⚠ Continuing with reasoning model. See issue #246 for workaround.");
+          }
+        }
+      } else {
+        model = "nemotron-3-nano";
+      }
       registry.updateSandbox(sandboxName, { model, provider, nimContainer });
       return { model, provider };
     }
@@ -312,7 +386,35 @@ async function setupNim(sandboxName, gpu) {
       }
       console.log("  ✓ Using Ollama on localhost:11434");
       provider = "ollama-local";
-      model = "nemotron-3-nano";
+      // List available models and let user choose, with reasoning model detection
+      const ollamaModels = listOllamaModels();
+      if (ollamaModels.length > 0) {
+        console.log("");
+        console.log("  Available Ollama models:");
+        ollamaModels.forEach((m, i) => {
+          const warning = isReasoningModel(m) ? " ⚠ reasoning" : "";
+          console.log(`    ${i + 1}) ${m}${warning}`);
+        });
+        console.log("");
+        const modelChoice = await prompt(`  Choose model [1]: `);
+        const midx = parseInt(modelChoice || "1", 10) - 1;
+        model = ollamaModels[midx] || ollamaModels[0];
+        if (isReasoningModel(model)) {
+          console.log(`  ⚠ '${model}' is a reasoning model that may produce blank responses.`);
+          console.log("  Creating a non-reasoning chat variant...");
+          const variant = createChatVariant(model);
+          if (variant) {
+            console.log(`  ✓ Created '${variant}' — using it instead.`);
+            model = variant;
+          } else {
+            console.log("  ⚠ Continuing with reasoning model. See issue #246 for workaround.");
+          }
+        }
+      } else {
+        model = "nemotron-3-nano";
+        console.log("  No models found locally. Defaulting to nemotron-3-nano.");
+        console.log("  Pull it with: ollama pull nemotron-3-nano");
+      }
     } else if (selected.key === "install-ollama") {
       console.log("  Installing Ollama via Homebrew...");
       run("brew install ollama", { ignoreError: true });
@@ -321,7 +423,9 @@ async function setupNim(sandboxName, gpu) {
       require("child_process").spawnSync("sleep", ["2"]);
       console.log("  ✓ Using Ollama on localhost:11434");
       provider = "ollama-local";
+      // Fresh install — no models available yet, suggest pulling one
       model = "nemotron-3-nano";
+      console.log("  Note: You'll need to pull a model. Run: ollama pull nemotron-3-nano");
     } else if (selected.key === "vllm") {
       console.log("  ✓ Using existing vLLM on localhost:8000");
       provider = "vllm-local";

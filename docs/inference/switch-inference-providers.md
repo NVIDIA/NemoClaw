@@ -67,6 +67,32 @@ You can switch to any of these models at runtime.
 | `nvidia/llama-3.3-nemotron-super-49b-v1.5` | Nemotron Super 49B v1.5 | 131,072 | 4,096 |
 | `nvidia/nemotron-3-nano-30b-a3b` | Nemotron 3 Nano 30B | 131,072 | 4,096 |
 
+## Ollama Reasoning Models {: #ollama-reasoning-models }
+
+!!! warning "Reasoning models may produce blank responses on Ollama"
+
+    Some Ollama models (e.g., `nemotron-3-nano`, `deepseek-r1`, `qwq`) are
+    **reasoning models** that put their output into a `reasoning` field instead
+    of `content` in the OpenAI-compatible API response. OpenClaw reads the
+    `content` field, so the agent's response appears blank.
+
+### Workaround
+
+Create a non-reasoning chat variant of the model:
+
+```console
+$ echo "FROM nemotron-3-nano:30b" | ollama create nemotron-nano-chat
+```
+
+Then set the inference model to the new variant:
+
+```console
+$ openshell inference set --no-verify --provider ollama-local --model nemotron-nano-chat
+```
+
+The `nemoclaw onboard` command detects reasoning models automatically and
+offers to create a chat variant during setup.
+
 ## Related Topics
 
 - [Inference Profiles](../reference/inference-profiles.md) for full profile configuration details.

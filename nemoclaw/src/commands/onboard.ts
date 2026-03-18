@@ -12,6 +12,67 @@ import {
 import { promptInput, promptConfirm, promptSelect } from "../onboard/prompt.js";
 import { validateApiKey, maskApiKey } from "../onboard/validate.js";
 
+// Known Ollama reasoning models that put output into the `reasoning` field
+// instead of `content`, causing blank responses in OpenClaw.
+// See: https://github.com/NVIDIA/NemoClaw/issues/246
+const KNOWN_REASONING_MODEL_PATTERNS: RegExp[] = [
+  /^nemotron.*nano/i,
+  /^deepseek-r1/i,
+  /^qwq/i,
+];
+
+/**
+ * Check if a model name matches a known reasoning model pattern.
+ * These models put their output in a `reasoning` field instead of `content`
+ * on Ollama's OpenAI-compatible endpoint, which causes blank responses.
+ */
+function isReasoningModel(modelName: string): boolean {
+  return KNOWN_REASONING_MODEL_PATTERNS.some((pattern) => pattern.test(modelName));
+}
+
+/**
+ * List models available in the local Ollama instance.
+ */
+function listOllamaModels(): string[] {
+  try {
+    const raw = execSync("curl -sf http://localhost:11434/api/tags", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 5000,
+    });
+    const data = JSON.parse(raw) as { models?: Array<{ name: string }> };
+    return (data.models ?? []).map((m) => m.name);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Create a non-reasoning (chat-only) variant of an Ollama reasoning model.
+ * Uses `ollama create` with a simple Modelfile that wraps the base model
+ * without triggering reasoning mode.
+ *
+ * Returns the variant name on success, or null on failure.
+ */
+function createOllamaChatVariant(baseModel: string, logger: PluginLogger): string | null {
+  const variantName = baseModel.replace(/:.*$/, "") + "-chat";
+  try {
+    const modelfile = `FROM ${baseModel}`;
+    execSync(`echo '${modelfile}' | ollama create ${variantName}`, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 120000,
+      shell: "/bin/bash",
+    });
+    return variantName;
+  } catch (err) {
+    logger.warn(
+      `Could not create chat variant '${variantName}': ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
+}
+
 export interface OnboardOptions {
   apiKey?: string;
   endpoint?: string;
@@ -330,6 +391,23 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
   let model: string;
   if (opts.model) {
     model = opts.model;
+  } else if (endpointType === "ollama") {
+    // For Ollama, list locally available models and mark reasoning ones
+    const ollamaModels = listOllamaModels();
+    if (ollamaModels.length > 0) {
+      const modelOptions = ollamaModels.map((id) => ({
+        label: isReasoningModel(id) ? `${id} ⚠ reasoning` : id,
+        value: id,
+      }));
+      model = await promptSelect("Select your Ollama model:", modelOptions);
+    } else {
+      // No models pulled yet — fall back to defaults
+      const modelOptions = DEFAULT_MODELS.map((m) => ({
+        label: `${m.label} (${m.id})`,
+        value: m.id,
+      }));
+      model = await promptSelect("Select your primary model:", modelOptions);
+    }
   } else {
     // Build model options: prefer Nemotron models from the endpoint, fall back to defaults
     const nemotronModels = validation.models.filter((m) => m.includes("nemotron"));
@@ -339,6 +417,41 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
         : DEFAULT_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }));
 
     model = await promptSelect("Select your primary model:", modelOptions);
+  }
+
+  // For Ollama reasoning models, offer to create a non-reasoning chat variant
+  // to prevent blank responses (see: https://github.com/NVIDIA/NemoClaw/issues/246)
+  if (endpointType === "ollama" && isReasoningModel(model)) {
+    logger.warn("");
+    logger.warn(`'${model}' is a reasoning model. On Ollama, reasoning models put output`);
+    logger.warn("into a 'reasoning' field instead of 'content', which causes blank responses.");
+    logger.warn("");
+
+    if (!nonInteractive) {
+      const createVariant = await promptConfirm(
+        "Create a non-reasoning chat variant? (recommended)",
+        true,
+      );
+      if (createVariant) {
+        logger.info("Creating chat variant...");
+        const variant = createOllamaChatVariant(model, logger);
+        if (variant) {
+          logger.info(`Created '${variant}' — using it instead.`);
+          model = variant;
+        } else {
+          logger.warn("Could not create variant. Continuing with reasoning model.");
+          logger.warn("Workaround: echo 'FROM " + model + "' | ollama create " + model.replace(/:.*$/, "") + "-chat");
+        }
+      }
+    } else {
+      // Non-interactive: auto-create variant
+      logger.info("Auto-creating non-reasoning chat variant...");
+      const variant = createOllamaChatVariant(model, logger);
+      if (variant) {
+        logger.info(`Created '${variant}' — using it instead.`);
+        model = variant;
+      }
+    }
   }
 
   // Step 6: Resolve profile
