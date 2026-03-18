@@ -16,4 +16,4 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+          - allow: { method: POST, path: "/v2/**" }

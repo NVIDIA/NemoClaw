@@ -9,9 +9,11 @@ const policies = require("../bin/lib/policies");
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 13 presets", () => {
+    const expected = ["apt", "cargo", "discord", "docker", "ghcr", "go", "huggingface", "jira", "npm", "outlook", "pypi", "slack", "telegram"];
+
+    it("returns all presets", () => {
       const presets = policies.listPresets();
-      assert.equal(presets.length, 13);
+      assert.equal(presets.length, expected.length);
     });
 
     it("each preset has name and description", () => {
@@ -23,7 +25,6 @@ describe("policies", () => {
 
     it("returns expected preset names", () => {
       const names = policies.listPresets().map((p) => p.name).sort();
-      const expected = ["apt", "cargo", "discord", "docker", "ghcr", "go", "huggingface", "jira", "npm", "outlook", "pypi", "slack", "telegram"];
       assert.deepEqual(names, expected);
     });
   });
@@ -141,7 +142,7 @@ describe("policies", () => {
       assert.ok(hosts.includes("deb.debian.org"));
     });
 
-    it("ghcr preset has registry and token endpoints", () => {
+    it("ghcr preset has registry endpoint", () => {
       const content = policies.loadPreset("ghcr");
       const hosts = policies.getPresetEndpoints(content);
       assert.ok(hosts.includes("ghcr.io"));
