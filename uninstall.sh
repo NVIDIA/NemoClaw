@@ -454,6 +454,6 @@ main() {
   info "Uninstall complete."
 }
 
-if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+if [ "${BASH_SOURCE[0]-}" = "$0" ] || [ "$0" = "bash" ] || [ "$0" = "-bash" ]; then
   main "$@"
 fi
