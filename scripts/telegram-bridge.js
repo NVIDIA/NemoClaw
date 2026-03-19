@@ -12,7 +12,7 @@
  * Env:
  *   TELEGRAM_BOT_TOKEN  — from @BotFather
  *   NVIDIA_API_KEY      — for inference
- *   SANDBOX_NAME        — sandbox name (default: nemoclaw)
+ *   SANDBOX_NAME        — sandbox name (default: from registry, or "my-assistant")
  *   ALLOWED_CHAT_IDS    — comma-separated Telegram chat IDs to accept (optional, accepts all if unset)
  */
 
