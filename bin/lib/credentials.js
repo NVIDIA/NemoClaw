@@ -4,7 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const readline = require("readline");
-const { execSync } = require("child_process");
+const { execSync, spawnSync } = require("child_process");
 
 const CREDS_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
 const CREDS_FILE = path.join(CREDS_DIR, "credentials.json");
@@ -104,7 +104,7 @@ function validateApiKey(key) {
   try {
     // Pass the auth header via stdin using -H @- so the API key
     // does not appear in process arguments visible via ps aux.
-    const result = require("child_process").spawnSync(
+    const result = spawnSync(
       "curl",
       [
         "-sf",
@@ -122,6 +122,9 @@ function validateApiKey(key) {
     );
     // Check for local spawn errors (curl missing, timeout) before inspecting stdout.
     if (result.error) {
+      if (result.error.code === "ENOENT") {
+        return { ok: false, fatal: false, message: "Could not validate key (curl is not installed). Proceeding with saved key." };
+      }
       const reason = result.error.code === "ETIMEDOUT" ? "timed out" : result.error.message || "unknown error";
       return { ok: false, fatal: false, message: `Could not validate key (${reason}). Proceeding with saved key.` };
     }

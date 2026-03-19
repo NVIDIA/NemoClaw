@@ -18,7 +18,10 @@ function load() {
     const backupFile = REGISTRY_FILE + ".corrupt." + Date.now();
     try {
       fs.copyFileSync(REGISTRY_FILE, backupFile);
-    } catch {}
+    } catch {
+      // Best-effort backup — if the copy fails (e.g., disk full), we still
+      // warn the user and reset the registry. The corrupt file remains in place.
+    }
     console.error(`  [warn] Registry file is corrupted. Backed up to: ${path.basename(backupFile)}`);
     console.error("  [warn] Sandbox list has been reset. Run 'nemoclaw onboard' to recreate.");
   }
