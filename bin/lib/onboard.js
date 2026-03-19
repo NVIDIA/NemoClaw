@@ -57,6 +57,18 @@ async function promptOrDefault(question, envVar, defaultValue) {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
+/**
+ * Check if a sandbox is in Ready state from `openshell sandbox list` output.
+ * Strips ANSI codes and exact-matches the sandbox name in the first column.
+ */
+function isSandboxReady(output, sandboxName) {
+  const clean = output.replace(/\x1b\[[0-9;]*m/g, "");
+  return clean.split("\n").some((l) => {
+    const cols = l.trim().split(/\s+/);
+    return cols[0] === sandboxName && cols.includes("Ready") && !cols.includes("NotReady");
+  });
+}
+
 function step(n, total, msg) {
   console.log("");
   console.log(`  [${n}/${total}] ${msg}`);
@@ -463,14 +475,7 @@ async function createSandbox(gpu) {
   let ready = false;
   for (let i = 0; i < 30; i++) {
     const list = runCapture("openshell sandbox list 2>&1", { ignoreError: true });
-    const clean = list.replace(/\x1b\[[0-9;]*m/g, "");
-    // Exact-match sandbox name in the first column and "Ready" as a whole
-    // word. includes() would false-positive on substring names ("my" in
-    // "my-assistant") and on "NotReady" containing "Ready".
-    if (clean.split("\n").some((l) => {
-      const cols = l.trim().split(/\s+/);
-      return cols[0] === sandboxName && cols.includes("Ready") && !cols.includes("NotReady");
-    })) {
+    if (isSandboxReady(list, sandboxName)) {
       ready = true;
       break;
     }
@@ -480,11 +485,15 @@ async function createSandbox(gpu) {
   if (!ready) {
     // Clean up the orphaned sandbox so the next onboard retry with the same
     // name doesn't fail on "sandbox already exists".
-    run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+    const delResult = run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
     console.error("");
     console.error(`  Sandbox '${sandboxName}' was created but did not become ready within 60s.`);
-    console.error("  The orphaned sandbox has been removed — you can safely retry.");
-    console.error(`  Logs:  openshell sandbox logs "${sandboxName}"`);
+    if (delResult.status === 0) {
+      console.error("  The orphaned sandbox has been removed — you can safely retry.");
+    } else {
+      console.error(`  Could not remove the orphaned sandbox. Manual cleanup:`);
+      console.error(`    openshell sandbox delete "${sandboxName}"`);
+    }
     console.error("  Retry: nemoclaw onboard");
     process.exit(1);
   }
@@ -933,4 +942,4 @@ async function onboard(opts = {}) {
   printDashboard(sandboxName, model, provider);
 }
 
-module.exports = { buildSandboxConfigSyncScript, onboard, setupNim };
+module.exports = { buildSandboxConfigSyncScript, isSandboxReady, onboard, setupNim };

@@ -5,17 +5,7 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
 const { buildPolicySetCommand, buildPolicyGetCommand } = require("../bin/lib/policies");
-
-// Test the readiness parsing logic extracted for testability
-// These validate the exact matching algorithm from onboard.js createSandbox()
-
-function isSandboxReady(output, sandboxName) {
-  const clean = output.replace(/\x1b\[[0-9;]*m/g, "");
-  return clean.split("\n").some((l) => {
-    const cols = l.trim().split(/\s+/);
-    return cols[0] === sandboxName && cols.includes("Ready") && !cols.includes("NotReady");
-  });
-}
+const { isSandboxReady } = require("../bin/lib/onboard");
 
 describe("sandbox readiness parsing", () => {
   it("detects Ready sandbox", () => {
