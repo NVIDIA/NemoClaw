@@ -188,6 +188,8 @@ Run these on the host to set up, connect to, and manage sandboxes.
 | `openshell term`                     | Launch the OpenShell TUI for monitoring and approvals. |
 | `nemoclaw start` / `stop` / `status` | Manage auxiliary services (Telegram bridge, tunnel).   |
 
+**Re-running onboard:** If a second `nemoclaw onboard` fails with port 8080 or 18789 already in use (e.g. after a previous sandbox or gateway session), run the cleanup script from the repo root then onboard again: `./nemoclaw_clean.sh` then `nemoclaw onboard`. See [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html) for details.
+
 ### Plugin commands (`openclaw nemoclaw`)
 
 Run these inside the OpenClaw CLI. These commands are under active development and may not all be functional yet.

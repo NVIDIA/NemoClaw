@@ -103,7 +103,21 @@ nemoclaw onboard
 | Docker permission denied | Fixed in `setup-spark` | `usermod -aG docker` |
 | CoreDNS CrashLoop after setup | Fixed in `fix-coredns.sh` | Uses container gateway IP, not 127.0.0.11 |
 | Image pull failure (k3s can't find built image) | OpenShell bug | `openshell gateway destroy && openshell gateway start`, re-run setup |
+| Port 8080 or 18789 in use on re-onboard | Common | Run `./nemoclaw_clean.sh` then `nemoclaw onboard` (see [Re-running onboard](#re-running-onboard)) |
 | GPU passthrough | Untested on Spark | Should work with `--gpu` flag if NVIDIA Container Toolkit is configured |
+
+### Re-running onboard
+
+If you run `nemoclaw onboard` a second time (or after a previous sandbox/gateway session), the OpenShell gateway or port forwards may still be holding ports 8080 and 18789. The CLI will report that the port is not available.
+
+From the NemoClaw repo root, run the cleanup script to free those ports and stop OpenShell forwards, then onboard again:
+
+```bash
+./nemoclaw_clean.sh
+nemoclaw onboard
+```
+
+This is required only when you want to start a fresh onboard and the previous session did not tear down cleanly.
 
 ## Verifying Your Install
 

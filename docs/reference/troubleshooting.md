@@ -84,9 +84,17 @@ Add the `export` line to your `~/.bashrc` or `~/.zshrc` to make it permanent, th
 
 ### Port already in use
 
-The NemoClaw gateway uses port `18789` by default.
-If another process is already bound to this port, onboarding fails.
-Identify the conflicting process, verify it is safe to stop, and terminate it:
+The NemoClaw gateway and dashboard use ports `8080` and `18789` by default.
+If another process is already bound to one of these ports (for example when re-running onboard after a previous session), onboarding fails.
+
+**Re-running onboard (e.g. on DGX Spark):** From the NemoClaw repo root, run the cleanup script to free ports and stop OpenShell forwards, then retry:
+
+```console
+$ ./nemoclaw_clean.sh
+$ nemoclaw onboard
+```
+
+**Manual cleanup:** Otherwise, identify the conflicting process, verify it is safe to stop, and terminate it:
 
 ```console
 $ lsof -i :18789
