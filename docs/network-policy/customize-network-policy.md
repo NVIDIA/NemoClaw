@@ -40,8 +40,8 @@ Create or edit policy files on the host, then apply them to the sandbox.
 Before creating a custom policy file, check whether an existing preset already covers the service you need:
 
 ```console
-$ nemoclaw <name> policy-list
-$ nemoclaw <name> policy-add
+nemoclaw <name> policy-list
+nemoclaw <name> policy-add
 ```
 
 Use `policy-add` for built-in presets such as `slack`, `telegram`, `npm`, or `pypi`.
@@ -72,7 +72,7 @@ Each entry in the `network_policies` section defines an endpoint group with the 
 Apply the updated policy by re-running the onboard wizard:
 
 ```console
-$ nemoclaw onboard
+nemoclaw onboard
 ```
 
 The wizard picks up the modified policy file and applies it to the sandbox.
@@ -82,7 +82,7 @@ The wizard picks up the modified policy file and applies it to the sandbox.
 Check that the sandbox is running with the updated policy:
 
 ```console
-$ nemoclaw <name> status
+nemoclaw <name> status
 ```
 
 ## Dynamic Changes
@@ -119,7 +119,7 @@ network_policies:
 Use the OpenShell CLI to apply the policy update:
 
 ```console
-$ openshell policy set <policy-file>
+openshell policy set <policy-file>
 ```
 
 The change takes effect immediately.
