@@ -57,13 +57,6 @@ async function promptOrDefault(question, envVar, defaultValue) {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-// Shell-safe single-quote escaping to prevent injection when interpolating
-// user-supplied values into shell commands. Wraps value in single quotes
-// and escapes any embedded single quotes.
-function shQuote(value) {
-  return `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
-}
-
 function step(n, total, msg) {
   console.log("");
   console.log(`  [${n}/${total}] ${msg}`);
@@ -522,16 +515,17 @@ async function setupNim(sandboxName, gpu) {
         console.error(`  NEMOCLAW_DYNAMO_ENDPOINT must use http or https: ${dynamoEndpointRaw}`);
         process.exit(1);
       }
-      // Log sanitized URL (redact credentials and query params if present)
-      const safeLogUrl = `${parsedUrl.protocol}//${parsedUrl.host}${parsedUrl.pathname}`;
+      // Build sanitized URL for logging and storage (no credentials or query params)
+      const safeUrl = `${parsedUrl.protocol}//${parsedUrl.host}${parsedUrl.pathname}`;
       const redacted = [];
       if (parsedUrl.username || parsedUrl.password) redacted.push("credentials");
       if (parsedUrl.search) redacted.push("query");
-      console.log(`  Using Dynamo endpoint: ${safeLogUrl}${redacted.length ? ` [REDACTED: ${redacted.join(", ")}]` : ""}`);
+      console.log(`  Using Dynamo endpoint: ${safeUrl}${redacted.length ? ` [REDACTED: ${redacted.join(", ")}]` : ""}`);
 
       provider = "dynamo";
       model = (process.env.NEMOCLAW_DYNAMO_MODEL || "").trim() || "dynamo";
-      registry.updateSandbox(sandboxName, { model, provider, nimContainer, dynamoEndpoint: dynamoEndpointRaw });
+      // Store sanitized URL in registry (no credentials), pass raw URL to setupInference
+      registry.updateSandbox(sandboxName, { model, provider, nimContainer, dynamoEndpoint: safeUrl });
       return { model, provider, dynamoEndpoint: dynamoEndpointRaw };
     } else if (providerKey === "ollama") {
       if (!ollamaRunning) {
@@ -743,17 +737,17 @@ async function setupInference(sandboxName, model, provider, opts = {}) {
       console.error("  Dynamo provider requires dynamoEndpoint in options.");
       process.exit(1);
     }
-    // Use shQuote for shell-safe escaping of the endpoint URL
+    // Use shellQuote for shell-safe escaping of the endpoint URL
     run(
       `openshell provider create --name dynamo --type openai ` +
-      `--credential "OPENAI_API_KEY=dummy" ` +
-      `--config "OPENAI_BASE_URL=${shQuote(dynamoEndpoint)}" 2>&1 || ` +
-      `openshell provider update dynamo --credential "OPENAI_API_KEY=dummy" ` +
-      `--config "OPENAI_BASE_URL=${shQuote(dynamoEndpoint)}" 2>&1 || true`,
+      `--credential OPENAI_API_KEY=dummy ` +
+      `--config OPENAI_BASE_URL=${shellQuote(dynamoEndpoint)} 2>&1 || ` +
+      `openshell provider update dynamo --credential OPENAI_API_KEY=dummy ` +
+      `--config OPENAI_BASE_URL=${shellQuote(dynamoEndpoint)} 2>&1 || true`,
       { ignoreError: true }
     );
     run(
-      `openshell inference set --no-verify --provider dynamo --model ${shQuote(model)} 2>/dev/null || true`,
+      `openshell inference set --no-verify --provider dynamo --model ${shellQuote(model)} 2>/dev/null || true`,
       { ignoreError: true }
     );
   } else if (provider === "nvidia-nim") {
