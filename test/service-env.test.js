@@ -121,71 +121,33 @@ describe("service environment", () => {
   });
 
   describe("validate_name", () => {
-    // Source the script and call validate_name in a sub-shell.
-    // The script exits on invalid names, so we check the exit code.
-    function callValidateName(name) {
+    // Test the validate_name case pattern directly (sourcing the full script
+    // has side effects that interfere with the test environment).
+    function testValidateName(name) {
       return spawnSync(
         "bash",
-        ["-c", `source "${START_SERVICES_SH}" 2>/dev/null; validate_name ${JSON.stringify(name)}`],
-        {
-          encoding: "utf-8",
-          // Override ACTION so the script does not try to run do_start
-          env: { ...process.env, SANDBOX_NAME: "test" },
-        }
+        ["-c", `
+          validate_name() {
+            case "$1" in
+              (*[!A-Za-z0-9._-]*|'') return 1 ;;
+            esac
+          }
+          validate_name ${JSON.stringify(name)}
+        `],
+        { encoding: "utf-8" }
       );
     }
 
     it("accepts valid sandbox names", () => {
-      // validate_name is a case statement that calls fail on bad input.
-      // We source just the function definition, not the whole script.
-      const result = spawnSync(
-        "bash",
-        ["-c", `
-          validate_name() {
-            case "$1" in
-              (*[!A-Za-z0-9._-]*|'') echo "INVALID"; return 1 ;;
-            esac
-            echo "VALID"
-          }
-          validate_name "my-sandbox"
-        `],
-        { encoding: "utf-8" }
-      );
-      assert.equal(result.stdout.trim(), "VALID");
+      assert.equal(testValidateName("my-sandbox").status, 0);
     });
 
     it("rejects names with shell metacharacters", () => {
-      const result = spawnSync(
-        "bash",
-        ["-c", `
-          validate_name() {
-            case "$1" in
-              (*[!A-Za-z0-9._-]*|'') echo "INVALID"; return 1 ;;
-            esac
-            echo "VALID"
-          }
-          validate_name 'foo;rm -rf /'
-        `],
-        { encoding: "utf-8" }
-      );
-      assert.equal(result.stdout.trim(), "INVALID");
+      assert.notEqual(testValidateName("foo;rm -rf /").status, 0);
     });
 
     it("rejects empty names", () => {
-      const result = spawnSync(
-        "bash",
-        ["-c", `
-          validate_name() {
-            case "$1" in
-              (*[!A-Za-z0-9._-]*|'') echo "INVALID"; return 1 ;;
-            esac
-            echo "VALID"
-          }
-          validate_name ''
-        `],
-        { encoding: "utf-8" }
-      );
-      assert.equal(result.stdout.trim(), "INVALID");
+      assert.notEqual(testValidateName("").status, 0);
     });
   });
 
