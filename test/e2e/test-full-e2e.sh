@@ -307,13 +307,26 @@ fi
 rm -f "$ssh_config_block"
 
 # ── Test 5b: Sandbox command execution ──
-# Note: nemoclaw connect does not pass -- args to the sandbox.
-# Use openshell sandbox connect directly which supports -- <command>.
-info "Testing sandbox command execution..."
-connect_output=$(openshell sandbox connect "$SANDBOX_NAME" -- echo "CONNECT_OK" 2>&1) || true
-echo "$connect_output" | grep -q "CONNECT_OK" \
-  && pass "Sandbox connect: command executed in sandbox" \
-  || fail "Sandbox connect: expected CONNECT_OK, got: ${connect_output:0:200}"
+# Neither nemoclaw connect nor openshell sandbox connect supports -- <command>.
+# Use SSH directly (same approach as the inference tests above).
+info "Testing sandbox command execution via SSH..."
+ssh_config_exec="$(mktemp)"
+if openshell sandbox ssh-config "$SANDBOX_NAME" > "$ssh_config_exec" 2>/dev/null; then
+  connect_output=$($TIMEOUT_CMD ssh -F "$ssh_config_exec" \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=10 \
+    -o LogLevel=ERROR \
+    "openshell-${SANDBOX_NAME}" \
+    "echo CONNECT_OK" \
+  2>&1) || true
+  echo "$connect_output" | grep -q "CONNECT_OK" \
+    && pass "Sandbox command execution: echo returned CONNECT_OK" \
+    || fail "Sandbox command execution: expected CONNECT_OK, got: ${connect_output:0:200}"
+else
+  fail "Could not get SSH config for command execution test"
+fi
+rm -f "$ssh_config_exec"
 
 # ── Test 5c: nemoclaw logs ──
 info "Testing sandbox log retrieval..."
