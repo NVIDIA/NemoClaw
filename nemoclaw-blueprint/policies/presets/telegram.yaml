@@ -19,3 +19,4 @@ network_policies:
           - allow: { method: POST, path: "/bot*/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }

@@ -85,6 +85,7 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/claude }
       - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
 
   github:
     name: github
@@ -118,6 +119,7 @@ network_policies:
           - allow: { method: POST, path: "/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
 
   openclaw_api:
     name: openclaw_api
@@ -132,6 +134,7 @@ network_policies:
           - allow: { method: POST, path: "/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
 
   openclaw_docs:
     name: openclaw_docs
@@ -145,6 +148,7 @@ network_policies:
           - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
 
   # npm registry — needed for `openclaw plugins install` and `npm install`
   npm_registry:
@@ -155,6 +159,7 @@ network_policies:
         access: full
     binaries:
       - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
       - { path: /usr/local/bin/npm }
 
   # ── Messaging — pre-allowed for agent notifications ────────────
@@ -173,6 +178,7 @@ network_policies:
           - allow: { method: POST, path: "/bot*/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
 
   discord:
     name: discord
@@ -202,3 +208,4 @@ network_policies:
           - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }

@@ -146,6 +146,21 @@ describe("policies", () => {
       assert.ok(!content.includes("/usr/bin/python3"), "pypi should not allow python3");
     });
 
+    it("every preset that allows openclaw also allows node runtime", () => {
+      // openclaw is a Node.js script (#!/usr/bin/env node). The sandbox proxy
+      // allowlists by kernel-level binary, so /usr/local/bin/node must be listed
+      // alongside /usr/local/bin/openclaw or requests will be blocked with 403.
+      for (const p of policies.listPresets()) {
+        const content = policies.loadPreset(p.name);
+        if (content.includes("/usr/local/bin/openclaw")) {
+          assert.ok(
+            content.includes("/usr/local/bin/node"),
+            `${p.name} allows openclaw but missing node runtime binary (see #391)`,
+          );
+        }
+      }
+    });
+
     it("non-listed binaries are denied by omission", () => {
       // Binaries restriction is an allowlist — any binary not listed is implicitly denied.
       // Verify no preset includes common shell tools that could be used for exfiltration.
