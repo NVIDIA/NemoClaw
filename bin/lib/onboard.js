@@ -773,7 +773,25 @@ async function setupNim(sandboxName, gpu) {
     } else if (selected.key === "vllm") {
       console.log("  ✓ Using existing vLLM on localhost:8000");
       provider = "vllm-local";
-      model = "vllm-local";
+      // Query vLLM for the actual model ID
+      const vllmModelsRaw = runCapture("curl -sf http://localhost:8000/v1/models 2>/dev/null", { ignoreError: true });
+      try {
+        const vllmModels = JSON.parse(vllmModelsRaw);
+        if (vllmModels.data && vllmModels.data.length > 0) {
+          model = vllmModels.data[0].id;
+          if (!isSafeModelId(model)) {
+            console.error(`  Detected model ID contains invalid characters: ${model}`);
+            process.exit(1);
+          }
+          console.log(`  Detected model: ${model}`);
+        } else {
+          console.error("  Could not detect model from vLLM. Please specify manually.");
+          process.exit(1);
+        }
+      } catch {
+        console.error("  Could not query vLLM models endpoint. Is vLLM running on localhost:8000?");
+        process.exit(1);
+      }
     }
     // else: cloud — fall through to default below
   }
