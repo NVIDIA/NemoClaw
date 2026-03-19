@@ -879,7 +879,7 @@ async function onboard(opts = {}) {
     try {
   await startGateway(gpu);
         } catch (error) {
-          await destroyGateway();
+          await run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });();
           throw error;
         }
   const sandboxName = await createSandbox(gpu);
