@@ -280,9 +280,12 @@ run_onboard() {
     nemoclaw onboard --non-interactive
   elif [ -t 0 ]; then
     nemoclaw onboard
-  elif [ -r /dev/tty ]; then
+  elif exec 3</dev/tty; then
     info "Installer stdin is piped; attaching onboarding to /dev/tty…"
-    nemoclaw onboard < /dev/tty
+    local status=0
+    nemoclaw onboard <&3 || status=$?
+    exec 3<&-
+    return "$status"
   else
     error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1."
   fi
