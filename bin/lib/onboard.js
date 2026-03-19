@@ -221,10 +221,10 @@ function getNonInteractiveProvider() {
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
 
-  const validProviders = new Set(["cloud", "ollama", "vllm", "nim"]);
+  const validProviders = new Set(["cloud", "ollama", "vllm", "nim", "install-ollama"]);
   if (!validProviders.has(providerKey)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
-    console.error("  Valid values: cloud, ollama, vllm, nim");
+    console.error("  Valid values: cloud, ollama, vllm, nim, install-ollama");
     process.exit(1);
   }
 
@@ -499,9 +499,14 @@ async function setupNim(sandboxName, gpu) {
     });
   }
 
-  // On macOS without Ollama, offer to install it
-  if (!hasOllama && process.platform === "darwin") {
-    options.push({ key: "install-ollama", label: "Install Ollama (macOS)" });
+  // Without Ollama, offer to install it so users always have a local fallback
+  // (e.g. when the NVIDIA API server is down and cloud keys are unavailable)
+  if (!hasOllama && !ollamaRunning) {
+    if (process.platform === "darwin") {
+      options.push({ key: "install-ollama", label: "Install Ollama (macOS)" });
+    } else if (process.platform === "linux") {
+      options.push({ key: "install-ollama", label: "Install Ollama (Linux)" });
+    }
   }
 
   if (options.length > 1) {
@@ -599,8 +604,13 @@ async function setupNim(sandboxName, gpu) {
         model = await promptOllamaModel();
       }
     } else if (selected.key === "install-ollama") {
-      console.log("  Installing Ollama via Homebrew...");
-      run("brew install ollama", { ignoreError: true });
+      if (process.platform === "darwin") {
+        console.log("  Installing Ollama via Homebrew...");
+        run("brew install ollama", { ignoreError: true });
+      } else {
+        console.log("  Installing Ollama via official installer...");
+        run("curl -fsSL https://ollama.com/install.sh | sh", { ignoreError: true });
+      }
       console.log("  Starting Ollama...");
       run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
         sleep(2);
