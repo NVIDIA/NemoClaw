@@ -136,12 +136,13 @@ if check_local_provider_health "vllm-local" || python3 -c "import vllm" 2>/dev/n
 fi
 
 # lmstudio-local (if LM Studio is running)
-if curl -s http://localhost:1234/v1/models > /dev/null 2>&1; then
+if check_local_provider_health "lmstudio-local"; then
+  LMSTUDIO_LOCAL_BASE_URL="$(get_local_provider_base_url "lmstudio-local")"
   upsert_provider \
     "lmstudio-local" \
     "openai" \
     "OPENAI_API_KEY=dummy" \
-    "OPENAI_BASE_URL=http://host.openshell.internal:1234/v1"
+    "OPENAI_BASE_URL=$LMSTUDIO_LOCAL_BASE_URL"
 fi
 
 # 4a. Ollama (macOS local inference)

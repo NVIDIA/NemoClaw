@@ -148,13 +148,59 @@ function getOllamaModelOptions(): string[] {
     if (parsed.length > 0) {
       return parsed;
     }
-  } catch {}
+  } catch { }
   return [DEFAULT_OLLAMA_MODEL];
 }
 
 function getDefaultOllamaModel(): string {
   const models = getOllamaModelOptions();
   return models.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : models[0];
+}
+
+/**
+ * Fetches available models from LM Studio's OpenAI-compatible endpoint.
+ * Requires the LM Studio local server to be running (default: http://localhost:1234)
+ */
+export async function fetchLMStudioModels(endpointUrl: string = "http://localhost:1234"): Promise<string[]> {
+  try {
+    const response = await fetch(`${endpointUrl}/v1/models`);
+    if (!response.ok) {
+      console.warn(`Failed to fetch LM Studio models. Status: ${response.status}`);
+      return [];
+    }
+
+    const data = await response.json();
+    return data.data.map((model: { id: string }) => model.id);
+  } catch (error) {
+    console.error("Could not connect to LM Studio. Ensure the local server is running.", error);
+    return [];
+  }
+}
+
+/**
+ * Formats LM Studio models into label/value pairs for the prompt selector.
+ */
+export function getLMStudioModelOptions(models: string[]): { label: string; value: string }[] {
+  return models.map((id) => ({
+    label: id,
+    value: id,
+  }));
+}
+
+/**
+ * Selects a sensible default model from the LM Studio list.
+ * You can customize the 'preferred' array based on what works best with NemoClaw.
+ */
+export function getDefaultLMStudioModel(models: string[]): string | undefined {
+  if (!models || models.length === 0) return undefined;
+
+  // Attempt to auto-select a robust known model architecture if available
+  const preferredArchitectures = ["llama-3", "qwen", "mistral"];
+  const defaultModel = models.find((id) =>
+    preferredArchitectures.some((pref) => id.toLowerCase().includes(pref))
+  );
+
+  return defaultModel || models[0]; // Fallback to the first available model
 }
 
 function testCommand(command: string): boolean {
@@ -377,28 +423,39 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
   }
 
   // Step 5: Model Selection
+
   let model: string;
   if (opts.model) {
     model = opts.model;
   } else {
+    const lmStudioModels = endpointType === "lmstudio"
+      ? await fetchLMStudioModels(endpointUrl)
+      : [];
     const discoveredModelOptions =
       endpointType === "ollama"
         ? getOllamaModelOptions().map((id) => ({ label: id, value: id }))
-        : validation.models.map((id) => ({ label: id, value: id }));
+        : endpointType === "lmstudio"
+          ? getLMStudioModelOptions(lmStudioModels)
+          : validation.models.map((id) => ({ label: id, value: id }));
     const curatedCloudOptions =
       endpointType === "build" || endpointType === "ncp"
         ? DEFAULT_MODELS.filter((option) => validation.models.includes(option.id)).map((option) => ({
-            label: `${option.label} (${option.id})`,
-            value: option.id,
-          }))
+          label: `${option.label} (${option.id})`,
+          value: option.id,
+        }))
         : [];
     const defaultIndex =
       endpointType === "ollama"
         ? Math.max(
+          0,
+          discoveredModelOptions.findIndex((option) => option.value === getDefaultOllamaModel())
+        )
+        : endpointType === "lmstudio"
+          ? Math.max(
             0,
-            discoveredModelOptions.findIndex((option) => option.value === getDefaultOllamaModel()),
+            discoveredModelOptions.findIndex((option) => option.value === getDefaultLMStudioModel(lmStudioModels))
           )
-        : 0;
+          : 0;
     const modelOptions =
       curatedCloudOptions.length > 0
         ? curatedCloudOptions

@@ -40,6 +40,8 @@ export function describeOnboardProvider(config: NemoClawOnboardConfig): string {
       return "Local Ollama";
     case "vllm":
       return "Local vLLM";
+    case "lmstudio":
+      return "Local LM Studio";
     case "nim-local":
       return "Local NIM";
     case "ncp":

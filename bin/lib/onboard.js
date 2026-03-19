@@ -221,7 +221,7 @@ function getNonInteractiveProvider() {
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
 
-  const validProviders = new Set(["cloud", "ollama", "vllm", "nim"]);
+  const validProviders = new Set(["cloud", "ollama", "vllm", "nim", "lmstudio"]);
   if (!validProviders.has(providerKey)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
     console.error("  Valid values: cloud, ollama, vllm, nim");
@@ -471,6 +471,7 @@ async function setupNim(sandboxName, gpu) {
   const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
   const ollamaRunning = !!runCapture("curl -sf http://localhost:11434/api/tags 2>/dev/null", { ignoreError: true });
   const vllmRunning = !!runCapture("curl -sf http://localhost:8000/v1/models 2>/dev/null", { ignoreError: true });
+  const lmstudioRunning = !!runCapture("curl -sf http://localhost:1234/v1/models 2>/dev/null", { ignoreError: true });
   const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
   const requestedModel = isNonInteractive() ? getNonInteractiveModel(requestedProvider || "cloud") : null;
   // Build options list — only show local options with NEMOCLAW_EXPERIMENTAL=1
@@ -732,6 +733,7 @@ async function setupInference(sandboxName, model, provider) {
       `openshell inference set --no-verify --provider lmstudio-local --model ${model} 2>/dev/null || true`,
       { ignoreError: true }
     );
+  }
   registry.updateSandbox(sandboxName, { model, provider });
   console.log(`  ✓ Inference route set: ${provider} / ${model}`);
 }
