@@ -13,6 +13,7 @@
  *   TELEGRAM_BOT_TOKEN  — from @BotFather
  *   NVIDIA_API_KEY      — for inference
  *   SANDBOX_NAME        — sandbox name (default: nemoclaw)
+ *   NEMOCLAW_MODEL      — model ID to display (default: nvidia/nemotron-3-super-120b-a12b)
  *   ALLOWED_CHAT_IDS    — comma-separated Telegram chat IDs to accept (optional, accepts all if unset)
  */
 
@@ -29,6 +30,7 @@ if (!OPENSHELL) {
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API_KEY = process.env.NVIDIA_API_KEY;
 const SANDBOX = process.env.SANDBOX_NAME || "nemoclaw";
+const MODEL = process.env.NEMOCLAW_MODEL || "nvidia/nemotron-3-super-120b-a12b";
 const ALLOWED_CHATS = process.env.ALLOWED_CHAT_IDS
   ? process.env.ALLOWED_CHAT_IDS.split(",").map((s) => s.trim())
   : null;
@@ -176,7 +178,7 @@ async function poll() {
         if (msg.text === "/start") {
           await sendMessage(
             chatId,
-            "🦀 *NemoClaw* — powered by Nemotron 3 Super 120B\n\n" +
+            `🦀 *NemoClaw* — powered by \`${MODEL}\`\n\n` +
               "Send me a message and I'll run it through the OpenClaw agent " +
               "inside an OpenShell sandbox.\n\n" +
               "If the agent needs external access, the TUI will prompt for approval.",
@@ -232,7 +234,7 @@ async function main() {
   console.log("  │                                                     │");
   console.log(`  │  Bot:      @${(me.result.username + "                    ").slice(0, 37)}│`);
   console.log("  │  Sandbox:  " + (SANDBOX + "                              ").slice(0, 40) + "│");
-  console.log("  │  Model:    nvidia/nemotron-3-super-120b-a12b       │");
+  console.log("  │  Model:    " + (MODEL + "                              ").slice(0, 40) + "│");
   console.log("  │                                                     │");
   console.log("  │  Messages are forwarded to the OpenClaw agent      │");
   console.log("  │  inside the sandbox. Run 'openshell term' in       │");
