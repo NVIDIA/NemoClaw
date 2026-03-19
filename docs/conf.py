@@ -97,9 +97,15 @@ html_theme_options = {
     # "public_docs_features": True, # TODO: Uncomment this when the docs are public
     "icon_links": [
         {
-            "name": "GitHub",
+            "name": "NVIDIA NemoClaw GitHub",
             "url": "https://github.com/NVIDIA/NemoClaw",
             "icon": "fa-brands fa-github",
+            "type": "fontawesome",
+        },
+        {
+            "name": "NVIDIA NemoClaw Discord Forum",
+            "url": "https://discord.com/channels/1019361803752456192/1482072289511211200",
+            "icon": "fa-brands fa-discord",
             "type": "fontawesome",
         },
     ],
