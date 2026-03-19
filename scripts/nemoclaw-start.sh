@@ -120,6 +120,8 @@ start_auto_pair() {
       return
       ;;
   esac
+  local pair_timeout="${NEMOCLAW_AUTO_PAIR_TIMEOUT:-120}"
+  echo "[gateway] auto-pair watcher launching (timeout=${pair_timeout}s)"
   nohup python3 - <<'PYAUTOPAIR' >> /tmp/gateway.log 2>&1 &
 import json
 import os
