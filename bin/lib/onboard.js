@@ -408,10 +408,18 @@ async function createSandbox(gpu) {
     registry.removeSandbox(sandboxName);
   }
 
-  // Stage build context
-  const { mkdtempSync } = require("fs");
+  // Stage build context.
+  // The build context contains source code, scripts, and potentially API keys
+  // in env args, so it must not persist in /tmp after a failed sandbox create.
+  // run() calls process.exit() on failure (bypassing try/finally), so we
+  // register a process 'exit' handler to guarantee cleanup in all cases.
   const os = require("os");
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
+  const cleanupBuildCtx = () => {
+    try { fs.rmSync(buildCtx, { recursive: true, force: true }); } catch {}
+  };
+  process.on("exit", cleanupBuildCtx);
+
   fs.copyFileSync(path.join(ROOT, "Dockerfile"), path.join(buildCtx, "Dockerfile"));
   run(`cp -r "${path.join(ROOT, "nemoclaw")}" "${buildCtx}/nemoclaw"`);
   run(`cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`);
@@ -445,8 +453,9 @@ async function createSandbox(gpu) {
   // Forward dashboard port to the new sandbox
   run(`openshell forward start --background 18789 "${sandboxName}"`, { ignoreError: true });
 
-  // Clean up build context
-  run(`rm -rf "${buildCtx}"`, { ignoreError: true });
+  // Clean up build context and deregister the exit handler
+  cleanupBuildCtx();
+  process.removeListener("exit", cleanupBuildCtx);
 
   // Register in registry
   registry.registerSandbox({
