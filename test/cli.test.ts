@@ -43,6 +43,12 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Compatibility Commands")).toBeTruthy();
   });
 
+  it("help mentions gateway in start description", () => {
+    const r = run("help");
+    expect(r.code).toBe(0);
+    expect(r.out.includes("gateway")).toBeTruthy();
+  });
+
   it("--help exits 0", () => {
     expect(run("--help").code).toBe(0);
   });

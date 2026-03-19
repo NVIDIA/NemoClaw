@@ -843,8 +843,19 @@ async function deploy(instanceName) {
 
 async function start() {
   const { startAll } = require("./lib/services");
+
+  // Recover gateway and port forwarding for the default sandbox before
+  // starting host-side services (cloudflared). After a system reboot the
+  // OpenClaw gateway inside the sandbox and the dashboard port forward are
+  // lost — checkAndRecoverSandboxProcesses re-establishes both.
+  const sandboxes = registry.listSandboxes();
+  const defaultSandbox = sandboxes.defaultSandbox;
+  if (defaultSandbox) {
+    checkAndRecoverSandboxProcesses(defaultSandbox);
+  }
+
   await runStartCommand({
-    listSandboxes: () => registry.listSandboxes(),
+    listSandboxes: () => sandboxes,
     startAll,
   });
 }
@@ -1486,7 +1497,7 @@ function help() {
     nemoclaw deploy <instance>       Deprecated Brev-specific bootstrap path
 
   ${G}Services:${R}
-    nemoclaw start                   Start auxiliary services ${D}(Telegram, tunnel)${R}
+    nemoclaw start                   Start services ${D}(gateway, port fwd, tunnel)${R}
     nemoclaw stop                    Stop all services
     nemoclaw status                  Show sandbox list and service status
 
