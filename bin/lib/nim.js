@@ -68,7 +68,7 @@ function detectGpu() {
         totalMemoryMB,
         perGpuMB: totalMemoryMB,
         nimCapable: true,
-        spark: nameOutput.includes("GB10"),
+        spark: nameOutput.toLowerCase().includes("gb10"),
         unifiedMemory: true,
         name: nameOutput.split("\n")[0].trim(),
       };

@@ -61,17 +61,19 @@ describe("UNIFIED_MEMORY_CHIPS", () => {
     }
   });
 
-  it("spark flag is true only for GB10", () => {
-    // Verify the logic: spark = nameOutput.includes("GB10")
+  it("spark flag is true only for GB10 (case-insensitive)", () => {
+    // Verify the logic: spark = nameOutput.toLowerCase().includes("gb10")
     const testCases = [
       { name: "NVIDIA GB10", expectedSpark: true },
+      { name: "NVIDIA gb10", expectedSpark: true },
+      { name: "NVIDIA Gb10", expectedSpark: true },
       { name: "NVIDIA Thor", expectedSpark: false },
       { name: "Orin (nvgpu)", expectedSpark: false },
       { name: "Orin Nano", expectedSpark: false },
       { name: "Xavier", expectedSpark: false },
     ];
     for (const { name, expectedSpark } of testCases) {
-      assert.equal(name.includes("GB10"), expectedSpark, `spark for "${name}"`);
+      assert.equal(name.toLowerCase().includes("gb10"), expectedSpark, `spark for "${name}"`);
     }
   });
 
