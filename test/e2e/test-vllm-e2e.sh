@@ -31,12 +31,17 @@ info()  { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 CONTAINER_NAME="nemoclaw-vllm-e2e"
 VLLM_PORT=8099
 MODEL="facebook/opt-125m"  # Tiny model for fast E2E testing (~250MB)
+VLLM_IMAGE="vllm/vllm-openai:v0.7.3"  # Pinned for reproducibility
+
+# Ensure the GPU container is cleaned up on exit, interrupt, or error
+cleanup() { docker rm -f "$CONTAINER_NAME" 2>/dev/null || true; }
+trap cleanup EXIT INT TERM
 
 # ======================================================================
 # Phase 0: Pre-cleanup
 # ======================================================================
 section "Phase 0: Pre-cleanup"
-docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+cleanup
 pass "Pre-cleanup complete"
 
 # ======================================================================
@@ -75,7 +80,7 @@ CONTAINER_OUTPUT=$(docker run -d \
   --name "$CONTAINER_NAME" \
   -p "${VLLM_PORT}:8000" \
   --shm-size 4g \
-  vllm/vllm-openai:latest \
+  "$VLLM_IMAGE" \
   --model "$MODEL" \
   --max-model-len 512 \
   --dtype float16 2>&1)
@@ -150,7 +155,7 @@ fi
 # ======================================================================
 section "Phase 5: Cleanup"
 
-docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+cleanup
 pass "Container cleaned up"
 
 # ======================================================================
