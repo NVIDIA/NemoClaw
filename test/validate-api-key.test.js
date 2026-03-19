@@ -11,6 +11,8 @@ describe("validateApiKey", () => {
   // We can't mock spawnSync easily, so we test with a known-bad key
   // and verify the return structure.
 
+  // @flaky — hits real NVIDIA API; may return network error instead of 401
+  // depending on connectivity. Conditional assertions handle both outcomes.
   it("returns { ok: false, fatal: true } for an invalid key", () => {
     const result = validateApiKey("nvapi-INVALID_TEST_KEY_000000");
     // Either we get a 401/403 (fatal) or a network error (non-fatal).

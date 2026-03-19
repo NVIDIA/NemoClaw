@@ -122,7 +122,7 @@ function validateApiKey(key) {
     );
     const httpCode = (result.stdout || "").trim();
     if (httpCode === "200") {
-      return { ok: true, fatal: false };
+      return { ok: true, fatal: false, message: "API key validated successfully" };
     }
     if (httpCode === "401" || httpCode === "403") {
       return { ok: false, fatal: true, message: "API key is invalid or expired. Check https://build.nvidia.com/settings/api-keys" };
