@@ -79,7 +79,8 @@ if ! command -v node > /dev/null 2>&1; then
   fail "Node.js not found. Install via brew or download from nodejs.org (LTS recommended): brew install node@20"
 fi
 
-NODE_MAJOR=$(node -e "console.log(process.versions.node.split('.')[0])")
+NODE_MAJOR=$(node -e "console.log(process.versions.node.split('.')[0])" 2>/dev/null || echo "0")
+NODE_MAJOR="${NODE_MAJOR:-0}"
 if [ "$NODE_MAJOR" -lt 20 ] 2>/dev/null; then
   fail "Node.js 20+ required (found v$(node -v)). Upgrade via: brew install node@20"
 fi
@@ -158,8 +159,9 @@ else
 
   # Check OLLAMA_HOST binding
   if [ -n "${OLLAMA_HOST:-}" ]; then
-    # Parse host from OLLAMA_HOST (strip port if present)
-    OLLAMA_HOST_PARSED="${OLLAMA_HOST%%:*}"
+    # Parse host from OLLAMA_HOST (strip scheme and port)
+    OLLAMA_HOST_PARSED="${OLLAMA_HOST#*://}"  # strip http:// or https://
+    OLLAMA_HOST_PARSED="${OLLAMA_HOST_PARSED%%:*}"  # strip port
     # Check if it's a loopback address
     if [[ "$OLLAMA_HOST_PARSED" == "localhost" ]] || [[ "$OLLAMA_HOST_PARSED" =~ ^127\. ]] || [[ "$OLLAMA_HOST_PARSED" == "::1" ]]; then
       warn "OLLAMA_HOST=$OLLAMA_HOST uses loopback address (not reachable from containers)"
@@ -193,6 +195,13 @@ if ! command -v openshell > /dev/null 2>&1; then
   fi
 fi
 info "openshell CLI: $(openshell --version 2>/dev/null || echo 'installed')"
+
+# Run OpenShell's built-in environment check
+if openshell doctor check > /dev/null 2>&1; then
+  info "openshell doctor check: passed"
+else
+  warn "openshell doctor check reported issues. Run 'openshell doctor check' for details."
+fi
 
 # ── 5. Apple GPU detection ───────────────────────────────────────
 
