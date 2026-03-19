@@ -62,6 +62,63 @@ if [ -n "$REAL_USER" ]; then
   fi
 fi
 
+# ── 1b. Check for conflicting Kubernetes installations ────────────
+#
+# If another kubelet is running on the host (MicroK8s, k3s, kubeadm),
+# setting cgroupns=host will cause k3s inside the gateway container to
+# fight over /sys/fs/cgroup/kubepods with the host kubelet. Both see
+# each other's pods as orphaned and kill them → CrashLoopBackOff.
+# See: https://github.com/NVIDIA/NemoClaw/issues/431
+
+detect_conflicting_kubelet() {
+  local found=""
+
+  # Check for common kubelet processes
+  if pgrep -x kubelet > /dev/null 2>&1 || pgrep -x kubelite > /dev/null 2>&1; then
+    found="kubelet process detected"
+  fi
+
+  # Check for MicroK8s specifically
+  if command -v microk8s > /dev/null 2>&1; then
+    if microk8s status 2>/dev/null | grep -q "microk8s is running"; then
+      found="MicroK8s is running"
+    fi
+  fi
+
+  # Check for k3s service
+  if systemctl is-active --quiet k3s 2>/dev/null; then
+    found="k3s service is active"
+  fi
+
+  if [ -n "$found" ]; then
+    warn "⚠️  Conflicting Kubernetes detected: $found"
+    warn ""
+    warn "The gateway runs k3s inside Docker with cgroupns=host, which will"
+    warn "conflict with the host kubelet over /sys/fs/cgroup/kubepods."
+    warn "This causes all pods to enter CrashLoopBackOff."
+    warn ""
+    warn "Options:"
+    warn "  1. Stop the host Kubernetes first:"
+    warn "     sudo microk8s stop        # for MicroK8s"
+    warn "     sudo systemctl stop k3s   # for k3s"
+    warn "     sudo systemctl stop kubelet  # for kubeadm"
+    warn ""
+    warn "  2. Continue anyway (gateway will likely fail)"
+    warn ""
+
+    if [ -t 0 ]; then
+      read -rp "Continue anyway? [y/N] " reply
+      if [[ ! "$reply" =~ ^[Yy] ]]; then
+        fail "Aborted. Stop the conflicting Kubernetes service and retry."
+      fi
+    else
+      fail "Conflicting Kubernetes detected. Stop it first or run interactively to override."
+    fi
+  fi
+}
+
+detect_conflicting_kubelet
+
 # ── 2. Docker cgroup namespace ────────────────────────────────────
 #
 # Spark runs cgroup v2 (Ubuntu 24.04). OpenShell's gateway embeds
