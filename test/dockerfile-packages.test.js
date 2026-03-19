@@ -10,6 +10,10 @@ function read(relPath) {
   return fs.readFileSync(path.join(__dirname, "..", relPath), "utf8");
 }
 
+// packagesFromDockerfile intentionally tracks the current apt-get install block
+// shape: `apt-get install -y --no-install-recommends`, one package per continued
+// line, then a terminating `&& rm -rf ...`. If that formatting changes, update
+// this helper and the Dockerfiles together.
 function packagesFromDockerfile(contents) {
   const match = contents.match(/apt-get install -y --no-install-recommends \\\n([\s\S]*?)\n\s*&& rm -rf/);
   assert.ok(match, "expected apt-get install block");
