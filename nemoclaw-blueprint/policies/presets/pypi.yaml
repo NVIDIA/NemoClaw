@@ -23,3 +23,11 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+    # Without binaries, OpenShell may treat the endpoint as not usable
+    # by any executable and return 403 Forbidden.
+    binaries:
+      - { path: /usr/local/bin/python }
+      - { path: /usr/local/bin/python3 }
+      - { path: /usr/local/bin/pip }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/pip }
