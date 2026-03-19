@@ -69,6 +69,16 @@ function isSandboxReady(output, sandboxName) {
   });
 }
 
+/**
+ * Determine whether stale NemoClaw gateway output indicates a previous
+ * session that should be cleaned up before the port preflight check.
+ * @param {string} gwInfoOutput - Raw output from `openshell gateway info -g nemoclaw`.
+ * @returns {boolean}
+ */
+function hasStaleGateway(gwInfoOutput) {
+  return typeof gwInfoOutput === "string" && gwInfoOutput.length > 0 && gwInfoOutput.includes("nemoclaw");
+}
+
 function step(n, total, msg) {
   console.log("");
   console.log(`  [${n}/${total}] ${msg}`);
@@ -287,6 +297,18 @@ async function preflight() {
     }
   }
   console.log(`  ✓ openshell CLI: ${runCapture("openshell --version 2>/dev/null || echo unknown", { ignoreError: true })}`);
+
+  // Clean up stale NemoClaw session before checking ports.
+  // A previous onboard run may have left the gateway container and port
+  // forward running.  If a NemoClaw-owned gateway is still present, tear
+  // it down so the port check below doesn't fail on our own leftovers.
+  const gwInfo = runCapture("openshell gateway info -g nemoclaw 2>/dev/null", { ignoreError: true });
+  if (hasStaleGateway(gwInfo)) {
+    console.log("  Cleaning up previous NemoClaw session...");
+    run("openshell forward stop 18789 2>/dev/null || true", { ignoreError: true });
+    run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
+    console.log("  ✓ Previous session cleaned up");
+  }
 
   // Required ports — gateway (8080) and dashboard (18789)
   const requiredPorts = [
@@ -942,4 +964,4 @@ async function onboard(opts = {}) {
   printDashboard(sandboxName, model, provider);
 }
 
-module.exports = { buildSandboxConfigSyncScript, isSandboxReady, onboard, setupNim };
+module.exports = { buildSandboxConfigSyncScript, hasStaleGateway, isSandboxReady, onboard, setupNim };

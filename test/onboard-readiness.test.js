@@ -5,7 +5,7 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
 const { buildPolicySetCommand, buildPolicyGetCommand } = require("../bin/lib/policies");
-const { isSandboxReady } = require("../bin/lib/onboard");
+const { hasStaleGateway, isSandboxReady } = require("../bin/lib/onboard");
 
 describe("sandbox readiness parsing", () => {
   it("detects Ready sandbox", () => {
@@ -122,5 +122,54 @@ describe("WSL sandbox name handling", () => {
     assert.ok(!isSandboxReady("my-assistant   Ready   2m ago", "m"));
     assert.ok(!isSandboxReady("my-assistant   Ready   2m ago", "my"));
     assert.ok(!isSandboxReady("my-assistant   Ready   2m ago", "my-"));
+  });
+});
+
+// Regression tests for issue #397: stale gateway detection before port checks.
+// A previous onboard session may leave the gateway container and port forward
+// running, causing port-conflict failures on the next onboard invocation.
+describe("stale gateway detection", () => {
+  it("detects active nemoclaw gateway from real output", () => {
+    // Actual output from `openshell gateway info -g nemoclaw` (ANSI stripped)
+    const output = [
+      "Gateway Info",
+      "",
+      "  Gateway: nemoclaw",
+      "  Gateway endpoint: https://127.0.0.1:8080",
+    ].join("\n");
+    assert.ok(hasStaleGateway(output));
+  });
+
+  it("detects gateway from ANSI-colored output", () => {
+    const output =
+      "\x1b[1m\x1b[36mGateway Info\x1b[39m\x1b[0m\n\n" +
+      "  \x1b[2mGateway:\x1b[0m nemoclaw\n" +
+      "  \x1b[2mGateway endpoint:\x1b[0m https://127.0.0.1:8080";
+    assert.ok(hasStaleGateway(output));
+  });
+
+  it("returns false for empty string (no gateway running)", () => {
+    assert.ok(!hasStaleGateway(""));
+  });
+
+  it("returns false for null/undefined", () => {
+    assert.ok(!hasStaleGateway(null));
+    assert.ok(!hasStaleGateway(undefined));
+  });
+
+  it("returns false for error output without gateway name", () => {
+    assert.ok(!hasStaleGateway("Error: no gateway found"));
+    assert.ok(!hasStaleGateway("connection refused"));
+  });
+
+  it("returns false for a different gateway name", () => {
+    // If someone ran a non-nemoclaw gateway, we should not touch it
+    const output = [
+      "Gateway Info",
+      "",
+      "  Gateway: my-other-gateway",
+      "  Gateway endpoint: https://127.0.0.1:8080",
+    ].join("\n");
+    assert.ok(!hasStaleGateway(output));
   });
 });
