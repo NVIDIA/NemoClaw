@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { BlueprintManifest } from "./resolve.js";
+
+// SHA-256 hex digest: exactly 64 lowercase hex characters
+const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 
 export interface VerificationResult {
   valid: boolean;
@@ -18,15 +21,27 @@ export function verifyBlueprintDigest(
   manifest: BlueprintManifest,
 ): VerificationResult {
   const errors: string[] = [];
-  const actualDigest = computeDirectoryDigest(blueprintPath);
+  let actualDigest = "";
 
-  if (manifest.digest && manifest.digest !== actualDigest) {
-    errors.push(`Digest mismatch: expected ${manifest.digest}, got ${actualDigest}`);
+  // A missing digest means "cannot verify", not "verification unnecessary".
+  // This is distinct from minOpenShellVersion/minOpenClawVersion where missing
+  // means "no requirement" and the falsy guard is correct.
+  if (!manifest.digest || !manifest.digest.trim()) {
+    errors.push("Blueprint manifest is missing a digest — cannot verify integrity");
+  } else if (!DIGEST_PATTERN.test(manifest.digest)) {
+    errors.push(
+      `Blueprint digest format is invalid: "${manifest.digest}". Expected: 64 lowercase hex characters (SHA-256)`,
+    );
+  } else {
+    actualDigest = computeDirectoryDigest(blueprintPath);
+    if (!digestsEqual(manifest.digest, actualDigest)) {
+      errors.push(`Digest mismatch: expected ${manifest.digest}, got ${actualDigest}`);
+    }
   }
 
   return {
     valid: errors.length === 0,
-    expectedDigest: manifest.digest,
+    expectedDigest: manifest.digest ?? "",
     actualDigest,
     errors,
   };
@@ -66,6 +81,13 @@ function satisfiesMinVersion(actual: string, minimum: string): boolean {
     if (a < m) return false;
   }
   return true; // equal
+}
+
+function digestsEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, "utf-8");
+  const bufB = Buffer.from(b, "utf-8");
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
 }
 
 function computeDirectoryDigest(dirPath: string): string {
