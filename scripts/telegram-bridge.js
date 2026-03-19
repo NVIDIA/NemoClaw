@@ -29,7 +29,7 @@ const ALLOWED_CHATS = process.env.ALLOWED_CHAT_IDS
 
 if (!TOKEN) { console.error("TELEGRAM_BOT_TOKEN required"); process.exit(1); }
 if (!API_KEY) { console.error("NVIDIA_API_KEY required"); process.exit(1); }
-if (!/^[a-zA-Z0-9_-]+$/.test(SANDBOX)) {
+if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(SANDBOX)) {
   console.error(`Invalid SANDBOX_NAME: must be alphanumeric, hyphens, or underscores. Got: ${SANDBOX}`);
   process.exit(1);
 }
@@ -94,7 +94,7 @@ function runAgentInSandbox(message, sessionId) {
 
     // Write temp ssh config with unpredictable filename to prevent symlink races
     const confPath = `/tmp/nemoclaw-tg-ssh-${crypto.randomBytes(8).toString("hex")}.conf`;
-    require("fs").writeFileSync(confPath, sshConfig, { mode: 0o600 });
+    require("fs").writeFileSync(confPath, sshConfig, { mode: 0o600, flag: "wx" });
 
     const escaped = message.replace(/'/g, "'\\''");
     const cmd = `export NVIDIA_API_KEY='${API_KEY}' && nemoclaw-start openclaw agent --agent main --local -m '${escaped}' --session-id 'tg-${sessionId}'`;
