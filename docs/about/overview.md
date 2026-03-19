@@ -2,8 +2,8 @@
 title:
   page: "NemoClaw Overview — What It Does and How It Fits Together"
   nav: "Overview"
-description: "NemoClaw sandboxes OpenClaw with NVIDIA inference and declarative policy."
-keywords: ["nemoclaw overview", "openclaw openshell sandbox plugin"]
+description: "NemoClaw is an open source reference stack that simplifies running OpenClaw always-on assistants safely."
+keywords: ["nemoclaw overview", "openclaw always-on assistants", "nvidia openshell", "nvidia nemotron"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "inference_routing", "blueprints"]
 content:
@@ -20,8 +20,9 @@ status: published
 
 # Overview
 
-NemoClaw is the [OpenClaw](https://openclaw.ai) plugin for [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
-It moves OpenClaw into a sandboxed environment where every network request, file access, and inference call is governed by declarative policy.
+NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants safely. It incorporates policy-based privacy and security guardrails, giving users control over their agents' behavior and data handling. This enables self-evolving claws to run more safely in clouds, on prem, RTX PCs, and DGX Spark.
+
+NemoClaw uses open source models, such as [NVIDIA Nemotron](https://build.nvidia.com), alongside the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of the [NVIDIA Agent Toolkit](https://docs.nvidia.com/nemo/agent-toolkit/latest), a secure environment designed for executing claws more safely. By combining open source models with built-in safety measures, NemoClaw simplifies and secures AI agent deployment.
 
 | Capability              | Description                                                                                                                                          |
 |-------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|

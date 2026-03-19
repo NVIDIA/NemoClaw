@@ -20,8 +20,7 @@ status: published
 
 # How NemoClaw Works
 
-NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox.
-This page explains the key concepts at a high level.
+This page explains the key concepts about NemoClaw at a high level.
 
 ## How It Fits Together
 

@@ -6,14 +6,13 @@
 [![Project Status](https://img.shields.io/badge/status-alpha-orange)](https://github.com/NVIDIA/NemoClaw/blob/main/docs/about/release-notes.md)
 <!-- end-badges -->
 
-NVIDIA NemoClaw is an open source stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants safely. It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of [NVIDIA Agent Toolkit](https://docs.nvidia.com/nemo/agent-toolkit/latest), a secure environment for running autonomous agents, with inference routed through [NVIDIA cloud](https://build.nvidia.com).
+NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants safely. It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of [NVIDIA Agent Toolkit](https://docs.nvidia.com/nemo/agent-toolkit/latest), a secure environment for running autonomous agents, and open source models such as [NVIDIA Nemotron](https://build.nvidia.com).
 
 > **Alpha software**
 > 
-> NemoClaw is early-stage. Expect rough edges. We are building toward production-ready sandbox orchestration, but the starting point is getting your own environment up and running.
+> NemoClaw is available in early preview starting March 16, 2026.
 > Interfaces, APIs, and behavior may change without notice as we iterate on the design.
-> The project is shared to gather feedback and enable early experimentation, but it
-> should not yet be considered production-ready.
+> The project is shared to gather feedback and enable early experimentation.
 > We welcome issues and discussion from the community while the project evolves.
 
 ---
@@ -98,11 +97,13 @@ Connect to the sandbox, then chat with the agent through the TUI or the CLI.
 
 #### Connect to the Sandbox
 
+Run the following command to connect to the sandbox:
+
 ```bash
 nemoclaw my-assistant connect
 ```
 
-This opens the sandbox shell `sandbox@my-assistant:~$` where you can run `openclaw` commands.
+This connects you to the sandbox shell `sandbox@my-assistant:~$` where you can run `openclaw` commands.
 
 #### OpenClaw TUI
 
