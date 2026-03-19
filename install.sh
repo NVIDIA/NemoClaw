@@ -278,8 +278,16 @@ run_onboard() {
   info "Running nemoclaw onboard…"
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     nemoclaw onboard --non-interactive
-  else
+  elif [ -t 0 ]; then
+    # stdin is already a terminal — run interactively as normal
     nemoclaw onboard
+  elif ( : </dev/tty ) 2>/dev/null; then
+    # stdin is a pipe (e.g. curl | bash) but a terminal is available —
+    # redirect stdin from /dev/tty so interactive prompts work
+    nemoclaw onboard </dev/tty
+  else
+    warn "No terminal available — skipping interactive onboard."
+    info "Run 'nemoclaw onboard' manually to complete setup."
   fi
 }
 

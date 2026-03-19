@@ -445,4 +445,75 @@ exit 0
     assert.equal(fs.readlinkSync(shimPath), path.join(prefix, "bin", "nemoclaw"));
     assert.match(`${result.stdout}${result.stderr}`, /Created user-local shim/);
   });
+
+  it("does not hang when installer is piped via stdin (curl | bash)", () => {
+    // Simulates: curl -fsSL https://nvidia.com/nemoclaw.sh | bash
+    // Before the fix, nemoclaw onboard received EOF on stdin (the pipe)
+    // instead of terminal input, causing it to hang or silently exit.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-pipe-onboard-"));
+    const fakeBin = path.join(tmp, "bin");
+    const prefix = path.join(tmp, "prefix");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+
+    writeExecutable(
+      path.join(fakeBin, "node"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+  echo "v22.14.0"
+  exit 0
+fi
+exit 99
+`,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "--version" ]; then
+  echo "10.9.2"
+  exit 0
+fi
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
+  echo "$NPM_PREFIX"
+  exit 0
+fi
+if [ "$1" = "install" ] && [ "$2" = "-g" ] && [ "$3" = "${GITHUB_INSTALL_URL}" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+if [ "$1" = "onboard" ]; then exit 0; fi
+if [ "$1" = "--version" ]; then echo "v0.1.0-test"; exit 0; fi
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi
+echo "unexpected npm invocation: $*" >&2
+exit 98
+`,
+    );
+
+    // Pipe the installer via stdin to simulate curl | bash
+    const scriptContents = fs.readFileSync(INSTALLER, "utf-8");
+    const result = spawnSync("bash", [], {
+      cwd: tmp,
+      input: scriptContents,
+      encoding: "utf-8",
+      timeout: 15000,
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        NPM_PREFIX: prefix,
+      },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    assert.equal(result.status, 0);
+    assert.match(output, /Installation complete/);
+    // When piped without a controlling terminal, onboard should be skipped
+    // with a helpful message instead of hanging on EOF
+    assert.match(output, /No terminal available|Running nemoclaw onboard/);
+  });
 });
