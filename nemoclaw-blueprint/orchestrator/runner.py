@@ -217,9 +217,9 @@ def action_apply(
     # Use bare key form (--credential OPENAI_API_KEY) so the actual credential
     # value is passed via the child process environment, not visible in `ps aux`.
     provider_env: dict[str, str] = {}
-    if credential:
-        provider_args.extend(["--credential", "OPENAI_API_KEY"])
-        provider_env["OPENAI_API_KEY"] = credential
+    if credential and credential_env:
+        provider_args.extend(["--credential", credential_env])
+        provider_env[credential_env] = credential
     if endpoint:
         provider_args.extend(["--config", f"OPENAI_BASE_URL={endpoint}"])
 
