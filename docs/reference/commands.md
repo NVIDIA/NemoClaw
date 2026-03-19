@@ -92,6 +92,8 @@ The `/nemoclaw` slash command is available inside the OpenClaw chat interface fo
 
 The `nemoclaw` binary handles host-side operations that run outside the OpenClaw plugin context.
 
+Most sandbox-management commands in this section require the OpenShell CLI (`openshell`) to be installed and available on your `PATH`.
+
 ### `nemoclaw onboard`
 
 Run the interactive setup wizard.

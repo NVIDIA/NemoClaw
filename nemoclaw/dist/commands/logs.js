@@ -9,9 +9,13 @@ exports.cliLogs = cliLogs;
 const node_child_process_1 = require("node:child_process");
 const node_util_1 = require("node:util");
 const state_js_1 = require("../blueprint/state.js");
+const openshell_cli_js_1 = require("./openshell-cli.js");
 const execAsync = (0, node_util_1.promisify)(node_child_process_1.exec);
 async function cliLogs(opts) {
     const { follow, lines, runId, logger, pluginConfig } = opts;
+    if (!(0, openshell_cli_js_1.ensureOpenShellCli)(logger, "nemoclaw <name> logs")) {
+        return;
+    }
     const state = (0, state_js_1.loadState)();
     const sandboxName = state.sandboxName ?? pluginConfig.sandboxName;
     const targetRunId = runId ?? state.lastRunId;

@@ -9,6 +9,7 @@ import { exec, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import type { PluginLogger, NemoClawConfig } from "../index.js";
 import { loadState } from "../blueprint/state.js";
+import { ensureOpenShellCli } from "./openshell-cli.js";
 
 const execAsync = promisify(exec);
 
@@ -22,6 +23,9 @@ export interface LogsOptions {
 
 export async function cliLogs(opts: LogsOptions): Promise<void> {
   const { follow, lines, runId, logger, pluginConfig } = opts;
+  if (!ensureOpenShellCli(logger, "nemoclaw <name> logs")) {
+    return;
+  }
   const state = loadState();
   const sandboxName = state.sandboxName ?? pluginConfig.sandboxName;
 

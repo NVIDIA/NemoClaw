@@ -3,6 +3,7 @@
 
 import { spawn } from "node:child_process";
 import type { PluginLogger } from "../index.js";
+import { ensureOpenShellCli } from "./openshell-cli.js";
 
 export interface ConnectOptions {
   sandbox: string;
@@ -16,6 +17,10 @@ export async function cliConnect(opts: ConnectOptions): Promise<void> {
   logger.info("You will be inside the sandbox. Run 'openclaw' commands normally.");
   logger.info("Type 'exit' to return to your host shell.");
   logger.info("");
+
+  if (!ensureOpenShellCli(logger, "nemoclaw <name> connect")) {
+    return;
+  }
 
   const exitCode = await new Promise<number | null>((resolve) => {
     const proc = spawn("openshell", ["sandbox", "connect", sandboxName], {

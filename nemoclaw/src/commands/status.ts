@@ -5,6 +5,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { PluginLogger, NemoClawConfig } from "../index.js";
 import { loadState } from "../blueprint/state.js";
+import { ensureOpenShellCli } from "./openshell-cli.js";
 
 const execAsync = promisify(exec);
 
@@ -16,6 +17,9 @@ export interface StatusOptions {
 
 export async function cliStatus(opts: StatusOptions): Promise<void> {
   const { json: jsonOutput, logger } = opts;
+  if (!ensureOpenShellCli(logger, "nemoclaw <name> status")) {
+    return;
+  }
   const state = loadState();
   const sandboxName = state.sandboxName ?? "openclaw";
 
