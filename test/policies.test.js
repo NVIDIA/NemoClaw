@@ -120,4 +120,45 @@ describe("policies", () => {
       }
     });
   });
+
+  describe("binaries restriction", () => {
+    it("every preset has a binaries section", () => {
+      for (const p of policies.listPresets()) {
+        const content = policies.loadPreset(p.name);
+        assert.ok(content.includes("binaries:"), `${p.name} missing binaries restriction`);
+      }
+    });
+
+    it("every preset allows openclaw binary", () => {
+      for (const p of policies.listPresets()) {
+        const content = policies.loadPreset(p.name);
+        assert.ok(
+          content.includes("/usr/local/bin/openclaw"),
+          `${p.name} missing openclaw in binaries allowlist`,
+        );
+      }
+    });
+
+    it("pypi preset allows pip3 but not curl or python3", () => {
+      const content = policies.loadPreset("pypi");
+      assert.ok(content.includes("/usr/bin/pip3"), "pypi missing pip3 in binaries");
+      assert.ok(!content.includes("/usr/bin/curl"), "pypi should not allow curl");
+      assert.ok(!content.includes("/usr/bin/python3"), "pypi should not allow python3");
+    });
+
+    it("non-listed binaries are denied by omission", () => {
+      // Binaries restriction is an allowlist — any binary not listed is implicitly denied.
+      // Verify no preset includes common shell tools that could be used for exfiltration.
+      const dangerousBinaries = ["/usr/bin/curl", "/usr/bin/wget", "/bin/bash", "/bin/sh"];
+      for (const p of policies.listPresets()) {
+        const content = policies.loadPreset(p.name);
+        for (const bin of dangerousBinaries) {
+          assert.ok(
+            !content.includes(bin),
+            `${p.name} should not allow ${bin} in binaries`,
+          );
+        }
+      }
+    });
+  });
 });
