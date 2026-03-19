@@ -19,6 +19,7 @@
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { execSync, spawn } = require("child_process");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 
@@ -32,11 +33,16 @@ const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API_KEY = process.env.NVIDIA_API_KEY;
 
 function readDefaultSandbox() {
-  const configPath = path.join(process.env.HOME, ".nemoclaw", "sandboxes.json");
+  const configPath = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
   try {
     const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
     if (config.defaultSandbox) return config.defaultSandbox;
-  } catch {}
+    console.warn("[warn] sandboxes.json has no defaultSandbox field — falling back to SANDBOX_NAME or \"nemoclaw\"");
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      console.warn(`[warn] could not read sandboxes.json: ${err.message} — falling back to SANDBOX_NAME or "nemoclaw"`);
+    }
+  }
   return null;
 }
 
