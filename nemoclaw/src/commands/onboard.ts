@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, execSync } from "node:child_process";
+import { writeFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { PluginLogger, NemoClawConfig } from "../index.js";
 import {
   describeOnboardEndpoint,
@@ -13,6 +16,55 @@ import {
 } from "../onboard/config.js";
 import { promptInput, promptConfirm, promptSelect } from "../onboard/prompt.js";
 import { validateApiKey, maskApiKey } from "../onboard/validate.js";
+
+// Known Ollama reasoning models that output to `reasoning` field instead of `content`.
+// See: https://github.com/NVIDIA/NemoClaw/issues/246
+const KNOWN_REASONING_MODEL_PATTERNS: RegExp[] = [
+  /^nemotron.*nano/i,
+  /^deepseek-r1/i,
+  /^qwq/i,
+];
+
+function isReasoningModel(modelName: string): boolean {
+  // Exclude chat variants (e.g. nemotron-3-nano-chat) — they don't use reasoning mode
+  if (/-chat$/i.test(modelName)) return false;
+  return KNOWN_REASONING_MODEL_PATTERNS.some((p) => p.test(modelName));
+}
+
+function listOllamaModels(): string[] {
+  try {
+    const raw = execSync("curl -sf http://localhost:11434/api/tags", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 5000,
+    });
+    const data = JSON.parse(raw) as { models?: Array<{ name: string }> };
+    return (data.models ?? []).map((m) => m.name);
+  } catch {
+    return [];
+  }
+}
+
+function createOllamaChatVariant(baseModel: string, logger: PluginLogger): string | null {
+  const variantName = baseModel.replace(/:.*$/, "") + "-chat";
+  const modelfilePath = join(tmpdir(), `nemoclaw-modelfile-${Date.now()}`);
+  try {
+    writeFileSync(modelfilePath, `FROM ${baseModel}\n`, "utf-8");
+    execFileSync("ollama", ["create", variantName, "-f", modelfilePath], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 120_000,
+    });
+    return variantName;
+  } catch (err) {
+    logger.warn(
+      `Could not create chat variant '${variantName}': ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  } finally {
+    try { unlinkSync(modelfilePath); } catch { /* ignore */ }
+  }
+}
 
 export interface OnboardOptions {
   apiKey?: string;
@@ -366,6 +418,17 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
   let model: string;
   if (opts.model) {
     model = opts.model;
+  } else if (endpointType === "ollama") {
+    // For Ollama, list locally available models first
+    const ollamaModels = listOllamaModels();
+    if (ollamaModels.length > 0) {
+      logger.info(`Found ${String(ollamaModels.length)} model(s) in Ollama:`);
+      const modelOptions = ollamaModels.map((id) => ({ label: id, value: id }));
+      model = await promptSelect("Select your primary model:", modelOptions);
+    } else {
+      logger.info("No models found in Ollama. Enter a model name manually.");
+      model = await promptInput("Model name (e.g., nemotron-3-nano)");
+    }
   } else {
     const discoveredModelOptions =
       endpointType === "ollama"
@@ -393,6 +456,24 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
           : DEFAULT_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }));
 
     model = await promptSelect("Select your primary model:", modelOptions, defaultIndex);
+  }
+
+  // For Ollama reasoning models, create a chat variant to avoid blank responses.
+  // Reasoning models (e.g. deepseek-r1, qwq) output to the `reasoning` field
+  // instead of `content`, which causes empty responses in chat mode.
+  // Creating a "-chat" variant forces the model into standard chat mode.
+  if (endpointType === "ollama" && isReasoningModel(model)) {
+    logger.warn(
+      `Model '${model}' is a reasoning model that may return blank responses in chat mode.`,
+    );
+    logger.info("Creating a chat variant to ensure proper output...");
+    const chatVariant = createOllamaChatVariant(model, logger);
+    if (chatVariant) {
+      logger.info(`Using chat variant: ${chatVariant}`);
+      model = chatVariant;
+    } else {
+      logger.warn("Could not create chat variant. The model may return empty responses.");
+    }
   }
 
   // Step 6: Resolve profile

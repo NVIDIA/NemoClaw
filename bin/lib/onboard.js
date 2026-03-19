@@ -7,11 +7,12 @@
 
 const fs = require("fs");
 const path = require("path");
+const { execSync, execFileSync } = require("child_process");
+const os = require("os");
 const { ROOT, SCRIPTS, run, runCapture } = require("./runner");
 const {
   getDefaultOllamaModel,
   getLocalProviderBaseUrl,
-  getOllamaModelOptions,
   getOllamaWarmupCommand,
   validateOllamaModel,
   validateLocalProvider,
@@ -55,7 +56,89 @@ async function promptOrDefault(question, envVar, defaultValue) {
   return prompt(question);
 }
 
+// Known Ollama reasoning models that output to `reasoning` field instead of `content`.
+// See: https://github.com/NVIDIA/NemoClaw/issues/246
+const KNOWN_REASONING_MODEL_PATTERNS = [
+  /^nemotron.*nano/i,
+  /^deepseek-r1/i,
+  /^qwq/i,
+];
+
+/**
+ * Parse an Ollama model reference into its components.
+ * Handles fully-qualified refs like "ghcr.io/org/deepseek-r1:8b" as well as
+ * simple refs like "deepseek-r1:8b" or "deepseek-r1".
+ */
+function parseOllamaModelRef(modelRef) {
+  const ref = String(modelRef).split("@", 1)[0];
+  const withoutTag = ref.replace(/:(?=[^/]*$).*/, "");
+  return {
+    withoutTag,
+    baseName: withoutTag.slice(withoutTag.lastIndexOf("/") + 1),
+  };
+}
+
+function isReasoningModel(modelName) {
+  if (typeof modelName !== "string" || modelName.length === 0) return false;
+  // Extract base model name — strips registry, namespace, and tag
+  // so "ghcr.io/org/deepseek-r1:8b" → baseName "deepseek-r1"
+  // and "nemotron-3-nano-chat:latest" → baseName "nemotron-3-nano-chat"
+  const { baseName } = parseOllamaModelRef(modelName);
+  // Exclude chat variants
+  if (/-chat$/i.test(baseName)) return false;
+  return KNOWN_REASONING_MODEL_PATTERNS.some((p) => p.test(baseName));
+}
+
+function listOllamaModels() {
+  try {
+    const raw = execSync("curl -sf http://localhost:11434/api/tags", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 5000,
+    });
+    const data = JSON.parse(raw);
+    return (data.models || []).map((m) => m.name);
+  } catch {
+    return [];
+  }
+}
+
+function createOllamaChatVariant(baseModel) {
+  const variantName = baseModel.replace(/:.*$/, "") + "-chat";
+  const modelfilePath = path.join(os.tmpdir(), `nemoclaw-modelfile-${Date.now()}`);
+  try {
+    fs.writeFileSync(modelfilePath, `FROM ${baseModel}\n`, "utf-8");
+    execFileSync("ollama", ["create", variantName, "-f", modelfilePath], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 120000,
+    });
+    return variantName;
+  } catch (err) {
+    console.log(`  ⚠ Could not create chat variant '${variantName}': ${err.message || err}`);
+    return null;
+  } finally {
+    try { fs.unlinkSync(modelfilePath); } catch { /* ignore */ }
+  }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────
+
+/**
+ * If the model is a known reasoning model, create a chat variant and return it.
+ * Otherwise return the original model unchanged.
+ */
+function handleReasoningModel(model) {
+  if (!isReasoningModel(model)) return model;
+  console.log(`  ⚠ '${model}' is a reasoning model — creating chat variant...`);
+  const chatVariant = createOllamaChatVariant(model);
+  if (chatVariant) {
+    console.log(`  ✓ Using chat variant: ${chatVariant}`);
+    return chatVariant;
+  }
+  console.log("  ⚠ Could not create chat variant. Model may return empty responses.");
+  return model;
+}
 
 function step(n, total, msg) {
   console.log("");
@@ -141,23 +224,6 @@ async function promptCloudModel() {
   const choice = await prompt("  Choose model [1]: ");
   const index = parseInt(choice || "1", 10) - 1;
   return (CLOUD_MODEL_OPTIONS[index] || CLOUD_MODEL_OPTIONS[0]).id;
-}
-
-async function promptOllamaModel() {
-  const options = getOllamaModelOptions(runCapture);
-  const defaultModel = getDefaultOllamaModel(runCapture);
-  const defaultIndex = Math.max(0, options.indexOf(defaultModel));
-
-  console.log("");
-  console.log("  Ollama models:");
-  options.forEach((option, index) => {
-    console.log(`    ${index + 1}) ${option}`);
-  });
-  console.log("");
-
-  const choice = await prompt(`  Choose model [${defaultIndex + 1}]: `);
-  const index = parseInt(choice || String(defaultIndex + 1), 10) - 1;
-  return options[index] || options[defaultIndex] || defaultModel;
 }
 
 function isDockerRunning() {
@@ -591,13 +657,28 @@ async function setupNim(sandboxName, gpu) {
         run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
         sleep(2);
       }
-      console.log("  ✓ Using Ollama on localhost:11434");
       provider = "ollama-local";
       if (isNonInteractive()) {
         model = requestedModel || getDefaultOllamaModel(runCapture);
       } else {
-        model = await promptOllamaModel();
+        // List available models and let the user pick
+        const ollamaModels = listOllamaModels();
+        if (ollamaModels.length > 0) {
+          console.log("");
+          console.log("  Available Ollama models:");
+          ollamaModels.forEach((m, i) => {
+            console.log(`    ${i + 1}) ${m}`);
+          });
+          console.log("");
+          const modelChoice = await prompt(`  Choose model [1]: `);
+          const midx = parseInt(modelChoice || "1", 10) - 1;
+          model = ollamaModels[midx] || ollamaModels[0];
+        } else {
+          model = getDefaultOllamaModel(runCapture);
+        }
       }
+      model = handleReasoningModel(model);
+      console.log(`  ✓ Using Ollama on localhost:11434 with model: ${model}`);
     } else if (selected.key === "install-ollama") {
       console.log("  Installing Ollama via Homebrew...");
       run("brew install ollama", { ignoreError: true });
@@ -609,8 +690,24 @@ async function setupNim(sandboxName, gpu) {
       if (isNonInteractive()) {
         model = requestedModel || getDefaultOllamaModel(runCapture);
       } else {
-        model = await promptOllamaModel();
+        // List available models and let the user pick
+        const ollamaModels = listOllamaModels();
+        if (ollamaModels.length > 0) {
+          console.log("");
+          console.log("  Available Ollama models:");
+          ollamaModels.forEach((m, i) => {
+            console.log(`    ${i + 1}) ${m}`);
+          });
+          console.log("");
+          const modelChoice = await prompt(`  Choose model [1]: `);
+          const midx = parseInt(modelChoice || "1", 10) - 1;
+          model = ollamaModels[midx] || ollamaModels[0];
+        } else {
+          model = getDefaultOllamaModel(runCapture);
+        }
       }
+      model = handleReasoningModel(model);
+      console.log(`  ✓ Using Ollama on localhost:11434 with model: ${model}`);
     } else if (selected.key === "vllm") {
       console.log("  ✓ Using existing vLLM on localhost:8000");
       provider = "vllm-local";
