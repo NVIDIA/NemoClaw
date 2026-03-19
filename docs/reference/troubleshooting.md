@@ -84,13 +84,14 @@ Add the `export` line to your `~/.bashrc` or `~/.zshrc` to make it permanent, th
 
 The NemoClaw gateway uses port `18789` by default.
 If another process is already bound to this port, onboarding fails.
-Identify and stop the conflicting process:
+Identify the conflicting process, verify it is safe to stop, and terminate it:
 
 ```console
 $ lsof -i :18789
 $ kill <PID>
 ```
 
+If the process does not exit, use `kill -9 <PID>` to force-terminate it.
 Then retry onboarding.
 
 ## Onboarding
