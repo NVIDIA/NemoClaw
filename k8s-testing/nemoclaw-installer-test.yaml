@@ -3,7 +3,7 @@
 #
 # Prerequisites:
 #   - Dynamo vLLM serving a model (e.g., in robert namespace)
-#   - PR #225 merged (or using a build that includes unattended install support)
+#   - PR #318 merged (non-interactive mode) + PR #365 (Dynamo provider support)
 #
 # Usage:
 #   kubectl apply -f nemoclaw-installer-test.yaml
@@ -49,16 +49,21 @@ spec:
       env:
         - name: DOCKER_HOST
           value: unix:///var/run/docker.sock
-        # Unattended install configuration
-        - name: NEMOCLAW_NONINTERACTIVE
+        # Unattended install configuration (PR #318)
+        - name: NEMOCLAW_NON_INTERACTIVE
           value: "1"
         - name: NEMOCLAW_SANDBOX_NAME
           value: "nemoclaw-k8s"
-        # Dynamo vLLM endpoint - update to match your deployment
+        # Dynamo provider configuration (PR #365)
+        - name: NEMOCLAW_PROVIDER
+          value: "dynamo"
         - name: NEMOCLAW_DYNAMO_ENDPOINT
           value: "http://vllm-agg-frontend.robert.svc.cluster.local:8000/v1"
         - name: NEMOCLAW_DYNAMO_MODEL
           value: "meta-llama/Llama-3.1-8B-Instruct"
+        # Skip policies for faster testing
+        - name: NEMOCLAW_POLICY_MODE
+          value: "skip"
       volumeMounts:
         - name: docker-socket
           mountPath: /var/run

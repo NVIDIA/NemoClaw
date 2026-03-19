@@ -2,7 +2,7 @@
 
 Test NemoClaw with [OpenShell](https://github.com/NVIDIA/OpenShell) on AWS EKS, using Dynamo vLLM for inference.
 
-> **Note:** The public installer test (`test-installer.sh`) requires unattended install support. See PR #225.
+> **Note:** The public installer test (`test-installer.sh`) requires non-interactive mode (PR #318) and Dynamo provider support (PR #365).
 
 ## Architecture
 
@@ -42,6 +42,21 @@ Test NemoClaw with [OpenShell](https://github.com/NVIDIA/OpenShell) on AWS EKS, 
 
 OpenShell runs a k3s cluster inside Docker to provide sandboxed execution. On Kubernetes, we use Docker-in-Docker (DinD) to provide the Docker daemon that OpenShell requires.
 
+### Network Architecture Note
+
+The OpenShell inference proxy runs inside pods in the nested k3s cluster, which cannot resolve Kubernetes DNS names (e.g., `vllm-agg-frontend.robert.svc.cluster.local`). To work around this, we use:
+
+1. A **socat TCP proxy** running in the workspace container that forwards traffic to the K8s service
+2. The `host.openshell.internal` hostname, which resolves to the host (workspace container) from inside k3s
+
+```
+Sandbox Pod (k3s) → inference.local → OpenShell Proxy → host.openshell.internal:8000
+                                                              ↓
+                                                    socat proxy (workspace)
+                                                              ↓
+                                          vllm-agg-frontend.robert.svc:8000 (K8s)
+```
+
 ## Prerequisites
 
 - EKS cluster with kubectl access
@@ -52,7 +67,7 @@ OpenShell runs a k3s cluster inside Docker to provide sandboxed execution. On Ku
 
 ### Option A: Public Installer (Recommended)
 
-Uses the official NemoClaw installer with unattended mode. Requires PR #225 merged.
+Uses the official NemoClaw installer with non-interactive mode. Requires PR #318 (non-interactive mode) and PR #365 (Dynamo provider) merged.
 
 ```bash
 # Run the public installer test
@@ -66,6 +81,7 @@ This will:
 
 Environment variables (set before running):
 ```bash
+export NEMOCLAW_PROVIDER=dynamo
 export NEMOCLAW_DYNAMO_ENDPOINT=http://vllm-agg-frontend.robert.svc.cluster.local:8000/v1
 export NEMOCLAW_DYNAMO_MODEL=meta-llama/Llama-3.1-8B-Instruct
 ./test-installer.sh
@@ -219,8 +235,37 @@ kubectl exec openshell-gateway -c workspace -- \
   curl -s http://vllm-agg-frontend.robert.svc.cluster.local:8000/v1/models
 ```
 
+### Inference returns 502 Bad Gateway
+
+The nested k3s cluster cannot resolve Kubernetes DNS names. You need to set up a socat proxy:
+
+```bash
+# Install socat in workspace
+kubectl exec openshell-gateway -c workspace -- apt-get install -y socat
+
+# Start socat proxy (background)
+kubectl exec openshell-gateway -c workspace -- \
+  socat TCP-LISTEN:8000,fork,reuseaddr \
+    TCP:vllm-agg-frontend.robert.svc.cluster.local:8000 &
+
+# Reconfigure provider to use host.openshell.internal
+kubectl exec openshell-gateway -c workspace -- \
+  openshell provider create \
+    --name dynamo-vllm \
+    --type openai \
+    --credential "OPENAI_API_KEY=dummy" \
+    --config "OPENAI_BASE_URL=http://host.openshell.internal:8000/v1"
+
+kubectl exec openshell-gateway -c workspace -- \
+  openshell inference set \
+    --no-verify \
+    --provider dynamo-vllm \
+    --model meta-llama/Llama-3.1-8B-Instruct
+```
+
 ## Known Limitations
 
 - **Privileged mode required**: DinD needs privileged containers
 - **Memory**: Gateway pod needs ~8GB; workspace needs ~4GB
 - **Nested virtualization**: Running k3s inside Docker inside K8s adds overhead
+- **K8s DNS isolation**: Nested k3s pods cannot resolve K8s service names; requires socat proxy (see above)

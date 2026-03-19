@@ -3,7 +3,7 @@
 #
 # Prerequisites:
 #   - Dynamo vLLM serving a model
-#   - PR #225 merged (unattended install support)
+#   - PR #318 merged (non-interactive mode) + PR #365 (Dynamo provider)
 #
 # Usage:
 #   ./test-installer.sh [--cleanup]

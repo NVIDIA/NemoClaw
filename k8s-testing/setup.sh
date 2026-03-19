@@ -109,35 +109,58 @@ done
 info "Gateway is healthy"
 echo ""
 
-# Step 7: Configure vLLM provider
-info "Step 7: Configuring vLLM provider..."
+# Step 7: Start socat proxy for K8s service access
+info "Step 7: Starting socat proxy for vLLM endpoint..."
 
-# Test vLLM connectivity from inside the pod
+# Extract host:port from VLLM_ENDPOINT (remove /v1 suffix and http:// prefix)
+VLLM_HOST_PORT=$(echo "$VLLM_ENDPOINT" | sed 's|^http://||' | sed 's|/v1$||')
+
+# Install socat and start proxy
+kubectl exec "$POD_NAME" -n "$NAMESPACE" -c workspace -- bash -c "
+  apt-get install -y -qq socat >/dev/null 2>&1
+
+  # Kill any existing socat on port 8000
+  pkill -f 'socat.*TCP-LISTEN:8000' 2>/dev/null || true
+
+  # Start socat proxy in background
+  # This forwards localhost:8000 to the K8s vLLM service
+  nohup socat TCP-LISTEN:8000,fork,reuseaddr TCP:$VLLM_HOST_PORT >/dev/null 2>&1 &
+
+  sleep 1
+  echo 'socat proxy started: localhost:8000 -> $VLLM_HOST_PORT'
+"
+echo ""
+
+# Step 8: Configure vLLM provider
+info "Step 8: Configuring vLLM provider..."
+
+# Test vLLM connectivity via socat proxy
 if kubectl exec "$POD_NAME" -n "$NAMESPACE" -c workspace -- \
-  curl -sf --max-time 5 "${VLLM_ENDPOINT%/v1}/v1/models" >/dev/null 2>&1; then
+  curl -sf --max-time 5 "http://localhost:8000/v1/models" >/dev/null 2>&1; then
 
+  # Use host.openshell.internal which resolves to the workspace container from k3s
   kubectl exec "$POD_NAME" -n "$NAMESPACE" -c workspace -- bash -c "
     openshell provider create \
       --name dynamo-vllm \
       --type openai \
       --credential 'OPENAI_API_KEY=dummy' \
-      --config 'OPENAI_BASE_URL=$VLLM_ENDPOINT' 2>&1 || true
+      --config 'OPENAI_BASE_URL=http://host.openshell.internal:8000/v1' 2>&1 || true
 
     openshell inference set \
       --no-verify \
       --provider dynamo-vllm \
       --model '$VLLM_MODEL'
   "
-  info "vLLM provider configured: $VLLM_MODEL"
+  info "vLLM provider configured via host.openshell.internal:8000"
 else
-  warn "vLLM endpoint not reachable at $VLLM_ENDPOINT"
+  warn "vLLM endpoint not reachable via socat proxy"
   warn "Configure manually later with:"
   echo "  kubectl exec $POD_NAME -c workspace -- openshell provider create ..."
 fi
 echo ""
 
-# Step 8: Show status
-info "Step 8: Verifying setup..."
+# Step 9: Show status
+info "Step 9: Verifying setup..."
 kubectl exec "$POD_NAME" -n "$NAMESPACE" -c workspace -- openshell status
 echo ""
 

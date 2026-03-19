@@ -19,16 +19,19 @@ spec:
           mountPath: /var/lib/docker
         - name: docker-socket
           mountPath: /var/run
+        - name: docker-config
+          mountPath: /etc/docker
       env:
         - name: DOCKER_TLS_CERTDIR
           value: ""
+      command:
+        - dockerd
+        - --host=unix:///var/run/docker.sock
       resources:
         requests:
-          memory: "2Gi"
-          cpu: "1"
-        limits:
           memory: "8Gi"
-          cpu: "4"
+          cpu: "2"
+        # No limits - sandbox image builds need headroom
 
     # Workspace container - run openshell commands here
     - name: workspace
@@ -45,18 +48,32 @@ spec:
           mountPath: /root/.openshell
         - name: docker-socket
           mountPath: /var/run
+        - name: docker-config
+          mountPath: /etc/docker
       resources:
         requests:
-          memory: "1Gi"
-          cpu: "500m"
-        limits:
-          memory: "4Gi"
-          cpu: "2"
+          memory: "2Gi"
+          cpu: "1"
+        # No limits - builds need headroom
+
+  initContainers:
+    # Configure Docker daemon for cgroup v2 compatibility
+    - name: init-docker-config
+      image: busybox
+      command:
+        - sh
+        - -c
+        - echo '{"default-cgroupns-mode":"host"}' > /etc/docker/daemon.json
+      volumeMounts:
+        - name: docker-config
+          mountPath: /etc/docker
 
   volumes:
     - name: docker-storage
       emptyDir: {}
     - name: docker-socket
+      emptyDir: {}
+    - name: docker-config
       emptyDir: {}
     - name: workspace
       emptyDir: {}
