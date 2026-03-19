@@ -79,12 +79,10 @@ async function ensureApiKey() {
   const validation = validateApiKey(key);
   if (validation.ok) {
     console.log("  ✓ API key is valid");
+  } else if (validation.fatal) {
+    console.error(`  ✗ ${validation.message}`);
+    process.exit(1);
   } else {
-    // Non-fatal: warn but continue if it's a network issue
-    if (validation.message.includes("invalid") || validation.message.includes("expired")) {
-      console.error(`  ✗ ${validation.message}`);
-      process.exit(1);
-    }
     console.log(`  ⓘ ${validation.message}`);
   }
 
@@ -97,7 +95,10 @@ async function ensureApiKey() {
 
 /**
  * Validate an NVIDIA API key by making a lightweight test request.
- * Returns { ok: true } or { ok: false, message: string }.
+ * Returns { ok, fatal, message } where:
+ *   ok:    true if the key is confirmed valid
+ *   fatal: true if the key is definitively invalid (should not proceed)
+ *   message: human-readable status
  */
 function validateApiKey(key) {
   try {
@@ -121,18 +122,18 @@ function validateApiKey(key) {
     );
     const httpCode = (result.stdout || "").trim();
     if (httpCode === "200") {
-      return { ok: true };
+      return { ok: true, fatal: false };
     }
     if (httpCode === "401" || httpCode === "403") {
-      return { ok: false, message: "API key is invalid or expired. Check https://build.nvidia.com/settings/api-keys" };
+      return { ok: false, fatal: true, message: "API key is invalid or expired. Check https://build.nvidia.com/settings/api-keys" };
     }
     if (httpCode === "000" || !httpCode) {
-      return { ok: false, message: "Could not reach NVIDIA API (network issue). Key format looks valid — proceeding." };
+      return { ok: false, fatal: false, message: "Could not reach NVIDIA API (network issue). Key format looks valid — proceeding." };
     }
-    return { ok: false, message: `Unexpected response (HTTP ${httpCode}). Key format looks valid — proceeding.` };
+    return { ok: false, fatal: false, message: `Unexpected response (HTTP ${httpCode}). Key format looks valid — proceeding.` };
   } catch {
     // Network failure — don't block onboarding, just warn
-    return { ok: false, message: "Could not validate key (network error). Proceeding with saved key." };
+    return { ok: false, fatal: false, message: "Could not validate key (network error). Proceeding with saved key." };
   }
 }
 

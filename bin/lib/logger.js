@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Structured logger with verbose/debug support.
+// Debug logger for verbose/diagnostic output.
 // Usage:
 //   LOG_LEVEL=debug nemoclaw onboard
 //   nemoclaw --verbose onboard
@@ -27,28 +27,10 @@ function debug(...args) {
   }
 }
 
-function info(...args) {
-  if (currentLevel >= LOG_LEVELS.info) {
-    console.log("  [info]", ...args);
-  }
-}
-
-function warn(...args) {
-  if (currentLevel >= LOG_LEVELS.warn) {
-    console.error("  [warn]", ...args);
-  }
-}
-
-function error(...args) {
-  if (currentLevel >= LOG_LEVELS.error) {
-    console.error("  [error]", ...args);
-  }
-}
-
 // Initialize from environment
 const envLevel = (process.env.LOG_LEVEL || process.env.NEMOCLAW_LOG_LEVEL || "").toLowerCase();
 if (envLevel && LOG_LEVELS[envLevel] !== undefined) {
   setLevel(envLevel);
 }
 
-module.exports = { LOG_LEVELS, setLevel, isVerbose, debug, info, warn, error };
+module.exports = { LOG_LEVELS, setLevel, isVerbose, debug };

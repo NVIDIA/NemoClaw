@@ -538,15 +538,10 @@ async function createSandbox(gpu) {
   // nemoclaw-start.sh reads them from the environment.
   const envArgs = [`CHAT_UI_URL=${shellQuote(chatUiUrl)}`];
 
-  // Run without piping through awk — the pipe masked non-zero exit codes
-  // from openshell because bash returns the status of the last pipeline
-  // command (awk, always 0) unless pipefail is set. Removing the pipe
-  // lets the real exit code flow through to run().
   const createResult = await streamSandboxCreate(
     `openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1`
   );
 
-  // Clean up build context regardless of outcome
   run(`rm -rf "${buildCtx}"`, { ignoreError: true });
 
   if (createResult.status !== 0) {
@@ -561,10 +556,6 @@ async function createSandbox(gpu) {
     process.exit(createResult.status || 1);
   }
 
-  // Wait for sandbox to reach Ready state in k3s before registering.
-  // On WSL2 + Docker Desktop the pod can take longer to initialize;
-  // without this gate, NemoClaw registers a phantom sandbox that
-  // causes "sandbox not found" on every subsequent connect/status call.
   console.log("  Waiting for sandbox to become ready...");
   let ready = false;
   for (let i = 0; i < 30; i++) {
@@ -1045,7 +1036,7 @@ class OnboardPipeline {
       this.aborted = true;
       console.log("");
       console.log("  ⚠  Interrupted — cleaning up...");
-      this._rollbackSync();
+      this._rollback();
       process.exit(130);
     };
     process.on("SIGINT", this._signalHandler);
@@ -1060,9 +1051,9 @@ class OnboardPipeline {
     }
   }
 
-  // Synchronous rollback for signal handlers — safe to call from SIGINT/SIGTERM
-  // since all rollback actions use spawnSync (no async work).
-  _rollbackSync() {
+  // Synchronous rollback — safe to call from both signal handlers and catch
+  // blocks since all rollback actions use spawnSync (no async work).
+  _rollback() {
     for (let i = this.completedSteps.length - 1; i >= 0; i--) {
       const step = this.completedSteps[i];
       if (step.rollback) {
@@ -1075,10 +1066,6 @@ class OnboardPipeline {
       }
     }
     this.completedSteps = [];
-  }
-
-  async _rollback() {
-    this._rollbackSync();
   }
 
   async run(steps) {
@@ -1098,7 +1085,7 @@ class OnboardPipeline {
       console.error(`    ${err.message || err}`);
       console.error("");
       console.error("  Cleaning up partial state...");
-      await this._rollback();
+      this._rollback();
       this._removeSignalHandlers();
       throw err;
     }
@@ -1117,7 +1104,16 @@ async function onboard(opts = {}) {
   console.log("  ===================");
 
   // Shared state across steps — populated as each step completes.
-  const state = { gpu: null, sandboxName: null, model: null, provider: null };
+  // gatewayStarted / sandboxCreated track ownership so rollback only
+  // undoes resources THIS run created, not pre-existing ones.
+  const state = {
+    gpu: null,
+    sandboxName: null,
+    model: null,
+    provider: null,
+    gatewayStarted: false,
+    sandboxCreated: false,
+  };
 
   const pipeline = new OnboardPipeline();
 
@@ -1130,16 +1126,34 @@ async function onboard(opts = {}) {
     },
     {
       name: "Start gateway",
-      execute: async () => { await startGateway(state.gpu); },
+      execute: async () => {
+        await startGateway(state.gpu);
+        state.gatewayStarted = true;
+      },
       rollback: () => {
-        run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
+        if (state.gatewayStarted) {
+          run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
+        }
       },
     },
     {
       name: "Create sandbox",
-      execute: async () => { state.sandboxName = await createSandbox(state.gpu); },
+      execute: async () => {
+        // Snapshot ALL registry entries so we can compare by returned name
+        // (the user may type a different name than the env var default).
+        const allBefore = {};
+        for (const sb of registry.listSandboxes().sandboxes) {
+          allBefore[sb.name] = sb.createdAt;
+        }
+        state.sandboxName = await createSandbox(state.gpu);
+        const after = registry.getSandbox(state.sandboxName);
+        // If the entry existed before with the same createdAt, the user
+        // chose "keep existing" — rollback must not destroy it.
+        const beforeCreatedAt = allBefore[state.sandboxName];
+        state.sandboxCreated = !(beforeCreatedAt && after && beforeCreatedAt === after.createdAt);
+      },
       rollback: () => {
-        if (state.sandboxName) {
+        if (state.sandboxName && state.sandboxCreated) {
           run(`openshell sandbox delete "${state.sandboxName}" 2>/dev/null || true`, { ignoreError: true });
           registry.removeSandbox(state.sandboxName);
         }

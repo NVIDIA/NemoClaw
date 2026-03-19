@@ -15,17 +15,17 @@ if (dockerHost) {
 }
 
 // Redact known secret patterns from command strings for logging.
-const SECRET_PATTERNS = [
-  /NVIDIA_API_KEY=[^\s"']*/g,
-  /nvapi-[A-Za-z0-9_-]+/g,
-  /GITHUB_TOKEN=[^\s"']*/g,
-  /TELEGRAM_BOT_TOKEN=[^\s"']*/g,
-  /OPENAI_API_KEY=[^\s"']*/g,
-];
-
+// Patterns are created inside the function to avoid shared /g lastIndex state.
 function redactSecrets(str) {
+  const patterns = [
+    /NVIDIA_API_KEY=[^\s"']*/g,
+    /nvapi-[A-Za-z0-9_-]+/g,
+    /GITHUB_TOKEN=[^\s"']*/g,
+    /TELEGRAM_BOT_TOKEN=[^\s"']*/g,
+    /OPENAI_API_KEY=[^\s"']*/g,
+  ];
   let result = str;
-  for (const pattern of SECRET_PATTERNS) {
+  for (const pattern of patterns) {
     result = result.replace(pattern, (match) => {
       const eqIdx = match.indexOf("=");
       if (eqIdx > 0) return match.slice(0, eqIdx + 1) + "***";
