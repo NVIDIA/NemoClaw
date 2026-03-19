@@ -11,6 +11,7 @@
     "prepublishOnly": "cd nemoclaw && npm install --ignore-scripts && npm run build"
   },
   "dependencies": {
+    "discord.js": "^14.25.1",
     "openclaw": "2026.3.11"
   },
   "files": [

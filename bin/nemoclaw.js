@@ -113,6 +113,8 @@ async function deploy(instanceName) {
   if (ghToken) envLines.push(`GITHUB_TOKEN=${ghToken}`);
   const tgToken = getCredential("TELEGRAM_BOT_TOKEN");
   if (tgToken) envLines.push(`TELEGRAM_BOT_TOKEN=${tgToken}`);
+  const dcToken = getCredential("DISCORD_BOT_TOKEN");
+  if (dcToken) envLines.push(`DISCORD_BOT_TOKEN=${dcToken}`);
   const envTmp = path.join(os.tmpdir(), `nemoclaw-env-${Date.now()}`);
   fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
   run(`scp -q -o StrictHostKeyChecking=no -o LogLevel=ERROR "${envTmp}" ${name}:/home/ubuntu/nemoclaw/.env`);
