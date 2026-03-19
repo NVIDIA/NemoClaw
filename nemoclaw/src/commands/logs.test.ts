@@ -10,10 +10,27 @@ import { captureLogger, mockSpawnProc } from "../test-helpers.js";
 // Mocks
 // ---------------------------------------------------------------------------
 
-vi.mock("node:child_process", () => ({
-  exec: vi.fn(),
-  spawn: vi.fn(),
-}));
+vi.mock("node:child_process", async () => {
+  const { promisify } = await import("node:util");
+  const execFn = vi.fn();
+  // Attach a custom promisify that mirrors the real exec behaviour:
+  // the raw callback uses (err, stdout, stderr); promisify folds them
+  // into { stdout, stderr } just like the real Node implementation.
+  Object.defineProperty(execFn, promisify.custom, {
+    value: (...args: unknown[]) =>
+      new Promise((resolve, reject) => {
+        (execFn as Function)(...args, (err: Error | null, stdout: string, stderr: string) => {
+          if (err) {
+            Object.assign(err, { stdout, stderr });
+            reject(err);
+          } else {
+            resolve({ stdout, stderr });
+          }
+        });
+      }),
+  });
+  return { exec: execFn, spawn: vi.fn() };
+});
 
 vi.mock("../blueprint/state.js", () => ({
   loadState: vi.fn(),
@@ -51,24 +68,29 @@ const defaultConfig: NemoClawConfig = {
 /**
  * Make the exec mock resolve with the given stdout, or reject if error is set.
  * Routes by command substring.
+ *
+ * Uses the real Node `exec` callback signature `(err, stdout, stderr)` so that
+ * `util.promisify(exec)` — which is what production code calls — receives
+ * the three positional arguments it expects before folding them into
+ * `{ stdout, stderr }`.
  */
 function mockExec(responses: Record<string, string | Error>): void {
   vi.mocked(exec).mockImplementation(((
     cmd: string,
     _opts: unknown,
-    callback?: (err: Error | null, result: { stdout: string; stderr: string }) => void,
+    callback?: (err: Error | null, stdout: string, stderr: string) => void,
   ) => {
     for (const [substring, response] of Object.entries(responses)) {
       if (cmd.includes(substring)) {
         if (response instanceof Error) {
-          callback?.(response, { stdout: "", stderr: response.message });
+          callback?.(response, "", response.message);
         } else {
-          callback?.(null, { stdout: response, stderr: "" });
+          callback?.(null, response, "");
         }
         return;
       }
     }
-    callback?.(new Error(`command not found: ${cmd}`), { stdout: "", stderr: "" });
+    callback?.(new Error(`command not found: ${cmd}`), "", "");
   }) as typeof exec);
 }
 
