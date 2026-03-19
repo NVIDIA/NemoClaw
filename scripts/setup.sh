@@ -163,7 +163,7 @@ openshell inference set --no-verify --provider nvidia-nim --model nvidia/nemotro
 
 # 5. Swap check — prevent OOM during sandbox image push (Linux only)
 if [ "$(uname -s)" = "Linux" ]; then
-  MIN_TOTAL_MB=6144
+  MIN_TOTAL_MB=12000
   total_ram_mb=$(awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 0)
   total_swap_mb=$(awk '/SwapTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 0)
   total_mb=$((total_ram_mb + total_swap_mb))
