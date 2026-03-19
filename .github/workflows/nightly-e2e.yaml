@@ -24,6 +24,7 @@ concurrency:
 
 jobs:
   full-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
