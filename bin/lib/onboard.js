@@ -516,8 +516,15 @@ async function setupNim(sandboxName, gpu) {
       const providerKey = requestedProvider || "cloud";
       selected = options.find((o) => o.key === providerKey);
       if (!selected) {
-        console.error(`  Requested provider '${providerKey}' is not available in this environment.`);
-        process.exit(1);
+        // install-ollama is valid even when Ollama is already installed —
+        // fall back to the existing ollama option silently
+        if (providerKey === "install-ollama") {
+          selected = options.find((o) => o.key === "ollama");
+        }
+        if (!selected) {
+          console.error(`  Requested provider '${providerKey}' is not available in this environment.`);
+          process.exit(1);
+        }
       }
       console.log(`  [non-interactive] Provider: ${selected.key}`);
     } else {
@@ -606,10 +613,10 @@ async function setupNim(sandboxName, gpu) {
     } else if (selected.key === "install-ollama") {
       if (process.platform === "darwin") {
         console.log("  Installing Ollama via Homebrew...");
-        run("brew install ollama", { ignoreError: true });
+        run("brew install ollama");
       } else {
         console.log("  Installing Ollama via official installer...");
-        run("curl -fsSL https://ollama.com/install.sh | sh", { ignoreError: true });
+        run("curl -fsSL https://ollama.com/install.sh | sh");
       }
       console.log("  Starting Ollama...");
       run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
