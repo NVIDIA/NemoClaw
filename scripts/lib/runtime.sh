@@ -257,7 +257,7 @@ detect_kubelet_conflict() {
 
 # Emit standardized warning for kubelet conflicts.
 warn_kubelet_conflict() {
-  local detail="${1:-$KUBELET_CONFLICT_DETAIL}"
+  local detail="${1:-${KUBELET_CONFLICT_DETAIL:-}}"
   warn "⚠️  Conflicting Kubernetes detected: $detail"
   warn ""
   warn "The gateway runs k3s inside Docker with cgroupns=host, which will"
