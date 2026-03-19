@@ -224,7 +224,7 @@ function getNonInteractiveProvider() {
   const validProviders = new Set(["cloud", "ollama", "vllm", "nim", "lmstudio"]);
   if (!validProviders.has(providerKey)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
-    console.error("  Valid values: cloud, ollama, vllm, nim");
+    console.error(`  Valid values: ${Array.from(validProviders).join(", ")}`);
     process.exit(1);
   }
 
@@ -483,7 +483,7 @@ async function setupNim(sandboxName, gpu) {
     key: "cloud",
     label:
       "NVIDIA Cloud API (build.nvidia.com)" +
-      (!ollamaRunning && !(EXPERIMENTAL && vllmRunning) ? " (recommended)" : ""),
+      (!ollamaRunning && !(EXPERIMENTAL && vllmRunning) && !(EXPERIMENTAL && lmstudioRunning) ? " (recommended)" : ""),
   });
   if (hasOllama || ollamaRunning) {
     options.push({
@@ -502,7 +502,7 @@ async function setupNim(sandboxName, gpu) {
   if (EXPERIMENTAL && lmstudioRunning) {
     options.push({
       key: "lmstudio",
-      label: "Local LM Studio (localhost:1234) — running [experimental]",
+      label: "Local LM Studio (localhost:1234) — running [experimental] (suggested)",
     });
   }
 
@@ -526,6 +526,7 @@ async function setupNim(sandboxName, gpu) {
       const suggestions = [];
       if (vllmRunning) suggestions.push("vLLM");
       if (ollamaRunning) suggestions.push("Ollama");
+      if (lmstudioRunning) suggestions.push("LM Studio");
       if (suggestions.length > 0) {
         console.log(`  Detected local inference option${suggestions.length > 1 ? "s" : ""}: ${suggestions.join(", ")}`);
         console.log("  Select one explicitly to use it. Press Enter to keep the cloud default.");
