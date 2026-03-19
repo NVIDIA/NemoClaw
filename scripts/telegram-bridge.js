@@ -20,6 +20,7 @@ const https = require("https");
 const { execFileSync, spawn } = require("child_process");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 const { shellQuote, validateName } = require("../bin/lib/runner");
+const registry = require("../bin/lib/registry");
 
 const OPENSHELL = resolveOpenshell();
 if (!OPENSHELL) {
@@ -260,9 +261,11 @@ async function main() {
   console.log("  ┌─────────────────────────────────────────────────────┐");
   console.log("  │  NemoClaw Telegram Bridge                          │");
   console.log("  │                                                     │");
+  const sandboxInfo = registry.getSandbox(SANDBOX);
+  const model = sandboxInfo?.model || "nvidia/nemotron-3-super-120b-a12b";
   console.log(`  │  Bot:      @${(me.result.username + "                    ").slice(0, 37)}│`);
   console.log("  │  Sandbox:  " + (SANDBOX + "                              ").slice(0, 40) + "│");
-  console.log("  │  Model:    nvidia/nemotron-3-super-120b-a12b       │");
+  console.log(`  │  Model:    ${(model + "                                        ").slice(0, 40)}│`);
   console.log("  │                                                     │");
   console.log("  │  Messages are forwarded to the OpenClaw agent      │");
   console.log("  │  inside the sandbox. Run 'openshell term' in       │");
