@@ -55,7 +55,131 @@ async function promptOrDefault(question, envVar, defaultValue) {
   return prompt(question);
 }
 
+// Known Ollama reasoning models that output to `reasoning` field instead of `content`.
+// See: https://github.com/NVIDIA/NemoClaw/issues/246
+const KNOWN_REASONING_MODEL_PATTERNS = [
+  /^nemotron.*nano/i,
+  /^deepseek-r1/i,
+  /^qwq/i,
+];
+
+/**
+ * Parse an Ollama model reference into its components.
+ * Handles fully-qualified refs like "ghcr.io/org/deepseek-r1:8b" as well as
+ * simple refs like "deepseek-r1:8b" or "deepseek-r1".
+ */
+function parseOllamaModelRef(modelRef) {
+  // Strip @digest if present
+  const ref = String(modelRef).split("@", 1)[0];
+  // Strip :tag suffix (only the last one, after the last /)
+  const tagMatch = ref.match(/:([^/]*)$/);
+  const tag = tagMatch ? tagMatch[1] : "";
+  const withoutTag = tagMatch ? ref.slice(0, tagMatch.index) : ref;
+  return {
+    withoutTag,
+    baseName: withoutTag.slice(withoutTag.lastIndexOf("/") + 1),
+    tag,
+  };
+}
+
+function isReasoningModel(modelName) {
+  if (typeof modelName !== "string" || modelName.length === 0) return false;
+  // Extract base model name — strips registry, namespace, and tag
+  // so "ghcr.io/org/deepseek-r1:8b" → baseName "deepseek-r1"
+  const { baseName } = parseOllamaModelRef(modelName);
+  // Exclude chat variants
+  if (/-chat$/i.test(baseName)) return false;
+  return KNOWN_REASONING_MODEL_PATTERNS.some((p) => p.test(baseName));
+}
+
+function listOllamaModels() {
+  try {
+    const { execSync } = require("child_process");
+    const raw = execSync("curl -sf http://localhost:11434/api/tags", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 5000,
+    });
+    const data = JSON.parse(raw);
+    return (data.models || [])
+      .map((m) => m && m.name)
+      .filter((name) => typeof name === "string" && name.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Build a tag-safe chat variant name that preserves the Ollama tag to avoid
+ * collisions (e.g. deepseek-r1:8b → deepseek-r1-8b-chat, deepseek-r1:14b → deepseek-r1-14b-chat).
+ * Correctly handles registry refs with ports (e.g. registry.example.com:5000/model:v1).
+ *
+ * A colon is treated as a tag separator only when it appears after the last '/'.
+ * This prevents misinterpreting a port number as a tag in registry URLs.
+ */
+function buildChatVariantName(baseModel) {
+  const lastSlash = baseModel.lastIndexOf("/");
+  const colonIndex = baseModel.lastIndexOf(":");
+  // Treat as a tag only when the colon occurs after the last slash
+  // (i.e. "registry:5000/model" has no tag, "model:v1" does)
+  const hasTag = colonIndex > lastSlash;
+  const namePart = hasTag ? baseModel.slice(0, colonIndex) : baseModel;
+  const safeTag = hasTag
+    ? `-${baseModel.slice(colonIndex + 1).replace(/[^a-z0-9._-]/gi, "-")}`
+    : "";
+  return `${namePart}${safeTag}-chat`;
+}
+
+function createOllamaChatVariant(baseModel, variantName) {
+  const { execFileSync } = require("child_process");
+  const os = require("os");
+  // Use mkdtempSync for atomic temp directory creation — avoids TOCTOU races
+  // with predictable filenames on multi-user systems
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-modelfile-"));
+  const modelfilePath = path.join(tempDir, "Modelfile");
+  try {
+    fs.writeFileSync(modelfilePath, `FROM ${baseModel}\n`, {
+      encoding: "utf-8",
+      flag: "wx", // exclusive creation — fails if file already exists
+    });
+    execFileSync("ollama", ["create", variantName, "-f", modelfilePath], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 120000,
+    });
+    return variantName;
+  } catch (err) {
+    console.log(`  ⚠ Could not create chat variant '${variantName}': ${err.message || err}`);
+    return null;
+  } finally {
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────
+
+/**
+ * If the model is a known reasoning model, create a chat variant and return it.
+ * Otherwise return the original model unchanged.
+ */
+function handleReasoningModel(model) {
+  if (!isReasoningModel(model)) return model;
+  const variantName = buildChatVariantName(model);
+  // Reuse existing variant — makes the operation idempotent
+  const existingModels = listOllamaModels();
+  if (existingModels.includes(variantName)) {
+    console.log(`  ✓ Using existing chat variant: ${variantName}`);
+    return variantName;
+  }
+  console.log(`  ⚠ '${model}' is a reasoning model — creating chat variant...`);
+  const chatVariant = createOllamaChatVariant(model, variantName);
+  if (chatVariant) {
+    console.log(`  ✓ Using chat variant: ${chatVariant}`);
+    return chatVariant;
+  }
+  console.log("  ⚠ Could not create chat variant. Model may return empty responses.");
+  return model;
+}
 
 function step(n, total, msg) {
   console.log("");
@@ -591,13 +715,29 @@ async function setupNim(sandboxName, gpu) {
         run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
         sleep(2);
       }
-      console.log("  ✓ Using Ollama on localhost:11434");
+      // List available models and let the user pick
+      const ollamaModels = listOllamaModels();
+      if (ollamaModels.length > 0) {
+        console.log("");
+        console.log("  Available Ollama models:");
+        ollamaModels.forEach((m, i) => {
+          console.log(`    ${i + 1}) ${m}`);
+        });
+        console.log("");
+        const modelChoice = await prompt(`  Choose model [1]: `);
+        const midx = parseInt(modelChoice || "1", 10) - 1;
+        model = ollamaModels[midx] || ollamaModels[0];
+      } else {
+        model = "nemotron-3-nano";
+      }
       provider = "ollama-local";
       if (isNonInteractive()) {
         model = requestedModel || getDefaultOllamaModel(runCapture);
       } else {
         model = await promptOllamaModel();
       }
+      model = handleReasoningModel(model);
+      console.log(`  ✓ Using Ollama on localhost:11434 with model: ${model}`);
     } else if (selected.key === "install-ollama") {
       console.log("  Installing Ollama via Homebrew...");
       run("brew install ollama", { ignoreError: true });
@@ -611,6 +751,7 @@ async function setupNim(sandboxName, gpu) {
       } else {
         model = await promptOllamaModel();
       }
+      model = handleReasoningModel(model);
     } else if (selected.key === "vllm") {
       console.log("  ✓ Using existing vLLM on localhost:8000");
       provider = "vllm-local";
