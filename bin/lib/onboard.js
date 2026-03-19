@@ -112,12 +112,22 @@ function listOllamaModels() {
 /**
  * Build a tag-safe chat variant name that preserves the Ollama tag to avoid
  * collisions (e.g. deepseek-r1:8b → deepseek-r1-8b-chat, deepseek-r1:14b → deepseek-r1-14b-chat).
- * Correctly handles registry refs with ports (e.g. localhost:5000/ns/model:tag).
+ * Correctly handles registry refs with ports (e.g. registry.example.com:5000/model:v1).
+ *
+ * A colon is treated as a tag separator only when it appears after the last '/'.
+ * This prevents misinterpreting a port number as a tag in registry URLs.
  */
 function buildChatVariantName(baseModel) {
-  const { withoutTag, tag } = parseOllamaModelRef(baseModel);
-  const safeTag = tag ? `-${tag.replace(/[^a-z0-9._-]/gi, "-")}` : "";
-  return `${withoutTag}${safeTag}-chat`;
+  const lastSlash = baseModel.lastIndexOf("/");
+  const colonIndex = baseModel.lastIndexOf(":");
+  // Treat as a tag only when the colon occurs after the last slash
+  // (i.e. "registry:5000/model" has no tag, "model:v1" does)
+  const hasTag = colonIndex > lastSlash;
+  const namePart = hasTag ? baseModel.slice(0, colonIndex) : baseModel;
+  const safeTag = hasTag
+    ? `-${baseModel.slice(colonIndex + 1).replace(/[^a-z0-9._-]/gi, "-")}`
+    : "";
+  return `${namePart}${safeTag}-chat`;
 }
 
 function createOllamaChatVariant(baseModel, variantName) {
