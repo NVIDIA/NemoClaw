@@ -7,6 +7,7 @@ const assert = require("node:assert/strict");
 const {
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
+  DEFAULT_OLLAMA_MODEL_JETSON,
   getDefaultOllamaModel,
   getLocalProviderBaseUrl,
   getLocalProviderContainerReachabilityCheck,
@@ -18,6 +19,8 @@ const {
   validateOllamaModel,
   validateLocalProvider,
 } = require("../bin/lib/local-inference");
+
+const FAKE_JETSON_GPU = { type: "nvidia", jetson: true, totalMemoryMB: 7619 };
 
 describe("local inference helpers", () => {
   it("returns the expected base URL for vllm-local", () => {
@@ -116,6 +119,26 @@ describe("local inference helpers", () => {
     assert.equal(
       getDefaultOllamaModel(() => "qwen3:32b  abc  20 GB  now\ngemma3:4b  def  3 GB  now"),
       "qwen3:32b",
+    );
+  });
+
+  it("returns jetson 4b model as default on jetson when available", () => {
+    const list = `nemotron-3-nano:4b  abc  2.8 GB  now\nqwen3:32b  def  20 GB  now`;
+    assert.equal(
+      getDefaultOllamaModel(() => list, FAKE_JETSON_GPU),
+      DEFAULT_OLLAMA_MODEL_JETSON,
+    );
+  });
+
+  it("falls back to jetson 4b model when ollama list is empty on jetson", () => {
+    assert.deepEqual(getOllamaModelOptions(() => "", FAKE_JETSON_GPU), [DEFAULT_OLLAMA_MODEL_JETSON]);
+    assert.equal(getDefaultOllamaModel(() => "", FAKE_JETSON_GPU), DEFAULT_OLLAMA_MODEL_JETSON);
+  });
+
+  it("falls back to first available model on jetson when 4b is absent", () => {
+    assert.equal(
+      getDefaultOllamaModel(() => "qwen3:4b  abc  3 GB  now", FAKE_JETSON_GPU),
+      "qwen3:4b",
     );
   });
 
