@@ -675,26 +675,25 @@ async function setupNim(sandboxName, gpu) {
         run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
         sleep(2);
       }
-      // List available models and let the user pick
-      const ollamaModels = listOllamaModels();
-      if (ollamaModels.length > 0) {
-        console.log("");
-        console.log("  Available Ollama models:");
-        ollamaModels.forEach((m, i) => {
-          console.log(`    ${i + 1}) ${m}`);
-        });
-        console.log("");
-        const modelChoice = await prompt(`  Choose model [1]: `);
-        const midx = parseInt(modelChoice || "1", 10) - 1;
-        model = ollamaModels[midx] || ollamaModels[0];
-      } else {
-        model = "nemotron-3-nano";
-      }
       provider = "ollama-local";
       if (isNonInteractive()) {
         model = requestedModel || getDefaultOllamaModel(runCapture);
       } else {
-        model = await promptOllamaModel();
+        // List available models and let the user pick
+        const ollamaModels = listOllamaModels();
+        if (ollamaModels.length > 0) {
+          console.log("");
+          console.log("  Available Ollama models:");
+          ollamaModels.forEach((m, i) => {
+            console.log(`    ${i + 1}) ${m}`);
+          });
+          console.log("");
+          const modelChoice = await prompt(`  Choose model [1]: `);
+          const midx = parseInt(modelChoice || "1", 10) - 1;
+          model = ollamaModels[midx] || ollamaModels[0];
+        } else {
+          model = getDefaultOllamaModel(runCapture);
+        }
       }
       model = handleReasoningModel(model);
       console.log(`  ✓ Using Ollama on localhost:11434 with model: ${model}`);
