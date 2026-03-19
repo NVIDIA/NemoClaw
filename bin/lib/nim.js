@@ -24,7 +24,7 @@ function listModels() {
 }
 
 // Chip names that use unified memory (VRAM not separately queryable)
-const UNIFIED_MEMORY_CHIPS = ["GB10", "Thor", "Orin", "Xavier"];
+const UNIFIED_MEMORY_CHIPS = Object.freeze(["GB10", "Thor", "Orin", "Xavier"]);
 
 function detectGpu() {
   // Try NVIDIA first — query VRAM
