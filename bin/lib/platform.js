@@ -55,6 +55,7 @@ function findColimaDockerSocket(opts = {}) {
 function getDockerSocketCandidates(opts = {}) {
   const home = opts.home ?? process.env.HOME ?? "/tmp";
   const platform = opts.platform ?? process.platform;
+  const uid = opts.uid ?? (process.getuid ? process.getuid() : 1000);
 
   if (platform === "darwin") {
     return [
@@ -63,7 +64,15 @@ function getDockerSocketCandidates(opts = {}) {
     ];
   }
 
-  return [];
+  // Linux (native Docker, WSL2, Podman)
+  return [
+    path.join(home, ".docker/run/docker.sock"),
+    "/run/docker.sock",
+    "/var/run/docker.sock",
+    path.join(home, ".local/share/containers/podman/machine/podman.sock"),
+    `/run/user/${uid}/podman/podman.sock`,
+    path.join(home, ".local/share/containers/podman/machine/qemu/podman.sock"),
+  ];
 }
 
 function detectDockerHost(opts = {}) {
