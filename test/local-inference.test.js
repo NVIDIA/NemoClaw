@@ -34,6 +34,13 @@ describe("local inference helpers", () => {
     );
   });
 
+  it("returns the expected base URL for lmstudio-local", () => {
+    assert.equal(
+      getLocalProviderBaseUrl("lmstudio-local"),
+      "http://host.openshell.internal:1234/v1",
+    );
+  });
+
   it("returns the expected health check command for ollama-local", () => {
     assert.equal(
       getLocalProviderHealthCheck("ollama-local"),
@@ -45,6 +52,20 @@ describe("local inference helpers", () => {
     assert.equal(
       getLocalProviderContainerReachabilityCheck("ollama-local"),
       `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:11434/api/tags 2>/dev/null`,
+    );
+  });
+
+  it("returns the expected health check command for lmstudio-local", () => {
+    assert.equal(
+      getLocalProviderHealthCheck("lmstudio-local"),
+      "curl -sf http://localhost:1234/v1/models 2>/dev/null",
+    );
+  });
+
+  it("returns the expected container reachability command for lmstudio-local", () => {
+    assert.equal(
+      getLocalProviderContainerReachabilityCheck("lmstudio-local"),
+      `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:1234/v1/models 2>/dev/null`,
     );
   });
 
