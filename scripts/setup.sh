@@ -11,7 +11,7 @@
 #
 # Usage:
 #   export NVIDIA_API_KEY=nvapi-...
-#   ./scripts/setup.sh
+#   ./scripts/setup.sh [sandbox-name]
 #
 # What it does:
 #   1. Starts an OpenShell gateway (or reuses existing)
@@ -28,6 +28,11 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=./lib/runtime.sh
+. "$SCRIPT_DIR/lib/runtime.sh"
 
 info() { echo -e "${GREEN}>>>${NC} $1"; }
 warn() { echo -e "${YELLOW}>>>${NC} $1"; }
@@ -51,16 +56,25 @@ upsert_provider() {
   fi
 }
 
-# Resolve DOCKER_HOST for Colima if needed (legacy ~/.colima or XDG ~/.config/colima)
-if [ -z "${DOCKER_HOST:-}" ]; then
-  for _sock in "$HOME/.colima/default/docker.sock" "$HOME/.config/colima/default/docker.sock"; do
-    if [ -S "$_sock" ]; then
-      export DOCKER_HOST="unix://$_sock"
-      warn "Using Colima Docker socket: $_sock"
-      break
-    fi
-  done
-  unset _sock
+# Resolve DOCKER_HOST for macOS user-scoped runtimes when needed.
+ORIGINAL_DOCKER_HOST="${DOCKER_HOST:-}"
+if docker_host="$(detect_docker_host)"; then
+  export DOCKER_HOST="$docker_host"
+  if [ -n "$ORIGINAL_DOCKER_HOST" ]; then
+    warn "Using DOCKER_HOST from environment: $docker_host"
+  else
+    case "$(docker_host_runtime "$docker_host" || true)" in
+      colima)
+        warn "Using Colima Docker socket: ${docker_host#unix://}"
+        ;;
+      docker-desktop)
+        warn "Using Docker Desktop socket: ${docker_host#unix://}"
+        ;;
+      custom)
+        warn "Using Docker host: $docker_host"
+        ;;
+    esac
+  fi
 fi
 
 # Check prerequisites
@@ -68,8 +82,15 @@ command -v openshell > /dev/null || fail "openshell CLI not found. Install the b
 command -v docker > /dev/null || fail "docker not found"
 [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY not set. Get one from build.nvidia.com"
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CONTAINER_RUNTIME="$(infer_container_runtime_from_info "$(docker info 2>/dev/null || true)")"
+if is_unsupported_macos_runtime "$(uname -s)" "$CONTAINER_RUNTIME"; then
+  fail "Podman on macOS is not supported yet. NemoClaw currently depends on OpenShell support for Podman on macOS. Use Colima or Docker Desktop instead."
+fi
+if [ "$CONTAINER_RUNTIME" != "unknown" ]; then
+  info "Container runtime: $CONTAINER_RUNTIME"
+fi
+SANDBOX_NAME="${1:-nemoclaw}"
+info "Using sandbox name: ${SANDBOX_NAME}"
 
 # 1. Gateway — always start fresh to avoid stale state
 info "Starting OpenShell gateway..."
@@ -89,9 +110,9 @@ done
 info "Gateway is healthy"
 
 # 2. CoreDNS fix (Colima only)
-if [ -S "$HOME/.colima/default/docker.sock" ]; then
+if [ "$CONTAINER_RUNTIME" = "colima" ]; then
   info "Patching CoreDNS for Colima..."
-  bash "$SCRIPT_DIR/fix-coredns.sh" 2>&1 || warn "CoreDNS patch failed (may not be needed)"
+  bash "$SCRIPT_DIR/fix-coredns.sh" nemoclaw 2>&1 || warn "CoreDNS patch failed (may not be needed)"
 fi
 
 # 3. Providers
@@ -105,12 +126,13 @@ upsert_provider \
   "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1"
 
 # vllm-local (if vLLM is installed or running)
-if curl -s http://localhost:8000/v1/models > /dev/null 2>&1 || python3 -c "import vllm" 2>/dev/null; then
+if check_local_provider_health "vllm-local" || python3 -c "import vllm" 2>/dev/null; then
+  VLLM_LOCAL_BASE_URL="$(get_local_provider_base_url "vllm-local")"
   upsert_provider \
     "vllm-local" \
     "openai" \
     "OPENAI_API_KEY=dummy" \
-    "OPENAI_BASE_URL=http://host.openshell.internal:8000/v1"
+    "OPENAI_BASE_URL=$VLLM_LOCAL_BASE_URL"
 fi
 
 # 4a. Ollama (macOS local inference)
@@ -121,16 +143,17 @@ if [ "$(uname -s)" = "Darwin" ]; then
   fi
   if command -v ollama > /dev/null 2>&1; then
     # Start Ollama service if not running
-    if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+    if ! check_local_provider_health "ollama-local"; then
       info "Starting Ollama service..."
       OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &
       sleep 2
     fi
+    OLLAMA_LOCAL_BASE_URL="$(get_local_provider_base_url "ollama-local")"
     upsert_provider \
       "ollama-local" \
       "openai" \
       "OPENAI_API_KEY=ollama" \
-      "OPENAI_BASE_URL=http://host.openshell.internal:11434/v1"
+      "OPENAI_BASE_URL=$OLLAMA_LOCAL_BASE_URL"
   fi
 fi
 
@@ -139,8 +162,8 @@ info "Setting inference route to nvidia-nim / Nemotron 3 Super..."
 openshell inference set --no-verify --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b > /dev/null 2>&1
 
 # 5. Build and create sandbox
-info "Deleting old nemoclaw sandbox (if any)..."
-openshell sandbox delete nemoclaw > /dev/null 2>&1 || true
+info "Deleting old ${SANDBOX_NAME} sandbox (if any)..."
+openshell sandbox delete "$SANDBOX_NAME" > /dev/null 2>&1 || true
 
 info "Building and creating NemoClaw sandbox (this takes a few minutes on first run)..."
 
@@ -162,7 +185,7 @@ fi
 # detect failures. The raw log is kept on failure for debugging.
 CREATE_LOG=$(mktemp /tmp/nemoclaw-create-XXXXXX.log)
 set +e
-openshell sandbox create --from "$BUILD_CTX/Dockerfile" --name nemoclaw \
+openshell sandbox create --from "$BUILD_CTX/Dockerfile" --name "$SANDBOX_NAME" \
   --provider nvidia-nim \
   -- env NVIDIA_API_KEY="$NVIDIA_API_KEY" > "$CREATE_LOG" 2>&1
 CREATE_RC=$?
@@ -183,20 +206,20 @@ rm -f "$CREATE_LOG"
 
 # Verify sandbox is Ready (not just that a record exists)
 # Strip ANSI color codes before checking phase
-SANDBOX_LINE=$(openshell sandbox list 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep "nemoclaw")
+SANDBOX_LINE=$(openshell sandbox list 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | awk -v name="$SANDBOX_NAME" '$1 == name { print; exit }')
 if ! echo "$SANDBOX_LINE" | grep -q "Ready"; then
   SANDBOX_PHASE=$(echo "$SANDBOX_LINE" | awk '{print $NF}')
   echo ""
   warn "Sandbox phase: ${SANDBOX_PHASE:-unknown}"
   # Check for common failure modes
-  SB_DETAIL=$(openshell sandbox get nemoclaw 2>&1 || true)
+  SB_DETAIL=$(openshell sandbox get "$SANDBOX_NAME" 2>&1 || true)
   if echo "$SB_DETAIL" | grep -qi "ImagePull\|ErrImagePull\|image.*not found"; then
     warn "Image pull failure detected. The sandbox image was built inside the"
     warn "gateway but k3s can't find it. This is a known openshell issue."
     warn "Workaround: run 'openshell gateway destroy && openshell gateway start'"
     warn "and re-run this script."
   fi
-  fail "Sandbox created but not Ready (phase: ${SANDBOX_PHASE:-unknown}). Check 'openshell sandbox get nemoclaw'."
+  fail "Sandbox created but not Ready (phase: ${SANDBOX_PHASE:-unknown}). Check 'openshell sandbox get ${SANDBOX_NAME}'."
 fi
 
 # 6. Done

@@ -47,7 +47,7 @@ Key fields in the output include the following:
 - Blueprint run ID, which is the identifier for the most recent blueprint execution.
 - Inference provider, which shows the active provider, model, and endpoint.
 
-If you run `openclaw nemoclaw status` from inside the sandbox, the command detects the sandbox context and reports it. Host-level sandbox and inference details are not available from within the sandbox. Run `openshell sandbox status` on the host for full host-side details.
+If you run `openclaw nemoclaw status` from inside the sandbox, the command detects the sandbox context and reports it. Host-level sandbox and inference details are not available from within the sandbox. Run `openshell sandbox list` on the host to check the underlying sandbox state.
 
 ## View Blueprint and Sandbox Logs
 
@@ -108,21 +108,9 @@ If the request fails, check the following:
 2. Run `openclaw nemoclaw logs -f` to view error messages from the blueprint runner.
 3. Verify that the inference endpoint is reachable from the host.
 
-## Common Issues
-
-The following table lists common problems and their resolution steps:
-
-| Symptom | Resolution |
-|---|---|
-| Sandbox shows as stopped | Run `nemoclaw onboard` to recreate the sandbox. |
-| Inference requests time out | Verify the provider endpoint is reachable. Check `openclaw nemoclaw status` for the active endpoint. |
-| Agent cannot reach an external host | Open the TUI with `openshell term` and approve the blocked request, or add the endpoint to the policy. |
-| Blueprint run failed | Run `openclaw nemoclaw logs --run-id <id>` to view the error output for the failed run. |
-| cgroup v2 error during onboard | On Ubuntu 24.04, DGX Spark, or WSL2, Docker requires `"default-cgroupns-mode": "host"` in `/etc/docker/daemon.json`. Run `nemoclaw setup-spark` to apply this fix, then retry `nemoclaw onboard`. |
-| Status shows "not running" inside sandbox | This is expected. The status command cannot query host-level state from within the sandbox. Run `openshell sandbox status` on the host instead. |
-
 ## Related Topics
 
+- [Troubleshooting](../reference/troubleshooting.md) for common issues and resolution steps.
 - [Commands](../reference/commands.md) for the full CLI reference.
 - [Approve or Deny Agent Network Requests](../network-policy/approve-network-requests.md) for the operator approval flow.
 - [Switch Inference Providers](../inference/switch-inference-providers.md) to change the active provider.

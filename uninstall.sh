@@ -30,9 +30,10 @@ OPENSHELL_CONFIG_DIR="${HOME}/.config/openshell"
 NEMOCLAW_CONFIG_DIR="${HOME}/.config/nemoclaw"
 DEFAULT_GATEWAY="nemoclaw"
 PROVIDERS=("nvidia-nim" "vllm-local" "ollama-local" "nvidia-ncp" "nim-local")
-OPEN_SHELL_INSTALL_PATHS=("/usr/local/bin/openshell")
+OPEN_SHELL_INSTALL_PATHS=("/usr/local/bin/openshell" "${XDG_BIN_HOME:-$HOME/.local/bin}/openshell")
 OLLAMA_MODELS=("nemotron-3-super:120b" "nemotron-3-nano:30b")
 TMP_ROOT="${TMPDIR:-/tmp}"
+NEMOCLAW_SHIM_DIR="${HOME}/.local/bin"
 
 ASSUME_YES=false
 KEEP_OPEN_SHELL=false
@@ -131,6 +132,9 @@ remove_file_with_optional_sudo() {
 
   if [ -w "$path" ] || [ -w "$(dirname "$path")" ]; then
     rm -f "$path"
+  elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
+    warn "Skipping privileged removal of $path in non-interactive mode."
+    return 0
   else
     sudo rm -f "$path"
   fi
@@ -197,6 +201,10 @@ remove_nemoclaw_cli() {
     fi
   else
     warn "npm not found; skipping nemoclaw npm uninstall."
+  fi
+
+  if [ -L "${NEMOCLAW_SHIM_DIR}/nemoclaw" ] || [ -f "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
+    remove_path "${NEMOCLAW_SHIM_DIR}/nemoclaw"
   fi
 }
 
@@ -308,6 +316,52 @@ remove_related_docker_images() {
   fi
 }
 
+gateway_volume_candidates() {
+  local gateway_name="${1:-$DEFAULT_GATEWAY}"
+
+  printf 'openshell-cluster-%s\n' "$gateway_name"
+}
+
+remove_related_docker_volumes() {
+  if ! command -v docker > /dev/null 2>&1; then
+    warn "docker not found; skipping Docker volume cleanup."
+    return 0
+  fi
+
+  if ! docker info > /dev/null 2>&1; then
+    warn "docker is not running; skipping Docker volume cleanup."
+    return 0
+  fi
+
+  local -a volume_names=()
+  local volume_name
+  while IFS= read -r volume_name; do
+    [ -n "$volume_name" ] || continue
+    volume_names+=("$volume_name")
+  done < <(gateway_volume_candidates "$DEFAULT_GATEWAY")
+
+  if [ "${#volume_names[@]}" -eq 0 ]; then
+    info "No NemoClaw/OpenShell Docker volumes found"
+    return 0
+  fi
+
+  local removed_any=false
+  for volume_name in "${volume_names[@]}"; do
+    if docker volume inspect "$volume_name" > /dev/null 2>&1; then
+      if docker volume rm -f "$volume_name" > /dev/null 2>&1; then
+        info "Removed Docker volume $volume_name"
+        removed_any=true
+      else
+        warn "Failed to remove Docker volume $volume_name"
+      fi
+    fi
+  done
+
+  if [ "$removed_any" = false ]; then
+    info "No NemoClaw/OpenShell Docker volumes found"
+  fi
+}
+
 remove_optional_ollama_models() {
   if [ "$DELETE_MODELS" != true ]; then
     info "Keeping Ollama models as requested."
@@ -384,6 +438,9 @@ main() {
   info "Removing related Docker images..."
   remove_related_docker_images
 
+  info "Removing related Docker volumes..."
+  remove_related_docker_volumes
+
   info "Removing optional Ollama models..."
   remove_optional_ollama_models
 
@@ -397,4 +454,6 @@ main() {
   info "Uninstall complete."
 }
 
-main "$@"
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi

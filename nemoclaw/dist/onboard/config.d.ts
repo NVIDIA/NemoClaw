@@ -6,8 +6,12 @@ export interface NemoClawOnboardConfig {
     model: string;
     profile: string;
     credentialEnv: string;
+    provider?: string;
+    providerLabel?: string;
     onboardedAt: string;
 }
+export declare function describeOnboardEndpoint(config: NemoClawOnboardConfig): string;
+export declare function describeOnboardProvider(config: NemoClawOnboardConfig): string;
 export declare function loadOnboardConfig(): NemoClawOnboardConfig | null;
 export declare function saveOnboardConfig(config: NemoClawOnboardConfig): void;
 export declare function clearOnboardConfig(): void;

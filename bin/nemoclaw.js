@@ -7,7 +7,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
-const { ROOT, SCRIPTS, run, runCapture } = require("./lib/runner");
+const { ROOT, SCRIPTS, run, runCapture, runInteractive } = require("./lib/runner");
 const {
   ensureApiKey,
   ensureGithubToken,
@@ -28,9 +28,17 @@ const GLOBAL_COMMANDS = new Set([
 
 // ── Commands ─────────────────────────────────────────────────────
 
-async function onboard() {
+async function onboard(args) {
   const { onboard: runOnboard } = require("./lib/onboard");
-  await runOnboard();
+  const allowedArgs = new Set(["--non-interactive"]);
+  const unknownArgs = args.filter((arg) => !allowedArgs.has(arg));
+  if (unknownArgs.length > 0) {
+    console.error(`  Unknown onboard option(s): ${unknownArgs.join(", ")}`);
+    console.error("  Usage: nemoclaw onboard [--non-interactive]");
+    process.exit(1);
+  }
+  const nonInteractive = args.includes("--non-interactive");
+  await runOnboard({ nonInteractive });
 }
 
 async function setup() {
@@ -39,7 +47,9 @@ async function setup() {
   console.log("     Running legacy setup.sh for backwards compatibility...");
   console.log("");
   await ensureApiKey();
-  run(`bash "${SCRIPTS}/setup.sh"`);
+  const { defaultSandbox } = registry.listSandboxes();
+  const safeName = defaultSandbox && /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(defaultSandbox) ? defaultSandbox : "";
+  run(`bash "${SCRIPTS}/setup.sh" ${safeName}`);
 }
 
 async function setupSpark() {
@@ -119,7 +129,7 @@ async function deploy(instanceName) {
   fs.unlinkSync(envTmp);
 
   console.log("  Running setup...");
-  run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh'`);
+  runInteractive(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh'`);
 
   if (tgToken) {
     console.log("  Starting services...");
@@ -129,12 +139,15 @@ async function deploy(instanceName) {
   console.log("");
   console.log("  Connecting to sandbox...");
   console.log("");
-  run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw'`);
+  runInteractive(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw'`);
 }
 
 async function start() {
   await ensureApiKey();
-  run(`bash "${SCRIPTS}/start-services.sh"`);
+  const { defaultSandbox } = registry.listSandboxes();
+  const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
+  const sandboxEnv = safeName ? `SANDBOX_NAME="${safeName}"` : "";
+  run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh"`);
 }
 
 function stop() {
@@ -189,7 +202,7 @@ function listSandboxes() {
 function sandboxConnect(sandboxName) {
   // Ensure port forward is alive before connecting
   run(`openshell forward start --background 18789 "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
-  run(`openshell sandbox connect "${sandboxName}"`);
+  runInteractive(`openshell sandbox connect "${sandboxName}"`);
 }
 
 function sandboxStatus(sandboxName) {
@@ -315,7 +328,7 @@ const [cmd, ...args] = process.argv.slice(2);
   // Global commands
   if (GLOBAL_COMMANDS.has(cmd)) {
     switch (cmd) {
-      case "onboard":     await onboard(); break;
+      case "onboard":     await onboard(args); break;
       case "setup":       await setup(); break;
       case "setup-spark": await setupSpark(); break;
       case "deploy":      await deploy(args[0]); break;

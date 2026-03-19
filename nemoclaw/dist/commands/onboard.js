@@ -8,7 +8,7 @@ const config_js_1 = require("../onboard/config.js");
 const prompt_js_1 = require("../onboard/prompt.js");
 const validate_js_1 = require("../onboard/validate.js");
 const ENDPOINT_TYPES = ["build", "ncp", "nim-local", "vllm", "ollama", "custom"];
-const SUPPORTED_ENDPOINT_TYPES = ["build", "ncp"];
+const SUPPORTED_ENDPOINT_TYPES = ["build", "ncp", "ollama"];
 function isExperimentalEnabled() {
     return process.env.NEMOCLAW_EXPERIMENTAL === "1";
 }
@@ -16,10 +16,13 @@ const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const HOST_GATEWAY_URL = "http://host.openshell.internal";
 const DEFAULT_MODELS = [
     { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
-    { id: "nvidia/llama-3.1-nemotron-ultra-253b-v1", label: "Nemotron Ultra 253B" },
-    { id: "nvidia/llama-3.3-nemotron-super-49b-v1.5", label: "Nemotron Super 49B v1.5" },
-    { id: "nvidia/nemotron-3-nano-30b-a3b", label: "Nemotron 3 Nano 30B" },
+    { id: "moonshotai/kimi-k2.5", label: "Kimi K2.5" },
+    { id: "z-ai/glm5", label: "GLM-5" },
+    { id: "minimaxai/minimax-m2.5", label: "MiniMax M2.5" },
+    { id: "qwen/qwen3.5-397b-a17b", label: "Qwen3.5 397B A17B" },
+    { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
 ];
+const DEFAULT_OLLAMA_MODEL = "nemotron-3-nano:30b";
 function resolveProfile(endpointType) {
     switch (endpointType) {
         case "build":
@@ -96,6 +99,30 @@ function detectOllama() {
     const running = testCommand("curl -sf http://localhost:11434/api/tags >/dev/null 2>&1");
     return { installed, running };
 }
+function parseOllamaList(output) {
+    return output
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .filter((line) => !/^NAME\s+/i.test(line))
+        .map((line) => line.split(/\s{2,}/)[0])
+        .filter(Boolean);
+}
+function getOllamaModelOptions() {
+    try {
+        const output = (0, node_child_process_1.execSync)("ollama list", { encoding: "utf-8", shell: "/bin/bash" });
+        const parsed = parseOllamaList(output);
+        if (parsed.length > 0) {
+            return parsed;
+        }
+    }
+    catch { }
+    return [DEFAULT_OLLAMA_MODEL];
+}
+function getDefaultOllamaModel() {
+    const models = getOllamaModelOptions();
+    return models.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : models[0];
+}
 function testCommand(command) {
     try {
         (0, node_child_process_1.execSync)(command, { encoding: "utf-8", stdio: "ignore", shell: "/bin/bash" });
@@ -106,7 +133,8 @@ function testCommand(command) {
     }
 }
 function showConfig(config, logger) {
-    logger.info(`  Endpoint:    ${config.endpointType} (${config.endpointUrl})`);
+    logger.info(`  Endpoint:    ${(0, config_js_1.describeOnboardEndpoint)(config)}`);
+    logger.info(`  Provider:    ${(0, config_js_1.describeOnboardProvider)(config)}`);
     if (config.ncpPartner) {
         logger.info(`  NCP Partner: ${config.ncpPartner}`);
     }
@@ -128,6 +156,15 @@ async function promptEndpoint(ollama) {
             hint: "dedicated capacity, SLA-backed",
         },
     ];
+    options.push({
+        label: "Local Ollama",
+        value: "ollama",
+        hint: ollama.running
+            ? "detected on localhost:11434"
+            : ollama.installed
+                ? "installed locally"
+                : "localhost:11434",
+    });
     if (isExperimentalEnabled()) {
         options.push({
             label: "Self-hosted NIM [experimental]",
@@ -137,10 +174,6 @@ async function promptEndpoint(ollama) {
             label: "Local vLLM [experimental]",
             value: "vllm",
             hint: "experimental — local development",
-        }, {
-            label: "Local Ollama [experimental]",
-            value: "ollama",
-            hint: `experimental — ${ollama.installed ? "installed locally" : "localhost:11434"}`,
         });
     }
     return (await (0, prompt_js_1.promptSelect)("Select your inference endpoint:", options));
@@ -186,13 +219,11 @@ async function cliOnboard(opts) {
     }
     else {
         const ollama = detectOllama();
-        if (ollama.running && isExperimentalEnabled()) {
-            logger.info("Detected Ollama on localhost:11434. Using it for onboarding.");
-            endpointType = "ollama";
+        if (ollama.running) {
+            logger.info("Detected local inference option: Ollama.");
+            logger.info("Select it explicitly if you want to use it.");
         }
-        else {
-            endpointType = await promptEndpoint(ollama);
-        }
+        endpointType = await promptEndpoint(ollama);
     }
     // Step 2: Endpoint URL resolution
     let endpointUrl;
@@ -280,20 +311,45 @@ async function cliOnboard(opts) {
         model = opts.model;
     }
     else {
-        // Build model options: prefer Nemotron models from the endpoint, fall back to defaults
-        const nemotronModels = validation.models.filter((m) => m.includes("nemotron"));
-        const modelOptions = nemotronModels.length > 0
-            ? nemotronModels.map((id) => ({ label: id, value: id }))
-            : DEFAULT_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }));
-        model = await (0, prompt_js_1.promptSelect)("Select your primary model:", modelOptions);
+        const discoveredModelOptions = endpointType === "ollama"
+            ? getOllamaModelOptions().map((id) => ({ label: id, value: id }))
+            : validation.models.map((id) => ({ label: id, value: id }));
+        const curatedCloudOptions = endpointType === "build" || endpointType === "ncp"
+            ? DEFAULT_MODELS.filter((option) => validation.models.includes(option.id)).map((option) => ({
+                label: `${option.label} (${option.id})`,
+                value: option.id,
+            }))
+            : [];
+        const defaultIndex = endpointType === "ollama"
+            ? Math.max(0, discoveredModelOptions.findIndex((option) => option.value === getDefaultOllamaModel()))
+            : 0;
+        const modelOptions = curatedCloudOptions.length > 0
+            ? curatedCloudOptions
+            : discoveredModelOptions.length > 0
+                ? discoveredModelOptions
+                : DEFAULT_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }));
+        model = await (0, prompt_js_1.promptSelect)("Select your primary model:", modelOptions, defaultIndex);
     }
     // Step 6: Resolve profile
     const profile = resolveProfile(endpointType);
     const providerName = resolveProviderName(endpointType);
+    const summaryConfig = {
+        endpointType,
+        endpointUrl,
+        ncpPartner,
+        model,
+        profile,
+        credentialEnv,
+        provider: providerName,
+        providerLabel: undefined,
+        onboardedAt: "",
+    };
+    summaryConfig.providerLabel = (0, config_js_1.describeOnboardProvider)(summaryConfig);
     // Step 7: Confirmation
     logger.info("");
     logger.info("Configuration summary:");
-    logger.info(`  Endpoint:    ${endpointType} (${endpointUrl})`);
+    logger.info(`  Endpoint:    ${(0, config_js_1.describeOnboardEndpoint)(summaryConfig)}`);
+    logger.info(`  Provider:    ${summaryConfig.providerLabel}`);
     if (ncpPartner) {
         logger.info(`  NCP Partner: ${ncpPartner}`);
     }
@@ -375,13 +431,16 @@ async function cliOnboard(opts) {
         model,
         profile,
         credentialEnv,
+        provider: providerName,
+        providerLabel: summaryConfig.providerLabel,
         onboardedAt: new Date().toISOString(),
     });
     // Step 9: Success
     logger.info("");
     logger.info("Onboarding complete!");
     logger.info("");
-    logger.info(`  Endpoint:   ${endpointUrl}`);
+    logger.info(`  Endpoint:   ${(0, config_js_1.describeOnboardEndpoint)(summaryConfig)}`);
+    logger.info(`  Provider:   ${summaryConfig.providerLabel}`);
     logger.info(`  Model:      ${model}`);
     logger.info(`  Credential: $${credentialEnv}`);
     logger.info("");
