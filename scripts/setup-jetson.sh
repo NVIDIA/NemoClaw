@@ -40,6 +40,10 @@ if [ "$(uname -s)" != "Linux" ]; then
   fail "This script is for NVIDIA Jetson (Linux). Use 'nemoclaw setup' for macOS."
 fi
 
+if [ "$(uname -m)" != "aarch64" ]; then
+  fail "Jetson devices are aarch64. This system is $(uname -m)."
+fi
+
 if [ "$(id -u)" -ne 0 ]; then
   fail "Must run as root: sudo nemoclaw setup-jetson"
 fi
@@ -65,6 +69,7 @@ info "Detected Jetson platform: ${JETSON_MODEL}"
 REAL_USER="${SUDO_USER:-$(logname 2>/dev/null || echo "")}"
 
 command -v docker > /dev/null || fail "Docker not found. Install docker.io: sudo apt-get install -y docker.io"
+command -v python3 > /dev/null || fail "python3 not found. Install with: sudo apt-get install -y python3-minimal"
 
 # ── 1. Docker group ───────────────────────────────────────────────
 

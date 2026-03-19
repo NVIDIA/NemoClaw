@@ -4,6 +4,7 @@
 const HOST_GATEWAY_URL = "http://host.openshell.internal";
 const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
 const DEFAULT_OLLAMA_MODEL = "nemotron-3-nano:30b";
+const DEFAULT_OLLAMA_MODEL_JETSON = "nemotron-3-nano:4b";
 
 function getLocalProviderBaseUrl(provider) {
   switch (provider) {
@@ -109,8 +110,14 @@ function getOllamaModelOptions(runCapture) {
   return [DEFAULT_OLLAMA_MODEL];
 }
 
-function getDefaultOllamaModel(runCapture) {
+function getDefaultOllamaModel(runCapture, gpu) {
   const models = getOllamaModelOptions(runCapture);
+  // Jetson Orin Nano has limited unified memory (8GB) — prefer the 4B
+  // quantized model which fits comfortably, over the 30B default.
+  if (gpu && gpu.jetson) {
+    if (models.includes(DEFAULT_OLLAMA_MODEL_JETSON)) return DEFAULT_OLLAMA_MODEL_JETSON;
+    return models[0];
+  }
   return models.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : models[0];
 }
 
@@ -165,6 +172,7 @@ function validateOllamaModel(model, runCapture) {
 module.exports = {
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
+  DEFAULT_OLLAMA_MODEL_JETSON,
   HOST_GATEWAY_URL,
   getDefaultOllamaModel,
   getLocalProviderBaseUrl,

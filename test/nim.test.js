@@ -52,10 +52,18 @@ describe("nim", () => {
       }
     });
 
-    it("nvidia type is nimCapable", () => {
+    it("nvidia (discrete) type is nimCapable", () => {
       const gpu = nim.detectGpu();
-      if (gpu && gpu.type === "nvidia") {
+      if (gpu && gpu.type === "nvidia" && !gpu.jetson) {
         assert.equal(gpu.nimCapable, true);
+      }
+    });
+
+    it("nvidia (jetson) type is not nimCapable", () => {
+      const gpu = nim.detectGpu();
+      if (gpu && gpu.type === "nvidia" && gpu.jetson) {
+        assert.equal(gpu.nimCapable, false);
+        assert.ok(gpu.name, "jetson gpu should have name");
       }
     });
 

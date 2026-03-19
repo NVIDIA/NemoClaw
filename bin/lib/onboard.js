@@ -143,9 +143,9 @@ async function promptCloudModel() {
   return (CLOUD_MODEL_OPTIONS[index] || CLOUD_MODEL_OPTIONS[0]).id;
 }
 
-async function promptOllamaModel() {
+async function promptOllamaModel(gpu) {
   const options = getOllamaModelOptions(runCapture);
-  const defaultModel = getDefaultOllamaModel(runCapture);
+  const defaultModel = getDefaultOllamaModel(runCapture, gpu);
   const defaultIndex = Math.max(0, options.indexOf(defaultModel));
 
   console.log("");
@@ -280,8 +280,8 @@ async function preflight() {
   // a previous onboard run may have left the gateway running, which
   // would block port 8080 and cause a confusing "port in use" error.
   run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
-  // Also kill any leftover openclaw-gateway processes holding port 18789.
-  run("sudo kill $(lsof -ti :18789) 2>/dev/null || true", { ignoreError: true });
+  // Kill only nemoclaw-owned openclaw-gateway processes holding port 18789.
+  run("kill $(lsof -ti :18789 -c openclaw) 2>/dev/null || true", { ignoreError: true });
   sleep(2);
 
   // Required ports — gateway (8080) and dashboard (18789)
@@ -369,6 +369,7 @@ function patchGatewayImageForJetson() {
   }
 
   console.log("  Patching gateway image for Jetson (iptables-legacy)...");
+  console.log("  (this may take a moment on first run if the base image needs to be pulled)");
 
   const os = require("os");
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-jetson-"));
@@ -389,7 +390,7 @@ function patchGatewayImageForJetson() {
     ].join("\n")
   );
 
-  run(`docker build --quiet -t ${image} "${tmpDir}"`, { ignoreError: false });
+  run(`docker build --quiet -t "${image}" "${tmpDir}"`, { ignoreError: false });
   run(`rm -rf "${tmpDir}"`, { ignoreError: true });
   console.log("  ✓ Gateway image patched for Jetson (iptables-legacy)");
 }
@@ -671,9 +672,9 @@ async function setupNim(sandboxName, gpu) {
       console.log("  ✓ Using Ollama on localhost:11434");
       provider = "ollama-local";
       if (isNonInteractive()) {
-        model = requestedModel || getDefaultOllamaModel(runCapture);
+        model = requestedModel || getDefaultOllamaModel(runCapture, gpu);
       } else {
-        model = await promptOllamaModel();
+        model = await promptOllamaModel(gpu);
       }
     } else if (selected.key === "install-ollama") {
       console.log("  Installing Ollama via Homebrew...");
@@ -684,9 +685,9 @@ async function setupNim(sandboxName, gpu) {
       console.log("  ✓ Using Ollama on localhost:11434");
       provider = "ollama-local";
       if (isNonInteractive()) {
-        model = requestedModel || getDefaultOllamaModel(runCapture);
+        model = requestedModel || getDefaultOllamaModel(runCapture, gpu);
       } else {
-        model = await promptOllamaModel();
+        model = await promptOllamaModel(gpu);
       }
     } else if (selected.key === "vllm") {
       console.log("  ✓ Using existing vLLM on localhost:8000");

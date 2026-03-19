@@ -46,14 +46,16 @@ function detectGpu() {
     }
   } catch {}
 
-  // Fallback: DGX Spark (GB10) — VRAM not queryable due to unified memory architecture
+  // Fallback: unified-memory NVIDIA platforms where nvidia-smi reports [N/A]
+  // for memory.total. Query GPU name once and check for DGX Spark or Jetson.
   try {
     const nameOutput = runCapture(
       "nvidia-smi --query-gpu=name --format=csv,noheader,nounits",
       { ignoreError: true }
     );
+
+    // DGX Spark (GB10) — 128GB unified memory shared with Grace CPU
     if (nameOutput && nameOutput.includes("GB10")) {
-      // GB10 has 128GB unified memory shared with Grace CPU — use system RAM
       let totalMemoryMB = 0;
       try {
         const memLine = runCapture("free -m | awk '/Mem:/ {print $2}'", { ignoreError: true });
@@ -68,16 +70,14 @@ function detectGpu() {
         spark: true,
       };
     }
-  } catch {}
 
-  // Fallback: NVIDIA Jetson (Orin, Thor, etc.) — unified memory, nvidia-smi
-  // reports [N/A] for memory.total. Detect via GPU name or device-tree model.
-  try {
-    const nameOutput = runCapture(
-      "nvidia-smi --query-gpu=name --format=csv,noheader,nounits",
-      { ignoreError: true }
-    );
-    const isJetsonGpu = nameOutput && /orin|thor/i.test(nameOutput);
+    // NVIDIA Jetson — unified memory, nvidia-smi reports GPU name containing
+    // "Orin" or "Thor" but without discrete GPU identifiers like
+    // GeForce/RTX/Quadro. Tested on Jetson Orin Nano Super (JetPack 6.x).
+    // Other Jetson variants may also work via /proc/device-tree/model fallback.
+    const isJetsonGpu = nameOutput &&
+      /orin|thor/i.test(nameOutput) &&
+      !/geforce|rtx|quadro/i.test(nameOutput);
     const dtModel = runCapture(
       "cat /proc/device-tree/model 2>/dev/null | tr -d '\\0'",
       { ignoreError: true }
