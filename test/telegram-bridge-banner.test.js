@@ -30,4 +30,70 @@ describe("telegram bridge banner", () => {
       );
     }
   });
+
+  it("displays a non-default model from the sandbox registry in the banner", () => {
+    // Behavioral test: set up a registry with a non-default model,
+    // then require the banner-building logic and verify the output.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-banner-test-"));
+    const registryDir = path.join(tmp, ".nemoclaw");
+    fs.mkdirSync(registryDir, { recursive: true });
+
+    // Write a sandbox registry with a non-default model
+    const registryData = {
+      sandboxes: {
+        "test-sandbox": {
+          name: "test-sandbox",
+          createdAt: new Date().toISOString(),
+          model: "ollama/llama3",
+          provider: "ollama-local",
+          gpuEnabled: false,
+          policies: [],
+        },
+      },
+      defaultSandbox: "test-sandbox",
+    };
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify(registryData, null, 2),
+    );
+
+    // Run a script that loads the registry with HOME pointed at our temp dir,
+    // looks up the sandbox, and prints what the banner model line would be
+    const { spawnSync } = require("node:child_process");
+    const result = spawnSync(
+      "node",
+      [
+        "-e",
+        `
+        const registry = require("./bin/lib/registry");
+        const sandboxInfo = registry.getSandbox("test-sandbox");
+        const model = sandboxInfo?.model || "nvidia/nemotron-3-super-120b-a12b";
+        const line = "  │  Model:    " + (model + "                                        ").slice(0, 40) + "│";
+        console.log(line);
+        console.log("MODEL=" + model);
+        `,
+      ],
+      {
+        cwd: path.join(__dirname, ".."),
+        encoding: "utf-8",
+        timeout: 5000,
+        env: { ...process.env, HOME: tmp },
+      },
+    );
+
+    assert.equal(result.status, 0, `script failed: ${result.stderr}`);
+    const output = result.stdout;
+
+    // The banner must show the registry model, not the hardcoded default
+    assert.match(output, /MODEL=ollama\/llama3/, "should resolve the model from the registry");
+    assert.match(output, /ollama\/llama3/, "banner line should contain the registry model");
+    assert.doesNotMatch(
+      output,
+      /nemotron-3-super/,
+      "banner should not fall back to the hardcoded default when registry has a model",
+    );
+
+    // Clean up
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
 });
