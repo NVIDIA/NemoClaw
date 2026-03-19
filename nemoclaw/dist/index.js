@@ -7,6 +7,7 @@ exports.default = register;
 const cli_js_1 = require("./cli.js");
 const slash_js_1 = require("./commands/slash.js");
 const config_js_1 = require("./onboard/config.js");
+const runtime_context_js_1 = require("./runtime-context.js");
 function activeModelEntries(onboardCfg) {
     if (!onboardCfg?.model) {
         return [
@@ -100,6 +101,9 @@ function register(api) {
     const onboardCfg = (0, config_js_1.loadOnboardConfig)();
     const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
     api.registerProvider(registeredProviderForConfig(onboardCfg, providerCredentialEnv));
+    // 4. Register runtime context injection (sandbox-awareness hook)
+    const pluginConfig = getPluginConfig(api);
+    (0, runtime_context_js_1.registerRuntimeContext)(api, pluginConfig);
     const bannerEndpoint = onboardCfg ? (0, config_js_1.describeOnboardEndpoint)(onboardCfg) : "build.nvidia.com";
     const bannerProvider = onboardCfg ? (0, config_js_1.describeOnboardProvider)(onboardCfg) : "NVIDIA Cloud API";
     const bannerModel = onboardCfg?.model ?? "nvidia/nemotron-3-super-120b-a12b";
