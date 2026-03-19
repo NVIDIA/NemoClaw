@@ -77,6 +77,12 @@ $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 If you use nvm or fnm to manage Node.js, the installer may not update your current shell's PATH.
 If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
 
+To uninstall NemoClaw and remove its local state, run:
+
+```console
+$ curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash
+```
+
 When the install completes, a summary confirms the running environment:
 
 ```
