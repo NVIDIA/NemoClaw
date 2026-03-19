@@ -3130,4 +3130,103 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.ok(payload.lines.some((line) => line.includes("tool-call-parser requires")));
   });
+
+  it("offers install-ollama option on Linux when Ollama is not installed", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-ollama-"));
+    const scriptPath = path.join(tmpDir, "install-ollama-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    // Simulate: no Ollama installed, no Ollama running, no vLLM — only cloud + install-ollama should appear.
+    // User picks install-ollama (option 7). The install command is mocked to succeed.
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+
+let promptCalls = 0;
+const messages = [];
+const updates = [];
+const runCommands = [];
+
+credentials.prompt = async (message) => {
+  promptCalls += 1;
+  messages.push(message);
+  // Select option 7 (install-ollama) on first prompt, default on model prompt
+  if (promptCalls === 1) return "7";
+  return "";
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  // No ollama installed
+  if (command.includes("command -v ollama")) return "";
+  // No ollama running
+  if (command.includes("localhost:11434/api/tags")) return "";
+  // No vLLM running
+  if (command.includes("localhost:8000/v1/models")) return "";
+  // After install, ollama list returns a model
+  if (command.includes("ollama list")) return "qwen3:8b  abc  5 GB  now";
+  return "";
+};
+runner.run = (command, opts) => {
+  runCommands.push(command);
+};
+registry.updateSandbox = (_name, update) => updates.push(update);
+
+// Force platform to linux for this test
+Object.defineProperty(process, 'platform', { value: 'linux' });
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim("install-test", null);
+    originalLog(JSON.stringify({ result, promptCalls, messages, updates, lines, runCommands }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+      },
+    });
+
+    assert.equal(result.status, 0, `Process failed: ${result.stderr}`);
+    assert.notEqual(result.stdout.trim(), "", result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+
+    // Should have shown the "Install Ollama (Linux)" option
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Install Ollama (Linux)")),
+      "Should show Install Ollama option on Linux"
+    );
+
+    // Should have selected ollama-local provider after install
+    assert.equal(payload.result.provider, "ollama-local");
+
+    // Should have run the curl installer (not brew)
+    assert.ok(
+      payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
+      "Should use curl installer on Linux"
+    );
+    assert.ok(
+      !payload.runCommands.some((cmd: string) => cmd.includes("brew install")),
+      "Should NOT use brew on Linux"
+    );
+  });
 });
