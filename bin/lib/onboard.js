@@ -276,6 +276,14 @@ async function preflight() {
   }
   console.log(`  ✓ openshell CLI: ${runCapture("openshell --version 2>/dev/null || echo unknown", { ignoreError: true })}`);
 
+  // Clean up any existing nemoclaw gateway before checking ports —
+  // a previous onboard run may have left the gateway running, which
+  // would block port 8080 and cause a confusing "port in use" error.
+  run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
+  // Also kill any leftover openclaw-gateway processes holding port 18789.
+  run("sudo kill $(lsof -ti :18789) 2>/dev/null || true", { ignoreError: true });
+  sleep(2);
+
   // Required ports — gateway (8080) and dashboard (18789)
   const requiredPorts = [
     { port: 8080, label: "OpenShell gateway" },
@@ -313,7 +321,10 @@ async function preflight() {
 
   // GPU
   const gpu = nim.detectGpu();
-  if (gpu && gpu.type === "nvidia") {
+  if (gpu && gpu.type === "nvidia" && gpu.jetson) {
+    console.log(`  ✓ NVIDIA Jetson detected: ${gpu.name}, ${gpu.totalMemoryMB} MB unified memory`);
+    console.log("  ⓘ NIM containers not supported on Jetson — will use Ollama or cloud inference");
+  } else if (gpu && gpu.type === "nvidia") {
     console.log(`  ✓ NVIDIA GPU detected: ${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`);
   } else if (gpu && gpu.type === "apple") {
     console.log(`  ✓ Apple GPU detected: ${gpu.name}${gpu.cores ? ` (${gpu.cores} cores)` : ""}, ${gpu.totalMemoryMB} MB unified memory`);
@@ -325,13 +336,79 @@ async function preflight() {
   return gpu;
 }
 
+// ── Jetson gateway image patch ───────────────────────────────────
+//
+// JetPack kernels (Tegra) ship without nft_chain_filter and related
+// nf_tables modules. The OpenShell gateway image embeds k3s, whose
+// network policy controller calls iptables in nf_tables mode by default.
+// Without kernel support the controller panics on startup.
+//
+// This function rebuilds the gateway image locally, switching the
+// default iptables alternative to iptables-legacy so all rule
+// manipulation uses the classic xtables backend that Tegra kernels
+// fully support.
+
+function getGatewayImageTag() {
+  const openshellVersion = runCapture("openshell --version 2>/dev/null", { ignoreError: true }) || "";
+  const match = openshellVersion.match(/(\d+\.\d+\.\d+)/);
+  return match ? match[1] : "latest";
+}
+
+function patchGatewayImageForJetson() {
+  const tag = getGatewayImageTag();
+  const image = `ghcr.io/nvidia/openshell/cluster:${tag}`;
+
+  // Check if already patched (look for our label)
+  const inspectOut = runCapture(
+    `docker inspect --format='{{index .Config.Labels "io.nemoclaw.jetson-patched"}}' "${image}" 2>/dev/null`,
+    { ignoreError: true }
+  ).trim();
+  if (inspectOut === "true") {
+    console.log("  ✓ Gateway image already patched for Jetson");
+    return;
+  }
+
+  console.log("  Patching gateway image for Jetson (iptables-legacy)...");
+
+  const os = require("os");
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-jetson-"));
+  const dockerfile = path.join(tmpDir, "Dockerfile");
+  fs.writeFileSync(
+    dockerfile,
+    [
+      `FROM ${image}`,
+      `RUN if command -v update-alternatives >/dev/null 2>&1; then \\`,
+      `      update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null || true; \\`,
+      `      update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy 2>/dev/null || true; \\`,
+      `    elif [ -f /usr/sbin/iptables-legacy ]; then \\`,
+      `      ln -sf /usr/sbin/iptables-legacy /usr/sbin/iptables; \\`,
+      `      ln -sf /usr/sbin/ip6tables-legacy /usr/sbin/ip6tables; \\`,
+      `    fi`,
+      `LABEL io.nemoclaw.jetson-patched="true"`,
+      "",
+    ].join("\n")
+  );
+
+  run(`docker build --quiet -t ${image} "${tmpDir}"`, { ignoreError: false });
+  run(`rm -rf "${tmpDir}"`, { ignoreError: true });
+  console.log("  ✓ Gateway image patched for Jetson (iptables-legacy)");
+}
+
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
 async function startGateway(gpu) {
   step(2, 7, "Starting OpenShell gateway");
 
-  // Destroy old gateway
-  run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
+  // Old gateway was already destroyed in preflight() to free ports.
+
+  // Jetson (Tegra kernel): The k3s container image ships iptables v1.8.10 in
+  // nf_tables mode, but JetPack kernels lack the nft_chain_filter module,
+  // causing the k3s network policy controller to panic on startup.
+  // Workaround: rebuild the gateway image locally with iptables-legacy as the
+  // default so iptables commands use the legacy (xtables) backend instead.
+  if (gpu && gpu.jetson) {
+    patchGatewayImageForJetson();
+  }
 
   const gwArgs = ["--name", "nemoclaw"];
   // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is

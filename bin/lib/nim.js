@@ -70,6 +70,38 @@ function detectGpu() {
     }
   } catch {}
 
+  // Fallback: NVIDIA Jetson (Orin, Thor, etc.) — unified memory, nvidia-smi
+  // reports [N/A] for memory.total. Detect via GPU name or device-tree model.
+  try {
+    const nameOutput = runCapture(
+      "nvidia-smi --query-gpu=name --format=csv,noheader,nounits",
+      { ignoreError: true }
+    );
+    const isJetsonGpu = nameOutput && /orin|thor/i.test(nameOutput);
+    const dtModel = runCapture(
+      "cat /proc/device-tree/model 2>/dev/null | tr -d '\\0'",
+      { ignoreError: true }
+    );
+    const isJetsonDt = dtModel && /jetson/i.test(dtModel);
+
+    if (isJetsonGpu || isJetsonDt) {
+      let totalMemoryMB = 0;
+      try {
+        const memLine = runCapture("free -m | awk '/Mem:/ {print $2}'", { ignoreError: true });
+        if (memLine) totalMemoryMB = parseInt(memLine.trim(), 10) || 0;
+      } catch {}
+      return {
+        type: "nvidia",
+        name: dtModel || nameOutput || "Jetson",
+        count: 1,
+        totalMemoryMB,
+        perGpuMB: totalMemoryMB,
+        nimCapable: false,
+        jetson: true,
+      };
+    }
+  } catch {}
+
   // macOS: detect Apple Silicon or discrete GPU
   if (process.platform === "darwin") {
     try {
