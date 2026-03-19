@@ -244,4 +244,5 @@ Troubleshooting <reference/troubleshooting>
 :hidden:
 
 resources/license
+Discord <https://discord.com/channels/1019361803752456192/1482072289511211200>
 ```
