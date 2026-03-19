@@ -1,0 +1,116 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Automated release pipeline: runs tests, publishes to npm, creates GitHub Release
+# with changelog generated from conventional commits.
+#
+# Triggered by pushing a semver tag (e.g., v0.2.0).
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm install
+
+      - name: Install and build TypeScript plugin
+        working-directory: nemoclaw
+        run: |
+          npm install
+          npm run build
+
+      - name: Run unit tests
+        run: node --test test/*.test.js
+
+      - name: Run TypeScript unit tests
+        working-directory: nemoclaw
+        run: npx vitest run
+
+  publish-npm:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install and build
+        run: |
+          npm install
+          cd nemoclaw && npm install && npm run build && cd ..
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  github-release:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog from conventional commits
+        id: changelog
+        run: |
+          # Find the previous tag
+          PREV_TAG=$(git tag --sort=-version:refname | head -2 | tail -1)
+          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "${{ github.ref_name }}" ]; then
+            PREV_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
+
+          echo "## What's Changed" > /tmp/changelog.md
+          echo "" >> /tmp/changelog.md
+
+          # Group commits by type
+          for type_label in "feat:Features" "fix:Bug Fixes" "docs:Documentation" "chore:Maintenance" "refactor:Refactoring" "test:Tests" "ci:CI/CD" "perf:Performance"; do
+            type="${type_label%%:*}"
+            label="${type_label##*:}"
+            commits=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --grep="^${type}" 2>/dev/null || true)
+            if [ -n "$commits" ]; then
+              echo "### ${label}" >> /tmp/changelog.md
+              echo "$commits" >> /tmp/changelog.md
+              echo "" >> /tmp/changelog.md
+            fi
+          done
+
+          echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${{ github.ref_name }}" >> /tmp/changelog.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: /tmp/changelog.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

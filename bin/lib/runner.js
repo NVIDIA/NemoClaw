@@ -4,6 +4,7 @@
 const { execSync, spawnSync } = require("child_process");
 const path = require("path");
 const { detectDockerHost } = require("./platform");
+const logger = require("./logger");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const SCRIPTS = path.join(ROOT, "scripts");
@@ -13,7 +14,29 @@ if (dockerHost) {
   process.env.DOCKER_HOST = dockerHost.dockerHost;
 }
 
+// Redact known secret patterns from command strings for logging.
+const SECRET_PATTERNS = [
+  /NVIDIA_API_KEY=[^\s"']*/g,
+  /nvapi-[A-Za-z0-9_-]+/g,
+  /GITHUB_TOKEN=[^\s"']*/g,
+  /TELEGRAM_BOT_TOKEN=[^\s"']*/g,
+  /OPENAI_API_KEY=[^\s"']*/g,
+];
+
+function redactSecrets(str) {
+  let result = str;
+  for (const pattern of SECRET_PATTERNS) {
+    result = result.replace(pattern, (match) => {
+      const eqIdx = match.indexOf("=");
+      if (eqIdx > 0) return match.slice(0, eqIdx + 1) + "***";
+      return match.slice(0, 8) + "***";
+    });
+  }
+  return result;
+}
+
 function run(cmd, opts = {}) {
+  logger.debug(`exec: ${redactSecrets(cmd.slice(0, 200))}`);
   const stdio = opts.stdio ?? ["ignore", "inherit", "inherit"];
   const result = spawnSync("bash", ["-c", cmd], {
     ...opts,
@@ -22,13 +45,14 @@ function run(cmd, opts = {}) {
     env: { ...process.env, ...opts.env },
   });
   if (result.status !== 0 && !opts.ignoreError) {
-    console.error(`  Command failed (exit ${result.status}): ${cmd.slice(0, 80)}`);
+    console.error(`  Command failed (exit ${result.status}): ${redactSecrets(cmd.slice(0, 80))}`);
     process.exit(result.status || 1);
   }
   return result;
 }
 
 function runInteractive(cmd, opts = {}) {
+  logger.debug(`exec (interactive): ${redactSecrets(cmd.slice(0, 200))}`);
   const stdio = opts.stdio ?? "inherit";
   const result = spawnSync("bash", ["-c", cmd], {
     ...opts,
@@ -37,13 +61,14 @@ function runInteractive(cmd, opts = {}) {
     env: { ...process.env, ...opts.env },
   });
   if (result.status !== 0 && !opts.ignoreError) {
-    console.error(`  Command failed (exit ${result.status}): ${cmd.slice(0, 80)}`);
+    console.error(`  Command failed (exit ${result.status}): ${redactSecrets(cmd.slice(0, 80))}`);
     process.exit(result.status || 1);
   }
   return result;
 }
 
 function runCapture(cmd, opts = {}) {
+  logger.debug(`capture: ${redactSecrets(cmd.slice(0, 200))}`);
   try {
     return execSync(cmd, {
       ...opts,
@@ -85,4 +110,4 @@ function validateName(name, label = "name") {
   return name;
 }
 
-module.exports = { ROOT, SCRIPTS, run, runCapture, runInteractive, shellQuote, validateName };
+module.exports = { ROOT, SCRIPTS, run, runCapture, runInteractive, shellQuote, validateName, redactSecrets };

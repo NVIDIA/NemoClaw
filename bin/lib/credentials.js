@@ -74,11 +74,59 @@ async function ensureApiKey() {
     process.exit(1);
   }
 
+  // Validate the key against the NVIDIA API before saving
+  console.log("  Validating API key...");
+  const validation = validateApiKey(key);
+  if (validation.ok) {
+    console.log("  ✓ API key is valid");
+  } else {
+    // Non-fatal: warn but continue if it's a network issue
+    if (validation.message.includes("invalid") || validation.message.includes("expired")) {
+      console.error(`  ✗ ${validation.message}`);
+      process.exit(1);
+    }
+    console.log(`  ⓘ ${validation.message}`);
+  }
+
   saveCredential("NVIDIA_API_KEY", key);
   process.env.NVIDIA_API_KEY = key;
   console.log("");
   console.log("  Key saved to ~/.nemoclaw/credentials.json (mode 600)");
   console.log("");
+}
+
+/**
+ * Validate an NVIDIA API key by making a lightweight test request.
+ * Returns { ok: true } or { ok: false, message: string }.
+ */
+function validateApiKey(key) {
+  try {
+    const result = require("child_process").spawnSync(
+      "curl",
+      [
+        "-sf",
+        "-o", "/dev/null",
+        "-w", "%{http_code}",
+        "-H", `Authorization: Bearer ${key}`,
+        "https://integrate.api.nvidia.com/v1/models",
+      ],
+      { encoding: "utf-8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"] }
+    );
+    const httpCode = (result.stdout || "").trim();
+    if (httpCode === "200") {
+      return { ok: true };
+    }
+    if (httpCode === "401" || httpCode === "403") {
+      return { ok: false, message: "API key is invalid or expired. Check https://build.nvidia.com/settings/api-keys" };
+    }
+    if (httpCode === "000" || !httpCode) {
+      return { ok: false, message: "Could not reach NVIDIA API (network issue). Key format looks valid — proceeding." };
+    }
+    return { ok: false, message: `Unexpected response (HTTP ${httpCode}). Key format looks valid — proceeding.` };
+  } catch {
+    // Network failure — don't block onboarding, just warn
+    return { ok: false, message: "Could not validate key (network error). Proceeding with saved key." };
+  }
 }
 
 function isRepoPrivate(repo) {
@@ -138,4 +186,5 @@ module.exports = {
   ensureApiKey,
   ensureGithubToken,
   isRepoPrivate,
+  validateApiKey,
 };

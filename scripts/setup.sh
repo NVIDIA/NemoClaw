@@ -130,11 +130,17 @@ fi
 info "Setting up inference providers..."
 
 # nvidia-nim (build.nvidia.com)
+# Write credential to temp file to avoid exposing the API key in
+# process arguments visible via ps aux (#325).
+CRED_FILE="$(mktemp /tmp/nemoclaw-cred-XXXXXX)"
+chmod 600 "$CRED_FILE"
+printf 'NVIDIA_API_KEY=%s' "$NVIDIA_API_KEY" > "$CRED_FILE"
 upsert_provider \
   "nvidia-nim" \
   "openai" \
-  "NVIDIA_API_KEY=$NVIDIA_API_KEY" \
+  "$(cat "$CRED_FILE")" \
   "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1"
+rm -f "$CRED_FILE"
 
 # vllm-local (if vLLM is installed or running)
 if check_local_provider_health "vllm-local" || python3 -c "import vllm" 2>/dev/null; then
@@ -190,9 +196,11 @@ rm -rf "$BUILD_CTX/nemoclaw/node_modules"
 # detect failures. The raw log is kept on failure for debugging.
 CREATE_LOG=$(mktemp /tmp/nemoclaw-create-XXXXXX.log)
 set +e
+# NVIDIA_API_KEY is inherited from the parent process environment
+# instead of being passed as a CLI argument visible in ps aux (#325).
 openshell sandbox create --from "$BUILD_CTX/Dockerfile" --name "$SANDBOX_NAME" \
   --provider nvidia-nim \
-  -- env NVIDIA_API_KEY="$NVIDIA_API_KEY" > "$CREATE_LOG" 2>&1
+  -- nemoclaw-start > "$CREATE_LOG" 2>&1
 CREATE_RC=$?
 set -e
 rm -rf "$BUILD_CTX"
