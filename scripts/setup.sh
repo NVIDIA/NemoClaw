@@ -94,7 +94,7 @@ info "Using sandbox name: ${SANDBOX_NAME}"
 
 # 0. Check for conflicting Kubernetes — cgroupns=host + host kubelet = crash loop
 # See: https://github.com/NVIDIA/NemoClaw/issues/431
-if pgrep -x kubelet > /dev/null 2>&1 || pgrep -x kubelite > /dev/null 2>&1 || systemctl is-active --quiet k3s 2>/dev/null; then
+if pgrep -x kubelet > /dev/null 2>&1 || pgrep -x kubelite > /dev/null 2>&1 || pgrep -x k3s > /dev/null 2>&1 || systemctl is-active --quiet k3s 2>/dev/null || systemctl is-active --quiet k3s-agent 2>/dev/null; then
   warn "⚠️  A Kubernetes kubelet is running on this host."
   warn "The gateway's embedded k3s may conflict over cgroup paths (kubepods)."
   warn "If the gateway fails with CrashLoopBackOff, stop the host Kubernetes first:"

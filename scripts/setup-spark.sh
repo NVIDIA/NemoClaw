@@ -73,20 +73,20 @@ fi
 detect_conflicting_kubelet() {
   local found=""
 
-  # Check for common kubelet processes
-  if pgrep -x kubelet > /dev/null 2>&1 || pgrep -x kubelite > /dev/null 2>&1; then
+  # Check for common kubelet processes (including k3s itself)
+  if pgrep -x kubelet > /dev/null 2>&1 || pgrep -x kubelite > /dev/null 2>&1 || pgrep -x k3s > /dev/null 2>&1; then
     found="kubelet process detected"
   fi
 
   # Check for MicroK8s specifically
-  if command -v microk8s > /dev/null 2>&1; then
+  if [ -z "$found" ] && command -v microk8s > /dev/null 2>&1; then
     if microk8s status 2>/dev/null | grep -q "microk8s is running"; then
       found="MicroK8s is running"
     fi
   fi
 
-  # Check for k3s service
-  if systemctl is-active --quiet k3s 2>/dev/null; then
+  # Check for k3s/k3s-agent service
+  if [ -z "$found" ] && (systemctl is-active --quiet k3s 2>/dev/null || systemctl is-active --quiet k3s-agent 2>/dev/null); then
     found="k3s service is active"
   fi
 
@@ -107,7 +107,9 @@ detect_conflicting_kubelet() {
     warn ""
 
     if [ -t 0 ]; then
-      read -rp "Continue anyway? [y/N] " reply
+      if ! read -rp "Continue anyway? [y/N] " reply; then
+        fail "Aborted (no input). Stop the conflicting Kubernetes service and retry."
+      fi
       if [[ ! "$reply" =~ ^[Yy] ]]; then
         fail "Aborted. Stop the conflicting Kubernetes service and retry."
       fi
