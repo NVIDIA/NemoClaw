@@ -61,9 +61,8 @@ describe("onboard build context cleanup", () => {
         // Simulate successful path: explicit cleanup + deregister
         cleanup();
         process.removeListener("exit", cleanup);
-        // Verify deregistration by checking listener count
-        const count = process.listenerCount("exit");
-        if (count > 0) {
+        // Verify the specific handler was deregistered
+        if (process.listeners("exit").includes(cleanup)) {
           console.error("exit handler was not deregistered");
           process.exit(2);
         }
