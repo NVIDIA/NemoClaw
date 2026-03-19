@@ -647,11 +647,13 @@ async function setupInference(sandboxName, model, provider) {
 
   if (provider === "nvidia-nim") {
     // Create nvidia-nim provider
+    // Use bare key form (--credential NVIDIA_API_KEY) so the actual key value
+    // is passed via the child process environment, not visible in `ps aux`.
     run(
       `openshell provider create --name nvidia-nim --type openai ` +
-      `--credential "NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}" ` +
+      `--credential NVIDIA_API_KEY ` +
       `--config "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1" 2>&1 || true`,
-      { ignoreError: true }
+      { ignoreError: true, env: { NVIDIA_API_KEY: process.env.NVIDIA_API_KEY } }
     );
     run(
       `openshell inference set --no-verify --provider nvidia-nim --model ${model} 2>/dev/null || true`,
@@ -666,11 +668,11 @@ async function setupInference(sandboxName, model, provider) {
     const baseUrl = getLocalProviderBaseUrl(provider);
     run(
       `openshell provider create --name vllm-local --type openai ` +
-      `--credential "OPENAI_API_KEY=dummy" ` +
+      `--credential OPENAI_API_KEY ` +
       `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
-      `openshell provider update vllm-local --credential "OPENAI_API_KEY=dummy" ` +
+      `openshell provider update vllm-local --credential OPENAI_API_KEY ` +
       `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
-      { ignoreError: true }
+      { ignoreError: true, env: { OPENAI_API_KEY: "dummy" } }
     );
     run(
       `openshell inference set --no-verify --provider vllm-local --model ${model} 2>/dev/null || true`,
@@ -686,11 +688,11 @@ async function setupInference(sandboxName, model, provider) {
     const baseUrl = getLocalProviderBaseUrl(provider);
     run(
       `openshell provider create --name ollama-local --type openai ` +
-      `--credential "OPENAI_API_KEY=ollama" ` +
+      `--credential OPENAI_API_KEY ` +
       `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
-      `openshell provider update ollama-local --credential "OPENAI_API_KEY=ollama" ` +
+      `openshell provider update ollama-local --credential OPENAI_API_KEY ` +
       `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
-      { ignoreError: true }
+      { ignoreError: true, env: { OPENAI_API_KEY: "ollama" } }
     );
     run(
       `openshell inference set --no-verify --provider ollama-local --model ${model} 2>/dev/null || true`,

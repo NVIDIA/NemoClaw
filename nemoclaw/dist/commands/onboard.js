@@ -178,10 +178,11 @@ async function promptEndpoint(ollama) {
     }
     return (await (0, prompt_js_1.promptSelect)("Select your inference endpoint:", options));
 }
-function execOpenShell(args) {
+function execOpenShell(args, options) {
     return (0, node_child_process_1.execFileSync)("openshell", args, {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, ...options?.env },
     });
 }
 async function cliOnboard(opts) {
@@ -379,10 +380,10 @@ async function cliOnboard(opts) {
             "--type",
             "openai",
             "--credential",
-            `${credentialEnv}=${apiKey}`,
+            credentialEnv,
             "--config",
             `OPENAI_BASE_URL=${endpointUrl}`,
-        ]);
+        ], { env: { [credentialEnv]: apiKey } });
         logger.info(`Created provider: ${providerName}`);
     }
     catch (err) {
@@ -394,10 +395,10 @@ async function cliOnboard(opts) {
                     "update",
                     providerName,
                     "--credential",
-                    `${credentialEnv}=${apiKey}`,
+                    credentialEnv,
                     "--config",
                     `OPENAI_BASE_URL=${endpointUrl}`,
-                ]);
+                ], { env: { [credentialEnv]: apiKey } });
                 logger.info(`Updated provider: ${providerName}`);
             }
             catch (updateErr) {

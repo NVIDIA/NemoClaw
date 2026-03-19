@@ -57,13 +57,18 @@ def run_cmd(
     *,
     check: bool = True,
     capture: bool = False,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a command as an argv list (never shell=True)."""
+    env = None
+    if extra_env:
+        env = {**os.environ, **extra_env}
     return subprocess.run(
         args,
         check=check,
         capture_output=capture,
         text=True,
+        env=env,
     )
 
 
@@ -209,12 +214,16 @@ def action_apply(
         "--type",
         provider_type,
     ]
+    # Use bare key form (--credential OPENAI_API_KEY) so the actual credential
+    # value is passed via the child process environment, not visible in `ps aux`.
+    provider_env: dict[str, str] = {}
     if credential:
-        provider_args.extend(["--credential", f"OPENAI_API_KEY={credential}"])
+        provider_args.extend(["--credential", "OPENAI_API_KEY"])
+        provider_env["OPENAI_API_KEY"] = credential
     if endpoint:
         provider_args.extend(["--config", f"OPENAI_BASE_URL={endpoint}"])
 
-    run_cmd(provider_args, check=False, capture=True)
+    run_cmd(provider_args, check=False, capture=True, extra_env=provider_env)
 
     # Step 3: Set inference route
     progress(70, "Setting inference route")

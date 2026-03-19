@@ -216,10 +216,11 @@ async function promptEndpoint(
   return (await promptSelect("Select your inference endpoint:", options)) as EndpointType;
 }
 
-function execOpenShell(args: string[]): string {
+function execOpenShell(args: string[], options?: { env?: Record<string, string> }): string {
   return execFileSync("openshell", args, {
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, ...options?.env },
   });
 }
 
@@ -450,10 +451,10 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
       "--type",
       "openai",
       "--credential",
-      `${credentialEnv}=${apiKey}`,
+      credentialEnv,
       "--config",
       `OPENAI_BASE_URL=${endpointUrl}`,
-    ]);
+    ], { env: { [credentialEnv]: apiKey } });
     logger.info(`Created provider: ${providerName}`);
   } catch (err) {
     const stderr =
@@ -465,10 +466,10 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
           "update",
           providerName,
           "--credential",
-          `${credentialEnv}=${apiKey}`,
+          credentialEnv,
           "--config",
           `OPENAI_BASE_URL=${endpointUrl}`,
-        ]);
+        ], { env: { [credentialEnv]: apiKey } });
         logger.info(`Updated provider: ${providerName}`);
       } catch (updateErr) {
         const updateStderr =
