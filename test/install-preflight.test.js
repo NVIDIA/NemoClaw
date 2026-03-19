@@ -125,6 +125,7 @@ exit 98
         ...process.env,
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
         NPM_PREFIX: prefix,
         NPM_LOG_PATH: npmLog,
       },
@@ -180,6 +181,7 @@ exit 98
         ...process.env,
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
         NPM_PREFIX: prefix,
       },
     });
@@ -436,6 +438,7 @@ exit 0
         ...process.env,
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
         NPM_PREFIX: prefix,
       },
     });
