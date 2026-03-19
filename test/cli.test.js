@@ -11,6 +11,7 @@ const path = require("path");
 const CLI = path.join(__dirname, "..", "bin", "nemoclaw.js");
 
 function run(args, extraEnv = {}) {
+  const createdHome = !extraEnv.HOME;
   const home = extraEnv.HOME || fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-"));
   try {
     const out = execSync(`node "${CLI}" ${args}`, {
@@ -18,9 +19,13 @@ function run(args, extraEnv = {}) {
       timeout: 10000,
       env: { ...process.env, ...extraEnv, HOME: home },
     });
-    return { code: 0, out };
+    return { code: 0, out, home };
   } catch (err) {
-    return { code: err.status, out: (err.stdout || "") + (err.stderr || "") };
+    return { code: err.status, out: (err.stdout || "") + (err.stderr || ""), home };
+  } finally {
+    if (createdHome) {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   }
 }
 
@@ -105,5 +110,12 @@ describe("CLI dispatch", () => {
       .trim()
       .split("\n");
     assert.deepEqual(args, ["logs", "my-assistant", "--tail"]);
+  });
+
+  it("cleans up internally-created HOME directories after each run", () => {
+    const r = run("help");
+    assert.equal(r.code, 0);
+    assert.ok(r.home, "expected run() to report the HOME directory it used");
+    assert.equal(fs.existsSync(r.home), false, "expected auto-created HOME directory to be removed");
   });
 });
