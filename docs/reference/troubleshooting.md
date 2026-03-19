@@ -37,6 +37,62 @@ The installer checks for a supported OS and architecture before proceeding.
 NemoClaw requires Linux Ubuntu 22.04 LTS or later.
 If you see an unsupported platform error, verify that you are running on a supported Linux distribution.
 
+### Node.js version is too old
+
+NemoClaw requires Node.js 20 or later.
+If the installer exits with a Node.js version error, check your current version:
+
+```console
+$ node --version
+```
+
+If the version is below 20, install a supported release.
+If you use nvm, run:
+
+```console
+$ nvm install 20
+$ nvm use 20
+```
+
+Then re-run the installer.
+
+### Docker is not running
+
+The installer and onboard wizard require Docker to be running.
+If you see a Docker connection error, start the Docker daemon:
+
+```console
+$ sudo systemctl start docker
+```
+
+On macOS with Docker Desktop, open the Docker Desktop application and wait for it to finish starting before retrying.
+
+### npm install fails with permission errors
+
+If `npm install` fails with an `EACCES` permission error, do not run npm with `sudo`.
+Instead, configure npm to use a directory you own:
+
+```console
+$ mkdir -p ~/.npm-global
+$ npm config set prefix ~/.npm-global
+$ export PATH=~/.npm-global/bin:$PATH
+```
+
+Add the `export` line to your `~/.bashrc` or `~/.zshrc` to make it permanent, then re-run the installer.
+
+### Port already in use
+
+The NemoClaw gateway uses port `18789` by default.
+If another process is already bound to this port, onboarding fails.
+Identify and stop the conflicting process:
+
+```console
+$ lsof -i :18789
+$ kill <PID>
+```
+
+Then retry onboarding.
+
 ## Onboarding
 
 ### Cgroup v2 errors during onboard
