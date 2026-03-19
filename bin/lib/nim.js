@@ -23,6 +23,11 @@ function listModels() {
   }));
 }
 
+/**
+ * Detects the GPU on the current system. Returns an object describing the GPU
+ * type, memory, and capabilities, or null if no GPU is found. Supports
+ * discrete NVIDIA GPUs, DGX Spark (GB10), Jetson (Orin/Thor), and Apple Silicon.
+ */
 function detectGpu() {
   // Try NVIDIA first — query VRAM
   try {

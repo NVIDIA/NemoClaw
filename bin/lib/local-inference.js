@@ -101,19 +101,31 @@ function parseOllamaList(output) {
     .filter(Boolean);
 }
 
-function getOllamaModelOptions(runCapture) {
+/**
+ * Returns available Ollama model names from `ollama list`, falling back to
+ * the platform-appropriate default when the CLI is unavailable.
+ */
+function getOllamaModelOptions(runCapture, gpu) {
   const output = runCapture("ollama list 2>/dev/null", { ignoreError: true });
   const parsed = parseOllamaList(output);
   if (parsed.length > 0) {
     return parsed;
   }
+  // Jetson: fall back to the 4B model that fits in 8GB unified memory
+  // instead of the 30B default which would OOM.
+  if (gpu && gpu.jetson) {
+    return [DEFAULT_OLLAMA_MODEL_JETSON];
+  }
   return [DEFAULT_OLLAMA_MODEL];
 }
 
+/**
+ * Returns the best default Ollama model for the current platform.
+ * On Jetson Orin Nano (8GB unified memory) this returns nemotron-3-nano:4b;
+ * on all other platforms it returns nemotron-3-nano:30b.
+ */
 function getDefaultOllamaModel(runCapture, gpu) {
-  const models = getOllamaModelOptions(runCapture);
-  // Jetson Orin Nano has limited unified memory (8GB) — prefer the 4B
-  // quantized model which fits comfortably, over the 30B default.
+  const models = getOllamaModelOptions(runCapture, gpu);
   if (gpu && gpu.jetson) {
     if (models.includes(DEFAULT_OLLAMA_MODEL_JETSON)) return DEFAULT_OLLAMA_MODEL_JETSON;
     return models[0];

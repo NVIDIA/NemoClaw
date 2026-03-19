@@ -6,6 +6,12 @@ const assert = require("node:assert/strict");
 
 const nim = require("../bin/lib/nim");
 
+// Detect GPU once for conditional test gating.
+const detectedGpu = nim.detectGpu();
+const isDiscreteNvidia = detectedGpu && detectedGpu.type === "nvidia" && !detectedGpu.jetson;
+const isJetson = detectedGpu && detectedGpu.type === "nvidia" && detectedGpu.jetson;
+const isApple = detectedGpu && detectedGpu.type === "apple";
+
 describe("nim", () => {
   describe("listModels", () => {
     it("returns 5 models", () => {
@@ -52,27 +58,20 @@ describe("nim", () => {
       }
     });
 
-    it("nvidia (discrete) type is nimCapable", () => {
-      const gpu = nim.detectGpu();
-      if (gpu && gpu.type === "nvidia" && !gpu.jetson) {
-        assert.equal(gpu.nimCapable, true);
-      }
+    it("nvidia (discrete) type is nimCapable", { skip: !isDiscreteNvidia }, () => {
+      assert.equal(detectedGpu.nimCapable, true);
     });
 
-    it("nvidia (jetson) type is not nimCapable", () => {
-      const gpu = nim.detectGpu();
-      if (gpu && gpu.type === "nvidia" && gpu.jetson) {
-        assert.equal(gpu.nimCapable, false);
-        assert.ok(gpu.name, "jetson gpu should have name");
-      }
+    it("nvidia (jetson) type is not nimCapable", { skip: !isJetson }, () => {
+      assert.equal(detectedGpu.nimCapable, false);
+      assert.ok(detectedGpu.name, "jetson gpu should have name");
+      assert.ok(detectedGpu.jetson === true, "jetson flag should be true");
+      assert.ok(detectedGpu.totalMemoryMB > 0, "should report unified memory");
     });
 
-    it("apple type is not nimCapable", () => {
-      const gpu = nim.detectGpu();
-      if (gpu && gpu.type === "apple") {
-        assert.equal(gpu.nimCapable, false);
-        assert.ok(gpu.name, "apple gpu should have name");
-      }
+    it("apple type is not nimCapable", { skip: !isApple }, () => {
+      assert.equal(detectedGpu.nimCapable, false);
+      assert.ok(detectedGpu.name, "apple gpu should have name");
     });
   });
 

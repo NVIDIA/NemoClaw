@@ -348,12 +348,19 @@ async function preflight() {
 // manipulation uses the classic xtables backend that Tegra kernels
 // fully support.
 
+/** Extracts the semver tag from the installed openshell CLI version. */
 function getGatewayImageTag() {
   const openshellVersion = runCapture("openshell --version 2>/dev/null", { ignoreError: true }) || "";
   const match = openshellVersion.match(/(\d+\.\d+\.\d+)/);
   return match ? match[1] : "latest";
 }
 
+/**
+ * Rebuilds the OpenShell gateway container image with iptables-legacy as the
+ * default backend. Idempotent — skips rebuild if the image is already patched
+ * (checked via Docker label). Required on Jetson because the Tegra kernel
+ * lacks nft_chain_filter modules that k3s's network policy controller needs.
+ */
 function patchGatewayImageForJetson() {
   const tag = getGatewayImageTag();
   const image = `ghcr.io/nvidia/openshell/cluster:${tag}`;

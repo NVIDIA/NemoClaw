@@ -60,6 +60,10 @@ if ! echo "$JETSON_MODEL" | grep -qi "jetson"; then
   if ! echo "$GPU_NAME" | grep -qiE "orin|thor"; then
     fail "This does not appear to be a Jetson device. Use 'nemoclaw onboard' directly."
   fi
+  # Exclude discrete GPUs that happen to contain matching strings
+  if echo "$GPU_NAME" | grep -qiE "geforce|rtx|quadro"; then
+    fail "Discrete GPU detected ('$GPU_NAME'). This script is for Jetson only."
+  fi
   JETSON_MODEL="${GPU_NAME}"
 fi
 
@@ -108,7 +112,7 @@ try:
     if 'nvidia' in runtimes:
         sys.exit(0)
     sys.exit(1)
-except:
+except (IOError, ValueError, KeyError):
     sys.exit(1)
 " 2>/dev/null; then
       info "NVIDIA runtime already configured in Docker daemon"
@@ -119,7 +123,7 @@ import json
 try:
     with open('$DAEMON_JSON') as f:
         d = json.load(f)
-except:
+except (IOError, ValueError, KeyError):
     d = {}
 d.setdefault('runtimes', {})['nvidia'] = {
     'path': 'nvidia-container-runtime',
@@ -172,7 +176,11 @@ fi
 
 if [ "$NEEDS_RESTART" = true ]; then
   info "Restarting Docker daemon..."
-  systemctl restart docker
+  if command -v systemctl > /dev/null 2>&1; then
+    systemctl restart docker
+  else
+    service docker restart 2>/dev/null || dockerd &
+  fi
   for i in 1 2 3 4 5 6 7 8 9 10; do
     if docker info > /dev/null 2>&1; then
       break
