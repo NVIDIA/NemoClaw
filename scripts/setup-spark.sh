@@ -43,7 +43,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # Detect the real user (not root) for docker group add
-REAL_USER="${SUDO_USER:-$(logname 2>/dev/null || echo "")}"
+REAL_USER="${SUDO_USER:-$USER}"
 if [ -z "$REAL_USER" ]; then
   warn "Could not detect non-root user. Docker group will not be configured."
 fi
