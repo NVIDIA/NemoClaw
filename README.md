@@ -60,6 +60,9 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | macOS | Podman | Not supported yet. NemoClaw currently depends on OpenShell support for Podman on macOS. |
 | Windows WSL | Docker Desktop (WSL backend) | Supported target path |
 
+> [!TIP]
+> For DGX Spark, follow the [DGX Spark setup guide](spark-install.md). It covers Spark-specific prerequisites, such as cgroup v2 and Docker configuration, before running the standard installer.
+
 ### Install NemoClaw and Onboard OpenClaw Agent
 
 Download and run the installer script.
