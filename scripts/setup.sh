@@ -129,11 +129,18 @@ fi
 # 3. Providers
 info "Setting up inference providers..."
 
+# Write API key to temp file to avoid exposing it in process arguments
+# visible via ps/proc (#325). The file is cleaned up on exit.
+_CRED_FILE=$(mktemp /tmp/nemoclaw-cred-XXXXXX)
+chmod 600 "$_CRED_FILE"
+printf '%s' "$NVIDIA_API_KEY" > "$_CRED_FILE"
+trap 'rm -f "$_CRED_FILE"' EXIT
+
 # nvidia-nim (build.nvidia.com)
 upsert_provider \
   "nvidia-nim" \
   "openai" \
-  "NVIDIA_API_KEY=$NVIDIA_API_KEY" \
+  "NVIDIA_API_KEY=$(cat "$_CRED_FILE")" \
   "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1"
 
 # vllm-local (if vLLM is installed or running)
