@@ -1,0 +1,22 @@
+name: Feature/Enhancement Request
++description: Submit a feature request other enhancement to help us improve NemoClaw
+labels: ["status: triage"]
+body:
+  - type: textarea
+    id: desc
+    attributes:
+      label: Proposed Change
+      placeholder: Describe the feature or provider integration...
+    validations:
+      required: true
+  - type: dropdown
+    id: cat
+    attributes:
+      label: Suggested Category
+      options: 
+        - "enhancement: feature"
+        - "enhancement: provider"
+        - "enhancement: platform"
+        - "enhancement: testing"
+    validations:
+      required: true
