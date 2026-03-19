@@ -58,4 +58,9 @@ function runCapture(cmd, opts = {}) {
   }
 }
 
-module.exports = { ROOT, SCRIPTS, run, runCapture, runInteractive };
+/** Single-quote a value for safe interpolation into shell commands. */
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+module.exports = { ROOT, SCRIPTS, run, runCapture, runInteractive, shellQuote };

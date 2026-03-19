@@ -3,7 +3,7 @@
 //
 // NIM container management — pull, start, stop, health-check NIM images.
 
-const { run, runCapture } = require("./runner");
+const { run, runCapture, shellQuote } = require("./runner");
 const nimImages = require("./nim-images.json");
 
 function containerName(sandboxName) {
@@ -136,9 +136,14 @@ function startNimContainer(sandboxName, model, port = 8000) {
   // Stop any existing container with same name
   run(`docker rm -f ${name} 2>/dev/null || true`, { ignoreError: true });
 
+  // Pass NGC_API_KEY so the container can pull model weights from NGC.
+  // Falls back to NVIDIA_API_KEY for environments that only set that.
+  const ngcKey = process.env.NGC_API_KEY || process.env.NVIDIA_API_KEY || "";
+  const envFlags = ngcKey ? `-e NGC_API_KEY=${shellQuote(ngcKey)}` : "";
+
   console.log(`  Starting NIM container: ${name}`);
   run(
-    `docker run -d --gpus all -p ${port}:8000 --name ${name} --shm-size 16g ${image}`
+    `docker run -d --gpus all -p ${port}:8000 --name ${name} --shm-size 16g ${envFlags} ${image}`
   );
   return name;
 }
