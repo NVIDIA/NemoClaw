@@ -120,6 +120,11 @@ function validateApiKey(key) {
         stdio: ["pipe", "pipe", "pipe"],
       }
     );
+    // Check for local spawn errors (curl missing, timeout) before inspecting stdout.
+    if (result.error) {
+      const reason = result.error.code === "ETIMEDOUT" ? "timed out" : result.error.message || "unknown error";
+      return { ok: false, fatal: false, message: `Could not validate key (${reason}). Proceeding with saved key.` };
+    }
     const httpCode = (result.stdout || "").trim();
     if (httpCode === "200") {
       return { ok: true, fatal: false, message: "API key validated successfully" };
