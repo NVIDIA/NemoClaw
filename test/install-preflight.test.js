@@ -349,6 +349,7 @@ exit 0
         ...process.env,
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
         NPM_PREFIX: prefix,
       },
     });
