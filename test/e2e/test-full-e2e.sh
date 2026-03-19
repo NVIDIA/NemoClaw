@@ -2,17 +2,22 @@
 # Full E2E: install → onboard → verify inference (REAL services, no mocks)
 #
 # Proves the COMPLETE user journey including real inference against
-# the NVIDIA Cloud API. Sends prompts through the sandbox and verifies
-# that responses come back from the model.
+# the NVIDIA Cloud API. Runs install.sh --non-interactive which handles
+# Node.js, openshell, NemoClaw, and onboard setup automatically.
 #
 # Prerequisites:
 #   - Docker running
 #   - NVIDIA_API_KEY set (real key, starts with nvapi-)
-#   - openshell CLI installed
 #   - Network access to integrate.api.nvidia.com
 #
+# Environment variables:
+#   NEMOCLAW_NON_INTERACTIVE=1   — required (enables non-interactive install + onboard)
+#   NEMOCLAW_SANDBOX_NAME        — sandbox name (default: e2e-nightly)
+#   NEMOCLAW_RECREATE_SANDBOX=1  — recreate sandbox if it exists from a previous run
+#   NVIDIA_API_KEY               — required for NVIDIA Cloud API inference
+#
 # Usage:
-#   bash test/e2e/test-full-e2e.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-full-e2e.sh
 #
 # See: https://github.com/NVIDIA/NemoClaw/issues/71
 
@@ -55,7 +60,7 @@ else
   exit 1
 fi
 
-SANDBOX_NAME="e2e-full"
+SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-nightly}"
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 0: Pre-cleanup
@@ -65,8 +70,10 @@ info "Destroying any leftover sandbox/gateway from previous runs..."
 if command -v nemoclaw > /dev/null 2>&1; then
   nemoclaw "$SANDBOX_NAME" destroy 2>/dev/null || true
 fi
-openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
-openshell gateway destroy -g nemoclaw 2>/dev/null || true
+if command -v openshell > /dev/null 2>&1; then
+  openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
+  openshell gateway destroy -g nemoclaw 2>/dev/null || true
+fi
 pass "Pre-cleanup complete"
 
 # ══════════════════════════════════════════════════════════════════
@@ -78,13 +85,6 @@ if docker info > /dev/null 2>&1; then
   pass "Docker is running"
 else
   fail "Docker is not running — cannot continue"
-  exit 1
-fi
-
-if command -v openshell > /dev/null 2>&1; then
-  pass "openshell CLI installed ($(openshell --version 2>&1 || echo unknown))"
-else
-  fail "openshell CLI not found — cannot continue"
   exit 1
 fi
 
@@ -102,32 +102,58 @@ else
   exit 1
 fi
 
+if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then
+  fail "NEMOCLAW_NON_INTERACTIVE=1 is required"
+  exit 1
+fi
+
 # ══════════════════════════════════════════════════════════════════
-# Phase 2: Install
+# Phase 2: Install (install.sh --non-interactive)
 # ══════════════════════════════════════════════════════════════════
-section "Phase 2: Install nemoclaw"
+section "Phase 2: Install (install.sh --non-interactive)"
 
 cd "$REPO"
 
-# Install from source (same as install.sh's install_nemoclaw does in a repo dir)
-if [ -f "./package.json" ] && grep -q '"name": "nemoclaw"' ./package.json 2>/dev/null; then
-  info "Installing nemoclaw from source (npm install + npm link)..."
-  npm install 2>&1 | tail -3
-  npm link 2>&1 | tail -3
-else
-  info "Installing nemoclaw globally..."
-  npm install -g nemoclaw 2>&1 | tail -3
-fi
+info "Running install.sh --non-interactive..."
+info "This installs Node.js, openshell, NemoClaw, and runs onboard."
+info "Expected duration: 5-10 minutes on first run."
 
-# Source bashrc in case nvm/asdf modified it
+INSTALL_LOG="/tmp/nemoclaw-e2e-install.log"
+bash install.sh --non-interactive 2>&1 | tee "$INSTALL_LOG"
+install_exit=${PIPESTATUS[0]}
+
+# Source shell profile to pick up nvm/PATH changes from install.sh
 if [ -f "$HOME/.bashrc" ]; then
   source "$HOME/.bashrc" 2>/dev/null || true
 fi
+# Ensure nvm is loaded in current shell
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+# Ensure ~/.local/bin is on PATH (openshell may be installed there in non-interactive mode)
+if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+  export PATH="$HOME/.local/bin:$PATH"
+fi
 
+if [ $install_exit -eq 0 ]; then
+  pass "install.sh completed (exit 0)"
+else
+  fail "install.sh failed (exit $install_exit)"
+  exit 1
+fi
+
+# Verify nemoclaw is on PATH
 if command -v nemoclaw > /dev/null 2>&1; then
   pass "nemoclaw installed at $(command -v nemoclaw)"
 else
   fail "nemoclaw not found on PATH after install"
+  exit 1
+fi
+
+# Verify openshell was installed
+if command -v openshell > /dev/null 2>&1; then
+  pass "openshell installed ($(openshell --version 2>&1 || echo unknown))"
+else
+  fail "openshell not found on PATH after install"
   exit 1
 fi
 
@@ -136,78 +162,46 @@ nemoclaw --help > /dev/null 2>&1 \
   || fail "nemoclaw --help failed"
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 3: Onboard (real openshell, real gateway, real sandbox)
+# Phase 3: Sandbox verification
 # ══════════════════════════════════════════════════════════════════
-section "Phase 3: Onboard"
+section "Phase 3: Sandbox verification"
 
-# Non-interactive onboard piped inputs:
-#   1. Sandbox name: "e2e-full"
-#   2. Inference choice: "" (empty = default = NVIDIA Cloud API)
-#   3. Policy presets: "Y" (apply suggested)
-# ensureApiKey() does NOT prompt when NVIDIA_API_KEY is in env.
-info "Running nemoclaw onboard (non-interactive)..."
-info "This may take several minutes on first run (builds sandbox image)..."
-# Write to a file instead of $(…) because openshell's background port-forward
-# inherits the pipe's file descriptors, which prevents $(…) from returning.
-ONBOARD_LOG="$(mktemp)"
-printf "${SANDBOX_NAME}\n\nY\n" | nemoclaw onboard > "$ONBOARD_LOG" 2>&1
-onboard_exit=$?
-onboard_output="$(cat "$ONBOARD_LOG")"
-rm -f "$ONBOARD_LOG"
-
-if [ $onboard_exit -eq 0 ]; then
-  pass "nemoclaw onboard completed (exit 0)"
-else
-  fail "nemoclaw onboard failed (exit $onboard_exit)"
-  echo "$onboard_output" | tail -30
-fi
-
-echo "$onboard_output" | grep -qi "Sandbox.*${SANDBOX_NAME}.*created\|Sandbox '${SANDBOX_NAME}' created" \
-  && pass "Onboard: sandbox '${SANDBOX_NAME}' created" \
-  || fail "Onboard: sandbox creation not confirmed in output"
-
-echo "$onboard_output" | grep -qi "nvidia-nim\|NVIDIA Cloud API" \
-  && pass "Onboard: NVIDIA Cloud API selected" \
-  || fail "Onboard: cloud API not selected"
-
-# ══════════════════════════════════════════════════════════════════
-# Phase 4: Sandbox verification + inference setup
-# ══════════════════════════════════════════════════════════════════
-section "Phase 4: Sandbox verification"
-
+# 3a: nemoclaw list
 list_output=$(nemoclaw list 2>&1)
 echo "$list_output" | grep -q "$SANDBOX_NAME" \
   && pass "nemoclaw list contains '${SANDBOX_NAME}'" \
   || fail "nemoclaw list does not contain '${SANDBOX_NAME}'"
 
+# 3b: nemoclaw status
 status_output=$(nemoclaw "$SANDBOX_NAME" status 2>&1)
 [ $? -eq 0 ] \
   && pass "nemoclaw ${SANDBOX_NAME} status exits 0" \
   || fail "nemoclaw ${SANDBOX_NAME} status failed"
 
-# Ensure inference is configured (onboard's openshell inference set may have
-# failed due to --no-verify flag incompatibility — configure it directly)
+# 3c: Inference must be configured by onboard (no fallback — if onboard
+# failed to configure it, that's a bug we want to catch)
 inf_check=$(openshell inference get 2>&1)
-if echo "$inf_check" | grep -qi "nvidia-nim"; then
-  pass "Inference already configured via onboard"
-else
-  info "Inference not configured by onboard — setting it directly..."
-  openshell provider create --name nvidia-nim --type openai \
-    --credential "NVIDIA_API_KEY=$NVIDIA_API_KEY" \
-    --config "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1" 2>&1 || true
-  openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b 2>&1
-  inf_verify=$(openshell inference get 2>&1)
-  echo "$inf_verify" | grep -qi "nvidia-nim" \
-    && pass "Inference configured (direct setup)" \
-    || fail "Failed to configure inference"
-fi
+echo "$inf_check" | grep -qi "nvidia-nim" \
+  && pass "Inference configured via onboard" \
+  || fail "Inference not configured — onboard did not set up nvidia-nim provider"
+
+# 3d: Policy presets applied
+policy_output=$(openshell policy get --full "$SANDBOX_NAME" 2>&1)
+echo "$policy_output" | grep -qi "network_policies" \
+  && pass "Policy applied to sandbox" \
+  || fail "No network policy found on sandbox"
+
+# Check that at least npm or pypi preset endpoints are present (onboard auto-suggests these)
+echo "$policy_output" | grep -qi "registry.npmjs.org\|pypi.org" \
+  && pass "Policy presets (npm/pypi) detected in sandbox policy" \
+  || skip "Could not confirm npm/pypi presets in policy (may vary by environment)"
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 5: Live inference — the real proof
+# Phase 4: Live inference — the real proof
 # ══════════════════════════════════════════════════════════════════
-section "Phase 5: Live inference"
+section "Phase 4: Live inference"
 
-# ── Test 5a: Direct NVIDIA Cloud API ──
+# ── Test 4a: Direct NVIDIA Cloud API ──
 info "[LIVE] Direct API test → integrate.api.nvidia.com..."
 api_response=$(curl -s --max-time 30 \
   -X POST https://integrate.api.nvidia.com/v1/chat/completions \
@@ -230,7 +224,7 @@ else
   fail "[LIVE] Direct API: empty response from curl"
 fi
 
-# ── Test 5b: Inference through the sandbox (THE definitive test) ──
+# ── Test 4b: Inference through the sandbox (THE definitive test) ──
 info "[LIVE] Sandbox inference test → user → sandbox → gateway → NVIDIA API..."
 ssh_config="$(mktemp)"
 sandbox_response=""
@@ -263,6 +257,62 @@ if [ -n "$sandbox_response" ]; then
   fi
 else
   fail "[LIVE] Sandbox inference: no response from inference.local inside sandbox"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 5: Policy enforcement and CLI operations
+# ══════════════════════════════════════════════════════════════════
+section "Phase 5: Policy enforcement and CLI operations"
+
+# ── Test 5a: Policy enforcement (blocked traffic) ──
+info "Testing that sandbox blocks unapproved hosts..."
+ssh_config_block="$(mktemp)"
+if openshell sandbox ssh-config "$SANDBOX_NAME" > "$ssh_config_block" 2>/dev/null; then
+  # Use example.com — a real domain that resolves (93.184.215.14) but is NOT
+  # on the sandbox allow-list. The proxy should block it.
+  # Do NOT use a non-existent domain — DNS failure would give a false positive.
+  TIMEOUT_CMD=""
+  command -v timeout > /dev/null 2>&1 && TIMEOUT_CMD="timeout 30"
+  command -v gtimeout > /dev/null 2>&1 && TIMEOUT_CMD="gtimeout 30"
+  blocked_response=$($TIMEOUT_CMD ssh -F "$ssh_config_block" \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=10 \
+    -o LogLevel=ERROR \
+    "openshell-${SANDBOX_NAME}" \
+    "curl -s --max-time 10 -o /dev/null -w '%{http_code}' https://example.com 2>&1 || echo BLOCKED" \
+  2>&1) || true
+
+  # A successful block should show proxy denial (HTTP 403/407/502) or connection refused.
+  # HTTP 200 means the policy did NOT block it — that's a failure.
+  if echo "$blocked_response" | grep -qi "200"; then
+    fail "Policy enforcement: example.com returned 200 — policy did not block unapproved host"
+  elif [ -n "$blocked_response" ]; then
+    pass "Policy enforcement: unapproved host blocked (response: ${blocked_response:0:100})"
+  else
+    fail "Policy enforcement: empty response — could not determine if blocked"
+  fi
+else
+  fail "Could not get SSH config for policy enforcement test"
+fi
+rm -f "$ssh_config_block"
+
+# ── Test 5b: Sandbox command execution ──
+# Note: nemoclaw connect does not pass -- args to the sandbox.
+# Use openshell sandbox connect directly which supports -- <command>.
+info "Testing sandbox command execution..."
+connect_output=$(openshell sandbox connect "$SANDBOX_NAME" -- echo "CONNECT_OK" 2>&1) || true
+echo "$connect_output" | grep -q "CONNECT_OK" \
+  && pass "Sandbox connect: command executed in sandbox" \
+  || fail "Sandbox connect: expected CONNECT_OK, got: ${connect_output:0:200}"
+
+# ── Test 5c: nemoclaw logs ──
+info "Testing sandbox log retrieval..."
+logs_output=$(nemoclaw "$SANDBOX_NAME" logs 2>&1) || true
+if [ -n "$logs_output" ]; then
+  pass "nemoclaw logs: produced output ($(echo "$logs_output" | wc -l | tr -d ' ') lines)"
+else
+  fail "nemoclaw logs: no output"
 fi
 
 # ══════════════════════════════════════════════════════════════════
