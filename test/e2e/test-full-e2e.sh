@@ -108,9 +108,9 @@ if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then
 fi
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 2: Install (install.sh --non-interactive)
+# Phase 2: Install nemoclaw (non-interactive mode)
 # ══════════════════════════════════════════════════════════════════
-section "Phase 2: Install (install.sh --non-interactive)"
+section "Phase 2: Install nemoclaw (non-interactive mode)"
 
 cd "$REPO"
 
