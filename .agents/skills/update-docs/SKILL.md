@@ -96,14 +96,14 @@ Write the doc update following these conventions:
 - **Always write NVIDIA in all caps.** Wrong: Nvidia, nvidia.
 - **Always capitalize NemoClaw correctly.** Wrong: nemoclaw (in prose), Nemoclaw.
 - **Always capitalize OpenShell correctly.** Wrong: openshell (in prose), Openshell, openShell.
-- **Do not number section titles.** Wrong: "Section 1: Configure Inference" or "Step 3: Verify." Use plain descriptive titles.
-- **No colons in titles.** Wrong: "Inference: Cloud and Local." Write "Cloud and Local Inference" instead.
+- **Use plain descriptive titles without numbering.** Wrong: "Section 1: Configure Inference" or "Step 3: Verify." Right: "Configure Inference."
+- **Write titles without colons.** Wrong: "Inference: Cloud and Local." Right: "Cloud and Local Inference."
 - **Use colons only to introduce a list.** Do not use colons as general-purpose punctuation between clauses.
 
 When updating an existing page:
 
 - Add content in the logical place within the existing structure.
-- Do not reorganize sections unless the change requires it.
+- Preserve existing section order unless the change requires restructuring.
 - Update any cross-references or "Next Steps" links if relevant.
 
 When creating a new page:
