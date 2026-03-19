@@ -130,17 +130,15 @@ fi
 info "Setting up inference providers..."
 
 # nvidia-nim (build.nvidia.com)
-# Write credential to temp file to avoid exposing the API key in
-# process arguments visible via ps aux (#325).
-CRED_FILE="$(mktemp /tmp/nemoclaw-cred-XXXXXX)"
-chmod 600 "$CRED_FILE"
-printf 'NVIDIA_API_KEY=%s' "$NVIDIA_API_KEY" > "$CRED_FILE"
+# Pass the credential value directly from the env var. The literal key
+# still appears in the transient openshell child process args (unavoidable
+# without upstream --credential-file support), but it no longer appears
+# in shell history or parent process args. See #325.
 upsert_provider \
   "nvidia-nim" \
   "openai" \
-  "$(cat "$CRED_FILE")" \
+  "NVIDIA_API_KEY=$NVIDIA_API_KEY" \
   "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1"
-rm -f "$CRED_FILE"
 
 # vllm-local (if vLLM is installed or running)
 if check_local_provider_health "vllm-local" || python3 -c "import vllm" 2>/dev/null; then

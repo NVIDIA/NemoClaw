@@ -101,16 +101,23 @@ async function ensureApiKey() {
  */
 function validateApiKey(key) {
   try {
+    // Pass the auth header via stdin using -H @- so the API key
+    // does not appear in process arguments visible via ps aux.
     const result = require("child_process").spawnSync(
       "curl",
       [
         "-sf",
         "-o", "/dev/null",
         "-w", "%{http_code}",
-        "-H", `Authorization: Bearer ${key}`,
+        "-H", "@-",
         "https://integrate.api.nvidia.com/v1/models",
       ],
-      { encoding: "utf-8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"] }
+      {
+        input: `Authorization: Bearer ${key}`,
+        encoding: "utf-8",
+        timeout: 15000,
+        stdio: ["pipe", "pipe", "pipe"],
+      }
     );
     const httpCode = (result.stdout || "").trim();
     if (httpCode === "200") {

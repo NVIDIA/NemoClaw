@@ -796,7 +796,10 @@ async function setupInference(sandboxName, model, provider) {
 
   if (provider === "nvidia-nim") {
     // Pass credential via env var reference so the literal key value does not
-    // appear in the parent bash process args. See #325.
+    // appear in the parent bash process args. The openshell child process will
+    // still receive the expanded value in its args (unavoidable without upstream
+    // --credential-file support), but the exposure window is limited to the
+    // short-lived openshell subprocess. See #325.
     run(
       `openshell provider create --name nvidia-nim --type openai ` +
       `--credential "NVIDIA_API_KEY=$NEMOCLAW_CRED" ` +
@@ -1035,12 +1038,14 @@ class OnboardPipeline {
   }
 
   _registerSignalHandlers() {
-    this._signalHandler = async () => {
+    // Use a synchronous handler to guarantee rollback completes before exit.
+    // All rollback actions use spawnSync, so no async work is needed.
+    this._signalHandler = () => {
       if (this.aborted) return; // Prevent re-entry
       this.aborted = true;
       console.log("");
       console.log("  ⚠  Interrupted — cleaning up...");
-      await this._rollback();
+      this._rollbackSync();
       process.exit(130);
     };
     process.on("SIGINT", this._signalHandler);
@@ -1055,19 +1060,25 @@ class OnboardPipeline {
     }
   }
 
-  async _rollback() {
+  // Synchronous rollback for signal handlers — safe to call from SIGINT/SIGTERM
+  // since all rollback actions use spawnSync (no async work).
+  _rollbackSync() {
     for (let i = this.completedSteps.length - 1; i >= 0; i--) {
       const step = this.completedSteps[i];
       if (step.rollback) {
         try {
           console.log(`  Rolling back: ${step.name}...`);
-          await step.rollback();
+          step.rollback();
         } catch (err) {
           console.error(`  [warn] Rollback failed for ${step.name}: ${err.message || err}`);
         }
       }
     }
     this.completedSteps = [];
+  }
+
+  async _rollback() {
+    this._rollbackSync();
   }
 
   async run(steps) {
