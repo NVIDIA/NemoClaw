@@ -77,12 +77,6 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 If you use nvm or fnm to manage Node.js, the installer may not update your current shell's PATH.
 If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
 
-To uninstall NemoClaw and remove its local state, run:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash
-```
-
 When the install completes, a summary confirms the running environment:
 
 ```
@@ -140,10 +134,10 @@ openclaw agent --agent main --local -m "hello" --session-id test
 
 ### Uninstall
 
-To remove NemoClaw and all resources created during setup, in the terminal outside the sandbox, run the [uninstall script](https://github.com/NVIDIA/NemoClaw/blob/main/uninstall.sh):
+To remove NemoClaw and all resources created during setup, in the terminal outside the sandbox, run:
 
 ```bash
-./uninstall.sh
+curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash
 ```
 
 The script removes sandboxes, the NemoClaw gateway and providers, related Docker images and containers, local state directories, and the global `nemoclaw` npm package. It does not remove shared system tooling such as Docker, Node.js, npm, or Ollama.
