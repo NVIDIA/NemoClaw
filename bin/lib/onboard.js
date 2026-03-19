@@ -408,45 +408,55 @@ async function createSandbox(gpu) {
     registry.removeSandbox(sandboxName);
   }
 
-  // Stage build context
-  const { mkdtempSync } = require("fs");
+  // Stage build context.
+  // The build context contains source code, scripts, and potentially API keys
+  // in env args, so it must not persist in /tmp after a failed sandbox create.
+  // run() calls process.exit() on failure (bypassing try/finally), so we
+  // register a process 'exit' handler to guarantee cleanup in all cases.
   const os = require("os");
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
-  fs.copyFileSync(path.join(ROOT, "Dockerfile"), path.join(buildCtx, "Dockerfile"));
-  run(`cp -r "${path.join(ROOT, "nemoclaw")}" "${buildCtx}/nemoclaw"`);
-  run(`cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`);
-  run(`cp -r "${path.join(ROOT, "scripts")}" "${buildCtx}/scripts"`);
-  run(`rm -rf "${buildCtx}/nemoclaw/node_modules" "${buildCtx}/nemoclaw/src"`, { ignoreError: true });
+  const cleanupBuildCtx = () => {
+    try { fs.rmSync(buildCtx, { recursive: true, force: true }); } catch {}
+  };
+  process.on("exit", cleanupBuildCtx);
 
-  // Create sandbox (use -- echo to avoid dropping into interactive shell)
-  // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
-  const basePolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
-  const createArgs = [
-    `--from "${buildCtx}/Dockerfile"`,
-    `--name "${sandboxName}"`,
-    `--policy "${basePolicyPath}"`,
-  ];
-  // --gpu is intentionally omitted. See comment in startGateway().
+  try {
+    fs.copyFileSync(path.join(ROOT, "Dockerfile"), path.join(buildCtx, "Dockerfile"));
+    run(`cp -r "${path.join(ROOT, "nemoclaw")}" "${buildCtx}/nemoclaw"`);
+    run(`cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`);
+    run(`cp -r "${path.join(ROOT, "scripts")}" "${buildCtx}/scripts"`);
+    run(`rm -rf "${buildCtx}/nemoclaw/node_modules" "${buildCtx}/nemoclaw/src"`, { ignoreError: true });
 
-  console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
-  const chatUiUrl = process.env.CHAT_UI_URL || 'http://127.0.0.1:18789';
-  const envArgs = [`CHAT_UI_URL=${chatUiUrl}`];
-  if (process.env.NVIDIA_API_KEY) {
-    envArgs.push(`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`);
+    // Create sandbox (use -- echo to avoid dropping into interactive shell)
+    // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
+    const basePolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
+    const createArgs = [
+      `--from "${buildCtx}/Dockerfile"`,
+      `--name "${sandboxName}"`,
+      `--policy "${basePolicyPath}"`,
+    ];
+    // --gpu is intentionally omitted. See comment in startGateway().
+
+    console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
+    const chatUiUrl = process.env.CHAT_UI_URL || 'http://127.0.0.1:18789';
+    const envArgs = [`CHAT_UI_URL=${chatUiUrl}`];
+    if (process.env.NVIDIA_API_KEY) {
+      envArgs.push(`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`);
+    }
+    // set -o pipefail ensures the openshell exit code propagates through the awk pipe.
+    // Without it, awk's exit code (always 0) would mask a failed sandbox create.
+    run(`set -o pipefail; openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`);
+
+    // Release any stale forward on port 18789 before claiming it for the new sandbox.
+    // A previous onboard run may have left the port forwarded to a different sandbox,
+    // which would silently prevent the new sandbox's dashboard from being reachable.
+    run(`openshell forward stop 18789 2>/dev/null || true`, { ignoreError: true });
+    // Forward dashboard port to the new sandbox
+    run(`openshell forward start --background 18789 "${sandboxName}"`, { ignoreError: true });
+  } finally {
+    cleanupBuildCtx();
+    process.removeListener("exit", cleanupBuildCtx);
   }
-  // set -o pipefail ensures the openshell exit code propagates through the awk pipe.
-  // Without it, awk's exit code (always 0) would mask a failed sandbox create.
-  run(`set -o pipefail; openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`);
-
-  // Release any stale forward on port 18789 before claiming it for the new sandbox.
-  // A previous onboard run may have left the port forwarded to a different sandbox,
-  // which would silently prevent the new sandbox's dashboard from being reachable.
-  run(`openshell forward stop 18789 2>/dev/null || true`, { ignoreError: true });
-  // Forward dashboard port to the new sandbox
-  run(`openshell forward start --background 18789 "${sandboxName}"`, { ignoreError: true });
-
-  // Clean up build context
-  run(`rm -rf "${buildCtx}"`, { ignoreError: true });
 
   // Register in registry
   registry.registerSandbox({
