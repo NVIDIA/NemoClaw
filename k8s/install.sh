@@ -1,5 +1,5 @@
 #!/bin/bash
-# NemoKlaw Installer - One-command deployment of NemoClaw on Kubernetes
+# NemoClaw Installer - One-command deployment of NemoClaw on Kubernetes
 #
 # Usage:
 #   ./install.sh
@@ -8,15 +8,15 @@
 #   DYNAMO_ENDPOINT=http://my-vllm:8000/v1 ./install.sh
 #
 # Options:
-#   --cleanup    Remove existing NemoKlaw deployment before installing
+#   --cleanup    Remove existing NemoClaw deployment before installing
 #   --dry-run    Show what would be done without making changes
 #   --help       Show this help message
 #
 set -euo pipefail
 
 # Configuration
-NAMESPACE="${NAMESPACE:-nemoklaw}"
-POD_NAME="${POD_NAME:-nemoklaw}"
+NAMESPACE="${NAMESPACE:-nemoclaw}"
+POD_NAME="${POD_NAME:-nemoclaw}"
 DYNAMO_ENDPOINT="${DYNAMO_ENDPOINT:-}"
 DYNAMO_MODEL="${DYNAMO_MODEL:-meta-llama/Llama-3.1-8B-Instruct}"
 SANDBOX_NAME="${SANDBOX_NAME:-my-assistant}"
@@ -33,9 +33,9 @@ BLUE='\033[0;34m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-info() { echo -e "${GREEN}[NemoKlaw]${NC} $1"; }
-warn() { echo -e "${YELLOW}[NemoKlaw]${NC} $1"; }
-error() { echo -e "${RED}[NemoKlaw]${NC} $1"; exit 1; }
+info() { echo -e "${GREEN}[NemoClaw]${NC} $1"; }
+warn() { echo -e "${YELLOW}[NemoClaw]${NC} $1"; }
+error() { echo -e "${RED}[NemoClaw]${NC} $1"; exit 1; }
 step() { echo -e "\n${BLUE}${BOLD}==> $1${NC}"; }
 
 usage() {
@@ -43,14 +43,14 @@ usage() {
 Usage: $0 [OPTIONS]
 
 Options:
-    --cleanup    Remove existing NemoKlaw deployment before installing
+    --cleanup    Remove existing NemoClaw deployment before installing
     --dry-run    Show what would be done without making changes
     --help       Show this help message
 
 Environment Variables:
     DYNAMO_ENDPOINT   URL to Dynamo/vLLM endpoint (required)
     DYNAMO_MODEL      Model name (default: meta-llama/Llama-3.1-8B-Instruct)
-    NAMESPACE         Kubernetes namespace (default: nemoklaw)
+    NAMESPACE         Kubernetes namespace (default: nemoclaw)
     SANDBOX_NAME      Name for your AI sandbox (default: my-assistant)
 
 Example:
@@ -69,17 +69,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-cat << 'BANNER'
-
- _   _                      _  ___
-| \ | | ___ _ __ ___   ___ | |/ / | __ ___      __
-|  \| |/ _ \ '_ ` _ \ / _ \| ' /| |/ _` \ \ /\ / /
-| |\  |  __/ | | | | | (_) | . \| | (_| |\ V  V /
-|_| \_|\___|_| |_| |_|\___/|_|\_\_|\__,_| \_/\_/
-
-  NemoClaw on Kubernetes
-
-BANNER
+echo ""
+echo "NemoClaw on Kubernetes - Installer"
+echo ""
 
 # ============================================================================
 # PREFLIGHT CHECKS
@@ -103,7 +95,7 @@ if [[ -z "$DYNAMO_ENDPOINT" ]]; then
     echo ""
     warn "DYNAMO_ENDPOINT not set!"
     echo ""
-    echo "NemoKlaw requires a Dynamo/vLLM endpoint for inference."
+    echo "NemoClaw requires a Dynamo/vLLM endpoint for inference."
     echo ""
     echo "Set the endpoint and try again:"
     echo "  export DYNAMO_ENDPOINT=http://your-vllm-service.namespace.svc:8000/v1"
@@ -125,7 +117,7 @@ fi
 EXISTING_POD=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" --ignore-not-found -o name 2>/dev/null || true)
 if [[ -n "$EXISTING_POD" ]]; then
     POD_STATUS=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
-    warn "Existing NemoKlaw pod found (status: $POD_STATUS)"
+    warn "Existing NemoClaw pod found (status: $POD_STATUS)"
 
     if [[ "$CLEANUP" == "true" ]]; then
         info "Cleanup flag set - will remove existing deployment"
@@ -148,7 +140,7 @@ fi
 
 # Test Dynamo endpoint reachability (from a temporary pod)
 info "Testing Dynamo endpoint reachability..."
-if kubectl run nemoklaw-preflight --image=curlimages/curl --rm -i --restart=Never \
+if kubectl run nemoclaw-preflight --image=curlimages/curl --rm -i --restart=Never \
     --namespace=default --quiet -- \
     curl -sf --max-time 10 "${DYNAMO_ENDPOINT%/v1}/v1/models" >/dev/null 2>&1; then
     info "Dynamo endpoint is reachable"
@@ -194,7 +186,7 @@ step "Step 1/5: Creating namespace"
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 info "Namespace '$NAMESPACE' ready"
 
-step "Step 2/5: Deploying NemoKlaw pod"
+step "Step 2/5: Deploying NemoClaw pod"
 # Apply the manifest with environment variable substitution
 cat << EOF | kubectl apply -f -
 apiVersion: v1
@@ -203,7 +195,7 @@ metadata:
   name: $POD_NAME
   namespace: $NAMESPACE
   labels:
-    app: nemoklaw
+    app: nemoclaw
 spec:
   containers:
     - name: dind
@@ -345,7 +337,7 @@ kubectl exec "$POD_NAME" -n "$NAMESPACE" -c workspace -- nemoclaw "$SANDBOX_NAME
 
 echo ""
 echo -e "${GREEN}${BOLD}============================================${NC}"
-echo -e "${GREEN}${BOLD}  NemoKlaw installation complete!${NC}"
+echo -e "${GREEN}${BOLD}  NemoClaw installation complete!${NC}"
 echo -e "${GREEN}${BOLD}============================================${NC}"
 echo ""
 echo "Connect to your AI sandbox:"

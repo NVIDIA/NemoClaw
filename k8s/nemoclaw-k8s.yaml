@@ -1,4 +1,4 @@
-# NemoKlaw - NemoClaw on Kubernetes
+# NemoClaw on Kubernetes
 # Init containers: build NemoClaw, install openshell
 # Workspace: installs packages at startup, runs onboard
 #
@@ -8,15 +8,15 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: nemoklaw
+  name: nemoclaw
 ---
 apiVersion: v1
 kind: Pod
 metadata:
-  name: nemoklaw
-  namespace: nemoklaw
+  name: nemoclaw
+  namespace: nemoclaw
   labels:
-    app: nemoklaw
+    app: nemoclaw
 spec:
   containers:
     # Docker daemon (DinD)
@@ -80,9 +80,9 @@ spec:
       env:
         - name: DOCKER_HOST
           value: unix:///var/run/docker.sock
-        # Dynamo endpoint (raw, for socat)
+        # Dynamo endpoint (raw host:port for socat) - UPDATE THIS FOR YOUR CLUSTER
         - name: DYNAMO_HOST
-          value: "vllm-agg-frontend.robert.svc.cluster.local:8000"
+          value: "vllm-frontend.dynamo.svc.cluster.local:8000"
         # NemoClaw config (uses host.openshell.internal via socat)
         - name: NEMOCLAW_NON_INTERACTIVE
           value: "1"
@@ -158,7 +158,7 @@ spec:
   volumes:
     - name: docker-storage
       hostPath:
-        path: /mnt/k8s-disks/nemoklaw-docker
+        path: /mnt/k8s-disks/nemoclaw-docker
         type: DirectoryOrCreate
     - name: docker-socket
       emptyDir: {}
