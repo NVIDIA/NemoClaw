@@ -72,6 +72,14 @@ If the sandbox is running on a remote host, run the forward command on that host
 open the forwarded address from the same machine, or tunnel port `18789` back to your
 local workstation before opening the URL.
 
+For example, replace `<user>@<remote-host>` with your actual SSH login and run:
+
+```console
+$ ssh -L 18789:127.0.0.1:18789 <user>@<remote-host>
+```
+
+After the tunnel is established, open `http://127.0.0.1:18789` on your workstation.
+
 ## View Blueprint and Sandbox Logs
 
 Stream the most recent log output from the blueprint runner and sandbox:
