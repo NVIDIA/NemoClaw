@@ -29,7 +29,9 @@ interface MockFile {
 
 function expectedDigest(files: MockFile[]): string {
   const hash = createHash("sha256");
-  const sorted = [...files].sort((a, b) => a.path.localeCompare(b.path));
+  const sorted = [...files].sort((a, b) =>
+    a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
+  );
   for (const f of sorted) {
     hash.update(f.path);
     hash.update(f.content);
