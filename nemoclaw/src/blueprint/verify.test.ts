@@ -120,8 +120,9 @@ describe("verifyBlueprintDigest", () => {
       const result = verifyBlueprintDigest("/fake/path", manifest);
 
       expect(result.valid).toBe(false);
-      expect(result.errors).toHaveLength(1);
-      expect(result.errors[0]).toContain("missing");
+      expect(result.errors).toEqual([
+        "Blueprint manifest is missing a digest — cannot verify integrity",
+      ]);
     });
 
     it("returns valid: false when digest is undefined", () => {
@@ -131,8 +132,21 @@ describe("verifyBlueprintDigest", () => {
       const result = verifyBlueprintDigest("/fake/path", manifest);
 
       expect(result.valid).toBe(false);
-      expect(result.errors).toHaveLength(1);
-      expect(result.errors[0]).toContain("missing");
+      expect(result.errors).toEqual([
+        "Blueprint manifest is missing a digest — cannot verify integrity",
+      ]);
+    });
+
+    it("skips directory hashing when digest is missing", () => {
+      mockDirectory(MOCK_FILES);
+      const manifest = makeManifest({ digest: "" });
+
+      const result = verifyBlueprintDigest("/fake/path", manifest);
+
+      expect(result.valid).toBe(false);
+      expect(result.actualDigest).toBe("");
+      // readdirSync should not be called — no I/O for invalid manifests
+      expect(readdirSync).not.toHaveBeenCalled();
     });
   });
 
@@ -167,6 +181,45 @@ describe("verifyBlueprintDigest", () => {
       ];
       mockDirectory(unsortedFiles);
       const digest = expectedDigest(unsortedFiles);
+      const manifest = makeManifest({ digest });
+
+      const result = verifyBlueprintDigest("/fake/path", manifest);
+
+      expect(result.valid).toBe(true);
+      expect(result.actualDigest).toBe(digest);
+    });
+  });
+
+  describe("nested directory", () => {
+    it("includes files from subdirectories with prefix paths", () => {
+      // Set up mocks for a directory with a nested subdirectory:
+      //   /fake/path/
+      //     file.txt      → "root content"
+      //     subdir/
+      //       nested.txt  → "nested content"
+      vi.mocked(readdirSync).mockImplementation((dirPath: unknown) => {
+        const p = String(dirPath);
+        if (p.endsWith("subdir")) return ["nested.txt"] as unknown as ReturnType<typeof readdirSync>;
+        return ["file.txt", "subdir"] as unknown as ReturnType<typeof readdirSync>;
+      });
+      vi.mocked(statSync).mockImplementation((filePath: unknown) => {
+        const p = String(filePath);
+        return {
+          isDirectory: () => p.endsWith("subdir"),
+        } as ReturnType<typeof statSync>;
+      });
+      vi.mocked(readFileSync).mockImplementation((filePath: unknown) => {
+        const p = String(filePath);
+        if (p.endsWith("nested.txt")) return Buffer.from("nested content");
+        return Buffer.from("root content");
+      });
+
+      // Expected digest uses prefix paths: "file.txt" and "subdir/nested.txt"
+      const nestedFiles: MockFile[] = [
+        { path: "file.txt", content: "root content" },
+        { path: "subdir/nested.txt", content: "nested content" },
+      ];
+      const digest = expectedDigest(nestedFiles);
       const manifest = makeManifest({ digest });
 
       const result = verifyBlueprintDigest("/fake/path", manifest);

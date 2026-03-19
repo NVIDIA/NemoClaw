@@ -18,12 +18,15 @@ export function verifyBlueprintDigest(
   manifest: BlueprintManifest,
 ): VerificationResult {
   const errors: string[] = [];
-  const actualDigest = computeDirectoryDigest(blueprintPath);
+  let actualDigest = "";
 
   if (!manifest.digest) {
     errors.push("Blueprint manifest is missing a digest — cannot verify integrity");
-  } else if (manifest.digest !== actualDigest) {
-    errors.push(`Digest mismatch: expected ${manifest.digest}, got ${actualDigest}`);
+  } else {
+    actualDigest = computeDirectoryDigest(blueprintPath);
+    if (manifest.digest !== actualDigest) {
+      errors.push(`Digest mismatch: expected ${manifest.digest}, got ${actualDigest}`);
+    }
   }
 
   return {
