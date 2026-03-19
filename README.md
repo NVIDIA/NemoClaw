@@ -52,6 +52,12 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | Container runtime | Supported runtime installed and running |
 | [OpenShell](https://github.com/NVIDIA/OpenShell) | Installed |
 
+#### API Keys
+
+| Key | Source | Purpose |
+|-----|--------|---------|
+| `NVIDIA_API_KEY` | [build.nvidia.com](https://build.nvidia.com) | Required for cloud-hosted inference. |
+
 #### Container Runtime Support
 
 | Platform | Supported runtimes | Notes |
