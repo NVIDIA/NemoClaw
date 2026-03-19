@@ -876,7 +876,12 @@ async function onboard(opts = {}) {
   console.log("  ===================");
 
   const gpu = await preflight();
+    try {
   await startGateway(gpu);
+        } catch (error) {
+          await destroyGateway();
+          throw error;
+        }
   const sandboxName = await createSandbox(gpu);
   const { model, provider } = await setupNim(sandboxName, gpu);
   await setupInference(sandboxName, model, provider);
