@@ -13,7 +13,6 @@ const { ROOT, SCRIPTS, run, runCapture } = require("./runner");
 const {
   getDefaultOllamaModel,
   getLocalProviderBaseUrl,
-  getOllamaModelOptions,
   getOllamaWarmupCommand,
   validateOllamaModel,
   validateLocalProvider,
@@ -225,23 +224,6 @@ async function promptCloudModel() {
   const choice = await prompt("  Choose model [1]: ");
   const index = parseInt(choice || "1", 10) - 1;
   return (CLOUD_MODEL_OPTIONS[index] || CLOUD_MODEL_OPTIONS[0]).id;
-}
-
-async function promptOllamaModel() {
-  const options = getOllamaModelOptions(runCapture);
-  const defaultModel = getDefaultOllamaModel(runCapture);
-  const defaultIndex = Math.max(0, options.indexOf(defaultModel));
-
-  console.log("");
-  console.log("  Ollama models:");
-  options.forEach((option, index) => {
-    console.log(`    ${index + 1}) ${option}`);
-  });
-  console.log("");
-
-  const choice = await prompt(`  Choose model [${defaultIndex + 1}]: `);
-  const index = parseInt(choice || String(defaultIndex + 1), 10) - 1;
-  return options[index] || options[defaultIndex] || defaultModel;
 }
 
 function isDockerRunning() {
@@ -708,9 +690,24 @@ async function setupNim(sandboxName, gpu) {
       if (isNonInteractive()) {
         model = requestedModel || getDefaultOllamaModel(runCapture);
       } else {
-        model = await promptOllamaModel();
+        // List available models and let the user pick
+        const ollamaModels = listOllamaModels();
+        if (ollamaModels.length > 0) {
+          console.log("");
+          console.log("  Available Ollama models:");
+          ollamaModels.forEach((m, i) => {
+            console.log(`    ${i + 1}) ${m}`);
+          });
+          console.log("");
+          const modelChoice = await prompt(`  Choose model [1]: `);
+          const midx = parseInt(modelChoice || "1", 10) - 1;
+          model = ollamaModels[midx] || ollamaModels[0];
+        } else {
+          model = getDefaultOllamaModel(runCapture);
+        }
       }
       model = handleReasoningModel(model);
+      console.log(`  ✓ Using Ollama on localhost:11434 with model: ${model}`);
     } else if (selected.key === "vllm") {
       console.log("  ✓ Using existing vLLM on localhost:8000");
       provider = "vllm-local";
