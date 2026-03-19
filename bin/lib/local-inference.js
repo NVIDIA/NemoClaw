@@ -1,41 +1,45 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const HOST_GATEWAY_URL = "http://host.openshell.internal";
+// On macOS (Docker Desktop), host.docker.internal resolves to the host.
+// On Linux, host.openshell.internal is injected by the network namespace.
+const IS_MACOS = process.platform === "darwin";
+const HOST_GATEWAY_URL = IS_MACOS
+  ? "http://host.docker.internal"
+  : "http://host.openshell.internal";
 const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
 const DEFAULT_OLLAMA_MODEL = "nemotron-3-nano:30b";
 
+const LOCAL_PROVIDER_PORTS = {
+  "vllm-local": 8000,
+  "ollama-local": 11434,
+  "omlx-local": 8080,
+};
+
 function getLocalProviderBaseUrl(provider) {
-  switch (provider) {
-    case "vllm-local":
-      return `${HOST_GATEWAY_URL}:8000/v1`;
-    case "ollama-local":
-      return `${HOST_GATEWAY_URL}:11434/v1`;
-    default:
-      return null;
-  }
+  const port = LOCAL_PROVIDER_PORTS[provider];
+  if (!port) return null;
+  return `${HOST_GATEWAY_URL}:${port}/v1`;
 }
 
 function getLocalProviderHealthCheck(provider) {
-  switch (provider) {
-    case "vllm-local":
-      return "curl -sf http://localhost:8000/v1/models 2>/dev/null";
-    case "ollama-local":
-      return "curl -sf http://localhost:11434/api/tags 2>/dev/null";
-    default:
-      return null;
+  const port = LOCAL_PROVIDER_PORTS[provider];
+  if (!port) return null;
+  if (provider === "ollama-local") {
+    return `curl -sf http://localhost:${port}/api/tags 2>/dev/null`;
   }
+  return `curl -sf http://localhost:${port}/v1/models 2>/dev/null`;
 }
 
 function getLocalProviderContainerReachabilityCheck(provider) {
-  switch (provider) {
-    case "vllm-local":
-      return `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:8000/v1/models 2>/dev/null`;
-    case "ollama-local":
-      return `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:11434/api/tags 2>/dev/null`;
-    default:
-      return null;
+  const port = LOCAL_PROVIDER_PORTS[provider];
+  if (!port) return null;
+  const addHost = IS_MACOS ? "" : "--add-host host.openshell.internal:host-gateway ";
+  const hostUrl = IS_MACOS ? "host.docker.internal" : "host.openshell.internal";
+  if (provider === "ollama-local") {
+    return `docker run --rm ${addHost}${CONTAINER_REACHABILITY_IMAGE} -sf http://${hostUrl}:${port}/api/tags 2>/dev/null`;
   }
+  return `docker run --rm ${addHost}${CONTAINER_REACHABILITY_IMAGE} -sf http://${hostUrl}:${port}/v1/models 2>/dev/null`;
 }
 
 function validateLocalProvider(provider, runCapture) {
@@ -46,20 +50,13 @@ function validateLocalProvider(provider, runCapture) {
 
   const output = runCapture(command, { ignoreError: true });
   if (!output) {
-    switch (provider) {
-      case "vllm-local":
-        return {
-          ok: false,
-          message: "Local vLLM was selected, but nothing is responding on http://localhost:8000.",
-        };
-      case "ollama-local":
-        return {
-          ok: false,
-          message: "Local Ollama was selected, but nothing is responding on http://localhost:11434.",
-        };
-      default:
-        return { ok: false, message: "The selected local inference provider is unavailable." };
-    }
+    const port = LOCAL_PROVIDER_PORTS[provider];
+    const names = { "vllm-local": "vLLM", "ollama-local": "Ollama", "omlx-local": "oMLX" };
+    const name = names[provider] || provider;
+    return {
+      ok: false,
+      message: `Local ${name} was selected, but nothing is responding on http://localhost:${port}.`,
+    };
   }
 
   const containerCommand = getLocalProviderContainerReachabilityCheck(provider);
@@ -72,22 +69,18 @@ function validateLocalProvider(provider, runCapture) {
     return { ok: true };
   }
 
-  switch (provider) {
-    case "vllm-local":
-      return {
-        ok: false,
-        message:
-          "Local vLLM is responding on localhost, but containers cannot reach http://host.openshell.internal:8000. Ensure the server is reachable from containers, not only from the host shell.",
-      };
-    case "ollama-local":
-      return {
-        ok: false,
-        message:
-          "Local Ollama is responding on localhost, but containers cannot reach http://host.openshell.internal:11434. Ensure Ollama listens on 0.0.0.0:11434 instead of 127.0.0.1 so sandboxes can reach it.",
-      };
-    default:
-      return { ok: false, message: "The selected local inference provider is unavailable from containers." };
+  const port = LOCAL_PROVIDER_PORTS[provider];
+  const hostUrl = IS_MACOS ? "host.docker.internal" : "host.openshell.internal";
+  const names = { "vllm-local": "vLLM", "ollama-local": "Ollama", "omlx-local": "oMLX" };
+  const name = names[provider] || provider;
+  let hint = `Ensure the server is reachable from containers, not only from the host shell.`;
+  if (provider === "ollama-local") {
+    hint = "Ensure Ollama listens on 0.0.0.0:11434 instead of 127.0.0.1 so sandboxes can reach it.";
   }
+  return {
+    ok: false,
+    message: `Local ${name} is responding on localhost, but containers cannot reach http://${hostUrl}:${port}. ${hint}`,
+  };
 }
 
 function parseOllamaList(output) {

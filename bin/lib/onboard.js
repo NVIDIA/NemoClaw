@@ -782,6 +782,25 @@ async function setupInference(sandboxName, model, provider) {
       console.error(`  ${probe.message}`);
       process.exit(1);
     }
+  } else if (provider === "omlx-local") {
+    const validation = validateLocalProvider(provider, runCapture);
+    if (!validation.ok) {
+      console.error(`  ${validation.message}`);
+      process.exit(1);
+    }
+    const baseUrl = getLocalProviderBaseUrl(provider);
+    run(
+      `openshell provider create --name omlx-local --type openai ` +
+      `--credential "OPENAI_API_KEY=omlx" ` +
+      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
+      `openshell provider update omlx-local --credential "OPENAI_API_KEY=omlx" ` +
+      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
+      { ignoreError: true }
+    );
+    run(
+      `openshell inference set --no-verify --provider omlx-local --model ${model} 2>/dev/null || true`,
+      { ignoreError: true }
+    );
   }
 
   registry.updateSandbox(sandboxName, { model, provider });
