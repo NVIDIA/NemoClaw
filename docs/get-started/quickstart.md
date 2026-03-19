@@ -34,7 +34,7 @@ NemoClaw currently requires a fresh installation of OpenClaw.
 :end-before: <!-- end-quickstart-guide -->
 ```
 
-### Troubleshooting: `Creating sandbox` exits with `Killed` or `exit 137`
+## Troubleshooting: `Creating sandbox` exits with `Killed` or `exit 137`
 
 If `nemoclaw onboard` fails during **Creating sandbox** and the shell reports `Killed` or exit code `137`, the host likely ran out of memory while building or starting the sandbox image.
 
@@ -46,7 +46,7 @@ Before rerunning `nemoclaw onboard`:
 - Restart the shell session if the Docker or OpenShell processes were terminated by the OOM killer.
 - Retry the onboard flow after the host has enough free memory headroom for the image build and sandbox startup.
 
-### Next Steps
+## Next Steps
 
 - [Switch inference providers](../inference/switch-inference-providers.md) to use a different model or endpoint.
 - [Approve or deny network requests](../network-policy/approve-network-requests.md) when the agent tries to reach external hosts.
