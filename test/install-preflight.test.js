@@ -128,6 +128,7 @@ exit 98
         NEMOCLAW_NON_INTERACTIVE: "1",
         NPM_PREFIX: prefix,
         NPM_LOG_PATH: npmLog,
+        NVM_DIR: "",
       },
     });
 
@@ -351,6 +352,7 @@ exit 0
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NPM_PREFIX: prefix,
+        NVM_DIR: "",
       },
     });
 
@@ -441,6 +443,7 @@ exit 0
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NPM_PREFIX: prefix,
+        NVM_DIR: "",
       },
     });
 
