@@ -461,9 +461,16 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
         ? curatedCloudOptions
         : discoveredModelOptions.length > 0
           ? discoveredModelOptions
-          : DEFAULT_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }));
+          : endpointType === "lmstudio"
+            ? [] // will be handled below
+            : DEFAULT_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }));
 
-    model = await promptSelect("Select your primary model:", modelOptions, defaultIndex);
+    // After modelOptions resolution:
+    if (endpointType === "lmstudio" && modelOptions.length === 0) {
+      model = await promptInput("LM Studio model ID (service unreachable, enter manually)");
+    } else {
+      model = await promptSelect("Select your primary model:", modelOptions, defaultIndex);
+    }
   }
 
   // Step 6: Resolve profile
