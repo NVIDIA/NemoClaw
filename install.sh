@@ -278,8 +278,13 @@ run_onboard() {
   info "Running nemoclaw onboard…"
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     nemoclaw onboard --non-interactive
-  else
+  elif [ -t 0 ]; then
     nemoclaw onboard
+  elif [ -r /dev/tty ]; then
+    info "Installer stdin is piped; attaching onboarding to /dev/tty…"
+    nemoclaw onboard < /dev/tty
+  else
+    error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1."
   fi
 }
 
