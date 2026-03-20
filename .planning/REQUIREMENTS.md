@@ -30,11 +30,11 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Lifecycle Management
 
-- [ ] **LIFE-01**: User can start the NemoClaw container (launching Docker Desktop if needed)
-- [ ] **LIFE-02**: User can stop the NemoClaw container
-- [ ] **LIFE-03**: User can restart the NemoClaw container
-- [ ] **LIFE-04**: User can check container status and port reachability
-- [ ] **LIFE-05**: User can uninstall (remove container, image, and optionally Docker Desktop)
+- [x] **LIFE-01**: User can start the NemoClaw container (launching Docker Desktop if needed)
+- [x] **LIFE-02**: User can stop the NemoClaw container
+- [x] **LIFE-03**: User can restart the NemoClaw container
+- [x] **LIFE-04**: User can check container status and port reachability
+- [x] **LIFE-05**: User can uninstall (remove container, image, and optionally Docker Desktop)
 
 ## v2 Requirements
 
@@ -82,11 +82,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SETUP-03 | Phase 2 | Complete |
 | SETUP-04 | Phase 2 | Complete |
 | SETUP-05 | Phase 2 | Complete |
-| LIFE-01 | Phase 3 | Pending |
-| LIFE-02 | Phase 3 | Pending |
-| LIFE-03 | Phase 3 | Pending |
-| LIFE-04 | Phase 3 | Pending |
-| LIFE-05 | Phase 3 | Pending |
+| LIFE-01 | Phase 3 | Complete |
+| LIFE-02 | Phase 3 | Complete |
+| LIFE-03 | Phase 3 | Complete |
+| LIFE-04 | Phase 3 | Complete |
+| LIFE-05 | Phase 3 | Complete |
 
 **Coverage:**
 - v1 requirements: 20 total
