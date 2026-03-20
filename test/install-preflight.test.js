@@ -17,6 +17,7 @@ function writeExecutable(target, contents) {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
+/** Build a hermetic installer environment that does not inherit host nvm state. */
 function installerEnv(tmp, fakeBin, extra = {}) {
   return {
     ...process.env,

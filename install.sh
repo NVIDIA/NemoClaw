@@ -75,6 +75,7 @@ refresh_path() {
   fi
 }
 
+# Create a user-local shim when npm installs nemoclaw outside the caller's PATH.
 ensure_nemoclaw_shim() {
   local npm_bin shim_path
   npm_bin="$(resolve_npm_bin)" || true
@@ -304,6 +305,7 @@ install_nemoclaw() {
 # ---------------------------------------------------------------------------
 # 4. Verify
 # ---------------------------------------------------------------------------
+# Verify that the nemoclaw binary is reachable and explain PATH remediation when it is not.
 verify_nemoclaw() {
   if command_exists nemoclaw; then
     info "Verified: nemoclaw is available at $(command -v nemoclaw)"
