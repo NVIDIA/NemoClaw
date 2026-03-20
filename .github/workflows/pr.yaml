@@ -38,11 +38,11 @@ jobs:
           npm run build
 
       - name: Run root unit tests
-        run: node --test test/*.test.js
+        run: node --test --experimental-test-coverage test/*.test.js
 
       - name: Run TypeScript unit tests
         working-directory: nemoclaw
-        run: npx vitest run
+        run: npx vitest run --coverage
 
   test-e2e-sandbox:
     runs-on: ubuntu-latest
