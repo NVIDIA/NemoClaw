@@ -6,8 +6,15 @@ license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = ["pyyaml>=6.0"]
 
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
 [tool.uv]
 managed = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.ruff]
 target-version = "py311"
@@ -35,6 +42,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
+"tests/**" = ["S101"]
 
 [tool.ruff.format]
 quote-style = "double"
