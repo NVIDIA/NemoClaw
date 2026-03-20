@@ -281,8 +281,72 @@ function listSandboxes() {
 // ── Sandbox-scoped actions ───────────────────────────────────────
 
 function sandboxConnect(sandboxName) {
+  const { isSandboxReady, parseSandboxStatus } = require("./lib/onboard");
+  const rawTimeout = process.env.NEMOCLAW_CONNECT_TIMEOUT;
+  let timeout = 120;
+  if (rawTimeout !== undefined) {
+    const parsed = parseInt(rawTimeout, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      console.warn(`  Warning: invalid NEMOCLAW_CONNECT_TIMEOUT="${rawTimeout}", using default 120s`);
+    } else {
+      timeout = parsed;
+    }
+  }
+  const interval = 3;
+
+  const list = runCapture("openshell sandbox list 2>&1", { ignoreError: true });
+  if (!isSandboxReady(list, sandboxName)) {
+    const status = parseSandboxStatus(list, sandboxName);
+    const TERMINAL = new Set(["Failed", "Error", "CrashLoopBackOff", "ImagePullBackOff", "Unknown", "Evicted"]);
+    if (status && TERMINAL.has(status)) {
+      console.error("");
+      console.error(`  Sandbox '${sandboxName}' is in '${status}' state.`);
+      console.error(`  Run:  nemoclaw ${sandboxName} logs --follow`);
+      console.error(`  Run:  nemoclaw ${sandboxName} status`);
+      process.exit(1);
+    }
+
+    console.log(`  Waiting for sandbox '${sandboxName}' to be ready...`);
+    let elapsed = 0;
+    let ready = false;
+    let everSeen = status !== null;
+    while (elapsed < timeout) {
+      spawnSync("sleep", [String(interval)]);
+      elapsed += interval;
+      const poll = runCapture("openshell sandbox list 2>&1", { ignoreError: true });
+      if (isSandboxReady(poll, sandboxName)) {
+        ready = true;
+        break;
+      }
+      const cur = parseSandboxStatus(poll, sandboxName) || "unknown";
+      if (cur !== "unknown") everSeen = true;
+      if (TERMINAL.has(cur)) {
+        console.error("");
+        console.error(`  Sandbox '${sandboxName}' entered '${cur}' state.`);
+        console.error(`  Run:  nemoclaw ${sandboxName} logs --follow`);
+        process.exit(1);
+      }
+      if (!everSeen && elapsed >= 30) {
+        console.error("");
+        console.error(`  Sandbox '${sandboxName}' not found after ${elapsed}s.`);
+        console.error(`  Check: openshell sandbox list`);
+        process.exit(1);
+      }
+      process.stdout.write(`\r    Status: ${cur.padEnd(20)} (${elapsed}s elapsed)`);
+    }
+
+    if (!ready) {
+      console.error("");
+      console.error(`  Timed out after ${timeout}s waiting for sandbox '${sandboxName}'.`);
+      console.error(`  Check: openshell sandbox list`);
+      console.error(`  Override timeout: NEMOCLAW_CONNECT_TIMEOUT=300 nemoclaw ${sandboxName} connect`);
+      process.exit(1);
+    }
+    console.log(`\r    Status: ${"Ready".padEnd(20)} (${elapsed}s elapsed)`);
+    console.log("  Sandbox is ready. Connecting...");
+  }
+
   const qn = shellQuote(sandboxName);
-  // Ensure port forward is alive before connecting
   run(`openshell forward start --background 18789 ${qn} 2>/dev/null || true`, { ignoreError: true });
   runInteractive(`openshell sandbox connect ${qn}`);
 }
