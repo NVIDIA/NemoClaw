@@ -28,8 +28,8 @@ Three phases, each delivering one complete vertical capability. Phase 1 installs
   5. Script rejects machines below Windows 10 build 19041 with a plain-English explanation and exits cleanly
 **Plans:** 2/2 plans complete
 Plans:
-- [ ] 01-01-PLAN.md — Create install.bat launcher and complete install.ps1 with state machine, all validation and installation functions
-- [ ] 01-02-PLAN.md — Create Pester test suite covering all PREREQ requirements with mocked system commands
+- [x] 01-01-PLAN.md — Create install.bat launcher and complete install.ps1 with state machine, all validation and installation functions
+- [x] 01-02-PLAN.md — Create Pester test suite covering all PREREQ requirements with mocked system commands
 
 ### Phase 2: Container Setup and NemoClaw Install
 **Goal**: A running NemoClaw container exists with port 18789 forwarded, Desktop/NemoClaw mounted as a shared folder, and the OpenClaw dashboard confirmed reachable at http://localhost:18789
@@ -40,7 +40,10 @@ Plans:
   2. A folder named `NemoClaw` appears on the user's Desktop after setup completes
   3. Files placed in `Desktop\NemoClaw` are visible inside the container at the expected mount path
   4. Opening http://localhost:18789 in a browser shows the OpenClaw dashboard
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 02-01-PLAN.md — Create Dockerfile.nemoclaw and all Phase 2 PowerShell functions (API key, container build/run, health check, orchestrator)
+- [ ] 02-02-PLAN.md — Add Pester tests for SETUP-01 through SETUP-05 requirements
 
 ### Phase 3: Lifecycle Management
 **Goal**: Users can start, stop, restart, check status, and uninstall NemoClaw using the same script — no Docker CLI knowledge required
@@ -61,5 +64,5 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Prerequisites and Docker Desktop | 2/2 | Complete   | 2026-03-20 |
-| 2. Container Setup and NemoClaw Install | 0/TBD | Not started | - |
+| 2. Container Setup and NemoClaw Install | 0/2 | In progress | - |
 | 3. Lifecycle Management | 0/TBD | Not started | - |
