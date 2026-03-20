@@ -63,6 +63,12 @@ if [ -z "$TARGET_IP" ]; then
   exit 0
 fi
 
+# Basic IP format validation — reject unexpected kubectl output
+if ! echo "$TARGET_IP" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+  echo "WARN: Invalid IP format '$TARGET_IP'. DNS fix skipped."
+  exit 0
+fi
+
 echo "Patching CoreDNS: inference.local -> $TARGET_IP"
 
 # Inject inference.local into the hosts block of the Corefile as an inline
