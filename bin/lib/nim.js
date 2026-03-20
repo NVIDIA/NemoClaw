@@ -6,15 +6,21 @@
 const { run, runCapture } = require("./runner");
 const nimImages = require("./nim-images.json");
 
+/** @param {string} sandboxName @returns {string} Docker container name. */
 function containerName(sandboxName) {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(sandboxName)) {
+    throw new Error(`Invalid sandbox name: ${sandboxName}`);
+  }
   return `nemoclaw-nim-${sandboxName}`;
 }
 
+/** @param {string} modelName @returns {string|null} NIM container image or null. */
 function getImageForModel(modelName) {
   const entry = nimImages.models.find((m) => m.name === modelName);
   return entry ? entry.image : null;
 }
 
+/** @returns {Array<{name: string, image: string, minGpuMemoryMB: number}>} */
 function listModels() {
   return nimImages.models.map((m) => ({
     name: m.name,
@@ -23,10 +29,21 @@ function listModels() {
   }));
 }
 
-function detectGpu() {
+/**
+ * Detect GPU hardware. Returns an object describing the GPU (type, count,
+ * memory, capabilities) or null if no GPU is found.
+ * @param {object} [opts] - Optional overrides for dependency injection.
+ * @param {Function} [opts.runCapture] - Command runner (default: runner.runCapture).
+ * @param {string} [opts.platform] - OS platform (default: process.platform).
+ * @returns {{ type: string, count: number, totalMemoryMB: number, perGpuMB: number, nimCapable: boolean, spark?: boolean, name?: string, cores?: number } | null}
+ */
+function detectGpu(opts) {
+  const runCmd = (opts && opts.runCapture) || runCapture;
+  const platform = (opts && opts.platform) || process.platform;
+
   // Try NVIDIA first — query VRAM
   try {
-    const output = runCapture(
+    const output = runCmd(
       "nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits",
       { ignoreError: true }
     );
@@ -35,8 +52,18 @@ function detectGpu() {
       const perGpuMB = lines.map((l) => parseInt(l.trim(), 10)).filter((n) => !isNaN(n));
       if (perGpuMB.length > 0) {
         const totalMemoryMB = perGpuMB.reduce((a, b) => a + b, 0);
+        // Query GPU name for display
+        let name;
+        try {
+          name = runCmd(
+            "nvidia-smi --query-gpu=name --format=csv,noheader,nounits",
+            { ignoreError: true }
+          );
+          if (name) name = name.split("\n")[0].trim();
+        } catch {}
         return {
           type: "nvidia",
+          name,
           count: perGpuMB.length,
           totalMemoryMB,
           perGpuMB: perGpuMB[0],
@@ -48,7 +75,7 @@ function detectGpu() {
 
   // Fallback: DGX Spark (GB10) — VRAM not queryable due to unified memory architecture
   try {
-    const nameOutput = runCapture(
+    const nameOutput = runCmd(
       "nvidia-smi --query-gpu=name --format=csv,noheader,nounits",
       { ignoreError: true }
     );
@@ -56,7 +83,7 @@ function detectGpu() {
       // GB10 has 128GB unified memory shared with Grace CPU — use system RAM
       let totalMemoryMB = 0;
       try {
-        const memLine = runCapture("free -m | awk '/Mem:/ {print $2}'", { ignoreError: true });
+        const memLine = runCmd("free -m | awk '/Mem:/ {print $2}'", { ignoreError: true });
         if (memLine) totalMemoryMB = parseInt(memLine.trim(), 10) || 0;
       } catch {}
       return {
@@ -71,9 +98,9 @@ function detectGpu() {
   } catch {}
 
   // macOS: detect Apple Silicon or discrete GPU
-  if (process.platform === "darwin") {
+  if (platform === "darwin") {
     try {
-      const spOutput = runCapture(
+      const spOutput = runCmd(
         "system_profiler SPDisplaysDataType 2>/dev/null",
         { ignoreError: true }
       );
@@ -92,7 +119,7 @@ function detectGpu() {
           } else {
             // Apple Silicon shares system RAM — read total memory
             try {
-              const memBytes = runCapture("sysctl -n hw.memsize", { ignoreError: true });
+              const memBytes = runCmd("sysctl -n hw.memsize", { ignoreError: true });
               if (memBytes) memoryMB = Math.floor(parseInt(memBytes, 10) / 1024 / 1024);
             } catch {}
           }
@@ -101,7 +128,7 @@ function detectGpu() {
             type: "apple",
             name,
             count: 1,
-            cores: coresMatch ? parseInt(coresMatch[1], 10) : null,
+            ...(coresMatch ? { cores: parseInt(coresMatch[1], 10) } : {}),
             totalMemoryMB: memoryMB,
             perGpuMB: memoryMB,
             nimCapable: false,
@@ -114,23 +141,47 @@ function detectGpu() {
   return null;
 }
 
+/**
+ * Suggest NIM models ranked by fit for a given GPU.
+ * Returns models sorted by VRAM requirement (descending), with the largest
+ * model that uses ≤90% of available VRAM marked as recommended.
+ * @param {{ totalMemoryMB: number, nimCapable: boolean } | null} gpu
+ * @returns {Array<{ name: string, image: string, minGpuMemoryMB: number, recommended: boolean }>}
+ */
+function suggestModelsForGpu(gpu) {
+  if (!gpu || !gpu.nimCapable) return [];
+  const vram = gpu.totalMemoryMB;
+  const fits = listModels()
+    .filter((m) => m.minGpuMemoryMB <= vram)
+    .sort((a, b) => b.minGpuMemoryMB - a.minGpuMemoryMB);
+
+  // Mark the largest model that fits within 90% VRAM as recommended
+  const threshold = vram * 0.9;
+  let recommended = false;
+  return fits.map((m) => {
+    const rec = !recommended && m.minGpuMemoryMB <= threshold;
+    if (rec) recommended = true;
+    return { ...m, recommended: rec };
+  });
+}
+
+/** @param {string} model - Model name to pull. @returns {string} Image tag. */
 function pullNimImage(model) {
   const image = getImageForModel(model);
   if (!image) {
-    console.error(`  Unknown model: ${model}`);
-    process.exit(1);
+    throw new Error(`Unknown model: ${model}`);
   }
   console.log(`  Pulling NIM image: ${image}`);
   run(`docker pull ${image}`);
   return image;
 }
 
+/** @param {string} sandboxName @param {string} model @param {number} [port=8000] @returns {string} Container name. */
 function startNimContainer(sandboxName, model, port = 8000) {
   const name = containerName(sandboxName);
   const image = getImageForModel(model);
   if (!image) {
-    console.error(`  Unknown model: ${model}`);
-    process.exit(1);
+    throw new Error(`Unknown model: ${model}`);
   }
 
   // Stop any existing container with same name
@@ -143,6 +194,7 @@ function startNimContainer(sandboxName, model, port = 8000) {
   return name;
 }
 
+/** @param {number} [port=8000] @param {number} [timeout=300] @returns {boolean} True if healthy. */
 function waitForNimHealth(port = 8000, timeout = 300) {
   const start = Date.now();
   const interval = 5000;
@@ -150,8 +202,9 @@ function waitForNimHealth(port = 8000, timeout = 300) {
 
   while ((Date.now() - start) / 1000 < timeout) {
     try {
-      const result = runCapture(`curl -sf http://localhost:${port}/v1/models`, {
+      const result = runCapture(`curl -sf --max-time 10 http://localhost:${port}/v1/models`, {
         ignoreError: true,
+        timeout: 15000,
       });
       if (result) {
         console.log("  NIM is healthy.");
@@ -165,6 +218,7 @@ function waitForNimHealth(port = 8000, timeout = 300) {
   return false;
 }
 
+/** @param {string} sandboxName - Stop and remove the NIM container. */
 function stopNimContainer(sandboxName) {
   const name = containerName(sandboxName);
   console.log(`  Stopping NIM container: ${name}`);
@@ -172,7 +226,8 @@ function stopNimContainer(sandboxName) {
   run(`docker rm ${name} 2>/dev/null || true`, { ignoreError: true });
 }
 
-function nimStatus(sandboxName) {
+/** @param {string} sandboxName @param {number} [port=8000] @returns {{running: boolean, healthy?: boolean, container: string, state?: string}} */
+function nimStatus(sandboxName, port = 8000) {
   const name = containerName(sandboxName);
   try {
     const state = runCapture(
@@ -183,7 +238,7 @@ function nimStatus(sandboxName) {
 
     let healthy = false;
     if (state === "running") {
-      const health = runCapture(`curl -sf http://localhost:8000/v1/models 2>/dev/null`, {
+      const health = runCapture(`curl -sf http://localhost:${port}/v1/models 2>/dev/null`, {
         ignoreError: true,
       });
       healthy = !!health;
@@ -199,6 +254,7 @@ module.exports = {
   getImageForModel,
   listModels,
   detectGpu,
+  suggestModelsForGpu,
   pullNimImage,
   startNimContainer,
   waitForNimHealth,

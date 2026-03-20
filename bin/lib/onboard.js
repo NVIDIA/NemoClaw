@@ -348,7 +348,8 @@ async function preflight() {
   // GPU
   const gpu = nim.detectGpu();
   if (gpu && gpu.type === "nvidia") {
-    console.log(`  ✓ NVIDIA GPU detected: ${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`);
+    const label = gpu.name ? `${gpu.name}, ` : "";
+    console.log(`  ✓ NVIDIA GPU detected: ${label}${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`);
   } else if (gpu && gpu.type === "apple") {
     console.log(`  ✓ Apple GPU detected: ${gpu.name}${gpu.cores ? ` (${gpu.cores} cores)` : ""}, ${gpu.totalMemoryMB} MB unified memory`);
     console.log("  ⓘ NIM requires NVIDIA GPU — will use cloud inference");
@@ -618,8 +619,8 @@ async function setupNim(sandboxName, gpu) {
     }
 
     if (selected.key === "nim") {
-      // List models that fit GPU VRAM
-      const models = nim.listModels().filter((m) => m.minGpuMemoryMB <= gpu.totalMemoryMB);
+      // List models that fit GPU VRAM, ranked with recommendation
+      const models = nim.suggestModelsForGpu(gpu);
       if (models.length === 0) {
         console.log("  No NIM models fit your GPU VRAM. Falling back to cloud API.");
       } else {
@@ -639,7 +640,8 @@ async function setupNim(sandboxName, gpu) {
           console.log("");
           console.log("  Models that fit your GPU:");
           models.forEach((m, i) => {
-            console.log(`    ${i + 1}) ${m.name} (min ${m.minGpuMemoryMB} MB)`);
+            const tag = m.recommended ? " (recommended)" : "";
+            console.log(`    ${i + 1}) ${m.name} (min ${m.minGpuMemoryMB} MB)${tag}`);
           });
           console.log("");
 
@@ -649,14 +651,22 @@ async function setupNim(sandboxName, gpu) {
         }
         model = sel.name;
 
+        const nimPort = 8000;
+        const nimPortCheck = await checkPortAvailable(nimPort);
+        if (!nimPortCheck.ok) {
+          console.error(`  Port ${nimPort} is already in use (${nimPortCheck.process || "unknown"}).`);
+          console.error("  Stop the existing service or choose a different provider.");
+          process.exit(1);
+        }
+
         console.log(`  Pulling NIM image for ${model}...`);
         nim.pullNimImage(model);
 
         console.log("  Starting NIM container...");
-        nimContainer = nim.startNimContainer(sandboxName, model);
+        nimContainer = nim.startNimContainer(sandboxName, model, nimPort);
 
         console.log("  Waiting for NIM to become healthy...");
-        if (!nim.waitForNimHealth()) {
+        if (!nim.waitForNimHealth(nimPort)) {
           console.error("  NIM failed to start. Falling back to cloud API.");
           model = null;
           nimContainer = null;
