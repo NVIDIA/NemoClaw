@@ -114,7 +114,11 @@ spin() {
     sleep 0.08
   done
 
-  wait "$pid"; local status=$?
+  if wait "$pid"; then
+    local status=0
+  else
+    local status=$?
+  fi
   if [[ $status -eq 0 ]]; then
     printf "\r  ${C_GREEN}✓${C_RESET}  %s\n" "$msg"
   else
@@ -253,6 +257,8 @@ install_nodejs() {
   rm -f "$nvm_tmp"
   ensure_nvm_loaded
   spin "Installing Node.js 22..." bash -c ". \"$NVM_DIR/nvm.sh\" && nvm install 22 --no-progress"
+  ensure_nvm_loaded
+  nvm use 22 --silent
   info "Node.js installed: $(node --version)"
 }
 
