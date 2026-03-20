@@ -12,11 +12,9 @@ A Windows user can run one script and get a working OpenClaw dashboard accessibl
 
 ### Validated
 
-(None yet — ship to validate)
+- [x] PowerShell script installs Docker Desktop if not already installed — Validated in Phase 01: prerequisites-and-docker-desktop
 
 ### Active
-
-- [ ] PowerShell script installs Docker Desktop if not already installed
 - [ ] Script creates an Ubuntu 22.04 container with NemoClaw installed via install.sh
 - [ ] OpenClaw dashboard port (18789) is forwarded to the host machine
 - [ ] Desktop folder `NemoClaw` is created and mounted into the container
@@ -55,10 +53,10 @@ Key technical details:
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Docker Desktop over WSL Docker Engine | Easiest for Windows users, GUI management | — Pending |
+| Docker Desktop over WSL Docker Engine | Easiest for Windows users, GUI management | Implemented in Phase 01 |
 | Fresh Ubuntu over existing Dockerfile | Closer to documented install path, user preference | — Pending |
 | Prompt for API key during setup | Interactive setup experience, no env var prerequisite | — Pending |
 | Include start/stop/restart/status commands | Users shouldn't need to learn Docker CLI | — Pending |
 
 ---
-*Last updated: 2026-03-20 after initialization*
+*Last updated: 2026-03-20 after Phase 01 completion*
