@@ -198,6 +198,18 @@ if [ "$QUICK" = false ]; then
   collect "openshell-gateway-info" openshell gateway info
 fi
 
+# -- Sandbox internals (via openshell sandbox exec) --
+
+if command -v openshell &>/dev/null && openshell sandbox list 2>/dev/null | grep -q "$SANDBOX_NAME"; then
+  section "Sandbox Internals"
+  collect "sandbox-ps" openshell sandbox exec "$SANDBOX_NAME" -- ps -ef
+  collect "sandbox-free" openshell sandbox exec "$SANDBOX_NAME" -- free -m
+  if [ "$QUICK" = false ]; then
+    collect "sandbox-top" openshell sandbox exec "$SANDBOX_NAME" -- sh -c 'top -b -n 1 | head -50'
+    collect "sandbox-gateway-log" openshell sandbox exec "$SANDBOX_NAME" -- tail -200 /tmp/gateway.log
+  fi
+fi
+
 # -- Network (full mode only) --
 
 if [ "$QUICK" = false ]; then
