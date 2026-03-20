@@ -809,8 +809,19 @@ async function setupOpenclaw(sandboxName, model, provider) {
       onboardedAt: new Date().toISOString(),
     };
     const script = buildSandboxConfigSyncScript(sandboxConfig);
+    // Also write ~/.nemoclaw/config.json inside the sandbox so the NemoClaw
+    // plugin displays the correct endpoint/model in its banner instead of
+    // falling back to the cloud defaults.
+    const nemoClawConfigScript = `
+mkdir -p ~/.nemoclaw
+cat > ~/.nemoclaw/config.json <<'EOF_NEMOCLAW_CFG'
+${JSON.stringify(sandboxConfig, null, 2)}
+EOF_NEMOCLAW_CFG
+`;
     run(`cat <<'EOF_NEMOCLAW_SYNC' | openshell sandbox connect "${sandboxName}"
 ${script}
+${nemoClawConfigScript}
+exit
 EOF_NEMOCLAW_SYNC`, { stdio: ["ignore", "ignore", "inherit"] });
   }
 
