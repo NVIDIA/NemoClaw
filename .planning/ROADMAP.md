@@ -26,7 +26,10 @@ Three phases, each delivering one complete vertical capability. Phase 1 installs
   3. On a clean Windows machine with no WSL2, script enables WSL2 and installs Docker Desktop, prompting for reboot and resuming correctly when the user runs it again after reboot
   4. After Docker Desktop is installed, script waits for the daemon to be ready and confirms `docker info` succeeds before proceeding
   5. Script rejects machines below Windows 10 build 19041 with a plain-English explanation and exits cleanly
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 01-01-PLAN.md — Create install.bat launcher and complete install.ps1 with state machine, all validation and installation functions
+- [ ] 01-02-PLAN.md — Create Pester test suite covering all PREREQ requirements with mocked system commands
 
 ### Phase 2: Container Setup and NemoClaw Install
 **Goal**: A running NemoClaw container exists with port 18789 forwarded, Desktop/NemoClaw mounted as a shared folder, and the OpenClaw dashboard confirmed reachable at http://localhost:18789
@@ -57,6 +60,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Prerequisites and Docker Desktop | 0/TBD | Not started | - |
+| 1. Prerequisites and Docker Desktop | 0/2 | Planned | - |
 | 2. Container Setup and NemoClaw Install | 0/TBD | Not started | - |
 | 3. Lifecycle Management | 0/TBD | Not started | - |
