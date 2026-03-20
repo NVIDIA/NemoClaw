@@ -222,11 +222,26 @@ install_or_upgrade_ollama() {
 install_nemoclaw() {
   if [[ -f "./package.json" ]] && grep -q '"name": "nemoclaw"' ./package.json 2>/dev/null; then
     info "NemoClaw package.json found in current directory — installing from source…"
-    npm install && npm link
+    npm install
+    
+    # Check if we have write access to the npm prefix to avoid EACCES errors
+    local prefix
+    prefix="$(npm config get prefix 2>/dev/null || echo "/usr/local")"
+    if [[ -w "$prefix/lib/node_modules" ]]; then
+      npm link
+    else
+      warn "Insufficient permissions to link NemoClaw globally. Retrying with sudo…"
+      sudo npm link
+    fi
   else
     info "Installing NemoClaw from GitHub…"
     # Revert once https://github.com/NVIDIA/NemoClaw/issues/71 is complete and the package is published
-    npm install -g git+https://github.com/NVIDIA/NemoClaw.git
+    if [[ -w "$(npm config get prefix 2>/dev/null || echo "/usr/local")/lib/node_modules" ]]; then
+      npm install -g git+https://github.com/NVIDIA/NemoClaw.git
+    else
+      warn "Insufficient permissions for global install. Retrying with sudo…"
+      sudo npm install -g git+https://github.com/NVIDIA/NemoClaw.git
+    fi
   fi
 
   refresh_path
