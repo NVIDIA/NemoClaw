@@ -373,5 +373,6 @@ function Install-Prerequisites {
 #   DOCKER_READY     -> (deleted)        : Success, registry cleaned up
 
 # --- Entry Point ---
+if ($env:NEMOCLAW_TESTING) { return }
 Assert-Administrator
 Install-Prerequisites
