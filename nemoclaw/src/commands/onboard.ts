@@ -441,6 +441,10 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
   logger.info("Applying configuration...");
 
   // 7a: Create/update provider
+  // Set the credential as an environment variable so openshell reads it
+  // from the env instead of exposing it in the process argument list (ps aux).
+  process.env[credentialEnv] = apiKey;
+
   try {
     execOpenShell([
       "provider",
@@ -450,7 +454,7 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
       "--type",
       "openai",
       "--credential",
-      `${credentialEnv}=${apiKey}`,
+      credentialEnv,
       "--config",
       `OPENAI_BASE_URL=${endpointUrl}`,
     ]);
@@ -465,7 +469,7 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
           "update",
           providerName,
           "--credential",
-          `${credentialEnv}=${apiKey}`,
+          credentialEnv,
           "--config",
           `OPENAI_BASE_URL=${endpointUrl}`,
         ]);

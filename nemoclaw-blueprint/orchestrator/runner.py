@@ -194,11 +194,11 @@ def action_apply(
     model: str = inference_cfg.get("model", "")
 
     # Resolve credential from environment
-    credential_env = inference_cfg.get("credential_env")
+    target_cred_env = inference_cfg.get("credential_env")
     credential_default: str = inference_cfg.get("credential_default", "")
     credential = ""
-    if credential_env:
-        credential = os.environ.get(credential_env, credential_default)
+    if target_cred_env:
+        credential = os.environ.get(target_cred_env, credential_default)
 
     provider_args = [
         "openshell",
@@ -209,8 +209,11 @@ def action_apply(
         "--type",
         provider_type,
     ]
-    if credential:
-        provider_args.extend(["--credential", f"OPENAI_API_KEY={credential}"])
+    if credential and target_cred_env:
+        # Set credential as env var so openshell reads it from the environment
+        # instead of exposing the secret in the process argument list (ps aux).
+        os.environ[target_cred_env] = credential
+        provider_args.extend(["--credential", target_cred_env])
     if endpoint:
         provider_args.extend(["--config", f"OPENAI_BASE_URL={endpoint}"])
 
