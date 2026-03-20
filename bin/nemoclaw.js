@@ -64,6 +64,8 @@ function exitWithSpawnResult(result) {
   process.exit(1);
 }
 
+=======
+>>>>>>> fork/feat/sandbox-backup
 const SANDBOX_ACTIONS = [
   "connect", "status", "logs", "policy-add", "policy-list", "destroy", "export"
 ];
@@ -518,6 +520,9 @@ function help() {
     --yes                            Skip the confirmation prompt
     --keep-openshell                 Leave the openshell binary installed
     --delete-models                  Remove NemoClaw-pulled Ollama models
+
+  Shell Completion:
+    nemoclaw completion <shell>      Generate shell completion script
 
   Shell Completion:
     nemoclaw completion <shell>      Generate shell completion script
