@@ -8,12 +8,31 @@
 const fs = require("fs");
 const path = require("path");
 const { ROOT, SCRIPTS, run, runCapture } = require("./runner");
+const {
+  getDefaultOllamaModel,
+  getLocalProviderBaseUrl,
+  getOllamaModelOptions,
+  getOllamaWarmupCommand,
+  validateOllamaModel,
+  validateLocalProvider,
+} = require("./local-inference");
+const {
+  CLOUD_MODEL_OPTIONS,
+  DEFAULT_CLOUD_MODEL,
+  DEFAULT_OLLAMA_MODEL,
+  getOpenClawPrimaryModel,
+  getProviderSelectionConfig,
+} = require("./inference-config");
+const {
+  inferContainerRuntime,
+  isUnsupportedMacosRuntime,
+  shouldPatchCoredns,
+} = require("./platform");
 const { prompt, ensureApiKey, getCredential } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
 const policies = require("./policies");
 const { checkPortAvailable } = require("./preflight");
-const HOST_GATEWAY_URL = "http://host.openshell.internal";
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 
 // Non-interactive mode: set by --non-interactive flag or env var.
@@ -38,10 +57,129 @@ async function promptOrDefault(question, envVar, defaultValue) {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
+/**
+ * Check if a sandbox is in Ready state from `openshell sandbox list` output.
+ * Strips ANSI codes and exact-matches the sandbox name in the first column.
+ */
+function isSandboxReady(output, sandboxName) {
+  const clean = output.replace(/\x1b\[[0-9;]*m/g, "");
+  return clean.split("\n").some((l) => {
+    const cols = l.trim().split(/\s+/);
+    return cols[0] === sandboxName && cols.includes("Ready") && !cols.includes("NotReady");
+  });
+}
+
+/**
+ * Determine whether stale NemoClaw gateway output indicates a previous
+ * session that should be cleaned up before the port preflight check.
+ * @param {string} gwInfoOutput - Raw output from `openshell gateway info -g nemoclaw`.
+ * @returns {boolean}
+ */
+function hasStaleGateway(gwInfoOutput) {
+  return typeof gwInfoOutput === "string" && gwInfoOutput.length > 0 && gwInfoOutput.includes("nemoclaw");
+}
+
 function step(n, total, msg) {
   console.log("");
   console.log(`  [${n}/${total}] ${msg}`);
   console.log(`  ${"─".repeat(50)}`);
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function pythonLiteralJson(value) {
+  return JSON.stringify(JSON.stringify(value));
+}
+
+function buildSandboxConfigSyncScript(selectionConfig) {
+  const providerType =
+    selectionConfig.profile === "inference-local"
+      ? selectionConfig.model === DEFAULT_OLLAMA_MODEL
+        ? "ollama-local"
+        : "nvidia-nim"
+      : selectionConfig.endpointType === "vllm"
+        ? "vllm-local"
+        : "nvidia-nim";
+  const primaryModel = getOpenClawPrimaryModel(providerType, selectionConfig.model);
+  const providerKey = "inference";
+  const providerConfig = {
+    baseUrl: selectionConfig.endpointUrl,
+    apiKey: "unused",
+    api: "openai-completions",
+    models: [
+      {
+        id: selectionConfig.model,
+        name: selectionConfig.model,
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 131072,
+        maxTokens: 4096,
+      },
+    ],
+  };
+  return `
+set -euo pipefail
+mkdir -p ~/.nemoclaw ~/.openclaw
+cat > ~/.nemoclaw/config.json <<'EOF_NEMOCLAW_CFG'
+${JSON.stringify(selectionConfig, null, 2)}
+EOF_NEMOCLAW_CFG
+python3 - <<'PYCFG'
+import json
+import os
+
+cfg_path = os.path.expanduser('~/.openclaw/openclaw.json')
+cfg = {}
+if os.path.exists(cfg_path):
+    with open(cfg_path) as f:
+        cfg = json.load(f)
+
+cfg.setdefault('agents', {}).setdefault('defaults', {}).setdefault('model', {})['primary'] = ${JSON.stringify(primaryModel)}
+models_cfg = cfg.setdefault('models', {})
+models_cfg.setdefault('mode', 'merge')
+providers_cfg = models_cfg.setdefault('providers', {})
+providers_cfg[${JSON.stringify(providerKey)}] = json.loads(${pythonLiteralJson(providerConfig)})
+
+with open(cfg_path, 'w') as f:
+    json.dump(cfg, f, indent=2)
+
+os.chmod(cfg_path, 0o600)
+PYCFG
+openclaw models set ${shellQuote(primaryModel)} > /dev/null 2>&1 || true
+exit
+`.trim();
+}
+
+async function promptCloudModel() {
+  console.log("");
+  console.log("  Cloud models:");
+  CLOUD_MODEL_OPTIONS.forEach((option, index) => {
+    console.log(`    ${index + 1}) ${option.label} (${option.id})`);
+  });
+  console.log("");
+
+  const choice = await prompt("  Choose model [1]: ");
+  const index = parseInt(choice || "1", 10) - 1;
+  return (CLOUD_MODEL_OPTIONS[index] || CLOUD_MODEL_OPTIONS[0]).id;
+}
+
+async function promptOllamaModel() {
+  const options = getOllamaModelOptions(runCapture);
+  const defaultModel = getDefaultOllamaModel(runCapture);
+  const defaultIndex = Math.max(0, options.indexOf(defaultModel));
+
+  console.log("");
+  console.log("  Ollama models:");
+  options.forEach((option, index) => {
+    console.log(`    ${index + 1}) ${option}`);
+  });
+  console.log("");
+
+  const choice = await prompt(`  Choose model [${defaultIndex + 1}]: `);
+  const index = parseInt(choice || String(defaultIndex + 1), 10) - 1;
+  return options[index] || options[defaultIndex] || defaultModel;
 }
 
 function isDockerRunning() {
@@ -51,6 +189,11 @@ function isDockerRunning() {
   } catch {
     return false;
   }
+}
+
+function getContainerRuntime() {
+  const info = runCapture("docker info 2>/dev/null", { ignoreError: true });
+  return inferContainerRuntime(info);
 }
 
 function isOpenshellInstalled() {
@@ -133,6 +276,17 @@ async function preflight() {
   }
   console.log("  ✓ Docker is running");
 
+  const runtime = getContainerRuntime();
+  if (isUnsupportedMacosRuntime(runtime)) {
+    console.error("  Podman on macOS is not supported by NemoClaw at this time.");
+    console.error("  OpenShell currently depends on Docker host-gateway behavior that Podman on macOS does not provide.");
+    console.error("  Use Colima or Docker Desktop on macOS instead.");
+    process.exit(1);
+  }
+  if (runtime !== "unknown") {
+    console.log(`  ✓ Container runtime: ${runtime}`);
+  }
+
   // OpenShell CLI
   if (!isOpenshellInstalled()) {
     console.log("  openshell CLI not found. Attempting to install...");
@@ -143,6 +297,18 @@ async function preflight() {
     }
   }
   console.log(`  ✓ openshell CLI: ${runCapture("openshell --version 2>/dev/null || echo unknown", { ignoreError: true })}`);
+
+  // Clean up stale NemoClaw session before checking ports.
+  // A previous onboard run may have left the gateway container and port
+  // forward running.  If a NemoClaw-owned gateway is still present, tear
+  // it down so the port check below doesn't fail on our own leftovers.
+  const gwInfo = runCapture("openshell gateway info -g nemoclaw 2>/dev/null", { ignoreError: true });
+  if (hasStaleGateway(gwInfo)) {
+    console.log("  Cleaning up previous NemoClaw session...");
+    run("openshell forward stop 18789 2>/dev/null || true", { ignoreError: true });
+    run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
+    console.log("  ✓ Previous session cleaned up");
+  }
 
   // Required ports — gateway (8080) and dashboard (18789)
   const requiredPorts = [
@@ -225,14 +391,10 @@ async function startGateway(gpu) {
   }
 
   // CoreDNS fix — always run. k3s-inside-Docker has broken DNS on all platforms.
-  const home = process.env.HOME || "/tmp";
-  const colimaSocket = [
-    path.join(home, ".colima/default/docker.sock"),
-    path.join(home, ".config/colima/default/docker.sock"),
-  ].find((s) => fs.existsSync(s));
-  if (colimaSocket) {
+  const runtime = getContainerRuntime();
+  if (shouldPatchCoredns(runtime)) {
     console.log("  Patching CoreDNS for Colima...");
-    run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" 2>&1 || true`, { ignoreError: true });
+    run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" nemoclaw 2>&1 || true`, { ignoreError: true });
   }
   // Give DNS a moment to propagate
   sleep(5);
@@ -288,7 +450,7 @@ async function createSandbox(gpu) {
   run(`cp -r "${path.join(ROOT, "nemoclaw")}" "${buildCtx}/nemoclaw"`);
   run(`cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`);
   run(`cp -r "${path.join(ROOT, "scripts")}" "${buildCtx}/scripts"`);
-  run(`rm -rf "${buildCtx}/nemoclaw/node_modules" "${buildCtx}/nemoclaw/src"`, { ignoreError: true });
+  run(`rm -rf "${buildCtx}/nemoclaw/node_modules"`, { ignoreError: true });
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
@@ -306,9 +468,57 @@ async function createSandbox(gpu) {
   if (process.env.NVIDIA_API_KEY) {
     envArgs.push(`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`);
   }
-  // set -o pipefail ensures the openshell exit code propagates through the awk pipe.
-  // Without it, awk's exit code (always 0) would mask a failed sandbox create.
-  run(`set -o pipefail; openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`);
+
+  // Run without piping through awk — the pipe masked non-zero exit codes
+  // from openshell because bash returns the status of the last pipeline
+  // command (awk, always 0) unless pipefail is set. Removing the pipe
+  // lets the real exit code flow through to run().
+  const createResult = run(
+    `openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1`,
+    { ignoreError: true }
+  );
+
+  // Clean up build context regardless of outcome
+  run(`rm -rf "${buildCtx}"`, { ignoreError: true });
+
+  if (createResult.status !== 0) {
+    console.error("");
+    console.error(`  Sandbox creation failed (exit ${createResult.status}).`);
+    console.error("  Try:  openshell sandbox list        # check gateway state");
+    console.error("  Try:  nemoclaw onboard              # retry from scratch");
+    process.exit(createResult.status || 1);
+  }
+
+  // Wait for sandbox to reach Ready state in k3s before registering.
+  // On WSL2 + Docker Desktop the pod can take longer to initialize;
+  // without this gate, NemoClaw registers a phantom sandbox that
+  // causes "sandbox not found" on every subsequent connect/status call.
+  console.log("  Waiting for sandbox to become ready...");
+  let ready = false;
+  for (let i = 0; i < 30; i++) {
+    const list = runCapture("openshell sandbox list 2>&1", { ignoreError: true });
+    if (isSandboxReady(list, sandboxName)) {
+      ready = true;
+      break;
+    }
+    require("child_process").spawnSync("sleep", ["2"]);
+  }
+
+  if (!ready) {
+    // Clean up the orphaned sandbox so the next onboard retry with the same
+    // name doesn't fail on "sandbox already exists".
+    const delResult = run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+    console.error("");
+    console.error(`  Sandbox '${sandboxName}' was created but did not become ready within 60s.`);
+    if (delResult.status === 0) {
+      console.error("  The orphaned sandbox has been removed — you can safely retry.");
+    } else {
+      console.error(`  Could not remove the orphaned sandbox. Manual cleanup:`);
+      console.error(`    openshell sandbox delete "${sandboxName}"`);
+    }
+    console.error("  Retry: nemoclaw onboard");
+    process.exit(1);
+  }
 
   // Release any stale forward on port 18789 before claiming it for the new sandbox.
   // A previous onboard run may have left the port forwarded to a different sandbox,
@@ -317,10 +527,7 @@ async function createSandbox(gpu) {
   // Forward dashboard port to the new sandbox
   run(`openshell forward start --background 18789 "${sandboxName}"`, { ignoreError: true });
 
-  // Clean up build context
-  run(`rm -rf "${buildCtx}"`, { ignoreError: true });
-
-  // Register in registry
+  // Register only after confirmed ready — prevents phantom entries
   registry.registerSandbox({
     name: sandboxName,
     gpuEnabled: !!gpu,
@@ -345,76 +552,35 @@ async function setupNim(sandboxName, gpu) {
   const vllmRunning = !!runCapture("curl -sf http://localhost:8000/v1/models 2>/dev/null", { ignoreError: true });
   const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
   const requestedModel = isNonInteractive() ? getNonInteractiveModel(requestedProvider || "cloud") : null;
-
-  // Auto-select only with NEMOCLAW_EXPERIMENTAL=1 (prevents silent misconfiguration)
-  if (EXPERIMENTAL) {
-    if (vllmRunning) {
-      console.log("  ✓ vLLM detected on localhost:8000 — using it [experimental]");
-      provider = "vllm-local";
-      model = "vllm-local";
-      registry.updateSandbox(sandboxName, { model, provider, nimContainer });
-      return { model, provider };
-    }
-    if (ollamaRunning) {
-      console.log("  ✓ Ollama detected on localhost:11434 — using it [experimental]");
-      provider = "ollama-local";
-      model = "nemotron-3-nano";
-      registry.updateSandbox(sandboxName, { model, provider, nimContainer });
-      return { model, provider };
-    }
-  }
-
-  // Non-interactive: honor NEMOCLAW_PROVIDER before building interactive options
-  if (isNonInteractive() && requestedProvider) {
-    const providerKey = requestedProvider;
-    console.log(`  [non-interactive] Provider: ${providerKey}`);
-    if (providerKey === "ollama") {
-      if (!ollamaRunning) {
-        console.error("  Ollama is not running on localhost:11434. Start it first.");
-        process.exit(1);
-      }
-      provider = "ollama-local";
-      model = requestedModel || "nemotron-3-nano";
-      registry.updateSandbox(sandboxName, { model, provider, nimContainer });
-      return { model, provider };
-    } else if (providerKey === "vllm") {
-      if (!vllmRunning) {
-        console.error("  vLLM is not running on localhost:8000. Start it first.");
-        process.exit(1);
-      }
-      provider = "vllm-local";
-      model = requestedModel || "vllm-local";
-      registry.updateSandbox(sandboxName, { model, provider, nimContainer });
-      return { model, provider };
-    } else if (providerKey === "nim") {
-      if (!EXPERIMENTAL) {
-        console.error("  NEMOCLAW_PROVIDER=nim requires NEMOCLAW_EXPERIMENTAL=1.");
-        process.exit(1);
-      }
-      if (!gpu || !gpu.nimCapable) {
-        console.error("  Local NIM requires a compatible NVIDIA GPU.");
-        process.exit(1);
-      }
-    }
-    // "cloud" or "nim" fall through to normal flow below
-  }
-
   // Build options list — only show local options with NEMOCLAW_EXPERIMENTAL=1
   const options = [];
   if (EXPERIMENTAL && gpu && gpu.nimCapable) {
     options.push({ key: "nim", label: "Local NIM container (NVIDIA GPU) [experimental]" });
   }
-  options.push({ key: "cloud", label: "NVIDIA Cloud API (build.nvidia.com)" });
-  if (EXPERIMENTAL && (hasOllama || ollamaRunning)) {
-    options.push({ key: "ollama", label: `Local Ollama (localhost:11434)${ollamaRunning ? " — running" : ""} [experimental]` });
+  options.push({
+    key: "cloud",
+    label:
+      "NVIDIA Cloud API (build.nvidia.com)" +
+      (!ollamaRunning && !(EXPERIMENTAL && vllmRunning) ? " (recommended)" : ""),
+  });
+  if (hasOllama || ollamaRunning) {
+    options.push({
+      key: "ollama",
+      label:
+        `Local Ollama (localhost:11434)${ollamaRunning ? " — running" : ""}` +
+        (ollamaRunning ? " (suggested)" : ""),
+    });
   }
   if (EXPERIMENTAL && vllmRunning) {
-    options.push({ key: "vllm", label: "Existing vLLM instance (localhost:8000) — running [experimental]" });
+    options.push({
+      key: "vllm",
+      label: "Existing vLLM instance (localhost:8000) — running [experimental] (suggested)",
+    });
   }
 
   // On macOS without Ollama, offer to install it
-  if (EXPERIMENTAL && !hasOllama && process.platform === "darwin") {
-    options.push({ key: "install-ollama", label: "Install Ollama (macOS) [experimental]" });
+  if (!hasOllama && process.platform === "darwin") {
+    options.push({ key: "install-ollama", label: "Install Ollama (macOS)" });
   }
 
   if (options.length > 1) {
@@ -429,6 +595,15 @@ async function setupNim(sandboxName, gpu) {
       }
       console.log(`  [non-interactive] Provider: ${selected.key}`);
     } else {
+      const suggestions = [];
+      if (vllmRunning) suggestions.push("vLLM");
+      if (ollamaRunning) suggestions.push("Ollama");
+      if (suggestions.length > 0) {
+        console.log(`  Detected local inference option${suggestions.length > 1 ? "s" : ""}: ${suggestions.join(", ")}`);
+        console.log("  Select one explicitly to use it. Press Enter to keep the cloud default.");
+        console.log("");
+      }
+
       console.log("");
       console.log("  Inference options:");
       options.forEach((o, i) => {
@@ -497,7 +672,11 @@ async function setupNim(sandboxName, gpu) {
       }
       console.log("  ✓ Using Ollama on localhost:11434");
       provider = "ollama-local";
-      model = "nemotron-3-nano";
+      if (isNonInteractive()) {
+        model = requestedModel || getDefaultOllamaModel(runCapture);
+      } else {
+        model = await promptOllamaModel();
+      }
     } else if (selected.key === "install-ollama") {
       console.log("  Installing Ollama via Homebrew...");
       run("brew install ollama", { ignoreError: true });
@@ -506,7 +685,11 @@ async function setupNim(sandboxName, gpu) {
         sleep(2);
       console.log("  ✓ Using Ollama on localhost:11434");
       provider = "ollama-local";
-      model = "nemotron-3-nano";
+      if (isNonInteractive()) {
+        model = requestedModel || getDefaultOllamaModel(runCapture);
+      } else {
+        model = await promptOllamaModel();
+      }
     } else if (selected.key === "vllm") {
       console.log("  ✓ Using existing vLLM on localhost:8000");
       provider = "vllm-local";
@@ -525,8 +708,9 @@ async function setupNim(sandboxName, gpu) {
       }
     } else {
       await ensureApiKey();
+      model = model || (await promptCloudModel()) || DEFAULT_CLOUD_MODEL;
     }
-    model = model || requestedModel || "nvidia/nemotron-3-super-120b-a12b";
+    model = model || requestedModel || DEFAULT_CLOUD_MODEL;
     console.log(`  Using NVIDIA Cloud API with model: ${model}`);
   }
 
@@ -553,12 +737,18 @@ async function setupInference(sandboxName, model, provider) {
       { ignoreError: true }
     );
   } else if (provider === "vllm-local") {
+    const validation = validateLocalProvider(provider, runCapture);
+    if (!validation.ok) {
+      console.error(`  ${validation.message}`);
+      process.exit(1);
+    }
+    const baseUrl = getLocalProviderBaseUrl(provider);
     run(
       `openshell provider create --name vllm-local --type openai ` +
       `--credential "OPENAI_API_KEY=dummy" ` +
-      `--config "OPENAI_BASE_URL=${HOST_GATEWAY_URL}:8000/v1" 2>&1 || ` +
+      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
       `openshell provider update vllm-local --credential "OPENAI_API_KEY=dummy" ` +
-      `--config "OPENAI_BASE_URL=${HOST_GATEWAY_URL}:8000/v1" 2>&1 || true`,
+      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
       { ignoreError: true }
     );
     run(
@@ -566,18 +756,32 @@ async function setupInference(sandboxName, model, provider) {
       { ignoreError: true }
     );
   } else if (provider === "ollama-local") {
+    const validation = validateLocalProvider(provider, runCapture);
+    if (!validation.ok) {
+      console.error(`  ${validation.message}`);
+      console.error("  On macOS, local inference also depends on OpenShell host routing support.");
+      process.exit(1);
+    }
+    const baseUrl = getLocalProviderBaseUrl(provider);
     run(
       `openshell provider create --name ollama-local --type openai ` +
       `--credential "OPENAI_API_KEY=ollama" ` +
-      `--config "OPENAI_BASE_URL=${HOST_GATEWAY_URL}:11434/v1" 2>&1 || ` +
+      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
       `openshell provider update ollama-local --credential "OPENAI_API_KEY=ollama" ` +
-      `--config "OPENAI_BASE_URL=${HOST_GATEWAY_URL}:11434/v1" 2>&1 || true`,
+      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
       { ignoreError: true }
     );
     run(
       `openshell inference set --no-verify --provider ollama-local --model ${model} 2>/dev/null || true`,
       { ignoreError: true }
     );
+    console.log(`  Priming Ollama model: ${model}`);
+    run(getOllamaWarmupCommand(model), { ignoreError: true });
+    const probe = validateOllamaModel(model, runCapture);
+    if (!probe.ok) {
+      console.error(`  ${probe.message}`);
+      process.exit(1);
+    }
   }
 
   registry.updateSandbox(sandboxName, { model, provider });
@@ -586,14 +790,21 @@ async function setupInference(sandboxName, model, provider) {
 
 // ── Step 6: OpenClaw ─────────────────────────────────────────────
 
-async function setupOpenclaw(sandboxName) {
+async function setupOpenclaw(sandboxName, model, provider) {
   step(6, 7, "Setting up OpenClaw inside sandbox");
 
-  // sandbox create with a command runs it inside the sandbox then exits.
-  // Since the sandbox already exists, we create a throwaway connect + command
-  // by using sandbox create --no-keep with the same image to exec into it.
-  // Simpler: just use sandbox connect which opens a shell — but it doesn't
-  // support passing commands. So we run the setup on next connect instead.
+  const selectionConfig = getProviderSelectionConfig(provider, model);
+  if (selectionConfig) {
+    const sandboxConfig = {
+      ...selectionConfig,
+      onboardedAt: new Date().toISOString(),
+    };
+    const script = buildSandboxConfigSyncScript(sandboxConfig);
+    run(`cat <<'EOF_NEMOCLAW_SYNC' | openshell sandbox connect "${sandboxName}"
+${script}
+EOF_NEMOCLAW_SYNC`, { stdio: ["ignore", "ignore", "inherit"] });
+  }
+
   console.log("  ✓ OpenClaw gateway launched inside sandbox");
 }
 
@@ -717,6 +928,7 @@ function printDashboard(sandboxName, model, provider) {
   let providerLabel = provider;
   if (provider === "nvidia-nim") providerLabel = "NVIDIA Cloud API";
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
+  else if (provider === "ollama-local") providerLabel = "Local Ollama";
 
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
@@ -747,9 +959,9 @@ async function onboard(opts = {}) {
   const sandboxName = await createSandbox(gpu);
   const { model, provider } = await setupNim(sandboxName, gpu);
   await setupInference(sandboxName, model, provider);
-  await setupOpenclaw(sandboxName);
+  await setupOpenclaw(sandboxName, model, provider);
   await setupPolicies(sandboxName);
   printDashboard(sandboxName, model, provider);
 }
 
-module.exports = { onboard };
+module.exports = { buildSandboxConfigSyncScript, hasStaleGateway, isSandboxReady, onboard, setupNim };

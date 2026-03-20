@@ -36,6 +36,14 @@ function prompt(question) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
     rl.question(question, (answer) => {
       rl.close();
+      if (!process.stdin.isTTY) {
+        if (typeof process.stdin.pause === "function") {
+          process.stdin.pause();
+        }
+        if (typeof process.stdin.unref === "function") {
+          process.stdin.unref();
+        }
+      }
       resolve(answer.trim());
     });
   });
