@@ -174,6 +174,12 @@ $ nemoclaw my-assistant logs [--follow]
 Stop the NIM container and delete the sandbox.
 This removes the sandbox from the registry.
 
+```{warning}
+This command permanently deletes the sandbox **and its persistent volume**.
+All [workspace files](../workspace/workspace-files.md) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
+Back up your workspace first — see [Backup and Restore](../workspace/backup-restore.md).
+```
+
 ```console
 $ nemoclaw my-assistant destroy
 ```
