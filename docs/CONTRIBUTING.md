@@ -8,7 +8,7 @@ If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo inclu
 
 | Skill | What it does | When to use |
 |---|---|---|
-| `update-docs-from-commits` | Scans recent commits for user-facing changes and drafts doc updates. | After landing features, before a release, or to find doc gaps. |
+| `update-docs` | Scans recent commits for user-facing changes and drafts doc updates. | After landing features, before a release, or to find doc gaps. |
 
 The skills live in `.agents/skills/` and follow the style guide below automatically. To use one, ask your agent to run it. For example, ask it to "catch up the docs for everything merged since v0.2.0".
 

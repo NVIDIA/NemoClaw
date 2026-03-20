@@ -18,6 +18,13 @@
 
 const https = require("https");
 const { execSync, spawn } = require("child_process");
+const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
+
+const OPENSHELL = resolveOpenshell();
+if (!OPENSHELL) {
+  console.error("openshell not found on PATH or in common locations");
+  process.exit(1);
+}
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API_KEY = process.env.NVIDIA_API_KEY;
@@ -85,7 +92,7 @@ async function sendTyping(chatId) {
 
 function runAgentInSandbox(message, sessionId) {
   return new Promise((resolve) => {
-    const sshConfig = execSync(`openshell sandbox ssh-config ${SANDBOX}`, { encoding: "utf-8" });
+    const sshConfig = execSync(`"${OPENSHELL}" sandbox ssh-config "${SANDBOX}"`, { encoding: "utf-8" });
 
     // Write temp ssh config
     const confPath = `/tmp/nemoclaw-tg-ssh-${sessionId}.conf`;

@@ -19,6 +19,8 @@ MIN_NODE_MAJOR=20
 MIN_NPM_MAJOR=10
 RECOMMENDED_NODE_MAJOR=22
 RUNTIME_REQUIREMENT_MSG="NemoClaw requires Node.js >=${MIN_NODE_MAJOR} and npm >=${MIN_NPM_MAJOR} (recommended Node.js ${RECOMMENDED_NODE_MAJOR})."
+NEMOCLAW_SHIM_DIR="${HOME}/.local/bin"
+ORIGINAL_PATH="${PATH:-}"
 
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
 version_gte() {
@@ -53,6 +55,30 @@ refresh_path() {
   if [[ -n "$npm_bin" && -d "$npm_bin" && ":$PATH:" != *":$npm_bin:"* ]]; then
     export PATH="$npm_bin:$PATH"
   fi
+
+  if [[ -d "$NEMOCLAW_SHIM_DIR" && ":$PATH:" != *":$NEMOCLAW_SHIM_DIR:"* ]]; then
+    export PATH="$NEMOCLAW_SHIM_DIR:$PATH"
+  fi
+}
+
+ensure_nemoclaw_shim() {
+  local npm_bin shim_path
+  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  shim_path="${NEMOCLAW_SHIM_DIR}/nemoclaw"
+
+  if [[ -z "$npm_bin" || ! -x "$npm_bin/nemoclaw" ]]; then
+    return 1
+  fi
+
+  if [[ ":$ORIGINAL_PATH:" == *":$npm_bin:"* ]] || [[ ":$ORIGINAL_PATH:" == *":$NEMOCLAW_SHIM_DIR:"* ]]; then
+    return 0
+  fi
+
+  mkdir -p "$NEMOCLAW_SHIM_DIR"
+  ln -sfn "$npm_bin/nemoclaw" "$shim_path"
+  refresh_path
+  info "Created user-local shim at $shim_path"
+  return 0
 }
 
 version_major() {
@@ -198,12 +224,13 @@ install_nemoclaw() {
     info "NemoClaw package.json found in current directory — installing from source…"
     npm install && npm link
   else
-    info "Installing NemoClaw from npm…"
+    info "Installing NemoClaw from GitHub…"
     # Revert once https://github.com/NVIDIA/NemoClaw/issues/71 is complete and the package is published
-    npm install -g git+ssh://git@github.com/nvidia/NemoClaw.git
+    npm install -g git+https://github.com/NVIDIA/NemoClaw.git
   fi
 
   refresh_path
+  ensure_nemoclaw_shim || true
 }
 
 # ---------------------------------------------------------------------------
@@ -222,21 +249,26 @@ verify_nemoclaw() {
   npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
 
   if [[ -n "$npm_bin" && -x "$npm_bin/nemoclaw" ]]; then
-    warn "Found nemoclaw at $npm_bin/nemoclaw but that directory is not on PATH."
+    ensure_nemoclaw_shim || true
+    if command_exists nemoclaw; then
+      info "Verified: nemoclaw is available at $(command -v nemoclaw)"
+      return 0
+    fi
+
+    warn "Found nemoclaw at $npm_bin/nemoclaw but could not expose it on PATH."
     warn ""
-    warn "Add it to your shell profile:"
-    warn "  echo 'export PATH=\"$npm_bin:\$PATH\"' >> ~/.bashrc"
-    warn "  source ~/.bashrc"
+    warn "Add one of these directories to your shell profile:"
+    warn "  $NEMOCLAW_SHIM_DIR"
+    warn "  $npm_bin"
     warn ""
-    warn "Or for zsh:"
-    warn "  echo 'export PATH=\"$npm_bin:\$PATH\"' >> ~/.zshrc"
-    warn "  source ~/.zshrc"
+    warn "Continuing — nemoclaw is installed but requires a PATH update."
+    return 0
   else
     warn "Could not locate the nemoclaw executable."
-    warn "Try running:  npm install -g nemoclaw"
+    warn "Try running:  npm install -g git+https://github.com/NVIDIA/NemoClaw.git"
   fi
 
-  error "Installation failed: nemoclaw --help could not be executed."
+  error "Installation failed: nemoclaw binary not found."
 }
 
 # ---------------------------------------------------------------------------
@@ -244,13 +276,67 @@ verify_nemoclaw() {
 # ---------------------------------------------------------------------------
 run_onboard() {
   info "Running nemoclaw onboard…"
-  nemoclaw onboard
+  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+    nemoclaw onboard --non-interactive
+  elif [ -t 0 ]; then
+    nemoclaw onboard
+  elif exec 3</dev/tty; then
+    info "Installer stdin is piped; attaching onboarding to /dev/tty…"
+    local status=0
+    nemoclaw onboard <&3 || status=$?
+    exec 3<&-
+    return "$status"
+  else
+    error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1."
+  fi
+}
+
+# 6. Post-install message
+# ---------------------------------------------------------------------------
+post_install_message() {
+  # Only show shell reload instructions when Node was installed via a
+  # version manager that modifies PATH in shell profile files.
+  # nvm and fnm require sourcing the profile; nodesource/brew install to
+  # system paths already on PATH.
+  if [[ ! -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]]; then
+    return 0
+  fi
+
+  local profile="$HOME/.bashrc"
+  if [[ -n "${ZSH_VERSION:-}" ]] || [[ "$(basename "${SHELL:-}")" == "zsh" ]]; then
+    profile="$HOME/.zshrc"
+  elif [[ ! -f "$HOME/.bashrc" && -f "$HOME/.profile" ]]; then
+    profile="$HOME/.profile"
+  fi
+
+  echo ""
+  echo "  ──────────────────────────────────────────────────"
+  warn "Your current shell may not have the updated PATH."
+  echo ""
+  echo "  To use nemoclaw now, run:"
+  echo ""
+  echo "    source $profile"
+  echo ""
+  echo "  Or open a new terminal window."
+  echo "  ──────────────────────────────────────────────────"
+  echo ""
 }
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 main() {
+  # Parse flags
+  NON_INTERACTIVE=""
+  for arg in "$@"; do
+    case "$arg" in
+      --non-interactive) NON_INTERACTIVE=1 ;;
+    esac
+  done
+  # Also honor env var
+  NON_INTERACTIVE="${NON_INTERACTIVE:-${NEMOCLAW_NON_INTERACTIVE:-}}"
+  export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
+
   info "=== NemoClaw Installer ==="
 
   install_nodejs
@@ -258,6 +344,7 @@ main() {
   # install_or_upgrade_ollama
   install_nemoclaw
   verify_nemoclaw
+  post_install_message
   run_onboard
 
   info "=== Installation complete ==="

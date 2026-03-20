@@ -67,7 +67,8 @@ function slashOnboard() {
             text: [
                 "**NemoClaw Onboard Status**",
                 "",
-                `Endpoint: ${config.endpointType} (${config.endpointUrl})`,
+                `Endpoint: ${(0, config_js_1.describeOnboardEndpoint)(config)}`,
+                `Provider: ${(0, config_js_1.describeOnboardProvider)(config)}`,
                 config.ncpPartner ? `NCP Partner: ${config.ncpPartner}` : null,
                 `Model: ${config.model}`,
                 `Credential: $${config.credentialEnv}`,

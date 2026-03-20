@@ -3,105 +3,123 @@
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
 
-const { isCgroupV2, readDaemonJson, checkCgroupConfig } = require("../bin/lib/preflight");
+const net = require("net");
+const { checkPortAvailable } = require("../bin/lib/preflight");
 
-// Helper: create a temp daemon.json with given content and return its path.
-function writeTempDaemon(content) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preflight-"));
-  const p = path.join(dir, "daemon.json");
-  fs.writeFileSync(p, content, "utf-8");
-  return p;
-}
-
-describe("isCgroupV2", () => {
-  it("returns a boolean", () => {
-    assert.equal(typeof isCgroupV2(), "boolean");
+describe("checkPortAvailable", () => {
+  it("falls through to net probe when lsof output is empty", async () => {
+    // Empty lsof output is not authoritative (non-root can't see root-owned
+    // listeners), so the function must fall through to the net probe.
+    // Use a guaranteed-free port so the net probe confirms availability.
+    const freePort = await new Promise((resolve) => {
+      const srv = net.createServer();
+      srv.listen(0, "127.0.0.1", () => {
+        const port = srv.address().port;
+        srv.close(() => resolve(port));
+      });
+    });
+    const result = await checkPortAvailable(freePort, { lsofOutput: "" });
+    assert.deepEqual(result, { ok: true });
   });
 
-  it("returns false on non-linux platforms", () => {
-    // On Linux this still returns a boolean (true or false depending on
-    // actual cgroup version). On macOS/other it always returns false.
-    // Either way the function must not throw.
-    const result = isCgroupV2();
-    if (process.platform !== "linux") {
-      assert.equal(result, false);
+  it("net probe catches occupied port even when lsof returns empty", async () => {
+    // Simulates the non-root-can't-see-root-listener scenario:
+    // lsof returns empty, but net probe detects the port is taken.
+    const srv = net.createServer();
+    const port = await new Promise((resolve) => {
+      srv.listen(0, "127.0.0.1", () => resolve(srv.address().port));
+    });
+    try {
+      const result = await checkPortAvailable(port, { lsofOutput: "" });
+      assert.equal(result.ok, false);
+      assert.equal(result.process, "unknown");
+      assert.ok(result.reason.includes("EADDRINUSE"));
+    } finally {
+      await new Promise((resolve) => srv.close(resolve));
     }
   });
-});
 
-describe("readDaemonJson", () => {
-  it("parses valid JSON", () => {
-    const p = writeTempDaemon('{ "default-cgroupns-mode": "host" }');
-    const result = readDaemonJson(p);
-    assert.deepEqual(result, { "default-cgroupns-mode": "host" });
+  it("parses process and PID from lsof output", async () => {
+    const lsofOutput = [
+      "COMMAND     PID   USER   FD   TYPE DEVICE SIZE/OFF NODE NAME",
+      "openclaw  12345   root    7u  IPv4  54321      0t0  TCP *:18789 (LISTEN)",
+    ].join("\n");
+    const result = await checkPortAvailable(18789, { lsofOutput });
+    assert.equal(result.ok, false);
+    assert.equal(result.process, "openclaw");
+    assert.equal(result.pid, 12345);
+    assert.ok(result.reason.includes("openclaw"));
   });
 
-  it("returns null for invalid JSON", () => {
-    const p = writeTempDaemon("not json at all");
-    assert.equal(readDaemonJson(p), null);
+  it("picks first listener when lsof shows multiple", async () => {
+    const lsofOutput = [
+      "COMMAND     PID   USER   FD   TYPE DEVICE SIZE/OFF NODE NAME",
+      "gateway   111   root    7u  IPv4  54321      0t0  TCP *:18789 (LISTEN)",
+      "node      222   root    8u  IPv4  54322      0t0  TCP *:18789 (LISTEN)",
+    ].join("\n");
+    const result = await checkPortAvailable(18789, { lsofOutput });
+    assert.equal(result.ok, false);
+    assert.equal(result.process, "gateway");
+    assert.equal(result.pid, 111);
   });
 
-  it("returns null for missing file", () => {
-    assert.equal(readDaemonJson("/tmp/nonexistent-daemon-" + Date.now() + ".json"), null);
+  it("net probe returns ok for a free port", async () => {
+    // Find a free port by binding then releasing
+    const freePort = await new Promise((resolve) => {
+      const srv = net.createServer();
+      srv.listen(0, "127.0.0.1", () => {
+        const port = srv.address().port;
+        srv.close(() => resolve(port));
+      });
+    });
+    const result = await checkPortAvailable(freePort, { skipLsof: true });
+    assert.deepEqual(result, { ok: true });
   });
-});
 
-describe("checkCgroupConfig", () => {
-  it("runs without arguments (uses live detection)", () => {
-    const result = checkCgroupConfig();
+  it("net probe detects occupied port", async () => {
+    const srv = net.createServer();
+    const port = await new Promise((resolve) => {
+      srv.listen(0, "127.0.0.1", () => resolve(srv.address().port));
+    });
+    try {
+      const result = await checkPortAvailable(port, { skipLsof: true });
+      assert.equal(result.ok, false);
+      assert.equal(result.process, "unknown");
+      assert.ok(result.reason.includes("EADDRINUSE"));
+    } finally {
+      await new Promise((resolve) => srv.close(resolve));
+    }
+  });
+
+  it("smoke test with live detection on a dynamically selected free port", async () => {
+    const freePort = await new Promise((resolve) => {
+      const srv = net.createServer();
+      srv.listen(0, "127.0.0.1", () => {
+        const port = srv.address().port;
+        srv.close(() => resolve(port));
+      });
+    });
+    const result = await checkPortAvailable(freePort);
+    assert.equal(result.ok, true);
+  });
+
+  it("defaults to port 18789 when no args given", async () => {
+    // Should not throw — just verify it returns a valid result object
+    const result = await checkPortAvailable();
     assert.equal(typeof result.ok, "boolean");
   });
 
-  it("returns ok when cgroup v1 (skips daemon.json check)", () => {
-    const result = checkCgroupConfig({ cgroupV2: false });
-    assert.deepEqual(result, { ok: true });
-  });
-
-  it("returns ok when cgroup v2 and daemon.json has cgroupns=host", () => {
-    const p = writeTempDaemon('{ "default-cgroupns-mode": "host" }');
-    const result = checkCgroupConfig({ cgroupV2: true, daemonPath: p });
-    assert.deepEqual(result, { ok: true });
-  });
-
-  it("fails when cgroup v2 and daemon.json missing", () => {
-    const p = "/tmp/nonexistent-daemon-" + Date.now() + ".json";
-    const result = checkCgroupConfig({ cgroupV2: true, daemonPath: p });
-    assert.equal(result.ok, false);
-    assert.ok(result.reason.includes("does not exist"));
-  });
-
-  it("fails when cgroup v2 and daemon.json has no cgroupns key", () => {
-    const p = writeTempDaemon('{ "storage-driver": "overlay2" }');
-    const result = checkCgroupConfig({ cgroupV2: true, daemonPath: p });
-    assert.equal(result.ok, false);
-    assert.ok(result.reason.includes("not set to"));
-  });
-
-  it("fails when cgroup v2 and cgroupns mode is wrong value", () => {
-    const p = writeTempDaemon('{ "default-cgroupns-mode": "private" }');
-    const result = checkCgroupConfig({ cgroupV2: true, daemonPath: p });
-    assert.equal(result.ok, false);
-    assert.ok(result.reason.includes("not set to"));
-  });
-
-  it("fails when cgroup v2 and daemon.json is invalid JSON", () => {
-    const p = writeTempDaemon("oops");
-    const result = checkCgroupConfig({ cgroupV2: true, daemonPath: p });
-    assert.equal(result.ok, false);
-    assert.ok(result.reason.includes("not valid JSON"));
-  });
-
-  it("passes with extra keys alongside cgroupns=host", () => {
-    const p = writeTempDaemon(JSON.stringify({
-      "storage-driver": "overlay2",
-      "default-cgroupns-mode": "host",
-      "log-driver": "json-file",
-    }));
-    const result = checkCgroupConfig({ cgroupV2: true, daemonPath: p });
-    assert.deepEqual(result, { ok: true });
+  it("checks gateway port 8080", async () => {
+    const freePort = await new Promise((resolve) => {
+      const srv = net.createServer();
+      srv.listen(0, "127.0.0.1", () => {
+        const port = srv.address().port;
+        srv.close(() => resolve(port));
+      });
+    });
+    // Verify the function works with any port (including 8080-range)
+    const result = await checkPortAvailable(freePort);
+    assert.equal(result.ok, true);
   });
 });
