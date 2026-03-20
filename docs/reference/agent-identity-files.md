@@ -18,13 +18,15 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# Agent Identity Files
+# NemoClaw Agent Identity Files — SOUL.md, USER.md, and IDENTITY.md
 
 OpenClaw creates three Markdown files inside the sandbox that define how the agent behaves, remembers the user, and presents itself.
-These files persist across sandbox restarts but are lost when the gateway is destroyed.
+These files persist across sandbox restarts, but the gateway destroys them when it is torn down.
 This page describes the files, where they are stored, and how to back them up.
 
 ## The Identity Files
+
+Each file controls a distinct aspect of the agent's behavior and memory.
 
 | File | Purpose |
 |---|---|
@@ -39,13 +41,13 @@ You can edit them directly to adjust how the agent behaves.
 
 All three files live inside the sandbox at:
 
-```
+```text
 /sandbox/.openclaw/workspace/
 ```
 
 The full paths are:
 
-```
+```text
 /sandbox/.openclaw/workspace/SOUL.md
 /sandbox/.openclaw/workspace/USER.md
 /sandbox/.openclaw/workspace/IDENTITY.md
@@ -57,6 +59,8 @@ The files are not at `/sandbox/SOUL.md` — you must include the full path when 
 :::
 
 ## Persistence Behavior
+
+The table below shows which events preserve the identity files and which destroy them.
 
 | Event | Identity files |
 |---|---|
