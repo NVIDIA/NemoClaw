@@ -1,0 +1,29 @@
+# NemoClaw Windows installer -- container image
+# Built by install.ps1; run with NVIDIA_API_KEY env var and Desktop/NemoClaw volume mount.
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies needed by install.sh (curl for downloads, git for npm deps,
+# ca-certificates for HTTPS, python3 for nemoclaw-start.sh config scripts)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        ca-certificates \
+        git \
+        python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and run the NemoClaw installer non-interactively at build time.
+# This installs Node.js, npm, nemoclaw CLI, and runs onboard.
+COPY install.sh /tmp/install.sh
+RUN chmod +x /tmp/install.sh \
+    && NEMOCLAW_NON_INTERACTIVE=1 /tmp/install.sh --non-interactive
+
+# Copy the startup script that configures openclaw and launches the gateway
+COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
+RUN chmod +x /usr/local/bin/nemoclaw-start
+
+EXPOSE 18789
+
+# nemoclaw-start.sh reads NVIDIA_API_KEY at runtime, configures openclaw, and starts the gateway
+CMD ["/usr/local/bin/nemoclaw-start"]
