@@ -256,7 +256,37 @@ export default function register(api: OpenClawPluginApi): void {
     { commands: ["nemoclaw"] },
   );
 
-  // 3. Register nvidia-nim provider — use onboard config if available
+  // 3. Register Metrics Service if enabled
+  if (metrics.isEnabled()) {
+    let server: ReturnType<typeof createServer> | undefined;
+
+    api.registerService({
+      id: "nemoclaw-metrics",
+      start: ({ logger }) => {
+        const port = Number(process.env.NEMOCLAW_METRICS_PORT || 9090);
+        server = createServer((req, res) => {
+          if (req.url === "/metrics") {
+            res.writeHead(200, { "Content-Type": "text/plain" });
+            res.end(metrics.getPrometheusMetrics());
+          } else {
+            res.writeHead(404);
+            res.end();
+          }
+        });
+        server.listen(port, "0.0.0.0", () => {
+          logger.info(`NemoClaw metrics server listening on port ${port}`);
+        });
+      },
+      stop: ({ logger }) => {
+        if (server) {
+          server.close();
+          logger.info("NemoClaw metrics server stopped");
+        }
+      },
+    });
+  }
+
+  // 4. Register nvidia-nim provider — use onboard config if available
   const onboardCfg = loadOnboardConfig();
   const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
   api.registerProvider(registeredProviderForConfig(onboardCfg, providerCredentialEnv));

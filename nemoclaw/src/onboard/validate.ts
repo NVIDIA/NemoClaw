@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { observeLatency } from "../observability/metrics.js";
+
 export interface ValidationResult {
   valid: boolean;
   models: string[];
@@ -8,6 +10,17 @@ export interface ValidationResult {
 }
 
 export async function validateApiKey(
+  apiKey: string,
+  endpointUrl: string,
+): Promise<ValidationResult> {
+  return observeLatency(
+    "tool_api_validate",
+    { endpoint: endpointUrl },
+    () => validateApiKeyInternal(apiKey, endpointUrl),
+  );
+}
+
+async function validateApiKeyInternal(
   apiKey: string,
   endpointUrl: string,
 ): Promise<ValidationResult> {

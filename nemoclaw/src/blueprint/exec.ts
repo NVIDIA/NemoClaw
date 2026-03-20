@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { PluginLogger } from "../index.js";
+import { observeLatency } from "../observability/metrics.js";
 
 export type BlueprintAction = "plan" | "apply" | "status" | "rollback";
 
@@ -32,6 +33,17 @@ function failResult(action: BlueprintAction, message: string): BlueprintRunResul
 }
 
 export async function execBlueprint(
+  options: BlueprintRunOptions,
+  logger: PluginLogger,
+): Promise<BlueprintRunResult> {
+  return observeLatency(
+    "blueprint_execution",
+    { action: options.action, profile: options.profile },
+    () => execBlueprintInternal(options, logger),
+  );
+}
+
+async function execBlueprintInternal(
   options: BlueprintRunOptions,
   logger: PluginLogger,
 ): Promise<BlueprintRunResult> {
