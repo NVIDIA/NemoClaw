@@ -25,18 +25,36 @@ NemoClaw supports both static policy changes that persist across restarts and dy
 
 ## Prerequisites
 
-- A running NemoClaw sandbox for dynamic changes, or the NemoClaw source repository for static changes.
+- A running NemoClaw sandbox for dynamic changes.
+- The NemoClaw source repository if you want to change the baseline policy permanently for future sandboxes.
 - The OpenShell CLI on your `PATH`.
+
+Do not try to edit policy files from inside the sandbox shell.
+The sandbox image intentionally omits editors such as `vim` and `nano`, does not provide `sudo`, and does not allow package-manager writes to system paths.
+Create or edit policy files on the host, then apply them to the sandbox.
+
+## Use Presets First
+
+Before creating a custom policy file, check whether an existing preset already covers the service you need:
+
+```console
+nemoclaw <name> policy-list
+nemoclaw <name> policy-add
+```
+
+Use `policy-add` for built-in presets such as `slack`, `telegram`, `npm`, or `pypi`.
+Create a custom policy file only when you need to allow a host that is not covered by an existing preset.
 
 ## Static Changes
 
 Static changes modify the baseline policy file and take effect after the next sandbox creation.
+Use this path when you are working from a local NemoClaw checkout and want every future sandbox to inherit the change.
 
 ### Edit the Policy File
 
-Open `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and add or modify endpoint entries.
+On the host, open `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` from the NemoClaw source tree and add or modify endpoint entries.
 
-Each entry in the `network` section defines an endpoint group with the following fields:
+Each entry in the `network_policies` section defines an endpoint group with the following fields:
 
 `endpoints`
 : Host and port pairs that the sandbox can reach.
@@ -52,7 +70,7 @@ Each entry in the `network` section defines an endpoint group with the following
 Apply the updated policy by re-running the onboard wizard:
 
 ```console
-$ nemoclaw onboard
+nemoclaw onboard
 ```
 
 The wizard picks up the modified policy file and applies it to the sandbox.
@@ -62,24 +80,44 @@ The wizard picks up the modified policy file and applies it to the sandbox.
 Check that the sandbox is running with the updated policy:
 
 ```console
-$ openclaw nemoclaw status
+openclaw nemoclaw status
 ```
 
 ## Dynamic Changes
 
 Dynamic changes apply a policy update to a running sandbox without restarting it.
+Use this path when you installed NemoClaw already and want to allow an additional endpoint without rebuilding the baseline blueprint.
 
 ### Create a Policy File
 
-Create a YAML file with the endpoints to add.
+On the host, create a YAML file with the endpoints to add.
 Follow the same format as the baseline policy in `nemoclaw-blueprint/policies/openclaw-sandbox.yaml`.
+
+For example, to allow a weather API from `curl`, create a file such as `weather-policy.yaml`:
+
+```yaml
+version: 1
+network_policies:
+  weather:
+    name: weather
+    endpoints:
+      - host: api.weather.gov
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/bin/curl }
+```
 
 ### Apply the Policy
 
 Use the OpenShell CLI to apply the policy update:
 
 ```console
-$ openshell policy set <policy-file>
+openshell policy set <policy-file>
 ```
 
 The change takes effect immediately.
