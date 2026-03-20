@@ -11,6 +11,8 @@ function getLocalProviderBaseUrl(provider) {
       return `${HOST_GATEWAY_URL}:8000/v1`;
     case "ollama-local":
       return `${HOST_GATEWAY_URL}:11434/v1`;
+    case "lmstudio-local":
+      return `${HOST_GATEWAY_URL}:1234/v1`;
     default:
       return null;
   }
@@ -22,6 +24,8 @@ function getLocalProviderHealthCheck(provider) {
       return "curl -sf http://localhost:8000/v1/models 2>/dev/null";
     case "ollama-local":
       return "curl -sf http://localhost:11434/api/tags 2>/dev/null";
+    case "lmstudio-local":
+      return "curl -sf http://localhost:1234/v1/models 2>/dev/null";
     default:
       return null;
   }
@@ -33,6 +37,8 @@ function getLocalProviderContainerReachabilityCheck(provider) {
       return `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:8000/v1/models 2>/dev/null`;
     case "ollama-local":
       return `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:11434/api/tags 2>/dev/null`;
+    case "lmstudio-local":
+      return `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:1234/v1/models 2>/dev/null`;
     default:
       return null;
   }
@@ -56,6 +62,11 @@ function validateLocalProvider(provider, runCapture) {
         return {
           ok: false,
           message: "Local Ollama was selected, but nothing is responding on http://localhost:11434.",
+        };
+      case "lmstudio-local":
+        return {
+          ok: false,
+          message: "Local LM Studio was selected, but nothing is responding on http://localhost:1234.",
         };
       default:
         return { ok: false, message: "The selected local inference provider is unavailable." };
@@ -84,6 +95,12 @@ function validateLocalProvider(provider, runCapture) {
         ok: false,
         message:
           "Local Ollama is responding on localhost, but containers cannot reach http://host.openshell.internal:11434. Ensure Ollama listens on 0.0.0.0:11434 instead of 127.0.0.1 so sandboxes can reach it.",
+      };
+    case "lmstudio-local":
+      return {
+        ok: false,
+        message:
+          "Local LM Studio is responding on localhost, but containers cannot reach http://host.openshell.internal:1234. Ensure the server is reachable from containers, not only from the host shell.",
       };
     default:
       return { ok: false, message: "The selected local inference provider is unavailable from containers." };

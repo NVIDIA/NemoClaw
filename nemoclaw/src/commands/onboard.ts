@@ -24,7 +24,7 @@ export interface OnboardOptions {
   pluginConfig: NemoClawConfig;
 }
 
-const ENDPOINT_TYPES: EndpointType[] = ["build", "ncp", "nim-local", "vllm", "ollama", "custom"];
+const ENDPOINT_TYPES: EndpointType[] = ["build", "ncp", "nim-local", "vllm", "ollama", "lmstudio", "custom"];
 const SUPPORTED_ENDPOINT_TYPES: EndpointType[] = ["build", "ncp", "ollama"];
 
 function isExperimentalEnabled(): boolean {
@@ -57,6 +57,8 @@ function resolveProfile(endpointType: EndpointType): string {
       return "vllm";
     case "ollama":
       return "ollama";
+    case "lmstudio":
+      return "lmstudio";
   }
 }
 
@@ -73,6 +75,8 @@ function resolveProviderName(endpointType: EndpointType): string {
       return "vllm-local";
     case "ollama":
       return "ollama-local";
+    case "lmstudio":
+      return "lmstudio-local";
   }
 }
 
@@ -86,6 +90,7 @@ function resolveCredentialEnv(endpointType: EndpointType): string {
       return "NIM_API_KEY";
     case "vllm":
     case "ollama":
+    case "lmstudio":
       return "OPENAI_API_KEY";
   }
 }
@@ -111,6 +116,7 @@ function endpointRequiresApiKey(endpointType: EndpointType): boolean {
 function defaultCredentialForEndpoint(endpointType: EndpointType): string {
   switch (endpointType) {
     case "vllm":
+    case "lmstudio":
       return "dummy";
     case "ollama":
       return "ollama";
@@ -142,13 +148,59 @@ function getOllamaModelOptions(): string[] {
     if (parsed.length > 0) {
       return parsed;
     }
-  } catch {}
+  } catch { }
   return [DEFAULT_OLLAMA_MODEL];
 }
 
 function getDefaultOllamaModel(): string {
   const models = getOllamaModelOptions();
   return models.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : models[0];
+}
+
+/**
+ * Fetches available models from LM Studio's OpenAI-compatible endpoint.
+ * Requires the LM Studio local server to be running (default: http://localhost:1234)
+ */
+export async function fetchLMStudioModels(endpointUrl: string = "http://localhost:1234/v1"): Promise<string[]> {
+  try {
+    const response = await fetch(`${endpointUrl}/models`);
+    if (!response.ok) {
+      console.warn(`Failed to fetch LM Studio models. Status: ${response.status}`);
+      return [];
+    }
+
+    const data = await response.json();
+    return data.data.map((model: { id: string }) => model.id);
+  } catch (error) {
+    console.error("Could not connect to LM Studio. Ensure the local server is running.", error);
+    return [];
+  }
+}
+
+/**
+ * Formats LM Studio models into label/value pairs for the prompt selector.
+ */
+export function getLMStudioModelOptions(models: string[]): { label: string; value: string }[] {
+  return models.map((id) => ({
+    label: id,
+    value: id,
+  }));
+}
+
+/**
+ * Selects a sensible default model from the LM Studio list.
+ * You can customize the 'preferred' array based on what works best with NemoClaw.
+ */
+export function getDefaultLMStudioModel(models: string[]): string | undefined {
+  if (!models || models.length === 0) return undefined;
+
+  // Attempt to auto-select a robust known model architecture if available
+  const preferredArchitectures = ["llama-3", "qwen", "mistral"];
+  const defaultModel = models.find((id) =>
+    preferredArchitectures.some((pref) => id.toLowerCase().includes(pref))
+  );
+
+  return defaultModel || models[0]; // Fallback to the first available model
 }
 
 function testCommand(command: string): boolean {
@@ -209,6 +261,11 @@ async function promptEndpoint(
         label: "Local vLLM [experimental]",
         value: "vllm",
         hint: "experimental — local development",
+      },
+      {
+        label: "Local LM Studio [experimental]",
+        value: "lmstudio",
+        hint: "experimental — localhost:1234",
       },
     );
   }
@@ -297,6 +354,9 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
     case "ollama":
       endpointUrl = opts.endpointUrl ?? `${HOST_GATEWAY_URL}:11434/v1`;
       break;
+    case "lmstudio":
+      endpointUrl = opts.endpointUrl ?? `${HOST_GATEWAY_URL}:1234/v1`;
+      break;
     case "custom":
       endpointUrl = opts.endpointUrl ?? (await promptInput("Custom endpoint URL"));
       break;
@@ -338,10 +398,10 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
   }
 
   // Step 4: Validate API Key
-  // For local endpoints (vllm, ollama, nim-local), validation is best-effort since the
+  // For local endpoints (vllm, ollama, lmstudio, nim-local), validation is best-effort since the
   // service may not be running yet during onboarding.
   const isLocalEndpoint =
-    endpointType === "vllm" || endpointType === "ollama" || endpointType === "nim-local";
+    endpointType === "vllm" || endpointType === "ollama" || endpointType === "lmstudio" || endpointType === "nim-local";
   logger.info("");
   logger.info(`Validating ${requiresApiKey ? "credential" : "endpoint"} against ${endpointUrl}...`);
   const validation = await validateApiKey(apiKey, endpointUrl);
@@ -363,36 +423,54 @@ export async function cliOnboard(opts: OnboardOptions): Promise<void> {
   }
 
   // Step 5: Model Selection
+
   let model: string;
   if (opts.model) {
     model = opts.model;
   } else {
+    const lmStudioModels = endpointType === "lmstudio"
+      ? await fetchLMStudioModels(endpointUrl)
+      : [];
     const discoveredModelOptions =
       endpointType === "ollama"
         ? getOllamaModelOptions().map((id) => ({ label: id, value: id }))
-        : validation.models.map((id) => ({ label: id, value: id }));
+        : endpointType === "lmstudio"
+          ? getLMStudioModelOptions(lmStudioModels)
+          : validation.models.map((id) => ({ label: id, value: id }));
     const curatedCloudOptions =
       endpointType === "build" || endpointType === "ncp"
         ? DEFAULT_MODELS.filter((option) => validation.models.includes(option.id)).map((option) => ({
-            label: `${option.label} (${option.id})`,
-            value: option.id,
-          }))
+          label: `${option.label} (${option.id})`,
+          value: option.id,
+        }))
         : [];
     const defaultIndex =
       endpointType === "ollama"
         ? Math.max(
+          0,
+          discoveredModelOptions.findIndex((option) => option.value === getDefaultOllamaModel())
+        )
+        : endpointType === "lmstudio"
+          ? Math.max(
             0,
-            discoveredModelOptions.findIndex((option) => option.value === getDefaultOllamaModel()),
+            discoveredModelOptions.findIndex((option) => option.value === getDefaultLMStudioModel(lmStudioModels))
           )
-        : 0;
+          : 0;
     const modelOptions =
       curatedCloudOptions.length > 0
         ? curatedCloudOptions
         : discoveredModelOptions.length > 0
           ? discoveredModelOptions
-          : DEFAULT_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }));
+          : endpointType === "lmstudio"
+            ? [] // will be handled below
+            : DEFAULT_MODELS.map((m) => ({ label: `${m.label} (${m.id})`, value: m.id }));
 
-    model = await promptSelect("Select your primary model:", modelOptions, defaultIndex);
+    // After modelOptions resolution:
+    if (endpointType === "lmstudio" && modelOptions.length === 0) {
+      model = await promptInput("LM Studio model ID (service unreachable, enter manually)");
+    } else {
+      model = await promptSelect("Select your primary model:", modelOptions, defaultIndex);
+    }
   }
 
   // Step 6: Resolve profile

@@ -135,6 +135,16 @@ if check_local_provider_health "vllm-local" || python3 -c "import vllm" 2>/dev/n
     "OPENAI_BASE_URL=$VLLM_LOCAL_BASE_URL"
 fi
 
+# lmstudio-local (if LM Studio is running)
+if check_local_provider_health "lmstudio-local"; then
+  LMSTUDIO_LOCAL_BASE_URL="$(get_local_provider_base_url "lmstudio-local")"
+  upsert_provider \
+    "lmstudio-local" \
+    "openai" \
+    "OPENAI_API_KEY=dummy" \
+    "OPENAI_BASE_URL=$LMSTUDIO_LOCAL_BASE_URL"
+fi
+
 # 4a. Ollama (macOS local inference)
 if [ "$(uname -s)" = "Darwin" ]; then
   if ! command -v ollama > /dev/null 2>&1; then

@@ -243,10 +243,10 @@ function getNonInteractiveProvider() {
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
 
-  const validProviders = new Set(["cloud", "ollama", "vllm", "nim"]);
+  const validProviders = new Set(["cloud", "ollama", "vllm", "nim", "lmstudio"]);
   if (!validProviders.has(providerKey)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
-    console.error("  Valid values: cloud, ollama, vllm, nim");
+    console.error(`  Valid values: ${Array.from(validProviders).join(", ")}`);
     process.exit(1);
   }
 
@@ -550,6 +550,7 @@ async function setupNim(sandboxName, gpu) {
   const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
   const ollamaRunning = !!runCapture("curl -sf http://localhost:11434/api/tags 2>/dev/null", { ignoreError: true });
   const vllmRunning = !!runCapture("curl -sf http://localhost:8000/v1/models 2>/dev/null", { ignoreError: true });
+  const lmstudioRunning = !!runCapture("curl -sf http://localhost:1234/v1/models 2>/dev/null", { ignoreError: true });
   const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
   const requestedModel = isNonInteractive() ? getNonInteractiveModel(requestedProvider || "cloud") : null;
   // Build options list — only show local options with NEMOCLAW_EXPERIMENTAL=1
@@ -561,7 +562,7 @@ async function setupNim(sandboxName, gpu) {
     key: "cloud",
     label:
       "NVIDIA Cloud API (build.nvidia.com)" +
-      (!ollamaRunning && !(EXPERIMENTAL && vllmRunning) ? " (recommended)" : ""),
+      (!ollamaRunning && !(EXPERIMENTAL && vllmRunning) && !(EXPERIMENTAL && lmstudioRunning) ? " (recommended)" : ""),
   });
   if (hasOllama || ollamaRunning) {
     options.push({
@@ -577,7 +578,16 @@ async function setupNim(sandboxName, gpu) {
       label: "Existing vLLM instance (localhost:8000) — running [experimental] (suggested)",
     });
   }
-
+  if (EXPERIMENTAL && lmstudioRunning) {
+    options.push({
+      key: "lmstudio",
+      label: "Local LM Studio (localhost:1234) — running [experimental] (suggested)",
+    });
+  }
+  if (isNonInteractive() && requestedProvider && !options.some((o) => o.key === requestedProvider)) {
+    console.error(`  Requested provider '${requestedProvider}' is not available in this environment.`);
+    process.exit(1);
+  }
   // On macOS without Ollama, offer to install it
   if (!hasOllama && process.platform === "darwin") {
     options.push({ key: "install-ollama", label: "Install Ollama (macOS)" });
@@ -598,6 +608,7 @@ async function setupNim(sandboxName, gpu) {
       const suggestions = [];
       if (vllmRunning) suggestions.push("vLLM");
       if (ollamaRunning) suggestions.push("Ollama");
+      if (EXPERIMENTAL && lmstudioRunning) suggestions.push("LM Studio");
       if (suggestions.length > 0) {
         console.log(`  Detected local inference option${suggestions.length > 1 ? "s" : ""}: ${suggestions.join(", ")}`);
         console.log("  Select one explicitly to use it. Press Enter to keep the cloud default.");
@@ -694,6 +705,10 @@ async function setupNim(sandboxName, gpu) {
       console.log("  ✓ Using existing vLLM on localhost:8000");
       provider = "vllm-local";
       model = "vllm-local";
+    } else if (selected.key === "lmstudio") {
+      console.log("  ✓ Using existing LM Studio on localhost:1234");
+      provider = "lmstudio-local";
+      model = "lmstudio-local";
     }
     // else: cloud — fall through to default below
   }
@@ -782,8 +797,26 @@ async function setupInference(sandboxName, model, provider) {
       console.error(`  ${probe.message}`);
       process.exit(1);
     }
+  } else if (provider === "lmstudio-local") {
+    const validation = validateLocalProvider(provider, runCapture);
+    if (!validation.ok) {
+      console.error(`  ${validation.message}`);
+      process.exit(1);
+    }
+    const baseUrl = getLocalProviderBaseUrl(provider);
+    run(
+      `openshell provider create --name lmstudio-local --type openai ` +
+      `--credential "OPENAI_API_KEY=lmstudio" ` +
+      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
+      `openshell provider update lmstudio-local --credential "OPENAI_API_KEY=lmstudio" ` +
+      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
+      { ignoreError: true }
+    );
+    run(
+      `openshell inference set --no-verify --provider lmstudio-local --model ${model} 2>/dev/null || true`,
+      { ignoreError: true }
+    );
   }
-
   registry.updateSandbox(sandboxName, { model, provider });
   console.log(`  ✓ Inference route set: ${provider} / ${model}`);
 }
@@ -929,7 +962,8 @@ function printDashboard(sandboxName, model, provider) {
   if (provider === "nvidia-nim") providerLabel = "NVIDIA Cloud API";
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
-
+  else if (provider === "lmstudio-local") providerLabel = "Local LM Studio";
+  
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
   // console.log(`  Dashboard    http://localhost:18789/`);
