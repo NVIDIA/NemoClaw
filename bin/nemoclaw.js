@@ -127,7 +127,7 @@ async function deploy(instanceName) {
 
   if (!exists) {
     console.log(`  Creating Brev instance '${name}' (${gpu})...`);
-    run(`brev create ${name} --gpu "${gpu}"`);
+    run(`brev create ${name} --type "${gpu}"`);
   } else {
     console.log(`  Brev instance '${name}' already exists.`);
   }
