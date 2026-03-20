@@ -36,6 +36,11 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+include = ["orchestrator", "migrations"]
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
