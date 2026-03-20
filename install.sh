@@ -603,7 +603,7 @@ main() {
   else
     warn "Skipping onboarding — nemoclaw is not on PATH. Run 'nemoclaw onboard' after updating your PATH."
   fi
-  print_done
-}
+    print_done
+  }
 
 main "$@"
