@@ -30,8 +30,6 @@ set -euo pipefail
 
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-experimental}}"
 CLOUD_EXPERIMENTAL_MODEL="${CLOUD_EXPERIMENTAL_MODEL:-${SCENARIO_A_MODEL:-${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-${NEMOCLAW_SCENARIO_A_MODEL:-moonshotai/kimi-k2.5}}}}"
-SANDBOX_NAME=test01
-CLOUD_EXPERIMENTAL_MODEL=nvidia/nemotron-3-nano-30b-a3b
 die() { printf '%s\n' "01-onboard-completion: FAIL: $*" >&2; exit 1; }
 
 set +e
