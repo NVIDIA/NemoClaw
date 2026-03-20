@@ -17,6 +17,7 @@ Protocol:
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -72,6 +73,17 @@ def openshell_available() -> bool:
     return shutil.which("openshell") is not None
 
 
+def normalize_sandbox_name(name: str) -> str:
+    """Normalize sandbox name to lowercase and validate it."""
+    normalized = name.lower()
+    # Only lowercase letters, numbers, and hyphens allowed
+    if not re.match(r'^[a-z0-9-]+$', normalized):
+        raise ValueError(f"Invalid sandbox name: '{name}'. Only lowercase letters, numbers, and hyphens are allowed.")
+    if len(normalized) > 64:
+        raise ValueError(f"Sandbox name too long: '{name}'. Must be 64 characters or less.")
+    return normalized
+
+
 # ---------------------------------------------------------------------------
 # Actions
 # ---------------------------------------------------------------------------
@@ -109,12 +121,15 @@ def action_plan(
     if endpoint_url:
         inference_cfg = {**inference_cfg, "endpoint": endpoint_url}
 
+    # Normalize sandbox name to lowercase
+    sandbox_name = normalize_sandbox_name(sandbox_cfg.get("name", "openclaw"))
+
     plan: dict[str, Any] = {
         "run_id": rid,
         "profile": profile,
         "sandbox": {
             "image": sandbox_cfg.get("image", "openclaw"),
-            "name": sandbox_cfg.get("name", "openclaw"),
+            "name": sandbox_name,
             "forward_ports": sandbox_cfg.get("forward_ports", [18789]),
         },
         "inference": {
@@ -160,7 +175,8 @@ def action_apply(
 
     sandbox_cfg: dict[str, Any] = blueprint.get("components", {}).get("sandbox", {})
 
-    sandbox_name: str = sandbox_cfg.get("name", "openclaw")
+    # Normalize sandbox name to lowercase
+    sandbox_name: str = normalize_sandbox_name(sandbox_cfg.get("name", "openclaw"))
     sandbox_image: str = sandbox_cfg.get("image", "openclaw")
     forward_ports: list[int] = sandbox_cfg.get("forward_ports", [18789])
 
@@ -282,7 +298,8 @@ def action_rollback(rid: str) -> None:
     plan_file = state_dir / "plan.json"
     if plan_file.exists():
         plan = json.loads(plan_file.read_text())
-        sandbox_name = plan.get("sandbox_name", "openclaw")
+        # Normalize sandbox name from plan (in case it was saved before normalization)
+        sandbox_name = normalize_sandbox_name(plan.get("sandbox_name", "openclaw"))
 
         progress(30, f"Stopping sandbox {sandbox_name}")
         run_cmd(
