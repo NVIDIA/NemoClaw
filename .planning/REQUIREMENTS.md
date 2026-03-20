@@ -67,32 +67,32 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PREREQ-01 | — | Pending |
-| PREREQ-02 | — | Pending |
-| PREREQ-03 | — | Pending |
-| PREREQ-04 | — | Pending |
-| PREREQ-05 | — | Pending |
-| PREREQ-06 | — | Pending |
-| PREREQ-07 | — | Pending |
-| PREREQ-08 | — | Pending |
-| PREREQ-09 | — | Pending |
-| PREREQ-10 | — | Pending |
-| SETUP-01 | — | Pending |
-| SETUP-02 | — | Pending |
-| SETUP-03 | — | Pending |
-| SETUP-04 | — | Pending |
-| SETUP-05 | — | Pending |
-| LIFE-01 | — | Pending |
-| LIFE-02 | — | Pending |
-| LIFE-03 | — | Pending |
-| LIFE-04 | — | Pending |
-| LIFE-05 | — | Pending |
+| PREREQ-01 | Phase 1 | Pending |
+| PREREQ-02 | Phase 1 | Pending |
+| PREREQ-03 | Phase 1 | Pending |
+| PREREQ-04 | Phase 1 | Pending |
+| PREREQ-05 | Phase 1 | Pending |
+| PREREQ-06 | Phase 1 | Pending |
+| PREREQ-07 | Phase 1 | Pending |
+| PREREQ-08 | Phase 1 | Pending |
+| PREREQ-09 | Phase 1 | Pending |
+| PREREQ-10 | Phase 1 | Pending |
+| SETUP-01 | Phase 2 | Pending |
+| SETUP-02 | Phase 2 | Pending |
+| SETUP-03 | Phase 2 | Pending |
+| SETUP-04 | Phase 2 | Pending |
+| SETUP-05 | Phase 2 | Pending |
+| LIFE-01 | Phase 3 | Pending |
+| LIFE-02 | Phase 3 | Pending |
+| LIFE-03 | Phase 3 | Pending |
+| LIFE-04 | Phase 3 | Pending |
+| LIFE-05 | Phase 3 | Pending |
 
 **Coverage:**
 - v1 requirements: 20 total
-- Mapped to phases: 0
-- Unmapped: 20 ⚠️
+- Mapped to phases: 20
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-20*
-*Last updated: 2026-03-20 after initial definition*
+*Last updated: 2026-03-20 after roadmap creation*
