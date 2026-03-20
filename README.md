@@ -1,4 +1,4 @@
-# NVIDIA NemoClaw: OpenClaw Plugin for OpenShell
+# NVIDIA NemoClaw: Reference stack for running OpenClaw in OpenShell
 
 <!-- start-badges -->
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue)](https://github.com/NVIDIA/NemoClaw/blob/main/LICENSE)
