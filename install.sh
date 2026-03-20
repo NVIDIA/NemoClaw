@@ -256,9 +256,9 @@ install_nodejs() {
   spin "Installing nvm..." bash "$nvm_tmp"
   rm -f "$nvm_tmp"
   ensure_nvm_loaded
-  spin "Installing Node.js 22..." bash -c ". \"$NVM_DIR/nvm.sh\" && nvm install 22 --no-progress"
+  spin "Installing Node.js ${RECOMMENDED_NODE_MAJOR}..." bash -c ". \"$NVM_DIR/nvm.sh\" && nvm install ${RECOMMENDED_NODE_MAJOR} --no-progress"
   ensure_nvm_loaded
-  nvm use 22 --silent
+  nvm use "${RECOMMENDED_NODE_MAJOR}" --silent
   info "Node.js installed: $(node --version)"
 }
 
@@ -454,6 +454,7 @@ main() {
       --non-interactive) NON_INTERACTIVE=1 ;;
       --version) printf "nemoclaw-installer v%s\n" "$NEMOCLAW_VERSION"; exit 0 ;;
       --help|-h) usage; exit 0 ;;
+      *) usage; error "Unknown option: $arg" ;;
     esac
   done
   # Also honor env var
@@ -474,7 +475,11 @@ main() {
   post_install_message
 
   step 3 "Onboarding"
-  run_onboard
+  if command_exists nemoclaw; then
+    run_onboard
+  else
+    warn "Skipping onboarding — nemoclaw is not on PATH. Run 'nemoclaw onboard' after updating your PATH."
+  fi
 
   print_done
 }
