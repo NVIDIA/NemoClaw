@@ -1200,6 +1200,7 @@ async function listSandboxes() {
 // ── Sandbox-scoped actions ───────────────────────────────────────
 
 async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false } = {}) {
+  const { isSandboxReady, parseSandboxStatus } = require("./lib/onboard");
   await ensureLiveSandboxOrExit(sandboxName);
 
   // Version staleness check — warn but don't block
@@ -1270,6 +1271,88 @@ async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false 
     }
   } catch {
     /* non-fatal — don't block connect on inference route swap failure */
+  }
+
+  const rawTimeout = process.env.NEMOCLAW_CONNECT_TIMEOUT;
+  let timeout = 120;
+  if (rawTimeout !== undefined) {
+    const parsed = parseInt(rawTimeout, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      console.warn(`  Warning: invalid NEMOCLAW_CONNECT_TIMEOUT="${rawTimeout}", using default 120s`);
+    } else {
+      timeout = parsed;
+    }
+  }
+  const interval = 3;
+  const startedAt = Date.now();
+  const deadline = startedAt + timeout * 1000;
+  const elapsedSec = () => Math.floor((Date.now() - startedAt) / 1000);
+  const remainingMs = () => Math.max(1, deadline - Date.now());
+  const runSandboxList = () =>
+    captureOpenshell(["sandbox", "list"], {
+      ignoreError: true,
+      timeout: remainingMs(),
+    }).output;
+
+  const list = runSandboxList();
+  if (!isSandboxReady(list, sandboxName)) {
+    const status = parseSandboxStatus(list, sandboxName);
+    const TERMINAL = new Set([
+      "Failed",
+      "Error",
+      "CrashLoopBackOff",
+      "ImagePullBackOff",
+      "Unknown",
+      "Evicted",
+    ]);
+    if (status && TERMINAL.has(status)) {
+      console.error("");
+      console.error(`  Sandbox '${sandboxName}' is in '${status}' state.`);
+      console.error(`  Run:  nemoclaw ${sandboxName} logs --follow`);
+      console.error(`  Run:  nemoclaw ${sandboxName} status`);
+      process.exit(1);
+    }
+
+    console.log(`  Waiting for sandbox '${sandboxName}' to be ready...`);
+    let ready = false;
+    let everSeen = status !== null;
+    while (Date.now() < deadline) {
+      const sleepFor = Math.min(interval, remainingMs() / 1000);
+      if (sleepFor <= 0) break;
+      spawnSync("sleep", [String(sleepFor)]);
+      const poll = runSandboxList();
+      const elapsed = elapsedSec();
+      if (isSandboxReady(poll, sandboxName)) {
+        ready = true;
+        break;
+      }
+      const cur = parseSandboxStatus(poll, sandboxName) || "unknown";
+      if (cur !== "unknown") everSeen = true;
+      if (TERMINAL.has(cur)) {
+        console.error("");
+        console.error(`  Sandbox '${sandboxName}' entered '${cur}' state.`);
+        console.error(`  Run:  nemoclaw ${sandboxName} logs --follow`);
+        console.error(`  Run:  nemoclaw ${sandboxName} status`);
+        process.exit(1);
+      }
+      if (!everSeen && elapsed >= 30) {
+        console.error("");
+        console.error(`  Sandbox '${sandboxName}' not found after ${elapsed}s.`);
+        console.error(`  Check: openshell sandbox list`);
+        process.exit(1);
+      }
+      process.stdout.write(`\r    Status: ${cur.padEnd(20)} (${elapsed}s elapsed)`);
+    }
+
+    if (!ready) {
+      console.error("");
+      console.error(`  Timed out after ${timeout}s waiting for sandbox '${sandboxName}'.`);
+      console.error(`  Check: openshell sandbox list`);
+      console.error(`  Override timeout: NEMOCLAW_CONNECT_TIMEOUT=300 nemoclaw ${sandboxName} connect`);
+      process.exit(1);
+    }
+    console.log(`\r    Status: ${"Ready".padEnd(20)} (${elapsedSec()}s elapsed)`);
+    console.log("  Sandbox is ready. Connecting...");
   }
 
   // Print a one-shot hint before dropping the user into the sandbox
