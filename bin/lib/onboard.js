@@ -104,7 +104,8 @@ function listOllamaModels() {
 }
 
 function createOllamaChatVariant(baseModel) {
-  const variantName = baseModel.replace(/:.*$/, "") + "-chat";
+  const { withoutTag } = parseOllamaModelRef(baseModel);
+  const variantName = withoutTag + "-chat";
   const modelfilePath = path.join(os.tmpdir(), `nemoclaw-modelfile-${Date.now()}`);
   try {
     fs.writeFileSync(modelfilePath, `FROM ${baseModel}\n`, "utf-8");
@@ -475,8 +476,6 @@ async function createSandbox(gpu) {
   }
 
   // Stage build context
-  const { mkdtempSync } = require("fs");
-  const os = require("os");
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
   fs.copyFileSync(path.join(ROOT, "Dockerfile"), path.join(buildCtx, "Dockerfile"));
   run(`cp -r "${path.join(ROOT, "nemoclaw")}" "${buildCtx}/nemoclaw"`);
