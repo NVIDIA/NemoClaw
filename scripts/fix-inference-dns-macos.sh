@@ -63,8 +63,8 @@ if [ -z "$TARGET_IP" ]; then
   exit 0
 fi
 
-# Basic IP format validation — reject unexpected kubectl output
-if ! echo "$TARGET_IP" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+# Strict IPv4 validation — reject out-of-range octets and unexpected output
+if ! echo "$TARGET_IP" | grep -qE '^((25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})$'; then
   echo "WARN: Invalid IP format '$TARGET_IP'. DNS fix skipped."
   exit 0
 fi
