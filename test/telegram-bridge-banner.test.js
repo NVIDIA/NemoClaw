@@ -96,4 +96,88 @@ describe("telegram bridge banner", () => {
     // Clean up
     fs.rmSync(tmp, { recursive: true, force: true });
   });
+
+  it("/start response uses registry provider and model instead of hardcoding", () => {
+    const bridgeSrc = fs.readFileSync(
+      path.join(__dirname, "..", "scripts", "telegram-bridge.js"),
+      "utf-8",
+    );
+
+    // The /start handler must not contain a hardcoded model name string
+    const startBlock = bridgeSrc.slice(
+      bridgeSrc.indexOf('"/start"'),
+      bridgeSrc.indexOf("continue;", bridgeSrc.indexOf('"/start"')),
+    );
+    assert.ok(startBlock.length > 0, "should find the /start handler block");
+    assert.doesNotMatch(
+      startBlock,
+      /Nemotron 3 Super 120B/,
+      "/start handler should not contain hardcoded 'Nemotron 3 Super 120B'",
+    );
+    // Must reference the registry for both provider and model
+    assert.match(
+      startBlock,
+      /registry\.getSandbox/,
+      "/start handler should look up the sandbox from the registry",
+    );
+    assert.match(
+      startBlock,
+      /provider/i,
+      "/start handler should reference the provider",
+    );
+  });
+
+  it("/start response reflects configured provider and model from registry", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-test-"));
+    const registryDir = path.join(tmp, ".nemoclaw");
+    fs.mkdirSync(registryDir, { recursive: true });
+
+    const registryData = {
+      sandboxes: {
+        "test-sandbox": {
+          name: "test-sandbox",
+          createdAt: new Date().toISOString(),
+          model: "qwen2.5:14b-instruct",
+          provider: "ollama-local",
+          gpuEnabled: false,
+          policies: [],
+        },
+      },
+      defaultSandbox: "test-sandbox",
+    };
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify(registryData, null, 2),
+    );
+
+    const { spawnSync } = require("node:child_process");
+    const result = spawnSync(
+      "node",
+      [
+        "-e",
+        `
+        const registry = require("./bin/lib/registry");
+        const info = registry.getSandbox("test-sandbox");
+        const model = info?.model || "nvidia/nemotron-3-super-120b-a12b";
+        const provider = info?.provider || "nvidia-nim";
+        const startMsg = "\u{1F980} *NemoClaw* — " + provider + " / " + model;
+        console.log(startMsg);
+        `,
+      ],
+      {
+        cwd: path.join(__dirname, ".."),
+        encoding: "utf-8",
+        timeout: 5000,
+        env: { ...process.env, HOME: tmp },
+      },
+    );
+
+    assert.equal(result.status, 0, `script failed: ${result.stderr}`);
+    const output = result.stdout;
+    assert.match(output, /ollama-local/, "/start should contain the configured provider");
+    assert.match(output, /qwen2\.5:14b-instruct/, "/start should contain the configured model");
+    assert.doesNotMatch(output, /Nemotron/, "/start should not contain the hardcoded default");
+
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
 });
