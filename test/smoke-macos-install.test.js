@@ -69,7 +69,7 @@ describe("macOS smoke install script guardrails", () => {
 
   it("stages the policy preset no answer after sandbox setup", () => {
     const script = `
-      set -euo pipefail
+      set -eo pipefail
       source "${SMOKE_SCRIPT}"
       answers_pipe="$(mktemp -u)"
       install_log="$(mktemp)"

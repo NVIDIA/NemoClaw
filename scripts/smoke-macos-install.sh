@@ -5,7 +5,11 @@
 # Run the primary NemoClaw install flow on a local machine, capture logs,
 # then uninstall and verify cleanup. Intended for manual smoke validation.
 
-set -euo pipefail
+# Only set strict mode when executed directly (not when sourced for unit testing).
+# Login shells may load tools (e.g. rvm) that break under set -u.
+if [ "${BASH_SOURCE[0]-}" = "$0" ] || { [ -z "${BASH_SOURCE[0]-}" ] && { [ "$0" = "bash" ] || [ "$0" = "-bash" ]; }; }; then
+  set -euo pipefail
+fi
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
