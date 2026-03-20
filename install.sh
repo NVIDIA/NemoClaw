@@ -44,14 +44,28 @@ ensure_nvm_loaded() {
   fi
 }
 
+# Resolve the active npm global bin without letting a host nvm install
+# override an already-working node/npm on PATH.
+resolve_npm_bin() {
+  if ! command_exists npm; then
+    ensure_nvm_loaded
+  fi
+
+  command_exists npm || return 1
+
+  local npm_prefix
+  npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+  [[ -n "$npm_prefix" ]] || return 1
+
+  printf '%s/bin\n' "$npm_prefix"
+}
+
 # Refresh PATH so that npm global bin is discoverable.
 # After nvm installs Node.js the global bin lives under the nvm prefix,
 # which may not yet be on PATH in the current session.
 refresh_path() {
-  ensure_nvm_loaded
-
   local npm_bin
-  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  npm_bin="$(resolve_npm_bin)" || true
   if [[ -n "$npm_bin" && -d "$npm_bin" && ":$PATH:" != *":$npm_bin:"* ]]; then
     export PATH="$npm_bin:$PATH"
   fi
@@ -63,7 +77,7 @@ refresh_path() {
 
 ensure_nemoclaw_shim() {
   local npm_bin shim_path
-  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  npm_bin="$(resolve_npm_bin)" || true
   shim_path="${NEMOCLAW_SHIM_DIR}/nemoclaw"
 
   if [[ -z "$npm_bin" || ! -x "$npm_bin/nemoclaw" ]]; then
@@ -300,7 +314,7 @@ verify_nemoclaw() {
   warn "nemoclaw is not on PATH after installation."
 
   local npm_bin
-  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  npm_bin="$(resolve_npm_bin)" || true
 
   if [[ -n "$npm_bin" && -x "$npm_bin/nemoclaw" ]]; then
     ensure_nemoclaw_shim || true

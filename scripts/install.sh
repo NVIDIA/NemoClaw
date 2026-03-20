@@ -107,12 +107,26 @@ ensure_nvm_loaded() {
   fi
 }
 
+# Resolve the active npm global bin without letting a host nvm install
+# override an already-working node/npm on PATH.
+resolve_npm_bin() {
+  if ! command -v npm > /dev/null 2>&1; then
+    ensure_nvm_loaded
+  fi
+
+  command -v npm > /dev/null 2>&1 || return 1
+
+  local npm_prefix
+  npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+  [ -n "$npm_prefix" ] || return 1
+
+  printf '%s/bin\n' "$npm_prefix"
+}
+
 # Refresh PATH so that npm global bin is discoverable.
 refresh_path() {
-  ensure_nvm_loaded
-
   local npm_bin
-  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  npm_bin="$(resolve_npm_bin)" || true
   if [ -n "$npm_bin" ] && [ -d "$npm_bin" ]; then
     case ":$PATH:" in
       *":$npm_bin:"*) ;;  # already on PATH
@@ -437,7 +451,7 @@ if ! command -v nemoclaw > /dev/null 2>&1; then
 fi
 
 if ! command -v nemoclaw > /dev/null 2>&1; then
-  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  npm_bin="$(resolve_npm_bin)" || true
   if [ -n "$npm_bin" ] && [ -x "$npm_bin/nemoclaw" ]; then
     warn "nemoclaw installed at $npm_bin/nemoclaw but not on current PATH."
     warn ""

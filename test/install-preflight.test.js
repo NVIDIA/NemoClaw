@@ -17,6 +17,16 @@ function writeExecutable(target, contents) {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
+function installerEnv(tmp, fakeBin, extra = {}) {
+  return {
+    ...process.env,
+    HOME: tmp,
+    PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+    NVM_DIR: path.join(tmp, ".nvm"),
+    ...extra,
+  };
+}
+
 describe("installer runtime preflight", () => {
   it("fails fast with a clear message on unsupported Node.js and npm", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-preflight-"));
@@ -50,11 +60,7 @@ exit 98
     const result = spawnSync("bash", [INSTALLER], {
       cwd: path.join(__dirname, ".."),
       encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-      },
+      env: installerEnv(tmp, fakeBin),
     });
 
     const output = `${result.stdout}${result.stderr}`;
@@ -147,14 +153,11 @@ exit 98
     const result = spawnSync("bash", [INSTALLER], {
       cwd: tmp,
       encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+      env: installerEnv(tmp, fakeBin, {
         NEMOCLAW_NON_INTERACTIVE: "1",
         NPM_PREFIX: prefix,
         GIT_LOG_PATH: gitLog,
-      },
+      }),
     });
 
     assert.equal(result.status, 0);
@@ -229,13 +232,10 @@ exit 98
     const result = spawnSync("bash", [INSTALLER], {
       cwd: tmp,
       encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+      env: installerEnv(tmp, fakeBin, {
         NEMOCLAW_NON_INTERACTIVE: "1",
         NPM_PREFIX: prefix,
-      },
+      }),
     });
 
     const output = `${result.stdout}${result.stderr}`;
@@ -310,12 +310,9 @@ echo "Darwin"
     const result = spawnSync("bash", [CURL_PIPE_INSTALLER], {
       cwd: path.join(__dirname, ".."),
       encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+      env: installerEnv(tmp, fakeBin, {
         NEMOCLAW_TEST_SOCKET_PATHS: `${colimaSocket}:${dockerDesktopSocket}`,
-      },
+      }),
     });
 
     const output = `${result.stdout}${result.stderr}`;
@@ -423,13 +420,10 @@ exit 0
       cwd: tmp,
       input: scriptContents,
       encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+      env: installerEnv(tmp, fakeBin, {
         NEMOCLAW_NON_INTERACTIVE: "1",
         NPM_PREFIX: prefix,
-      },
+      }),
     });
 
     const output = `${result.stdout}${result.stderr}`;
@@ -539,18 +533,99 @@ exit 0
     const result = spawnSync("bash", [INSTALLER], {
       cwd: tmp,
       encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+      env: installerEnv(tmp, fakeBin, {
         NEMOCLAW_NON_INTERACTIVE: "1",
         NPM_PREFIX: prefix,
-      },
+      }),
     });
 
     const shimPath = path.join(tmp, ".local", "bin", "nemoclaw");
     assert.equal(result.status, 0);
     assert.equal(fs.readlinkSync(shimPath), path.join(prefix, "bin", "nemoclaw"));
     assert.match(`${result.stdout}${result.stderr}`, /Created user-local shim/);
+  });
+
+  it("prefers the active npm over a host nvm environment during PATH refresh", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-nvm-precedence-"));
+    const fakeBin = path.join(tmp, "bin");
+    const prefix = path.join(tmp, "prefix");
+    const hostileNvmDir = path.join(tmp, "hostile-nvm");
+    const hostileNvmBin = path.join(hostileNvmDir, "bin");
+    const hostileNpmLog = path.join(tmp, "hostile-npm.log");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+    fs.mkdirSync(hostileNvmBin, { recursive: true });
+
+    writeExecutable(
+      path.join(fakeBin, "node"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "v22.14.0"
+  exit 0
+fi
+echo "unexpected node invocation: $*" >&2
+exit 99
+`,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "--version" ]; then
+  echo "10.9.2"
+  exit 0
+fi
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
+  echo "$NPM_PREFIX"
+  exit 0
+fi
+if [ "$1" = "install" ] && [ "$2" = "-g" ] && [ "$3" = "${GITHUB_INSTALL_URL}" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+if [ "$1" = "onboard" ]; then
+  exit 0
+fi
+if [ "$1" = "--version" ]; then
+  echo "v0.1.0-test"
+  exit 0
+fi
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi
+echo "unexpected npm invocation: $*" >&2
+exit 98
+`,
+    );
+
+    writeExecutable(
+      path.join(hostileNvmBin, "npm"),
+      `#!/usr/bin/env bash
+echo "hostile nvm npm should not be used" >> "$HOSTILE_NPM_LOG"
+exit 97
+`,
+    );
+
+    fs.writeFileSync(
+      path.join(hostileNvmDir, "nvm.sh"),
+      `export PATH="${hostileNvmBin}:$PATH"\n`,
+    );
+
+    const result = spawnSync("bash", [INSTALLER], {
+      cwd: tmp,
+      encoding: "utf-8",
+      env: installerEnv(tmp, fakeBin, {
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NPM_PREFIX: prefix,
+        NVM_DIR: hostileNvmDir,
+        HOSTILE_NPM_LOG: hostileNpmLog,
+      }),
+    });
+
+    assert.equal(result.status, 0);
+    assert.equal(fs.existsSync(hostileNpmLog), false);
+    assert.match(`${result.stdout}${result.stderr}`, /Verified: nemoclaw is available/);
   });
 });
