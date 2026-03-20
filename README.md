@@ -224,7 +224,7 @@ Run these inside the OpenClaw CLI. These commands are under active development a
 | `openclaw nemoclaw status`                 | Show sandbox health, blueprint state, and inference.     |
 | `openclaw nemoclaw logs [-f]`              | Stream blueprint execution and sandbox logs.             |
 
-See the full [CLI reference](https://docs.nvidia.com/nemoclaw/latest/reference/commands.md) for all commands, flags, and options.
+See the full [CLI reference](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html) for all commands, flags, and options.
 
 > **Known limitations:**
 > - The `openclaw nemoclaw` plugin commands are under active development. Use the `nemoclaw` host CLI as the primary interface.
