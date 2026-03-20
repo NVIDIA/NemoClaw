@@ -37,10 +37,9 @@ if [[ -z "${NO_COLOR:-}" && -t 1 ]]; then
   C_RED=$'\033[1;31m'
   C_YELLOW=$'\033[1;33m'
   C_CYAN=$'\033[1;36m'
-  C_WHITE=$'\033[1;37m'
   C_RESET=$'\033[0m'
 else
-  C_GREEN='' C_CLAW='' C_BOLD='' C_DIM='' C_RED='' C_YELLOW='' C_CYAN='' C_WHITE='' C_RESET=''
+  C_GREEN='' C_CLAW='' C_BOLD='' C_DIM='' C_RED='' C_YELLOW='' C_CYAN='' C_RESET=''
 fi
 
 # ---------------------------------------------------------------------------
