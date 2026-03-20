@@ -398,3 +398,257 @@ Describe "Test Guard for Testing" -Tag "TestInfra" {
         $content | Should -Match 'NEMOCLAW_TESTING'
     }
 }
+
+# ---------------------------------------------------------------------------
+# SETUP-01: Named Ubuntu 22.04 container with port 18789 forwarded
+# ---------------------------------------------------------------------------
+
+Describe "Container Creation" -Tag "Container", "SETUP-01" {
+    It "Remove-ExistingContainer function exists" {
+        Get-Command Remove-ExistingContainer | Should -Not -BeNullOrEmpty
+    }
+    It "Start-NemoClawContainer function exists" {
+        Get-Command Start-NemoClawContainer | Should -Not -BeNullOrEmpty
+    }
+    It "removes existing container before rebuild" {
+        Mock docker {
+            if ($args -contains "ps") { "nemoclaw" }
+            elseif ($args -contains "stop") { $global:LASTEXITCODE = 0 }
+            elseif ($args -contains "rm") { $global:LASTEXITCODE = 0 }
+        }
+        Mock Write-Info {}
+        Mock Write-Ok {}
+        Mock Out-Null {}
+        Remove-ExistingContainer
+        Should -Invoke docker -Times 3
+    }
+    It "skips removal when no existing container" {
+        Mock docker {
+            if ($args -contains "ps") { "" }
+        }
+        Remove-ExistingContainer
+        # Only the ps check, no stop/rm
+        Should -Invoke docker -Times 1
+    }
+    It "starts container with correct name and port" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match "--name nemoclaw"
+        $content | Should -Match "-p 18789:18789"
+    }
+    It "runs container in detached mode" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match "docker run -d"
+    }
+    It "uses exact name filter with anchors for container check" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match 'name=\^nemoclaw\$'
+    }
+}
+
+# ---------------------------------------------------------------------------
+# SETUP-02: Desktop/NemoClaw folder creation and mount
+# ---------------------------------------------------------------------------
+
+Describe "Shared Folder" -Tag "SharedFolder", "SETUP-02" {
+    It "New-NemoClawFolder function exists" {
+        Get-Command New-NemoClawFolder | Should -Not -BeNullOrEmpty
+    }
+    It "uses GetFolderPath for OneDrive-safe Desktop path" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match '\[Environment\]::GetFolderPath\("Desktop"\)'
+    }
+    It "creates folder when it does not exist" {
+        Mock Test-Path { $false } -ParameterFilter { $Path -like "*NemoClaw" }
+        Mock New-Item { [PSCustomObject]@{ FullName = "C:\Users\test\Desktop\NemoClaw" } }
+        Mock Write-Ok {}
+        Mock Out-Null {}
+        $result = New-NemoClawFolder
+        Should -Invoke New-Item -Times 1
+        $result | Should -Match "NemoClaw"
+    }
+    It "skips creation when folder already exists" {
+        Mock Test-Path { $true } -ParameterFilter { $Path -like "*NemoClaw" }
+        Mock Write-Info {}
+        $result = New-NemoClawFolder
+        $result | Should -Match "NemoClaw"
+    }
+    It "mounts shared folder into container at /home/nemoclaw/shared" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match "/home/nemoclaw/shared"
+    }
+    It "does not hardcode Desktop path with USERPROFILE" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        # New-NemoClawFolder should NOT use $env:USERPROFILE\Desktop
+        $content | Should -Not -Match 'USERPROFILE.*\\Desktop.*NemoClaw'
+    }
+}
+
+# ---------------------------------------------------------------------------
+# SETUP-03: API key prompt, persist, and pass to container
+# ---------------------------------------------------------------------------
+
+Describe "API Key Handling" -Tag "ApiKey", "SETUP-03" {
+    It "Save-NvidiaApiKey function exists" {
+        Get-Command Save-NvidiaApiKey | Should -Not -BeNullOrEmpty
+    }
+    It "Get-NvidiaApiKey function exists" {
+        Get-Command Get-NvidiaApiKey | Should -Not -BeNullOrEmpty
+    }
+    It "Request-NvidiaApiKey function exists" {
+        Get-Command Request-NvidiaApiKey | Should -Not -BeNullOrEmpty
+    }
+    It "uses ConvertFrom-SecureString for DPAPI encryption" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match "ConvertFrom-SecureString"
+    }
+    It "uses SecureStringToBSTR for PS 5.1 compatible decryption" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match "SecureStringToBSTR"
+        $content | Should -Match "PtrToStringAuto"
+        $content | Should -Match "ZeroFreeBSTR"
+    }
+    It "does not use -AsPlainText on ConvertFrom-SecureString (PS7+ only)" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Not -Match "ConvertFrom-SecureString.*-AsPlainText"
+    }
+    It "uses Read-Host -AsSecureString for masked input" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match "Read-Host.*-AsSecureString"
+    }
+    It "stores API key in registry at NemoClaw path" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match 'Set-ItemProperty.*-Name ApiKey'
+    }
+    It "passes NVIDIA_API_KEY as env var to docker run" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match '-e.*NVIDIA_API_KEY'
+    }
+    It "Get-NvidiaApiKey returns null when no key stored" {
+        Mock Get-ItemProperty { throw "not found" }
+        $result = Get-NvidiaApiKey
+        $result | Should -BeNullOrEmpty
+    }
+    It "Request-NvidiaApiKey skips prompt when key exists in registry" {
+        Mock Get-NvidiaApiKey { "nvapi-test-key-123" }
+        Mock Read-Host {}
+        Mock Write-Info {}
+        $result = Request-NvidiaApiKey
+        $result | Should -Be "nvapi-test-key-123"
+        Should -Invoke Read-Host -Times 0
+    }
+}
+
+# ---------------------------------------------------------------------------
+# SETUP-04: install.sh runs non-interactively inside container
+# ---------------------------------------------------------------------------
+
+Describe "Dockerfile and Image Build" -Tag "DockerBuild", "SETUP-04" {
+    It "Build-NemoClawImage function exists" {
+        Get-Command Build-NemoClawImage | Should -Not -BeNullOrEmpty
+    }
+    It "Dockerfile.nemoclaw exists" {
+        "$PSScriptRoot\..\Dockerfile.nemoclaw" | Should -Exist
+    }
+    It "Dockerfile uses ubuntu:22.04 base" {
+        $content = Get-Content "$PSScriptRoot\..\Dockerfile.nemoclaw" -Raw
+        $content | Should -Match "FROM ubuntu:22.04"
+    }
+    It "Dockerfile sets DEBIAN_FRONTEND=noninteractive" {
+        $content = Get-Content "$PSScriptRoot\..\Dockerfile.nemoclaw" -Raw
+        $content | Should -Match "DEBIAN_FRONTEND=noninteractive"
+    }
+    It "Dockerfile installs curl, ca-certificates, git" {
+        $content = Get-Content "$PSScriptRoot\..\Dockerfile.nemoclaw" -Raw
+        $content | Should -Match "curl"
+        $content | Should -Match "ca-certificates"
+        $content | Should -Match "git"
+    }
+    It "Dockerfile copies and runs install.sh with non-interactive flag" {
+        $content = Get-Content "$PSScriptRoot\..\Dockerfile.nemoclaw" -Raw
+        $content | Should -Match "COPY install\.sh"
+        $content | Should -Match "NEMOCLAW_NON_INTERACTIVE=1.*install\.sh.*--non-interactive"
+    }
+    It "Dockerfile copies nemoclaw-start.sh as entrypoint" {
+        $content = Get-Content "$PSScriptRoot\..\Dockerfile.nemoclaw" -Raw
+        $content | Should -Match "COPY scripts/nemoclaw-start\.sh"
+        $content | Should -Match "nemoclaw-start"
+    }
+    It "Dockerfile exposes port 18789" {
+        $content = Get-Content "$PSScriptRoot\..\Dockerfile.nemoclaw" -Raw
+        $content | Should -Match "EXPOSE 18789"
+    }
+    It "Dockerfile cleans apt cache in same layer" {
+        $content = Get-Content "$PSScriptRoot\..\Dockerfile.nemoclaw" -Raw
+        $content | Should -Match "rm -rf /var/lib/apt/lists"
+    }
+    It "Build-NemoClawImage uses Dockerfile.nemoclaw path" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match "Dockerfile\.nemoclaw"
+    }
+}
+
+# ---------------------------------------------------------------------------
+# SETUP-05: Container health and dashboard reachability
+# ---------------------------------------------------------------------------
+
+Describe "Dashboard Health Check" -Tag "HealthCheck", "SETUP-05" {
+    It "Test-DashboardReady function exists" {
+        Get-Command Test-DashboardReady | Should -Not -BeNullOrEmpty
+    }
+    It "Show-ContainerBanner function exists" {
+        Get-Command Show-ContainerBanner | Should -Not -BeNullOrEmpty
+    }
+    It "Install-NemoClawContainer function exists" {
+        Get-Command Install-NemoClawContainer | Should -Not -BeNullOrEmpty
+    }
+    It "returns true when dashboard responds with 200" {
+        Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200 } }
+        Mock Write-Info {}
+        Mock Write-Host {}
+        $result = Test-DashboardReady -TimeoutSeconds 10 -IntervalSeconds 1
+        $result | Should -Be $true
+    }
+    It "returns false when dashboard never responds" {
+        Mock Invoke-WebRequest { throw "Connection refused" }
+        Mock Start-Sleep {}
+        Mock Write-Info {}
+        Mock Write-Host {}
+        $result = Test-DashboardReady -TimeoutSeconds 5 -IntervalSeconds 5
+        $result | Should -Be $false
+    }
+    It "polls http://localhost:18789" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match 'Invoke-WebRequest.*localhost:18789'
+    }
+    It "uses UseBasicParsing for compatibility" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match '-UseBasicParsing'
+    }
+    It "defaults to 180 second timeout" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match 'TimeoutSeconds\s*=\s*180'
+    }
+    It "defaults to 5 second interval" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match 'IntervalSeconds\s*=\s*5'
+    }
+    It "success banner includes container running, shared folder, dashboard reachable, and URL" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match "Container.*nemoclaw.*running"
+        $content | Should -Match "Shared folder"
+        $content | Should -Match "Dashboard is reachable"
+        $content | Should -Match "http://localhost:18789"
+    }
+    It "does NOT auto-open browser" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Not -Match "Start-Process.*http"
+        $content | Should -Not -Match "explorer.*http"
+    }
+    It "Phase 2 state machine has correct stage names" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match "API_KEY_STORED"
+        $content | Should -Match "IMAGE_BUILT"
+        $content | Should -Match "CONTAINER_RUNNING"
+        $content | Should -Match "DASHBOARD_READY"
+    }
+}
