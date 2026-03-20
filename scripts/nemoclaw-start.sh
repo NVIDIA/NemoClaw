@@ -180,6 +180,11 @@ if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
 fi
 
 nohup openclaw gateway run > /tmp/gateway.log 2>&1 &
-echo "[gateway] openclaw gateway launched (pid $!)"
+GATEWAY_PID=$!
+echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)"
 start_auto_pair
 print_dashboard_urls
+
+# Keep the container alive by tailing the gateway log.
+# This also makes 'docker logs nemoclaw' show gateway output.
+exec tail -f /tmp/gateway.log
