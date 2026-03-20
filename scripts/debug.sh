@@ -14,7 +14,7 @@
 #   nemoclaw debug [--quick] [--output path]    # via CLI wrapper
 #
 # Can also be run without cloning:
-#   curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/debug.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/debug.sh | bash -s -- --quick
 
 set -euo pipefail
 
@@ -67,13 +67,12 @@ Examples:
   nemoclaw debug
   nemoclaw debug --quick
   nemoclaw debug --output /tmp/diag.tar.gz
-  curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/debug.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/debug.sh | bash -s -- --quick
 USAGE
       exit 0
       ;;
     *)
-      warn "Unknown option: $1"
-      shift
+      fail "Unknown option: $1 (see --help)"
       ;;
   esac
 done
@@ -91,8 +90,17 @@ elif command -v gtimeout >/dev/null 2>&1; then
   TIMEOUT_BIN="gtimeout"
 fi
 
+# Redact known sensitive patterns (API keys, tokens, passwords in env/args).
+redact() {
+  sed -E \
+    -e 's/(NVIDIA_API_KEY|API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY)=\S+/\1=<REDACTED>/gi' \
+    -e 's/(nvapi-[A-Za-z0-9_-]{10,})/<REDACTED>/g' \
+    -e 's/(ghp_[A-Za-z0-9]{30,})/<REDACTED>/g' \
+    -e 's/(Bearer )[^ ]+/\1<REDACTED>/gi'
+}
+
 # Run a command, print output, and save to a file in the collect dir.
-# Silently skips commands that are not found.
+# Silently skips commands that are not found. Output is redacted for secrets.
 collect() {
   local label="$1"
   shift
@@ -106,11 +114,15 @@ collect() {
   fi
 
   local rc=0
+  local tmpout="${outfile}.raw"
   if [ -n "$TIMEOUT_BIN" ]; then
-    "$TIMEOUT_BIN" 30 "$@" > "$outfile" 2>&1 || rc=$?
+    "$TIMEOUT_BIN" 30 "$@" > "$tmpout" 2>&1 || rc=$?
   else
-    "$@" > "$outfile" 2>&1 || rc=$?
+    "$@" > "$tmpout" 2>&1 || rc=$?
   fi
+
+  redact < "$tmpout" > "$outfile"
+  rm -f "$tmpout"
 
   cat "$outfile"
   if [ "$rc" -ne 0 ]; then
@@ -242,7 +254,7 @@ collect "dmesg" sh -c 'dmesg | tail -100'
 if [ -n "$OUTPUT" ]; then
   tar czf "$OUTPUT" -C "$(dirname "$COLLECT_DIR")" "$(basename "$COLLECT_DIR")"
   info "Tarball written to ${OUTPUT}"
-  warn "Diagnostics may contain sensitive data (tokens, hostnames, IPs). Review/redact before sharing."
+  warn "Known secrets are auto-redacted, but please review for any remaining sensitive data before sharing."
   info "Attach this file to your GitHub issue."
 fi
 
