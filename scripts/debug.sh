@@ -83,6 +83,14 @@ done
 TMPDIR_BASE="${TMPDIR:-/tmp}"
 COLLECT_DIR=$(mktemp -d "${TMPDIR_BASE}/nemoclaw-debug-XXXXXX")
 
+# Detect timeout binary (GNU coreutils; gtimeout on macOS via brew)
+TIMEOUT_BIN=""
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="gtimeout"
+fi
+
 # Run a command, print output, and save to a file in the collect dir.
 # Silently skips commands that are not found.
 collect() {
@@ -97,11 +105,15 @@ collect() {
     return 0
   fi
 
-  # Run with a timeout to avoid hangs
-  if timeout 30 "$@" > "$outfile" 2>&1; then
-    cat "$outfile"
+  local rc=0
+  if [ -n "$TIMEOUT_BIN" ]; then
+    "$TIMEOUT_BIN" 30 "$@" > "$outfile" 2>&1 || rc=$?
   else
-    cat "$outfile"
+    "$@" > "$outfile" 2>&1 || rc=$?
+  fi
+
+  cat "$outfile"
+  if [ "$rc" -ne 0 ]; then
     echo "  (command exited with non-zero status)"
   fi
 }
@@ -137,12 +149,12 @@ fi
 # -- Processes --
 
 section "Processes"
-collect "ps-cpu" ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head -30
+collect "ps-cpu" sh -c 'ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head -30'
 
 if [ "$QUICK" = false ]; then
-  collect "ps-mem" ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%mem | head -30
+  collect "ps-mem" sh -c 'ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%mem | head -30'
   collect "ps-all" ps -ef
-  collect "top" top -b -n 1 | head -50
+  collect "top" sh -c 'top -b -n 1 | head -50'
 fi
 
 # -- GPU --
@@ -211,13 +223,14 @@ fi
 # -- dmesg (always, last 100 lines) --
 
 section "Kernel Messages"
-collect "dmesg" dmesg | tail -100
+collect "dmesg" sh -c 'dmesg | tail -100'
 
 # ── Produce tarball if requested ─────────────────────────────────
 
 if [ -n "$OUTPUT" ]; then
   tar czf "$OUTPUT" -C "$(dirname "$COLLECT_DIR")" "$(basename "$COLLECT_DIR")"
   info "Tarball written to ${OUTPUT}"
+  warn "Diagnostics may contain sensitive data (tokens, hostnames, IPs). Review/redact before sharing."
   info "Attach this file to your GitHub issue."
 fi
 
