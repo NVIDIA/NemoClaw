@@ -151,6 +151,20 @@ network_policies:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/npm }
 
+  # ── Local inference — Ollama via Docker host gateway ────────────
+  # Allows the sandbox to reach a host-side Ollama instance through
+  # the Docker host-gateway alias. Required for Jetson and other
+  # edge devices that run local inference instead of cloud APIs.
+  ollama_local:
+    name: ollama_local
+    endpoints:
+      - host: host.openshell.internal
+        port: 11434
+        access: full
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
+
   # ── Messaging — pre-allowed for agent notifications ────────────
   # Telegram Bot API is open by default so the agent can send
   # notifications and respond to chats without triggering approval.

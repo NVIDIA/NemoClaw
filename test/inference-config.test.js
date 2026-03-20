@@ -30,17 +30,13 @@ describe("inference selection config", () => {
     );
   });
 
-  it("maps ollama-local to the sandbox inference route and default model", () => {
-    assert.deepEqual(getProviderSelectionConfig("ollama-local"), {
-      endpointType: "custom",
-      endpointUrl: INFERENCE_ROUTE_URL,
-      ncpPartner: null,
-      model: DEFAULT_OLLAMA_MODEL,
-      profile: DEFAULT_ROUTE_PROFILE,
-      credentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
-      provider: "ollama-local",
-      providerLabel: "Local Ollama",
-    });
+  it("maps ollama-local to host-gateway URL (bypasses inference.local DNS)", () => {
+    const cfg = getProviderSelectionConfig("ollama-local");
+    assert.equal(cfg.endpointType, "custom");
+    assert.match(cfg.endpointUrl, /host\.openshell\.internal:11434/);
+    assert.equal(cfg.model, DEFAULT_OLLAMA_MODEL);
+    assert.equal(cfg.provider, "ollama-local");
+    assert.equal(cfg.providerLabel, "Local Ollama");
   });
 
   it("maps nvidia-nim to the sandbox inference route", () => {
