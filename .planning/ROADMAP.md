@@ -10,7 +10,7 @@ Three phases, each delivering one complete vertical capability. Phase 1 installs
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
-- [ ] **Phase 1: Prerequisites and Docker Desktop** - Get a working Docker daemon on the user's machine, surviving reboots
+- [x] **Phase 1: Prerequisites and Docker Desktop** - Get a working Docker daemon on the user's machine, surviving reboots (completed 2026-03-20)
 - [ ] **Phase 2: Container Setup and NemoClaw Install** - Create the NemoClaw container, mount shared folder, verify dashboard reachability
 - [ ] **Phase 3: Lifecycle Management** - Give users start/stop/restart/status/uninstall commands with no Docker knowledge required
 
@@ -26,7 +26,7 @@ Three phases, each delivering one complete vertical capability. Phase 1 installs
   3. On a clean Windows machine with no WSL2, script enables WSL2 and installs Docker Desktop, prompting for reboot and resuming correctly when the user runs it again after reboot
   4. After Docker Desktop is installed, script waits for the daemon to be ready and confirms `docker info` succeeds before proceeding
   5. Script rejects machines below Windows 10 build 19041 with a plain-English explanation and exits cleanly
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 Plans:
 - [ ] 01-01-PLAN.md — Create install.bat launcher and complete install.ps1 with state machine, all validation and installation functions
 - [ ] 01-02-PLAN.md — Create Pester test suite covering all PREREQ requirements with mocked system commands
@@ -60,6 +60,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Prerequisites and Docker Desktop | 0/2 | Planned | - |
+| 1. Prerequisites and Docker Desktop | 2/2 | Complete   | 2026-03-20 |
 | 2. Container Setup and NemoClaw Install | 0/TBD | Not started | - |
 | 3. Lifecycle Management | 0/TBD | Not started | - |
