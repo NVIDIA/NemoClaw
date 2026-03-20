@@ -22,9 +22,43 @@ const policies = require("./lib/policies");
 
 const GLOBAL_COMMANDS = new Set([
   "onboard", "list", "deploy", "setup", "setup-spark",
-  "start", "stop", "status",
+  "start", "stop", "status", "uninstall",
   "help", "--help", "-h",
 ]);
+
+const REMOTE_UNINSTALL_URL = "https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh";
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function resolveUninstallScript() {
+  const candidates = [
+    path.join(ROOT, "uninstall.sh"),
+    path.join(__dirname, "..", "uninstall.sh"),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function exitWithSpawnResult(result) {
+  if (result.status !== null) {
+    process.exit(result.status);
+  }
+
+  if (result.signal) {
+    const signalNumber = os.constants.signals[result.signal];
+    process.exit(signalNumber ? 128 + signalNumber : 1);
+  }
+
+  process.exit(1);
+}
 
 // ── Commands ─────────────────────────────────────────────────────
 
@@ -154,6 +188,31 @@ function stop() {
   run(`bash "${SCRIPTS}/start-services.sh" --stop`);
 }
 
+function uninstall(args) {
+  const localScript = resolveUninstallScript();
+  if (localScript) {
+    console.log(`  Running local uninstall script: ${localScript}`);
+    const result = spawnSync("bash", [localScript, ...args], {
+      stdio: "inherit",
+      cwd: ROOT,
+      env: process.env,
+    });
+    exitWithSpawnResult(result);
+  }
+
+  console.log(`  Local uninstall script not found; falling back to ${REMOTE_UNINSTALL_URL}`);
+  const forwardedArgs = args.map(shellQuote).join(" ");
+  const command = forwardedArgs.length > 0
+    ? `curl -fsSL ${shellQuote(REMOTE_UNINSTALL_URL)} | bash -s -- ${forwardedArgs}`
+    : `curl -fsSL ${shellQuote(REMOTE_UNINSTALL_URL)} | bash`;
+  const result = spawnSync("bash", ["-c", command], {
+    stdio: "inherit",
+    cwd: ROOT,
+    env: process.env,
+  });
+  exitWithSpawnResult(result);
+}
+
 function showStatus() {
   // Show sandbox registry
   const { sandboxes, defaultSandbox } = registry.listSandboxes();
@@ -229,8 +288,8 @@ function sandboxStatus(sandboxName) {
 }
 
 function sandboxLogs(sandboxName, follow) {
-  const followFlag = follow ? " --follow" : "";
-  run(`openshell sandbox logs "${sandboxName}"${followFlag}`);
+  const followFlag = follow ? " --tail" : "";
+  run(`openshell logs "${sandboxName}"${followFlag}`);
 }
 
 async function sandboxPolicyAdd(sandboxName) {
@@ -308,6 +367,12 @@ function help() {
     nemoclaw start                   Start services (Telegram, tunnel)
     nemoclaw stop                    Stop all services
     nemoclaw status                  Show sandbox list and service status
+    nemoclaw uninstall [flags]       Run uninstall.sh (local first, curl fallback)
+
+  Uninstall flags:
+    --yes                            Skip the confirmation prompt
+    --keep-openshell                 Leave the openshell binary installed
+    --delete-models                  Remove NemoClaw-pulled Ollama models
 
   Credentials are prompted on first use, then saved securely
   in ~/.nemoclaw/credentials.json (mode 600).
@@ -335,6 +400,7 @@ const [cmd, ...args] = process.argv.slice(2);
       case "start":       await start(); break;
       case "stop":        stop(); break;
       case "status":      showStatus(); break;
+      case "uninstall":   uninstall(args); break;
       case "list":        listSandboxes(); break;
       default:            help(); break;
     }

@@ -1,4 +1,4 @@
-# NVIDIA NemoClaw: OpenClaw Plugin for OpenShell
+# NVIDIA NemoClaw: Reference stack for running OpenClaw in OpenShell
 
 <!-- start-badges -->
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue)](https://github.com/NVIDIA/NemoClaw/blob/main/LICENSE)
@@ -6,14 +6,13 @@
 [![Project Status](https://img.shields.io/badge/status-alpha-orange)](https://github.com/NVIDIA/NemoClaw/blob/main/docs/about/release-notes.md)
 <!-- end-badges -->
 
-NVIDIA NemoClaw is an open source stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants safely. It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of [NVIDIA Agent Toolkit](https://docs.nvidia.com/nemo/agent-toolkit/latest), a secure environment for running autonomous agents, with inference routed through [NVIDIA cloud](https://build.nvidia.com).
+NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants safely. It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of NVIDIA Agent Toolkit, a secure environment for running autonomous agents, and open source models such as [NVIDIA Nemotron](https://build.nvidia.com).
 
 > **Alpha software**
 > 
-> NemoClaw is early-stage. Expect rough edges. We are building toward production-ready sandbox orchestration, but the starting point is getting your own environment up and running.
+> NemoClaw is available in early preview starting March 16, 2026.
 > Interfaces, APIs, and behavior may change without notice as we iterate on the design.
-> The project is shared to gather feedback and enable early experimentation, but it
-> should not yet be considered production-ready.
+> The project is shared to gather feedback and enable early experimentation.
 > We welcome issues and discussion from the community while the project evolves.
 
 ---
@@ -22,8 +21,9 @@ NVIDIA NemoClaw is an open source stack that simplifies running [OpenClaw](https
 
 Follow these steps to get started with NemoClaw and your first sandboxed OpenClaw agent.
 
-> [!NOTE]
-> NemoClaw currently requires a fresh installation of OpenClaw.
+> **ℹ️ Note**
+>
+> NemoClaw creates a fresh OpenClaw instance inside the sandbox during onboarding.
 
 <!-- start-quickstart-guide -->
 
@@ -60,13 +60,17 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | macOS | Podman | Not supported yet. NemoClaw currently depends on OpenShell support for Podman on macOS. |
 | Windows WSL | Docker Desktop (WSL backend) | Supported target path |
 
+> **💡 Tip**
+>
+> For DGX Spark, follow the [DGX Spark setup guide](https://github.com/NVIDIA/NemoClaw/blob/main/spark-install.md). It covers Spark-specific prerequisites, such as cgroup v2 and Docker configuration, before running the standard installer.
+
 ### Install NemoClaw and Onboard OpenClaw Agent
 
 Download and run the installer script.
 The script installs Node.js if it is not already present, then runs the guided onboard wizard to create a sandbox, configure inference, and apply security policies.
 
-```console
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 If you use nvm or fnm to manage Node.js, the installer may not update your current shell's PATH.
@@ -91,35 +95,60 @@ Logs:        nemoclaw my-assistant logs --follow
 
 Connect to the sandbox, then chat with the agent through the TUI or the CLI.
 
-```console
-$ nemoclaw my-assistant connect
+#### Connect to the Sandbox
+
+Run the following command to connect to the sandbox:
+
+```bash
+nemoclaw my-assistant connect
 ```
+
+This connects you to the sandbox shell `sandbox@my-assistant:~$` where you can run `openclaw` commands.
 
 #### OpenClaw TUI
 
-The OpenClaw TUI opens an interactive chat interface. Type a message and press Enter to send it to the agent:
+In the sandbox shell, run the following command to open the OpenClaw TUI, which opens an interactive chat interface.
 
-```console
-sandbox@my-assistant:~$ openclaw tui
+```bash
+openclaw tui
 ```
 
 Send a test message to the agent and verify you receive a response.
 
-> [!NOTE]
-> The TUI is best for interactive back-and-forth. If you need the full text of a long response (for example, large code generation output), use the CLI instead:
+> **ℹ️ Note**
 >
-> ```console
-> sandbox@my-assistant:~$ openclaw agent --agent main --local -m "<prompt>" --session-id <id>
-> ```
->
-> This prints the complete response directly in the terminal and avoids relying on the TUI view for long output.
+> The TUI is best for interactive back-and-forth. If you need the full text of a long response such as a large code generation output, use the CLI instead.
 
 #### OpenClaw CLI
 
-Use the OpenClaw CLI to send a single message and print the response:
+In the sandbox shell, run the following command to send a single message and print the response:
 
-```console
-sandbox@my-assistant:~$ openclaw agent --agent main --local -m "hello" --session-id test
+```bash
+openclaw agent --agent main --local -m "hello" --session-id test
+```
+
+This prints the complete response directly in the terminal and avoids relying on the TUI view for long output.
+
+### Uninstall
+
+To remove NemoClaw and all resources created during setup, in the terminal outside the sandbox, run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash
+```
+
+The script removes sandboxes, the NemoClaw gateway and providers, related Docker images and containers, local state directories, and the global `nemoclaw` npm package. It does not remove shared system tooling such as Docker, Node.js, npm, or Ollama.
+
+| Flag               | Effect                                              |
+|--------------------|-----------------------------------------------------|
+| `--yes`            | Skip the confirmation prompt.                       |
+| `--keep-openshell` | Leave the `openshell` binary installed.              |
+| `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
+
+For example, to skip the confirmation prompt:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash -s -- --yes
 ```
 
 <!-- end-quickstart-guide -->
@@ -181,7 +210,6 @@ Run these on the host to set up, connect to, and manage sandboxes.
 | Command                              | Description                                            |
 |--------------------------------------|--------------------------------------------------------|
 | `nemoclaw onboard`                  | Interactive setup wizard: gateway, providers, sandbox. |
-| `nemoclaw deploy <instance>` (**experimental**)         | Deploy to a remote GPU instance through Brev.          |
 | `nemoclaw <name> connect`            | Open an interactive shell inside the sandbox.          |
 | `openshell term`                     | Launch the OpenShell TUI for monitoring and approvals. |
 | `nemoclaw start` / `stop` / `status` | Manage auxiliary services (Telegram bridge, tunnel).   |
@@ -196,7 +224,7 @@ Run these inside the OpenClaw CLI. These commands are under active development a
 | `openclaw nemoclaw status`                 | Show sandbox health, blueprint state, and inference.     |
 | `openclaw nemoclaw logs [-f]`              | Stream blueprint execution and sandbox logs.             |
 
-See the full [CLI reference](https://docs.nvidia.com/nemoclaw/latest/reference/commands.md) for all commands, flags, and options.
+See the full [CLI reference](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html) for all commands, flags, and options.
 
 > **Known limitations:**
 > - The `openclaw nemoclaw` plugin commands are under active development. Use the `nemoclaw` host CLI as the primary interface.
@@ -208,13 +236,14 @@ See the full [CLI reference](https://docs.nvidia.com/nemoclaw/latest/reference/c
 
 Refer to the documentation for more information on NemoClaw.
 
-- [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html): what NemoClaw does and how it fits together
-- [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html): plugin, blueprint, and sandbox lifecycle
-- [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html): plugin structure, blueprint lifecycle, and sandbox environment
-- [Inference Profiles](https://docs.nvidia.com/nemoclaw/latest/reference/inference-profiles.html): NVIDIA cloud inference configuration
-- [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html): egress control and policy customization
-- [CLI Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html): full command reference
-- [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html): common issues and resolution steps
+- [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html): Learn what NemoClaw does and how it fits together.
+- [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html): Learn about the plugin, blueprint, and sandbox lifecycle.
+- [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html): Learn about the plugin structure, blueprint lifecycle, and sandbox environment.
+- [Inference Profiles](https://docs.nvidia.com/nemoclaw/latest/reference/inference-profiles.html): Learn about the NVIDIA cloud inference configuration.
+- [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html): Learn about egress control and policy customization.
+- [CLI Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html): Learn about the full command reference.
+- [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html): Troubleshoot common issues and resolution steps.
+- [Discord](https://discord.gg/XFpfPv9Uvx): Join the community for questions and discussion.
 
 ## License
 

@@ -8,6 +8,7 @@ on:
     types: [opened, synchronize, reopened]
     paths:
       - "docs/**"
+      - "README.md"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/docs.yaml"

@@ -173,13 +173,7 @@ cp "$REPO_DIR/Dockerfile" "$BUILD_CTX/"
 cp -r "$REPO_DIR/nemoclaw" "$BUILD_CTX/nemoclaw"
 cp -r "$REPO_DIR/nemoclaw-blueprint" "$BUILD_CTX/nemoclaw-blueprint"
 cp -r "$REPO_DIR/scripts" "$BUILD_CTX/scripts"
-rm -rf "$BUILD_CTX/nemoclaw/node_modules" "$BUILD_CTX/nemoclaw/src"
-
-# Verify nemoclaw/dist/ exists (TypeScript must be pre-built)
-if [ ! -d "$BUILD_CTX/nemoclaw/dist" ] || [ -z "$(ls -A "$BUILD_CTX/nemoclaw/dist" 2>/dev/null)" ]; then
-  rm -rf "$BUILD_CTX"
-  fail "nemoclaw/dist/ is missing or empty. Run 'cd nemoclaw && npm install && npm run build' first."
-fi
+rm -rf "$BUILD_CTX/nemoclaw/node_modules"
 
 # Capture full output to a temp file so we can filter for display but still
 # detect failures. The raw log is kept on failure for debugging.

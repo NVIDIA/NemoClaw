@@ -89,7 +89,12 @@ confirm() {
     warn "Ollama models are preserved by default. Re-run with --delete-models to remove them."
   fi
   printf "Continue? [y/N] "
-  read -r reply
+  local reply=""
+  if [ -t 2 ] && read -r reply 0</dev/tty 2>/dev/null; then
+    :
+  else
+    read -r reply || true
+  fi
   case "$reply" in
     y|Y|yes|YES) ;;
     *) info "Aborted."; exit 0 ;;
@@ -429,9 +434,6 @@ main() {
   info "Removing global nemoclaw install..."
   remove_nemoclaw_cli
 
-  info "Removing NemoClaw state..."
-  remove_nemoclaw_state
-
   info "Removing related Docker containers..."
   remove_related_docker_containers
 
@@ -450,10 +452,13 @@ main() {
   info "Removing openshell binary..."
   remove_openshell_binary
 
+  info "Removing NemoClaw state..."
+  remove_nemoclaw_state
+
   echo ""
   info "Uninstall complete."
 }
 
-if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+if [ "${BASH_SOURCE[0]-}" = "$0" ] || { [ -z "${BASH_SOURCE[0]-}" ] && { [ "$0" = "bash" ] || [ "$0" = "-bash" ]; }; }; then
   main "$@"
 fi

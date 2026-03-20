@@ -20,7 +20,7 @@ status: published
 
 # Release Notes
 
-NVIDIA NemoClaw is in active development and follows a frequent release cadence. Use the following GitHub resources directly.
+NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use the following GitHub resources to track changes.
 
 | Resource | Description |
 |---|---|
