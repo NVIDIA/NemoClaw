@@ -16,6 +16,8 @@ RUN groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbo
     && chown -R sandbox:sandbox /sandbox
 
 # Install OpenClaw CLI
+# CACHE_BUST build arg can be set to invalidate this layer and force a fresh install.
+ARG CACHE_BUST
 RUN npm install -g openclaw@2026.3.11
 
 # Install PyYAML for blueprint runner

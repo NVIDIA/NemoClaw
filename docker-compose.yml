@@ -1,0 +1,54 @@
+services:
+  nemoclaw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Pass today's date so the openclaw@latest layer is never served from
+      # Docker's build cache. Run: docker compose build (rebuilds if date changed)
+      # or: docker compose build --no-cache (forces full rebuild)
+      args:
+        CACHE_BUST: ${CACHE_BUST:-}
+    # The Dockerfile ENTRYPOINT is /bin/bash. Override it so we can pass -c
+    # with a compound command: run nemoclaw-start, then tail the gateway log
+    # as the foreground PID 1 process (nemoclaw-start exits after backgrounding
+    # the gateway, which would cause Docker to restart without this).
+    entrypoint: ["/bin/bash", "-c"]
+    # Set gateway.bind=lan before nemoclaw-start so the gateway listens on
+    # 0.0.0.0 instead of 127.0.0.1 (loopback), which is unreachable via
+    # Docker port forwarding. nemoclaw-start's fix_openclaw_config does not
+    # set gateway.bind so our value survives the config merge.
+    command:
+      - |
+        python3 -c 'import json,pathlib; p=pathlib.Path("/sandbox/.openclaw/openclaw.json"); cfg=json.loads(p.read_text()) if p.exists() else {}; cfg.setdefault("gateway",{})["bind"]="lan"; p.write_text(json.dumps(cfg,indent=2))' \
+        && /usr/local/bin/nemoclaw-start; exec tail -f /tmp/gateway.log
+    ports:
+      - "${PUBLIC_PORT:-18789}:18789"
+    environment:
+      # NVIDIA inference API key — required for NVIDIA cloud inference
+      NVIDIA_API_KEY: "${NVIDIA_API_KEY:-}"
+      # Override the default model (optional)
+      NEMOCLAW_MODEL: "${NEMOCLAW_MODEL:-}"
+      # Browser origin for the Control UI (must match where you open the browser)
+      CHAT_UI_URL: "${CHAT_UI_URL:-http://localhost:${PUBLIC_PORT:-18789}}"
+      PUBLIC_PORT: "18789"
+    extra_hosts:
+      # OpenShell runs on the host and exposes inference.local — this maps it in
+      # If OpenShell is NOT running on the host, inference calls will fail.
+      # See: https://github.com/NVIDIA/OpenShell
+      - "inference.local:host-gateway"
+    volumes:
+      # Persist OpenClaw agent state (config, memory, sessions) across restarts
+      - openclaw-state:/sandbox/.openclaw
+      # Persist NemoClaw blueprint state
+      - nemoclaw-state:/sandbox/.nemoclaw
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "openclaw gateway status 2>/dev/null | grep -q running || curl -sf http://127.0.0.1:18789/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  openclaw-state:
+  nemoclaw-state:
