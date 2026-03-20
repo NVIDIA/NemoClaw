@@ -721,15 +721,32 @@ async function setupNim(sandboxName, gpu) {
 
 // ── Step 5: Inference provider ───────────────────────────────────
 
+/**
+ * Build an openshell provider create-or-update command string.
+ * Falls back to `provider update` when `provider create` fails (e.g. provider
+ * already exists from a previous onboard attempt).
+ */
+function buildProviderCommand(name, credentialPair, baseUrl) {
+  const create =
+    `openshell provider create --name ${name} --type openai ` +
+    `--credential "${credentialPair}" ` +
+    `--config "OPENAI_BASE_URL=${baseUrl}"`;
+  const update =
+    `openshell provider update ${name} --credential "${credentialPair}" ` +
+    `--config "OPENAI_BASE_URL=${baseUrl}"`;
+  return `${create} 2>&1 || ${update} 2>&1 || true`;
+}
+
 async function setupInference(sandboxName, model, provider) {
   step(5, 7, "Setting up inference provider");
 
   if (provider === "nvidia-nim") {
-    // Create nvidia-nim provider
     run(
-      `openshell provider create --name nvidia-nim --type openai ` +
-      `--credential "NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}" ` +
-      `--config "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1" 2>&1 || true`,
+      buildProviderCommand(
+        "nvidia-nim",
+        `NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`,
+        "https://integrate.api.nvidia.com/v1"
+      ),
       { ignoreError: true }
     );
     run(
@@ -744,11 +761,7 @@ async function setupInference(sandboxName, model, provider) {
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
     run(
-      `openshell provider create --name vllm-local --type openai ` +
-      `--credential "OPENAI_API_KEY=dummy" ` +
-      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
-      `openshell provider update vllm-local --credential "OPENAI_API_KEY=dummy" ` +
-      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
+      buildProviderCommand("vllm-local", "OPENAI_API_KEY=dummy", baseUrl),
       { ignoreError: true }
     );
     run(
@@ -764,11 +777,7 @@ async function setupInference(sandboxName, model, provider) {
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
     run(
-      `openshell provider create --name ollama-local --type openai ` +
-      `--credential "OPENAI_API_KEY=ollama" ` +
-      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
-      `openshell provider update ollama-local --credential "OPENAI_API_KEY=ollama" ` +
-      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
+      buildProviderCommand("ollama-local", "OPENAI_API_KEY=ollama", baseUrl),
       { ignoreError: true }
     );
     run(
@@ -964,4 +973,4 @@ async function onboard(opts = {}) {
   printDashboard(sandboxName, model, provider);
 }
 
-module.exports = { buildSandboxConfigSyncScript, hasStaleGateway, isSandboxReady, onboard, setupNim };
+module.exports = { buildProviderCommand, buildSandboxConfigSyncScript, hasStaleGateway, isSandboxReady, onboard, setupNim };

@@ -4,7 +4,58 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
-const { buildSandboxConfigSyncScript } = require("../bin/lib/onboard");
+const { buildProviderCommand, buildSandboxConfigSyncScript } = require("../bin/lib/onboard");
+
+describe("buildProviderCommand", () => {
+  it("includes both create and update fallback for nvidia-nim", () => {
+    const cmd = buildProviderCommand(
+      "nvidia-nim",
+      "NVIDIA_API_KEY=nvapi-test123",
+      "https://integrate.api.nvidia.com/v1"
+    );
+    assert.match(cmd, /openshell provider create --name nvidia-nim/);
+    assert.match(cmd, /openshell provider update nvidia-nim/);
+    assert.match(cmd, /NVIDIA_API_KEY=nvapi-test123/);
+    assert.match(cmd, /OPENAI_BASE_URL=https:\/\/integrate\.api\.nvidia\.com\/v1/);
+  });
+
+  it("includes both create and update fallback for vllm-local", () => {
+    const cmd = buildProviderCommand(
+      "vllm-local",
+      "OPENAI_API_KEY=dummy",
+      "http://host.containers.internal:8000/v1"
+    );
+    assert.match(cmd, /openshell provider create --name vllm-local/);
+    assert.match(cmd, /openshell provider update vllm-local/);
+  });
+
+  it("includes both create and update fallback for ollama-local", () => {
+    const cmd = buildProviderCommand(
+      "ollama-local",
+      "OPENAI_API_KEY=ollama",
+      "http://host.containers.internal:11434/v1"
+    );
+    assert.match(cmd, /openshell provider create --name ollama-local/);
+    assert.match(cmd, /openshell provider update ollama-local/);
+  });
+
+  it("credential appears in both create and update branches", () => {
+    const cmd = buildProviderCommand(
+      "nvidia-nim",
+      "NVIDIA_API_KEY=nvapi-secret",
+      "https://integrate.api.nvidia.com/v1"
+    );
+    const parts = cmd.split("||");
+    assert.ok(parts.length >= 2, "should have create || update || true");
+    assert.match(parts[0], /NVIDIA_API_KEY=nvapi-secret/);
+    assert.match(parts[1], /NVIDIA_API_KEY=nvapi-secret/);
+  });
+
+  it("ends with || true for error suppression", () => {
+    const cmd = buildProviderCommand("test", "KEY=val", "http://localhost:8000/v1");
+    assert.ok(cmd.trimEnd().endsWith("|| true"));
+  });
+});
 
 describe("onboard helpers", () => {
   it("builds a sandbox sync script that writes config and updates the selected model", () => {
