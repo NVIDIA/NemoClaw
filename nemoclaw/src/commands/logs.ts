@@ -51,7 +51,9 @@ export async function cliLogs(opts: LogsOptions): Promise<void> {
   const proc = spawn("openshell", args, { stdio: ["ignore", "inherit", "inherit"] });
 
   await new Promise<void>((resolve) => {
-    proc.on("close", () => resolve());
+    proc.on("close", () => {
+      resolve();
+    });
     proc.on("error", (err) => {
       logger.error(`Failed to stream logs: ${err.message}`);
       resolve();

@@ -36,6 +36,7 @@ export function fetchBlueprint(registry: string, version: string): Promise<Resol
  * Resolve a "latest" version tag to a concrete version string by querying
  * the registry's tag list or release API.
  */
+// eslint-disable-next-line @typescript-eslint/require-await -- stub; will use await once registry API is implemented
 export async function resolveLatestVersion(registry: string): Promise<string> {
   // Future: query OCI tag list or GitHub releases API
   void registry;
@@ -46,6 +47,7 @@ export async function resolveLatestVersion(registry: string): Promise<string> {
  * Download and extract a blueprint tarball into the local cache directory.
  * Returns the local path where the blueprint was extracted.
  */
+// eslint-disable-next-line @typescript-eslint/require-await -- stub; will use await once HTTP fetch is implemented
 export async function downloadAndCache(
   registry: string,
   version: string,

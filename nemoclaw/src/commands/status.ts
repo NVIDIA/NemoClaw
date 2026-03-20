@@ -123,7 +123,10 @@ interface SandboxStatusResponse {
   uptime?: string;
 }
 
-async function getSandboxStatus(sandboxName: string, insideSandbox: boolean): Promise<SandboxStatus> {
+async function getSandboxStatus(
+  sandboxName: string,
+  insideSandbox: boolean,
+): Promise<SandboxStatus> {
   if (insideSandbox) {
     return { name: sandboxName, running: false, uptime: null, insideSandbox: true };
   }
