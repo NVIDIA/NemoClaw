@@ -33,7 +33,7 @@ describe("inference selection config", () => {
   it("maps ollama-local to host-gateway URL (bypasses inference.local DNS)", () => {
     const cfg = getProviderSelectionConfig("ollama-local");
     assert.equal(cfg.endpointType, "custom");
-    assert.match(cfg.endpointUrl, /host\.openshell\.internal:11434/);
+    assert.match(cfg.endpointUrl, /^http:\/\/host\.openshell\.internal:11434\/v1$/);
     assert.equal(cfg.model, DEFAULT_OLLAMA_MODEL);
     assert.equal(cfg.provider, "ollama-local");
     assert.equal(cfg.providerLabel, "Local Ollama");
