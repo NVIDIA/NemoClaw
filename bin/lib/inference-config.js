@@ -14,7 +14,7 @@ const CLOUD_MODEL_OPTIONS = [
 const DEFAULT_ROUTE_PROFILE = "inference-local";
 const DEFAULT_ROUTE_CREDENTIAL_ENV = "OPENAI_API_KEY";
 const MANAGED_PROVIDER_ID = "inference";
-const { DEFAULT_OLLAMA_MODEL } = require("./local-inference");
+const { DEFAULT_OLLAMA_MODEL, DEFAULT_YAMA_MODEL } = require("./local-inference");
 
 function getProviderSelectionConfig(provider, model) {
   switch (provider) {
@@ -51,14 +51,28 @@ function getProviderSelectionConfig(provider, model) {
         provider,
         providerLabel: "Local Ollama",
       };
+    case "token-overdrive":
+      return {
+        endpointType: "custom",
+        endpointUrl: INFERENCE_ROUTE_URL,
+        ncpPartner: null,
+        model: model || DEFAULT_YAMA_MODEL,
+        profile: DEFAULT_ROUTE_PROFILE,
+        credentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
+        provider,
+        providerLabel: "Token Overdrive (llama.cpp DMR)",
+      };
     default:
       return null;
   }
 }
 
 function getOpenClawPrimaryModel(provider, model) {
-  const resolvedModel =
-    model || (provider === "ollama-local" ? DEFAULT_OLLAMA_MODEL : DEFAULT_CLOUD_MODEL);
+  const localDefault =
+    provider === "ollama-local" ? DEFAULT_OLLAMA_MODEL :
+    provider === "token-overdrive" ? DEFAULT_YAMA_MODEL :
+    DEFAULT_CLOUD_MODEL;
+  const resolvedModel = model || localDefault;
   return resolvedModel ? `${MANAGED_PROVIDER_ID}/${resolvedModel}` : null;
 }
 
@@ -66,6 +80,7 @@ module.exports = {
   CLOUD_MODEL_OPTIONS,
   DEFAULT_CLOUD_MODEL,
   DEFAULT_OLLAMA_MODEL,
+  DEFAULT_YAMA_MODEL,
   DEFAULT_ROUTE_CREDENTIAL_ENV,
   DEFAULT_ROUTE_PROFILE,
   INFERENCE_ROUTE_URL,

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "description": "Token Overdrive local model catalog — llama.cpp DMR router, Metal-accelerated (Apple Silicon)",
+  "port": 8101,
+  "models": [
+    {
+      "id": "qwen35-35b-a3b",
+      "display_name": "Qwen3.5-35B-A3B",
+      "canonical_id": "qwen3.5-35b-a3b",
+      "provider": "docker-model-runner",
+      "observed_decode_tps": 60.19,
+      "recommended_ctx_size": 32768,
+      "recommended_for": ["general", "tool-use", "coding"],
+      "notes": "Fastest local model at 60 tps on Apple Silicon. MoE architecture runs efficiently on Metal."
+    },
+    {
+      "id": "qwen35-27b",
+      "display_name": "Qwen3.5-27B",
+      "canonical_id": "qwen3.5-27b",
+      "provider": "docker-model-runner",
+      "observed_decode_tps": 17.06,
+      "recommended_ctx_size": 32768,
+      "recommended_for": ["general", "quality", "reasoning"],
+      "notes": "Dense model, higher quality output at lower throughput."
+    }
+  ]
+}
