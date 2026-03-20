@@ -50,8 +50,22 @@ describe("platform helpers", () => {
       ]);
     });
 
-    it("does not auto-detect sockets on Linux", () => {
-      assert.deepEqual(getDockerSocketCandidates({ platform: "linux", home: "/tmp/test-home" }), []);
+    it("returns Linux candidates in priority order", () => {
+      const home = "/home/test";
+      const candidates = getDockerSocketCandidates({ platform: "linux", home, uid: 1000 });
+      assert.deepEqual(candidates, [
+        path.join(home, ".docker/run/docker.sock"),
+        "/run/docker.sock",
+        "/var/run/docker.sock",
+        path.join(home, ".local/share/containers/podman/machine/podman.sock"),
+        "/run/user/1000/podman/podman.sock",
+        path.join(home, ".local/share/containers/podman/machine/qemu/podman.sock"),
+      ]);
+    });
+
+    it("uses correct uid for rootless Podman path", () => {
+      const candidates = getDockerSocketCandidates({ platform: "linux", home: "/home/test", uid: 5000 });
+      assert.ok(candidates.includes("/run/user/5000/podman/podman.sock"));
     });
   });
 
@@ -124,9 +138,118 @@ describe("platform helpers", () => {
           env: {},
           platform: "linux",
           home: "/tmp/test-home",
+          uid: 1000,
           existsSync: () => false,
         }),
         null,
+      );
+    });
+
+    it("detects native Docker socket on Linux", () => {
+      assert.deepEqual(
+        detectDockerHost({
+          env: {},
+          platform: "linux",
+          home: "/home/test",
+          uid: 1000,
+          existsSync: (p) => p === "/run/docker.sock",
+        }),
+        {
+          dockerHost: "unix:///run/docker.sock",
+          source: "socket",
+          socketPath: "/run/docker.sock",
+        },
+      );
+    });
+
+    it("detects /var/run/docker.sock fallback on Linux", () => {
+      assert.deepEqual(
+        detectDockerHost({
+          env: {},
+          platform: "linux",
+          home: "/home/test",
+          uid: 1000,
+          existsSync: (p) => p === "/var/run/docker.sock",
+        }),
+        {
+          dockerHost: "unix:///var/run/docker.sock",
+          source: "socket",
+          socketPath: "/var/run/docker.sock",
+        },
+      );
+    });
+
+    it("prefers Docker Desktop over native Linux socket", () => {
+      const home = "/home/test";
+      const ddPath = path.join(home, ".docker/run/docker.sock");
+      assert.deepEqual(
+        detectDockerHost({
+          env: {},
+          platform: "linux",
+          home,
+          uid: 1000,
+          existsSync: (p) => p === ddPath || p === "/run/docker.sock",
+        }),
+        {
+          dockerHost: `unix://${ddPath}`,
+          source: "socket",
+          socketPath: ddPath,
+        },
+      );
+    });
+
+    it("prefers native Docker over Podman on Linux", () => {
+      const home = "/home/test";
+      const podmanPath = path.join(home, ".local/share/containers/podman/machine/podman.sock");
+      assert.deepEqual(
+        detectDockerHost({
+          env: {},
+          platform: "linux",
+          home,
+          uid: 1000,
+          existsSync: (p) => p === "/run/docker.sock" || p === podmanPath,
+        }),
+        {
+          dockerHost: "unix:///run/docker.sock",
+          source: "socket",
+          socketPath: "/run/docker.sock",
+        },
+      );
+    });
+
+    it("falls back to Podman on Linux when Docker absent", () => {
+      const home = "/home/test";
+      const podmanPath = path.join(home, ".local/share/containers/podman/machine/podman.sock");
+      assert.deepEqual(
+        detectDockerHost({
+          env: {},
+          platform: "linux",
+          home,
+          uid: 1000,
+          existsSync: (p) => p === podmanPath,
+        }),
+        {
+          dockerHost: `unix://${podmanPath}`,
+          source: "socket",
+          socketPath: podmanPath,
+        },
+      );
+    });
+
+    it("detects rootless Podman on Linux", () => {
+      assert.deepEqual(
+        detectDockerHost({
+          env: {},
+          platform: "linux",
+          home: "/home/test",
+          uid: 1001,
+          existsSync: (p) => p === "/run/user/1001/podman/podman.sock",
+        }),
+        {
+          dockerHost: "unix:///run/user/1001/podman/podman.sock",
+          source: "socket",
+          socketPath: "/run/user/1001/podman/podman.sock",
+        },
       );
     });
   });
