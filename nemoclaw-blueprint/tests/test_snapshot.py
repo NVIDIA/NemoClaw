@@ -4,6 +4,7 @@
 """Unit tests for migrations.snapshot — snapshot/restore logic."""
 
 import json
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
@@ -75,11 +76,12 @@ class TestCreateSnapshot:
         assert ".nemoclaw" in str(snap_dir)
         assert "snapshots" in str(snap_dir)
 
-    def test_multiple_snapshots_have_different_dirs(self, mock_home):
+    def test_multiple_snapshots_succeed(self, mock_home):
         _create_openclaw_dir(mock_home)
         snap1 = create_snapshot()
         snap2 = create_snapshot()
-        # Both should succeed (dirs_exist_ok=True handles same-second collision)
+        # Both calls should succeed; if created in the same second the
+        # timestamp-based directory is reused (dirs_exist_ok=True).
         assert snap1 is not None
         assert snap2 is not None
 
@@ -153,8 +155,6 @@ class TestRollbackFromSnapshot:
         assert snap_dir is not None
 
         # Delete original config
-        import shutil
-
         shutil.rmtree(oc_dir)
         assert not oc_dir.exists()
 

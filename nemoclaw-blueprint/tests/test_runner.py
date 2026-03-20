@@ -4,6 +4,7 @@
 """Unit tests for orchestrator.runner — the NemoClaw Blueprint Runner."""
 
 import json
+import re
 import subprocess
 from unittest.mock import patch
 
@@ -129,7 +130,7 @@ class TestOpenshellAvailable:
 
 class TestActionPlan:
     @patch("orchestrator.runner.openshell_available", return_value=True)
-    def test_valid_default_profile(self, _mock, sample_blueprint, capsys):
+    def test_valid_default_profile(self, _mock, sample_blueprint):
         plan = action_plan("default", sample_blueprint)
         assert plan["profile"] == "default"
         assert plan["sandbox"]["name"] == "openclaw"
@@ -189,13 +190,13 @@ class TestActionPlan:
 
 
 class TestActionStatus:
-    def test_no_runs_directory(self, tmp_path, monkeypatch, capsys):
+    def test_no_runs_directory(self, tmp_path, monkeypatch):
         monkeypatch.setattr("orchestrator.runner.Path.home", lambda: tmp_path)
         with pytest.raises(SystemExit) as exc_info:
             action_status()
         assert exc_info.value.code == 0
 
-    def test_empty_runs_directory(self, tmp_path, monkeypatch, capsys):
+    def test_empty_runs_directory(self, tmp_path, monkeypatch):
         state_dir = tmp_path / ".nemoclaw" / "state" / "runs"
         state_dir.mkdir(parents=True)
         monkeypatch.setattr("orchestrator.runner.Path.home", lambda: tmp_path)
@@ -301,7 +302,7 @@ class TestActionRollback:
         assert rolled_back_file.exists()
         # Content should be an ISO timestamp
         content = rolled_back_file.read_text()
-        assert "2026" in content
+        assert re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", content)
 
     @patch("orchestrator.runner.run_cmd")
     def test_rollback_without_plan_still_marks(self, mock_run_cmd, tmp_path, monkeypatch):
