@@ -54,7 +54,10 @@ Plans:
   2. Running the script with `stop` brings the container down cleanly
   3. Running the script with `status` prints whether the container is running and whether port 18789 is reachable, in plain English
   4. Running the script with `uninstall` removes the container and image with a confirmation prompt, and optionally removes Docker Desktop
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 03-01-PLAN.md — Fix nemoclaw-start.sh foreground process and add param block, lifecycle functions, and command routing to install.ps1
+- [ ] 03-02-PLAN.md — Add Pester tests for LIFE-01 through LIFE-05 requirements
 
 ## Progress
 
@@ -65,4 +68,4 @@ Phases execute in numeric order: 1 → 2 → 3
 |-------|----------------|--------|-----------|
 | 1. Prerequisites and Docker Desktop | 2/2 | Complete   | 2026-03-20 |
 | 2. Container Setup and NemoClaw Install | 0/2 | In progress | - |
-| 3. Lifecycle Management | 0/TBD | Not started | - |
+| 3. Lifecycle Management | 0/2 | Not started | - |
