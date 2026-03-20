@@ -8,6 +8,8 @@
 # Optional env:
 #   NVIDIA_API_KEY   API key for NVIDIA-hosted inference
 #   CHAT_UI_URL      Browser origin that will access the forwarded dashboard
+#   NEMOCLAW_SKIP_AUTO_PAIR     Set to 1/true/yes to disable auto-pair watcher
+#   NEMOCLAW_AUTO_PAIR_TIMEOUT  Auto-pair timeout in seconds (default: 120)
 
 set -euo pipefail
 
@@ -15,6 +17,7 @@ NEMOCLAW_CMD=("$@")
 CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:18789}"
 PUBLIC_PORT=18789
 
+# Patch the OpenClaw JSON config with sandbox-safe gateway defaults.
 fix_openclaw_config() {
   python3 - <<'PYCFG'
 import json
@@ -57,6 +60,7 @@ os.chmod(config_path, 0o600)
 PYCFG
 }
 
+# Write an NVIDIA auth-profile if NVIDIA_API_KEY is set.
 write_auth_profile() {
   if [ -z "${NVIDIA_API_KEY:-}" ]; then
     return
@@ -79,6 +83,7 @@ os.chmod(path, 0o600)
 PYAUTH
 }
 
+# Print the local and remote dashboard URLs, appending the auth token if present.
 print_dashboard_urls() {
   local token chat_ui_base local_url remote_url
 
@@ -107,19 +112,41 @@ PYTOKEN
   echo "[gateway] Remote UI: ${remote_url}"
 }
 
+# Launch a background watcher that auto-approves pending device-pair requests.
 start_auto_pair() {
+  case "$(echo "${NEMOCLAW_SKIP_AUTO_PAIR:-}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes)
+      echo "[gateway] auto-pair watcher skipped (NEMOCLAW_SKIP_AUTO_PAIR is set)"
+      return
+      ;;
+  esac
+  local pair_timeout="${NEMOCLAW_AUTO_PAIR_TIMEOUT:-120}"
+  echo "[gateway] auto-pair watcher launching (timeout=${pair_timeout}s)"
   nohup python3 - <<'PYAUTOPAIR' >> /tmp/gateway.log 2>&1 &
 import json
+import os
 import subprocess
 import time
 
-DEADLINE = time.time() + 600
+try:
+    timeout = int(os.environ.get('NEMOCLAW_AUTO_PAIR_TIMEOUT', '120'))
+    if timeout <= 0:
+        timeout = 120
+except ValueError:
+    timeout = 120
+DEADLINE = time.time() + timeout
 QUIET_POLLS = 0
 APPROVED = 0
+print(f'[auto-pair] watcher launched (timeout={timeout}s)')
 
 def run(*args):
-    proc = subprocess.run(args, capture_output=True, text=True)
-    return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    """Run a subprocess and return (returncode, stdout, stderr)."""
+    remaining = max(1, int(DEADLINE - time.time()))
+    try:
+        proc = subprocess.run(args, capture_output=True, text=True, timeout=remaining)
+        return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    except subprocess.TimeoutExpired:
+        return 124, '', f'subprocess timed out after {remaining}s'
 
 while time.time() < DEADLINE:
     rc, out, err = run('openclaw', 'devices', 'list', '--json')
