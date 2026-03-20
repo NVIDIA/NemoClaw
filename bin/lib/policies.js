@@ -84,6 +84,16 @@ function buildPolicyGetCommand(sandboxName) {
 }
 
 function applyPreset(sandboxName, presetName) {
+  // Guard against truncated sandbox names — WSL can truncate hyphenated
+  // names during argument parsing, e.g. "my-assistant" → "m"
+  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
+  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
+    throw new Error(
+      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
+      `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`
+    );
+  }
+
   const presetContent = loadPreset(presetName);
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);

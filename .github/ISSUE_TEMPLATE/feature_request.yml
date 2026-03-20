@@ -1,22 +1,51 @@
-name: Feature/Enhancement Request
-+description: Submit a feature request other enhancement to help us improve NemoClaw
-labels: ["status: triage"]
+name: Feature Request
+description: Propose a feature with a design. Not a "please build this" request.
+labels: ["enhancement", "status: triage"]
 body:
   - type: textarea
-    id: desc
+    id: problem
     attributes:
-      label: Proposed Change
-      placeholder: Describe the feature or provider integration...
+      label: Problem Statement
+      description: What problem does this solve? Why does it matter?
     validations:
       required: true
-  - type: dropdown
-    id: cat
+
+  - type: textarea
+    id: design
     attributes:
-      label: Suggested Category
-      options: 
+      label: Proposed Design
+      description: |
+        How should this work? Describe the system behavior, components involved, and user-facing interface.
+        This should be a design, not a wish list.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What other approaches did you evaluate? Why is the proposed design better?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
         - "enhancement: feature"
         - "enhancement: provider"
         - "enhancement: platform"
         - "enhancement: testing"
     validations:
       required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+        - label: This is a design proposal, not a "please build this" request
+          required: true
