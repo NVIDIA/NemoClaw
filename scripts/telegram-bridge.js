@@ -175,9 +175,12 @@ async function poll() {
 
         // Handle /start
         if (msg.text === "/start") {
+          const info = registry.getSandbox(SANDBOX);
+          const startModel = info?.model || "nvidia/nemotron-3-super-120b-a12b";
+          const startProvider = info?.provider || "nvidia-nim";
           await sendMessage(
             chatId,
-            "🦀 *NemoClaw* — powered by Nemotron 3 Super 120B\n\n" +
+            `🦀 *NemoClaw* — ${startProvider} / ${startModel}\n\n` +
               "Send me a message and I'll run it through the OpenClaw agent " +
               "inside an OpenShell sandbox.\n\n" +
               "If the agent needs external access, the TUI will prompt for approval.",
@@ -233,8 +236,10 @@ async function main() {
   console.log("  │                                                     │");
   const sandboxInfo = registry.getSandbox(SANDBOX);
   const model = sandboxInfo?.model || "nvidia/nemotron-3-super-120b-a12b";
+  const provider = sandboxInfo?.provider || "nvidia-nim";
   console.log(`  │  Bot:      @${(me.result.username + "                    ").slice(0, 37)}│`);
   console.log("  │  Sandbox:  " + (SANDBOX + "                              ").slice(0, 40) + "│");
+  console.log(`  │  Provider: ${(provider + "                                        ").slice(0, 40)}│`);
   console.log(`  │  Model:    ${(model + "                                        ").slice(0, 40)}│`);
   console.log("  │                                                     │");
   console.log("  │  Messages are forwarded to the OpenClaw agent      │");
