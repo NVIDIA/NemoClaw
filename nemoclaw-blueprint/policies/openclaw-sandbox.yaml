@@ -163,7 +163,6 @@ network_policies:
         access: full
     binaries:
       - { path: /usr/local/bin/openclaw }
-      - { path: /usr/local/bin/node }
 
   # ── Messaging — pre-allowed for agent notifications ────────────
   # Telegram Bot API is open by default so the agent can send

@@ -366,10 +366,10 @@ function patchGatewayImageForJetson() {
   const image = `ghcr.io/nvidia/openshell/cluster:${tag}`;
 
   // Check if already patched (look for our label)
-  const inspectOut = runCapture(
+  const inspectOut = (runCapture(
     `docker inspect --format='{{index .Config.Labels "io.nemoclaw.jetson-patched"}}' "${image}" 2>/dev/null`,
     { ignoreError: true }
-  ).trim();
+  ) || "").trim();
   if (inspectOut === "true") {
     console.log("  ✓ Gateway image already patched for Jetson");
     return;
