@@ -1,5 +1,18 @@
 # NemoClaw sandbox image — OpenClaw + NemoClaw plugin inside OpenShell
 
+# Build NemoClaw plugin from source
+FROM node:22-slim AS builder
+WORKDIR /build
+
+COPY nemoclaw/package*.json ./nemoclaw/
+WORKDIR /build/nemoclaw
+RUN npm install
+
+WORKDIR /build
+COPY nemoclaw/ ./nemoclaw/
+WORKDIR /build/nemoclaw
+RUN npm run build
+
 FROM node:22-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -22,7 +35,7 @@ RUN npm install -g openclaw@2026.3.11
 RUN pip3 install --break-system-packages pyyaml
 
 # Copy our plugin and blueprint into the sandbox
-COPY nemoclaw/dist/ /opt/nemoclaw/dist/
+COPY --from=builder /build/nemoclaw/dist/ /opt/nemoclaw/dist/
 COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
 COPY nemoclaw/package.json /opt/nemoclaw/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
