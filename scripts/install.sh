@@ -428,11 +428,14 @@ rm -rf "$NEMOCLAW_SRC"
 mkdir -p "$(dirname "$NEMOCLAW_SRC")"
 git clone --depth 1 https://github.com/NVIDIA/NemoClaw.git "$NEMOCLAW_SRC"
 pre_extract_openclaw "$NEMOCLAW_SRC" || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
-# Use sudo for npm link when the global prefix requires it (e.g., nodesource),
+# Use sudo for npm link only when the Nodesource global prefix requires it,
 # but skip sudo if already root (e.g., Docker containers).
 SUDO=""
 if [ "$NODE_MGR" = "nodesource" ] && [ "$(id -u)" -ne 0 ]; then
-  SUDO="sudo"
+  npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+  if [ -z "$npm_prefix" ] || [ ! -w "$npm_prefix" ]; then
+    SUDO="sudo"
+  fi
 fi
 (cd "$NEMOCLAW_SRC" && npm install --ignore-scripts && cd nemoclaw && npm install --ignore-scripts && npm run build && cd .. && $SUDO npm link)
 

@@ -415,6 +415,21 @@ exit 0
 `,
     );
 
+    writeExecutable(
+      path.join(fakeBin, "uname"),
+      `#!/usr/bin/env bash
+if [ "$1" = "-s" ]; then
+  echo "Linux"
+  exit 0
+fi
+if [ "$1" = "-m" ]; then
+  echo "x86_64"
+  exit 0
+fi
+echo "Linux"
+`,
+    );
+
     const scriptContents = fs.readFileSync(CURL_PIPE_INSTALLER, "utf-8");
     const result = spawnSync("bash", [], {
       cwd: tmp,
