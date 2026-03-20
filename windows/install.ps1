@@ -5,6 +5,12 @@
 # Installs WSL2 and Docker Desktop, handling reboots and daemon verification.
 # Usage: Run install.bat (double-click) or: powershell -ExecutionPolicy Bypass -File install.ps1
 
+param(
+    [Parameter(Position = 0)]
+    [ValidateSet("install", "start", "stop", "restart", "status", "uninstall")]
+    [string]$Command = "install"
+)
+
 # ---------------------------------------------------------------------------
 # Output Helpers
 # ---------------------------------------------------------------------------
@@ -597,8 +603,195 @@ function Install-NemoClawContainer {
 #   CONTAINER_RUNNING   -> DASHBOARD_READY : HTTP 200 from localhost:18789
 #   DASHBOARD_READY     -> (deleted)       : Success, registry cleaned up
 
+# ---------------------------------------------------------------------------
+# Phase 3: Lifecycle Management
+# ---------------------------------------------------------------------------
+
+function Assert-ContainerExists {
+    $exists = docker ps -a --filter "name=^nemoclaw$" --format "{{.Names}}" 2>&1
+    if ($exists -ne "nemoclaw") {
+        Write-Err "NemoClaw container not found. Run 'install.bat' first to set up NemoClaw."
+        exit 1
+    }
+}
+
+function Assert-DockerRunning {
+    docker info 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        $ready = Wait-DockerReady
+        if (-not $ready) {
+            Write-Err "Docker Desktop is not running and could not be started."
+            Write-Err "Open Docker Desktop manually and try again."
+            exit 1
+        }
+    }
+}
+
+function Start-NemoClaw {
+    Assert-DockerRunning
+    Assert-ContainerExists
+
+    $state = docker inspect --format "{{.State.Status}}" nemoclaw 2>&1
+    if ($state -eq "running") {
+        Write-Info "NemoClaw is already running."
+        Write-Info "Dashboard: http://localhost:18789"
+        return
+    }
+
+    Write-Info "Starting NemoClaw container..."
+    docker start nemoclaw 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "Failed to start NemoClaw container."
+        exit 1
+    }
+
+    $ready = Test-DashboardReady -TimeoutSeconds 60 -IntervalSeconds 3
+    if ($ready) {
+        Write-Ok "NemoClaw is running."
+        Write-Ok "Dashboard: http://localhost:18789"
+    } else {
+        Write-Warn "Container started but dashboard is not responding yet."
+        Write-Warn "Check logs with: docker logs nemoclaw"
+    }
+}
+
+function Stop-NemoClaw {
+    Assert-DockerRunning
+    Assert-ContainerExists
+
+    $state = docker inspect --format "{{.State.Status}}" nemoclaw 2>&1
+    if ($state -ne "running") {
+        Write-Info "NemoClaw is not running."
+        return
+    }
+
+    Write-Info "Stopping NemoClaw container..."
+    docker stop nemoclaw 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "Failed to stop NemoClaw container."
+        exit 1
+    }
+    Write-Ok "NemoClaw stopped."
+}
+
+function Restart-NemoClaw {
+    Assert-DockerRunning
+    Assert-ContainerExists
+
+    Write-Info "Restarting NemoClaw container..."
+    docker restart nemoclaw 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "Failed to restart NemoClaw container."
+        exit 1
+    }
+
+    $ready = Test-DashboardReady -TimeoutSeconds 60 -IntervalSeconds 3
+    if ($ready) {
+        Write-Ok "NemoClaw restarted."
+        Write-Ok "Dashboard: http://localhost:18789"
+    } else {
+        Write-Warn "Container restarted but dashboard is not responding yet."
+        Write-Warn "Check logs with: docker logs nemoclaw"
+    }
+}
+
+function Get-NemoClawStatus {
+    # Check Docker daemon
+    docker info 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Info "Docker Desktop is not running."
+        Write-Info "NemoClaw status: unknown (Docker not available)"
+        return
+    }
+
+    # Check container existence
+    $exists = docker ps -a --filter "name=^nemoclaw$" --format "{{.Names}}" 2>&1
+    if ($exists -ne "nemoclaw") {
+        Write-Info "NemoClaw is not installed. Run 'install.bat' to set up."
+        return
+    }
+
+    # Check container state
+    $state = docker inspect --format "{{.State.Status}}" nemoclaw 2>&1
+    switch ($state) {
+        "running" {
+            Write-Ok "NemoClaw container is running."
+            try {
+                $response = Invoke-WebRequest -Uri "http://localhost:18789" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+                Write-Ok "Dashboard is reachable at http://localhost:18789"
+            } catch {
+                Write-Warn "Container is running but dashboard is not responding on port 18789."
+            }
+        }
+        "exited" {
+            Write-Info "NemoClaw container is stopped."
+            Write-Info "Run 'install.bat start' to start it."
+        }
+        default {
+            Write-Info "NemoClaw container state: $state"
+        }
+    }
+}
+
+function Uninstall-NemoClaw {
+    Write-Warn "This will remove the NemoClaw container and Docker image."
+    Write-Warn "Your Desktop\NemoClaw folder will NOT be deleted."
+    $confirm = Read-Host "Type 'yes' to confirm"
+    if ($confirm -ne "yes") {
+        Write-Info "Uninstall cancelled."
+        return
+    }
+
+    # Remove container
+    $existing = docker ps -a --filter "name=^nemoclaw$" --format "{{.Names}}" 2>&1
+    if ($existing -eq "nemoclaw") {
+        docker stop nemoclaw 2>&1 | Out-Null
+        docker rm nemoclaw 2>&1 | Out-Null
+        Write-Ok "Container removed."
+    }
+
+    # Remove image
+    $image = docker images nemoclaw --quiet 2>&1
+    if ($image) {
+        docker rmi nemoclaw 2>&1 | Out-Null
+        Write-Ok "Image removed."
+    }
+
+    # Clean registry
+    Remove-Item -Path "HKCU:\Software\NemoClaw" -Recurse -ErrorAction SilentlyContinue
+    Write-Ok "Registry entries cleaned."
+
+    # Optional: Remove Docker Desktop
+    Write-Host ""
+    $removeDocker = Read-Host "Also remove Docker Desktop? (yes/no)"
+    if ($removeDocker -eq "yes") {
+        Write-Info "Removing Docker Desktop..."
+        winget uninstall --id Docker.DockerDesktop --silent 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "winget uninstall failed. You can remove Docker Desktop from Settings > Apps."
+        } else {
+            Write-Ok "Docker Desktop removed."
+            Write-Info "Note: WSL distributions (docker-desktop, docker-desktop-data) may remain."
+            Write-Info "To remove them: wsl --unregister docker-desktop-data"
+        }
+    }
+
+    Write-Host ""
+    Write-Ok "NemoClaw has been uninstalled."
+}
+
 # --- Entry Point ---
 if ($env:NEMOCLAW_TESTING) { return }
-Assert-Administrator
-Install-Prerequisites
-Install-NemoClawContainer
+
+switch ($Command) {
+    "install" {
+        Assert-Administrator
+        Install-Prerequisites
+        Install-NemoClawContainer
+    }
+    "start"     { Start-NemoClaw }
+    "stop"      { Stop-NemoClaw }
+    "restart"   { Restart-NemoClaw }
+    "status"    { Get-NemoClawStatus }
+    "uninstall" { Uninstall-NemoClaw }
+}
