@@ -13,12 +13,12 @@ A Windows user can run one script and get a working OpenClaw dashboard accessibl
 ### Validated
 
 - [x] PowerShell script installs Docker Desktop if not already installed — Validated in Phase 01: prerequisites-and-docker-desktop
+- [x] Script creates an Ubuntu 22.04 container with NemoClaw installed via install.sh — Validated in Phase 02: container-setup-and-nemoclaw-install
+- [x] OpenClaw dashboard port (18789) is forwarded to the host machine — Validated in Phase 02: container-setup-and-nemoclaw-install
+- [x] Desktop folder `NemoClaw` is created and mounted into the container — Validated in Phase 02: container-setup-and-nemoclaw-install
+- [x] Script prompts the user for their NVIDIA API key during setup — Validated in Phase 02: container-setup-and-nemoclaw-install
 
 ### Active
-- [ ] Script creates an Ubuntu 22.04 container with NemoClaw installed via install.sh
-- [ ] OpenClaw dashboard port (18789) is forwarded to the host machine
-- [ ] Desktop folder `NemoClaw` is created and mounted into the container
-- [ ] Script prompts the user for their NVIDIA API key during setup
 - [ ] Script provides start, stop, restart, and status commands for the container
 - [ ] Script handles errors gracefully with clear messages (Docker not starting, network issues, etc.)
 
@@ -54,9 +54,9 @@ Key technical details:
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | Docker Desktop over WSL Docker Engine | Easiest for Windows users, GUI management | Implemented in Phase 01 |
-| Fresh Ubuntu over existing Dockerfile | Closer to documented install path, user preference | — Pending |
-| Prompt for API key during setup | Interactive setup experience, no env var prerequisite | — Pending |
+| Fresh Ubuntu over existing Dockerfile | Closer to documented install path, user preference | Implemented in Phase 02 |
+| Prompt for API key during setup | Interactive setup experience, no env var prerequisite | Implemented in Phase 02 |
 | Include start/stop/restart/status commands | Users shouldn't need to learn Docker CLI | — Pending |
 
 ---
-*Last updated: 2026-03-20 after Phase 01 completion*
+*Last updated: 2026-03-20 after Phase 02 completion*
