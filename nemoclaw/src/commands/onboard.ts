@@ -159,7 +159,8 @@ const _spinGreen = _spinColor
     ? "\x1b[38;2;118;185;0m"
     : "\x1b[38;5;148m"
   : "";
-const _spinReset = _spinColor ? "\x1b[0m" : "";
+const _spinRed   = _spinColor ? "\x1b[1;31m" : "";
+const _spinReset = _spinColor ? "\x1b[0m"    : "";
 
 function withSpinner<T>(msg: string, task: Promise<T>): Promise<T> {
   if (!process.stdout.isTTY) return task;
@@ -177,7 +178,7 @@ function withSpinner<T>(msg: string, task: Promise<T>): Promise<T> {
     },
     (err: unknown) => {
       clearInterval(timer);
-      process.stdout.write(`\r  ${msg} \x1b[1;31m✗\x1b[0m\n`);
+      process.stdout.write(`\r  ${msg} ${_spinRed}✗${_spinReset}\n`);
       throw err;
     },
   );
