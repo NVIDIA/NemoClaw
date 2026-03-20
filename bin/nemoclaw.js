@@ -407,7 +407,7 @@ function printCompletion(shell) {
     return;
   }
 
-  const globalCmds = Array.from(GLOBAL_COMMANDS).filter(c => !c.startsWith("-"));
+  const globalCmds = [...Array.from(GLOBAL_COMMANDS).filter(c => !c.startsWith("-")), "import"];
   let sandboxNames = [];
   try {
     sandboxNames = registry.listSandboxes().sandboxes.map(s => s.name);
@@ -458,8 +458,8 @@ _nemoclaw() {
   local -a cmd
   cmd=(\${words[1,CURRENT-1]})
 
-  # Check if first word is a sandbox name
-  if [[ " \${sandbox_names[@]} " =~ " \${cmd[1]} " ]]; then
+  # Check if first argument is a sandbox name
+  if [[ " \${sandbox_names[@]} " =~ " \${cmd[2]} " ]]; then
     _describe 'sandbox actions' sandbox_actions
   else
     _describe 'commands' global_cmds
@@ -473,7 +473,7 @@ compdef _nemoclaw nemoclaw`);
 
 complete -c nemoclaw -f -a "${globalCmds.join(" ")} ${sandboxNamesStr}" -n "test (count (commandline -opc)) -eq 1"
 
-complete -c nemoclaw -f -a "${SANDBOX_ACTIONS.join(" ")}" -n "test (count (commandline -opc)) -ge 2; and contains (commandline -opc | head -1) ${sandboxNamesFish}"
+complete -c nemoclaw -f -a "${SANDBOX_ACTIONS.join(" ")}" -n "test (count (commandline -opc)) -ge 2; and contains (commandline -opc)[2] ${sandboxNamesFish}"
 `);
   }
 }

@@ -6,7 +6,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { execSync } = require("child_process");
+const { execFileSync } = require("child_process");
 const registry = require("./registry");
 
 const BACKUP_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw", "backups");
@@ -50,9 +50,10 @@ function exportSandbox(sandboxName, outputPath) {
 
   let policyContent = "";
   try {
-    policyContent = execSync(`openshell policy get ${sandboxName} 2>/dev/null`, { 
+    policyContent = execFileSync("openshell", ["policy", "get", sandboxName], {
       encoding: "utf-8",
-      timeout: 10000 
+      timeout: 10000,
+      stdio: ["pipe", "pipe", "pipe"]
     });
   } catch {
     policyContent = "";
@@ -63,7 +64,7 @@ function exportSandbox(sandboxName, outputPath) {
     metadata: {
       name: sandboxName,
       createdAt: new Date().toISOString(),
-      nemoclawVersion: require("../package.json").version,
+      nemoclawVersion: require("../../package.json").version,
     },
     sandbox: {
       name: sandbox.name,
@@ -110,7 +111,7 @@ function importSandbox(backupPath, newName) {
   console.log(`  Creating sandbox '${sandboxName}' from backup...`);
   
   try {
-    execSync(`openshell sandbox exists ${sandboxName} 2>/dev/null`, { 
+    execFileSync("openshell", ["sandbox", "exists", sandboxName], {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"]
     });
@@ -130,18 +131,21 @@ function importSandbox(backupPath, newName) {
   });
 
   if (backup.policy) {
-    const policyPath = path.join(os.tmpdir(), `nemoclaw-restore-${Date.now()}.yaml`);
-    fs.writeFileSync(policyPath, backup.policy);
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-restore-"));
+    const policyPath = path.join(tmpDir, "policy.yaml");
+    fs.writeFileSync(policyPath, backup.policy, { mode: 0o600 });
     try {
-      execSync(`openshell policy set --policy "${policyPath}" --wait ${sandboxName}`, {
+      execFileSync("openshell", ["policy", "set", "--policy", policyPath, "--wait", sandboxName], {
         encoding: "utf-8",
         timeout: 30000,
+        stdio: ["pipe", "pipe", "pipe"]
       });
       console.log(`  Restored policy for '${sandboxName}'`);
     } catch (err) {
       console.warn(`  Warning: Could not restore policy: ${err.message}`);
     } finally {
       fs.unlinkSync(policyPath);
+      fs.rmdirSync(tmpDir);
     }
   }
 
