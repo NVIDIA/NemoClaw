@@ -21,13 +21,77 @@ status: published
 # How NemoClaw Works
 
 NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox.
-This page explains the key concepts at a high level.
+This page explains the key concepts about NemoClaw at a high level.
+
+## How It Fits Together
+
+The `nemoclaw` CLI is the primary entrypoint for setting up and managing sandboxed OpenClaw agents.
+It delegates heavy lifting to a versioned blueprint, a Python artifact that orchestrates sandbox creation, policy application, and inference provider setup through the OpenShell CLI.
+
+```{mermaid}
+flowchart TB
+    subgraph Host
+        CMD["nemoclaw onboard"]
+        PLUGIN[nemoclaw plugin]
+        BLUEPRINT[blueprint runner]
+        CLI["openshell CLI sandbox · gateway · inference · policy"]
+
+        CMD --> PLUGIN
+        PLUGIN --> BLUEPRINT
+        BLUEPRINT --> CLI
+    end
+
+    subgraph Sandbox["OpenShell Sandbox"]
+        AGENT[OpenClaw agent]
+        INF[NVIDIA inference, routed]
+        NET[strict network policy]
+        FS[filesystem isolation]
+
+        AGENT --- INF
+        AGENT --- NET
+        AGENT --- FS
+    end
+
+    PLUGIN --> AGENT
+
+    classDef nv fill:#76b900,stroke:#333,color:#fff
+    classDef nvLight fill:#e6f2cc,stroke:#76b900,color:#1a1a1a
+    classDef nvDark fill:#333,stroke:#76b900,color:#fff
+
+    class CMD,PLUGIN,BLUEPRINT nvDark
+    class CLI nv
+    class AGENT nv
+    class INF,NET,FS nvLight
+
+    style Host fill:none,stroke:#76b900,stroke-width:2px,color:#1a1a1a
+    style Sandbox fill:#f5faed,stroke:#76b900,stroke-width:2px,color:#1a1a1a
+```
+
+## Design Principles
+
+NemoClaw architecture follows the following principles.
+
+Thin plugin, versioned blueprint
+: The plugin stays small and stable. Orchestration logic lives in the blueprint and evolves on its own release cadence.
+
+Respect CLI boundaries
+: The `nemoclaw` CLI is the primary interface. Plugin commands are available under `openclaw nemoclaw` but do not override built-in OpenClaw commands.
+
+Supply chain safety
+: Blueprint artifacts are immutable, versioned, and digest-verified before execution.
+
+OpenShell-native for new installs
+: For users without an existing OpenClaw installation, NemoClaw recommends `openshell sandbox create` directly
+  rather than forcing a plugin-driven bootstrap.
+
+Reproducible setup
+: Running setup again recreates the sandbox from the same blueprint and policy definitions.
 
 ## Plugin and Blueprint
 
 NemoClaw is split into two parts:
 
-- The *plugin* is a TypeScript package that adds commands to the OpenClaw CLI under the `openclaw nemoclaw` namespace.
+- The *plugin* is a TypeScript package that powers the `nemoclaw` CLI and also registers commands under `openclaw nemoclaw`.
   It handles user interaction and delegates orchestration work to the blueprint.
 - The *blueprint* is a versioned Python artifact that contains all the logic for creating sandboxes, applying policies, and configuring inference.
   The plugin resolves, verifies, and executes the blueprint as a subprocess.
@@ -36,7 +100,7 @@ This separation keeps the plugin small and stable while allowing the blueprint t
 
 ## Sandbox Creation
 
-When you run `openclaw nemoclaw launch`, NemoClaw creates an OpenShell sandbox that runs OpenClaw in an isolated container.
+When you run `nemoclaw onboard`, NemoClaw creates an OpenShell sandbox that runs OpenClaw in an isolated container.
 The blueprint orchestrates this process through the OpenShell CLI:
 
 1. The plugin downloads the blueprint artifact, checks version compatibility, and verifies the digest.
@@ -49,13 +113,7 @@ After the sandbox starts, the agent runs inside it with all network, filesystem,
 
 Inference requests from the agent never leave the sandbox directly.
 OpenShell intercepts every inference call and routes it to the configured provider.
-NemoClaw ships with three inference profiles:
-
-- NVIDIA cloud, which routes to Nemotron 3 Super 120B through [build.nvidia.com](https://build.nvidia.com).
-- Local NIM, which routes to a NIM container on your local network.
-- Local vLLM, which routes to a vLLM server on localhost for offline development.
-
-You can switch providers at runtime without restarting the sandbox.
+NemoClaw routes inference to NVIDIA cloud, specifically Nemotron 3 Super 120B through [build.nvidia.com](https://build.nvidia.com). You can switch models at runtime without restarting the sandbox.
 
 ## Network and Filesystem Policy
 

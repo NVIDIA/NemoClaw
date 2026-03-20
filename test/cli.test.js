@@ -56,4 +56,10 @@ describe("CLI dispatch", () => {
     // With empty HOME, should say no sandboxes
     assert.ok(r.out.includes("No sandboxes"));
   });
+
+  it("unknown onboard option exits 1", () => {
+    const r = run("onboard --non-interactiv");
+    assert.equal(r.code, 1);
+    assert.ok(r.out.includes("Unknown onboard option"));
+  });
 });

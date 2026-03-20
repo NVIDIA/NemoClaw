@@ -96,10 +96,7 @@ Inference requests from the agent never leave the sandbox directly.
 OpenShell intercepts them and routes to the configured provider:
 
 ```text
-Agent (sandbox)  ──▶  OpenShell gateway  ──▶  Provider
-                                               ├── NVIDIA cloud (default)
-                                               ├── Local NIM service
-                                               └── vLLM on localhost
+Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA cloud (build.nvidia.com)
 ```
 
 Refer to [Inference Profiles](../reference/inference-profiles.md) for provider configuration details.

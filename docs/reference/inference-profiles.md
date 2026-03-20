@@ -1,11 +1,11 @@
 ---
 title:
-  page: "NemoClaw Inference Profiles — NVIDIA Cloud, NIM, and vLLM"
+  page: "NemoClaw Inference Profiles — NVIDIA Cloud"
   nav: "Inference Profiles"
-description: "Configuration reference for NVIDIA cloud, local NIM, and vLLM profiles."
-keywords: ["nemoclaw inference profiles", "nemoclaw nvidia nim vllm provider"]
+description: "Configuration reference for NVIDIA cloud inference profiles."
+keywords: ["nemoclaw inference profiles", "nemoclaw nvidia cloud provider"]
 topics: ["generative_ai", "ai_agents"]
-tags: ["openclaw", "openshell", "inference_routing", "nim", "vllm", "llms"]
+tags: ["openclaw", "openshell", "inference_routing", "llms"]
 content:
   type: reference
   difficulty: intermediate
@@ -20,9 +20,9 @@ status: published
 
 # Inference Profiles
 
-NemoClaw ships with three inference profiles defined in `blueprint.yaml`.
-Each profile configures an OpenShell inference provider and model route.
-The agent inside the sandbox uses whichever profile is active.
+NemoClaw ships with an inference profile defined in `blueprint.yaml`.
+The profile configures an OpenShell inference provider and model route.
+The agent inside the sandbox uses whichever model is active.
 Inference requests are routed transparently through the OpenShell gateway.
 
 ## Profile Summary
@@ -30,8 +30,6 @@ Inference requests are routed transparently through the OpenShell gateway.
 | Profile | Provider | Model | Endpoint | Use Case |
 |---|---|---|---|---|
 | `default` | NVIDIA cloud | `nvidia/nemotron-3-super-120b-a12b` | `integrate.api.nvidia.com` | Production. Requires an NVIDIA API key. |
-| `nim-local` | Local NIM service | `nvidia/nemotron-3-super-120b-a12b` | `nim-service.local:8000` | On-premises. NIM deployed as a local pod. |
-| `vllm` | vLLM | `nvidia/nemotron-3-nano-30b-a3b` | `host.openshell.internal:8000` | Local development. vLLM on the host. |
 
 ## Available Models
 
@@ -44,8 +42,7 @@ The `nvidia-nim` provider registers the following models from [build.nvidia.com]
 | `nvidia/llama-3.3-nemotron-super-49b-v1.5` | Nemotron Super 49B v1.5 | 131,072 | 4,096 |
 | `nvidia/nemotron-3-nano-30b-a3b` | Nemotron 3 Nano 30B | 131,072 | 4,096 |
 
-The `default` and `nim-local` profiles use Nemotron 3 Super 120B.
-The `vllm` profile uses Nemotron 3 Nano 30B.
+The default profile uses Nemotron 3 Super 120B.
 You can switch to any model in the catalog at runtime.
 
 ## `default` -- NVIDIA Cloud
@@ -58,57 +55,18 @@ The default profile routes inference to NVIDIA's hosted API through [build.nvidi
 - **Credential:** `NVIDIA_API_KEY` environment variable
 
 Get an API key from [build.nvidia.com](https://build.nvidia.com).
-The `nemoclaw setup` command prompts for this key and stores it in `~/.nemoclaw/credentials.json`.
+The `nemoclaw onboard` command prompts for this key and stores it in `~/.nemoclaw/credentials.json`.
 
 ```console
 $ openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b
 ```
 
-## `nim-local` -- Local NIM Service
+## Switching Models at Runtime
 
-Routes inference to a NIM container running on the local network.
-
-- **Provider type:** `openai`, which uses the OpenAI-compatible API
-- **Endpoint:** `http://nim-service.local:8000/v1`
-- **Model:** `nvidia/nemotron-3-super-120b-a12b`
-- **Credential:** `NIM_API_KEY` environment variable
-
-The sandbox network policy includes a `nim_service` entry that allows traffic to `nim-service.local:8000`.
+After the sandbox is running, switch models with the OpenShell CLI:
 
 ```console
-$ openshell inference set --provider nim-local --model nvidia/nemotron-3-super-120b-a12b
-```
-
-## `vllm` -- Local vLLM
-
-Routes inference to a vLLM server running on the host and exposed to the OpenShell gateway.
-
-- **Provider type:** `openai`, which uses the OpenAI-compatible API
-- **Endpoint:** `http://host.openshell.internal:8000/v1`
-- **Model:** `nvidia/nemotron-3-nano-30b-a3b`
-- **Credential:** `OPENAI_API_KEY` environment variable. Defaults to `dummy` for local use.
-
-Start the vLLM server with a non-loopback bind address such as `0.0.0.0`.
-On Linux hosts with UFW enabled, allow the Docker bridge subnet to reach port `8000`.
-
-```console
-$ openshell inference set --provider vllm-local --model nvidia/nemotron-3-nano-30b-a3b
-```
-
-## Selecting a Profile at Launch
-
-Pass `--profile` when launching to select a profile:
-
-```console
-$ openclaw nemoclaw launch --profile vllm
-```
-
-## Switching Profiles at Runtime
-
-After the sandbox is running, switch inference providers with the OpenShell CLI:
-
-```console
-$ openshell inference set --provider <provider-name> --model <model-name>
+$ openshell inference set --provider nvidia-nim --model <model-name>
 ```
 
 The change takes effect immediately.

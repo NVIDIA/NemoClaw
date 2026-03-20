@@ -24,7 +24,6 @@ extensions = [
     "sphinx_copybutton",
     "sphinx_design",
     "sphinxcontrib.mermaid",
-    "sphinx_llm.txt",
     "json_output",
     "search_assets",
 ]
@@ -98,9 +97,15 @@ html_theme_options = {
     # "public_docs_features": True, # TODO: Uncomment this when the docs are public
     "icon_links": [
         {
-            "name": "GitHub",
+            "name": "NemoClaw GitHub",
             "url": "https://github.com/NVIDIA/NemoClaw",
             "icon": "fa-brands fa-github",
+            "type": "fontawesome",
+        },
+        {
+            "name": "NemoClaw Discord",
+            "url": "https://discord.gg/XFpfPv9Uvx",
+            "icon": "fa-brands fa-discord",
             "type": "fontawesome",
         },
     ],

@@ -18,6 +18,114 @@ info()  { echo -e "${GREEN}[install]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[install]${NC} $1"; }
 fail()  { echo -e "${RED}[install]${NC} $1"; exit 1; }
 
+define_runtime_helpers() {
+  socket_exists() {
+    local socket_path="$1"
+
+    if [ -n "${NEMOCLAW_TEST_SOCKET_PATHS:-}" ]; then
+      case ":$NEMOCLAW_TEST_SOCKET_PATHS:" in
+        *":$socket_path:"*) return 0 ;;
+      esac
+    fi
+
+    [ -S "$socket_path" ]
+  }
+
+  find_colima_docker_socket() {
+    local home_dir="${1:-${HOME:-/tmp}}"
+    local socket_path
+
+    for socket_path in \
+      "$home_dir/.colima/default/docker.sock" \
+      "$home_dir/.config/colima/default/docker.sock"
+    do
+      if socket_exists "$socket_path"; then
+        printf '%s\n' "$socket_path"
+        return 0
+      fi
+    done
+
+    return 1
+  }
+
+  find_docker_desktop_socket() {
+    local home_dir="${1:-${HOME:-/tmp}}"
+    local socket_path="$home_dir/.docker/run/docker.sock"
+
+    if socket_exists "$socket_path"; then
+      printf '%s\n' "$socket_path"
+      return 0
+    fi
+
+    return 1
+  }
+
+  detect_docker_host() {
+    if [ -n "${DOCKER_HOST:-}" ]; then
+      printf '%s\n' "$DOCKER_HOST"
+      return 0
+    fi
+
+    local home_dir="${1:-${HOME:-/tmp}}"
+    local socket_path
+
+    if socket_path="$(find_colima_docker_socket "$home_dir")"; then
+      printf 'unix://%s\n' "$socket_path"
+      return 0
+    fi
+
+    if socket_path="$(find_docker_desktop_socket "$home_dir")"; then
+      printf 'unix://%s\n' "$socket_path"
+      return 0
+    fi
+
+    return 1
+  }
+}
+
+SCRIPT_PATH="${BASH_SOURCE[0]-}"
+SCRIPT_DIR=""
+if [ -n "$SCRIPT_PATH" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+fi
+
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/lib/runtime.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$SCRIPT_DIR/lib/runtime.sh"
+else
+  define_runtime_helpers
+fi
+
+# Ensure nvm environment is loaded in the current shell.
+ensure_nvm_loaded() {
+  if [ -z "${NVM_DIR:-}" ]; then
+    export NVM_DIR="$HOME/.nvm"
+  fi
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    # shellcheck source=/dev/null
+    . "$NVM_DIR/nvm.sh"
+  fi
+}
+
+# Refresh PATH so that npm global bin is discoverable.
+refresh_path() {
+  ensure_nvm_loaded
+
+  local npm_bin
+  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  if [ -n "$npm_bin" ] && [ -d "$npm_bin" ]; then
+    case ":$PATH:" in
+      *":$npm_bin:"*) ;;  # already on PATH
+      *) export PATH="$npm_bin:$PATH" ;;
+    esac
+  fi
+}
+
+MIN_NODE_MAJOR=20
+MIN_NPM_MAJOR=10
+RECOMMENDED_NODE_MAJOR=22
+RUNTIME_REQUIREMENT_MSG="NemoClaw requires Node.js >=${MIN_NODE_MAJOR} and npm >=${MIN_NPM_MAJOR} (recommended Node.js ${RECOMMENDED_NODE_MAJOR})."
+
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 
@@ -44,6 +152,9 @@ if command -v asdf > /dev/null 2>&1 && asdf plugin list 2>/dev/null | grep -q no
   NODE_MGR="asdf"
 elif [ -n "${NVM_DIR:-}" ] && [ -s "${NVM_DIR}/nvm.sh" ]; then
   NODE_MGR="nvm"
+elif [ -s "$HOME/.nvm/nvm.sh" ]; then
+  export NVM_DIR="$HOME/.nvm"
+  NODE_MGR="nvm"
 elif command -v fnm > /dev/null 2>&1; then
   NODE_MGR="fnm"
 elif command -v brew > /dev/null 2>&1 && [ "$OS" = "Darwin" ]; then
@@ -53,6 +164,30 @@ elif [ "$OS" = "Linux" ]; then
 fi
 
 info "Node.js manager: $NODE_MGR"
+
+version_major() {
+  printf '%s\n' "${1#v}" | cut -d. -f1
+}
+
+ensure_supported_runtime() {
+  command -v node > /dev/null 2>&1 || fail "${RUNTIME_REQUIREMENT_MSG} Node.js was not found on PATH."
+  command -v npm > /dev/null 2>&1 || fail "${RUNTIME_REQUIREMENT_MSG} npm was not found on PATH."
+
+  local node_version npm_version node_major npm_major
+  node_version="$(node -v 2>/dev/null || true)"
+  npm_version="$(npm --version 2>/dev/null || true)"
+  node_major="$(version_major "$node_version")"
+  npm_major="$(version_major "$npm_version")"
+
+  [[ "$node_major" =~ ^[0-9]+$ ]] || fail "Could not determine Node.js version from '${node_version}'. ${RUNTIME_REQUIREMENT_MSG}"
+  [[ "$npm_major" =~ ^[0-9]+$ ]] || fail "Could not determine npm version from '${npm_version}'. ${RUNTIME_REQUIREMENT_MSG}"
+
+  if (( node_major < MIN_NODE_MAJOR || npm_major < MIN_NPM_MAJOR )); then
+    fail "Unsupported runtime detected: Node.js ${node_version:-unknown}, npm ${npm_version:-unknown}. ${RUNTIME_REQUIREMENT_MSG} Upgrade Node.js and rerun the installer."
+  fi
+
+  info "Runtime OK: Node.js ${node_version}, npm ${npm_version}"
+}
 
 # ── Install Node.js 22 if needed ────────────────────────────────
 
@@ -107,6 +242,7 @@ install_node() {
 }
 
 install_node
+ensure_supported_runtime
 
 # ── Install Docker ───────────────────────────────────────────────
 
@@ -119,6 +255,23 @@ install_docker() {
   if command -v docker > /dev/null 2>&1; then
     # Docker installed but not running
     if [ "$OS" = "Darwin" ]; then
+      local colima_socket=""
+      local docker_desktop_socket=""
+      colima_socket="$(find_colima_docker_socket || true)"
+      docker_desktop_socket="$(find_docker_desktop_socket || true)"
+
+      if [ -n "${DOCKER_HOST:-}" ]; then
+        fail "Docker is installed but the selected runtime is not running. Start the runtime behind DOCKER_HOST (${DOCKER_HOST}) and re-run."
+      fi
+
+      if [ -n "$colima_socket" ] && [ -n "$docker_desktop_socket" ]; then
+        fail "Both Colima and Docker Desktop are available on this Mac. Start the runtime you want explicitly and re-run, or set DOCKER_HOST to select one."
+      fi
+
+      if [ -n "$docker_desktop_socket" ]; then
+        fail "Docker Desktop appears to be installed but is not running. Start Docker Desktop and re-run."
+      fi
+
       if command -v colima > /dev/null 2>&1; then
         info "Starting Colima..."
         colima start
@@ -209,17 +362,41 @@ install_openshell
 # ── Install NemoClaw CLI ─────────────────────────────────────────
 
 info "Installing nemoclaw CLI..."
-npm install -g nemoclaw
+if [ "$NODE_MGR" = "nodesource" ]; then
+  sudo npm install -g git+https://github.com/NVIDIA/NemoClaw.git
+else
+  npm install -g git+https://github.com/NVIDIA/NemoClaw.git
+fi
 
 if [ "$NEED_RESHIM" = true ]; then
   info "Reshimming asdf..."
   asdf reshim nodejs
 fi
 
+refresh_path
+
 # ── Verify ───────────────────────────────────────────────────────
 
 if ! command -v nemoclaw > /dev/null 2>&1; then
-  fail "nemoclaw not found in PATH after install. Check your Node.js bin directory."
+  # Try refreshing PATH one more time
+  refresh_path
+fi
+
+if ! command -v nemoclaw > /dev/null 2>&1; then
+  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  if [ -n "$npm_bin" ] && [ -x "$npm_bin/nemoclaw" ]; then
+    warn "nemoclaw installed at $npm_bin/nemoclaw but not on current PATH."
+    warn ""
+    warn "Add it to your shell profile:"
+    warn "  echo 'export PATH=\"$npm_bin:\$PATH\"' >> ~/.bashrc"
+    warn "  source ~/.bashrc"
+    warn ""
+    warn "Or for zsh:"
+    warn "  echo 'export PATH=\"$npm_bin:\$PATH\"' >> ~/.zshrc"
+    warn "  source ~/.zshrc"
+  else
+    fail "nemoclaw installation failed. Binary not found."
+  fi
 fi
 
 echo ""
@@ -228,3 +405,24 @@ info "nemoclaw $(nemoclaw --version 2>/dev/null || echo 'v0.1.0') is ready."
 echo ""
 echo "  Run \`nemoclaw onboard\` to get started"
 echo ""
+
+# ── Post-install: shell reload instructions ──────────────────
+
+if [ "$NODE_MGR" = "nvm" ] || [ "$NODE_MGR" = "fnm" ]; then
+  profile="$HOME/.bashrc"
+  if [ -n "${ZSH_VERSION:-}" ] || [ "$(basename "${SHELL:-}")" = "zsh" ]; then
+    profile="$HOME/.zshrc"
+  elif [ ! -f "$HOME/.bashrc" ] && [ -f "$HOME/.profile" ]; then
+    profile="$HOME/.profile"
+  fi
+  echo "  ──────────────────────────────────────────────────"
+  warn "Your current shell may not have the updated PATH."
+  echo ""
+  echo "  To use nemoclaw now, run:"
+  echo ""
+  echo "    source $profile"
+  echo ""
+  echo "  Or open a new terminal window."
+  echo "  ──────────────────────────────────────────────────"
+  echo ""
+fi

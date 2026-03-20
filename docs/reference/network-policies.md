@@ -127,10 +127,10 @@ This opens a split tmux session with the TUI on the left and the agent on the ri
 
 ### Static Changes
 
-Edit `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and re-run setup:
+Edit `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and re-run the onboard wizard:
 
 ```console
-$ nemoclaw setup
+$ nemoclaw onboard
 ```
 
 ### Dynamic Changes
