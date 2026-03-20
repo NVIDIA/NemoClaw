@@ -143,6 +143,51 @@ $ colima status
 
 ## Runtime
 
+### Reconnecting after a reboot
+
+After a machine reboot, the Docker daemon, OpenShell gateway, and sandbox containers stop.
+Follow these steps to restore your previous NemoClaw session.
+
+1. Verify that Docker is running:
+```console
+   $ sudo systemctl start docker
+```
+
+   On macOS with Docker Desktop, open the Docker Desktop application and wait for it to finish starting.
+
+2. Check the sandbox state from the host:
+```console
+   $ openshell sandbox list
+```
+
+   This shows whether your sandbox still exists but is stopped, or has been removed entirely.
+
+3. Check NemoClaw status:
+```console
+   $ nemoclaw status
+```
+
+   This lists registered sandboxes and the state of auxiliary services.
+
+4. If the sandbox is listed but stopped, reconnect:
+```console
+   $ nemoclaw <name> connect
+```
+
+   Replace `<name>` with your sandbox name, for example `my-assistant`.
+
+5. If the sandbox no longer exists, re-run the onboard wizard to recreate it:
+```console
+   $ nemoclaw onboard
+```
+
+   The wizard recreates the sandbox from the same blueprint and policy definitions.
+
+6. If you were running auxiliary services (Telegram bridge, tunnel), restart them:
+```console
+   $ nemoclaw start
+```
+
 ### Sandbox shows as stopped
 
 The sandbox may have been stopped or deleted.
