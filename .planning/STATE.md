@@ -3,27 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-stopped_at: Phase 2 context gathered
-last_updated: "2026-03-20T14:54:49.810Z"
+stopped_at: Completed 02-01-PLAN.md
+last_updated: "2026-03-20T16:34:16.622Z"
 progress:
   total_phases: 3
   completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
----
-
----
-gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: unknown
-stopped_at: Completed 01-02-PLAN.md (Phase 01 complete)
-last_updated: "2026-03-20T13:37:14.157Z"
-progress:
-  total_phases: 3
-  completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  total_plans: 4
+  completed_plans: 3
 ---
 
 # Project State
@@ -33,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Core value:** A Windows user can run one script and get a working OpenClaw dashboard accessible from their browser, with a Desktop folder for sharing files — no Linux or Docker knowledge required.
-**Current focus:** Phase 01 — prerequisites-and-docker-desktop
+**Current focus:** Phase 02 — container-setup-and-nemoclaw-install
 
 ## Current Position
 
-Phase: 01 (prerequisites-and-docker-desktop) — COMPLETE
-Plan: 2 of 2 (all plans complete)
+Phase: 02 (container-setup-and-nemoclaw-install) — EXECUTING
+Plan: 2 of 2
 
 ## Performance Metrics
 
@@ -62,6 +48,7 @@ Plan: 2 of 2 (all plans complete)
 *Updated after each plan completion*
 | Phase 01 P01 | 3min | 3 tasks | 2 files |
 | Phase 01 P02 | 5min | 2 tasks | 2 files |
+| Phase 02 P01 | 2min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -76,6 +63,8 @@ Recent decisions affecting current work:
 - Include start/stop/restart/status commands: Users shouldn't need to learn Docker CLI
 - [Phase 01]: Registry breadcrumb at HKCU:\Software\NemoClaw for reboot resume with 6-stage state machine
 - [Phase 01 P02]: Test guard pattern using $env:NEMOCLAW_TESTING for safe dot-sourcing in Pester tests
+- [Phase 02]: Root user inside container to avoid volume mount permission issues
+- [Phase 02]: DPAPI via ConvertFrom-SecureString for API key encryption (PS 5.1 compatible)
 
 ### Pending Todos
 
@@ -88,6 +77,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-20T14:54:49.809Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-container-setup-and-nemoclaw-install/02-CONTEXT.md
+Last session: 2026-03-20T16:34:16.621Z
+Stopped at: Completed 02-01-PLAN.md
+Resume file: None

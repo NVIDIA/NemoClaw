@@ -22,11 +22,11 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Container Setup
 
-- [ ] **SETUP-01**: Script creates a named Ubuntu 22.04 container with port 18789 forwarded
-- [ ] **SETUP-02**: Script creates Desktop/NemoClaw folder and mounts it into the container
-- [ ] **SETUP-03**: Script prompts user for NVIDIA API key and passes it to the container
-- [ ] **SETUP-04**: Script runs install.sh non-interactively inside the container
-- [ ] **SETUP-05**: Script verifies container health and dashboard reachability after setup
+- [x] **SETUP-01**: Script creates a named Ubuntu 22.04 container with port 18789 forwarded
+- [x] **SETUP-02**: Script creates Desktop/NemoClaw folder and mounts it into the container
+- [x] **SETUP-03**: Script prompts user for NVIDIA API key and passes it to the container
+- [x] **SETUP-04**: Script runs install.sh non-interactively inside the container
+- [x] **SETUP-05**: Script verifies container health and dashboard reachability after setup
 
 ### Lifecycle Management
 
@@ -77,11 +77,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PREREQ-08 | Phase 1 | Complete |
 | PREREQ-09 | Phase 1 | Complete |
 | PREREQ-10 | Phase 1 | Complete |
-| SETUP-01 | Phase 2 | Pending |
-| SETUP-02 | Phase 2 | Pending |
-| SETUP-03 | Phase 2 | Pending |
-| SETUP-04 | Phase 2 | Pending |
-| SETUP-05 | Phase 2 | Pending |
+| SETUP-01 | Phase 2 | Complete |
+| SETUP-02 | Phase 2 | Complete |
+| SETUP-03 | Phase 2 | Complete |
+| SETUP-04 | Phase 2 | Complete |
+| SETUP-05 | Phase 2 | Complete |
 | LIFE-01 | Phase 3 | Pending |
 | LIFE-02 | Phase 3 | Pending |
 | LIFE-03 | Phase 3 | Pending |
