@@ -652,3 +652,378 @@ Describe "Dashboard Health Check" -Tag "HealthCheck", "SETUP-05" {
         $content | Should -Match "DASHBOARD_READY"
     }
 }
+
+# ---------------------------------------------------------------------------
+# LIFE-01: Start container (launching Docker Desktop if needed)
+# ---------------------------------------------------------------------------
+
+Describe "Start-NemoClaw" -Tag "Lifecycle", "LIFE-01" {
+    It "Start-NemoClaw function exists" {
+        Get-Command Start-NemoClaw | Should -Not -BeNullOrEmpty
+    }
+    It "Assert-DockerRunning function exists" {
+        Get-Command Assert-DockerRunning | Should -Not -BeNullOrEmpty
+    }
+    It "Assert-ContainerExists function exists" {
+        Get-Command Assert-ContainerExists | Should -Not -BeNullOrEmpty
+    }
+    It "reports already running when container state is running" {
+        Mock docker {
+            if ($args -contains "info") { $global:LASTEXITCODE = 0 }
+            elseif ($args -contains "ps") { "nemoclaw" }
+            elseif ($args -contains "inspect") { "running" }
+        }
+        Mock Write-Info {}
+        Mock Write-Ok {}
+        Mock Write-Host {}
+        Mock Out-Null {}
+        Start-NemoClaw
+        Should -Invoke Write-Info -ParameterFilter { $Message -match "already running" }
+    }
+    It "calls docker start when container is stopped" {
+        $script:dockerStartCalled = $false
+        Mock docker {
+            if ($args -contains "info") { $global:LASTEXITCODE = 0 }
+            elseif ($args -contains "ps") { "nemoclaw" }
+            elseif ($args -contains "inspect") { "exited" }
+            elseif ($args -contains "start") { $global:LASTEXITCODE = 0; $script:dockerStartCalled = $true }
+        }
+        Mock Test-DashboardReady { $true }
+        Mock Write-Info {}
+        Mock Write-Ok {}
+        Mock Write-Warn {}
+        Mock Write-Host {}
+        Mock Out-Null {}
+        Start-NemoClaw
+        $script:dockerStartCalled | Should -Be $true
+    }
+    It "calls Test-DashboardReady after starting" {
+        Mock docker {
+            if ($args -contains "info") { $global:LASTEXITCODE = 0 }
+            elseif ($args -contains "ps") { "nemoclaw" }
+            elseif ($args -contains "inspect") { "exited" }
+            elseif ($args -contains "start") { $global:LASTEXITCODE = 0 }
+        }
+        Mock Test-DashboardReady { $true }
+        Mock Write-Info {}
+        Mock Write-Ok {}
+        Mock Write-Host {}
+        Mock Out-Null {}
+        Start-NemoClaw
+        Should -Invoke Test-DashboardReady -Times 1
+    }
+    It "does not require Assert-Administrator" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        # Assert-Administrator should only appear in the install case
+        $switchBlock = [regex]::Match($content, '"start"\s*\{[^}]+\}')
+        $switchBlock.Value | Should -Not -Match "Assert-Administrator"
+    }
+    It "calls Assert-DockerRunning before container operations" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match "function Start-NemoClaw[\s\S]*?Assert-DockerRunning"
+    }
+}
+
+# ---------------------------------------------------------------------------
+# LIFE-02: Stop container
+# ---------------------------------------------------------------------------
+
+Describe "Stop-NemoClaw" -Tag "Lifecycle", "LIFE-02" {
+    It "Stop-NemoClaw function exists" {
+        Get-Command Stop-NemoClaw | Should -Not -BeNullOrEmpty
+    }
+    It "reports not running when container is already stopped" {
+        Mock docker {
+            if ($args -contains "info") { $global:LASTEXITCODE = 0 }
+            elseif ($args -contains "ps") { "nemoclaw" }
+            elseif ($args -contains "inspect") { "exited" }
+        }
+        Mock Write-Info {}
+        Mock Write-Host {}
+        Mock Out-Null {}
+        Stop-NemoClaw
+        Should -Invoke Write-Info -ParameterFilter { $Message -match "not running" }
+    }
+    It "calls docker stop when container is running" {
+        $script:dockerStopCalled = $false
+        Mock docker {
+            if ($args -contains "info") { $global:LASTEXITCODE = 0 }
+            elseif ($args -contains "ps") { "nemoclaw" }
+            elseif ($args -contains "inspect") { "running" }
+            elseif ($args -contains "stop") { $global:LASTEXITCODE = 0; $script:dockerStopCalled = $true }
+        }
+        Mock Write-Info {}
+        Mock Write-Ok {}
+        Mock Write-Host {}
+        Mock Out-Null {}
+        Stop-NemoClaw
+        $script:dockerStopCalled | Should -Be $true
+    }
+    It "uses docker stop (not docker kill) for graceful shutdown" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match "function Stop-NemoClaw[\s\S]*?docker stop nemoclaw"
+        # Should NOT use docker kill in Stop-NemoClaw
+        $stopFunc = [regex]::Match($content, 'function Stop-NemoClaw \{[\s\S]*?\n\}').Value
+        $stopFunc | Should -Not -Match "docker kill"
+    }
+}
+
+# ---------------------------------------------------------------------------
+# LIFE-03: Restart container
+# ---------------------------------------------------------------------------
+
+Describe "Restart-NemoClaw" -Tag "Lifecycle", "LIFE-03" {
+    It "Restart-NemoClaw function exists" {
+        Get-Command Restart-NemoClaw | Should -Not -BeNullOrEmpty
+    }
+    It "calls docker restart" {
+        $script:dockerRestartCalled = $false
+        Mock docker {
+            if ($args -contains "info") { $global:LASTEXITCODE = 0 }
+            elseif ($args -contains "ps") { "nemoclaw" }
+            elseif ($args -contains "restart") { $global:LASTEXITCODE = 0; $script:dockerRestartCalled = $true }
+        }
+        Mock Test-DashboardReady { $true }
+        Mock Write-Info {}
+        Mock Write-Ok {}
+        Mock Write-Host {}
+        Mock Out-Null {}
+        Restart-NemoClaw
+        $script:dockerRestartCalled | Should -Be $true
+    }
+    It "calls Test-DashboardReady after restart" {
+        Mock docker {
+            if ($args -contains "info") { $global:LASTEXITCODE = 0 }
+            elseif ($args -contains "ps") { "nemoclaw" }
+            elseif ($args -contains "restart") { $global:LASTEXITCODE = 0 }
+        }
+        Mock Test-DashboardReady { $true }
+        Mock Write-Info {}
+        Mock Write-Ok {}
+        Mock Write-Host {}
+        Mock Out-Null {}
+        Restart-NemoClaw
+        Should -Invoke Test-DashboardReady -Times 1
+    }
+    It "warns when dashboard not responding after restart" {
+        Mock docker {
+            if ($args -contains "info") { $global:LASTEXITCODE = 0 }
+            elseif ($args -contains "ps") { "nemoclaw" }
+            elseif ($args -contains "restart") { $global:LASTEXITCODE = 0 }
+        }
+        Mock Test-DashboardReady { $false }
+        Mock Write-Info {}
+        Mock Write-Warn {}
+        Mock Write-Host {}
+        Mock Out-Null {}
+        Restart-NemoClaw
+        Should -Invoke Write-Warn -ParameterFilter { $Message -match "not responding" }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# LIFE-04: Status and port reachability
+# ---------------------------------------------------------------------------
+
+Describe "Get-NemoClawStatus" -Tag "Lifecycle", "LIFE-04" {
+    It "Get-NemoClawStatus function exists" {
+        Get-Command Get-NemoClawStatus | Should -Not -BeNullOrEmpty
+    }
+    It "reports Docker not running when docker info fails" {
+        Mock docker {
+            $global:LASTEXITCODE = 1
+        }
+        Mock Write-Info {}
+        Mock Write-Host {}
+        Mock Out-Null {}
+        Get-NemoClawStatus
+        Should -Invoke Write-Info -ParameterFilter { $Message -match "Docker Desktop is not running" }
+    }
+    It "reports not installed when container does not exist" {
+        Mock docker {
+            if ($args -contains "info") { $global:LASTEXITCODE = 0 }
+            elseif ($args -contains "ps") { "" }
+        }
+        Mock Write-Info {}
+        Mock Write-Host {}
+        Mock Out-Null {}
+        Get-NemoClawStatus
+        Should -Invoke Write-Info -ParameterFilter { $Message -match "not installed" }
+    }
+    It "reports running and checks dashboard when container is running" {
+        Mock docker {
+            if ($args -contains "info") { $global:LASTEXITCODE = 0 }
+            elseif ($args -contains "ps") { "nemoclaw" }
+            elseif ($args -contains "inspect") { "running" }
+        }
+        Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200 } }
+        Mock Write-Ok {}
+        Mock Write-Info {}
+        Mock Write-Host {}
+        Mock Out-Null {}
+        Get-NemoClawStatus
+        Should -Invoke Write-Ok -ParameterFilter { $Message -match "running" }
+        Should -Invoke Write-Ok -ParameterFilter { $Message -match "reachable" }
+    }
+    It "warns when container running but dashboard not responding" {
+        Mock docker {
+            if ($args -contains "info") { $global:LASTEXITCODE = 0 }
+            elseif ($args -contains "ps") { "nemoclaw" }
+            elseif ($args -contains "inspect") { "running" }
+        }
+        Mock Invoke-WebRequest { throw "Connection refused" }
+        Mock Write-Ok {}
+        Mock Write-Warn {}
+        Mock Write-Info {}
+        Mock Write-Host {}
+        Mock Out-Null {}
+        Get-NemoClawStatus
+        Should -Invoke Write-Warn -ParameterFilter { $Message -match "not responding" }
+    }
+    It "reports stopped when container state is exited" {
+        Mock docker {
+            if ($args -contains "info") { $global:LASTEXITCODE = 0 }
+            elseif ($args -contains "ps") { "nemoclaw" }
+            elseif ($args -contains "inspect") { "exited" }
+        }
+        Mock Write-Info {}
+        Mock Write-Host {}
+        Mock Out-Null {}
+        Get-NemoClawStatus
+        Should -Invoke Write-Info -ParameterFilter { $Message -match "stopped" }
+    }
+    It "uses Invoke-WebRequest for HTTP health check" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match "function Get-NemoClawStatus[\s\S]*?Invoke-WebRequest.*localhost:18789"
+    }
+}
+
+# ---------------------------------------------------------------------------
+# LIFE-05: Uninstall (container, image, optionally Docker Desktop)
+# ---------------------------------------------------------------------------
+
+Describe "Uninstall-NemoClaw" -Tag "Lifecycle", "LIFE-05" {
+    It "Uninstall-NemoClaw function exists" {
+        Get-Command Uninstall-NemoClaw | Should -Not -BeNullOrEmpty
+    }
+    It "cancels when user does not type yes" {
+        Mock Read-Host { "no" }
+        Mock Write-Warn {}
+        Mock Write-Info {}
+        Mock docker {}
+        Uninstall-NemoClaw
+        Should -Invoke Write-Info -ParameterFilter { $Message -match "cancelled" }
+        Should -Invoke docker -Times 0
+    }
+    It "removes container when it exists" {
+        $script:dockerStopCalled = $false
+        $script:dockerRmCalled = $false
+        Mock Read-Host {
+            if ($Prompt -match "Type.*yes") { "yes" }
+            else { "no" }
+        }
+        Mock docker {
+            if ($args -contains "ps") { "nemoclaw" }
+            elseif ($args -contains "stop") { $global:LASTEXITCODE = 0; $script:dockerStopCalled = $true }
+            elseif ($args -contains "rm") { $global:LASTEXITCODE = 0; $script:dockerRmCalled = $true }
+            elseif ($args -contains "images") { "" }
+        }
+        Mock Remove-Item {}
+        Mock Write-Warn {}
+        Mock Write-Ok {}
+        Mock Write-Info {}
+        Mock Write-Host {}
+        Mock Out-Null {}
+        Uninstall-NemoClaw
+        $script:dockerStopCalled | Should -Be $true
+        $script:dockerRmCalled | Should -Be $true
+    }
+    It "removes image when it exists" {
+        $script:dockerRmiCalled = $false
+        Mock Read-Host {
+            if ($Prompt -match "Type.*yes") { "yes" }
+            else { "no" }
+        }
+        Mock docker {
+            if ($args -contains "ps") { "" }
+            elseif ($args -contains "images") { "abc123" }
+            elseif ($args -contains "rmi") { $global:LASTEXITCODE = 0; $script:dockerRmiCalled = $true }
+        }
+        Mock Remove-Item {}
+        Mock Write-Warn {}
+        Mock Write-Ok {}
+        Mock Write-Info {}
+        Mock Write-Host {}
+        Mock Out-Null {}
+        Uninstall-NemoClaw
+        $script:dockerRmiCalled | Should -Be $true
+    }
+    It "cleans registry entries" {
+        Mock Read-Host {
+            if ($Prompt -match "Type.*yes") { "yes" }
+            else { "no" }
+        }
+        Mock docker {
+            if ($args -contains "ps") { "" }
+            elseif ($args -contains "images") { "" }
+        }
+        Mock Remove-Item {}
+        Mock Write-Warn {}
+        Mock Write-Ok {}
+        Mock Write-Info {}
+        Mock Write-Host {}
+        Mock Out-Null {}
+        Uninstall-NemoClaw
+        Should -Invoke Remove-Item -ParameterFilter { $Path -match "NemoClaw" }
+    }
+    It "preserves Desktop\NemoClaw folder (does not delete user files)" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $uninstallFunc = [regex]::Match($content, 'function Uninstall-NemoClaw \{[\s\S]*?\n\}').Value
+        $uninstallFunc | Should -Match "NOT be deleted"
+        # Should not contain Remove-Item targeting Desktop\NemoClaw
+        $uninstallFunc | Should -Not -Match 'Remove-Item.*Desktop.*NemoClaw'
+    }
+    It "offers optional Docker Desktop removal via winget" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match "winget uninstall.*Docker\.DockerDesktop"
+    }
+    It "uses Read-Host for confirmation prompt" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match 'function Uninstall-NemoClaw[\s\S]*?Read-Host.*yes'
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Command Routing (param block and switch)
+# ---------------------------------------------------------------------------
+
+Describe "Command Routing" -Tag "Lifecycle", "CommandRouting" {
+    It "install.ps1 has param block with ValidateSet" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match '\[ValidateSet\("install",\s*"start",\s*"stop",\s*"restart",\s*"status",\s*"uninstall"\)\]'
+    }
+    It "defaults Command to install" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match '\[string\]\$Command\s*=\s*"install"'
+    }
+    It "has switch block routing commands" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $content | Should -Match 'switch \(\$Command\)'
+    }
+    It "only calls Assert-Administrator for install command" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        # After the NEMOCLAW_TESTING guard, Assert-Administrator should only appear inside "install" case
+        $entrySection = $content.Substring($content.IndexOf("switch (`$Command)"))
+        $installCase = [regex]::Match($entrySection, '"install"\s*\{[^}]+\}').Value
+        $installCase | Should -Match "Assert-Administrator"
+        # Other cases should not have it
+        $startCase = [regex]::Match($entrySection, '"start"\s*\{[^}]+\}').Value
+        $startCase | Should -Not -Match "Assert-Administrator"
+    }
+    It "NEMOCLAW_TESTING guard returns before switch" {
+        $content = Get-Content "$PSScriptRoot\..\install.ps1" -Raw
+        $guardIndex = $content.IndexOf('if ($env:NEMOCLAW_TESTING) { return }')
+        $switchIndex = $content.IndexOf('switch ($Command)')
+        $guardIndex | Should -BeLessThan $switchIndex
+    }
+}
