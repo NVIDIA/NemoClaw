@@ -276,7 +276,7 @@ function Request-Reboot {
 function Show-SuccessBanner {
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Green
-    Write-Host "  NemoClaw Prerequisites — Complete!    " -ForegroundColor Green
+    Write-Host "  NemoClaw Prerequisites - Complete!    " -ForegroundColor Green
     Write-Host "========================================" -ForegroundColor Green
     Write-Host ""
     Write-Ok "WSL2 is enabled"
@@ -372,7 +372,233 @@ function Install-Prerequisites {
 #   DOCKER_CONFIGURED-> DOCKER_READY     : Docker daemon responding
 #   DOCKER_READY     -> (deleted)        : Success, registry cleaned up
 
+# ---------------------------------------------------------------------------
+# Phase 2: Container Setup and NemoClaw Install
+# ---------------------------------------------------------------------------
+
+# --- API Key Handling ---
+
+function Save-NvidiaApiKey {
+    param([SecureString]$ApiKey)
+    $encrypted = ConvertFrom-SecureString -SecureString $ApiKey
+    if (-not (Test-Path $script:RegPath)) {
+        New-Item -Path $script:RegPath -Force | Out-Null
+    }
+    Set-ItemProperty -Path $script:RegPath -Name ApiKey -Value $encrypted
+}
+
+function Get-NvidiaApiKey {
+    try {
+        $encrypted = (Get-ItemProperty -Path $script:RegPath -Name ApiKey -ErrorAction Stop).ApiKey
+        $secure = ConvertTo-SecureString -String $encrypted
+        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+        try {
+            [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+        } finally {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        }
+    } catch {
+        $null
+    }
+}
+
+function Request-NvidiaApiKey {
+    $existing = Get-NvidiaApiKey
+    if ($existing) {
+        Write-Info "NVIDIA API key found in registry -- skipping prompt."
+        return $existing
+    }
+    Write-Host ""
+    Write-Info "An NVIDIA API key is required for NemoClaw."
+    Write-Info "Get one at: https://build.nvidia.com/settings/api-key"
+    Write-Host ""
+    $secure = Read-Host -Prompt "Enter your NVIDIA API key" -AsSecureString
+    # Convert to plaintext to validate non-empty
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try {
+        $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+    } finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
+    if ([string]::IsNullOrWhiteSpace($plain)) {
+        Write-Err "API key cannot be empty."
+        exit 1
+    }
+    Save-NvidiaApiKey -ApiKey $secure
+    Write-Ok "API key saved."
+    return $plain
+}
+
+# --- Shared Folder ---
+
+function New-NemoClawFolder {
+    $desktopPath = [Environment]::GetFolderPath("Desktop")
+    $sharedFolder = Join-Path $desktopPath "NemoClaw"
+    if (-not (Test-Path $sharedFolder)) {
+        New-Item -ItemType Directory -Path $sharedFolder -Force | Out-Null
+        Write-Ok "Created shared folder: $sharedFolder"
+    } else {
+        Write-Info "Shared folder already exists: $sharedFolder"
+    }
+    return $sharedFolder
+}
+
+# --- Container Management ---
+
+function Remove-ExistingContainer {
+    $existing = docker ps -a --filter "name=^nemoclaw$" --format "{{.Names}}" 2>&1
+    if ($existing -eq "nemoclaw") {
+        Write-Info "Removing existing nemoclaw container..."
+        docker stop nemoclaw 2>&1 | Out-Null
+        docker rm nemoclaw 2>&1 | Out-Null
+        Write-Ok "Old container removed."
+    }
+}
+
+function Build-NemoClawImage {
+    Write-Info "Building NemoClaw Docker image (this may take several minutes)..."
+    $dockerfilePath = Join-Path $PSScriptRoot "Dockerfile.nemoclaw"
+    $contextPath = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+    docker build -t nemoclaw -f $dockerfilePath $contextPath 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "Docker image build failed. Check the output above for details."
+        exit 1
+    }
+    Write-Ok "NemoClaw image built successfully."
+}
+
+function Start-NemoClawContainer {
+    param([string]$ApiKey, [string]$SharedFolder)
+    Write-Info "Starting NemoClaw container..."
+    docker run -d `
+        --name nemoclaw `
+        -p 18789:18789 `
+        -v "${SharedFolder}:/home/nemoclaw/shared" `
+        -e "NVIDIA_API_KEY=$ApiKey" `
+        nemoclaw 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "Failed to start NemoClaw container. Check the output above for details."
+        exit 1
+    }
+    Write-Ok "Container 'nemoclaw' started."
+}
+
+# --- Health Check ---
+
+function Test-DashboardReady {
+    param([int]$TimeoutSeconds = 180, [int]$IntervalSeconds = 5)
+    Write-Info "Waiting for OpenClaw dashboard (up to ${TimeoutSeconds}s)..."
+    $elapsed = 0
+    $spinChars = @('|', '/', '-', '\')
+    while ($elapsed -lt $TimeoutSeconds) {
+        try {
+            $response = Invoke-WebRequest -Uri "http://localhost:18789" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+            if ($response.StatusCode -eq 200) {
+                Write-Host ""
+                return $true
+            }
+        } catch {
+            # Connection refused or timeout -- keep polling
+        }
+        $char = $spinChars[($elapsed / $IntervalSeconds) % $spinChars.Length]
+        Write-Host "`r$char Waiting for OpenClaw dashboard... (${elapsed}s / ${TimeoutSeconds}s)" -NoNewline
+        Start-Sleep -Seconds $IntervalSeconds
+        $elapsed += $IntervalSeconds
+    }
+    Write-Host ""
+    return $false
+}
+
+# --- Success Banner ---
+
+function Show-ContainerBanner {
+    param([string]$SharedFolder)
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor Green
+    Write-Host "  NemoClaw Setup - Complete!            " -ForegroundColor Green
+    Write-Host "========================================" -ForegroundColor Green
+    Write-Host ""
+    Write-Ok "Container 'nemoclaw' is running"
+    Write-Ok "Shared folder: $SharedFolder"
+    Write-Ok "Dashboard is reachable"
+    Write-Ok "URL: http://localhost:18789"
+    Write-Host ""
+    Write-Info "Open http://localhost:18789 in your browser to access OpenClaw."
+    Write-Host ""
+}
+
+# --- Phase 2 Orchestrator ---
+
+function Install-NemoClawContainer {
+    $stage = Get-InstallStage
+    $totalSteps = 5
+
+    # Step 1: API Key
+    if (-not $stage -or $stage -eq "DOCKER_READY" -or $stage -eq $null) {
+        Write-Step -Current 1 -Total $totalSteps -Message "Checking NVIDIA API key..."
+        $apiKey = Request-NvidiaApiKey
+        Set-InstallStage "API_KEY_STORED"
+        $stage = "API_KEY_STORED"
+    }
+
+    # Step 2: Build image
+    if ($stage -eq "API_KEY_STORED") {
+        Write-Step -Current 2 -Total $totalSteps -Message "Preparing Docker image..."
+        Remove-ExistingContainer
+        Invoke-WithRetry -StepName "Docker image build" -Action {
+            Build-NemoClawImage
+        }
+        Set-InstallStage "IMAGE_BUILT"
+        $stage = "IMAGE_BUILT"
+    }
+
+    # Step 3: Create shared folder and start container
+    if ($stage -eq "IMAGE_BUILT") {
+        Write-Step -Current 3 -Total $totalSteps -Message "Starting container..."
+        $sharedFolder = New-NemoClawFolder
+        # Retrieve API key from registry (may have been stored in a prior run)
+        if (-not $apiKey) { $apiKey = Get-NvidiaApiKey }
+        if (-not $apiKey) {
+            Write-Err "NVIDIA API key not found. Please re-run the installer."
+            exit 1
+        }
+        Start-NemoClawContainer -ApiKey $apiKey -SharedFolder $sharedFolder
+        Set-InstallStage "CONTAINER_RUNNING"
+        $stage = "CONTAINER_RUNNING"
+    }
+
+    # Step 4: Health check
+    if ($stage -eq "CONTAINER_RUNNING") {
+        Write-Step -Current 4 -Total $totalSteps -Message "Verifying dashboard..."
+        $ready = Test-DashboardReady
+        if (-not $ready) {
+            Write-Err "OpenClaw dashboard did not respond within 180 seconds."
+            Write-Err "Check container logs: docker logs nemoclaw"
+            exit 1
+        }
+        Set-InstallStage "DASHBOARD_READY"
+        $stage = "DASHBOARD_READY"
+    }
+
+    # Step 5: Complete
+    if ($stage -eq "DASHBOARD_READY") {
+        Write-Step -Current 5 -Total $totalSteps -Message "Finishing up..."
+        $desktopPath = [Environment]::GetFolderPath("Desktop")
+        $sharedFolder = Join-Path $desktopPath "NemoClaw"
+        Remove-InstallStage
+        Show-ContainerBanner -SharedFolder $sharedFolder
+    }
+}
+
+# Stage progression (Phase 2):
+#   (null/DOCKER_READY) -> API_KEY_STORED  : API key prompted and saved to registry
+#   API_KEY_STORED      -> IMAGE_BUILT     : Docker image built from Dockerfile.nemoclaw
+#   IMAGE_BUILT         -> CONTAINER_RUNNING: Container started with volume + env + port
+#   CONTAINER_RUNNING   -> DASHBOARD_READY : HTTP 200 from localhost:18789
+#   DASHBOARD_READY     -> (deleted)       : Success, registry cleaned up
+
 # --- Entry Point ---
 if ($env:NEMOCLAW_TESTING) { return }
 Assert-Administrator
 Install-Prerequisites
+Install-NemoClawContainer
