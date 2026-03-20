@@ -6,8 +6,9 @@
 # gateway inside the sandbox so the forwarded host port has a live upstream.
 #
 # Optional env:
-#   NVIDIA_API_KEY   API key for NVIDIA-hosted inference
-#   CHAT_UI_URL      Browser origin that will access the forwarded dashboard
+#   NVIDIA_API_KEY                API key for NVIDIA-hosted inference
+#   CHAT_UI_URL                  Browser origin that will access the forwarded dashboard
+#   NEMOCLAW_DISABLE_DEVICE_AUTH Set to "1" to skip device-pairing auth (development only)
 
 set -euo pipefail
 
@@ -44,9 +45,11 @@ if chat_origin not in origins:
 
 gateway = cfg.setdefault('gateway', {})
 gateway['mode'] = 'local'
+disable_device_auth = os.environ.get('NEMOCLAW_DISABLE_DEVICE_AUTH', '') == '1'
+allow_insecure = parsed.scheme != 'https'
 gateway['controlUi'] = {
-    'allowInsecureAuth': True,
-    'dangerouslyDisableDeviceAuth': True,
+    'allowInsecureAuth': allow_insecure,
+    'dangerouslyDisableDeviceAuth': disable_device_auth,
     'allowedOrigins': origins,
 }
 gateway['trustedProxies'] = ['127.0.0.1', '::1']
@@ -138,14 +141,23 @@ while time.time() < DEADLINE:
 
     if pending:
         QUIET_POLLS = 0
+        ALLOWED_CLIENTS = {'openclaw-control-ui'}
+        ALLOWED_MODES = {'webchat'}
         for device in pending:
-            request_id = (device or {}).get('requestId')
+            if not isinstance(device, dict):
+                continue
+            client_id = device.get('clientId', '')
+            client_mode = device.get('clientMode', '')
+            if client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES:
+                print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
+                continue
+            request_id = device.get('requestId')
             if not request_id:
                 continue
             arc, aout, aerr = run('openclaw', 'devices', 'approve', request_id, '--json')
             if arc == 0:
                 APPROVED += 1
-                print(f'[auto-pair] approved request={request_id}')
+                print(f'[auto-pair] approved request={request_id} client={client_id}')
             elif aout or aerr:
                 print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
         time.sleep(1)
