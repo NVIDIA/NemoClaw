@@ -258,4 +258,120 @@ function Wait-DockerReady {
     return $false
 }
 
-# --- Main Orchestrator ---
+# ---------------------------------------------------------------------------
+# Reboot Prompt
+# ---------------------------------------------------------------------------
+
+function Request-Reboot {
+    Write-Warn "WSL2 is enabled. A reboot is required."
+    Write-Warn "Press Enter to reboot now, or reboot manually and re-run this script."
+    Read-Host
+    Restart-Computer -Force
+}
+
+# ---------------------------------------------------------------------------
+# Success Banner
+# ---------------------------------------------------------------------------
+
+function Show-SuccessBanner {
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor Green
+    Write-Host "  NemoClaw Prerequisites — Complete!    " -ForegroundColor Green
+    Write-Host "========================================" -ForegroundColor Green
+    Write-Host ""
+    Write-Ok "WSL2 is enabled"
+    Write-Ok "Docker Desktop is installed"
+    Write-Ok "Docker daemon is running"
+    Write-Ok "$env:USERNAME is in docker-users group"
+    Write-Host ""
+    Write-Info "You can now proceed with NemoClaw container setup."
+    Write-Host ""
+}
+
+# ---------------------------------------------------------------------------
+# Main Orchestrator
+# ---------------------------------------------------------------------------
+
+function Install-Prerequisites {
+    $stage = Get-InstallStage
+    $totalSteps = 6
+
+    # Step 1: Windows version check
+    if (-not $stage -or $stage -eq $null) {
+        Write-Step -Current 1 -Total $totalSteps -Message "Checking Windows version..."
+        Assert-WindowsVersion
+        Write-Step -Current 1 -Total $totalSteps -Message "Checking disk space..."
+        Assert-DiskSpace
+        Write-Step -Current 1 -Total $totalSteps -Message "Checking for antivirus..."
+        Test-AntivirusInterference
+        Set-InstallStage "VERSION_OK"
+        $stage = "VERSION_OK"
+    }
+
+    # Step 2: Enable WSL2
+    if ($stage -eq "VERSION_OK") {
+        Write-Step -Current 2 -Total $totalSteps -Message "Enabling WSL2..."
+        $rebootNeeded = Invoke-WithRetry -StepName "WSL2 enablement" -Action {
+            Enable-WSL2
+        }
+        Set-InstallStage "WSL_ENABLED"
+        if ($rebootNeeded) {
+            Request-Reboot
+            return  # Script ends; user reboots and re-runs
+        }
+        $stage = "WSL_ENABLED"
+    }
+
+    # Step 3: Install Docker Desktop
+    if ($stage -eq "WSL_ENABLED") {
+        Write-Step -Current 3 -Total $totalSteps -Message "Installing Docker Desktop..."
+        Invoke-WithRetry -StepName "Docker Desktop installation" -Action {
+            Install-DockerDesktop
+        }
+        Set-InstallStage "DOCKER_INSTALLED"
+        $stage = "DOCKER_INSTALLED"
+    }
+
+    # Step 4: Configure Docker Desktop
+    if ($stage -eq "DOCKER_INSTALLED") {
+        Write-Step -Current 4 -Total $totalSteps -Message "Configuring Docker Desktop..."
+        Disable-DockerAutoStart
+        Add-DockerUsersGroup
+        Set-InstallStage "DOCKER_CONFIGURED"
+        $stage = "DOCKER_CONFIGURED"
+    }
+
+    # Step 5: Wait for Docker daemon
+    if ($stage -eq "DOCKER_CONFIGURED") {
+        Write-Step -Current 5 -Total $totalSteps -Message "Waiting for Docker daemon..."
+        $ready = Wait-DockerReady
+        if (-not $ready) {
+            Write-Err "Docker daemon is not responding. Please:"
+            Write-Err "  1. Open Docker Desktop manually"
+            Write-Err "  2. Accept any license agreements"
+            Write-Err "  3. Re-run this script"
+            exit 1
+        }
+        Set-InstallStage "DOCKER_READY"
+        $stage = "DOCKER_READY"
+    }
+
+    # Step 6: Complete
+    if ($stage -eq "DOCKER_READY") {
+        Write-Step -Current 6 -Total $totalSteps -Message "Finishing up..."
+        Remove-InstallStage
+        Show-SuccessBanner
+    }
+}
+
+# Stage progression:
+#   (null)           -> VERSION_OK       : Version, disk, AV checks passed
+#   VERSION_OK       -> WSL_ENABLED      : WSL2 enabled (may reboot here)
+#   WSL_ENABLED      -> DOCKER_INSTALLED : Docker Desktop installed
+#   DOCKER_INSTALLED -> DOCKER_CONFIGURED: Auto-start disabled, user in docker-users
+#   DOCKER_CONFIGURED-> DOCKER_READY     : Docker daemon responding
+#   DOCKER_READY     -> (deleted)        : Success, registry cleaned up
+
+# --- Entry Point ---
+Assert-Administrator
+Install-Prerequisites
