@@ -19,7 +19,7 @@ A Windows user can run one script and get a working OpenClaw dashboard accessibl
 - [x] Script prompts the user for their NVIDIA API key during setup — Validated in Phase 02: container-setup-and-nemoclaw-install
 
 ### Active
-- [ ] Script provides start, stop, restart, and status commands for the container
+- [x] Script provides start, stop, restart, and status commands for the container — Validated in Phase 03: lifecycle-management
 - [ ] Script handles errors gracefully with clear messages (Docker not starting, network issues, etc.)
 
 ### Out of Scope
@@ -56,7 +56,7 @@ Key technical details:
 | Docker Desktop over WSL Docker Engine | Easiest for Windows users, GUI management | Implemented in Phase 01 |
 | Fresh Ubuntu over existing Dockerfile | Closer to documented install path, user preference | Implemented in Phase 02 |
 | Prompt for API key during setup | Interactive setup experience, no env var prerequisite | Implemented in Phase 02 |
-| Include start/stop/restart/status commands | Users shouldn't need to learn Docker CLI | — Pending |
+| Include start/stop/restart/status commands | Users shouldn't need to learn Docker CLI | Implemented in Phase 03 |
 
 ---
-*Last updated: 2026-03-20 after Phase 02 completion*
+*Last updated: 2026-03-20 after Phase 03 completion*
