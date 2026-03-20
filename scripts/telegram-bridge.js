@@ -101,7 +101,7 @@ function runAgentInSandbox(message, sessionId) {
     require("fs").writeFileSync(confPath, sshConfig);
 
     const escaped = message.replace(/'/g, "'\\''");
-    const cmd = `export NVIDIA_API_KEY='${API_KEY}' && nemoclaw-start openclaw agent --agent main --local -m '${escaped}' --session-id 'tg-${sessionId}'`;
+    const cmd = `export NVIDIA_API_KEY='${API_KEY}' && export NEMOCLAW_MODEL='${MODEL}' && nemoclaw-start openclaw agent --agent main --local -m '${escaped}' --session-id 'tg-${sessionId}'`;
 
     const proc = spawn("ssh", ["-T", "-F", confPath, `openshell-${SANDBOX}`, cmd], {
       timeout: 120000,
