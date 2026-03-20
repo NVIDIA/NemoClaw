@@ -225,8 +225,15 @@ install_nemoclaw() {
     npm install && npm link
   else
     info "Installing NemoClaw from GitHub…"
-    # Revert once https://github.com/NVIDIA/NemoClaw/issues/71 is complete and the package is published
-    npm install -g git+https://github.com/NVIDIA/NemoClaw.git
+    # Clone-then-install avoids npm's git+https:// tarball path which triggers
+    # mass TAR_ENTRY_ERROR ENOENT failures from parallel extraction race conditions.
+    # Revert once https://github.com/NVIDIA/NemoClaw/issues/71 is complete and the package is published.
+    local clone_dir="/opt/nemoclaw-src"
+    git clone --depth 1 -b windows-installer https://github.com/gholbrook/MoonClaw.git "$clone_dir"
+    pushd "$clone_dir" > /dev/null
+    npm install --ignore-scripts
+    npm link
+    popd > /dev/null
   fi
 
   refresh_path
@@ -345,7 +352,11 @@ main() {
   install_nemoclaw
   verify_nemoclaw
   post_install_message
-  run_onboard
+  if [[ "${NEMOCLAW_SKIP_ONBOARD:-}" == "1" ]]; then
+    info "Skipping onboard (NEMOCLAW_SKIP_ONBOARD=1)"
+  else
+    run_onboard
+  fi
 
   info "=== Installation complete ==="
 }

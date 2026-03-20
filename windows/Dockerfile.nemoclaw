@@ -1,29 +1,50 @@
 # NemoClaw Windows installer -- container image
-# Built by install.ps1; run with NVIDIA_API_KEY env var and Desktop/NemoClaw volume mount.
+# Built by install.ps1; run with Docker socket mounted so nemoclaw onboard
+# can create OpenShell sandboxes via the host Docker daemon.
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies needed by install.sh (curl for downloads, git for npm deps,
-# ca-certificates for HTTPS, python3 for nemoclaw-start.sh config scripts)
+# System dependencies: curl (downloads), git (npm deps), ca-certificates (HTTPS),
+# python3 (config scripts), docker.io (Docker CLI for OpenShell/sandbox management)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
         git \
         python3 \
+        docker.io \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and run the NemoClaw installer non-interactively at build time.
-# This installs Node.js, npm, nemoclaw CLI, and runs onboard.
-COPY install.sh /tmp/install.sh
-RUN chmod +x /tmp/install.sh \
-    && NEMOCLAW_NON_INTERACTIVE=1 /tmp/install.sh --non-interactive
+# Install OpenShell CLI (nemoclaw onboard requires it)
+COPY scripts/install-openshell.sh /tmp/install-openshell.sh
+RUN sed -i 's/\r$//' /tmp/install-openshell.sh \
+    && chmod +x /tmp/install-openshell.sh \
+    && NEMOCLAW_NON_INTERACTIVE=1 /tmp/install-openshell.sh
 
-# Copy the startup script that configures openclaw and launches the gateway
+# Copy and run the NemoClaw installer non-interactively at build time.
+# This installs Node.js, npm, and nemoclaw CLI. NEMOCLAW_SKIP_ONBOARD=1 skips
+# the onboard step (which needs Docker) — it runs at container startup instead.
+COPY install.sh /tmp/install.sh
+RUN sed -i 's/\r$//' /tmp/install.sh \
+    && chmod +x /tmp/install.sh \
+    && NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_SKIP_ONBOARD=1 /tmp/install.sh --non-interactive
+
+# Symlink nvm-installed binaries into /usr/local/bin so they're on PATH in
+# all contexts (docker exec, nohup, python subprocess) without sourcing nvm.
+RUN NVM_BIN="$(find /root/.nvm/versions/node -path '*/bin/node' -print -quit | xargs dirname)" \
+    && ln -sf "$NVM_BIN/node" /usr/local/bin/node \
+    && ln -sf "$NVM_BIN/npx" /usr/local/bin/npx \
+    && ln -sf "$NVM_BIN/npm" /usr/local/bin/npm \
+    && ln -sf "$NVM_BIN/nemoclaw" /usr/local/bin/nemoclaw \
+    && ln -sf "$NVM_BIN/openclaw" /usr/local/bin/openclaw
+
+# Copy the startup script that runs nemoclaw onboard and launches the gateway
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
-RUN chmod +x /usr/local/bin/nemoclaw-start
+RUN sed -i 's/\r$//' /usr/local/bin/nemoclaw-start \
+    && chmod +x /usr/local/bin/nemoclaw-start
 
 EXPOSE 18789
 
-# nemoclaw-start.sh reads NVIDIA_API_KEY at runtime, configures openclaw, and starts the gateway
+# nemoclaw-start runs `nemoclaw onboard --non-interactive` at first boot,
+# then monitors the sandbox gateway.
 CMD ["/usr/local/bin/nemoclaw-start"]

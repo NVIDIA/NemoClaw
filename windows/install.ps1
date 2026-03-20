@@ -476,9 +476,12 @@ function Build-NemoClawImage {
 function Start-NemoClawContainer {
     param([string]$ApiKey, [string]$SharedFolder)
     Write-Info "Starting NemoClaw container..."
+    # Mount the Docker socket so nemoclaw onboard can create OpenShell sandboxes
+    # via the host Docker daemon.
     docker run -d `
         --name nemoclaw `
         -p 18789:18789 `
+        -v /var/run/docker.sock:/var/run/docker.sock `
         -v "${SharedFolder}:/home/nemoclaw/shared" `
         -e "NVIDIA_API_KEY=$ApiKey" `
         nemoclaw 2>&1
