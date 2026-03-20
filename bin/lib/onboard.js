@@ -6,6 +6,7 @@
 // NEMOCLAW_NON_INTERACTIVE=1 env var for CI/CD pipelines.
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { ROOT, SCRIPTS, run, runCapture } = require("./runner");
 const {
@@ -443,8 +444,6 @@ async function createSandbox(gpu) {
   }
 
   // Stage build context
-  const { mkdtempSync } = require("fs");
-  const os = require("os");
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
   fs.copyFileSync(path.join(ROOT, "Dockerfile"), path.join(buildCtx, "Dockerfile"));
   run(`cp -r "${path.join(ROOT, "nemoclaw")}" "${buildCtx}/nemoclaw"`);
@@ -921,6 +920,39 @@ async function setupPolicies(sandboxName) {
 
 // ── Dashboard ────────────────────────────────────────────────────
 
+/**
+ * Parse dashboard URL with token from openclaw dashboard --no-open output.
+ * Returns URL with 127.0.0.1 normalized to localhost, or null if not found.
+ * Exported for unit tests.
+ */
+function parseDashboardUrlFromOutput(output) {
+  if (!output || typeof output !== "string") return null;
+  const match = output.match(/https?:\/\/[^\s]+#token=[^\s]+/);
+  if (!match) return null;
+  return match[0].replace(/127\.0\.0\.1/, "localhost").trim();
+}
+
+function getDashboardUrlWithToken(sandboxName) {
+  let tmpConf = null;
+  try {
+    const sshConfig = runCapture(`openshell sandbox ssh-config ${sandboxName} 2>/dev/null`, { ignoreError: true });
+    if (!sshConfig) return null;
+    tmpConf = path.join(os.tmpdir(), `nemoclaw-ssh-${sandboxName}.conf`);
+    fs.writeFileSync(tmpConf, sshConfig, { mode: 0o600 });
+    const out = runCapture(
+      `ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -F "${tmpConf}" openshell-${sandboxName} "openclaw dashboard --no-open" 2>/dev/null`,
+      { ignoreError: true }
+    );
+    return parseDashboardUrlFromOutput(out);
+  } catch {
+    return null;
+  } finally {
+    if (tmpConf && fs.existsSync(tmpConf)) {
+      try { fs.unlinkSync(tmpConf); } catch {}
+    }
+  }
+}
+
 function printDashboard(sandboxName, model, provider) {
   const nimStat = nim.nimStatus(sandboxName);
   const nimLabel = nimStat.running ? "running" : "not running";
@@ -930,9 +962,11 @@ function printDashboard(sandboxName, model, provider) {
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
 
+  const dashboardUrl = getDashboardUrlWithToken(sandboxName) || "http://localhost:18789/";
+
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
-  // console.log(`  Dashboard    http://localhost:18789/`);
+  console.log(`  Dashboard    ${dashboardUrl}`);
   console.log(`  Sandbox      ${sandboxName} (Landlock + seccomp + netns)`);
   console.log(`  Model        ${model} (${providerLabel})`);
   console.log(`  NIM          ${nimLabel}`);
@@ -964,4 +998,4 @@ async function onboard(opts = {}) {
   printDashboard(sandboxName, model, provider);
 }
 
-module.exports = { buildSandboxConfigSyncScript, hasStaleGateway, isSandboxReady, onboard, setupNim };
+module.exports = { buildSandboxConfigSyncScript, hasStaleGateway, isSandboxReady, onboard, parseDashboardUrlFromOutput, setupNim };
