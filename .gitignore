@@ -1,6 +1,5 @@
 node_modules/
 dist/
-!nemoclaw/dist/
 .pytest_cache/
 __pycache__/
 *.pyc
