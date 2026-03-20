@@ -9,16 +9,16 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Prerequisites
 
-- [ ] **PREREQ-01**: Script has a .bat launcher that bypasses PowerShell execution policy
-- [ ] **PREREQ-02**: Script self-elevates to administrator via UAC prompt
-- [ ] **PREREQ-03**: Script validates Windows 10 build 19041+ or Windows 11
-- [ ] **PREREQ-04**: Script checks available disk space before installing
-- [ ] **PREREQ-05**: Script warns if known antivirus may interfere with Docker
-- [ ] **PREREQ-06**: Script detects and enables WSL2 if not present
-- [ ] **PREREQ-07**: Script handles reboot-required scenario with resume capability
-- [ ] **PREREQ-08**: Script installs Docker Desktop silently (winget with EXE fallback)
-- [ ] **PREREQ-09**: Script adds current user to docker-users group
-- [ ] **PREREQ-10**: Script polls for Docker daemon readiness with timeout
+- [x] **PREREQ-01**: Script has a .bat launcher that bypasses PowerShell execution policy
+- [x] **PREREQ-02**: Script self-elevates to administrator via UAC prompt
+- [x] **PREREQ-03**: Script validates Windows 10 build 19041+ or Windows 11
+- [x] **PREREQ-04**: Script checks available disk space before installing
+- [x] **PREREQ-05**: Script warns if known antivirus may interfere with Docker
+- [x] **PREREQ-06**: Script detects and enables WSL2 if not present
+- [x] **PREREQ-07**: Script handles reboot-required scenario with resume capability
+- [x] **PREREQ-08**: Script installs Docker Desktop silently (winget with EXE fallback)
+- [x] **PREREQ-09**: Script adds current user to docker-users group
+- [x] **PREREQ-10**: Script polls for Docker daemon readiness with timeout
 
 ### Container Setup
 
@@ -67,16 +67,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PREREQ-01 | Phase 1 | Pending |
-| PREREQ-02 | Phase 1 | Pending |
-| PREREQ-03 | Phase 1 | Pending |
-| PREREQ-04 | Phase 1 | Pending |
-| PREREQ-05 | Phase 1 | Pending |
-| PREREQ-06 | Phase 1 | Pending |
-| PREREQ-07 | Phase 1 | Pending |
-| PREREQ-08 | Phase 1 | Pending |
-| PREREQ-09 | Phase 1 | Pending |
-| PREREQ-10 | Phase 1 | Pending |
+| PREREQ-01 | Phase 1 | Complete |
+| PREREQ-02 | Phase 1 | Complete |
+| PREREQ-03 | Phase 1 | Complete |
+| PREREQ-04 | Phase 1 | Complete |
+| PREREQ-05 | Phase 1 | Complete |
+| PREREQ-06 | Phase 1 | Complete |
+| PREREQ-07 | Phase 1 | Complete |
+| PREREQ-08 | Phase 1 | Complete |
+| PREREQ-09 | Phase 1 | Complete |
+| PREREQ-10 | Phase 1 | Complete |
 | SETUP-01 | Phase 2 | Pending |
 | SETUP-02 | Phase 2 | Pending |
 | SETUP-03 | Phase 2 | Pending |
