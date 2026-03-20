@@ -62,4 +62,19 @@ describe("CLI dispatch", () => {
     assert.equal(r.code, 1);
     assert.ok(r.out.includes("Unknown onboard option"));
   });
+
+  it("debug --help exits 0 and shows usage", () => {
+    const r = run("debug --help");
+    assert.equal(r.code, 0);
+    assert.ok(r.out.includes("Collect NemoClaw diagnostic information"), "should show description");
+    assert.ok(r.out.includes("--quick"), "should mention --quick flag");
+    assert.ok(r.out.includes("--output"), "should mention --output flag");
+  });
+
+  it("help mentions debug command", () => {
+    const r = run("help");
+    assert.equal(r.code, 0);
+    assert.ok(r.out.includes("Troubleshooting"), "missing Troubleshooting section");
+    assert.ok(r.out.includes("nemoclaw debug"), "help should mention debug command");
+  });
 });

@@ -22,7 +22,7 @@ const policies = require("./lib/policies");
 
 const GLOBAL_COMMANDS = new Set([
   "onboard", "list", "deploy", "setup", "setup-spark",
-  "start", "stop", "status", "uninstall",
+  "start", "stop", "status", "debug", "uninstall",
   "help", "--help", "-h",
 ]);
 
@@ -186,6 +186,18 @@ async function start() {
 
 function stop() {
   run(`bash "${SCRIPTS}/start-services.sh" --stop`);
+}
+
+function debug(args) {
+  const result = spawnSync("bash", [path.join(SCRIPTS, "debug.sh"), ...args], {
+    stdio: "inherit",
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      SANDBOX_NAME: registry.listSandboxes().defaultSandbox || "",
+    },
+  });
+  exitWithSpawnResult(result);
 }
 
 function uninstall(args) {
@@ -367,6 +379,12 @@ function help() {
     nemoclaw start                   Start services (Telegram, tunnel)
     nemoclaw stop                    Stop all services
     nemoclaw status                  Show sandbox list and service status
+
+  Troubleshooting:
+    nemoclaw debug [--quick]         Collect diagnostics for bug reports
+    nemoclaw debug --output FILE     Save diagnostics tarball for GitHub issues
+
+  Cleanup:
     nemoclaw uninstall [flags]       Run uninstall.sh (local first, curl fallback)
 
   Uninstall flags:
@@ -400,6 +418,7 @@ const [cmd, ...args] = process.argv.slice(2);
       case "start":       await start(); break;
       case "stop":        stop(); break;
       case "status":      showStatus(); break;
+      case "debug":       debug(args); break;
       case "uninstall":   uninstall(args); break;
       case "list":        listSandboxes(); break;
       default:            help(); break;
