@@ -32,6 +32,13 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
+function defaultSandboxEnv() {
+  const { defaultSandbox } = registry.listSandboxes();
+  return defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox)
+    ? `SANDBOX_NAME=${shellQuote(defaultSandbox)} `
+    : "";
+}
+
 function resolveUninstallScript() {
   const candidates = [
     path.join(ROOT, "uninstall.sh"),
@@ -178,14 +185,16 @@ async function deploy(instanceName) {
 
 async function start() {
   await ensureApiKey();
-  const { defaultSandbox } = registry.listSandboxes();
-  const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
-  const sandboxEnv = safeName ? `SANDBOX_NAME="${safeName}"` : "";
-  run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh"`);
+  const envParts = [];
+  const sandboxEnv = defaultSandboxEnv();
+  if (sandboxEnv) envParts.push(sandboxEnv.trim());
+  const tgToken = getCredential("TELEGRAM_BOT_TOKEN");
+  if (tgToken) envParts.push(`TELEGRAM_BOT_TOKEN=${shellQuote(tgToken)}`);
+  run(`${envParts.join(" ")} bash "${SCRIPTS}/start-services.sh"`);
 }
 
 function stop() {
-  run(`bash "${SCRIPTS}/start-services.sh" --stop`);
+  run(`${defaultSandboxEnv()}bash "${SCRIPTS}/start-services.sh" --stop`);
 }
 
 function debug(args) {
@@ -240,7 +249,7 @@ function showStatus() {
   }
 
   // Show service status
-  run(`bash "${SCRIPTS}/start-services.sh" --status`);
+  run(`${defaultSandboxEnv()}bash "${SCRIPTS}/start-services.sh" --status`);
 }
 
 function listSandboxes() {
