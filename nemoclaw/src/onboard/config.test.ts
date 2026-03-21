@@ -17,7 +17,7 @@ import {
 const store = new Map<string, string>();
 
 vi.mock("node:fs", async (importOriginal) => {
-  const original = await importOriginal<typeof import("node:fs")>();
+  const original = await importOriginal();
   return {
     ...original,
     existsSync: (p: string) => store.has(p),
@@ -61,9 +61,7 @@ describe("onboard/config", () => {
   describe("describeOnboardEndpoint", () => {
     it("returns managed route description for inference.local", () => {
       const config = makeConfig({ endpointUrl: "https://inference.local/v1" });
-      expect(describeOnboardEndpoint(config)).toBe(
-        "Managed Inference Route (inference.local)",
-      );
+      expect(describeOnboardEndpoint(config)).toBe("Managed Inference Route (inference.local)");
     });
 
     it("returns type and URL for other endpoints", () => {
@@ -71,9 +69,7 @@ describe("onboard/config", () => {
         endpointType: "ollama",
         endpointUrl: "http://localhost:11434/v1",
       });
-      expect(describeOnboardEndpoint(config)).toBe(
-        "ollama (http://localhost:11434/v1)",
-      );
+      expect(describeOnboardEndpoint(config)).toBe("ollama (http://localhost:11434/v1)");
     });
   });
 
@@ -140,7 +136,9 @@ describe("onboard/config", () => {
     });
 
     it("does not throw when no config file exists", () => {
-      expect(() => clearOnboardConfig()).not.toThrow();
+      expect(() => {
+        clearOnboardConfig();
+      }).not.toThrow();
     });
   });
 });

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import path from "node:path";
 import type { PluginLogger } from "../index.js";
 
 // ---------------------------------------------------------------------------
@@ -29,7 +28,7 @@ function addSymlink(p: string): void {
 }
 
 vi.mock("node:fs", async (importOriginal) => {
-  const original = await importOriginal<typeof import("node:fs")>();
+  const original = await importOriginal();
   return {
     ...original,
     existsSync: (p: string) => store.has(p),
@@ -39,7 +38,7 @@ vi.mock("node:fs", async (importOriginal) => {
     readFileSync: (p: string) => {
       const entry = store.get(p);
       if (!entry || entry.type !== "file") throw new Error(`ENOENT: ${p}`);
-      return entry.content!;
+      return entry.content ?? "";
     },
     writeFileSync: vi.fn((p: string, data: string) => {
       store.set(p, { type: "file", content: data });
@@ -451,10 +450,13 @@ describe("commands/migration-state", () => {
       };
 
       const bundle = createSnapshotBundle(hostState, logger, { persist: true });
-      expect(bundle).not.toBeNull();
-      expect(bundle!.manifest.version).toBe(2);
-      expect(bundle!.manifest.homeDir).toBe("/home/user");
-      expect(bundle!.temporary).toBe(false);
+      if (bundle === null) {
+        expect.unreachable("bundle should not be null");
+        return;
+      }
+      expect(bundle.manifest.version).toBe(2);
+      expect(bundle.manifest.homeDir).toBe("/home/user");
+      expect(bundle.temporary).toBe(false);
     });
 
     it("snapshots external config when hasExternalConfig", () => {
@@ -479,9 +481,12 @@ describe("commands/migration-state", () => {
       };
 
       const bundle = createSnapshotBundle(hostState, logger, { persist: false });
-      expect(bundle).not.toBeNull();
-      expect(bundle!.manifest.hasExternalConfig).toBe(true);
-      expect(bundle!.temporary).toBe(true);
+      if (bundle === null) {
+        expect.unreachable("bundle should not be null");
+        return;
+      }
+      expect(bundle.manifest.hasExternalConfig).toBe(true);
+      expect(bundle.temporary).toBe(true);
     });
 
     it("snapshots external roots", () => {
@@ -517,8 +522,11 @@ describe("commands/migration-state", () => {
       };
 
       const bundle = createSnapshotBundle(hostState, logger, { persist: false });
-      expect(bundle).not.toBeNull();
-      expect(bundle!.manifest.externalRoots.length).toBe(1);
+      if (bundle === null) {
+        expect.unreachable("bundle should not be null");
+        return;
+      }
+      expect(bundle.manifest.externalRoots.length).toBe(1);
     });
   });
 

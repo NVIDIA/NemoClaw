@@ -7,7 +7,7 @@ import { loadState, saveState, clearState, type NemoClawState } from "./state.js
 const store = new Map<string, string>();
 
 vi.mock("node:fs", async (importOriginal) => {
-  const original = await importOriginal<typeof import("node:fs")>();
+  const original = await importOriginal();
   return {
     ...original,
     existsSync: (p: string) => store.has(p),
@@ -100,7 +100,9 @@ describe("blueprint/state", () => {
     });
 
     it("does nothing when no file exists", () => {
-      expect(() => clearState()).not.toThrow();
+      expect(() => {
+        clearState();
+      }).not.toThrow();
     });
   });
 });
