@@ -134,7 +134,10 @@ collect() {
 
 if [ -z "$SANDBOX_NAME" ]; then
   if command -v openshell &>/dev/null; then
-    SANDBOX_NAME=$(openshell sandbox list 2>/dev/null | head -1 | awk '{print $1}' || true)
+    SANDBOX_NAME=$(
+      openshell sandbox list 2>/dev/null \
+        | awk 'NF { if (tolower($1) == "name") next; print $1; exit }'
+    ) || true
   fi
   SANDBOX_NAME="${SANDBOX_NAME:-default}"
 fi
@@ -211,7 +214,10 @@ fi
 
 # -- Sandbox internals (via openshell sandbox connect) --
 
-if command -v openshell &>/dev/null && openshell sandbox list 2>/dev/null | grep -q "$SANDBOX_NAME"; then
+if command -v openshell &>/dev/null \
+  && openshell sandbox list 2>/dev/null \
+    | awk 'NF { if (tolower($1) == "name") next; print $1 }' \
+    | grep -Fxq -- "$SANDBOX_NAME"; then
   section "Sandbox Internals"
   collect "sandbox-ps" openshell sandbox connect "$SANDBOX_NAME" -- ps -ef
   collect "sandbox-free" openshell sandbox connect "$SANDBOX_NAME" -- free -m
@@ -259,11 +265,7 @@ fi
 
 # ── Cleanup ──────────────────────────────────────────────────────
 
-if [ -z "$OUTPUT" ]; then
-  rm -rf "$COLLECT_DIR"
-else
-  info "Raw files kept in ${COLLECT_DIR}"
-fi
+rm -rf "$COLLECT_DIR"
 
 echo ""
 info "Done. If filing a bug, run with --output and attach the tarball to your issue:"
