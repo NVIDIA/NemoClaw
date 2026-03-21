@@ -232,19 +232,31 @@ if [ "$QUICK" = false ]; then
   collect "openshell-gateway-info" openshell gateway info
 fi
 
-# -- Sandbox internals (via openshell sandbox connect) --
+# -- Sandbox internals (via SSH using openshell ssh-config) --
 
 if command -v openshell &>/dev/null \
   && openshell sandbox list 2>/dev/null \
     | awk 'NF { if (tolower($1) == "name") next; print $1 }' \
     | grep -Fxq -- "$SANDBOX_NAME"; then
   section "Sandbox Internals"
-  collect "sandbox-ps" openshell sandbox connect "$SANDBOX_NAME" -- ps -ef
-  collect "sandbox-free" openshell sandbox connect "$SANDBOX_NAME" -- free -m
-  if [ "$QUICK" = false ]; then
-    collect "sandbox-top" openshell sandbox connect "$SANDBOX_NAME" -- sh -c 'top -b -n 1 | head -50'
-    collect "sandbox-gateway-log" openshell sandbox connect "$SANDBOX_NAME" -- tail -200 /tmp/gateway.log
+
+  # Build a temporary SSH config so we can run commands inside the sandbox.
+  # This follows the pattern from OpenShell's own demo.sh.
+  SANDBOX_SSH_CONFIG=$(mktemp "${TMPDIR_BASE}/nemoclaw-ssh-XXXXXX")
+  if openshell sandbox ssh-config "$SANDBOX_NAME" > "$SANDBOX_SSH_CONFIG" 2>/dev/null; then
+    SANDBOX_SSH_HOST="openshell-${SANDBOX_NAME}"
+    sandbox_ssh() { ssh -F "$SANDBOX_SSH_CONFIG" -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$SANDBOX_SSH_HOST" "$@"; }
+
+    collect "sandbox-ps" sandbox_ssh ps -ef
+    collect "sandbox-free" sandbox_ssh free -m
+    if [ "$QUICK" = false ]; then
+      collect "sandbox-top" sandbox_ssh 'top -b -n 1 | head -50'
+      collect "sandbox-gateway-log" sandbox_ssh tail -200 /tmp/gateway.log
+    fi
+  else
+    warn "Could not generate SSH config for sandbox '${SANDBOX_NAME}', skipping internals"
   fi
+  rm -f "$SANDBOX_SSH_CONFIG"
 fi
 
 # -- Network (full mode only) --
