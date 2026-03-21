@@ -44,7 +44,7 @@ flowchart TB
     subgraph Sandbox["OpenShell Sandbox"]
         AGENT[OpenClaw agent]
         INF[NVIDIA inference, routed]
-        NET[strict network policy]
+        NET[default network policy]
         FS[filesystem isolation]
 
         AGENT --- INF

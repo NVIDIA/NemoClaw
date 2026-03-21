@@ -7,7 +7,7 @@
 # via `openshell policy set`. Static fields are effectively creation-locked.
 #
 # Policy tiers (future):
-#   strict  — this file. Minimum for onboard + basic agent operation.
+#   default — this file. Minimum for onboard + basic agent operation.
 #   relaxed — adds third-party model providers, broader web access.
 #
 # To add endpoints: update this file and re-run `nemoclaw onboard`
