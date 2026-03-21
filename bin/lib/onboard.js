@@ -58,19 +58,6 @@ async function promptOrDefault(question, envVar, defaultValue) {
 // ── Helpers ──────────────────────────────────────────────────────
 
 /**
- * Escapes a string for safe use in shell commands.
- * Wraps in single quotes and handles embedded single quotes.
- */
-function shellEscape(str) {
-  if (typeof str !== "string") {
-    throw new Error("shellEscape: expected string argument");
-  }
-  // Use single quotes and escape any embedded single quotes
-  // by ending the quote, adding an escaped quote, and starting a new quote
-  return "'" + str.replace(/'/g, "'\"'\"'") + "'";
-}
-
-/**
  * Check if a sandbox is in Ready state from `openshell sandbox list` output.
  * Strips ANSI codes and exact-matches the sandbox name in the first column.
  */
@@ -451,7 +438,7 @@ async function createSandbox(gpu) {
       }
     }
     // Destroy old sandbox
-    run(`openshell sandbox delete ${shellEscape(sandboxName)} 2>/dev/null || true`, { ignoreError: true });
+    run(`openshell sandbox delete ${shellQuote(sandboxName)} 2>/dev/null || true`, { ignoreError: true });
     registry.removeSandbox(sandboxName);
   }
 
@@ -470,7 +457,7 @@ async function createSandbox(gpu) {
   const basePolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
   const createArgs = [
     `--from "${buildCtx}/Dockerfile"`,
-    `--name ${shellEscape(sandboxName)}`,
+    `--name ${shellQuote(sandboxName)}`,
     `--policy "${basePolicyPath}"`,
   ];
   // --gpu is intentionally omitted. See comment in startGateway().
@@ -538,7 +525,7 @@ async function createSandbox(gpu) {
   // which would silently prevent the new sandbox's dashboard from being reachable.
   run(`openshell forward stop 18789 2>/dev/null || true`, { ignoreError: true });
   // Forward dashboard port to the new sandbox
-  run(`openshell forward start --background 18789 ${shellEscape(sandboxName)}`, { ignoreError: true });
+  run(`openshell forward start --background 18789 ${shellQuote(sandboxName)}`, { ignoreError: true });
 
   // Register only after confirmed ready — prevents phantom entries
   registry.registerSandbox({
