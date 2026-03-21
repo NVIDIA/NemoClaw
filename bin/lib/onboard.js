@@ -26,6 +26,7 @@ const {
 const {
   inferContainerRuntime,
   isUnsupportedMacosRuntime,
+  needsIptablesLegacy,
   shouldPatchCoredns,
 } = require("./platform");
 const { prompt, ensureApiKey, getCredential } = require("./credentials");
@@ -287,6 +288,11 @@ async function preflight() {
     console.log(`  ✓ Container runtime: ${runtime}`);
   }
 
+  // iptables compatibility (Jetson devices may lack nf_tables NAT modules)
+  if (needsIptablesLegacy()) {
+    console.log("  ⓘ Jetson detected — iptables-legacy patch will be applied to gateway image");
+  }
+
   // OpenShell CLI
   if (!isOpenshellInstalled()) {
     console.log("  openshell CLI not found. Attempting to install...");
@@ -374,7 +380,25 @@ async function startGateway(gpu) {
   // FailedPrecondition errors when the gateway's k3s device plugin cannot
   // allocate GPUs. See: https://build.nvidia.com/spark/nemoclaw/instructions
 
-  run(`openshell gateway start ${gwArgs.join(" ")}`, { ignoreError: false });
+  if (needsIptablesLegacy()) {
+    // Two-pass start for Jetson: the first attempt pulls the image and
+    // crashes because k3s uses iptables-nft, which needs nf_tables kernel
+    // modules that Jetson doesn't ship. We then patch the image to use
+    // iptables-legacy and start again.
+    console.log("  Pulling gateway image (first start will fail on Jetson)...");
+    run(`openshell gateway start ${gwArgs.join(" ")}`, { ignoreError: true });
+    sleep(3);
+
+    console.log("  Patching gateway image with iptables-legacy...");
+    run(`bash "${path.join(SCRIPTS, "fix-iptables-jetson.sh")}" nemoclaw`, { ignoreError: false });
+
+    run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
+
+    console.log("  Starting gateway with patched image...");
+    run(`openshell gateway start ${gwArgs.join(" ")}`, { ignoreError: false });
+  } else {
+    run(`openshell gateway start ${gwArgs.join(" ")}`, { ignoreError: false });
+  }
 
   // Verify health
   for (let i = 0; i < 5; i++) {

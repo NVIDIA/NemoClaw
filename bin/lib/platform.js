@@ -1,8 +1,43 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+const fs = require("fs");
 const os = require("os");
 const path = require("path");
+
+function readFileSafe(filePath) {
+  try {
+    return fs.readFileSync(filePath, "utf-8");
+  } catch {
+    return "";
+  }
+}
+
+function isJetson(opts = {}) {
+  const platform = opts.platform ?? process.platform;
+  if (platform !== "linux") return false;
+
+  const release = opts.release ?? os.release();
+  if (/tegra/i.test(release)) return true;
+
+  const deviceTree = opts.deviceTreeCompatible ?? readFileSafe("/proc/device-tree/compatible");
+  if (/nvidia,tegra|nvidia,jetson/i.test(deviceTree)) return true;
+
+  const tegraRelease = opts.nvTegraRelease ?? readFileSafe("/etc/nv_tegra_release");
+  return tegraRelease.trim().length > 0;
+}
+
+function hasNfTablesNatSupport(opts = {}) {
+  const platform = opts.platform ?? process.platform;
+  if (platform !== "linux") return true;
+
+  const procModules = opts.procModules ?? readFileSafe("/proc/modules");
+  return /\bnft_chain_nat\b/.test(procModules);
+}
+
+function needsIptablesLegacy(opts = {}) {
+  return isJetson(opts) && !hasNfTablesNatSupport(opts);
+}
 
 function isWsl(opts = {}) {
   const platform = opts.platform ?? process.platform;
@@ -95,8 +130,11 @@ module.exports = {
   findColimaDockerSocket,
   getColimaDockerSocketCandidates,
   getDockerSocketCandidates,
+  hasNfTablesNatSupport,
   inferContainerRuntime,
+  isJetson,
   isUnsupportedMacosRuntime,
   isWsl,
+  needsIptablesLegacy,
   shouldPatchCoredns,
 };

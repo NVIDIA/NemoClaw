@@ -9,9 +9,12 @@ const {
   detectDockerHost,
   findColimaDockerSocket,
   getDockerSocketCandidates,
+  hasNfTablesNatSupport,
   inferContainerRuntime,
+  isJetson,
   isUnsupportedMacosRuntime,
   isWsl,
+  needsIptablesLegacy,
   shouldPatchCoredns,
 } = require("../bin/lib/platform");
 
@@ -160,6 +163,139 @@ describe("platform helpers", () => {
       assert.equal(shouldPatchCoredns("colima"), true);
       assert.equal(shouldPatchCoredns("docker-desktop"), false);
       assert.equal(shouldPatchCoredns("docker"), false);
+    });
+  });
+
+  describe("isJetson", () => {
+    it("detects Jetson from kernel release string", () => {
+      assert.equal(
+        isJetson({
+          platform: "linux",
+          release: "5.15.185-tegra",
+          deviceTreeCompatible: "",
+          nvTegraRelease: "",
+        }),
+        true,
+      );
+    });
+
+    it("detects Jetson from device tree compatible", () => {
+      assert.equal(
+        isJetson({
+          platform: "linux",
+          release: "5.15.0-generic",
+          deviceTreeCompatible: "nvidia,p3768-0000+p3767-0005\0nvidia,jetson-orin-nano\0nvidia,tegra234\0",
+          nvTegraRelease: "",
+        }),
+        true,
+      );
+    });
+
+    it("detects Jetson from /etc/nv_tegra_release", () => {
+      assert.equal(
+        isJetson({
+          platform: "linux",
+          release: "5.15.0-generic",
+          deviceTreeCompatible: "",
+          nvTegraRelease: "# R36 (release), REVISION: 4.3",
+        }),
+        true,
+      );
+    });
+
+    it("returns false for non-Jetson Linux", () => {
+      assert.equal(
+        isJetson({
+          platform: "linux",
+          release: "6.8.0-41-generic",
+          deviceTreeCompatible: "",
+          nvTegraRelease: "",
+        }),
+        false,
+      );
+    });
+
+    it("returns false for macOS", () => {
+      assert.equal(
+        isJetson({
+          platform: "darwin",
+          release: "24.6.0",
+          deviceTreeCompatible: "",
+          nvTegraRelease: "",
+        }),
+        false,
+      );
+    });
+  });
+
+  describe("hasNfTablesNatSupport", () => {
+    it("returns true when nft_chain_nat is loaded", () => {
+      assert.equal(
+        hasNfTablesNatSupport({
+          platform: "linux",
+          procModules: "nft_chain_nat 16384 1 - Live 0xffff\nnf_nat 49152 2 - Live 0xffff",
+        }),
+        true,
+      );
+    });
+
+    it("returns false when nft_chain_nat is absent", () => {
+      assert.equal(
+        hasNfTablesNatSupport({
+          platform: "linux",
+          procModules: "nf_conntrack 163840 3 - Live 0xffff\nip_tables 32768 0 - Live 0xffff",
+        }),
+        false,
+      );
+    });
+
+    it("returns true on non-Linux (not applicable)", () => {
+      assert.equal(hasNfTablesNatSupport({ platform: "darwin" }), true);
+    });
+  });
+
+  describe("needsIptablesLegacy", () => {
+    it("returns true for Jetson without nf_tables NAT", () => {
+      assert.equal(
+        needsIptablesLegacy({
+          platform: "linux",
+          release: "5.15.185-tegra",
+          deviceTreeCompatible: "",
+          nvTegraRelease: "",
+          procModules: "ip_tables 32768 0 - Live 0xffff",
+        }),
+        true,
+      );
+    });
+
+    it("returns false for Jetson with nf_tables NAT", () => {
+      assert.equal(
+        needsIptablesLegacy({
+          platform: "linux",
+          release: "5.15.185-tegra",
+          deviceTreeCompatible: "",
+          nvTegraRelease: "",
+          procModules: "nft_chain_nat 16384 1 - Live 0xffff",
+        }),
+        false,
+      );
+    });
+
+    it("returns false for non-Jetson Linux", () => {
+      assert.equal(
+        needsIptablesLegacy({
+          platform: "linux",
+          release: "6.8.0-41-generic",
+          deviceTreeCompatible: "",
+          nvTegraRelease: "",
+          procModules: "",
+        }),
+        false,
+      );
+    });
+
+    it("returns false for macOS", () => {
+      assert.equal(needsIptablesLegacy({ platform: "darwin" }), false);
     });
   });
 });

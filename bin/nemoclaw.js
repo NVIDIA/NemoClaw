@@ -21,7 +21,7 @@ const policies = require("./lib/policies");
 // ── Global commands ──────────────────────────────────────────────
 
 const GLOBAL_COMMANDS = new Set([
-  "onboard", "list", "deploy", "setup", "setup-spark",
+  "onboard", "list", "deploy", "setup", "setup-spark", "setup-jetson",
   "start", "stop", "status", "debug", "uninstall",
   "help", "--help", "-h",
 ]);
@@ -89,6 +89,10 @@ async function setup() {
 async function setupSpark() {
   await ensureApiKey();
   run(`sudo -E NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}" bash "${SCRIPTS}/setup-spark.sh"`);
+}
+
+async function setupJetson() {
+  run(`sudo -E bash "${SCRIPTS}/setup-jetson.sh"`);
 }
 
 async function deploy(instanceName) {
@@ -360,6 +364,7 @@ function help() {
     nemoclaw onboard                 Interactive setup wizard (recommended)
     nemoclaw setup                   Legacy setup (deprecated, use onboard)
     nemoclaw setup-spark             Set up on DGX Spark (fixes cgroup v2 + Docker)
+    nemoclaw setup-jetson            Set up on Jetson (fixes iptables + Docker)
 
   Sandbox Management:
     nemoclaw list                    List all sandboxes
@@ -413,7 +418,8 @@ const [cmd, ...args] = process.argv.slice(2);
     switch (cmd) {
       case "onboard":     await onboard(args); break;
       case "setup":       await setup(); break;
-      case "setup-spark": await setupSpark(); break;
+      case "setup-spark":  await setupSpark(); break;
+      case "setup-jetson": await setupJetson(); break;
       case "deploy":      await deploy(args[0]); break;
       case "start":       await start(); break;
       case "stop":        stop(); break;

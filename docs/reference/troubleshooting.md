@@ -116,6 +116,32 @@ $ sudo nemoclaw setup-spark
 $ nemoclaw onboard
 ```
 
+### Jetson: "Failed to bootstrap IPTables" during onboard
+
+On NVIDIA Jetson devices (Orin Nano, Orin NX, AGX Orin) running the default
+5.15.x-tegra kernel, the OpenShell gateway crashes during onboarding with:
+
+```text
+Failed to bootstrap IPTables: failed to apply partial iptables-restore
+Extension MASQUERADE revision 0 not supported, missing kernel module?
+```
+
+**Cause**: The gateway container's k3s uses `iptables-nft` (nf_tables backend),
+but the Jetson kernel does not include the required nf_tables NAT modules
+(`nft_chain_nat`, `xt_MASQUERADE`).
+
+**Fix**: NemoClaw automatically detects Jetson devices and patches the gateway
+image to use `iptables-legacy` during onboarding. The first gateway start
+pulls the image and crashes; NemoClaw rebuilds the image with `iptables-legacy`
+as the default and starts the gateway again.
+
+Before onboarding, run the Jetson setup script to configure the host:
+
+```console
+$ sudo nemoclaw setup-jetson
+$ nemoclaw onboard
+```
+
 ### Invalid sandbox name
 
 Sandbox names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
