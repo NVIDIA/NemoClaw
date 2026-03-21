@@ -8,7 +8,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { ROOT, SCRIPTS, run, runCapture } = require("./runner");
+const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
 const {
   getDefaultOllamaModel,
   getLocalProviderBaseUrl,
@@ -82,10 +82,6 @@ function step(n, total, msg) {
   console.log("");
   console.log(`  [${n}/${total}] ${msg}`);
   console.log(`  ${"─".repeat(50)}`);
-}
-
-function shellQuote(value) {
-  return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
 function getInstalledOpenshellVersion(versionOutput = null) {
@@ -447,9 +443,9 @@ async function createSandbox(gpu) {
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const chatUiUrl = process.env.CHAT_UI_URL || 'http://127.0.0.1:18789';
-  const envArgs = [`CHAT_UI_URL=${chatUiUrl}`];
+  const envArgs = [`CHAT_UI_URL=${shellQuote(chatUiUrl)}`];
   if (process.env.NVIDIA_API_KEY) {
-    envArgs.push(`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`);
+    envArgs.push(`NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY)}`);
   }
   const discordToken = getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN;
   if (discordToken) {
@@ -719,12 +715,12 @@ async function setupInference(sandboxName, model, provider) {
     // Create nvidia-nim provider
     run(
       `openshell provider create --name nvidia-nim --type openai ` +
-      `--credential "NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}" ` +
+      `--credential ${shellQuote("NVIDIA_API_KEY=" + process.env.NVIDIA_API_KEY)} ` +
       `--config "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1" 2>&1 || true`,
       { ignoreError: true }
     );
     run(
-      `openshell inference set --no-verify --provider nvidia-nim --model ${model} 2>/dev/null || true`,
+      `openshell inference set --no-verify --provider nvidia-nim --model ${shellQuote(model)} 2>/dev/null || true`,
       { ignoreError: true }
     );
   } else if (provider === "vllm-local") {
@@ -743,7 +739,7 @@ async function setupInference(sandboxName, model, provider) {
       { ignoreError: true }
     );
     run(
-      `openshell inference set --no-verify --provider vllm-local --model ${model} 2>/dev/null || true`,
+      `openshell inference set --no-verify --provider vllm-local --model ${shellQuote(model)} 2>/dev/null || true`,
       { ignoreError: true }
     );
   } else if (provider === "ollama-local") {
@@ -763,7 +759,7 @@ async function setupInference(sandboxName, model, provider) {
       { ignoreError: true }
     );
     run(
-      `openshell inference set --no-verify --provider ollama-local --model ${model} 2>/dev/null || true`,
+      `openshell inference set --no-verify --provider ollama-local --model ${shellQuote(model)} 2>/dev/null || true`,
       { ignoreError: true }
     );
     console.log(`  Priming Ollama model: ${model}`);

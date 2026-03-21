@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { execSync, spawnSync } = require("child_process");
+const { execFileSync, spawnSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
-const { ROOT, SCRIPTS, run, runCapture, runInteractive } = require("./lib/runner");
+const { ROOT, SCRIPTS, run, runCapture, runInteractive, shellQuote, validateName } = require("./lib/runner");
 const {
   ensureApiKey,
   ensureGithubToken,
@@ -27,10 +27,6 @@ const GLOBAL_COMMANDS = new Set([
 ]);
 
 const REMOTE_UNINSTALL_URL = "https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh";
-
-function shellQuote(value) {
-  return `'${String(value).replace(/'/g, `'\\''`)}'`;
-}
 
 function resolveUninstallScript() {
   const candidates = [
@@ -83,12 +79,12 @@ async function setup() {
   await ensureApiKey();
   const { defaultSandbox } = registry.listSandboxes();
   const safeName = defaultSandbox && /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(defaultSandbox) ? defaultSandbox : "";
-  run(`bash "${SCRIPTS}/setup.sh" ${safeName}`);
+  run(`bash "${SCRIPTS}/setup.sh" ${shellQuote(safeName)}`);
 }
 
 async function setupSpark() {
   await ensureApiKey();
-  run(`sudo -E NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}" bash "${SCRIPTS}/setup-spark.sh"`);
+  run(`sudo -E NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY)} bash "${SCRIPTS}/setup-spark.sh"`);
 }
 
 async function deploy(instanceName) {
@@ -105,7 +101,9 @@ async function deploy(instanceName) {
   if (isRepoPrivate("NVIDIA/OpenShell")) {
     await ensureGithubToken();
   }
+  validateName(instanceName, "instance name");
   const name = instanceName;
+  const qname = shellQuote(name);
   const gpu = process.env.NEMOCLAW_GPU || "a2-highgpu-1g:nvidia-tesla-a100:1";
 
   console.log("");
@@ -113,7 +111,7 @@ async function deploy(instanceName) {
   console.log("");
 
   try {
-    execSync("which brev", { stdio: "ignore" });
+    execFileSync("which", ["brev"], { stdio: "ignore" });
   } catch {
     console.error("brev CLI not found. Install: https://brev.nvidia.com");
     process.exit(1);
@@ -121,13 +119,16 @@ async function deploy(instanceName) {
 
   let exists = false;
   try {
-    const out = execSync("brev ls 2>&1", { encoding: "utf-8" });
+    const out = execFileSync("brev", ["ls"], { encoding: "utf-8" });
     exists = out.includes(name);
-  } catch {}
+  } catch (err) {
+    if (err.stdout && err.stdout.includes(name)) exists = true;
+    if (err.stderr && err.stderr.includes(name)) exists = true;
+  }
 
   if (!exists) {
     console.log(`  Creating Brev instance '${name}' (${gpu})...`);
-    run(`brev create ${name} --gpu "${gpu}"`);
+    run(`brev create ${qname} --gpu ${shellQuote(gpu)}`);
   } else {
     console.log(`  Brev instance '${name}' already exists.`);
   }
@@ -137,7 +138,7 @@ async function deploy(instanceName) {
   console.log("  Waiting for SSH...");
   for (let i = 0; i < 60; i++) {
     try {
-      execSync(`ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no ${name} 'echo ok' 2>/dev/null`, { encoding: "utf-8", stdio: "pipe" });
+      execFileSync("ssh", ["-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no", name, "echo", "ok"], { encoding: "utf-8", stdio: "ignore" });
       break;
     } catch {
       if (i === 59) {
@@ -149,42 +150,47 @@ async function deploy(instanceName) {
   }
 
   console.log("  Syncing NemoClaw to VM...");
-  run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'mkdir -p /home/ubuntu/nemoclaw'`);
-  run(`rsync -az --delete --exclude node_modules --exclude .git --exclude src -e "ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR" "${ROOT}/scripts" "${ROOT}/Dockerfile" "${ROOT}/nemoclaw" "${ROOT}/nemoclaw-blueprint" "${ROOT}/bin" "${ROOT}/package.json" ${name}:/home/ubuntu/nemoclaw/`);
+  run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'mkdir -p /home/ubuntu/nemoclaw'`);
+  run(`rsync -az --delete --exclude node_modules --exclude .git --exclude src -e "ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR" "${ROOT}/scripts" "${ROOT}/Dockerfile" "${ROOT}/nemoclaw" "${ROOT}/nemoclaw-blueprint" "${ROOT}/bin" "${ROOT}/package.json" ${qname}:/home/ubuntu/nemoclaw/`);
 
-  const envLines = [`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`];
+  const envLines = [`NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY || "")}`];
   const ghToken = process.env.GITHUB_TOKEN;
-  if (ghToken) envLines.push(`GITHUB_TOKEN=${ghToken}`);
+  if (ghToken) envLines.push(`GITHUB_TOKEN=${shellQuote(ghToken)}`);
   const tgToken = getCredential("TELEGRAM_BOT_TOKEN");
-  if (tgToken) envLines.push(`TELEGRAM_BOT_TOKEN=${tgToken}`);
+  if (tgToken) envLines.push(`TELEGRAM_BOT_TOKEN=${shellQuote(tgToken)}`);
   const discordToken = getCredential("DISCORD_BOT_TOKEN");
-  if (discordToken) envLines.push(`DISCORD_BOT_TOKEN=${discordToken}`);
+  if (discordToken) envLines.push(`DISCORD_BOT_TOKEN=${shellQuote(discordToken)}`);
   const slackToken = getCredential("SLACK_BOT_TOKEN");
-  if (slackToken) envLines.push(`SLACK_BOT_TOKEN=${slackToken}`);
-  const envTmp = path.join(os.tmpdir(), `nemoclaw-env-${Date.now()}`);
+  if (slackToken) envLines.push(`SLACK_BOT_TOKEN=${shellQuote(slackToken)}`);
+  const envDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-"));
+  const envTmp = path.join(envDir, "env");
   fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
-  run(`scp -q -o StrictHostKeyChecking=no -o LogLevel=ERROR "${envTmp}" ${name}:/home/ubuntu/nemoclaw/.env`);
-  fs.unlinkSync(envTmp);
+  try {
+    run(`scp -q -o StrictHostKeyChecking=no -o LogLevel=ERROR ${shellQuote(envTmp)} ${qname}:/home/ubuntu/nemoclaw/.env`);
+  } finally {
+    try { fs.unlinkSync(envTmp); } catch {}
+    try { fs.rmdirSync(envDir); } catch {}
+  }
 
   console.log("  Running setup...");
-  runInteractive(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh'`);
+  runInteractive(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh'`);
 
   if (tgToken) {
     console.log("  Starting services...");
-    run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/start-services.sh'`);
+    run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/start-services.sh'`);
   }
 
   console.log("");
   console.log("  Connecting to sandbox...");
   console.log("");
-  runInteractive(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw'`);
+  runInteractive(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw'`);
 }
 
 async function start() {
   await ensureApiKey();
   const { defaultSandbox } = registry.listSandboxes();
   const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
-  const sandboxEnv = safeName ? `SANDBOX_NAME="${safeName}"` : "";
+  const sandboxEnv = safeName ? `SANDBOX_NAME=${shellQuote(safeName)}` : "";
   run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh"`);
 }
 
@@ -275,9 +281,10 @@ function listSandboxes() {
 // ── Sandbox-scoped actions ───────────────────────────────────────
 
 function sandboxConnect(sandboxName) {
+  const qn = shellQuote(sandboxName);
   // Ensure port forward is alive before connecting
-  run(`openshell forward start --background 18789 "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
-  runInteractive(`openshell sandbox connect "${sandboxName}"`);
+  run(`openshell forward start --background 18789 ${qn} 2>/dev/null || true`, { ignoreError: true });
+  runInteractive(`openshell sandbox connect ${qn}`);
 }
 
 function sandboxStatus(sandboxName) {
@@ -292,7 +299,7 @@ function sandboxStatus(sandboxName) {
   }
 
   // openshell info
-  run(`openshell sandbox get "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+  run(`openshell sandbox get ${shellQuote(sandboxName)} 2>/dev/null || true`, { ignoreError: true });
 
   // NIM health
   const nimStat = nim.nimStatus(sandboxName);
@@ -305,7 +312,7 @@ function sandboxStatus(sandboxName) {
 
 function sandboxLogs(sandboxName, follow) {
   const followFlag = follow ? " --tail" : "";
-  run(`openshell logs "${sandboxName}"${followFlag}`);
+  run(`openshell logs ${shellQuote(sandboxName)}${followFlag}`);
 }
 
 async function sandboxPolicyAdd(sandboxName) {
@@ -348,7 +355,7 @@ function sandboxDestroy(sandboxName) {
   nim.stopNimContainer(sandboxName);
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
-  run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+  run(`openshell sandbox delete ${shellQuote(sandboxName)} 2>/dev/null || true`, { ignoreError: true });
 
   registry.removeSandbox(sandboxName);
   console.log(`  ✓ Sandbox '${sandboxName}' destroyed`);
@@ -433,6 +440,7 @@ const [cmd, ...args] = process.argv.slice(2);
   // Sandbox-scoped commands: nemoclaw <name> <action>
   const sandbox = registry.getSandbox(cmd);
   if (sandbox) {
+    validateName(cmd, "sandbox name");
     const action = args[0] || "connect";
     const actionArgs = args.slice(1);
 
