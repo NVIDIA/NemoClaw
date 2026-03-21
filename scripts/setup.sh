@@ -96,7 +96,10 @@ info "Using sandbox name: ${SANDBOX_NAME}"
 info "Starting OpenShell gateway..."
 openshell gateway destroy -g nemoclaw > /dev/null 2>&1 || true
 GATEWAY_ARGS=(--name nemoclaw)
-command -v nvidia-smi > /dev/null 2>&1 && GATEWAY_ARGS+=(--gpu)
+# WSL2: nvidia-smi works but GPU can't pass through to k3s inside Docker Desktop
+if command -v nvidia-smi > /dev/null 2>&1 && ! grep -qi "microsoft\|wsl" /proc/version 2>/dev/null; then
+  GATEWAY_ARGS+=(--gpu)
+fi
 openshell gateway start "${GATEWAY_ARGS[@]}" 2>&1 | grep -E "Gateway|✓|Error|error" || true
 
 # Verify gateway is actually healthy (may need a moment after start)

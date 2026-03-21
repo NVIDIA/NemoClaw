@@ -347,7 +347,11 @@ async function preflight() {
 
   // GPU
   const gpu = nim.detectGpu();
-  if (gpu && gpu.type === "nvidia") {
+  if (gpu && gpu.type === "nvidia" && gpu.wsl2) {
+    console.log(`  ✓ NVIDIA GPU detected: ${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`);
+    console.log("  ⓘ WSL2 detected — GPU passthrough to containers is not supported");
+    console.log("    Gateway and sandbox will start without --gpu. Cloud inference will be used.");
+  } else if (gpu && gpu.type === "nvidia") {
     console.log(`  ✓ NVIDIA GPU detected: ${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`);
   } else if (gpu && gpu.type === "apple") {
     console.log(`  ✓ Apple GPU detected: ${gpu.name}${gpu.cores ? ` (${gpu.cores} cores)` : ""}, ${gpu.totalMemoryMB} MB unified memory`);
