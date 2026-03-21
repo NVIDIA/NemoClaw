@@ -54,8 +54,12 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
 # Install OpenClaw CLI
 RUN npm install -g openclaw@2026.3.11
 
+# Create virtual environment for Python tools
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 # Install PyYAML for blueprint runner
-RUN pip3 install --break-system-packages pyyaml
+RUN pip install pyyaml
 
 # Copy built plugin and blueprint into the sandbox
 COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
