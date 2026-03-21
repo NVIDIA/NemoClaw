@@ -22,11 +22,23 @@ const path = require("node:path");
 // ═══════════════════════════════════════════════════════════════════
 
 /**
+ * normalizeHostPath — mirrors migration-state.ts:115-118
+ * On Windows, lowercases the resolved path for case-insensitive comparison.
+ */
+function normalizeHostPath(p) {
+  const resolved = path.resolve(p);
+  if (process.platform === "win32") {
+    return resolved.toLowerCase();
+  }
+  return resolved;
+}
+
+/**
  * isWithinRoot — same logic as migration-state.ts:120-125
  */
 function isWithinRoot(candidatePath, rootPath) {
-  const candidate = path.resolve(candidatePath);
-  const root = path.resolve(rootPath);
+  const candidate = normalizeHostPath(candidatePath);
+  const root = normalizeHostPath(rootPath);
   const relative = path.relative(root, candidate);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
@@ -92,30 +104,53 @@ function restoreVulnerable(snapshotDir) {
 
 /**
  * Simulate restoreSnapshotToHost WITH the fix (validates paths).
+ * Uses a trusted root instead of manifest.homeDir.
  * Returns { result, errors, written }.
+ * @param {string} snapshotDir
+ * @param {string} [trustedRoot] - trusted host root (defaults to os.homedir())
  */
-function restoreFixed(snapshotDir) {
+function restoreFixed(snapshotDir, trustedRoot) {
   const manifest = JSON.parse(
     fs.readFileSync(path.join(snapshotDir, "snapshot.json"), "utf-8"),
   );
   const snapshotStateDir = path.join(snapshotDir, "openclaw");
   const errors = [];
   let written = false;
+  const root = trustedRoot || os.homedir();
 
-  // FIX: validate write targets are within homeDir
-  if (!isWithinRoot(manifest.stateDir, manifest.homeDir)) {
+  // FIX: validate manifest.homeDir is within trusted root
+  if (typeof manifest.homeDir !== "string" || !isWithinRoot(manifest.homeDir, root)) {
     errors.push(
-      `Snapshot manifest stateDir is outside the expected home directory. ` +
-        `stateDir=${manifest.stateDir}, allowedRoot=${manifest.homeDir}`,
+      `Snapshot manifest homeDir is outside the trusted host root. ` +
+        `homeDir=${String(manifest.homeDir)}, trustedRoot=${root}`,
+    );
+    return { result: false, errors, written };
+  }
+
+  // FIX: validate stateDir type and containment
+  if (typeof manifest.stateDir !== "string") {
+    errors.push(`Snapshot manifest stateDir is not a string.`);
+    return { result: false, errors, written };
+  }
+
+  if (!isWithinRoot(manifest.stateDir, root)) {
+    errors.push(
+      `Snapshot manifest stateDir is outside the trusted host root. ` +
+        `stateDir=${manifest.stateDir}, trustedRoot=${root}`,
     );
     return { result: false, errors, written };
   }
 
   if (manifest.hasExternalConfig && manifest.configPath !== null) {
-    if (!isWithinRoot(manifest.configPath, manifest.homeDir)) {
+    if (typeof manifest.configPath !== "string") {
+      errors.push(`Snapshot manifest configPath is not a string.`);
+      return { result: false, errors, written };
+    }
+
+    if (!isWithinRoot(manifest.configPath, root)) {
       errors.push(
-        `Snapshot manifest configPath is outside the expected home directory. ` +
-          `configPath=${manifest.configPath}, allowedRoot=${manifest.homeDir}`,
+        `Snapshot manifest configPath is outside the trusted host root. ` +
+          `configPath=${manifest.configPath}, trustedRoot=${root}`,
       );
       return { result: false, errors, written };
     }
@@ -232,12 +267,13 @@ describe("C-4 fix: restoreSnapshotToHost rejects path traversal", () => {
         warnings: [],
       });
 
-      const { result, errors, written } = restoreFixed(snapshotDir);
+      // Pass homeDir as trustedRoot to simulate resolveHostHome()
+      const { result, errors, written } = restoreFixed(snapshotDir, homeDir);
 
       assert.equal(result, false, "fixed code must reject traversal");
       assert.equal(written, false, "no files must be written");
       assert.ok(!fs.existsSync(traversalTarget), "traversal target must not be created");
-      assert.ok(errors[0].includes("outside the expected home directory"));
+      assert.ok(errors[0].includes("outside the trusted host root"));
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -262,11 +298,11 @@ describe("C-4 fix: restoreSnapshotToHost rejects path traversal", () => {
         warnings: [],
       });
 
-      const { result, errors } = restoreFixed(snapshotDir);
+      const { result, errors } = restoreFixed(snapshotDir, homeDir);
 
       assert.equal(result, false, "fixed code must reject configPath traversal");
       assert.ok(!fs.existsSync(evilConfigPath), "evil config must not be written");
-      assert.ok(errors[0].includes("outside the expected home directory"));
+      assert.ok(errors[0].includes("outside the trusted host root"));
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -290,9 +326,39 @@ describe("C-4 fix: restoreSnapshotToHost rejects path traversal", () => {
         warnings: [],
       });
 
-      const { result } = restoreFixed(snapshotDir);
+      const { result } = restoreFixed(snapshotDir, homeDir);
       assert.equal(result, false, "sibling path must be rejected");
       assert.ok(!fs.existsSync(siblingDir));
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("tampered homeDir set to / is rejected based on trusted host root", () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-c4-root-"));
+    try {
+      const trustedRoot = path.join(workDir, "home", "victim");
+      fs.mkdirSync(trustedRoot, { recursive: true });
+
+      const snapshotDir = buildSnapshotDir(workDir, {
+        version: 2,
+        createdAt: "2026-03-22T00:00:00.000Z",
+        homeDir: "/", // TAMPERED: set to filesystem root
+        stateDir: "/tmp/evil",
+        configPath: null,
+        hasExternalConfig: false,
+        externalRoots: [],
+        warnings: [],
+      });
+
+      const { result, errors, written } = restoreFixed(snapshotDir, trustedRoot);
+
+      assert.equal(result, false, "homeDir=/ must be rejected");
+      assert.equal(written, false, "no files must be written");
+      assert.ok(
+        errors[0].includes("homeDir is outside the trusted host root"),
+        `expected homeDir rejection, got: ${errors[0]}`,
+      );
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -316,7 +382,8 @@ describe("C-4 fix: restoreSnapshotToHost rejects path traversal", () => {
         warnings: [],
       });
 
-      const { result, errors, written } = restoreFixed(snapshotDir);
+      // trustedRoot = homeDir (simulates resolveHostHome() returning this dir)
+      const { result, errors, written } = restoreFixed(snapshotDir, homeDir);
 
       assert.equal(result, true, "legitimate path must succeed");
       assert.equal(errors.length, 0);
@@ -346,7 +413,7 @@ describe("C-4 fix: restoreSnapshotToHost rejects path traversal", () => {
         warnings: [],
       });
 
-      const { result, errors } = restoreFixed(snapshotDir);
+      const { result, errors } = restoreFixed(snapshotDir, homeDir);
 
       assert.equal(result, true, "legitimate config path must succeed");
       assert.equal(errors.length, 0);

@@ -666,24 +666,71 @@ export function restoreSnapshotToHost(snapshotDir: string, logger: PluginLogger)
     return false;
   }
 
-  // SECURITY (C-4): Validate that write targets are within the expected home
-  // directory tree. A tampered snapshot.json with stateDir or configPath pointing
-  // outside homeDir would cause arbitrary filesystem writes.
-  const allowedRoot = manifest.homeDir;
+  // SECURITY (C-4): Validate that write targets are within a trusted root.
+  // Use the host's actual home directory — NOT manifest.homeDir which is
+  // attacker-controlled data from the snapshot JSON.
+  const trustedRoot = resolveHostHome();
 
-  if (!isWithinRoot(manifest.stateDir, allowedRoot)) {
+  // Validate manifest.homeDir itself is within trusted root
+  if (typeof manifest.homeDir !== "string" || !isWithinRoot(manifest.homeDir, trustedRoot)) {
     logger.error(
-      `Snapshot manifest stateDir is outside the expected home directory. ` +
-        `Refusing to restore. stateDir=${manifest.stateDir}, allowedRoot=${allowedRoot}`,
+      `Snapshot manifest homeDir is outside the trusted host root. ` +
+        `Refusing to restore. homeDir=${String(manifest.homeDir)}, trustedRoot=${trustedRoot}`,
+    );
+    return false;
+  }
+
+  // Validate stateDir type and containment
+  if (typeof manifest.stateDir !== "string") {
+    logger.error(
+      `Snapshot manifest stateDir is not a string. Refusing to restore.`,
+    );
+    return false;
+  }
+
+  // Support OPENCLAW_STATE_DIR env override: when set, require exact match
+  const envStateDir = process.env.OPENCLAW_STATE_DIR?.trim();
+  if (envStateDir) {
+    const resolvedEnvStateDir = resolveUserPath(envStateDir);
+    if (normalizeHostPath(manifest.stateDir) !== normalizeHostPath(resolvedEnvStateDir)) {
+      logger.error(
+        `Snapshot manifest stateDir does not match OPENCLAW_STATE_DIR. ` +
+          `Refusing to restore. stateDir=${manifest.stateDir}, expected=${resolvedEnvStateDir}`,
+      );
+      return false;
+    }
+  } else if (!isWithinRoot(manifest.stateDir, trustedRoot)) {
+    logger.error(
+      `Snapshot manifest stateDir is outside the trusted host root. ` +
+        `Refusing to restore. stateDir=${manifest.stateDir}, trustedRoot=${trustedRoot}`,
     );
     return false;
   }
 
   if (manifest.hasExternalConfig && manifest.configPath !== null) {
-    if (!isWithinRoot(manifest.configPath, allowedRoot)) {
+    // Validate configPath type
+    if (typeof manifest.configPath !== "string") {
       logger.error(
-        `Snapshot manifest configPath is outside the expected home directory. ` +
-          `Refusing to restore. configPath=${manifest.configPath}, allowedRoot=${allowedRoot}`,
+        `Snapshot manifest configPath is not a string. Refusing to restore.`,
+      );
+      return false;
+    }
+
+    // Support OPENCLAW_CONFIG_PATH env override: when set, require exact match
+    const envConfigPath = process.env.OPENCLAW_CONFIG_PATH?.trim();
+    if (envConfigPath) {
+      const resolvedEnvConfigPath = resolveUserPath(envConfigPath);
+      if (normalizeHostPath(manifest.configPath) !== normalizeHostPath(resolvedEnvConfigPath)) {
+        logger.error(
+          `Snapshot manifest configPath does not match OPENCLAW_CONFIG_PATH. ` +
+            `Refusing to restore. configPath=${manifest.configPath}, expected=${resolvedEnvConfigPath}`,
+        );
+        return false;
+      }
+    } else if (!isWithinRoot(manifest.configPath, trustedRoot)) {
+      logger.error(
+        `Snapshot manifest configPath is outside the trusted host root. ` +
+          `Refusing to restore. configPath=${manifest.configPath}, trustedRoot=${trustedRoot}`,
       );
       return false;
     }
