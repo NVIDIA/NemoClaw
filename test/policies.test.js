@@ -114,5 +114,14 @@ describe("policies", () => {
         assert.ok(content.includes("network_policies:"), `${p.name} missing network_policies`);
       }
     });
+
+    it("pypi and npm presets include binaries (prevents 403)", () => {
+      const required = ["pypi", "npm"];
+      for (const name of required) {
+        const content = policies.loadPreset(name);
+        assert.ok(content && content.includes("binaries:"), `${name} missing binaries section`);
+        assert.ok(/-\s*\{\s*path:\s*\//.test(content), `${name} binaries must include at least one { path: ... } entry`);
+      }
+    });
   });
 });
