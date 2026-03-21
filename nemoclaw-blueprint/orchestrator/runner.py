@@ -194,11 +194,12 @@ def action_apply(
     model: str = inference_cfg.get("model", "")
 
     # Resolve credential from environment
-    credential_env = inference_cfg.get("credential_env")
+    target_cred_env = inference_cfg.get("credential_env")
+    if not target_cred_env:
+        target_cred_env = "NVIDIA_API_KEY" if provider_type == "nvidia" else "OPENAI_API_KEY"
+
     credential_default: str = inference_cfg.get("credential_default", "")
-    credential = ""
-    if credential_env:
-        credential = os.environ.get(credential_env, credential_default)
+    credential = os.environ.get(target_cred_env, credential_default)
 
     provider_args = [
         "openshell",
@@ -210,8 +211,10 @@ def action_apply(
         provider_type,
     ]
     if credential:
-        provider_args.extend(["--credential", f"OPENAI_API_KEY={credential}"])
+        provider_args.extend(["--credential", f"{target_cred_env}={credential}"])
     if endpoint:
+        # Most OpenAI-compatible providers (including NVIDIA integrated)
+        # use OPENAI_BASE_URL in their internal environment.
         provider_args.extend(["--config", f"OPENAI_BASE_URL={endpoint}"])
 
     run_cmd(provider_args, check=False, capture=True)
