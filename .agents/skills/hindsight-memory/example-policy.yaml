@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Network policy preset for Hindsight memory API access.
+#
+# Grants the sandbox agent access to the Hindsight Cloud API for memory
+# recall and retain operations. Uses explicit path rules scoped to the
+# /v1/ API prefix.
+#
+# Usage:
+#   Add this block to nemoclaw-blueprint/policies/openclaw-sandbox.yaml
+#   and run `openclaw nemoclaw migrate`, or apply dynamically:
+#
+#     $ openshell policy set example-policy.yaml
+#
+# For self-hosted Hindsight instances, change the host and port and add
+# allowed_ips for private IP ranges. See SKILL.md for examples.
+
+network_policies:
+  hindsight_memory:
+    name: hindsight_memory
+    endpoints:
+      - host: api.hindsight.vectorize.io
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/v1/**" }
+          - allow: { method: POST, path: "/v1/**" }
+    binaries:
+      - { path: /usr/local/bin/hindsight }
+      - { path: /usr/bin/curl }
