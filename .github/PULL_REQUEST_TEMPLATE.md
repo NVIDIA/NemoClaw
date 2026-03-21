@@ -9,28 +9,32 @@
 
 ## Type of Change
 <!-- Check the one that applies. -->
-- [ ] Code change (new feature, bug fix, refactor)
-- [ ] Code change with doc updates
-- [ ] Doc only — prose changes (no code sample modifications)
-- [ ] Doc only — includes code sample changes
+- [ ] Code change for a new feature, bug fix, or refactor.
+- [ ] Code change with doc updates.
+- [ ] Doc only. Prose changes without code sample modifications.
+- [ ] Doc only. Includes code sample changes.
 
 ## Testing
 <!-- What testing was done? -->
-- [ ] `make check` passes
-- [ ] `npm test` passes
-- [ ] `make docs` builds without warnings (for doc changes)
+- [ ] `make check` passes.
+- [ ] `npm test` passes.
+- [ ] `make docs` builds without warnings. (for doc-only changes)
 
 ## Checklist
 
-### Code changes
-<!-- Skip if this is a doc-only PR. -->
-- [ ] `make format` applied (TypeScript and Python)
-- [ ] Tests added or updated for new or changed behavior
-- [ ] No secrets, API keys, or credentials committed
-- [ ] Doc pages updated for any user-facing behavior changes (new commands, changed defaults, new features, bug fixes that contradict existing docs)
+### General
+- [ ] I have read and followed the [contributing guide](CONTRIBUTING.md).
+- [ ] I have read and followed the [style guide](docs/CONTRIBUTING.md). (for doc-only changes)
 
-### Doc changes
+### Code Changes
+<!-- Skip if this is a doc-only PR. -->
+- [ ] `make format` applied (TypeScript and Python).
+- [ ] Tests added or updated for new or changed behavior.
+- [ ] No secrets, API keys, or credentials committed.
+- [ ] Doc pages updated for any user-facing behavior changes (new commands, changed defaults, new features, bug fixes that contradict existing docs).
+
+### Doc Changes
 <!-- Skip if this PR has no doc changes. -->
 - [ ] Follows the [style guide](docs/CONTRIBUTING.md). Try running the `update-docs` agent skill to draft changes while complying with the style guide. For example, prompt your agent with "`/update-docs` catch up the docs for the new changes I made in this PR."
-- [ ] New pages include SPDX license header and frontmatter (if creating a new page)
-- [ ] Cross-references and links verified
+- [ ] New pages include SPDX license header and frontmatter, if creating a new page.
+- [ ] Cross-references and links verified.
