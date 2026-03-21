@@ -7,30 +7,47 @@ const assert = require("node:assert/strict");
 const {
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
+  OLLAMA_VRAM_TIERS,
   getDefaultOllamaModel,
+  getHostUrl,
   getLocalProviderBaseUrl,
   getLocalProviderContainerReachabilityCheck,
   getLocalProviderHealthCheck,
   getOllamaModelOptions,
   getOllamaProbeCommand,
   getOllamaWarmupCommand,
+  getRecommendedOllamaModel,
+  getWsl2HostIp,
+  isOllamaBoundToAllInterfaces,
   parseOllamaList,
   validateOllamaModel,
   validateLocalProvider,
 } = require("../bin/lib/local-inference");
 
+const { isWsl } = require("../bin/lib/platform");
+
+// The host URL varies by platform: WSL2 uses eth0 IP, others use host.openshell.internal
+const hostUrl = getHostUrl();
+
 describe("local inference helpers", () => {
   it("returns the expected base URL for vllm-local", () => {
     assert.equal(
       getLocalProviderBaseUrl("vllm-local"),
-      "http://host.openshell.internal:8000/v1",
+      `${hostUrl}:8000/v1`,
     );
   });
 
   it("returns the expected base URL for ollama-local", () => {
     assert.equal(
       getLocalProviderBaseUrl("ollama-local"),
-      "http://host.openshell.internal:11434/v1",
+      `${hostUrl}:11434/v1`,
+    );
+  });
+
+  it("returns the expected base URL for lmstudio-local", () => {
+    assert.equal(
+      getLocalProviderBaseUrl("lmstudio-local"),
+      `${hostUrl}:1234/v1`,
     );
   });
 
@@ -41,11 +58,24 @@ describe("local inference helpers", () => {
     );
   });
 
-  it("returns the expected container reachability command for ollama-local", () => {
+  it("returns the expected health check command for lmstudio-local", () => {
     assert.equal(
-      getLocalProviderContainerReachabilityCheck("ollama-local"),
-      `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:11434/api/tags 2>/dev/null`,
+      getLocalProviderHealthCheck("lmstudio-local"),
+      "curl -sf http://localhost:1234/v1/models 2>/dev/null",
     );
+  });
+
+  it("returns the expected container reachability command for ollama-local", () => {
+    const cmd = getLocalProviderContainerReachabilityCheck("ollama-local");
+    assert.match(cmd, /docker run --rm/);
+    assert.match(cmd, /:11434\/api\/tags/);
+    assert.match(cmd, new RegExp(CONTAINER_REACHABILITY_IMAGE));
+    if (isWsl()) {
+      assert.match(cmd, /--add-host host\.docker\.internal:host-gateway/);
+      assert.match(cmd, /host\.docker\.internal:11434/);
+    } else {
+      assert.match(cmd, /--add-host host\.openshell\.internal:host-gateway/);
+    }
   });
 
   it("validates a reachable local provider", () => {
@@ -71,8 +101,25 @@ describe("local inference helpers", () => {
       return callCount === 1 ? '{"models":[]}' : "";
     });
     assert.equal(result.ok, false);
-    assert.match(result.message, /host\.openshell\.internal:11434/);
+    assert.match(result.message, /containers cannot reach it/);
     assert.match(result.message, /0\.0\.0\.0:11434/);
+  });
+
+  it("returns a clear error when lmstudio-local is unavailable", () => {
+    const result = validateLocalProvider("lmstudio-local", () => "");
+    assert.equal(result.ok, false);
+    assert.match(result.message, /http:\/\/localhost:1234/);
+  });
+
+  it("returns a clear error when lmstudio-local is not reachable from containers", () => {
+    let callCount = 0;
+    const result = validateLocalProvider("lmstudio-local", () => {
+      callCount += 1;
+      return callCount === 1 ? '{"data":[]}' : "";
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.message, /containers cannot reach it/);
+    assert.match(result.message, /0\.0\.0\.0:1234/);
   });
 
   it("returns a clear error when vllm-local is unavailable", () => {
@@ -153,5 +200,78 @@ describe("local inference helpers", () => {
       () => JSON.stringify({ model: "nemotron-3-nano:30b", response: "hello", done: true }),
     );
     assert.deepEqual(result, { ok: true });
+  });
+});
+
+describe("WSL2 networking", () => {
+  it("getHostUrl returns a URL string", () => {
+    const url = getHostUrl();
+    assert.match(url, /^http:\/\//);
+  });
+
+  it("getWsl2HostIp returns an IP on WSL2 or empty string otherwise", () => {
+    const ip = getWsl2HostIp();
+    if (isWsl()) {
+      assert.match(ip, /^\d+\.\d+\.\d+\.\d+$/);
+    } else {
+      assert.equal(ip, "");
+    }
+  });
+});
+
+describe("Ollama binding check", () => {
+  it("returns true when ss output shows 0.0.0.0 binding", () => {
+    const result = isOllamaBoundToAllInterfaces(
+      () => "LISTEN  0  4096  0.0.0.0:11434  *:*\nok",
+    );
+    assert.equal(result, true);
+  });
+
+  it("returns false when ss output does not match", () => {
+    const result = isOllamaBoundToAllInterfaces(() => "");
+    assert.ok(!result);
+  });
+
+  it("returns true when ss output shows wildcard binding", () => {
+    const result = isOllamaBoundToAllInterfaces(
+      () => "LISTEN  0  4096  *:11434  *:*\nok",
+    );
+    assert.equal(result, true);
+  });
+});
+
+describe("VRAM-aware model recommendation", () => {
+  it("recommends nemotron-3-nano:30b for 24+ GB VRAM", () => {
+    const rec = getRecommendedOllamaModel(24564); // RTX 4090 reports 24564 MB
+    assert.equal(rec.model, "nemotron-3-nano:30b");
+  });
+
+  it("recommends gemma3:12b for 12-24 GB VRAM", () => {
+    const rec = getRecommendedOllamaModel(12000);
+    assert.equal(rec.model, "gemma3:12b");
+  });
+
+  it("recommends gemma3:4b for 8-12 GB VRAM", () => {
+    const rec = getRecommendedOllamaModel(8000);
+    assert.equal(rec.model, "gemma3:4b");
+  });
+
+  it("recommends ministral-3:3b for < 8 GB VRAM", () => {
+    const rec = getRecommendedOllamaModel(4096);
+    assert.equal(rec.model, "ministral-3:3b");
+  });
+
+  it("returns fallback tier for 0 VRAM", () => {
+    const rec = getRecommendedOllamaModel(0);
+    assert.equal(rec.model, "ministral-3:3b");
+  });
+
+  it("OLLAMA_VRAM_TIERS is sorted descending by minMB", () => {
+    for (let i = 1; i < OLLAMA_VRAM_TIERS.length; i++) {
+      assert.ok(
+        OLLAMA_VRAM_TIERS[i - 1].minMB > OLLAMA_VRAM_TIERS[i].minMB,
+        `Tier ${i - 1} (${OLLAMA_VRAM_TIERS[i - 1].minMB}) should be > tier ${i} (${OLLAMA_VRAM_TIERS[i].minMB})`,
+      );
+    }
   });
 });

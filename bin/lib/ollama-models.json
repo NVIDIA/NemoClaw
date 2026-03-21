@@ -1,0 +1,6 @@
+[
+  { "minMB": 23000, "model": "nemotron-3-nano:30b",  "label": "Nemotron 3 Nano 30B (24+ GB)" },
+  { "minMB": 11000, "model": "gemma3:12b",           "label": "Gemma 3 12B (12+ GB)" },
+  { "minMB": 7000,  "model": "gemma3:4b",            "label": "Gemma 3 4B (8+ GB)" },
+  { "minMB": 0,     "model": "ministral-3:3b",       "label": "Ministral 3 3B (any GPU)" }
+]
