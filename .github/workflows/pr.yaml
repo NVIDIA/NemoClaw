@@ -44,6 +44,30 @@ jobs:
         working-directory: nemoclaw
         run: npx vitest run
 
+  test-blueprint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Run linter
+        working-directory: nemoclaw-blueprint
+        run: uv run ruff check .
+
+      - name: Run formatter check
+        working-directory: nemoclaw-blueprint
+        run: uv run ruff format --check .
+
+      - name: Run unit tests
+        working-directory: nemoclaw-blueprint
+        run: uv run --extra test pytest tests/ -v
+
   test-e2e-sandbox:
     runs-on: ubuntu-latest
     timeout-minutes: 15
