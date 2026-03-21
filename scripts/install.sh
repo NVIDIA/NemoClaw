@@ -107,12 +107,53 @@ ensure_nvm_loaded() {
   fi
 }
 
+# Resolve the active npm global bin without letting a host nvm install
+# override an already-working node/npm on PATH.
+resolve_npm_bin() {
+  if ! command -v npm > /dev/null 2>&1; then
+    ensure_nvm_loaded
+  fi
+
+  command -v npm > /dev/null 2>&1 || return 1
+
+  local npm_prefix
+  npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+  [ -n "$npm_prefix" ] || return 1
+
+  printf '%s/bin\n' "$npm_prefix"
+}
+
+# Check whether npm link can write to the active prefix targets.
+npm_link_targets_writable() {
+  local npm_prefix="$1"
+  local npm_bin_dir npm_lib_dir
+
+  [ -n "$npm_prefix" ] || return 1
+
+  npm_bin_dir="$npm_prefix/bin"
+  npm_lib_dir="$npm_prefix/lib/node_modules"
+
+  if [ -d "$npm_bin_dir" ]; then
+    [ -w "$npm_bin_dir" ] || return 1
+  elif [ ! -w "$npm_prefix" ]; then
+    return 1
+  fi
+
+  if [ -d "$npm_lib_dir" ]; then
+    [ -w "$npm_lib_dir" ] || return 1
+  elif [ -d "$npm_prefix/lib" ]; then
+    [ -w "$npm_prefix/lib" ] || return 1
+  elif [ ! -w "$npm_prefix" ]; then
+    return 1
+  fi
+
+  return 0
+}
+
 # Refresh PATH so that npm global bin is discoverable.
 refresh_path() {
-  ensure_nvm_loaded
-
   local npm_bin
-  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  npm_bin="$(resolve_npm_bin)" || true
   if [ -n "$npm_bin" ] && [ -d "$npm_bin" ]; then
     case ":$PATH:" in
       *":$npm_bin:"*) ;;  # already on PATH
@@ -414,11 +455,14 @@ rm -rf "$NEMOCLAW_SRC"
 mkdir -p "$(dirname "$NEMOCLAW_SRC")"
 git clone --depth 1 https://github.com/NVIDIA/NemoClaw.git "$NEMOCLAW_SRC"
 pre_extract_openclaw "$NEMOCLAW_SRC" || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
-# Use sudo for npm link when the global prefix requires it (e.g., nodesource),
+# Use sudo for npm link only when the Nodesource global prefix requires it,
 # but skip sudo if already root (e.g., Docker containers).
 SUDO=""
 if [ "$NODE_MGR" = "nodesource" ] && [ "$(id -u)" -ne 0 ]; then
-  SUDO="sudo"
+  npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+  if ! npm_link_targets_writable "$npm_prefix"; then
+    SUDO="sudo"
+  fi
 fi
 (cd "$NEMOCLAW_SRC" && npm install --ignore-scripts && cd nemoclaw && npm install --ignore-scripts && npm run build && cd .. && $SUDO npm link)
 
@@ -437,7 +481,7 @@ if ! command -v nemoclaw > /dev/null 2>&1; then
 fi
 
 if ! command -v nemoclaw > /dev/null 2>&1; then
-  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  npm_bin="$(resolve_npm_bin)" || true
   if [ -n "$npm_bin" ] && [ -x "$npm_bin/nemoclaw" ]; then
     warn "nemoclaw installed at $npm_bin/nemoclaw but not on current PATH."
     warn ""
