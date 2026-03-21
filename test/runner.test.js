@@ -114,4 +114,64 @@ describe("runner helpers", () => {
       assert.throws(() => validateName("trailing-"), /Invalid/);
     });
   });
+
+  describe("regression guards", () => {
+    it("nemoclaw.js does not use execSync", () => {
+      const fs = require("fs");
+      const src = fs.readFileSync(path.join(__dirname, "..", "bin", "nemoclaw.js"), "utf-8");
+      const lines = src.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes("execSync") && !lines[i].includes("execFileSync")) {
+          assert.fail(`bin/nemoclaw.js:${i + 1} uses execSync — use execFileSync instead`);
+        }
+      }
+    });
+
+    it("no duplicate shellQuote definitions in bin/", () => {
+      const fs = require("fs");
+      const glob = require("path");
+      const binDir = path.join(__dirname, "..", "bin");
+      const files = [];
+      function walk(dir) {
+        for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (f.isDirectory() && f.name !== "node_modules") walk(path.join(dir, f.name));
+          else if (f.name.endsWith(".js")) files.push(path.join(dir, f.name));
+        }
+      }
+      walk(binDir);
+
+      const defs = [];
+      for (const file of files) {
+        const src = fs.readFileSync(file, "utf-8");
+        if (src.includes("function shellQuote")) {
+          defs.push(file.replace(binDir, "bin"));
+        }
+      }
+      assert.equal(defs.length, 1, `Expected 1 shellQuote definition, found ${defs.length}: ${defs.join(", ")}`);
+      assert.ok(defs[0].includes("runner"), `shellQuote should be in runner.js, found in ${defs[0]}`);
+    });
+
+    it("CLI rejects malicious sandbox names before shell commands (e2e)", () => {
+      const result = spawnSync("node", [
+        path.join(__dirname, "..", "bin", "nemoclaw.js"),
+        "test; whoami",
+        "connect",
+      ], {
+        encoding: "utf-8",
+        timeout: 10000,
+        cwd: path.join(__dirname, ".."),
+      });
+      // Should exit non-zero — either "Unknown command" (not in registry)
+      // or "Invalid sandbox name" (validation caught it).
+      // Either way, no shell injection occurs.
+      assert.notEqual(result.status, 0, "CLI should reject malicious sandbox name");
+    });
+
+    it("telegram bridge validates SANDBOX_NAME on startup", () => {
+      const fs = require("fs");
+      const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "telegram-bridge.js"), "utf-8");
+      assert.ok(src.includes("validateName(SANDBOX"), "telegram-bridge.js must validate SANDBOX_NAME");
+      assert.ok(!src.includes("execSync"), "telegram-bridge.js should not use execSync");
+    });
+  });
 });
