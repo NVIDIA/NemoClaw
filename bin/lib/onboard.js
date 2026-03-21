@@ -7,6 +7,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { ROOT, SHELL_SCRIPTS, run, runCapture, ensureSupportedHost } = require("./runner");
 const { ROOT, SCRIPTS, run, runCapture } = require("./runner");
 const {
   getDefaultOllamaModel,
@@ -207,6 +208,7 @@ function isOpenshellInstalled() {
 
 function installOpenshell() {
   console.log("  Installing openshell CLI...");
+  run(`bash "${SHELL_SCRIPTS}/install.sh"`, { ignoreError: true });
   run(`bash "${path.join(SCRIPTS, "install-openshell.sh")}"`, { ignoreError: true });
   const localBin = process.env.XDG_BIN_HOME || path.join(process.env.HOME || "", ".local", "bin");
   if (fs.existsSync(path.join(localBin, "openshell")) && !process.env.PATH.split(path.delimiter).includes(localBin)) {
@@ -267,6 +269,7 @@ function getNonInteractiveModel(providerKey) {
 // ── Step 1: Preflight ────────────────────────────────────────────
 
 async function preflight() {
+  ensureSupportedHost();
   step(1, 7, "Preflight checks");
 
   // Docker
@@ -394,6 +397,7 @@ async function startGateway(gpu) {
   const runtime = getContainerRuntime();
   if (shouldPatchCoredns(runtime)) {
     console.log("  Patching CoreDNS for Colima...");
+    run(`bash "${SHELL_SCRIPTS}/fix-coredns.sh" 2>&1 || true`, { ignoreError: true });
     run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" nemoclaw 2>&1 || true`, { ignoreError: true });
   }
   // Give DNS a moment to propagate

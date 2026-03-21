@@ -7,6 +7,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
+const { ROOT, SHELL_SCRIPTS, run, runCapture, ensureSupportedHost } = require("./lib/runner");
 const { ROOT, SCRIPTS, run, runCapture, runInteractive } = require("./lib/runner");
 const {
   ensureApiKey,
@@ -62,6 +63,8 @@ function exitWithSpawnResult(result) {
 
 // ── Commands ─────────────────────────────────────────────────────
 
+async function onboard() {
+  ensureSupportedHost();
 async function onboard(args) {
   const { onboard: runOnboard } = require("./lib/onboard");
   const allowedArgs = new Set(["--non-interactive"]);
@@ -76,19 +79,22 @@ async function onboard(args) {
 }
 
 async function setup() {
+  ensureSupportedHost();
   console.log("");
   console.log("  ⚠  `nemoclaw setup` is deprecated. Use `nemoclaw onboard` instead.");
   console.log("     Running legacy setup.sh for backwards compatibility...");
   console.log("");
   await ensureApiKey();
+  run(`bash "${SHELL_SCRIPTS}/setup.sh"`);
   const { defaultSandbox } = registry.listSandboxes();
   const safeName = defaultSandbox && /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(defaultSandbox) ? defaultSandbox : "";
   run(`bash "${SCRIPTS}/setup.sh" ${safeName}`);
 }
 
 async function setupSpark() {
+  ensureSupportedHost();
   await ensureApiKey();
-  run(`sudo -E NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}" bash "${SCRIPTS}/setup-spark.sh"`);
+  run(`sudo -E NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}" bash "${SHELL_SCRIPTS}/setup-spark.sh"`);
 }
 
 async function deploy(instanceName) {
@@ -177,7 +183,9 @@ async function deploy(instanceName) {
 }
 
 async function start() {
+  ensureSupportedHost();
   await ensureApiKey();
+  run(`bash "${SHELL_SCRIPTS}/start-services.sh"`);
   const { defaultSandbox } = registry.listSandboxes();
   const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
   const sandboxEnv = safeName ? `SANDBOX_NAME="${safeName}"` : "";
@@ -185,7 +193,8 @@ async function start() {
 }
 
 function stop() {
-  run(`bash "${SCRIPTS}/start-services.sh" --stop`);
+  ensureSupportedHost();
+  run(`bash "${SHELL_SCRIPTS}/start-services.sh" --stop`);
 }
 
 function debug(args) {
@@ -240,7 +249,8 @@ function showStatus() {
   }
 
   // Show service status
-  run(`bash "${SCRIPTS}/start-services.sh" --status`);
+  ensureSupportedHost();
+  run(`bash "${SHELL_SCRIPTS}/start-services.sh" --status`);
 }
 
 function listSandboxes() {

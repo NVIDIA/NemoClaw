@@ -13,6 +13,17 @@ info()  { printf '\033[1;34m[INFO]\033[0m  %s\n' "$*"; }
 warn()  { printf '\033[1;33m[WARN]\033[0m  %s\n' "$*"; }
 error() { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*"; exit 1; }
 
+UNAME_S="$(uname -s)"
+case "$UNAME_S" in
+  Linux|Darwin) ;;
+  MINGW*|MSYS*|CYGWIN*)
+    error "Windows host shells are not supported. Run NemoClaw from WSL2 Ubuntu instead."
+    ;;
+  *)
+    error "Unsupported host OS: $UNAME_S"
+    ;;
+esac
+
 command_exists() { command -v "$1" &>/dev/null; }
 
 MIN_NODE_MAJOR=20
