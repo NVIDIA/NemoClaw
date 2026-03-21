@@ -91,10 +91,41 @@ The following endpoint groups are allowed by default:
   - `/usr/local/bin/openclaw`, `/usr/local/bin/npm`
   - GET only
 
+:::
+
+All endpoints use TLS termination and are enforced at port 443.
+
+## Policy Presets
+
+NemoClaw includes optional policy presets for third-party integrations. These can be enabled during onboarding or applied dynamically using `openshell policy set`.
+
+### Available Presets
+
+The following presets are available in `nemoclaw-blueprint/policies/presets/`:
+
+::: {list-table}
+:header-rows: 1
+:widths: 20 30 20 30
+
+* - Preset
+  - Endpoints
+  - Binaries
+  - Rules
+
 * - `telegram`
   - `api.telegram.org:443`
   - Any binary
   - GET, POST on `/bot*/**`
+
+* - `slack`
+  - `slack.com:443`
+  - Any binary
+  - API and webhook access
+
+* - `discord`
+  - `discord.com:443`
+  - Any binary
+  - Bot and gateway access
 
 :::
 
