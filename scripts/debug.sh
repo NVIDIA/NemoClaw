@@ -165,7 +165,6 @@ collect "ps-cpu" sh -c 'ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head -30'
 
 if [ "$QUICK" = false ]; then
   collect "ps-mem" sh -c 'ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%mem | head -30'
-  collect "ps-all" ps -ef
   collect "top" sh -c 'top -b -n 1 | head -50'
 fi
 
@@ -204,21 +203,21 @@ section "OpenShell"
 collect "openshell-status" openshell status
 collect "openshell-sandbox-list" openshell sandbox list
 collect "openshell-sandbox-get" openshell sandbox get "$SANDBOX_NAME"
-collect "openshell-sandbox-logs" openshell sandbox logs "$SANDBOX_NAME"
+collect "openshell-logs" openshell logs "$SANDBOX_NAME"
 
 if [ "$QUICK" = false ]; then
   collect "openshell-gateway-info" openshell gateway info
 fi
 
-# -- Sandbox internals (via openshell sandbox exec) --
+# -- Sandbox internals (via openshell sandbox connect) --
 
 if command -v openshell &>/dev/null && openshell sandbox list 2>/dev/null | grep -q "$SANDBOX_NAME"; then
   section "Sandbox Internals"
-  collect "sandbox-ps" openshell sandbox exec "$SANDBOX_NAME" -- ps -ef
-  collect "sandbox-free" openshell sandbox exec "$SANDBOX_NAME" -- free -m
+  collect "sandbox-ps" openshell sandbox connect "$SANDBOX_NAME" -- ps -ef
+  collect "sandbox-free" openshell sandbox connect "$SANDBOX_NAME" -- free -m
   if [ "$QUICK" = false ]; then
-    collect "sandbox-top" openshell sandbox exec "$SANDBOX_NAME" -- sh -c 'top -b -n 1 | head -50'
-    collect "sandbox-gateway-log" openshell sandbox exec "$SANDBOX_NAME" -- tail -200 /tmp/gateway.log
+    collect "sandbox-top" openshell sandbox connect "$SANDBOX_NAME" -- sh -c 'top -b -n 1 | head -50'
+    collect "sandbox-gateway-log" openshell sandbox connect "$SANDBOX_NAME" -- tail -200 /tmp/gateway.log
   fi
 fi
 
@@ -231,8 +230,8 @@ if [ "$QUICK" = false ]; then
   collect "ip-route" ip route
   collect "resolv-conf" cat /etc/resolv.conf
   collect "nslookup" nslookup integrate.api.nvidia.com
-  collect "curl-models" curl -I -s https://integrate.api.nvidia.com/v1/models
-  collect "lsof-net" lsof -i -P -n
+  collect "curl-models" sh -c 'code=$(curl -s -o /dev/null -w "%{http_code}" https://integrate.api.nvidia.com/v1/models); echo "HTTP $code"; if [ "$code" -ge 200 ] && [ "$code" -lt 500 ]; then echo "NIM API reachable"; else echo "NIM API unreachable"; exit 1; fi'
+  collect "lsof-net" sh -c 'lsof -i -P -n 2>/dev/null | head -50'
   collect "lsof-18789" lsof -i :18789
 fi
 
