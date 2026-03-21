@@ -30,17 +30,13 @@ describe("plugin registration", () => {
   it("registers a slash command", () => {
     const api = createMockApi();
     register(api);
-    expect(api.registerCommand).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "nemoclaw" }),
-    );
+    expect(api.registerCommand).toHaveBeenCalledWith(expect.objectContaining({ name: "nemoclaw" }));
   });
 
   it("registers an inference provider", () => {
     const api = createMockApi();
     register(api);
-    expect(api.registerProvider).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "inference" }),
-    );
+    expect(api.registerProvider).toHaveBeenCalledWith(expect.objectContaining({ id: "inference" }));
   });
 
   it("does NOT register CLI commands", () => {
