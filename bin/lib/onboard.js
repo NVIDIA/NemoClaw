@@ -120,6 +120,11 @@ models_cfg.setdefault('mode', 'merge')
 providers_cfg = models_cfg.setdefault('providers', {})
 providers_cfg[${JSON.stringify(providerKey)}] = json.loads(${pythonLiteralJson(providerConfig)})
 
+# Remove the default nvidia provider baked into the Docker image — it points
+# to inference.local which fails DNS inside the sandbox on OpenShell 0.0.10.
+# The 'inference' provider above is the authoritative one.
+providers_cfg.pop('nvidia', None)
+
 with open(cfg_path, 'w') as f:
     json.dump(cfg, f, indent=2)
 
