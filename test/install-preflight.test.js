@@ -69,7 +69,7 @@ exit 98
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-fallback-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
-    const npmLog = path.join(tmp, "npm.log");
+    const gitLog = path.join(tmp, "git.log");
     fs.mkdirSync(fakeBin);
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
@@ -80,8 +80,26 @@ if [ "$1" = "--version" ]; then
   echo "v22.14.0"
   exit 0
 fi
+if [ "$1" = "-e" ]; then
+  exit 1
+fi
 echo "unexpected node invocation: $*" >&2
 exit 99
+`,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "git"),
+      `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
+if [ "$1" = "clone" ]; then
+  target="\${@: -1}"
+  mkdir -p "$target/nemoclaw"
+  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
+  exit 0
+fi
+exit 0
 `,
     );
 
@@ -89,7 +107,6 @@ exit 99
       path.join(fakeBin, "npm"),
       `#!/usr/bin/env bash
 set -euo pipefail
-printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
 if [ "$1" = "--version" ]; then
   echo "10.9.2"
   exit 0
@@ -98,7 +115,16 @@ if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
   echo "$NPM_PREFIX"
   exit 0
 fi
-if [ "$1" = "install" ] && [ "$2" = "-g" ] && [ "$3" = "${GITHUB_INSTALL_URL}" ]; then
+if [ "$1" = "pack" ]; then
+  exit 1
+fi
+if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  exit 0
+fi
+if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
 if [ "$1" = "onboard" ]; then
@@ -127,12 +153,12 @@ exit 98
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NPM_PREFIX: prefix,
-        NPM_LOG_PATH: npmLog,
+        GIT_LOG_PATH: gitLog,
       },
     });
 
     assert.equal(result.status, 0);
-    assert.match(fs.readFileSync(npmLog, "utf-8"), new RegExp(`install -g ${GITHUB_INSTALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    assert.match(fs.readFileSync(gitLog, "utf-8"), /clone.*NemoClaw\.git/);
   });
 
   it("prints the HTTPS GitHub remediation when the binary is missing", () => {
@@ -149,8 +175,25 @@ if [ "$1" = "--version" ]; then
   echo "v22.14.0"
   exit 0
 fi
+if [ "$1" = "-e" ]; then
+  exit 1
+fi
 echo "unexpected node invocation: $*" >&2
 exit 99
+`,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "git"),
+      `#!/usr/bin/env bash
+if [ "$1" = "clone" ]; then
+  target="\${@: -1}"
+  mkdir -p "$target/nemoclaw"
+  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
+  exit 0
+fi
+exit 0
 `,
     );
 
@@ -166,7 +209,16 @@ if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
   echo "$NPM_PREFIX"
   exit 0
 fi
-if [ "$1" = "install" ] && [ "$2" = "-g" ] && [ "$3" = "${GITHUB_INSTALL_URL}" ]; then
+if [ "$1" = "pack" ]; then
+  exit 1
+fi
+if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  exit 0
+fi
+if [ "$1" = "link" ]; then
   exit 0
 fi
 echo "unexpected npm invocation: $*" >&2
@@ -286,7 +338,24 @@ if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
   echo "v22.14.0"
   exit 0
 fi
+if [ "$1" = "-e" ]; then
+  exit 1
+fi
 exit 99
+`,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "git"),
+      `#!/usr/bin/env bash
+if [ "$1" = "clone" ]; then
+  target="\${@: -1}"
+  mkdir -p "$target/nemoclaw"
+  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
+  exit 0
+fi
+exit 0
 `,
     );
 
@@ -302,7 +371,16 @@ if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
   echo "$NPM_PREFIX"
   exit 0
 fi
-if [ "$1" = "install" ] && [ "$2" = "-g" ]; then
+if [ "$1" = "pack" ]; then
+  exit 1
+fi
+if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  exit 0
+fi
+if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
 if [ "$1" = "--version" ]; then
@@ -375,7 +453,24 @@ if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
   echo "v22.14.0"
   exit 0
 fi
+if [ "$1" = "-e" ]; then
+  exit 1
+fi
 exit 99
+`,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "git"),
+      `#!/usr/bin/env bash
+if [ "$1" = "clone" ]; then
+  target="\${@: -1}"
+  mkdir -p "$target/nemoclaw"
+  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
+  exit 0
+fi
+exit 0
 `,
     );
 
@@ -391,7 +486,16 @@ if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
   echo "$NPM_PREFIX"
   exit 0
 fi
-if [ "$1" = "install" ] && [ "$2" = "-g" ] && [ "$3" = "${GITHUB_INSTALL_URL}" ]; then
+if [ "$1" = "pack" ]; then
+  exit 1
+fi
+if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  exit 0
+fi
+if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
 if [ "$1" = "onboard" ]; then

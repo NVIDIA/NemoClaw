@@ -11,8 +11,6 @@
  * time.
  */
 
-import type { Command } from "commander";
-import { registerCliCommands } from "./cli.js";
 import { handleSlashCommand } from "./commands/slash.js";
 import {
   describeOnboardEndpoint,
@@ -66,17 +64,6 @@ export interface PluginCommandDefinition {
   handler: (ctx: PluginCommandContext) => PluginCommandResult | Promise<PluginCommandResult>;
 }
 
-/** Context passed to the CLI registrar callback. */
-export interface PluginCliContext {
-  program: Command;
-  config: OpenClawConfig;
-  workspaceDir?: string;
-  logger: PluginLogger;
-}
-
-/** CLI registrar callback type. */
-export type PluginCliRegistrar = (ctx: PluginCliContext) => void | Promise<void>;
-
 /** Auth method for a provider plugin. */
 export interface ProviderAuthMethod {
   type: string;
@@ -129,7 +116,6 @@ export interface OpenClawPluginApi {
   pluginConfig?: Record<string, unknown>;
   logger: PluginLogger;
   registerCommand: (command: PluginCommandDefinition) => void;
-  registerCli: (registrar: PluginCliRegistrar, opts?: { commands?: string[] }) => void;
   registerProvider: (provider: ProviderPlugin) => void;
   registerService: (service: PluginService) => void;
   resolvePath: (input: string) => string;
@@ -248,15 +234,7 @@ export default function register(api: OpenClawPluginApi): void {
     handler: (ctx) => handleSlashCommand(ctx, api),
   });
 
-  // 2. Register `openclaw nemoclaw` CLI subcommands (commander.js)
-  api.registerCli(
-    (cliCtx) => {
-      registerCliCommands(cliCtx, api);
-    },
-    { commands: ["nemoclaw"] },
-  );
-
-  // 3. Register nvidia-nim provider — use onboard config if available
+  // 2. Register nvidia-nim provider — use onboard config if available
   const onboardCfg = loadOnboardConfig();
   const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
   api.registerProvider(registeredProviderForConfig(onboardCfg, providerCredentialEnv));
@@ -272,7 +250,7 @@ export default function register(api: OpenClawPluginApi): void {
   api.logger.info(`  │  Endpoint:  ${bannerEndpoint.padEnd(40)}│`);
   api.logger.info(`  │  Provider:  ${bannerProvider.padEnd(40)}│`);
   api.logger.info(`  │  Model:     ${bannerModel.padEnd(40)}│`);
-  api.logger.info("  │  Commands:  openclaw nemoclaw <command>             │");
+  api.logger.info("  │  Slash:     /nemoclaw                               │");
   api.logger.info("  └─────────────────────────────────────────────────────┘");
   api.logger.info("");
 }

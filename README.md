@@ -1,4 +1,4 @@
-# NVIDIA NemoClaw: OpenClaw Plugin for OpenShell
+# NVIDIA NemoClaw: Reference Stack for Running OpenClaw in OpenShell
 
 <!-- start-badges -->
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue)](https://github.com/NVIDIA/NemoClaw/blob/main/LICENSE)
@@ -6,11 +6,16 @@
 [![Project Status](https://img.shields.io/badge/status-alpha-orange)](https://github.com/NVIDIA/NemoClaw/blob/main/docs/about/release-notes.md)
 <!-- end-badges -->
 
-NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants safely. It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of NVIDIA Agent Toolkit, a secure environment for running autonomous agents, and open source models such as [NVIDIA Nemotron](https://build.nvidia.com).
+<!-- start-intro -->
+NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
+It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of NVIDIA Agent Toolkit, which provides additional security for running autonomous agents.
+It also includes open source models such as [NVIDIA Nemotron](https://build.nvidia.com).
+<!-- end-intro -->
 
 > **Alpha software**
-> 
+>
 > NemoClaw is available in early preview starting March 16, 2026.
+> This software is not production-ready.
 > Interfaces, APIs, and behavior may change without notice as we iterate on the design.
 > The project is shared to gather feedback and enable early experimentation.
 > We welcome issues and discussion from the community while the project evolves.
@@ -214,21 +219,7 @@ Run these on the host to set up, connect to, and manage sandboxes.
 | `openshell term`                     | Launch the OpenShell TUI for monitoring and approvals. |
 | `nemoclaw start` / `stop` / `status` | Manage auxiliary services (Telegram bridge, tunnel).   |
 
-### Plugin commands (`openclaw nemoclaw`)
-
-Run these inside the OpenClaw CLI. These commands are under active development and may not all be functional yet.
-
-| Command                                    | Description                                              |
-|--------------------------------------------|----------------------------------------------------------|
-| `openclaw nemoclaw launch [--profile ...]` | Bootstrap OpenClaw inside an OpenShell sandbox.          |
-| `openclaw nemoclaw status`                 | Show sandbox health, blueprint state, and inference.     |
-| `openclaw nemoclaw logs [-f]`              | Stream blueprint execution and sandbox logs.             |
-
 See the full [CLI reference](https://docs.nvidia.com/nemoclaw/latest/reference/commands.md) for all commands, flags, and options.
-
-> **Known limitations:**
-> - The `openclaw nemoclaw` plugin commands are under active development. Use the `nemoclaw` host CLI as the primary interface.
-> - Setup may require manual workarounds on some platforms. File an issue if you encounter blockers.
 
 ---
 
