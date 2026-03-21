@@ -3,6 +3,7 @@
 //
 // Preflight checks for NemoClaw onboarding.
 
+const fs = require("fs");
 const net = require("net");
 const { runCapture } = require("./runner");
 
@@ -88,4 +89,171 @@ async function checkPortAvailable(port, opts) {
   });
 }
 
-module.exports = { checkPortAvailable };
+/**
+ * Read system memory info (RAM + swap).
+ *
+ * On Linux, parses /proc/meminfo. On macOS, uses sysctl.
+ * Returns null on unsupported platforms or read errors.
+ *
+ * opts.meminfoContent — inject fake /proc/meminfo for testing
+ * opts.platform       — override process.platform for testing
+ *
+ * Returns:
+ *   { totalRamMB: number, totalSwapMB: number, totalMB: number }
+ */
+function getMemoryInfo(opts) {
+  const o = opts || {};
+  const platform = o.platform || process.platform;
+
+  if (platform === "linux") {
+    let content;
+    if (typeof o.meminfoContent === "string") {
+      content = o.meminfoContent;
+    } else {
+      try {
+        content = fs.readFileSync("/proc/meminfo", "utf-8");
+      } catch {
+        return null;
+      }
+    }
+
+    const parseKB = (key) => {
+      const match = content.match(new RegExp(`^${key}:\\s+(\\d+)`, "m"));
+      return match ? parseInt(match[1], 10) : 0;
+    };
+
+    const totalRamKB = parseKB("MemTotal");
+    const totalSwapKB = parseKB("SwapTotal");
+    const totalRamMB = Math.floor(totalRamKB / 1024);
+    const totalSwapMB = Math.floor(totalSwapKB / 1024);
+    return { totalRamMB, totalSwapMB, totalMB: totalRamMB + totalSwapMB };
+  }
+
+  if (platform === "darwin") {
+    try {
+      const memBytes = parseInt(
+        runCapture("sysctl -n hw.memsize", { ignoreError: true }),
+        10
+      );
+      if (!memBytes || isNaN(memBytes)) return null;
+      const totalRamMB = Math.floor(memBytes / 1024 / 1024);
+      // macOS does not use traditional swap files in the same way
+      return { totalRamMB, totalSwapMB: 0, totalMB: totalRamMB };
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Ensure the system has enough memory (RAM + swap) for sandbox operations.
+ *
+ * If total memory is below minTotalMB and no swap file exists, attempts to
+ * create a 4 GB swap file via sudo to prevent OOM kills during sandbox image push.
+ *
+ * opts.memoryInfo — inject mock getMemoryInfo() result for testing
+ * opts.platform   — override process.platform for testing
+ * opts.dryRun     — if true, skip actual swap creation (for testing)
+ *
+ * Returns:
+ *   { ok: true, totalMB, swapCreated: boolean }
+ *   { ok: false, reason: string }
+ */
+function ensureSwap(minTotalMB, opts) {
+  const o = opts || {};
+  const threshold = minTotalMB || 12000;
+  const platform = o.platform || process.platform;
+
+  if (platform !== "linux") {
+    return { ok: true, reason: "swap management only supported on Linux", swapCreated: false };
+  }
+
+  const mem = o.memoryInfo || getMemoryInfo({ platform });
+  if (!mem) {
+    return { ok: false, reason: "could not read memory info" };
+  }
+
+  if (mem.totalMB >= threshold) {
+    return { ok: true, totalMB: mem.totalMB, swapCreated: false };
+  }
+
+  // Check if swap file already exists
+  if (!o.dryRun) {
+    try {
+      fs.accessSync("/swapfile");
+      const swaps = fs.readFileSync("/proc/swaps", "utf-8");
+      if (swaps.includes("/swapfile")) {
+        return {
+          ok: true,
+          totalMB: mem.totalMB,
+          swapCreated: false,
+          reason: "/swapfile already exists",
+        };
+      }
+    } catch {
+      // No swap file — proceed to create one
+    }
+  } else {
+    // In dry-run mode, simulate the check
+    if (o.swapfileExists && o.swapfileActive !== false) {
+      return {
+        ok: true,
+        totalMB: mem.totalMB,
+        swapCreated: false,
+        reason: "/swapfile already exists",
+      };
+    }
+  }
+
+  // Bail if disk is too small for a 4 GB swap file
+  if (!o.dryRun) {
+    try {
+      const dfOut = runCapture("df / --output=avail -k 2>/dev/null | tail -1", { ignoreError: true });
+      const freeKB = parseInt((dfOut || "").trim(), 10);
+      if (!isNaN(freeKB) && freeKB < 5000000) {
+        return {
+          ok: false,
+          reason: `insufficient disk space (${Math.floor(freeKB / 1024)} MB free, need ~5 GB) to create swap file`,
+        };
+      }
+    } catch {
+      // df unavailable — let dd fail naturally if out of space
+    }
+  }
+
+  if (o.dryRun) {
+    return { ok: true, totalMB: mem.totalMB, swapCreated: true };
+  }
+
+  // Create 4 GB swap file
+  try {
+    runCapture("sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none", { ignoreError: false });
+    runCapture("sudo chmod 600 /swapfile", { ignoreError: false });
+    runCapture("sudo mkswap /swapfile", { ignoreError: false });
+    runCapture("sudo swapon /swapfile", { ignoreError: false });
+    runCapture(
+      "grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab",
+      { ignoreError: false }
+    );
+    return { ok: true, totalMB: mem.totalMB + 4096, swapCreated: true };
+  } catch (err) {
+    // Attempt cleanup of partial state
+    try {
+      runCapture("sudo swapoff /swapfile 2>/dev/null || true", { ignoreError: true });
+      runCapture("sudo rm -f /swapfile", { ignoreError: true });
+    } catch {
+      // Best effort cleanup
+    }
+
+    return {
+      ok: false,
+      reason: `swap creation failed: ${err.message}. Create swap manually:\n` +
+        "  sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none && sudo chmod 600 /swapfile && " +
+        "sudo mkswap /swapfile && sudo swapon /swapfile",
+    };
+  }
+}
+
+module.exports = { checkPortAvailable, getMemoryInfo, ensureSwap };
