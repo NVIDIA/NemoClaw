@@ -119,14 +119,13 @@ The proxy processes do not survive a host reboot.
 Restart them and the port forwards.
 The mcporter configuration inside the sandbox persists and does not need to be reconfigured.
 
-## Proposed CLI
+## CLI Commands
 
-:::{note}
-The following `nemoclaw mcp` subcommands are proposed but not yet implemented.
-They automate the manual steps above: proxy lifecycle, port forwarding, mcporter bootstrap, and sandbox configuration.
-:::
+The `nemoclaw <name> mcp` subcommands automate the manual steps above.
 
 ### Add a stdio MCP server
+
+Bridge a host-side MCP server into the sandbox.
 
 ```console
 $ export GITHUB_TOKEN=<your-token>
@@ -135,32 +134,16 @@ $ nemoclaw <name> mcp add --name github \
     --env GITHUB_TOKEN
 ```
 
-This would:
+This command:
 
-1. Start the stdio-to-HTTP proxy on the host with the named environment variables.
-2. Forward the port into the sandbox via `openshell forward`.
-3. Install mcporter in the sandbox if not already present.
-4. Register the server in the sandbox mcporter configuration.
-
-### Add a remote HTTP MCP server
-
-```console
-$ nemoclaw <name> mcp add --name linear --url https://mcp.linear.app/mcp
-```
-
-This routes the remote server through a host-side reverse proxy so the sandbox connects to `localhost` and no egress policy is needed.
-
-### Import from Claude Code or Cursor
-
-```console
-$ nemoclaw <name> mcp import github --from claude
-```
-
-This reads the server definition by name from `~/.claude.json` (or `--from cursor`, `--from windsurf`).
-It extracts the command and environment variable names only, never values.
-The user confirms the variables are set, then the command proceeds as `mcp add`.
+1. Starts the stdio-to-HTTP proxy on the host with the named environment variables.
+2. Forwards the port into the sandbox via `openshell forward`.
+3. Installs mcporter in the sandbox if not already present.
+4. Registers the server in the sandbox mcporter configuration.
 
 ### List bridges
+
+List all MCP bridges for a sandbox with their running status.
 
 ```console
 $ nemoclaw <name> mcp list
@@ -171,43 +154,54 @@ MCP Bridges for sandbox "my-assistant":
 
   ● github      :3101  npx @modelcontextprotocol/server-github      env: GITHUB_TOKEN
   ● slack       :3102  npx @anthropic/mcp-server-slack               env: SLACK_TOKEN
-  ○ linear      :3103  https://mcp.linear.app/mcp                    env: (none)      (stopped)
 ```
 
 ### Remove a bridge
+
+Stop the proxy, stop the port forward, and remove the server from the sandbox mcporter configuration.
 
 ```console
 $ nemoclaw <name> mcp remove github
 ```
 
-This stops the proxy, stops the port forward, and removes the server from the sandbox mcporter configuration.
-
 ### Restart after reboot
+
+Restart all proxy processes and port forwards from the saved configuration.
+The sandbox-side mcporter configuration persists and does not need to be rewritten.
 
 ```console
 $ nemoclaw <name> mcp restart
 ```
 
-This reads the saved bridge configuration from `~/.nemoclaw/sandboxes.json` and restarts all proxy processes and port forwards.
-The sandbox-side mcporter configuration persists and does not need to be rewritten.
+## Future Work
+
+:::{note}
+The following features are planned but not yet implemented.
+:::
+
+### Remote HTTP MCP servers
+
+Route a remote MCP server through a host-side reverse proxy so the sandbox connects to `localhost` and no egress policy is needed.
+
+```console
+$ nemoclaw <name> mcp add --name linear --url https://mcp.linear.app/mcp
+```
+
+### Import from Claude Code or Cursor
+
+Read MCP server definitions by name from editor configuration files.
+This extracts the command and environment variable names only, never values.
+
+```console
+$ nemoclaw <name> mcp import github --from claude
+```
 
 ### Integration with nemoclaw start
 
-MCP bridges are managed alongside the Telegram bridge and other auxiliary services.
+MCP bridges managed alongside the Telegram bridge and other auxiliary services.
 
 ```console
 $ nemoclaw start
-```
-
-```text
-  ┌─────────────────────────────────────────────────────┐
-  │  NemoClaw Services                                  │
-  │                                                     │
-  │  Telegram:    bridge running                        │
-  │  MCP:         2 bridges running (github, slack)     │
-  │                                                     │
-  │  Run 'openshell term' to monitor egress approvals   │
-  └─────────────────────────────────────────────────────┘
 ```
 
 ## Security

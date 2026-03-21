@@ -14,6 +14,17 @@ const registry = require("./registry");
 const MCP_PORT_START = 3100;
 const MCP_PORT_END = 3199;
 const PROXY_SCRIPT = path.join(SCRIPTS, "mcp-proxy.js");
+const VALID_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
+
+function validateName(name) {
+  if (!name || !VALID_NAME_RE.test(name) || name.length > 64) {
+    console.error(`  Invalid server name '${String(name).slice(0, 64)}'.`);
+    console.error(
+      "  Names must start with a letter and contain only letters, digits, hyphens, and underscores.",
+    );
+    process.exit(1);
+  }
+}
 
 // ── PID file helpers ────────────────────────────────────────────
 
@@ -37,18 +48,38 @@ function isRunning(pidPath) {
 
 // ── Port management ─────────────────────────────────────────────
 
-function getUsedPorts(sandboxName) {
-  const sandbox = registry.getSandbox(sandboxName);
-  if (!sandbox || !sandbox.mcp) return new Set();
-  return new Set(Object.values(sandbox.mcp).map((s) => s.port));
+function getAllUsedPorts() {
+  const data = registry.load();
+  const used = new Set();
+  for (const sb of Object.values(data.sandboxes)) {
+    if (!sb.mcp) continue;
+    for (const entry of Object.values(sb.mcp)) {
+      if (entry.port) used.add(entry.port);
+    }
+  }
+  return used;
 }
 
-function nextAvailablePort(sandboxName) {
-  const used = getUsedPorts(sandboxName);
+function nextAvailablePort() {
+  const used = getAllUsedPorts();
   for (let p = MCP_PORT_START; p <= MCP_PORT_END; p++) {
     if (!used.has(p)) return p;
   }
   return null;
+}
+
+function validatePort(port) {
+  if (port < MCP_PORT_START || port > MCP_PORT_END) {
+    console.error(
+      `  Port ${port} is outside the MCP range ${MCP_PORT_START}-${MCP_PORT_END}.`,
+    );
+    process.exit(1);
+  }
+  const used = getAllUsedPorts();
+  if (used.has(port)) {
+    console.error(`  Port ${port} is already in use by another MCP bridge.`);
+    process.exit(1);
+  }
 }
 
 // ── SSH into sandbox ────────────────────────────────────────────
@@ -59,16 +90,20 @@ function sshExec(sandboxName, command) {
     console.error("  openshell not found.");
     process.exit(1);
   }
-  const sshConfig = runCapture(`"${openshell}" sandbox ssh-config "${sandboxName}"`);
+  const sshConfig = runCapture(
+    `"${openshell}" sandbox ssh-config "${sandboxName}"`,
+  );
   const confPath = `/tmp/nemoclaw-mcp-ssh-${sandboxName}.conf`;
   fs.writeFileSync(confPath, sshConfig);
   try {
     return runCapture(
       `ssh -T -F "${confPath}" -o ConnectTimeout=10 "openshell-${sandboxName}" '${command.replace(/'/g, "'\\''")}'`,
-      { ignoreError: true }
+      { ignoreError: true },
     );
   } finally {
-    try { fs.unlinkSync(confPath); } catch {}
+    try {
+      fs.unlinkSync(confPath);
+    } catch {}
   }
 }
 
@@ -83,9 +118,15 @@ function ensureMcporter(sandboxName) {
 
   // Ensure PATH includes mcporter
   const profileLine = 'export PATH="/sandbox/.local/node_modules/.bin:$PATH"';
-  sshExec(sandboxName, `grep -qF '${profileLine}' /sandbox/.bash_profile 2>/dev/null || echo '${profileLine}' >> /sandbox/.bash_profile`);
+  sshExec(
+    sandboxName,
+    `grep -qF '${profileLine}' /sandbox/.bash_profile 2>/dev/null || echo '${profileLine}' >> /sandbox/.bash_profile`,
+  );
 
-  const verify = sshExec(sandboxName, "/sandbox/.local/node_modules/.bin/mcporter --version");
+  const verify = sshExec(
+    sandboxName,
+    "/sandbox/.local/node_modules/.bin/mcporter --version",
+  );
   if (verify && verify.trim()) {
     console.log(`  mcporter ${verify.trim()} installed.`);
     return true;
@@ -104,6 +145,7 @@ function add(sandboxName, opts) {
     console.error("  --name is required.");
     process.exit(1);
   }
+  validateName(name);
 
   if (!command) {
     console.error("  --command is required.");
@@ -119,7 +161,9 @@ function add(sandboxName, opts) {
 
   // Check for duplicate
   if (sandbox.mcp && sandbox.mcp[name]) {
-    console.error(`  MCP server '${name}' already exists on sandbox '${sandboxName}'.`);
+    console.error(
+      `  MCP server '${name}' already exists on sandbox '${sandboxName}'.`,
+    );
     console.error(`  Use 'nemoclaw ${sandboxName} mcp remove ${name}' first.`);
     process.exit(1);
   }
@@ -133,9 +177,12 @@ function add(sandboxName, opts) {
   }
 
   // Assign port
-  const port = requestedPort || nextAvailablePort(sandboxName);
+  if (requestedPort) validatePort(requestedPort);
+  const port = requestedPort || nextAvailablePort();
   if (!port) {
-    console.error(`  No available ports in range ${MCP_PORT_START}-${MCP_PORT_END}.`);
+    console.error(
+      `  No available ports in range ${MCP_PORT_START}-${MCP_PORT_END}.`,
+    );
     process.exit(1);
   }
 
@@ -165,18 +212,28 @@ function add(sandboxName, opts) {
   console.log(`  Forwarding port ${port} into sandbox...`);
   run(
     `openshell forward stop ${port} 2>/dev/null; openshell forward start --background ${port} "${sandboxName}" 2>/dev/null || true`,
-    { ignoreError: true }
+    { ignoreError: true },
   );
 
   // Bootstrap mcporter and register server
   console.log("  Registering server in sandbox...");
   if (!ensureMcporter(sandboxName)) {
-    console.error("  Could not bootstrap mcporter. Proxy is running but server is not registered.");
+    console.error("  Could not bootstrap mcporter. Rolling back...");
+    try {
+      process.kill(proc.pid, "SIGTERM");
+    } catch {}
+    try {
+      fs.unlinkSync(pidFile(sandboxName, name));
+    } catch {}
+    run(`openshell forward stop ${port} 2>/dev/null || true`, {
+      ignoreError: true,
+    });
     return;
   }
 
-  sshExec(sandboxName,
-    `/sandbox/.local/node_modules/.bin/mcporter config add ${name} --url http://localhost:${port} --scope home 2>&1 || true`
+  sshExec(
+    sandboxName,
+    `/sandbox/.local/node_modules/.bin/mcporter config add ${name} --url http://localhost:${port} --scope home 2>&1 || true`,
   );
 
   // Save to registry
@@ -200,10 +257,13 @@ function remove(sandboxName, serverName) {
     console.error("  Server name is required.");
     process.exit(1);
   }
+  validateName(serverName);
 
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox || !sandbox.mcp || !sandbox.mcp[serverName]) {
-    console.error(`  MCP server '${serverName}' not found on sandbox '${sandboxName}'.`);
+    console.error(
+      `  MCP server '${serverName}' not found on sandbox '${sandboxName}'.`,
+    );
     process.exit(1);
   }
 
@@ -218,21 +278,28 @@ function remove(sandboxName, serverName) {
       console.log(`  Proxy stopped (PID ${runningPid}).`);
     } catch {}
   }
-  try { fs.unlinkSync(pid); } catch {}
+  try {
+    fs.unlinkSync(pid);
+  } catch {}
 
   // Stop port forward
-  run(`openshell forward stop ${entry.port} 2>/dev/null || true`, { ignoreError: true });
+  run(`openshell forward stop ${entry.port} 2>/dev/null || true`, {
+    ignoreError: true,
+  });
 
   // Remove from sandbox mcporter config
-  sshExec(sandboxName,
-    `/sandbox/.local/node_modules/.bin/mcporter config remove ${serverName} 2>&1 || true`
+  sshExec(
+    sandboxName,
+    `/sandbox/.local/node_modules/.bin/mcporter config remove ${serverName} 2>&1 || true`,
   );
 
   // Remove from registry
   delete sandbox.mcp[serverName];
   registry.updateSandbox(sandboxName, { mcp: sandbox.mcp });
 
-  console.log(`  MCP server '${serverName}' removed from sandbox '${sandboxName}'.`);
+  console.log(
+    `  MCP server '${serverName}' removed from sandbox '${sandboxName}'.`,
+  );
 }
 
 // ── List ────────────────────────────────────────────────────────
@@ -255,9 +322,14 @@ function list(sandboxName) {
     const running = isRunning(pid);
     const marker = running ? "\x1b[32m●\x1b[0m" : "\x1b[31m○\x1b[0m";
     const status = running ? "" : "  (stopped)";
-    const envStr = entry.env && entry.env.length > 0 ? `env: ${entry.env.join(", ")}` : "env: (none)";
+    const envStr =
+      entry.env && entry.env.length > 0
+        ? `env: ${entry.env.join(", ")}`
+        : "env: (none)";
     const source = entry.type === "http" ? entry.url : entry.command;
-    console.log(`    ${marker} ${name.padEnd(14)} :${entry.port}  ${source.slice(0, 45).padEnd(45)}  ${envStr}${status}`);
+    console.log(
+      `    ${marker} ${name.padEnd(14)} :${entry.port}  ${source.slice(0, 45).padEnd(45)}  ${envStr}${status}`,
+    );
   }
   console.log("");
 }
@@ -271,7 +343,9 @@ function restart(sandboxName, serverName) {
     return;
   }
 
-  const servers = serverName ? { [serverName]: sandbox.mcp[serverName] } : sandbox.mcp;
+  const servers = serverName
+    ? { [serverName]: sandbox.mcp[serverName] }
+    : sandbox.mcp;
 
   for (const [name, entry] of Object.entries(servers)) {
     if (!entry) {
@@ -285,15 +359,21 @@ function restart(sandboxName, serverName) {
     const pid = pidFile(sandboxName, name);
     const runningPid = isRunning(pid);
     if (runningPid) {
-      try { process.kill(runningPid, "SIGTERM"); } catch {}
-      try { fs.unlinkSync(pid); } catch {}
+      try {
+        process.kill(runningPid, "SIGTERM");
+      } catch {}
+      try {
+        fs.unlinkSync(pid);
+      } catch {}
     }
 
     // Validate env vars
     let envOk = true;
     for (const v of entry.env || []) {
       if (!process.env[v]) {
-        console.error(`    Environment variable ${v} is not set. Skipping '${name}'.`);
+        console.error(
+          `    Environment variable ${v} is not set. Skipping '${name}'.`,
+        );
         envOk = false;
         break;
       }
@@ -304,7 +384,12 @@ function restart(sandboxName, serverName) {
     const dir = pidDir(sandboxName);
     fs.mkdirSync(dir, { recursive: true });
 
-    const proxyArgs = ["--command", entry.command, "--port", String(entry.port)];
+    const proxyArgs = [
+      "--command",
+      entry.command,
+      "--port",
+      String(entry.port),
+    ];
     for (const v of entry.env || []) {
       proxyArgs.push("--env", v);
     }
@@ -323,7 +408,7 @@ function restart(sandboxName, serverName) {
     // Forward port
     run(
       `openshell forward stop ${entry.port} 2>/dev/null; openshell forward start --background ${entry.port} "${sandboxName}" 2>/dev/null || true`,
-      { ignoreError: true }
+      { ignoreError: true },
     );
 
     console.log(`    Started (PID ${proc.pid}, port ${entry.port}).`);

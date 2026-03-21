@@ -42,7 +42,9 @@ function parseArgs(argv) {
 const config = parseArgs(process.argv.slice(2));
 
 if (!config.command) {
-  console.error("Usage: mcp-proxy.js --command <cmd> [--env VAR ...] [--port PORT]");
+  console.error(
+    "Usage: mcp-proxy.js --command <cmd> [--env VAR ...] [--port PORT]",
+  );
   process.exit(1);
 }
 
@@ -65,8 +67,17 @@ function startChild() {
   const cmd = parts[0];
   const cmdArgs = parts.slice(1);
 
-  // Build env with only the named variables passed through
-  const childEnv = { ...process.env };
+  // Build a minimal env with only the named variables plus essentials
+  const childEnv = {
+    PATH: process.env.PATH,
+    HOME: process.env.HOME,
+    SHELL: process.env.SHELL,
+    TERM: process.env.TERM || "xterm-256color",
+    NODE_ENV: process.env.NODE_ENV || "production",
+  };
+  for (const name of config.env) {
+    childEnv[name] = process.env[name];
+  }
 
   child = spawn(cmd, cmdArgs, {
     stdio: ["pipe", "pipe", "pipe"],
@@ -171,9 +182,20 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const MAX_BODY = 10 * 1024 * 1024; // 10 MB
   let body = "";
   for await (const chunk of req) {
     body += chunk;
+    if (body.length > MAX_BODY) {
+      res.writeHead(413, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          error: { code: -32600, message: "Request too large" },
+        }),
+      );
+      return;
+    }
   }
 
   let request;
@@ -181,7 +203,12 @@ const server = http.createServer(async (req, res) => {
     request = JSON.parse(body);
   } catch {
     res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" } }));
+    res.end(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        error: { code: -32700, message: "Parse error" },
+      }),
+    );
     return;
   }
 
@@ -191,11 +218,13 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify(response));
   } catch (err) {
     res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({
-      jsonrpc: "2.0",
-      id: request.id,
-      error: { code: -32603, message: err.message },
-    }));
+    res.end(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: request.id,
+        error: { code: -32603, message: err.message },
+      }),
+    );
   }
 });
 
