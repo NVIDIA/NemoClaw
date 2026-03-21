@@ -581,6 +581,20 @@ if [ "$1" = "--version" ]; then
 fi
 echo "unexpected node invocation: $*" >&2
 exit 99
+      `,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "git"),
+      `#!/usr/bin/env bash
+if [ "$1" = "clone" ]; then
+  target="\${@: -1}"
+  mkdir -p "$target/nemoclaw"
+  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
+  exit 0
+fi
+exit 0
 `,
     );
 
@@ -596,7 +610,16 @@ if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
   echo "$NPM_PREFIX"
   exit 0
 fi
-if [ "$1" = "install" ] && [ "$2" = "-g" ] && [ "$3" = "${GITHUB_INSTALL_URL}" ]; then
+if [ "$1" = "pack" ]; then
+  exit 1
+fi
+if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  exit 0
+fi
+if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
 if [ "$1" = "onboard" ]; then
