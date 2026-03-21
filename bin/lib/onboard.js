@@ -348,7 +348,8 @@ async function preflight() {
   // GPU
   const gpu = nim.detectGpu();
   if (gpu && gpu.type === "nvidia") {
-    console.log(`  ✓ NVIDIA GPU detected: ${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`);
+    const label = gpu.name ? `${gpu.name}, ` : "";
+    console.log(`  ✓ NVIDIA GPU detected: ${label}${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`);
   } else if (gpu && gpu.type === "apple") {
     console.log(`  ✓ Apple GPU detected: ${gpu.name}${gpu.cores ? ` (${gpu.cores} cores)` : ""}, ${gpu.totalMemoryMB} MB unified memory`);
     console.log("  ⓘ NIM requires NVIDIA GPU — will use cloud inference");
@@ -619,11 +620,12 @@ async function setupNim(sandboxName, gpu) {
 
     if (selected.key === "nim") {
       // List models that fit GPU VRAM
-      const models = nim.listModels().filter((m) => m.minGpuMemoryMB <= gpu.totalMemoryMB);
+      const models = nim.suggestModelsForGpu(gpu);
       if (models.length === 0) {
         console.log("  No NIM models fit your GPU VRAM. Falling back to cloud API.");
       } else {
         let sel;
+        const defaultModelIndex = Math.max(0, models.findIndex((m) => m.recommended));
         if (isNonInteractive()) {
           if (requestedModel) {
             sel = models.find((m) => m.name === requestedModel);
@@ -632,20 +634,22 @@ async function setupNim(sandboxName, gpu) {
               process.exit(1);
             }
           } else {
-            sel = models[0];
+            sel = models[defaultModelIndex];
           }
           console.log(`  [non-interactive] NIM model: ${sel.name}`);
         } else {
           console.log("");
           console.log("  Models that fit your GPU:");
           models.forEach((m, i) => {
-            console.log(`    ${i + 1}) ${m.name} (min ${m.minGpuMemoryMB} MB)`);
+            const tag = m.recommended ? " (recommended)" : "";
+            console.log(`    ${i + 1}) ${m.name} (min ${m.minGpuMemoryMB} MB)${tag}`);
           });
           console.log("");
 
-          const modelChoice = await prompt(`  Choose model [1]: `);
-          const midx = parseInt(modelChoice || "1", 10) - 1;
-          sel = models[midx] || models[0];
+          const defaultChoice = String(defaultModelIndex + 1);
+          const modelChoice = await prompt(`  Choose model [${defaultChoice}]: `);
+          const midx = parseInt(modelChoice || defaultChoice, 10) - 1;
+          sel = models[midx] || models[defaultModelIndex];
         }
         model = sel.name;
 
