@@ -89,10 +89,10 @@ sudo usermod -aG docker $USER
 newgrp docker  # or log out and back in
 ```
 
-### Then run normal setup
+### Then run the onboard wizard
 
 ```bash
-nemoclaw setup
+nemoclaw onboard
 ```
 
 ## Known Issues
@@ -118,7 +118,7 @@ openshell sandbox connect nemoclaw
 nemoclaw-start openclaw agent --agent main --local -m 'hello' --session-id test
 
 # Monitor network egress (separate terminal)
-nemoclaw term
+openshell term
 ```
 
 ## Architecture Notes

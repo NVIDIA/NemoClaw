@@ -24,8 +24,8 @@ NemoClaw has two main components: a TypeScript plugin that integrates with the O
 
 ## NemoClaw Plugin
 
-The plugin is a thin TypeScript package that registers commands under `openclaw nemoclaw`.
-It runs in-process with the OpenClaw gateway and handles user-facing CLI interactions.
+The plugin is a thin TypeScript package that registers an inference provider and the `/nemoclaw` slash command.
+It runs in-process with the OpenClaw gateway inside the sandbox.
 
 ```text
 nemoclaw/
@@ -96,10 +96,7 @@ Inference requests from the agent never leave the sandbox directly.
 OpenShell intercepts them and routes to the configured provider:
 
 ```text
-Agent (sandbox)  ──▶  OpenShell gateway  ──▶  Provider
-                                               ├── NVIDIA cloud (default)
-                                               ├── Local NIM service
-                                               └── vLLM on localhost
+Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA cloud (build.nvidia.com)
 ```
 
 Refer to [Inference Profiles](../reference/inference-profiles.md) for provider configuration details.

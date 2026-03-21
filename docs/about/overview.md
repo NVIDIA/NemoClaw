@@ -2,8 +2,8 @@
 title:
   page: "NemoClaw Overview — What It Does and How It Fits Together"
   nav: "Overview"
-description: "NemoClaw sandboxes OpenClaw with NVIDIA inference and declarative policy."
-keywords: ["nemoclaw overview", "openclaw openshell sandbox plugin"]
+description: "NemoClaw is an open source reference stack that simplifies running OpenClaw always-on assistants safely."
+keywords: ["nemoclaw overview", "openclaw always-on assistants", "nvidia openshell", "nvidia nemotron"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "inference_routing", "blueprints"]
 content:
@@ -20,73 +20,52 @@ status: published
 
 # Overview
 
-NemoClaw is the [OpenClaw](https://openclaw.ai) plugin for [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
-It moves OpenClaw into a sandboxed environment where every network request, file access, and inference call is governed by declarative policy.
+NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants.
+It incorporates policy-based privacy and security guardrails, giving users control over their agents’ behavior and data handling.
+This enables self-evolving claws to run more safely in clouds, on prem, RTX PCs and DGX Spark.
 
-## What NemoClaw Does
+NemoClaw uses open source models, such as [NVIDIA Nemotron](https://build.nvidia.com), alongside the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of the NVIDIA Agent Toolkit—a secure environment designed for executing claws more safely.
+By combining powerful open source models with built-in safety measures, NemoClaw simplifies and secures AI agent deployment.
 
-- Sandboxes OpenClaw. Creates an OpenShell sandbox pre-configured for OpenClaw, with strict filesystem and network policies applied from the first boot.
-- Routes inference through NVIDIA. Configures OpenShell inference routing so agent traffic flows through cloud-hosted Nemotron 3 Super 120B, a local NIM service, or vLLM, depending on the selected profile.
-- Manages the lifecycle. Handles blueprint versioning, digest verification, and sandbox setup.
+| Capability              | Description                                                                                                                                          |
+|-------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Sandbox OpenClaw        | Creates an OpenShell sandbox pre-configured for OpenClaw, with strict filesystem and network policies applied from the first boot.                   |
+| Route inference         | Configures OpenShell inference routing so agent traffic flows through cloud-hosted Nemotron 3 Super 120B via [build.nvidia.com](https://build.nvidia.com). |
+| Manage the lifecycle    | Handles blueprint versioning, digest verification, and sandbox setup.                                                                                |
 
-## How It Fits Together
+## Challenge
 
-NemoClaw is a thin TypeScript plugin that registers commands under the `openclaw nemoclaw` namespace.
-It delegates heavy lifting to a versioned blueprint, a Python artifact that orchestrates sandbox creation, policy application, and inference provider setup through the OpenShell CLI.
+Autonomous AI agents like OpenClaw can make arbitrary network requests, access the host filesystem, and call any inference endpoint. Without guardrails, this creates security, cost, and compliance risks that grow as agents run unattended.
 
-```{mermaid}
-flowchart TB
-    subgraph Host
-        CMD["openclaw nemoclaw launch"]
-        PLUGIN[nemoclaw plugin]
-        BLUEPRINT[blueprint runner]
-        CLI["openshell CLI\nsandbox · gateway · inference · policy"]
+## Benefits
 
-        CMD --> PLUGIN
-        PLUGIN --> BLUEPRINT
-        BLUEPRINT --> CLI
-    end
+NemoClaw provides the following benefits.
 
-    subgraph Sandbox["OpenShell Sandbox"]
-        AGENT[OpenClaw agent]
-        INF[NVIDIA inference, routed]
-        NET[strict network policy]
-        FS[filesystem isolation]
+| Benefit                    | Description                                                                                                            |
+|----------------------------|------------------------------------------------------------------------------------------------------------------------|
+| Sandboxed execution        | Every agent runs inside an OpenShell sandbox with Landlock, seccomp, and network namespace isolation. No access is granted by default. |
+| NVIDIA cloud inference     | Agent traffic routes through cloud-hosted Nemotron 3 Super 120B via [build.nvidia.com](https://build.nvidia.com), transparent to the agent.          |
+| Declarative network policy | Egress rules are defined in YAML. Unknown hosts are blocked and surfaced to the operator for approval.                 |
+| Single CLI                 | The `nemoclaw` command orchestrates the full stack: gateway, sandbox, inference provider, and network policy.           |
+| Blueprint lifecycle        | Versioned blueprints handle sandbox creation, digest verification, and reproducible setup.                             |
 
-        AGENT --- INF
-        AGENT --- NET
-        AGENT --- FS
-    end
+## Use Cases
 
-    PLUGIN --> AGENT
+You can use NemoClaw for various use cases including the following.
 
-    classDef nv fill:#76b900,stroke:#333,color:#fff
-    classDef nvLight fill:#e6f2cc,stroke:#76b900,color:#1a1a1a
-    classDef nvDark fill:#333,stroke:#76b900,color:#fff
+| Use Case                  | Description                                                                                  |
+|---------------------------|----------------------------------------------------------------------------------------------|
+| Always-on assistant       | Run an OpenClaw assistant with controlled network access and operator-approved egress.        |
+| Sandboxed testing         | Test agent behavior in a locked-down environment before granting broader permissions.         |
+| Remote GPU deployment     | Deploy a sandboxed agent to a remote GPU instance for persistent operation.                   |
 
-    class CMD,PLUGIN,BLUEPRINT nvDark
-    class CLI nv
-    class AGENT nv
-    class INF,NET,FS nvLight
+## Next Steps
 
-    style Host fill:none,stroke:#76b900,stroke-width:2px,color:#1a1a1a
-    style Sandbox fill:#f5faed,stroke:#76b900,stroke-width:2px,color:#1a1a1a
-```
+Explore the following pages to learn more about NemoClaw.
 
-## Design Principles
-
-Thin plugin, versioned blueprint
-: The plugin stays small and stable. Orchestration logic lives in the blueprint and evolves on its own release cadence.
-
-Respect CLI boundaries
-: Plugin commands live under the `nemoclaw` namespace and never override built-in OpenClaw commands.
-
-Supply chain safety
-: Blueprint artifacts are immutable, versioned, and digest-verified before execution.
-
-OpenShell-native for new installs
-: For users without an existing OpenClaw installation, NemoClaw recommends `openshell sandbox create` directly
-  rather than forcing a plugin-driven bootstrap.
-
-Reproducible setup
-: Running setup again recreates the sandbox from the same blueprint and policy definitions.
+- [How It Works](../about/how-it-works.md) to understand the key concepts behind NemoClaw.
+- [Quickstart](../get-started/quickstart.md) to install NemoClaw and run your first agent.
+- [Switch Inference Providers](../inference/switch-inference-providers.md) to configure the inference provider.
+- [Approve or Deny Network Requests](../network-policy/approve-network-requests.md) to manage egress approvals.
+- [Deploy to a Remote GPU Instance](../deployment/deploy-to-remote-gpu.md) for persistent operation.
+- [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity.md) to observe agent behavior.

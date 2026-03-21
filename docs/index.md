@@ -2,8 +2,8 @@
 title:
   page: "NVIDIA NemoClaw Developer Guide"
   nav: "NemoClaw"
-description: "Sandbox OpenClaw with NVIDIA inference routing and strict network policies."
-keywords: ["nemoclaw sandboxed ai agent", "openclaw openshell plugin"]
+description: "NemoClaw is an open source reference stack that simplifies running OpenClaw always-on assistants more safely, with a single command."
+keywords: ["nemoclaw open source reference stack", "openclaw always-on assistants", "nvidia openshell", "nvidia nemotron"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "inference_routing", "nemoclaw"]
 content:
@@ -20,12 +20,13 @@ status: published
 
 # NVIDIA NemoClaw
 
-[![GitHub](https://img.shields.io/badge/github-repo-green?logo=github)](https://github.com/NVIDIA/NemoClaw)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue)](https://github.com/NVIDIA/NemoClaw/blob/main/LICENSE)
+```{include} ../README.md
+:start-after: <!-- start-badges -->
+:end-before: <!-- end-badges -->
+```
 
-NemoClaw is the OpenClaw plugin for [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
-It runs OpenClaw inside a sandboxed environment with NVIDIA inference, such as Nemotron 3 Super 120B through [build.nvidia.com](https://build.nvidia.com) or local vLLM.
-The sandbox enforces strict network policies and operator-controlled egress approval.
+NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
+It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of NVIDIA Agent Toolkit, an environment designed for executing claws with additional security, and open source models like [NVIDIA Nemotron](https://build.nvidia.com).
 
 ## Get Started
 
@@ -75,9 +76,7 @@ Install the CLI and launch a sandboxed OpenClaw instance in a few commands.
     <span class="nc-term-dot nc-term-dot-g"></span>
   </div>
   <div class="nc-term-body">
-    <div><span class="nc-ps">$ </span>git clone https://github.com/NVIDIA/NemoClaw.git</div>
-    <div><span class="nc-ps">$ </span>cd NemoClaw</div>
-    <div><span class="nc-ps">$ </span>./install.sh<span class="nc-cursor"></span></div>
+    <div><span class="nc-ps">$ </span>curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash</div>
   </div>
 </div>
 ```
@@ -128,7 +127,7 @@ CLI commands for launching, connecting, monitoring, and managing sandboxes.
 :link: reference/inference-profiles
 :link-type: doc
 
-Switch between NVIDIA cloud, local NIM, and vLLM inference backends.
+NVIDIA cloud inference configuration and available models.
 
 +++
 {bdg-secondary}`Reference`
@@ -203,8 +202,6 @@ Quickstart <get-started/quickstart>
 :hidden:
 
 Switch Inference Providers <inference/switch-inference-providers>
-Set Up Local vLLM <inference/set-up-local-vllm>
-Set Up a Local NIM Service <inference/set-up-local-nim>
 ```
 
 ```{toctree}
@@ -238,6 +235,7 @@ Architecture <reference/architecture>
 Commands <reference/commands>
 Inference Profiles <reference/inference-profiles>
 Network Policies <reference/network-policies>
+Troubleshooting <reference/troubleshooting>
 ```
 
 ```{toctree}
@@ -245,4 +243,5 @@ Network Policies <reference/network-policies>
 :hidden:
 
 resources/license
+Discord <https://discord.gg/XFpfPv9Uvx>
 ```

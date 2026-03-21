@@ -3,22 +3,35 @@
 
 const { execSync, spawnSync } = require("child_process");
 const path = require("path");
-const fs = require("fs");
+const { detectDockerHost } = require("./platform");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const SCRIPTS = path.join(ROOT, "scripts");
 
-// Auto-detect Colima Docker socket
-if (!process.env.DOCKER_HOST) {
-  const colimaSocket = path.join(process.env.HOME || "/tmp", ".colima/default/docker.sock");
-  if (fs.existsSync(colimaSocket)) {
-    process.env.DOCKER_HOST = `unix://${colimaSocket}`;
-  }
+const dockerHost = detectDockerHost();
+if (dockerHost) {
+  process.env.DOCKER_HOST = dockerHost.dockerHost;
 }
 
 function run(cmd, opts = {}) {
+  const stdio = opts.stdio ?? ["ignore", "inherit", "inherit"];
   const result = spawnSync("bash", ["-c", cmd], {
-    stdio: "inherit",
+    stdio,
+    cwd: ROOT,
+    env: { ...process.env, ...opts.env },
+    ...opts,
+  });
+  if (result.status !== 0 && !opts.ignoreError) {
+    console.error(`  Command failed (exit ${result.status}): ${cmd.slice(0, 80)}`);
+    process.exit(result.status || 1);
+  }
+  return result;
+}
+
+function runInteractive(cmd, opts = {}) {
+  const stdio = opts.stdio ?? "inherit";
+  const result = spawnSync("bash", ["-c", cmd], {
+    stdio,
     cwd: ROOT,
     env: { ...process.env, ...opts.env },
     ...opts,
@@ -47,7 +60,7 @@ function runCapture(cmd, opts = {}) {
 
 /**
  * Validate a sandbox or instance name to prevent shell injection.
- * Names must be 1–63 chars, alphanumeric with hyphens and underscores,
+ * Names must be 1–63 chars, alphanumeric with dots, hyphens, and underscores,
  * and must start with a letter or digit.
  */
 function validateName(name) {
@@ -58,4 +71,4 @@ function validateName(name) {
   }
 }
 
-module.exports = { ROOT, SCRIPTS, run, runCapture, validateName };
+module.exports = { ROOT, SCRIPTS, run, runCapture, runInteractive, validateName };

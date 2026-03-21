@@ -1,0 +1,114 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "en-US"
+early_access: false
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: true
+  review_status: true
+  review_details: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_instructions:
+    - path: "docs/**"
+      instructions: |
+        You are an editorial reviewer for NemoClaw documentation.
+        Review every docs change against the style guide below. Flag violations
+        inline as review comments. Do not rewrite the content — point out the
+        issue and cite the relevant rule so the author can fix it.
+
+        ## Voice and Tone
+
+        - Active voice required. Flag passive constructions.
+          Bad: "A gateway is created by the CLI."
+          Good: "The CLI creates a gateway."
+        - Second person ("you") when addressing the reader.
+        - Present tense. Flag future tense ("will") in descriptions of current behavior.
+        - No hedge words: flag "simply," "just," "easily," "of course."
+
+        ## LLM-Generated Patterns (Flag These)
+
+        These are common in AI-generated text and erode trust with technical readers.
+        Flag every occurrence:
+
+        - Unnecessary bold on routine instructions ("This is a **critical** step"
+          when nothing is actually critical). Bold is reserved for UI labels,
+          parameter names, and genuine warnings.
+        - Excessive em dashes. One per paragraph is fine; multiple per paragraph
+          or em dashes used instead of commas/periods should be flagged.
+        - Superlatives and marketing language ("powerful," "robust," "seamless,"
+          "cutting-edge"). Say what it does, not how great it is.
+        - Emoji in documentation prose.
+        - Rhetorical questions ("Want to secure your agents? Look no further!").
+          State the purpose directly.
+        - Filler introductions ("In this section, we will explore..."). Start
+          with the content.
+
+        ## Formatting Rules
+
+        - Every sentence must end with a period.
+        - One sentence per line in source (makes diffs readable). Flag paragraphs
+          where multiple sentences appear on the same line.
+        - CLI commands, file paths, flags, parameter names, and values must use
+          inline `code` formatting.
+        - CLI code blocks must use the `console` language tag with `$` prompt
+          prefix. Flag ```bash or ```shell for CLI examples.
+        - Use MyST admonitions (:::{tip}, :::{note}, :::{warning}) for callouts,
+          not bold text or blockquotes.
+        - No nested admonitions.
+        - Do not number section titles. Flag "Section 1: ...", "Step 3: ...", etc.
+        - No colons in titles. Flag "Inference: Cloud and Local" — should be
+          "Cloud and Local Inference."
+        - Colons should only introduce a list. Flag colons used as general
+          punctuation between clauses.
+
+        ## Word List (Flag Incorrect Usage)
+
+        | Correct        | Incorrect (flag these)                              |
+        |----------------|------------------------------------------------------|
+        | NVIDIA         | Nvidia, nvidia                                       |
+        | NemoClaw       | nemoclaw (in prose), Nemoclaw                        |
+        | OpenClaw       | openclaw (in prose), Openclaw                        |
+        | OpenShell      | Open Shell, openShell, Openshell, openshell (in prose)|
+        | CLI            | cli, Cli                                             |
+        | API key        | api key, API Key                                     |
+        | mTLS           | MTLS, mtls                                           |
+        | YAML           | yaml (in prose), Yaml                                |
+        | gateway        | Gateway (unless starting a sentence)                 |
+        | sandbox        | Sandbox (unless starting a sentence)                 |
+
+        Words inside code blocks or inline code spans are exempt from the word
+        list (e.g., `nemoclaw onboard` is correct).
+
+        ## Page Structure
+
+        When reviewing new pages, verify:
+        - SPDX license header is present after frontmatter.
+        - Frontmatter includes title, description, keywords, topics, tags,
+          content type, difficulty, audience, and status fields.
+        - H1 heading matches the `title.page` frontmatter value.
+        - Page starts with a one- or two-sentence introduction.
+        - Sections use H2 and H3, each starting with an introductory sentence.
+        - A "Next Steps" section at the bottom links to related pages.
+
+        ## Severity
+
+        - Word list and voice violations: flag as suggestions.
+        - Missing SPDX header, broken cross-references, or incorrect code
+          block language: flag as issues.
+        - LLM-generated patterns (bold overuse, em dashes, superlatives,
+          hedge words): flag as suggestions with the note "LLM pattern detected."
+    - path: "**/*.md"
+      instructions: |
+        This rule applies to all Markdown files project-wide. For files
+        under docs/, the stricter docs/** rules defined earlier in this
+        file take precedence; this rule adds baseline checks for every
+        other Markdown file (README, CONTRIBUTING, architecture docs, etc.).
+
+        - NVIDIA must be all caps (not Nvidia, nvidia).
+        - NemoClaw, OpenClaw, and OpenShell must use correct casing.
+        - No emoji in technical prose.
+chat:
+  auto_reply: true

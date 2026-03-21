@@ -1,8 +1,9 @@
 node_modules/
 dist/
-!nemoclaw/dist/
 .pytest_cache/
 __pycache__/
 *.pyc
 .DS_Store
 docs/_build/
+vdr-notes/
+draft_newsletter_*

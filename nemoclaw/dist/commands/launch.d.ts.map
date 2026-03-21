@@ -1,1 +1,0 @@
-{"version":3,"file":"launch.d.ts","sourceRoot":"","sources":["../../src/commands/launch.ts"],"names":[],"mappings":"AAIA,OAAO,KAAK,EAAE,YAAY,EAAE,cAAc,EAAE,MAAM,aAAa,CAAC;AAOhE,MAAM,WAAW,aAAa;IAC5B,KAAK,EAAE,OAAO,CAAC;IACf,OAAO,EAAE,MAAM,CAAC;IAChB,MAAM,EAAE,YAAY,CAAC;IACrB,YAAY,EAAE,cAAc,CAAC;CAC9B;AAED,wBAAsB,SAAS,CAAC,IAAI,EAAE,aAAa,GAAG,OAAO,CAAC,IAAI,CAAC,CA2GlE"}
