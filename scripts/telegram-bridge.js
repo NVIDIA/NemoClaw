@@ -17,7 +17,7 @@
  */
 
 const https = require("https");
-const { execSync, spawn } = require("child_process");
+const { execFileSync, spawn } = require("child_process");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 
 const OPENSHELL = resolveOpenshell();
@@ -92,7 +92,11 @@ async function sendTyping(chatId) {
 
 function runAgentInSandbox(message, sessionId) {
   return new Promise((resolve) => {
-    const sshConfig = execSync(`"${OPENSHELL}" sandbox ssh-config "${SANDBOX}"`, { encoding: "utf-8" });
+    const sshConfig = execFileSync(
+      OPENSHELL,
+      ["sandbox", "ssh-config", SANDBOX],
+      { encoding: "utf-8" },
+    );
 
     // Write temp ssh config
     const confPath = `/tmp/nemoclaw-tg-ssh-${sessionId}.conf`;
