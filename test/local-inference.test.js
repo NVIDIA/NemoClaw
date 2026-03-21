@@ -19,18 +19,28 @@ const {
   validateLocalProvider,
 } = require("../bin/lib/local-inference");
 
+const IS_MACOS = process.platform === "darwin";
+const EXPECTED_HOST = IS_MACOS ? "host.docker.internal" : "host.openshell.internal";
+
 describe("local inference helpers", () => {
   it("returns the expected base URL for vllm-local", () => {
     assert.equal(
       getLocalProviderBaseUrl("vllm-local"),
-      "http://host.openshell.internal:8000/v1",
+      `http://${EXPECTED_HOST}:8000/v1`,
     );
   });
 
   it("returns the expected base URL for ollama-local", () => {
     assert.equal(
       getLocalProviderBaseUrl("ollama-local"),
-      "http://host.openshell.internal:11434/v1",
+      `http://${EXPECTED_HOST}:11434/v1`,
+    );
+  });
+
+  it("returns the expected base URL for omlx-local", () => {
+    assert.equal(
+      getLocalProviderBaseUrl("omlx-local"),
+      `http://${EXPECTED_HOST}:8080/v1`,
     );
   });
 
@@ -41,11 +51,17 @@ describe("local inference helpers", () => {
     );
   });
 
-  it("returns the expected container reachability command for ollama-local", () => {
+  it("returns the expected health check command for omlx-local", () => {
     assert.equal(
-      getLocalProviderContainerReachabilityCheck("ollama-local"),
-      `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:11434/api/tags 2>/dev/null`,
+      getLocalProviderHealthCheck("omlx-local"),
+      "curl -sf http://localhost:8080/v1/models 2>/dev/null",
     );
+  });
+
+  it("returns the expected container reachability command for ollama-local", () => {
+    const cmd = getLocalProviderContainerReachabilityCheck("ollama-local");
+    assert.match(cmd, new RegExp(`http://${EXPECTED_HOST.replace(/\./g, "\\.")}:11434/api/tags`));
+    assert.match(cmd, /docker run --rm/);
   });
 
   it("validates a reachable local provider", () => {
@@ -71,7 +87,7 @@ describe("local inference helpers", () => {
       return callCount === 1 ? '{"models":[]}' : "";
     });
     assert.equal(result.ok, false);
-    assert.match(result.message, /host\.openshell\.internal:11434/);
+    assert.match(result.message, new RegExp(`${EXPECTED_HOST.replace(/\./g, "\\.")}:11434`));
     assert.match(result.message, /0\.0\.0\.0:11434/);
   });
 
