@@ -1,15 +1,42 @@
 #!/usr/bin/env python3
 """Convert documentation files into Agent Skills (agentskills.io spec).
 
-Reads a directory of Markdown documentation, parses frontmatter and content,
-groups files by directory, and generates SKILL.md files with proper structure
-for agent consumption. Follows the Agent Skills specification:
+Reads a directory of Markdown documentation, parses YAML frontmatter and
+content structure, groups related pages into coherent skill units, and
+generates SKILL.md files following the Agent Skills specification:
 https://agentskills.io/specification
 
+What it does:
+  1. Scans a docs directory for Markdown files with YAML frontmatter.
+  2. Classifies each page by content type (how_to, concept, reference,
+     get_started) using the frontmatter `content.type` field.
+  3. Groups pages into skills using one of three strategies:
+       - smart (default): groups by directory, merges concept pages as
+         context for procedure pages in the same directory.
+       - grouped: groups all pages in the same parent directory.
+       - individual: each doc page becomes its own skill.
+  4. Generates a skill directory per group containing:
+       - SKILL.md with frontmatter (name, description, trigger keywords),
+         procedural steps, context sections, and a Related Skills section.
+       - references/ with detailed concept and reference content for
+         progressive disclosure (loaded by the agent on demand).
+  5. Resolves all relative doc paths to repo-root-relative paths, and
+     converts cross-references between docs into skill-to-skill pointers
+     so agents can navigate between skills.
+
+Naming:
+  Use --prefix to keep skill names consistent across the project. The prefix
+  is prepended to every generated skill name (e.g. --prefix nemoclaw produces
+  nemoclaw-get-started, nemoclaw-manage-policy). Action verbs are derived
+  automatically from page titles and content types. Use --name-map to
+  override specific names when the heuristic doesn't produce the right result.
+
 Usage:
-    python scripts/docs-to-skills.py docs/ .agents/skills/generated/
-    python scripts/docs-to-skills.py docs/ output/ --strategy individual
-    python scripts/docs-to-skills.py docs/ output/ --strategy grouped --dry-run
+    python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw
+    python scripts/docs-to-skills.py docs/ output/ --prefix nemoclaw --dry-run
+    python scripts/docs-to-skills.py docs/ output/ --strategy individual --prefix nemoclaw
+    python scripts/docs-to-skills.py docs/ output/ --prefix nemoclaw --name-map about=overview
+    python scripts/docs-to-skills.py docs/ output/ --exclude "release-notes.md"
 """
 
 from __future__ import annotations
