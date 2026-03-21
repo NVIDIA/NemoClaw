@@ -18,7 +18,7 @@ status: draft
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# Bridge MCP Servers into a Sandbox
+# Bridge MCP Servers into a NemoClaw Sandbox
 
 Bridge stdio-based MCP servers from the host into a NemoClaw sandbox so the OpenClaw agent can call external tools (GitHub, Slack, databases, etc.) without exposing API keys inside the sandbox.
 
@@ -28,7 +28,7 @@ MCP servers typically run as stdio subprocesses on the host, spawned by tools li
 
 The MCP bridge solves this by running a lightweight HTTP proxy on the host that wraps the stdio MCP server. The proxy port is forwarded into the sandbox via OpenShell, where mcporter connects to it as a standard HTTP MCP server.
 
-```
+```text
 Host                                Sandbox
 ┌────────────────────────┐         ┌───────────────────────┐
 │  stdio MCP server      │         │  mcporter             │
