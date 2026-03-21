@@ -105,13 +105,13 @@ config = { \
     'models': {'mode': 'merge', 'providers': { \
         'nvidia': { \
             'baseUrl': 'https://inference.local/v1', \
-            'apiKey': 'openshell-managed', # pragma: allowlist secret \
+            'apiKey': 'openshell-managed', \
             'api': 'openai-completions', \
             'models': [{'id': model.split('/')[-1], 'name': model, 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}] \
         }, \
         'inference': { \
             'baseUrl': 'https://inference.local/v1', \
-            'apiKey': 'unused', # pragma: allowlist secret \
+            'apiKey': 'unused', \
             'api': 'openai-completions', \
             'models': [{'id': model, 'name': model, 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}] \
         } \
