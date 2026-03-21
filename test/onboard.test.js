@@ -11,7 +11,7 @@ const {
 } = require("../bin/lib/onboard");
 
 describe("onboard helpers", () => {
-  it("builds a sandbox sync script that writes config and updates the selected model", () => {
+  it("builds a sandbox sync script that writes config and sets the model", () => {
     const script = buildSandboxConfigSyncScript({
       endpointType: "custom",
       endpointUrl: "https://inference.local/v1",
@@ -22,14 +22,17 @@ describe("onboard helpers", () => {
       onboardedAt: "2026-03-18T12:00:00.000Z",
     });
 
+    // Writes NemoClaw selection config to writable ~/.nemoclaw/
     assert.match(script, /cat > ~\/\.nemoclaw\/config\.json/);
     assert.match(script, /"model": "nemotron-3-nano:30b"/);
     assert.match(script, /"credentialEnv": "OPENAI_API_KEY"/);
+
+    // Sets the active model via openclaw CLI (writes to agent config, not openclaw.json)
     assert.match(script, /openclaw models set 'inference\/nemotron-3-nano:30b'/);
-    assert.match(script, /cfg\.setdefault\('agents', \{\}\)\.setdefault\('defaults', \{\}\)\.setdefault\('model', \{\}\)\['primary'\]/);
-    assert.match(script, /providers_cfg\["inference"\]/);
-    assert.match(script, /json\.loads\("\{\\\"baseUrl\\\":\\\"https:\/\/inference\.local\/v1\\\",\\\"apiKey\\\":\\\"unused\\\"/);
-    assert.match(script, /inference\/nemotron-3-nano:30b/);
+
+    // Must NOT write to openclaw.json — it is immutable (root:root 444)
+    assert.doesNotMatch(script, /openclaw\.json/);
+
     assert.match(script, /^exit$/m);
   });
 
