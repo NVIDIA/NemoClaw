@@ -8,8 +8,8 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "prepublishOnly": "cd nemoclaw && npm install --ignore-scripts && npm run build",
-    "prepare": "husky"
+    "prepare": "husky || true",
+    "prepublishOnly": "cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
   "dependencies": {
     "openclaw": "2026.3.11"

@@ -10,7 +10,7 @@
 #   strict  — this file. Minimum for onboard + basic agent operation.
 #   relaxed — adds third-party model providers, broader web access.
 #
-# To add endpoints: update this file and re-run `openclaw nemoclaw migrate`
+# To add endpoints: update this file and re-run `nemoclaw onboard`
 # or apply dynamically via `openshell policy set`.
 
 version: 1
@@ -25,10 +25,16 @@ filesystem_policy:
     - /app
     - /etc
     - /var/log
+    - /sandbox/.openclaw            # Immutable gateway config — prevents agent
+                                    # from tampering with auth tokens or CORS.
+                                    # Writable state (agents, plugins) lives in
+                                    # /sandbox/.openclaw-data via symlinks.
+                                    # Ref: https://github.com/NVIDIA/NemoClaw/issues/514
   read_write:
     - /sandbox
     - /tmp
     - /dev/null
+    - /sandbox/.openclaw-data       # Writable agent/plugin state (symlinked from .openclaw)
 
 landlock:
   compatibility: best_effort

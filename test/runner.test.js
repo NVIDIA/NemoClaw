@@ -52,4 +52,33 @@ describe("runner helpers", () => {
     assert.deepEqual(calls[0][2].stdio, ["ignore", "inherit", "inherit"]);
     assert.equal(calls[1][2].stdio, "inherit");
   });
+
+  it("preserves process env when opts.env is provided", () => {
+    const calls = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    const originalPath = process.env.PATH;
+    childProcess.spawnSync = (...args) => {
+      calls.push(args);
+      return { status: 0 };
+    };
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      process.env.PATH = "/usr/local/bin:/usr/bin";
+      run("echo test", { env: { OPENSHELL_CLUSTER_IMAGE: "ghcr.io/nvidia/openshell/cluster:0.0.12" } });
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][2].env.OPENSHELL_CLUSTER_IMAGE, "ghcr.io/nvidia/openshell/cluster:0.0.12");
+    assert.equal(calls[0][2].env.PATH, "/usr/local/bin:/usr/bin");
+  });
 });

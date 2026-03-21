@@ -92,6 +92,17 @@ fi
 SANDBOX_NAME="${1:-nemoclaw}"
 info "Using sandbox name: ${SANDBOX_NAME}"
 
+OPEN_SHELL_VERSION_RAW="$(openshell -V 2>/dev/null || true)"
+OPEN_SHELL_VERSION_LOWER="${OPEN_SHELL_VERSION_RAW,,}"
+if [[ "$OPEN_SHELL_VERSION_LOWER" =~ openshell[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+  export IMAGE_TAG="${BASH_REMATCH[1]}"
+  export OPENSHELL_CLUSTER_IMAGE="ghcr.io/nvidia/openshell/cluster:${BASH_REMATCH[1]}"
+  info "Using pinned OpenShell gateway image: ${OPENSHELL_CLUSTER_IMAGE}"
+elif [[ -n "$OPEN_SHELL_VERSION_RAW" ]]; then
+  warn "Could not parse openshell version from 'openshell -V': ${OPEN_SHELL_VERSION_RAW}"
+  warn "Skipping OpenShell gateway image pinning."
+fi
+
 # 1. Gateway — always start fresh to avoid stale state
 info "Starting OpenShell gateway..."
 openshell gateway destroy -g nemoclaw > /dev/null 2>&1 || true
@@ -173,13 +184,7 @@ cp "$REPO_DIR/Dockerfile" "$BUILD_CTX/"
 cp -r "$REPO_DIR/nemoclaw" "$BUILD_CTX/nemoclaw"
 cp -r "$REPO_DIR/nemoclaw-blueprint" "$BUILD_CTX/nemoclaw-blueprint"
 cp -r "$REPO_DIR/scripts" "$BUILD_CTX/scripts"
-rm -rf "$BUILD_CTX/nemoclaw/node_modules" "$BUILD_CTX/nemoclaw/src"
-
-# Verify nemoclaw/dist/ exists (TypeScript must be pre-built)
-if [ ! -d "$BUILD_CTX/nemoclaw/dist" ] || [ -z "$(ls -A "$BUILD_CTX/nemoclaw/dist" 2>/dev/null)" ]; then
-  rm -rf "$BUILD_CTX"
-  fail "nemoclaw/dist/ is missing or empty. Run 'cd nemoclaw && npm install && npm run build' first."
-fi
+rm -rf "$BUILD_CTX/nemoclaw/node_modules"
 
 # Capture full output to a temp file so we can filter for display but still
 # detect failures. The raw log is kept on failure for debugging.

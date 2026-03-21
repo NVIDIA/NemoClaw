@@ -219,14 +219,68 @@ install_or_upgrade_ollama() {
 # ---------------------------------------------------------------------------
 # 3. NemoClaw
 # ---------------------------------------------------------------------------
+# Work around openclaw tarball missing directory entries (GH-503).
+# npm's tar extractor hard-fails because the tarball is missing directory
+# entries for extensions/, skills/, and dist/plugin-sdk/config/. System tar
+# handles this fine. We pre-extract openclaw into node_modules BEFORE npm
+# install so npm sees the dependency is already satisfied and skips it.
+pre_extract_openclaw() {
+  local install_dir="$1"
+  local openclaw_version
+  openclaw_version=$(node -e "console.log(require('${install_dir}/package.json').dependencies.openclaw)" 2>/dev/null || echo "")
+
+  if [[ -z "$openclaw_version" ]]; then
+    warn "Could not determine openclaw version — skipping pre-extraction"
+    return 1
+  fi
+
+  info "Pre-extracting openclaw@${openclaw_version} with system tar (GH-503 workaround)…"
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  if npm pack "openclaw@${openclaw_version}" --pack-destination "$tmpdir" > /dev/null 2>&1; then
+    local tgz
+    tgz="$(find "$tmpdir" -maxdepth 1 -name 'openclaw-*.tgz' -print -quit)"
+    if [[ -n "$tgz" && -f "$tgz" ]]; then
+      if mkdir -p "${install_dir}/node_modules/openclaw" \
+        && tar xzf "$tgz" -C "${install_dir}/node_modules/openclaw" --strip-components=1
+      then
+        info "openclaw pre-extracted successfully"
+      else
+        warn "Failed to extract openclaw tarball"
+        rm -rf "$tmpdir"
+        return 1
+      fi
+    else
+      warn "npm pack succeeded but tarball not found"
+      rm -rf "$tmpdir"
+      return 1
+    fi
+  else
+    warn "Failed to download openclaw tarball"
+    rm -rf "$tmpdir"
+    return 1
+  fi
+  rm -rf "$tmpdir"
+}
+
 install_nemoclaw() {
   if [[ -f "./package.json" ]] && grep -q '"name": "nemoclaw"' ./package.json 2>/dev/null; then
     info "NemoClaw package.json found in current directory — installing from source…"
-    npm install && npm link
+    pre_extract_openclaw "$(pwd)" || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
+    npm install --ignore-scripts
+    (cd nemoclaw && npm install --ignore-scripts && npm run build)
+    npm link
   else
     info "Installing NemoClaw from GitHub…"
-    # Revert once https://github.com/NVIDIA/NemoClaw/issues/71 is complete and the package is published
-    npm install -g git+https://github.com/NVIDIA/NemoClaw.git
+    # Clone first so we can pre-extract openclaw before npm install (GH-503).
+    # npm install -g git+https://... does this internally but we can't hook
+    # into its extraction pipeline, so we do it ourselves.
+    local nemoclaw_src="${HOME}/.nemoclaw/source"
+    rm -rf "$nemoclaw_src"
+    mkdir -p "$(dirname "$nemoclaw_src")"
+    git clone --depth 1 https://github.com/NVIDIA/NemoClaw.git "$nemoclaw_src"
+    pre_extract_openclaw "$nemoclaw_src" || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
+    (cd "$nemoclaw_src" && npm install --ignore-scripts && cd nemoclaw && npm install --ignore-scripts && npm run build && cd .. && npm link)
   fi
 
   refresh_path

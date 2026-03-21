@@ -2,7 +2,7 @@
 # Full E2E: install → onboard → verify inference (REAL services, no mocks)
 #
 # Proves the COMPLETE user journey including real inference against
-# the NVIDIA Cloud API. Runs install.sh --non-interactive which handles
+# the NVIDIA Endpoint API. Runs install.sh --non-interactive which handles
 # Node.js, openshell, NemoClaw, and onboard setup automatically.
 #
 # Prerequisites:
@@ -14,7 +14,7 @@
 #   NEMOCLAW_NON_INTERACTIVE=1   — required (enables non-interactive install + onboard)
 #   NEMOCLAW_SANDBOX_NAME        — sandbox name (default: e2e-nightly)
 #   NEMOCLAW_RECREATE_SANDBOX=1  — recreate sandbox if it exists from a previous run
-#   NVIDIA_API_KEY               — required for NVIDIA Cloud API inference
+#   NVIDIA_API_KEY               — required for NVIDIA Endpoint API inference
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-full-e2e.sh
@@ -221,7 +221,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 4: Live inference"
 
-# ── Test 4a: Direct NVIDIA Cloud API ──
+# ── Test 4a: Direct NVIDIA Endpoint API ──
 info "[LIVE] Direct API test → integrate.api.nvidia.com..."
 api_response=$(curl -s --max-time 30 \
   -X POST https://integrate.api.nvidia.com/v1/chat/completions \
@@ -271,7 +271,7 @@ if [ -n "$sandbox_response" ]; then
   sandbox_content=$(echo "$sandbox_response" | parse_chat_content 2>/dev/null) || true
   if echo "$sandbox_content" | grep -qi "PONG"; then
     pass "[LIVE] Sandbox inference: model responded with PONG through sandbox"
-    info "Full path proven: user → sandbox → openshell gateway → NVIDIA Cloud API → response"
+    info "Full path proven: user → sandbox → openshell gateway → NVIDIA Endpoint API → response"
   else
     fail "[LIVE] Sandbox inference: expected PONG, got: ${sandbox_content:0:200}"
   fi
