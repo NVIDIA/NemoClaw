@@ -372,6 +372,66 @@ async function preflight() {
   return gpu;
 }
 
+
+// ── TLS Fix: inject missing secrets on WSL2/Linux ────────────────
+function injectTlsSecrets() {
+  const { execSync } = require("child_process");
+  console.log("  Injecting TLS secrets for OpenShell gateway...");
+  const tmpDir = "/tmp/openshell-tls-fix";
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  const ext = [
+    "[req]",
+    "req_extensions = v3_req",
+    "distinguished_name = req_distinguished_name",
+    "[req_distinguished_name]",
+    "[v3_req]",
+    "basicConstraints = CA:FALSE",
+    "keyUsage = nonRepudiation, digitalSignature, keyEncipherment",
+    "subjectAltName = @alt_names",
+    "[alt_names]",
+    "DNS.1 = openshell",
+    "DNS.2 = openshell.openshell.svc",
+    "DNS.3 = openshell.openshell.svc.cluster.local",
+    "DNS.4 = localhost",
+    "IP.1 = 127.0.0.1",
+    "[v3_ca]",
+    "subjectKeyIdentifier = hash",
+    "authorityKeyIdentifier = keyid:always,issuer",
+    "basicConstraints = CA:TRUE",
+    "keyUsage = cRLSign, keyCertSign",
+  ].join("\n");
+  fs.writeFileSync(tmpDir + "/v3.ext", ext);
+
+  try {
+    execSync("openssl req -x509 -newkey rsa:4096 -keyout " + tmpDir + "/ca.key -out " + tmpDir + "/ca.crt -days 365 -nodes -subj '/CN=openshell-ca' -extensions v3_ca -config " + tmpDir + "/v3.ext 2>/dev/null");
+    execSync("openssl req -newkey rsa:4096 -keyout " + tmpDir + "/server.key -out " + tmpDir + "/server.csr -nodes -subj '/CN=openshell' 2>/dev/null");
+    execSync("openssl x509 -req -in " + tmpDir + "/server.csr -CA " + tmpDir + "/ca.crt -CAkey " + tmpDir + "/ca.key -CAcreateserial -out " + tmpDir + "/server.crt -days 365 -extensions v3_req -extfile " + tmpDir + "/v3.ext 2>/dev/null");
+
+    console.log("  Waiting for k3s namespace...");
+    const container = execSync("docker ps --filter name=openshell-cluster-nemoclaw --format '{{.Names}}'").toString().trim();
+    for (let i = 0; i < 30; i++) {
+      try {
+        execSync("docker exec " + container + " kubectl get namespace openshell 2>/dev/null");
+        console.log("  ✓ k3s namespace ready");
+        break;
+      } catch {
+        require("child_process").spawnSync("sleep", ["3"]);
+      }
+    }
+
+    execSync("docker cp " + tmpDir + "/server.crt " + container + ":/tmp/server.crt");
+    execSync("docker cp " + tmpDir + "/server.key " + container + ":/tmp/server.key");
+    execSync("docker cp " + tmpDir + "/ca.crt " + container + ":/tmp/ca.crt");
+    execSync("docker exec " + container + " kubectl delete secret openshell-server-tls openshell-server-client-ca -n openshell 2>/dev/null || true");
+    execSync("docker exec " + container + " kubectl create secret tls openshell-server-tls -n openshell --cert=/tmp/server.crt --key=/tmp/server.key");
+    execSync("docker exec " + container + " kubectl create secret generic openshell-server-client-ca -n openshell --from-file=ca.crt=/tmp/ca.crt");
+    console.log("  ✓ TLS secrets injected");
+  } catch (e) {
+    console.error("  !! TLS injection failed:", e.message);
+  }
+}
+
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
 async function startGateway(gpu) {
@@ -401,6 +461,8 @@ async function startGateway(gpu) {
     ignoreError: false,
     env: gatewayEnv,
   });
+
+  injectTlsSecrets();
 
   // Verify health
   for (let i = 0; i < 5; i++) {
