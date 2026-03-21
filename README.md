@@ -245,6 +245,65 @@ See the full [CLI reference](https://docs.nvidia.com/nemoclaw/latest/reference/c
 
 ---
 
+## Configuration and personalization
+
+Most OpenClaw behavior is driven by a JSON config on the machine (or sandbox) where OpenClaw runs, plus environment variables read by NemoClaw scripts and the installer.
+
+### OpenClaw config file
+
+| Item | Location |
+|------|----------|
+| Default config path | `~/.openclaw/openclaw.json` (under your home directory) |
+| Override config file | Set `OPENCLAW_CONFIG_PATH` to an absolute path (or `~/...`); see migration tooling in the `nemoclaw` package |
+| Override state directory | Set `OPENCLAW_STATE_DIR` so the default config becomes `{dir}/openclaw.json` unless `OPENCLAW_CONFIG_PATH` is set |
+| Override home for `~/.openclaw` | Set `OPENCLAW_HOME` |
+
+Create the file if it does not exist. NemoClaw onboarding merges into this file (models, agents, and related keys); sandbox startup can also merge gateway settings. **Keep a backup** if you edit by hand—invalid JSON will break startup.
+
+After any change, **restart OpenClaw** (and reconnect to the sandbox if you run OpenClaw inside it) so the new config loads.
+
+### Example: Signal channel listening port
+
+Channel options are defined by [OpenClaw](https://openclaw.ai), not NemoClaw. Field names can change between OpenClaw versions—confirm against current OpenClaw documentation if something does not apply.
+
+To set an HTTP port for the Signal channel (example only), merge something like this into `openclaw.json`:
+
+```json
+{
+  "channels": {
+    "signal": {
+      "httpPort": 9090
+    }
+  }
+}
+```
+
+Pick a port that is free on that host and adjust as needed.
+
+### NemoClaw-only files and environment
+
+| Item | Role |
+|------|------|
+| `~/.nemoclaw/config.json` | Stores onboarding selections written during install (NemoClaw local state), separate from OpenClaw’s `openclaw.json` |
+| Env vars (e.g. `NVIDIA_API_KEY`, `CHAT_UI_URL`, `NEMOCLAW_*`) | Read on the host by the installer and supporting scripts; see onboarding and `scripts/` for behavior |
+
+For gateway and dashboard behavior inside the sandbox, see `scripts/nemoclaw-start.sh`, which updates `openclaw.json` (gateway mode, allowed origins, and related keys) using environment variables such as `CHAT_UI_URL`.
+
+### Optional: `my-start.sh` for personal defaults
+
+You can keep a small script in your home directory (for example `~/my-start.sh`) to export environment variables or run your usual `nemoclaw` / `connect` flow:
+
+```bash
+#!/usr/bin/env bash
+export CHAT_UI_URL="http://127.0.0.1:18789"
+# Add other exports or commands you use every session.
+nemoclaw my-assistant connect
+```
+
+Mark it executable (`chmod +x ~/my-start.sh`) and run it when you start working. Replace `my-assistant` with your sandbox name.
+
+---
+
 ## Learn More
 
 Refer to the documentation for more information on NemoClaw.
