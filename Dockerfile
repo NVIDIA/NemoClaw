@@ -52,7 +52,8 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
     && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
 
 # Install OpenClaw CLI
-RUN npm install -g openclaw@2026.3.11
+ARG OPENCLAW_VERSION=2026.3.11
+RUN npm install -g openclaw@${OPENCLAW_VERSION}
 
 # Install PyYAML for blueprint runner
 RUN pip3 install --break-system-packages pyyaml
