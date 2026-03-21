@@ -18,7 +18,6 @@
 
 const https = require("https");
 const { execFileSync, spawn } = require("child_process");
-const crypto = require("crypto");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 const { shellQuote, validateName } = require("../bin/lib/runner");
 
