@@ -448,6 +448,152 @@ echo "Linux"
     assert.match(output, /nemoclaw v0\.1\.0-test is ready/);
   });
 
+  it("uses sudo for npm link when nodesource target directories are not writable", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-pipe-sudo-link-"));
+    const fakeBin = path.join(tmp, "bin");
+    const prefix = path.join(tmp, "prefix");
+    const prefixBin = path.join(prefix, "bin");
+    const prefixNodeModules = path.join(prefix, "lib", "node_modules");
+    const sudoLog = path.join(tmp, "sudo.log");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(prefixBin, { recursive: true });
+    fs.mkdirSync(prefixNodeModules, { recursive: true });
+    fs.chmodSync(prefixBin, 0o555);
+    fs.chmodSync(prefixNodeModules, 0o555);
+
+    writeExecutable(
+      path.join(fakeBin, "node"),
+      `#!/usr/bin/env bash
+if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
+  echo "v22.14.0"
+  exit 0
+fi
+if [ "$1" = "-e" ]; then
+  exit 1
+fi
+exit 99
+`,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "git"),
+      `#!/usr/bin/env bash
+if [ "$1" = "clone" ]; then
+  target="\${@: -1}"
+  mkdir -p "$target/nemoclaw"
+  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
+  exit 0
+fi
+exit 0
+`,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "--version" ]; then
+  echo "10.9.2"
+  exit 0
+fi
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
+  echo "$NPM_PREFIX"
+  exit 0
+fi
+if [ "$1" = "pack" ]; then
+  exit 1
+fi
+if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  exit 0
+fi
+if [ "$1" = "link" ]; then
+if [ "\${UNDER_FAKE_SUDO:-0}" = "1" ]; then
+    chmod u+w "$NPM_PREFIX/bin" "$NPM_PREFIX/lib/node_modules"
+  fi
+  mkdir -p "$NPM_PREFIX/lib/node_modules/nemoclaw"
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "v0.1.0-test"
+  exit 0
+fi
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi
+echo "unexpected npm invocation: $*" >&2
+exit 98
+`,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "sudo"),
+      `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$SUDO_LOG_PATH"
+export UNDER_FAKE_SUDO=1
+exec "$@"
+`,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+if [ "$1" = "info" ]; then
+  exit 0
+fi
+exit 0
+`,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "openshell 0.0.9"
+  exit 0
+fi
+exit 0
+`,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "uname"),
+      `#!/usr/bin/env bash
+if [ "$1" = "-s" ]; then
+  echo "Linux"
+  exit 0
+fi
+if [ "$1" = "-m" ]; then
+  echo "x86_64"
+  exit 0
+fi
+echo "Linux"
+`,
+    );
+
+    const scriptContents = fs.readFileSync(CURL_PIPE_INSTALLER, "utf-8");
+    const result = spawnSync("bash", [], {
+      cwd: tmp,
+      input: scriptContents,
+      encoding: "utf-8",
+      env: installerEnv(tmp, fakeBin, {
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NPM_PREFIX: prefix,
+        SUDO_LOG_PATH: sudoLog,
+      }),
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    assert.equal(result.status, 0);
+    assert.match(output, /Installation complete!/);
+    assert.match(fs.readFileSync(sudoLog, "utf-8"), /^npm link$/m);
+  });
+
   it("creates a user-local shim when npm installs outside the current PATH", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-shim-"));
     const fakeBin = path.join(tmp, "bin");

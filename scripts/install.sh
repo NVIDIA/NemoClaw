@@ -123,6 +123,31 @@ resolve_npm_bin() {
   printf '%s/bin\n' "$npm_prefix"
 }
 
+# Check whether npm link can write to the active prefix targets.
+npm_link_targets_writable() {
+  local npm_prefix="$1"
+  local npm_bin_dir npm_lib_dir
+
+  [ -n "$npm_prefix" ] || return 1
+
+  npm_bin_dir="$npm_prefix/bin"
+  npm_lib_dir="$npm_prefix/lib/node_modules"
+
+  if [ -d "$npm_bin_dir" ]; then
+    [ -w "$npm_bin_dir" ] || return 1
+  elif [ ! -w "$npm_prefix" ]; then
+    return 1
+  fi
+
+  if [ -d "$npm_lib_dir" ]; then
+    [ -w "$npm_lib_dir" ] || return 1
+  elif [ ! -w "$npm_prefix" ]; then
+    return 1
+  fi
+
+  return 0
+}
+
 # Refresh PATH so that npm global bin is discoverable.
 refresh_path() {
   local npm_bin
@@ -433,7 +458,7 @@ pre_extract_openclaw "$NEMOCLAW_SRC" || warn "Pre-extraction failed — npm inst
 SUDO=""
 if [ "$NODE_MGR" = "nodesource" ] && [ "$(id -u)" -ne 0 ]; then
   npm_prefix="$(npm config get prefix 2>/dev/null || true)"
-  if [ -z "$npm_prefix" ] || [ ! -w "$npm_prefix" ]; then
+  if ! npm_link_targets_writable "$npm_prefix"; then
     SUDO="sudo"
   fi
 fi
