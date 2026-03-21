@@ -81,7 +81,12 @@ done
 
 TMPDIR_BASE="${TMPDIR:-/tmp}"
 COLLECT_DIR=$(mktemp -d "${TMPDIR_BASE}/nemoclaw-debug-XXXXXX")
-trap 'rm -rf "$COLLECT_DIR"' EXIT
+SANDBOX_SSH_CONFIG=""
+cleanup() {
+  rm -rf "$COLLECT_DIR"
+  [ -n "$SANDBOX_SSH_CONFIG" ] && rm -f "$SANDBOX_SSH_CONFIG"
+}
+trap cleanup EXIT
 
 # Platform detection
 IS_MACOS=false
@@ -256,7 +261,6 @@ if command -v openshell &>/dev/null \
   else
     warn "Could not generate SSH config for sandbox '${SANDBOX_NAME}', skipping internals"
   fi
-  rm -f "$SANDBOX_SSH_CONFIG"
 fi
 
 # -- Network (full mode only) --
