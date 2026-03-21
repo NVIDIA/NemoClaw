@@ -213,10 +213,10 @@ function getNonInteractiveProvider() {
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
 
-  const validProviders = new Set(["cloud", "ollama", "vllm", "nim"]);
+  const validProviders = new Set(["cloud", "ollama", "vllm", "nim", "dynamo"]);
   if (!validProviders.has(providerKey)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
-    console.error("  Valid values: cloud, ollama, vllm, nim");
+    console.error("  Valid values: cloud, ollama, vllm, nim, dynamo");
     process.exit(1);
   }
 
@@ -535,6 +535,91 @@ async function setupNim(sandboxName, gpu) {
   const vllmRunning = !!runCapture("curl -sf http://localhost:8000/v1/models 2>/dev/null", { ignoreError: true });
   const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
   const requestedModel = isNonInteractive() ? getNonInteractiveModel(requestedProvider || "cloud") : null;
+
+  // Auto-select only with NEMOCLAW_EXPERIMENTAL=1 (prevents silent misconfiguration)
+  if (EXPERIMENTAL) {
+    if (vllmRunning) {
+      console.log("  ✓ vLLM detected on localhost:8000 — using it [experimental]");
+      provider = "vllm-local";
+      model = "vllm-local";
+      registry.updateSandbox(sandboxName, { model, provider, nimContainer });
+      return { model, provider };
+    }
+    if (ollamaRunning) {
+      console.log("  ✓ Ollama detected on localhost:11434 — using it [experimental]");
+      provider = "ollama-local";
+      model = "nemotron-3-nano";
+      registry.updateSandbox(sandboxName, { model, provider, nimContainer });
+      return { model, provider };
+    }
+  }
+
+  // Non-interactive: honor NEMOCLAW_PROVIDER before building interactive options
+  if (isNonInteractive() && requestedProvider) {
+    const providerKey = requestedProvider;
+    console.log(`  [non-interactive] Provider: ${providerKey}`);
+    if (providerKey === "dynamo") {
+      // Dynamo: external vLLM endpoint (e.g., K8s service)
+      const dynamoEndpointRaw = (process.env.NEMOCLAW_DYNAMO_ENDPOINT || "").trim();
+      if (!dynamoEndpointRaw) {
+        console.error("  NEMOCLAW_DYNAMO_ENDPOINT is required when NEMOCLAW_PROVIDER=dynamo.");
+        process.exit(1);
+      }
+      // Validate URL format and protocol
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(dynamoEndpointRaw);
+      } catch {
+        console.error(`  Invalid NEMOCLAW_DYNAMO_ENDPOINT URL: ${dynamoEndpointRaw}`);
+        process.exit(1);
+      }
+      if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+        console.error(`  NEMOCLAW_DYNAMO_ENDPOINT must use http or https: ${dynamoEndpointRaw}`);
+        process.exit(1);
+      }
+      // Build sanitized URL for logging and storage (no credentials or query params)
+      const safeUrl = `${parsedUrl.protocol}//${parsedUrl.host}${parsedUrl.pathname}`;
+      const redacted = [];
+      if (parsedUrl.username || parsedUrl.password) redacted.push("credentials");
+      if (parsedUrl.search) redacted.push("query");
+      console.log(`  Using Dynamo endpoint: ${safeUrl}${redacted.length ? ` [REDACTED: ${redacted.join(", ")}]` : ""}`);
+
+      provider = "dynamo";
+      model = (process.env.NEMOCLAW_DYNAMO_MODEL || "").trim() || "dynamo";
+      // Store sanitized URL in registry (no credentials), pass raw URL to setupInference
+      registry.updateSandbox(sandboxName, { model, provider, nimContainer, dynamoEndpoint: safeUrl });
+      return { model, provider, dynamoEndpoint: dynamoEndpointRaw };
+    } else if (providerKey === "ollama") {
+      if (!ollamaRunning) {
+        console.error("  Ollama is not running on localhost:11434. Start it first.");
+        process.exit(1);
+      }
+      provider = "ollama-local";
+      model = requestedModel || "nemotron-3-nano";
+      registry.updateSandbox(sandboxName, { model, provider, nimContainer });
+      return { model, provider };
+    } else if (providerKey === "vllm") {
+      if (!vllmRunning) {
+        console.error("  vLLM is not running on localhost:8000. Start it first.");
+        process.exit(1);
+      }
+      provider = "vllm-local";
+      model = requestedModel || "vllm-local";
+      registry.updateSandbox(sandboxName, { model, provider, nimContainer });
+      return { model, provider };
+    } else if (providerKey === "nim") {
+      if (!EXPERIMENTAL) {
+        console.error("  NEMOCLAW_PROVIDER=nim requires NEMOCLAW_EXPERIMENTAL=1.");
+        process.exit(1);
+      }
+      if (!gpu || !gpu.nimCapable) {
+        console.error("  Local NIM requires a compatible NVIDIA GPU.");
+        process.exit(1);
+      }
+    }
+    // "cloud" or "nim" fall through to normal flow below
+  }
+
   // Build options list — only show local options with NEMOCLAW_EXPERIMENTAL=1
   const options = [];
   if (EXPERIMENTAL && gpu && gpu.nimCapable) {
@@ -704,10 +789,30 @@ async function setupNim(sandboxName, gpu) {
 
 // ── Step 5: Inference provider ───────────────────────────────────
 
-async function setupInference(sandboxName, model, provider) {
+async function setupInference(sandboxName, model, provider, opts = {}) {
   step(5, 7, "Setting up inference provider");
 
-  if (provider === "nvidia-nim") {
+  if (provider === "dynamo") {
+    // Dynamo: external vLLM endpoint (e.g., K8s service)
+    const dynamoEndpoint = opts.dynamoEndpoint;
+    if (!dynamoEndpoint) {
+      console.error("  Dynamo provider requires dynamoEndpoint in options.");
+      process.exit(1);
+    }
+    // Use shellQuote for shell-safe escaping of the endpoint URL
+    run(
+      `openshell provider create --name dynamo --type openai ` +
+      `--credential OPENAI_API_KEY=dummy ` +
+      `--config OPENAI_BASE_URL=${shellQuote(dynamoEndpoint)} 2>&1 || ` +
+      `openshell provider update dynamo --credential OPENAI_API_KEY=dummy ` +
+      `--config OPENAI_BASE_URL=${shellQuote(dynamoEndpoint)} 2>&1 || true`,
+      { ignoreError: true }
+    );
+    run(
+      `openshell inference set --no-verify --provider dynamo --model ${shellQuote(model)} 2>/dev/null || true`,
+      { ignoreError: true }
+    );
+  } else if (provider === "nvidia-nim") {
     // Create nvidia-nim provider
     run(
       `openshell provider create --name nvidia-nim --type openai ` +
@@ -917,6 +1022,7 @@ function printDashboard(sandboxName, model, provider) {
   if (provider === "nvidia-nim") providerLabel = "NVIDIA Endpoint API";
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
+  else if (provider === "dynamo") providerLabel = "Dynamo vLLM";
 
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
@@ -945,8 +1051,8 @@ async function onboard(opts = {}) {
   const gpu = await preflight();
   await startGateway(gpu);
   const sandboxName = await createSandbox(gpu);
-  const { model, provider } = await setupNim(sandboxName, gpu);
-  await setupInference(sandboxName, model, provider);
+  const { model, provider, dynamoEndpoint } = await setupNim(sandboxName, gpu);
+  await setupInference(sandboxName, model, provider, { dynamoEndpoint });
   await setupOpenclaw(sandboxName, model, provider);
   await setupPolicies(sandboxName);
   printDashboard(sandboxName, model, provider);
