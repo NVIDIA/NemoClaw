@@ -127,9 +127,10 @@ PYAUTOPAIR
 }
 
 echo 'Setting up NemoClaw...'
-openclaw doctor --fix > /dev/null 2>&1 || true
+# openclaw doctor --fix and openclaw plugins install already ran at build time
+# (Dockerfile Step 28). At runtime they fail with EPERM against the locked
+# /sandbox/.openclaw directory and accomplish nothing.
 write_auth_profile
-openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exec "${NEMOCLAW_CMD[@]}"
