@@ -6,6 +6,14 @@ content structure, groups related pages into coherent skill units, and
 generates SKILL.md files following the Agent Skills specification:
 https://agentskills.io/specification
 
+Usage:
+
+Make sure to run this script using the following command to generate the skills and keep the locations and names consistent.
+
+```bash
+python scripts/docs-to-skills.py docs/ .agents/skills/docs/ --prefix nemoclaw
+```
+
 What it does:
   1. Scans a docs directory for Markdown files with YAML frontmatter.
   2. Classifies each page by content type (how_to, concept, reference,
