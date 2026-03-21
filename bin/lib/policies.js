@@ -6,7 +6,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { ROOT, run, runCapture } = require("./runner");
+const { ROOT, run, runCapture, shellQuote } = require("./runner");
 const registry = require("./registry");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
@@ -29,7 +29,11 @@ function listPresets() {
 }
 
 function loadPreset(name) {
-  const file = path.join(PRESETS_DIR, `${name}.yaml`);
+  const file = path.resolve(PRESETS_DIR, `${name}.yaml`);
+  if (!file.startsWith(PRESETS_DIR + path.sep) && file !== PRESETS_DIR) {
+    console.error(`  Invalid preset name: ${name}`);
+    return null;
+  }
   if (!fs.existsSync(file)) {
     console.error(`  Preset not found: ${name}`);
     return null;
@@ -73,14 +77,14 @@ function parseCurrentPolicy(raw) {
  * Build the openshell policy set command with properly quoted arguments.
  */
 function buildPolicySetCommand(policyFile, sandboxName) {
-  return `openshell policy set --policy "${policyFile}" --wait "${sandboxName}"`;
+  return `openshell policy set --policy ${shellQuote(policyFile)} --wait ${shellQuote(sandboxName)}`;
 }
 
 /**
  * Build the openshell policy get command with properly quoted arguments.
  */
 function buildPolicyGetCommand(sandboxName) {
-  return `openshell policy get --full "${sandboxName}" 2>/dev/null`;
+  return `openshell policy get --full ${shellQuote(sandboxName)} 2>/dev/null`;
 }
 
 function applyPreset(sandboxName, presetName) {

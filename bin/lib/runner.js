@@ -58,4 +58,31 @@ function runCapture(cmd, opts = {}) {
   }
 }
 
-module.exports = { ROOT, SCRIPTS, run, runCapture, runInteractive };
+/**
+ * Shell-quote a value for safe interpolation into bash -c strings.
+ * Wraps in single quotes and escapes embedded single quotes.
+ */
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Validate a name (sandbox, instance, container) against RFC 1123 label rules.
+ * Rejects shell metacharacters, path traversal, and empty/overlength names.
+ */
+function validateName(name, label = "name") {
+  if (!name || typeof name !== "string") {
+    throw new Error(`${label} is required`);
+  }
+  if (name.length > 63) {
+    throw new Error(`${label} too long (max 63 chars): '${name.slice(0, 20)}...'`);
+  }
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
+    throw new Error(
+      `Invalid ${label}: '${name}'. Must be lowercase alphanumeric with optional internal hyphens.`
+    );
+  }
+  return name;
+}
+
+module.exports = { ROOT, SCRIPTS, run, runCapture, runInteractive, shellQuote, validateName };

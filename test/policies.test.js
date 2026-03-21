@@ -38,6 +38,11 @@ describe("policies", () => {
     it("returns null for nonexistent preset", () => {
       assert.equal(policies.loadPreset("nonexistent"), null);
     });
+
+    it("rejects path traversal attempts", () => {
+      assert.equal(policies.loadPreset("../../etc/passwd"), null);
+      assert.equal(policies.loadPreset("../../../etc/shadow"), null);
+    });
   });
 
   describe("getPresetEndpoints", () => {
@@ -66,28 +71,28 @@ describe("policies", () => {
   });
 
   describe("buildPolicySetCommand", () => {
-    it("quotes sandbox name to prevent argument splitting", () => {
+    it("shell-quotes sandbox name to prevent injection", () => {
       const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-      assert.equal(cmd, 'openshell policy set --policy "/tmp/policy.yaml" --wait "my-assistant"');
+      assert.equal(cmd, "openshell policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'");
     });
 
-    it("handles sandbox names with spaces", () => {
-      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my sandbox");
-      assert.ok(cmd.includes('"my sandbox"'), "sandbox name must be quoted");
+    it("escapes shell metacharacters in sandbox name", () => {
+      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test; whoami");
+      assert.ok(cmd.includes("'test; whoami'"), "metacharacters must be shell-quoted");
     });
 
     it("places --wait before the sandbox name", () => {
       const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test-box");
       const waitIdx = cmd.indexOf("--wait");
-      const nameIdx = cmd.indexOf('"test-box"');
+      const nameIdx = cmd.indexOf("'test-box'");
       assert.ok(waitIdx < nameIdx, "--wait must come before sandbox name");
     });
   });
 
   describe("buildPolicyGetCommand", () => {
-    it("quotes sandbox name", () => {
+    it("shell-quotes sandbox name", () => {
       const cmd = policies.buildPolicyGetCommand("my-assistant");
-      assert.equal(cmd, 'openshell policy get --full "my-assistant" 2>/dev/null');
+      assert.equal(cmd, "openshell policy get --full 'my-assistant' 2>/dev/null");
     });
   });
 
