@@ -141,6 +141,8 @@ npm_link_targets_writable() {
 
   if [ -d "$npm_lib_dir" ]; then
     [ -w "$npm_lib_dir" ] || return 1
+  elif [ -d "$npm_prefix/lib" ]; then
+    [ -w "$npm_prefix/lib" ] || return 1
   elif [ ! -w "$npm_prefix" ]; then
     return 1
   fi
