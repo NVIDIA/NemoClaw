@@ -97,9 +97,7 @@ def _apply_port_overrides(bp: dict[str, Any]) -> None:
             if key in profiles:
                 old_endpoint = profiles[key].get("endpoint", "")
                 # Replace the port in endpoint URL (matches any numeric port)
-                profiles[key]["endpoint"] = re.sub(
-                    r":\d+(/|$)", f":{vllm_port}\\1", old_endpoint
-                )
+                profiles[key]["endpoint"] = re.sub(r":\d+(/|$)", f":{vllm_port}\\1", old_endpoint)
 
         # Policy addition: nim_service port
         additions = components.get("policy", {}).get("additions", {})

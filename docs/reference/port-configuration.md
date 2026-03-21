@@ -18,7 +18,7 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# Port Configuration
+# NemoClaw Port Configuration
 
 NemoClaw uses four network ports.
 All ports are configurable through environment variables or a `.env` file at the project root.
