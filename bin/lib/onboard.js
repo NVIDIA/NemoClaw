@@ -104,9 +104,15 @@ function buildSandboxConfigSyncScript(selectionConfig) {
         : "nvidia-nim";
   const primaryModel = getOpenClawPrimaryModel(providerType, selectionConfig.model);
   const providerKey = "inference";
+  // Local providers (vllm, ollama) should use the gateway inference proxy,
+  // not the direct endpoint URL — the sandbox can't reach the host directly.
+  const isLocalProvider = providerType === "vllm-local" || providerType === "ollama-local";
+  const baseUrl = isLocalProvider
+    ? "https://inference.local/v1"
+    : selectionConfig.endpointUrl;
   const providerConfig = {
-    baseUrl: selectionConfig.endpointUrl,
-    apiKey: "unused",
+    baseUrl,
+    apiKey: isLocalProvider ? "openshell-managed" : "unused",
     api: "openai-completions",
     models: [
       {
@@ -693,7 +699,21 @@ async function setupNim(sandboxName, gpu) {
     } else if (selected.key === "vllm") {
       console.log("  ✓ Using existing vLLM on localhost:8000");
       provider = "vllm-local";
-      model = "vllm-local";
+      // Query vLLM for the actual model ID
+      const vllmModelsRaw = runCapture("curl -sf http://localhost:8000/v1/models 2>/dev/null", { ignoreError: true });
+      try {
+        const vllmModels = JSON.parse(vllmModelsRaw);
+        if (vllmModels.data && vllmModels.data.length > 0) {
+          model = vllmModels.data[0].id;
+          console.log(`  Detected model: ${model}`);
+        } else {
+          console.error("  Could not detect model from vLLM. Please specify manually.");
+          process.exit(1);
+        }
+      } catch {
+        console.error("  Could not query vLLM models endpoint. Is vLLM running on localhost:8000?");
+        process.exit(1);
+      }
     }
     // else: cloud — fall through to default below
   }
