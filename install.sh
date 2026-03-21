@@ -47,13 +47,27 @@ ensure_nvm_loaded() {
 # Refresh PATH so that npm global bin is discoverable.
 # After nvm installs Node.js the global bin lives under the nvm prefix,
 # which may not yet be on PATH in the current session.
+# Also persists the PATH entry to the user's shell profile so that new
+# terminal sessions can find globally-installed npm binaries (e.g. nemoclaw).
 refresh_path() {
   ensure_nvm_loaded
 
   local npm_bin
   npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
-  if [[ -n "$npm_bin" && -d "$npm_bin" && ":$PATH:" != *":$npm_bin:"* ]]; then
-    export PATH="$npm_bin:$PATH"
+  if [[ -n "$npm_bin" && -d "$npm_bin" ]]; then
+    if [[ ":$PATH:" != *":$npm_bin:"* ]]; then
+      export PATH="$npm_bin:$PATH"
+    fi
+
+    # Persist to shell profile so new terminal sessions inherit the PATH.
+    local export_line="export PATH=\"$npm_bin:\$PATH\""
+    local marker="# Added by NemoClaw installer"
+    for profile in "$HOME/.bashrc" "$HOME/.zshrc"; do
+      if [[ -f "$profile" ]] && ! grep -qF "$npm_bin" "$profile" 2>/dev/null; then
+        printf '\n%s\n%s\n' "$marker" "$export_line" >> "$profile"
+        info "Added npm bin to PATH in $profile"
+      fi
+    done
   fi
 
   if [[ -d "$NEMOCLAW_SHIM_DIR" && ":$PATH:" != *":$NEMOCLAW_SHIM_DIR:"* ]]; then
@@ -217,7 +231,29 @@ install_or_upgrade_ollama() {
 }
 
 # ---------------------------------------------------------------------------
-# 3. NemoClaw
+# 3. Shell profile sanity check
+# ---------------------------------------------------------------------------
+# OpenShell's installer has a known bug where it writes the fish-shell variant
+# of its env script (env.fish) into bash profiles instead of the POSIX variant
+# (env). Sourcing a fish script from bash produces a syntax error at startup.
+# Detect and fix this automatically before proceeding.
+fix_fish_in_bash_profiles() {
+  for profile in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile"; do
+    [[ -f "$profile" ]] || continue
+    if grep -qF 'env.fish' "$profile" 2>/dev/null; then
+      warn "Detected fish shell script sourced from bash profile: $profile"
+      warn "This is a known OpenShell installer bug. Fixing automatically…"
+      # Replace `. .../env.fish` with `. .../env` (POSIX-compatible version).
+      sed -i 's|\. *"\(.*\)/env\.fish"|\. "\1/env"|g; s|\. *'"'"'\(.*\)/env\.fish'"'"'|\. '"'"'\1/env'"'"'|g' "$profile"
+      # Remove bare (unquoted) sourcing of env.fish as well.
+      sed -i '/[[:space:]]env\.fish/d' "$profile"
+      info "Fixed: $profile no longer sources env.fish"
+    fi
+  done
+}
+
+# ---------------------------------------------------------------------------
+# 4. NemoClaw
 # ---------------------------------------------------------------------------
 # Work around openclaw tarball missing directory entries (GH-503).
 # npm's tar extractor hard-fails because the tarball is missing directory
@@ -288,7 +324,7 @@ install_nemoclaw() {
 }
 
 # ---------------------------------------------------------------------------
-# 4. Verify
+# 5. Verify
 # ---------------------------------------------------------------------------
 verify_nemoclaw() {
   if command_exists nemoclaw; then
@@ -326,7 +362,7 @@ verify_nemoclaw() {
 }
 
 # ---------------------------------------------------------------------------
-# 5. Onboard
+# 6. Onboard
 # ---------------------------------------------------------------------------
 run_onboard() {
   info "Running nemoclaw onboard…"
@@ -393,6 +429,7 @@ main() {
 
   info "=== NemoClaw Installer ==="
 
+  fix_fish_in_bash_profiles
   install_nodejs
   ensure_supported_runtime
   # install_or_upgrade_ollama
