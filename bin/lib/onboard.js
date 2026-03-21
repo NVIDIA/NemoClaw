@@ -444,8 +444,10 @@ async function createSandbox(gpu) {
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const chatUiUrl = process.env.CHAT_UI_URL || 'http://127.0.0.1:18789';
   const envArgs = [`CHAT_UI_URL=${shellQuote(chatUiUrl)}`];
-  if (process.env.NVIDIA_API_KEY) {
-    envArgs.push(`NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY)}`);
+  const nvKey = getCredential("NVIDIA_API_KEY");
+  if (nvKey) {
+    envArgs.push(`NVIDIA_API_KEY=${shellQuote(nvKey)}`);
+
   }
   const discordToken = getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN;
   if (discordToken) {
@@ -713,9 +715,10 @@ async function setupInference(sandboxName, model, provider) {
 
   if (provider === "nvidia-nim") {
     // Create nvidia-nim provider
+    const nvKey = getCredential("NVIDIA_API_KEY");
     run(
       `openshell provider create --name nvidia-nim --type openai ` +
-      `--credential ${shellQuote("NVIDIA_API_KEY=" + process.env.NVIDIA_API_KEY)} ` +
+      `--credential ${shellQuote("NVIDIA_API_KEY=" + nvKey)} ` +
       `--config "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1" 2>&1 || true`,
       { ignoreError: true }
     );
