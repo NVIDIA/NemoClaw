@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { PluginLogger, NemoClawConfig } from "../index.js";
 
 // ---------------------------------------------------------------------------
@@ -62,10 +62,21 @@ function openshellCalls(): string[][] {
 // Tests
 // ---------------------------------------------------------------------------
 
+let _prevExperimental: string | undefined;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  _prevExperimental = process.env.NEMOCLAW_EXPERIMENTAL;
   // Default: NEMOCLAW_EXPERIMENTAL=1 so ollama endpoint is available
   process.env.NEMOCLAW_EXPERIMENTAL = "1";
+});
+
+afterEach(() => {
+  if (_prevExperimental === undefined) {
+    delete process.env.NEMOCLAW_EXPERIMENTAL;
+  } else {
+    process.env.NEMOCLAW_EXPERIMENTAL = _prevExperimental;
+  }
 });
 
 describe("cliOnboard — ollama provider config", () => {
