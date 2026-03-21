@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { execSync, spawnSync } = require("child_process");
+const { execFileSync, spawnSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
-const { ROOT, SCRIPTS, run, runCapture, runInteractive } = require("./lib/runner");
+const { ROOT, SCRIPTS, run, runCapture, runInteractive, shellQuote } = require("./lib/runner");
 const {
   ensureApiKey,
   ensureGithubToken,
@@ -27,10 +27,6 @@ const GLOBAL_COMMANDS = new Set([
 ]);
 
 const REMOTE_UNINSTALL_URL = "https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh";
-
-function shellQuote(value) {
-  return `'${String(value).replace(/'/g, `'\\''`)}'`;
-}
 
 function resolveUninstallScript() {
   const candidates = [
@@ -107,14 +103,15 @@ async function deploy(instanceName) {
   }
   const name = instanceName.trim();
 
-  // Validate: same RFC 1123 subdomain rules used for sandbox names — lowercase
-  // alphanumeric and hyphens, must start and end with alphanumeric.
-  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name) || name.length > 253) {
+  // Validate: RFC 1123 label — lowercase alphanumeric and hyphens,
+  // must start and end with alphanumeric, max 63 chars.
+  if (!name || name.length > 63 || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
     console.error(`  Invalid instance name: '${name}'`);
     console.error("  Names must be lowercase, contain only letters, numbers, and hyphens,");
-    console.error("  and must start and end with a letter or number (max 253 chars).");
+    console.error("  and must start and end with a letter or number (max 63 chars).");
     process.exit(1);
   }
+  const qname = shellQuote(name);
 
   const gpu = process.env.NEMOCLAW_GPU || "a2-highgpu-1g:nvidia-tesla-a100:1";
 
@@ -123,7 +120,7 @@ async function deploy(instanceName) {
   console.log("");
 
   try {
-    execSync("which brev", { stdio: "ignore" });
+    execFileSync("which", ["brev"], { stdio: "ignore" });
   } catch {
     console.error("brev CLI not found. Install: https://brev.nvidia.com");
     process.exit(1);
@@ -131,13 +128,16 @@ async function deploy(instanceName) {
 
   let exists = false;
   try {
-    const out = execSync("brev ls 2>&1", { encoding: "utf-8" });
+    const out = execFileSync("brev", ["ls"], { encoding: "utf-8" });
     exists = out.includes(name);
-  } catch {}
+  } catch (err) {
+    if (err.stdout && err.stdout.includes(name)) exists = true;
+    if (err.stderr && err.stderr.includes(name)) exists = true;
+  }
 
   if (!exists) {
     console.log(`  Creating Brev instance '${name}' (${gpu})...`);
-    run(`brev create "${name}" --gpu "${gpu}"`);
+    run(`brev create ${qname} --gpu ${shellQuote(gpu)}`);
   } else {
     console.log(`  Brev instance '${name}' already exists.`);
   }
@@ -147,7 +147,7 @@ async function deploy(instanceName) {
   console.log("  Waiting for SSH...");
   for (let i = 0; i < 60; i++) {
     try {
-      execSync(`ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "${name}" 'echo ok' 2>/dev/null`, { encoding: "utf-8", stdio: "pipe" });
+      execFileSync("ssh", ["-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no", name, "echo", "ok"], { encoding: "utf-8", stdio: "ignore" });
       break;
     } catch {
       if (i === 59) {
@@ -159,35 +159,36 @@ async function deploy(instanceName) {
   }
 
   console.log("  Syncing NemoClaw to VM...");
-  run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "${name}" 'mkdir -p /home/ubuntu/nemoclaw'`);
-  run(`rsync -az --delete --exclude node_modules --exclude .git --exclude src -e "ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR" "${ROOT}/scripts" "${ROOT}/Dockerfile" "${ROOT}/nemoclaw" "${ROOT}/nemoclaw-blueprint" "${ROOT}/bin" "${ROOT}/package.json" "${name}":/home/ubuntu/nemoclaw/`);
+  run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'mkdir -p /home/ubuntu/nemoclaw'`);
+  run(`rsync -az --delete --exclude node_modules --exclude .git --exclude src -e "ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR" "${ROOT}/scripts" "${ROOT}/Dockerfile" "${ROOT}/nemoclaw" "${ROOT}/nemoclaw-blueprint" "${ROOT}/bin" "${ROOT}/package.json" ${qname}:/home/ubuntu/nemoclaw/`);
 
-  const envLines = [`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`];
+  const envLines = [`NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY || "")}`];
   const ghToken = process.env.GITHUB_TOKEN;
-  if (ghToken) envLines.push(`GITHUB_TOKEN=${ghToken}`);
+  if (ghToken) envLines.push(`GITHUB_TOKEN=${shellQuote(ghToken)}`);
   const tgToken = getCredential("TELEGRAM_BOT_TOKEN");
-  if (tgToken) envLines.push(`TELEGRAM_BOT_TOKEN=${tgToken}`);
+  if (tgToken) envLines.push(`TELEGRAM_BOT_TOKEN=${shellQuote(tgToken)}`);
   const envDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-"));
-  const envTmp = path.join(envDir, ".env");
+  const envTmp = path.join(envDir, "env");
+  fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
   try {
-    fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600, flag: "wx" });
-    run(`scp -q -o StrictHostKeyChecking=no -o LogLevel=ERROR "${envTmp}" "${name}":/home/ubuntu/nemoclaw/.env`);
+    run(`scp -q -o StrictHostKeyChecking=no -o LogLevel=ERROR ${shellQuote(envTmp)} ${qname}:/home/ubuntu/nemoclaw/.env`);
   } finally {
-    fs.rmSync(envDir, { recursive: true, force: true });
+    try { fs.unlinkSync(envTmp); } catch {}
+    try { fs.rmdirSync(envDir); } catch {}
   }
 
   console.log("  Running setup...");
-  runInteractive(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR "${name}" 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh'`);
+  runInteractive(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh'`);
 
   if (tgToken) {
     console.log("  Starting services...");
-    run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "${name}" 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/start-services.sh'`);
+    run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/start-services.sh'`);
   }
 
   console.log("");
   console.log("  Connecting to sandbox...");
   console.log("");
-  runInteractive(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR "${name}" 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw'`);
+  runInteractive(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw'`);
 }
 
 async function start() {

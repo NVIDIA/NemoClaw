@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Verify that deploy() validates and quotes the instance name in shell
+// Verify that deploy() validates and shell-quotes the instance name in
 // commands to prevent command injection.
 
 const { describe, it } = require("node:test");
@@ -45,53 +45,36 @@ describe("deploy instance name hardening", () => {
     assert.match(
       deployBody,
       /\^\[a-z0-9\]/,
-      "deploy() must validate the instance name against RFC 1123 subdomain rules"
+      "deploy() must validate the instance name against RFC 1123 label rules"
     );
   });
 
-  it("rejects names longer than 253 characters inside deploy()", () => {
+  it("enforces max 63 character limit", () => {
     assert.match(
       deployBody,
-      /name\.length\s*>\s*253/,
-      "deploy() must enforce a 253-character limit on instance names"
+      /length\s*>\s*63/,
+      "deploy() must enforce a 63-character limit on instance names"
     );
   });
 
-  it("does not interpolate unquoted instance name in shell commands", () => {
-    // Every ${name} in a shell command string must be exactly "${name}".
-    // Skip console.log/error lines which are display-only.
-    const lines = deployBody.split("\n");
-    for (const line of lines) {
-      if (line.includes("${name}") && !line.match(/console\.(log|error)/)) {
-        const all = [...line.matchAll(/\$\{name\}/g)].length;
-        const quoted = [...line.matchAll(/"\$\{name\}"/g)].length;
-        assert.equal(
-          quoted,
-          all,
-          `Unquoted \${name} in shell command: ${line.trim()}`
-        );
-      }
-    }
-  });
-
-  it("quotes instance name in brev create", () => {
+  it("uses shellQuote for instance name in shell commands", () => {
     assert.ok(
-      deployBody.includes('brev create "${name}"'),
-      'brev create must quote the instance name: brev create "${name}"'
+      deployBody.includes("qname = shellQuote(name)"),
+      "deploy() must create a shellQuoted name variable"
     );
   });
 
-  it("quotes instance name in rsync destination", () => {
+  it("does not use execSync (prefer execFileSync)", () => {
     assert.ok(
-      deployBody.includes('"${name}":/home/ubuntu/nemoclaw/'),
-      'rsync destination must quote the instance name: "${name}":/path'
+      !deployBody.includes("execSync("),
+      "deploy() must use execFileSync instead of execSync"
     );
   });
 
-  it("quotes instance name in scp destination", () => {
+  it("shell-quotes env values", () => {
     assert.ok(
-      deployBody.includes('"${name}":/home/ubuntu/nemoclaw/.env'),
-      'scp destination must quote the instance name: "${name}":/path'
+      deployBody.includes("shellQuote(process.env.NVIDIA_API_KEY"),
+      "NVIDIA_API_KEY must be shellQuoted in env file"
     );
   });
 });
