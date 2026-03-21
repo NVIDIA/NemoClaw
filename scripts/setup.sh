@@ -216,6 +216,14 @@ if ! echo "$SANDBOX_LINE" | grep -q "Ready"; then
   fail "Sandbox created but not Ready (phase: ${SANDBOX_PHASE:-unknown}). Check 'openshell sandbox get ${SANDBOX_NAME}'."
 fi
 
+# 5b. macOS: add inference.local to sandbox /etc/hosts for Ollama DNS
+if [ "$(uname -s)" = "Darwin" ]; then
+  info "Configuring inference.local DNS inside sandbox for macOS..."
+  openshell sandbox connect nemoclaw -- sh -c \
+    'grep -q inference.local /etc/hosts || { IP=$(grep -m1 "^nameserver" /etc/resolv.conf | awk "{print \$2}"); [ -n "$IP" ] && echo "$IP inference.local" >> /etc/hosts || echo "WARN: no nameserver found in /etc/resolv.conf, skipping"; }' \
+    2>/dev/null || warn "Could not patch sandbox /etc/hosts (sandbox may not be ready yet)"
+fi
+
 # 6. Done
 echo ""
 info "Setup complete!"
