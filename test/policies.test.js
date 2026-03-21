@@ -9,9 +9,9 @@ const policies = require("../bin/lib/policies");
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 9 presets", () => {
+    it("returns all 10 presets", () => {
       const presets = policies.listPresets();
-      assert.equal(presets.length, 9);
+      assert.equal(presets.length, 10);
     });
 
     it("each preset has name and description", () => {
@@ -23,7 +23,7 @@ describe("policies", () => {
 
     it("returns expected preset names", () => {
       const names = policies.listPresets().map((p) => p.name).sort();
-      const expected = ["discord", "docker", "huggingface", "jira", "npm", "outlook", "pypi", "slack", "telegram"];
+      const expected = ["discord", "docker", "heygen", "huggingface", "jira", "npm", "outlook", "pypi", "slack", "telegram"];
       assert.deepEqual(names, expected);
     });
   });
