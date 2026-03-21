@@ -22,26 +22,6 @@ status: draft
 
 Bridge stdio-based MCP servers from the host into a NemoClaw sandbox so the OpenClaw agent can call external tools without exposing API keys inside the sandbox.
 
-## How It Works
-
-MCP servers run as stdio subprocesses on the host, spawned by tools like Claude Code or Cursor.
-The sandbox cannot run these directly because the API keys would need to be inside the sandbox.
-
-The MCP bridge runs an HTTP proxy on the host that wraps the stdio MCP server.
-The proxy port is forwarded into the sandbox via OpenShell, where mcporter connects to it as a standard HTTP MCP server.
-
-```text
-Host                                Sandbox
-┌────────────────────────┐         ┌───────────────────────┐
-│  stdio MCP server      │         │  mcporter             │
-│    ↕                   │ forward │    ↕                  │
-│  stdio→HTTP proxy :3101├─────────┤  localhost:3101       │
-│                        │         │                       │
-│  API keys stay here    │         │  OpenClaw agent       │
-└────────────────────────┘         │    (no API keys)      │
-                                   └───────────────────────┘
-```
-
 ## Prerequisites
 
 - A running NemoClaw sandbox.
