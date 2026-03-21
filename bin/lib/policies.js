@@ -11,6 +11,16 @@ const registry = require("./registry");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function getOpenshellCommand() {
+  const binary = process.env.NEMOCLAW_OPENSHELL_BIN;
+  if (!binary) return "openshell";
+  return shellQuote(binary);
+}
+
 function listPresets() {
   if (!fs.existsSync(PRESETS_DIR)) return [];
   return fs
@@ -73,14 +83,14 @@ function parseCurrentPolicy(raw) {
  * Build the openshell policy set command with properly quoted arguments.
  */
 function buildPolicySetCommand(policyFile, sandboxName) {
-  return `openshell policy set --policy "${policyFile}" --wait "${sandboxName}"`;
+  return `${getOpenshellCommand()} policy set --policy "${policyFile}" --wait "${sandboxName}"`;
 }
 
 /**
  * Build the openshell policy get command with properly quoted arguments.
  */
 function buildPolicyGetCommand(sandboxName) {
-  return `openshell policy get --full "${sandboxName}" 2>/dev/null`;
+  return `${getOpenshellCommand()} policy get --full "${sandboxName}" 2>/dev/null`;
 }
 
 function applyPreset(sandboxName, presetName) {

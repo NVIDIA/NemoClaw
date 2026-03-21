@@ -31,10 +31,22 @@ function getCredential(key) {
   return creds[key] || null;
 }
 
-function prompt(question) {
+function prompt(question, opts = {}) {
   return new Promise((resolve) => {
+    const silent = opts.secret === true && process.stdin.isTTY;
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+    if (silent) {
+      rl.stdoutMuted = true;
+      rl._writeToOutput = function _writeToOutput(stringToWrite) {
+        if (!this.stdoutMuted) {
+          this.output.write(stringToWrite);
+        }
+      };
+    }
     rl.question(question, (answer) => {
+      if (silent) {
+        process.stderr.write("\n");
+      }
       rl.close();
       if (!process.stdin.isTTY) {
         if (typeof process.stdin.pause === "function") {
@@ -67,7 +79,7 @@ async function ensureApiKey() {
   console.log("  └─────────────────────────────────────────────────────────────────┘");
   console.log("");
 
-  key = await prompt("  NVIDIA API Key: ");
+  key = await prompt("  NVIDIA API Key: ", { secret: true });
 
   if (!key || !key.startsWith("nvapi-")) {
     console.error("  Invalid key. Must start with nvapi-");
@@ -114,7 +126,7 @@ async function ensureGithubToken() {
   console.log("  └──────────────────────────────────────────────────┘");
   console.log("");
 
-  token = await prompt("  GitHub Token: ");
+  token = await prompt("  GitHub Token: ", { secret: true });
 
   if (!token) {
     console.error("  Token required for deploy (repo is private).");
