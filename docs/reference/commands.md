@@ -36,7 +36,7 @@ The `nemoclaw` binary handles host-side operations that run outside the OpenClaw
 
 ### `nemoclaw onboard`
 
-Run the interactive setup wizard.
+Run the interactive setup wizard (recommended for new installs).
 The wizard creates an OpenShell gateway, registers inference providers, builds the sandbox image, and creates the sandbox.
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
@@ -45,6 +45,7 @@ $ nemoclaw onboard
 ```
 
 The first run prompts for your NVIDIA API key and saves it to `~/.nemoclaw/credentials.json`.
+The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
 
 The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
@@ -68,7 +69,7 @@ The `nemoclaw deploy` command is experimental and may not work as expected.
 :::
 
 Deploy NemoClaw to a remote GPU instance through [Brev](https://brev.nvidia.com).
-The deploy script installs Docker, NVIDIA Container Toolkit if a GPU is present, and OpenShell on the VM, then runs the nemoclaw setup and connects to the sandbox.
+The deploy script installs Docker, NVIDIA Container Toolkit if a GPU is present, and OpenShell on the VM, then runs `nemoclaw onboard` and connects to the sandbox.
 
 ```console
 $ nemoclaw deploy <instance-name>
@@ -172,3 +173,8 @@ After the fixes complete, the script prompts you to run `nemoclaw onboard` to co
 ```console
 $ sudo nemoclaw setup-spark
 ```
+
+### Legacy `nemoclaw setup`
+
+Deprecated. Use `nemoclaw onboard` instead.
+The legacy setup command runs the old setup script for backwards compatibility only.
