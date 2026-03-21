@@ -1,5 +1,7 @@
 node_modules
 /dist
+# Keep nemoclaw/dist/ — compiled plugin output needed by Dockerfile COPY (#196, #126)
+!nemoclaw/dist/
 .git
 *.pyc
 __pycache__
