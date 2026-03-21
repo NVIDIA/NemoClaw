@@ -11,6 +11,7 @@
     "prepare": "cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
   "dependencies": {
+    "discord.js": "^14.25.1",
     "openclaw": "2026.3.11"
   },
   "files": [
