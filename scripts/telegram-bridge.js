@@ -17,6 +17,9 @@
  */
 
 const https = require("https");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 const { execSync, spawn } = require("child_process");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 
@@ -28,7 +31,22 @@ if (!OPENSHELL) {
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API_KEY = process.env.NVIDIA_API_KEY;
-const SANDBOX = process.env.SANDBOX_NAME || "nemoclaw";
+
+function readDefaultSandbox() {
+  const configPath = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
+  try {
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    if (config.defaultSandbox) return config.defaultSandbox;
+    console.warn("[warn] sandboxes.json has no defaultSandbox field — falling back to SANDBOX_NAME or \"nemoclaw\"");
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      console.warn(`[warn] could not read sandboxes.json: ${err.message} — falling back to SANDBOX_NAME or "nemoclaw"`);
+    }
+  }
+  return null;
+}
+
+const SANDBOX = process.env.SANDBOX_NAME || readDefaultSandbox() || "nemoclaw";
 const ALLOWED_CHATS = process.env.ALLOWED_CHAT_IDS
   ? process.env.ALLOWED_CHAT_IDS.split(",").map((s) => s.trim())
   : null;
@@ -96,7 +114,7 @@ function runAgentInSandbox(message, sessionId) {
 
     // Write temp ssh config
     const confPath = `/tmp/nemoclaw-tg-ssh-${sessionId}.conf`;
-    require("fs").writeFileSync(confPath, sshConfig);
+    fs.writeFileSync(confPath, sshConfig);
 
     const escaped = message.replace(/'/g, "'\\''");
     const cmd = `export NVIDIA_API_KEY='${API_KEY}' && nemoclaw-start openclaw agent --agent main --local -m '${escaped}' --session-id 'tg-${sessionId}'`;
@@ -113,7 +131,7 @@ function runAgentInSandbox(message, sessionId) {
     proc.stderr.on("data", (d) => (stderr += d.toString()));
 
     proc.on("close", (code) => {
-      try { require("fs").unlinkSync(confPath); } catch {}
+      try { fs.unlinkSync(confPath); } catch {}
 
       // Extract the actual agent response — skip setup lines
       const lines = stdout.split("\n");
