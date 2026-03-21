@@ -176,17 +176,13 @@ async function promptOllamaModel(gpu) {
   const options = [];
   const seen = new Set();
 
-  // Add VRAM tier recommendations (show all tiers, mark which fits this GPU)
+  // Add VRAM tier models (show all tiers, mark download status)
   if (gpu && gpu.perGpuMB) {
     const { OLLAMA_VRAM_TIERS } = require("./local-inference");
-    const rec = getRecommendedOllamaModel(gpu.perGpuMB);
     for (const tier of OLLAMA_VRAM_TIERS) {
-      const fits = gpu.perGpuMB >= tier.minMB;
-      const isRec = tier.model === rec.model;
       const pulled = pulledModels.includes(tier.model);
-      const tag = isRec ? " (suggested for your GPU)" : !fits ? " (may not fit)" : "";
       const status = pulled ? "" : " [will download]";
-      options.push({ model: tier.model, label: `${tier.label}${tag}${status}` });
+      options.push({ model: tier.model, label: `${tier.label}${status}` });
       seen.add(tier.model);
     }
   }
@@ -284,7 +280,7 @@ function getNonInteractiveProvider() {
   const validProviders = new Set(["cloud", "ollama", "lmstudio", "vllm", "nim"]);
   if (!validProviders.has(providerKey)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
-    console.error("  Valid values: cloud, ollama, vllm, nim");
+    console.error("  Valid values: cloud, ollama, lmstudio, vllm, nim");
     process.exit(1);
   }
 
@@ -783,14 +779,20 @@ async function setupNim(sandboxName, gpu) {
       }
       // On WSL2, auto-fix if Ollama is bound to 127.0.0.1
       if (isWsl() && !isOllamaBoundToAllInterfaces(runCapture)) {
-        console.log("  Ollama is bound to 127.0.0.1 — fixing for container access...");
-        runInteractive(
-          'sudo mkdir -p /etc/systemd/system/ollama.service.d && ' +
-          'echo -e \'[Service]\\nEnvironment="OLLAMA_HOST=0.0.0.0:11434"\' | sudo tee /etc/systemd/system/ollama.service.d/override.conf && ' +
-          'sudo systemctl daemon-reload && sudo systemctl restart ollama',
-          { ignoreError: false }
-        );
-        sleep(3);
+        const hasSystemdOllama = !!runCapture("systemctl list-unit-files ollama.service 2>/dev/null | grep ollama", { ignoreError: true });
+        if (hasSystemdOllama) {
+          console.log("  Ollama is bound to 127.0.0.1 — fixing for container access...");
+          runInteractive(
+            'sudo mkdir -p /etc/systemd/system/ollama.service.d && ' +
+            'echo -e \'[Service]\\nEnvironment="OLLAMA_HOST=0.0.0.0:11434"\' | sudo tee /etc/systemd/system/ollama.service.d/override.conf && ' +
+            'sudo systemctl daemon-reload && sudo systemctl restart ollama',
+            { ignoreError: false }
+          );
+          sleep(3);
+        } else {
+          console.log("  Ollama is bound to 127.0.0.1 — containers won't be able to reach it.");
+          console.log("  Restart Ollama with: OLLAMA_HOST=0.0.0.0:11434 ollama serve");
+        }
       }
       console.log("  ✓ Using Ollama on localhost:11434");
       provider = "ollama-local";
@@ -803,7 +805,7 @@ async function setupNim(sandboxName, gpu) {
       const modelList = runCapture("ollama list 2>/dev/null", { ignoreError: true });
       if (!modelList || !modelList.includes(model)) {
         console.log(`  Pulling Ollama model: ${model} (this may take a few minutes)...`);
-        runInteractive(`ollama pull ${model}`, { ignoreError: false });
+        runInteractive(`ollama pull ${shellQuote(model)}`, { ignoreError: false });
       }
     } else if (selected.key === "lmstudio") {
       // Install LM Studio if not running
@@ -848,6 +850,12 @@ async function setupNim(sandboxName, gpu) {
         run("lms daemon up 2>/dev/null || true", { ignoreError: true });
         run("lms server start --bind 0.0.0.0 --port 1234 > /dev/null 2>&1 &", { ignoreError: true });
         sleep(5);
+        // Verify the server is actually responding
+        if (!runCapture("curl -sf http://localhost:1234/v1/models 2>/dev/null", { ignoreError: true })) {
+          console.error("  LM Studio server failed to start.");
+          console.error("  Try running manually: lms daemon up && lms server start --bind 0.0.0.0 --port 1234");
+          process.exit(1);
+        }
       }
       console.log("  ✓ Using LM Studio on localhost:1234");
       provider = "lmstudio-local";
@@ -922,7 +930,7 @@ async function setupInference(sandboxName, model, provider) {
       { ignoreError: true }
     );
     run(
-      `openshell inference set --no-verify --provider nvidia-nim --model ${model} 2>/dev/null || true`,
+      `openshell inference set --no-verify --provider nvidia-nim --model ${shellQuote(model)} 2>/dev/null || true`,
       { ignoreError: true }
     );
   } else if (provider === "vllm-local") {
@@ -941,7 +949,7 @@ async function setupInference(sandboxName, model, provider) {
       { ignoreError: true }
     );
     run(
-      `openshell inference set --no-verify --provider vllm-local --model ${model} 2>/dev/null || true`,
+      `openshell inference set --no-verify --provider vllm-local --model ${shellQuote(model)} 2>/dev/null || true`,
       { ignoreError: true }
     );
   } else if (provider === "ollama-local") {
@@ -961,16 +969,17 @@ async function setupInference(sandboxName, model, provider) {
       { ignoreError: true }
     );
     run(
-      `openshell inference set --no-verify --provider ollama-local --model ${model} 2>/dev/null || true`,
+      `openshell inference set --no-verify --provider ollama-local --model ${shellQuote(model)} 2>/dev/null || true`,
       { ignoreError: true }
     );
     console.log(`  Priming Ollama model: ${model}`);
-    run(getOllamaWarmupCommand(model), { ignoreError: true });
     const probe = validateOllamaModel(model, runCapture);
     if (!probe.ok) {
       console.error(`  ${probe.message}`);
       process.exit(1);
     }
+    // Keep the model loaded in VRAM after the probe
+    run(getOllamaWarmupCommand(model), { ignoreError: true });
   } else if (provider === "lmstudio-local") {
     const validation = validateLocalProvider(provider, runCapture);
     if (!validation.ok) {
@@ -987,7 +996,7 @@ async function setupInference(sandboxName, model, provider) {
       { ignoreError: true }
     );
     run(
-      `openshell inference set --no-verify --provider lmstudio-local --model ${model} 2>/dev/null || true`,
+      `openshell inference set --no-verify --provider lmstudio-local --model ${shellQuote(model)} 2>/dev/null || true`,
       { ignoreError: true }
     );
   }

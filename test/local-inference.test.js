@@ -71,8 +71,8 @@ describe("local inference helpers", () => {
     assert.match(cmd, /:11434\/api\/tags/);
     assert.match(cmd, new RegExp(CONTAINER_REACHABILITY_IMAGE));
     if (isWsl()) {
-      // On WSL2, uses direct IP without --add-host flag
-      assert.ok(!cmd.includes("--add-host"), "WSL2 should not use --add-host flag");
+      assert.match(cmd, /--add-host host\.docker\.internal:host-gateway/);
+      assert.match(cmd, /host\.docker\.internal:11434/);
     } else {
       assert.match(cmd, /--add-host host\.openshell\.internal:host-gateway/);
     }

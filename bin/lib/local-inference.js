@@ -9,9 +9,8 @@ const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
 const DEFAULT_OLLAMA_MODEL = "nemotron-3-nano:30b";
 
 // ── WSL2 networking ─────────────────────────────────────────────
-// On WSL2 with Docker Desktop, host-gateway points to the Docker VM (192.168.65.x)
-// rather than the WSL2 distro where Ollama/LM Studio actually run.
-// Use the WSL2 eth0 IP instead.
+// On WSL2, containers use host.docker.internal to reach host services.
+// On non-WSL, containers use host.openshell.internal via host-gateway.
 
 let _wsl2HostIp = null;
 function getWsl2HostIp() {
@@ -32,8 +31,8 @@ function getWsl2HostIp() {
 }
 
 function getHostUrl() {
-  const wslIp = getWsl2HostIp();
-  return wslIp ? `http://${wslIp}` : HOST_GATEWAY_URL;
+  if (isWsl()) return "http://host.docker.internal";
+  return HOST_GATEWAY_URL;
 }
 
 // ── Provider URL routing ────────────────────────────────────────
@@ -66,10 +65,11 @@ function getLocalProviderHealthCheck(provider) {
 }
 
 function getLocalProviderContainerReachabilityCheck(provider) {
-  const wslIp = getWsl2HostIp();
-  // On WSL2, test direct IP reachability instead of host-gateway (which points to Docker VM, not WSL2)
-  const hostFlag = wslIp ? [] : ["--add-host host.openshell.internal:host-gateway"];
-  const hostUrl = wslIp ? `http://${wslIp}` : "http://host.openshell.internal";
+  const wsl = isWsl();
+  const hostFlag = wsl
+    ? ["--add-host", "host.docker.internal:host-gateway"]
+    : ["--add-host", "host.openshell.internal:host-gateway"];
+  const hostUrl = wsl ? "http://host.docker.internal" : "http://host.openshell.internal";
   const baseArgs = ["docker", "run", "--rm", ...hostFlag, CONTAINER_REACHABILITY_IMAGE, "-sf"];
   switch (provider) {
     case "vllm-local":
