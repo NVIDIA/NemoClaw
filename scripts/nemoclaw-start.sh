@@ -37,6 +37,35 @@ os.chmod(path, 0o600)
 PYAUTH
 }
 
+sync_inference_api_key() {
+  if [ -z "${NVIDIA_API_KEY:-}" ]; then
+    return
+  fi
+
+  python3 - <<'PYSYNC'
+import json
+import os
+
+path = os.path.expanduser('~/.openclaw/openclaw.json')
+try:
+    cfg = json.load(open(path))
+except Exception:
+    raise SystemExit(0)
+
+providers = cfg.get('models', {}).get('providers', {})
+updated = False
+for name in ('inference', 'nvidia'):
+    provider = providers.get(name)
+    if isinstance(provider, dict):
+        provider['apiKey'] = os.environ['NVIDIA_API_KEY']
+        updated = True
+
+if updated:
+    json.dump(cfg, open(path, 'w'), indent=2)
+    os.chmod(path, 0o600)
+PYSYNC
+}
+
 print_dashboard_urls() {
   local token chat_ui_base local_url remote_url
 
@@ -129,6 +158,7 @@ PYAUTOPAIR
 echo 'Setting up NemoClaw...'
 openclaw doctor --fix > /dev/null 2>&1 || true
 write_auth_profile
+sync_inference_api_key
 openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
