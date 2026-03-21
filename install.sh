@@ -264,6 +264,7 @@ pre_extract_openclaw() {
 }
 
 install_nemoclaw() {
+  command_exists git || error "git was not found on PATH."
   if [[ -f "./package.json" ]] && grep -q '"name": "nemoclaw"' ./package.json 2>/dev/null; then
     info "NemoClaw package.json found in current directory — installing from source…"
     pre_extract_openclaw "$(pwd)" || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
