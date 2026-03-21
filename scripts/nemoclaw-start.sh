@@ -67,19 +67,43 @@ PUBLIC_PORT=18789
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 
 # ── Config integrity check ──────────────────────────────────────
-# The config hash was pinned at build time. If it doesn't match,
-# someone (or something) has tampered with the config.
+# The gateway config hash was pinned at build time. If it doesn't match,
+# someone (or something) has tampered with the protected gateway settings.
+
+config_hash() {
+  python3 - <<'PYHASH'
+import hashlib
+import json
+
+path = '/sandbox/.openclaw/openclaw.json'
+with open(path) as f:
+    cfg = json.load(f)
+
+payload = json.dumps(
+    {'gateway': cfg.get('gateway', {})},
+    sort_keys=True,
+    separators=(',', ':'),
+).encode()
+print(hashlib.sha256(payload).hexdigest())
+PYHASH
+}
 
 verify_config_integrity() {
   local hash_file="/sandbox/.openclaw/.config-hash"
+  local expected_hash actual_hash
   if [ ! -f "$hash_file" ]; then
     echo "[SECURITY] Config hash file missing — refusing to start without integrity verification"
     return 1
   fi
-  if ! (cd /sandbox/.openclaw && sha256sum -c "$hash_file" --status 2>/dev/null); then
+  expected_hash="$(cat "$hash_file")"
+  if ! actual_hash="$(config_hash 2>/dev/null)"; then
+    echo "[SECURITY] Could not compute config hash"
+    return 1
+  fi
+  if [ "$actual_hash" != "$expected_hash" ]; then
     echo "[SECURITY] openclaw.json integrity check FAILED — config may have been tampered with"
-    echo "[SECURITY] Expected hash: $(cat "$hash_file")"
-    echo "[SECURITY] Actual hash:   $(sha256sum /sandbox/.openclaw/openclaw.json)"
+    echo "[SECURITY] Expected hash: $expected_hash"
+    echo "[SECURITY] Actual hash:   $actual_hash"
     return 1
   fi
 }
@@ -94,16 +118,48 @@ import json
 import os
 path = os.path.expanduser('~/.openclaw/agents/main/agent/auth-profiles.json')
 os.makedirs(os.path.dirname(path), exist_ok=True)
-json.dump({
-    'nvidia:manual': {
-        'type': 'api_key',
-        'provider': 'nvidia',
-        'keyRef': {'source': 'env', 'id': 'NVIDIA_API_KEY'},
-        'profileId': 'nvidia:manual',
-    }
-}, open(path, 'w'))
+with open(path, 'w') as f:
+    json.dump({
+        'nvidia:manual': {
+            'type': 'api_key',
+            'provider': 'nvidia',
+            'keyRef': {'source': 'env', 'id': 'NVIDIA_API_KEY'},
+            'profileId': 'nvidia:manual',
+        }
+    }, f)
 os.chmod(path, 0o600)
 PYAUTH
+}
+
+sync_inference_api_key() {
+  if [ -z "${NVIDIA_API_KEY:-}" ]; then
+    return
+  fi
+
+  python3 - <<'PYSYNC'
+import json
+import os
+
+path = os.path.expanduser('~/.openclaw/openclaw.json')
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except Exception:
+    raise SystemExit(0)
+
+providers = cfg.get('models', {}).get('providers', {})
+updated = False
+for name in ('inference', 'nvidia'):
+    provider = providers.get(name)
+    if isinstance(provider, dict):
+        provider['apiKey'] = os.environ['NVIDIA_API_KEY']
+        updated = True
+
+if updated:
+    with open(path, 'w') as f:
+        json.dump(cfg, f, indent=2)
+    os.chmod(path, 0o600)
+PYSYNC
 }
 
 print_dashboard_urls() {
@@ -115,7 +171,8 @@ import json
 import os
 path = '/sandbox/.openclaw/openclaw.json'
 try:
-    cfg = json.load(open(path))
+    with open(path) as f:
+        cfg = json.load(f)
 except Exception:
     print('')
 else:
@@ -298,6 +355,7 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[SECURITY WARNING] Config integrity check failed — proceeding anyway (non-root mode)"
   fi
   write_auth_profile
+  sync_inference_api_key
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     exec "${NEMOCLAW_CMD[@]}"
@@ -328,7 +386,7 @@ fi
 verify_config_integrity
 
 # Write auth profile as sandbox user (needs writable .openclaw-data)
-gosu sandbox bash -c "$(declare -f write_auth_profile); write_auth_profile"
+gosu sandbox bash -c "$(declare -f write_auth_profile sync_inference_api_key); write_auth_profile; sync_inference_api_key"
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then

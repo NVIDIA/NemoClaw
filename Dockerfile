@@ -138,10 +138,13 @@ RUN chown root:root /sandbox/.openclaw \
     && chmod 755 /sandbox/.openclaw
 USER sandbox
 
-# Pin config hash at build time so the entrypoint can verify integrity.
-# Prevents the agent from creating a copy with a tampered config and
-# restarting the gateway pointing at it.
-RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
+# Pin a hash of the protected gateway config at build time so the entrypoint
+# can detect tampering without blocking writable model and auth state.
+RUN python3 -c "\
+import hashlib, json; \
+cfg = json.load(open('/sandbox/.openclaw/openclaw.json')); \
+payload = json.dumps({'gateway': cfg.get('gateway', {})}, sort_keys=True, separators=(',', ':')).encode(); \
+print(hashlib.sha256(payload).hexdigest())" > /sandbox/.openclaw/.config-hash \
     && chmod 444 /sandbox/.openclaw/.config-hash \
     && chown root:root /sandbox/.openclaw/.config-hash
 
