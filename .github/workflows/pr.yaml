@@ -40,9 +40,12 @@ jobs:
       - name: Run root unit tests
         run: node --test --experimental-test-coverage test/*.test.js
 
-      - name: Run TypeScript unit tests
+      - name: Run TypeScript unit tests with coverage
         working-directory: nemoclaw
         run: npx vitest run --coverage
+
+      - name: Check coverage ratchet
+        run: bash scripts/check-coverage-ratchet.sh
 
   test-e2e-sandbox:
     runs-on: ubuntu-latest
