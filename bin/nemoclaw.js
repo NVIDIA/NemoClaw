@@ -339,6 +339,11 @@ function sandboxPolicyList(sandboxName) {
   console.log("");
 }
 
+function sandboxR1Connect(sandboxName, actionArgs) {
+  const tunnelFlag = actionArgs.includes("--tunnel") ? " --tunnel" : "";
+  runInteractive(`bash "${SCRIPTS}/r1-connect.sh" --sandbox "${sandboxName}"${tunnelFlag}`);
+}
+
 function sandboxDestroy(sandboxName) {
   console.log(`  Stopping NIM for '${sandboxName}'...`);
   nim.stopNimContainer(sandboxName);
@@ -371,6 +376,10 @@ function help() {
   Policy Presets:
     nemoclaw <name> policy-add       Add a policy preset to a sandbox
     nemoclaw <name> policy-list      List presets (● = applied)
+
+  Devices:
+    nemoclaw <name> r1-connect       Pair a Rabbit R1 to the sandbox gateway
+    nemoclaw <name> r1-connect --tunnel  Same, but via cloudflared (remote access)
 
   Deploy:
     nemoclaw deploy <instance>       Deploy to a Brev VM and start services
@@ -438,10 +447,11 @@ const [cmd, ...args] = process.argv.slice(2);
       case "logs":        sandboxLogs(cmd, actionArgs.includes("--follow")); break;
       case "policy-add":  await sandboxPolicyAdd(cmd); break;
       case "policy-list": sandboxPolicyList(cmd); break;
+      case "r1-connect":  sandboxR1Connect(cmd, actionArgs); break;
       case "destroy":     sandboxDestroy(cmd); break;
       default:
         console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, destroy`);
+        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, r1-connect, destroy`);
         process.exit(1);
     }
     return;
