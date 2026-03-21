@@ -43,6 +43,7 @@ while [ $# -gt 0 ]; do
 done
 
 PIDDIR="/tmp/nemoclaw-services-${SANDBOX_NAME}"
+SANDBOX_STATE_FILE="$PIDDIR/sandbox.name"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -50,11 +51,54 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 info()  { echo -e "${GREEN}[services]${NC} $1"; }
+
+# Validate identifiers to prevent shell injection in ProxyCommand
+validate_name() {
+  case "$1" in
+    (*[!A-Za-z0-9._-]*|'') fail "Invalid identifier: '$1'" ;;
+  esac
+}
+
+# Resolve sandbox name: explicit flag > persisted state > auto-detect
+resolve_sandbox() {
+  if [ "$SANDBOX_NAME" != "default" ]; then
+    printf '%s\n' "$SANDBOX_NAME"
+    return
+  fi
+  if [ -f "$SANDBOX_STATE_FILE" ]; then
+    cat "$SANDBOX_STATE_FILE"
+    return
+  fi
+  openshell sandbox list --names 2>/dev/null | head -1
+}
 warn()  { echo -e "${YELLOW}[services]${NC} $1"; }
 fail()  { echo -e "${RED}[services]${NC} $1"; exit 1; }
 
 is_running() {
-  local pidfile="$PIDDIR/$1.pid"
+  local name="$1"
+  local pidfile="$PIDDIR/$name.pid"
+
+  # For openclaw-gateway, probe inside the sandbox via SSH so the check
+  # is independent of the local port-forward tunnel state.
+  if [ "$name" = "openclaw-gateway" ]; then
+    if command -v openshell > /dev/null 2>&1; then
+      local sandbox gateway_name proxy_cmd
+      sandbox="$(resolve_sandbox)"
+      [ -n "$sandbox" ] || return 1
+      gateway_name="$(openshell gateway info 2>/dev/null | grep -oP 'Gateway:\s+\K\S+' || echo 'openshell')"
+      printf -v proxy_cmd 'openshell ssh-proxy --gateway-name %q --name %q' "$gateway_name" "$sandbox"
+      ssh -o "ProxyCommand=$proxy_cmd" \
+          -o StrictHostKeyChecking=accept-new \
+          -o UserKnownHostsFile="$PIDDIR/openshell-known_hosts" \
+          -o LogLevel=ERROR \
+          -o ConnectTimeout=5 \
+          sandbox@"openshell-$sandbox" \
+          "curl -sf --max-time 2 http://127.0.0.1:$DASHBOARD_PORT/ >/dev/null" 2>/dev/null
+      return $?
+    fi
+    return 1
+  fi
+
   if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
     return 0
   fi
@@ -65,7 +109,11 @@ start_service() {
   local name="$1"
   shift
   if is_running "$name"; then
-    info "$name already running (PID $(cat "$PIDDIR/$name.pid"))"
+    if [ "$name" = "openclaw-gateway" ]; then
+      info "$name already running (port $DASHBOARD_PORT healthy)"
+    else
+      info "$name already running (PID $(cat "$PIDDIR/$name.pid"))"
+    fi
     return 0
   fi
   nohup "$@" > "$PIDDIR/$name.log" 2>&1 &
@@ -94,9 +142,13 @@ stop_service() {
 show_status() {
   mkdir -p "$PIDDIR"
   echo ""
-  for svc in telegram-bridge cloudflared; do
+  for svc in openclaw-gateway gateway-forward telegram-bridge cloudflared; do
     if is_running "$svc"; then
-      echo -e "  ${GREEN}●${NC} $svc  (PID $(cat "$PIDDIR/$svc.pid"))"
+      if [ "$svc" = "openclaw-gateway" ]; then
+        echo -e "  ${GREEN}●${NC} $svc  (healthy on port $DASHBOARD_PORT)"
+      else
+        echo -e "  ${GREEN}●${NC} $svc  (PID $(cat "$PIDDIR/$svc.pid"))"
+      fi
     else
       echo -e "  ${RED}●${NC} $svc  (stopped)"
     fi
@@ -116,6 +168,30 @@ do_stop() {
   mkdir -p "$PIDDIR"
   stop_service cloudflared
   stop_service telegram-bridge
+  stop_service gateway-forward
+  stop_service openclaw-gateway
+
+  # Stop the gateway process inside the sandbox (the local PID is just
+  # the SSH wrapper; the actual process runs inside the sandbox).
+  if command -v openshell > /dev/null 2>&1; then
+    local sandbox gateway_name
+    sandbox="$(resolve_sandbox)"
+    gateway_name="$(openshell gateway info 2>/dev/null | grep -oP 'Gateway:\s+\K\S+' || echo 'openshell')"
+    if [ -n "$sandbox" ]; then
+      validate_name "$sandbox"
+      validate_name "$gateway_name"
+      local proxy_cmd
+      printf -v proxy_cmd 'openshell ssh-proxy --gateway-name %q --name %q' "$gateway_name" "$sandbox"
+      info "Stopping gateway inside sandbox '$sandbox'..."
+      ssh -o "ProxyCommand=$proxy_cmd" \
+          -o StrictHostKeyChecking=accept-new \
+          -o UserKnownHostsFile="$PIDDIR/openshell-known_hosts" \
+          -o LogLevel=ERROR \
+          -o ConnectTimeout=10 \
+          sandbox@"openshell-$sandbox" \
+          'openclaw gateway stop 2>/dev/null; true' 2>/dev/null || true
+    fi
+  fi
   info "All services stopped."
 }
 
@@ -137,6 +213,63 @@ do_start() {
   fi
 
   mkdir -p "$PIDDIR"
+
+  # ── OpenClaw gateway inside sandbox ──────────────────────────────
+  # Start the OpenClaw gateway inside the sandbox and forward
+  # port 18789 to the host so external dashboards (e.g. Mission
+  # Control) can connect via WebSocket.
+  if command -v openshell > /dev/null 2>&1; then
+    local sandbox gateway_name
+    sandbox="$(resolve_sandbox)"
+    gateway_name="$(openshell gateway info 2>/dev/null | grep -oP 'Gateway:\s+\K\S+' || echo 'openshell')"
+    if [ -n "$sandbox" ]; then
+      validate_name "$sandbox"
+      validate_name "$gateway_name"
+      # Persist resolved sandbox so stop uses the same target
+      printf '%s\n' "$sandbox" > "$SANDBOX_STATE_FILE"
+      local gw_token="${OPENCLAW_GATEWAY_TOKEN:-$(head -c 24 /dev/urandom | xxd -p)}"
+      local proxy_cmd
+      printf -v proxy_cmd 'openshell ssh-proxy --gateway-name %q --name %q' "$gateway_name" "$sandbox"
+      local known_hosts_file="$PIDDIR/openshell-known_hosts"
+
+      # Start gateway inside sandbox (idempotent — skips if already running)
+      if ! is_running "openclaw-gateway"; then
+        info "Starting OpenClaw gateway inside sandbox '$sandbox'..."
+        # Write token to a temp file readable only by us, pipe it to ssh stdin
+        local token_file
+        token_file="$(mktemp "$PIDDIR/gw-token.XXXXXX")"
+        chmod 600 "$token_file"
+        printf '%s\n' "$gw_token" > "$token_file"
+        start_service openclaw-gateway \
+          sh -c "ssh -o 'ProxyCommand=$proxy_cmd' \
+              -o StrictHostKeyChecking=accept-new \
+              -o 'UserKnownHostsFile=$known_hosts_file' \
+              -o LogLevel=ERROR \
+              sandbox@openshell-$sandbox \
+              'read -r token; export OPENCLAW_GATEWAY_TOKEN=\"\$token\"; exec openclaw gateway run' \
+              < '$token_file'; rm -f '$token_file'"
+        sleep 5
+      fi
+
+      # Forward port 18789 from sandbox to host (idempotent)
+      # Bind to loopback only; use cloudflared for external access
+      if ! is_running "gateway-forward"; then
+        info "Forwarding port $DASHBOARD_PORT from sandbox..."
+        start_service gateway-forward \
+          ssh -N -L "127.0.0.1:$DASHBOARD_PORT:127.0.0.1:$DASHBOARD_PORT" \
+              -o "ProxyCommand=$proxy_cmd" \
+              -o StrictHostKeyChecking=accept-new \
+              -o UserKnownHostsFile="$known_hosts_file" \
+              -o LogLevel=ERROR \
+              -o ServerAliveInterval=15 \
+              -o ServerAliveCountMax=3 \
+              sandbox@"openshell-$sandbox"
+        sleep 3
+      fi
+    else
+      warn "No sandbox found. Gateway and port forwarding skipped."
+    fi
+  fi
 
   # Telegram bridge (only if token provided)
   if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
@@ -178,6 +311,16 @@ do_start() {
 
   if [ -n "$tunnel_url" ]; then
     printf "  │  Public URL:  %-40s│\n" "$tunnel_url"
+  fi
+
+  if is_running openclaw-gateway; then
+    printf "  │  Gateway:     %-40s│\n" "healthy (port $DASHBOARD_PORT)"
+  else
+    printf "  │  Gateway:     %-40s│\n" "offline"
+  fi
+
+  if is_running gateway-forward; then
+    printf "  │  Port fwd:    %-40s│\n" "$DASHBOARD_PORT → sandbox"
   fi
 
   if is_running telegram-bridge; then
