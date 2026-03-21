@@ -23,13 +23,13 @@ RUN groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbo
     && mkdir -p /sandbox/.nemoclaw \
     && chown -R sandbox:sandbox /sandbox
 
-# Split .openclaw into immutable config dir + writable state dir.
-# The policy makes /sandbox/.openclaw read-only via Landlock, so the agent
-# cannot modify openclaw.json, auth tokens, or CORS settings.  Writable
-# state (agents, plugins, etc.) lives in .openclaw-data, reached via symlinks.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/514
+# Split .openclaw into a stable entry path + writable state dir.
+# OpenClaw expects ~/.openclaw/openclaw.json to remain writable for
+# `openclaw models set`, so keep the canonical path but back it with
+# writable state under .openclaw-data.
 RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
         /sandbox/.openclaw-data/extensions \
+        /sandbox/.openclaw-data/identity \
         /sandbox/.openclaw-data/workspace \
         /sandbox/.openclaw-data/skills \
         /sandbox/.openclaw-data/hooks \
@@ -38,8 +38,10 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
         /sandbox/.openclaw-data/canvas \
         /sandbox/.openclaw-data/cron \
     && mkdir -p /sandbox/.openclaw \
+    && ln -s /sandbox/.openclaw-data/openclaw.json /sandbox/.openclaw/openclaw.json \
     && ln -s /sandbox/.openclaw-data/agents /sandbox/.openclaw/agents \
     && ln -s /sandbox/.openclaw-data/extensions /sandbox/.openclaw/extensions \
+    && ln -s /sandbox/.openclaw-data/identity /sandbox/.openclaw/identity \
     && ln -s /sandbox/.openclaw-data/workspace /sandbox/.openclaw/workspace \
     && ln -s /sandbox/.openclaw-data/skills /sandbox/.openclaw/skills \
     && ln -s /sandbox/.openclaw-data/hooks /sandbox/.openclaw/hooks \
@@ -87,10 +89,10 @@ WORKDIR /sandbox
 USER sandbox
 
 # Write the COMPLETE openclaw.json including gateway config and auth token.
-# This file is immutable at runtime (Landlock read-only on /sandbox/.openclaw).
-# No runtime writes to openclaw.json are needed or possible.
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 # Auth token is generated per build so each image has a unique token.
+# The ~/.openclaw/openclaw.json path is a symlink into .openclaw-data so
+# runtime model switches can update it without patching the image.
 RUN python3 -c "\
 import json, os, secrets; \
 from urllib.parse import urlparse; \
@@ -135,16 +137,12 @@ os.chmod(path, 0o600)"
 RUN openclaw doctor --fix > /dev/null 2>&1 || true \
     && openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true
 
-# Lock openclaw.json via DAC: chown to root so the sandbox user cannot modify
-# it at runtime.  This works regardless of Landlock enforcement status.
-# The Landlock policy (/sandbox/.openclaw in read_only) provides defense-in-depth
-# once OpenShell enables enforcement.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/514
+# Keep the top-level ~/.openclaw entries owned by root while leaving the
+# state-backed openclaw.json target writable under .openclaw-data.
 USER root
 RUN chown root:root /sandbox/.openclaw \
     && find /sandbox/.openclaw -mindepth 1 -maxdepth 1 -exec chown -h root:root {} + \
-    && chmod 1777 /sandbox/.openclaw \
-    && chmod 444 /sandbox/.openclaw/openclaw.json
+    && chmod 1777 /sandbox/.openclaw
 USER sandbox
 
 ENTRYPOINT ["/bin/bash"]
