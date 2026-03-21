@@ -90,7 +90,8 @@ Add the `export` line to your `~/.bashrc` or `~/.zshrc` to make it permanent, th
 
 ### Port already in use
 
-NemoClaw uses four ports (see the [Port Configuration](../../README.md#port-configuration) section in the README). If another process is bound to one of these ports, onboarding fails with a message identifying the conflicting process.
+NemoClaw uses four ports (see the [Port Configuration](../../README.md#port-configuration) section in the README).
+If another process is bound to one of these ports, onboarding fails with a message identifying the conflicting process.
 
 To resolve, either stop the conflicting process:
 

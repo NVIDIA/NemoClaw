@@ -702,9 +702,10 @@ async function setupNim(sandboxName, gpu) {
   }
 
   // Warn (don't block) if the selected inference port is occupied by another process.
-  // The check fires even when process is "unknown" (net probe fallback on non-root)
-  // because that's the most common conflict scenario on Linux.
-  if (provider === "vllm-local") {
+  // Only check for vllm-local when we did NOT start NIM ourselves (nimContainer is
+  // set when we launched a NIM container).  For ollama-local we always start or
+  // adopt the service, so the port being in use is expected — skip the warning.
+  if (provider === "vllm-local" && !nimContainer) {
     const vllmCheck = await checkPortAvailable(VLLM_PORT);
     if (!vllmCheck.ok) {
       const who = vllmCheck.process !== "unknown"
@@ -714,17 +715,6 @@ async function setupNim(sandboxName, gpu) {
       console.log(`  ⚠  Port ${VLLM_PORT} is in use${who}.`);
       console.log(`     vLLM/NIM inference needs this port. If this is your inference server, you're fine.`);
       console.log(`     Otherwise, stop the conflicting process or set NEMOCLAW_VLLM_PORT to a different port.`);
-    }
-  } else if (provider === "ollama-local") {
-    const ollamaCheck = await checkPortAvailable(OLLAMA_PORT);
-    if (!ollamaCheck.ok) {
-      const who = ollamaCheck.process !== "unknown"
-        ? ` by ${ollamaCheck.process}${ollamaCheck.pid ? ` (PID ${ollamaCheck.pid})` : ""}`
-        : "";
-      console.log("");
-      console.log(`  ⚠  Port ${OLLAMA_PORT} is in use${who}.`);
-      console.log(`     Ollama needs this port. If this is your Ollama server, you're fine.`);
-      console.log(`     Otherwise, stop the conflicting process or set NEMOCLAW_OLLAMA_PORT to a different port.`);
     }
   }
 

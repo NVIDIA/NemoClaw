@@ -86,7 +86,7 @@ $ scripts/check-ports.sh
 The script reads your `.env` and `.env.local` files (if present) to resolve the configured ports, then checks each one.
 If a port is in use, the output shows the process name and PID holding it.
 
-```
+```text
 Checking NemoClaw ports...
 
   ok        18789 (dashboard)

@@ -25,6 +25,29 @@ warn() { echo -e "${YELLOW}[uninstall]${NC} $1"; }
 fail() { echo -e "${RED}[uninstall]${NC} $1"; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── Load .env so custom port overrides are visible ──────────────────
+_load_env() {
+  local env_file="$1"
+  [[ -f "$env_file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+    [[ "$line" == *=* ]] || continue
+    local key="${line%%=*}"
+    local val="${line#*=}"
+    val="${val#\"}" ; val="${val%\"}"
+    val="${val#\'}" ; val="${val%\'}"
+    if [[ -z "${!key+x}" ]]; then
+      export "$key=$val"
+    fi
+  done < "$env_file"
+}
+_load_env "$SCRIPT_DIR/.env.local"
+_load_env "$SCRIPT_DIR/.env"
+
 NEMOCLAW_STATE_DIR="${HOME}/.nemoclaw"
 OPENSHELL_CONFIG_DIR="${HOME}/.config/openshell"
 NEMOCLAW_CONFIG_DIR="${HOME}/.config/nemoclaw"

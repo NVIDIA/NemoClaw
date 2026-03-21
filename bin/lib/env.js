@@ -36,18 +36,19 @@ function parseEnvFile(filePath) {
 
     let value = line.slice(eqIndex + 1).trim();
 
+    // Remove inline comments for unquoted values first, then strip quotes.
+    // This handles cases like KEY='value' # comment correctly.
+    const hashIndex = value.indexOf(" #");
+    if (hashIndex !== -1) {
+      value = value.slice(0, hashIndex).trim();
+    }
+
     // Strip surrounding quotes
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
     ) {
       value = value.slice(1, -1);
-    } else {
-      // Remove inline comments for unquoted values
-      const hashIndex = value.indexOf(" #");
-      if (hashIndex !== -1) {
-        value = value.slice(0, hashIndex).trim();
-      }
     }
 
     // Never overwrite existing env vars

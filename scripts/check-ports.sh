@@ -47,6 +47,31 @@ GATEWAY_PORT="${NEMOCLAW_GATEWAY_PORT:-8080}"
 VLLM_PORT="${NEMOCLAW_VLLM_PORT:-8000}"
 OLLAMA_PORT="${NEMOCLAW_OLLAMA_PORT:-11434}"
 
+# ── Validate ports ──────────────────────────────────────────────────
+validate_port() {
+  local name="$1"
+  local value="$2"
+  if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+    echo "Error: $name is not a valid integer: '$value'" >&2
+    exit 1
+  fi
+  if (( value < 1024 || value > 65535 )); then
+    echo "Error: $name=$value is out of range (must be 1024–65535)" >&2
+    exit 1
+  fi
+}
+
+validate_port "DASHBOARD_PORT" "$DASHBOARD_PORT"
+validate_port "GATEWAY_PORT" "$GATEWAY_PORT"
+validate_port "VLLM_PORT" "$VLLM_PORT"
+validate_port "OLLAMA_PORT" "$OLLAMA_PORT"
+
+# ── Ensure lsof is available ────────────────────────────────────────
+if ! command -v lsof >/dev/null 2>&1; then
+  echo "Error: lsof is required but not found in PATH" >&2
+  exit 1
+fi
+
 # ── Check a single port ─────────────────────────────────────────────
 conflicts=0
 
