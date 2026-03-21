@@ -64,9 +64,19 @@ $ export DISCORD_BOT_TOKEN=<your-bot-token>
 $ export NVIDIA_API_KEY=<your-nvidia-api-key>
 ```
 
+To target a non-default sandbox or model, set the following optional variables before running `nemoclaw start`.
+
+```console
+$ export SANDBOX_NAME=<your-sandbox-name>
+$ export NEMOCLAW_MODEL=nvidia/nemotron-3-nano-30b-a3b
+```
+
+`SANDBOX_NAME` selects which sandbox the bridge connects to (default: `default`).
+`NEMOCLAW_MODEL` sets the model the agent uses for inference (default: `nvidia/nemotron-3-super-120b-a12b`).
+
 ## Start Auxiliary Services
 
-Start the Discord bridge and other auxiliary services:
+Start the Discord bridge and other auxiliary services.
 
 ```console
 $ nemoclaw start
@@ -81,7 +91,7 @@ The Discord bridge starts only when the `DISCORD_BOT_TOKEN` environment variable
 
 ## Verify the Services
 
-Check that the Discord bridge is running:
+Check that the Discord bridge is running.
 
 ```console
 $ nemoclaw status
@@ -101,7 +111,7 @@ The agent remembers the conversation context within a channel across messages.
 
 To clear the conversation history for a channel, send the following message in that channel:
 
-```
+```text
 !reset
 ```
 
@@ -120,7 +130,7 @@ To find a guild ID, open Discord, go to **Settings → Advanced**, enable **Deve
 
 ## Stop the Services
 
-To stop the Discord bridge and all other auxiliary services:
+To stop the Discord bridge and all other auxiliary services.
 
 ```console
 $ nemoclaw stop

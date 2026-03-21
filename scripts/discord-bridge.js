@@ -47,9 +47,14 @@ if (!API_KEY) { console.error("NVIDIA_API_KEY required"); process.exit(1); }
 const DISCORD_MAX_LENGTH = 2000;
 
 // Per-channel session continuity: channelId → sessionId
-// A session ID is a unique string created when the channel first sends a message
-// or after !reset. Using a timestamp suffix ensures reset truly starts a new session.
+// Default session ID is stable (ch-<channelId>) so it survives restarts.
+// !reset replaces it with a timestamped ID to force a fresh history.
 const activeSessions = new Map();
+
+// Per-channel serialization queue: channelId → Promise chain
+// Ensures only one agent call runs per channel at a time so replies
+// are never interleaved or out of order.
+const channelQueues = new Map();
 
 // ── Run agent inside sandbox ──────────────────────────────────────
 
@@ -65,8 +70,7 @@ function runAgentInSandbox(message, sessionId) {
   return new Promise((resolve) => {
     const sshConfig = execSync(`"${OPENSHELL}" sandbox ssh-config "${SANDBOX}"`, { encoding: "utf-8" });
 
-    // Use a unique path per invocation to avoid races when multiple messages
-    // arrive concurrently in the same channel.
+    // Use a unique path per invocation to avoid file collisions on concurrent calls.
     const confPath = `/tmp/nemoclaw-dc-ssh-${sessionId}-${Date.now()}-${Math.random().toString(36).slice(2)}.conf`;
     require("fs").writeFileSync(confPath, sshConfig);
 
@@ -140,6 +144,20 @@ async function sendChunked(channel, text) {
   }
 }
 
+/**
+ * Enqueue a task for a channel so only one agent call runs per channel at a time.
+ *
+ * @param {string} channelId - The Discord channel ID used as the queue key.
+ * @param {() => Promise<void>} task - The async task to serialize.
+ * @returns {Promise<void>}
+ */
+function enqueueForChannel(channelId, task) {
+  const prev = channelQueues.get(channelId) ?? Promise.resolve();
+  const next = prev.then(task).catch(() => {});
+  channelQueues.set(channelId, next);
+  return next;
+}
+
 // ── Discord client ────────────────────────────────────────────────
 
 const client = new Client({
@@ -148,6 +166,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
   ],
+  allowedMentions: { parse: [], repliedUser: false },
 });
 
 client.on("messageCreate", async (message) => {
@@ -165,9 +184,10 @@ client.on("messageCreate", async (message) => {
   const channelId = message.channel.id;
   const content = message.content.trim();
 
-  // Handle !reset — delete the stored session so the next message gets a fresh ID
+  // Handle !reset — replace the stable session ID with a timestamped one
+  // so the agent starts fresh while the next non-reset message reuses it.
   if (content === "!reset") {
-    activeSessions.delete(channelId);
+    activeSessions.set(channelId, `ch-${channelId}-${Date.now()}`);
     await message.reply("Session reset.");
     return;
   }
@@ -181,27 +201,29 @@ client.on("messageCreate", async (message) => {
     console.log(`[${message.guild.id}/#${channelId}] ${message.author.id}: ${content.length} chars`);
   }
 
-  // Reuse the existing session for this channel, or create a new one
+  // Stable session ID by default; only changes after !reset
   if (!activeSessions.has(channelId)) {
-    activeSessions.set(channelId, `ch-${channelId}-${Date.now()}`);
+    activeSessions.set(channelId, `ch-${channelId}`);
   }
   const sessionId = activeSessions.get(channelId);
 
-  // Show typing indicator while agent runs
-  const typingInterval = setInterval(() => {
-    message.channel.sendTyping().catch(() => {});
-  }, 8000);
-  await message.channel.sendTyping().catch(() => {});
+  // Serialize per-channel: queue this message behind any in-flight agent call
+  enqueueForChannel(channelId, async () => {
+    const typingInterval = setInterval(() => {
+      message.channel.sendTyping().catch(() => {});
+    }, 8000);
+    await message.channel.sendTyping().catch(() => {});
 
-  try {
-    const response = await runAgentInSandbox(content, sessionId);
-    clearInterval(typingInterval);
-    console.log(`[${channelId}] agent responded (${response.length} chars)`);
-    await sendChunked(message.channel, response);
-  } catch (err) {
-    clearInterval(typingInterval);
-    await message.reply(`Error: ${err.message}`);
-  }
+    try {
+      const response = await runAgentInSandbox(content, sessionId);
+      clearInterval(typingInterval);
+      console.log(`[${channelId}] agent responded (${response.length} chars)`);
+      await sendChunked(message.channel, response);
+    } catch (err) {
+      clearInterval(typingInterval);
+      await message.reply(`Error: ${err.message}`);
+    }
+  });
 });
 
 client.once("ready", () => {
