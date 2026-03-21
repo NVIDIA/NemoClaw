@@ -30,20 +30,24 @@ import yaml
 
 
 def log(msg: str) -> None:
+    """Print a message to stdout with immediate flush."""
     print(msg, flush=True)
 
 
 def progress(pct: int, label: str) -> None:
+    """Emit a PROGRESS:<pct>:<label> line for the TS plugin to parse."""
     print(f"PROGRESS:{pct}:{label}", flush=True)
 
 
 def emit_run_id() -> str:
+    """Generate a unique run ID and print it as a RUN_ID:<id> line."""
     rid = f"nc-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     print(f"RUN_ID:{rid}", flush=True)
     return rid
 
 
 def load_blueprint() -> dict[str, Any]:
+    """Load blueprint.yaml from NEMOCLAW_BLUEPRINT_PATH and apply port overrides."""
     blueprint_path = Path(os.environ.get("NEMOCLAW_BLUEPRINT_PATH", "."))
     bp_file = blueprint_path / "blueprint.yaml"
     if not bp_file.exists():
@@ -364,6 +368,7 @@ def action_rollback(rid: str) -> None:
 
 
 def main() -> None:
+    """Parse CLI arguments and dispatch to the requested action."""
     parser = argparse.ArgumentParser(description="NemoClaw Blueprint Runner")
     parser.add_argument("action", choices=["plan", "apply", "status", "rollback"])
     parser.add_argument("--profile", default="default")

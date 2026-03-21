@@ -181,11 +181,11 @@ nemoclaw onboard
 
 Or create a `.env` file at the project root (see `.env.example`).
 
-> **Note**
+> **ℹ️ Note**
 >
 > Changing the dashboard port requires rebuilding the sandbox image because the CORS origin is baked in at build time. Re-run `nemoclaw onboard` after changing `NEMOCLAW_DASHBOARD_PORT`.
->
-> **Network exposure**
+
+> **⚠️ Network exposure**
 >
 > When using local inference (Ollama or vLLM), the inference service binds to `0.0.0.0` so that containers can reach it via `host.openshell.internal`. This means the service is reachable from your local network, not just localhost. This is required for the sandbox architecture but should be considered in shared or untrusted network environments.
 ---
