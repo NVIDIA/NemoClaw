@@ -165,7 +165,7 @@ stop_openshell_forward_processes() {
   while IFS= read -r pid; do
     [ -n "$pid" ] || continue
     pids+=("$pid")
-  done < <(pgrep -f 'openshell.*forward.*18789' 2>/dev/null || true)
+  done < <(pgrep -f "openshell.*forward.*${NEMOCLAW_DASHBOARD_PORT:-18789}" 2>/dev/null || true)
 
   if [ "${#pids[@]}" -eq 0 ]; then
     info "No local OpenShell forward processes found"

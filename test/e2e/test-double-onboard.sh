@@ -51,7 +51,7 @@ if command -v nemoclaw > /dev/null 2>&1; then
 fi
 openshell sandbox delete "$SANDBOX_A" 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_B" 2>/dev/null || true
-openshell forward stop 18789 2>/dev/null || true
+openshell forward stop "${NEMOCLAW_DASHBOARD_PORT:-18789}" 2>/dev/null || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 pass "Pre-cleanup complete"
 
@@ -156,13 +156,13 @@ echo "$output2" | grep -q "Cleaning up previous NemoClaw session" \
   && pass "Stale session cleanup fired on second onboard" \
   || fail "Stale session cleanup did NOT fire (regression: #397)"
 
-echo "$output2" | grep -q "Port 8080 is not available" \
-  && fail "Port 8080 conflict detected (regression: #21)" \
-  || pass "No port 8080 conflict"
+echo "$output2" | grep -q "Port ${NEMOCLAW_GATEWAY_PORT:-8080} is not available" \
+  && fail "Port ${NEMOCLAW_GATEWAY_PORT:-8080} conflict detected (regression: #21)" \
+  || pass "No port ${NEMOCLAW_GATEWAY_PORT:-8080} conflict"
 
-echo "$output2" | grep -q "Port 18789 is not available" \
-  && fail "Port 18789 conflict detected" \
-  || pass "No port 18789 conflict"
+echo "$output2" | grep -q "Port ${NEMOCLAW_DASHBOARD_PORT:-18789} is not available" \
+  && fail "Port ${NEMOCLAW_DASHBOARD_PORT:-18789} conflict detected" \
+  || pass "No port ${NEMOCLAW_DASHBOARD_PORT:-18789} conflict"
 
 echo "$output2" | grep -q "Sandbox '${SANDBOX_A}' created" \
   && pass "Sandbox '$SANDBOX_A' recreated" \
@@ -197,13 +197,13 @@ echo "$output3" | grep -q "Cleaning up previous NemoClaw session" \
   && pass "Stale session cleanup fired on third onboard" \
   || fail "Stale session cleanup did NOT fire on third onboard"
 
-echo "$output3" | grep -q "Port 8080 is not available" \
-  && fail "Port 8080 conflict on third onboard (regression)" \
-  || pass "No port 8080 conflict on third onboard"
+echo "$output3" | grep -q "Port ${NEMOCLAW_GATEWAY_PORT:-8080} is not available" \
+  && fail "Port ${NEMOCLAW_GATEWAY_PORT:-8080} conflict on third onboard (regression)" \
+  || pass "No port ${NEMOCLAW_GATEWAY_PORT:-8080} conflict on third onboard"
 
-echo "$output3" | grep -q "Port 18789 is not available" \
-  && fail "Port 18789 conflict on third onboard" \
-  || pass "No port 18789 conflict on third onboard"
+echo "$output3" | grep -q "Port ${NEMOCLAW_DASHBOARD_PORT:-18789} is not available" \
+  && fail "Port ${NEMOCLAW_DASHBOARD_PORT:-18789} conflict on third onboard" \
+  || pass "No port ${NEMOCLAW_DASHBOARD_PORT:-18789} conflict on third onboard"
 
 echo "$output3" | grep -q "Sandbox '${SANDBOX_B}' created" \
   && pass "Sandbox '$SANDBOX_B' created" \
@@ -218,7 +218,7 @@ nemoclaw "$SANDBOX_A" destroy 2>/dev/null || true
 nemoclaw "$SANDBOX_B" destroy 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_A" 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_B" 2>/dev/null || true
-openshell forward stop 18789 2>/dev/null || true
+openshell forward stop "${NEMOCLAW_DASHBOARD_PORT:-18789}" 2>/dev/null || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
 openshell sandbox get "$SANDBOX_A" > /dev/null 2>&1 \

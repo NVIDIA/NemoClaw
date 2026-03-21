@@ -20,7 +20,7 @@ components:
   sandbox:
     image: "ghcr.io/nvidia/openshell-community/sandboxes/openclaw:latest"
     name: "openclaw"
-    forward_ports:
+    forward_ports:  # Override at runtime via NEMOCLAW_DASHBOARD_PORT
       - 18789
 
   inference:
@@ -42,14 +42,14 @@ components:
       nim-local:
         provider_type: "openai"
         provider_name: "nim-local"
-        endpoint: "http://nim-service.local:8000/v1"
+        endpoint: "http://nim-service.local:8000/v1"  # Port overridden by NEMOCLAW_VLLM_PORT via runner.py
         model: "nvidia/nemotron-3-super-120b-a12b"
         credential_env: "NIM_API_KEY"
 
       vllm:
         provider_type: "openai"
         provider_name: "vllm-local"
-        endpoint: "http://localhost:8000/v1"
+        endpoint: "http://localhost:8000/v1"  # Port overridden by NEMOCLAW_VLLM_PORT via runner.py
         model: "nvidia/nemotron-3-nano-30b-a3b"
         credential_env: "OPENAI_API_KEY"
         credential_default: "dummy"
@@ -61,5 +61,5 @@ components:
         name: nim_service
         endpoints:
           - host: "nim-service.local"
-            port: 8000
+            port: 8000  # Overridden by NEMOCLAW_VLLM_PORT via runner.py
             protocol: rest

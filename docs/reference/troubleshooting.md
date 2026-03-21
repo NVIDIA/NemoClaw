@@ -90,17 +90,28 @@ Add the `export` line to your `~/.bashrc` or `~/.zshrc` to make it permanent, th
 
 ### Port already in use
 
-The NemoClaw gateway uses port `18789` by default.
-If another process is already bound to this port, onboarding fails.
-Identify the conflicting process, verify it is safe to stop, and terminate it:
+NemoClaw uses four ports (see the [Port Configuration](../../README.md#port-configuration) section in the README). If another process is bound to one of these ports, onboarding fails with a message identifying the conflicting process.
+
+To resolve, either stop the conflicting process:
 
 ```console
-$ lsof -i :18789
+$ lsof -i :8080
 $ kill <PID>
 ```
 
-If the process does not exit, use `kill -9 <PID>` to force-terminate it.
-Then retry onboarding.
+Or use a different port by setting the corresponding environment variable before onboarding:
+
+```console
+$ export NEMOCLAW_GATEWAY_PORT=9080
+$ nemoclaw onboard
+```
+
+| Default port | Env var | Common conflicts |
+|-------------|---------|-----------------|
+| 8080 | `NEMOCLAW_GATEWAY_PORT` | Jenkins, Tomcat, K8s dashboard |
+| 8000 | `NEMOCLAW_VLLM_PORT` | Django, PHP dev server |
+| 18789 | `NEMOCLAW_DASHBOARD_PORT` | Uncommon |
+| 11434 | `NEMOCLAW_OLLAMA_PORT` | Uncommon |
 
 ## Onboarding
 

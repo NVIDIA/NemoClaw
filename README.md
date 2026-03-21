@@ -160,6 +160,37 @@ curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uni
 
 ---
 
+## Port Configuration
+
+NemoClaw uses four network ports. All are configurable via environment variables or a `.env` file at the project root (copy `.env.example` to get started).
+
+| Port | Default | Env var | Purpose | Conflict risk |
+|------|---------|---------|---------|---------------|
+| Dashboard | 18789 | `NEMOCLAW_DASHBOARD_PORT` | OpenClaw web UI, forwarded from sandbox to host | Low |
+| Gateway | 8080 | `NEMOCLAW_GATEWAY_PORT` | OpenShell gateway signal channel | **High** — Jenkins, Tomcat, K8s dashboard |
+| vLLM/NIM | 8000 | `NEMOCLAW_VLLM_PORT` | Local vLLM or NIM inference endpoint | **High** — Django, PHP dev server |
+| Ollama | 11434 | `NEMOCLAW_OLLAMA_PORT` | Local Ollama inference endpoint | Low |
+
+To use non-default ports, set the environment variables before running `nemoclaw onboard`:
+
+```bash
+export NEMOCLAW_GATEWAY_PORT=9080
+export NEMOCLAW_VLLM_PORT=9000
+nemoclaw onboard
+```
+
+Or create a `.env` file at the project root (see `.env.example`).
+
+> **Note**
+>
+> Changing the dashboard port requires rebuilding the sandbox image because the CORS origin is baked in at build time. Re-run `nemoclaw onboard` after changing `NEMOCLAW_DASHBOARD_PORT`.
+
+> **Network exposure**
+>
+> When using local inference (Ollama or vLLM), the inference service binds to `0.0.0.0` so that containers can reach it via `host.openshell.internal`. This means the service is reachable from your local network, not just localhost. This is required for the sandbox architecture but should be considered in shared or untrusted network environments.
+
+---
+
 ## How It Works
 
 NemoClaw installs the NVIDIA OpenShell runtime and Nemotron models, then uses a versioned blueprint to create a sandboxed environment where every network request, file access, and inference call is governed by declarative policy. The `nemoclaw` CLI orchestrates the full stack: OpenShell gateway, sandbox, inference provider, and network policy.

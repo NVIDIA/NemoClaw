@@ -4,6 +4,7 @@
 // NIM container management — pull, start, stop, health-check NIM images.
 
 const { run, runCapture } = require("./runner");
+const { VLLM_PORT } = require("./ports");
 const nimImages = require("./nim-images.json");
 
 function containerName(sandboxName) {
@@ -125,7 +126,7 @@ function pullNimImage(model) {
   return image;
 }
 
-function startNimContainer(sandboxName, model, port = 8000) {
+function startNimContainer(sandboxName, model, port = VLLM_PORT) {
   const name = containerName(sandboxName);
   const image = getImageForModel(model);
   if (!image) {
@@ -138,12 +139,13 @@ function startNimContainer(sandboxName, model, port = 8000) {
 
   console.log(`  Starting NIM container: ${name}`);
   run(
+    // Right-hand :8000 is the NIM image's internal port — fixed by the image, not configurable.
     `docker run -d --gpus all -p ${port}:8000 --name ${name} --shm-size 16g ${image}`
   );
   return name;
 }
 
-function waitForNimHealth(port = 8000, timeout = 300) {
+function waitForNimHealth(port = VLLM_PORT, timeout = 300) {
   const start = Date.now();
   const interval = 5000;
   console.log(`  Waiting for NIM health on port ${port} (timeout: ${timeout}s)...`);
@@ -172,7 +174,7 @@ function stopNimContainer(sandboxName) {
   run(`docker rm ${name} 2>/dev/null || true`, { ignoreError: true });
 }
 
-function nimStatus(sandboxName) {
+function nimStatus(sandboxName, port = VLLM_PORT) {
   const name = containerName(sandboxName);
   try {
     const state = runCapture(
@@ -183,7 +185,7 @@ function nimStatus(sandboxName) {
 
     let healthy = false;
     if (state === "running") {
-      const health = runCapture(`curl -sf http://localhost:8000/v1/models 2>/dev/null`, {
+      const health = runCapture(`curl -sf http://localhost:${port}/v1/models 2>/dev/null`, {
         ignoreError: true,
       });
       healthy = !!health;

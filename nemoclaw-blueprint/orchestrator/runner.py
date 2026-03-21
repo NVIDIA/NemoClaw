@@ -17,6 +17,7 @@ Protocol:
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -49,7 +50,62 @@ def load_blueprint() -> dict[str, Any]:
         log(f"ERROR: blueprint.yaml not found at {bp_file}")
         sys.exit(1)
     with bp_file.open() as f:
-        return yaml.safe_load(f)
+        bp = yaml.safe_load(f)
+    _apply_port_overrides(bp)
+    return bp
+
+
+def _parse_port_env(env_var: str) -> int | None:
+    """Read and validate a port from an environment variable.
+
+    Returns the port as an int, or None if the variable is unset/empty.
+    Exits with a clear error for invalid values (matching ports.js behavior).
+    """
+    raw = os.environ.get(env_var, "")
+    if not raw:
+        return None
+    try:
+        port = int(raw)
+    except ValueError:
+        log(f'ERROR: {env_var}="{raw}" is not a valid port number')
+        sys.exit(1)
+    if port < 1024 or port > 65535:
+        log(f"ERROR: {env_var}={port} — must be between 1024 and 65535")
+        sys.exit(1)
+    return port
+
+
+def _apply_port_overrides(bp: dict[str, Any]) -> None:
+    """Override hardcoded ports from NEMOCLAW_*_PORT env vars.
+
+    Keeps blueprint.yaml as a readable reference of defaults while allowing
+    runtime configuration without editing YAML.
+    """
+    components = bp.setdefault("components", {})
+
+    # Dashboard / forward port
+    dashboard_port = _parse_port_env("NEMOCLAW_DASHBOARD_PORT")
+    if dashboard_port:
+        sandbox = components.setdefault("sandbox", {})
+        sandbox["forward_ports"] = [dashboard_port]
+
+    # vLLM / NIM inference port
+    vllm_port = _parse_port_env("NEMOCLAW_VLLM_PORT")
+    if vllm_port:
+        profiles = components.get("inference", {}).get("profiles", {})
+        for key in ("nim-local", "vllm"):
+            if key in profiles:
+                old_endpoint = profiles[key].get("endpoint", "")
+                # Replace the port in endpoint URL (matches any numeric port)
+                profiles[key]["endpoint"] = re.sub(
+                    r":\d+(/|$)", f":{vllm_port}\\1", old_endpoint
+                )
+
+        # Policy addition: nim_service port
+        additions = components.get("policy", {}).get("additions", {})
+        nim_svc = additions.get("nim_service", {})
+        for ep in nim_svc.get("endpoints", []):
+            ep["port"] = vllm_port
 
 
 def run_cmd(

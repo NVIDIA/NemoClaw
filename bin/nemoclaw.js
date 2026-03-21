@@ -7,6 +7,9 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
+// Load .env files before any module reads process.env (e.g. ports.js)
+require("./lib/env");
+
 const { ROOT, SCRIPTS, run, runCapture, runInteractive } = require("./lib/runner");
 const {
   ensureApiKey,
@@ -17,6 +20,7 @@ const {
 const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
+const { DASHBOARD_PORT } = require("./lib/ports");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -272,7 +276,7 @@ function listSandboxes() {
 
 function sandboxConnect(sandboxName) {
   // Ensure port forward is alive before connecting
-  run(`openshell forward start --background 18789 "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+  run(`openshell forward start --background ${DASHBOARD_PORT} "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
   runInteractive(`openshell sandbox connect "${sandboxName}"`);
 }
 

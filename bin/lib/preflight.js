@@ -5,6 +5,7 @@
 
 const net = require("net");
 const { runCapture } = require("./runner");
+const { DASHBOARD_PORT } = require("./ports");
 
 /**
  * Check whether a TCP port is available for listening.
@@ -21,7 +22,7 @@ const { runCapture } = require("./runner");
  *   { ok: false, process: string, pid: number|null, reason: string }
  */
 async function checkPortAvailable(port, opts) {
-  const p = port || 18789;
+  const p = port || DASHBOARD_PORT;
   const o = opts || {};
 
   // ── lsof path ──────────────────────────────────────────────────

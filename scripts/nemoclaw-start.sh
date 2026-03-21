@@ -12,8 +12,8 @@
 set -euo pipefail
 
 NEMOCLAW_CMD=("$@")
-CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:18789}"
-PUBLIC_PORT=18789
+PUBLIC_PORT="${NEMOCLAW_DASHBOARD_PORT:-${PUBLIC_PORT:-18789}}"
+CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${PUBLIC_PORT}}"
 
 write_auth_profile() {
   if [ -z "${NVIDIA_API_KEY:-}" ]; then

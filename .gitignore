@@ -8,3 +8,8 @@ docs/_build/
 coverage/
 vdr-notes/
 draft_newsletter_*
+tmp/
+.env
+.env.local
+.venv/
+uv.lock

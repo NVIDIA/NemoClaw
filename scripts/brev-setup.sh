@@ -27,6 +27,9 @@ fail() { echo -e "${RED}[brev]${NC} $1"; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Load port overrides if present
+[ -f "${SCRIPT_DIR}/../.env" ] && set -a && . "${SCRIPT_DIR}/../.env" && set +a
+
 [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY not set"
 
 # Suppress needrestart noise from apt (Scanning processes, No services need...)
@@ -129,19 +132,20 @@ if command -v nvidia-smi > /dev/null 2>&1; then
   fi
 
   # Start vLLM if not already running
-  if curl -s http://localhost:8000/v1/models > /dev/null 2>&1; then
-    info "vLLM already running on :8000"
+  VLLM_PORT="${NEMOCLAW_VLLM_PORT:-8000}"
+  if curl -s "http://localhost:${VLLM_PORT}/v1/models" > /dev/null 2>&1; then
+    info "vLLM already running on :${VLLM_PORT}"
   elif python3 -c "import vllm" 2>/dev/null; then
     info "Starting vLLM with $VLLM_MODEL..."
     nohup python3 -m vllm.entrypoints.openai.api_server \
       --model "$VLLM_MODEL" \
-      --port 8000 \
+      --port "$VLLM_PORT" \
       --host 0.0.0.0 \
       > /tmp/vllm-server.log 2>&1 &
     VLLM_PID=$!
     info "Waiting for vLLM to load model (this can take a few minutes)..."
-    for i in $(seq 1 120); do
-      if curl -s http://localhost:8000/v1/models > /dev/null 2>&1; then
+    for _i in $(seq 1 120); do
+      if curl -s "http://localhost:${VLLM_PORT}/v1/models" > /dev/null 2>&1; then
         info "vLLM ready (PID $VLLM_PID)"
         break
       fi
