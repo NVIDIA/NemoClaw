@@ -129,6 +129,95 @@ $ openshell forward stop 3101
 
 The proxy processes do not survive a host reboot. Restart them and the port forwards. The mcporter configuration inside the sandbox persists and does not need to be reconfigured.
 
+## Proposed CLI
+
+> **Note**
+>
+> The following `nemoclaw mcp` subcommands are proposed but not yet implemented.
+> They would automate the manual steps above: proxy lifecycle, port forwarding,
+> mcporter bootstrap, and sandbox configuration.
+
+### Add a stdio MCP server
+
+```console
+$ export GITHUB_TOKEN=<your-token>
+$ nemoclaw <name> mcp add --name github \
+    --command "npx @modelcontextprotocol/server-github" \
+    --env GITHUB_TOKEN
+```
+
+This would:
+
+1. Start the stdio→HTTP proxy on the host with the named environment variables.
+2. Forward the port into the sandbox via `openshell forward`.
+3. Install mcporter in the sandbox if not already present.
+4. Register the server in the sandbox mcporter configuration.
+
+### Add a remote HTTP MCP server
+
+```console
+$ nemoclaw <name> mcp add --name linear --url https://mcp.linear.app/mcp
+```
+
+Routes the remote server through a host-side reverse proxy so the sandbox connects to `localhost` and no egress policy is needed.
+
+### Import from Claude Code or Cursor
+
+```console
+$ nemoclaw <name> mcp import github --from claude
+```
+
+Reads the server definition by name from `~/.claude.json` (or `--from cursor`, `--from windsurf`). Extracts the command and environment variable **names** only, never values. Prompts the user to confirm the variables are set, then proceeds as `mcp add`.
+
+### List bridges
+
+```console
+$ nemoclaw <name> mcp list
+```
+
+```text
+MCP Bridges for sandbox "my-assistant":
+
+  ● github      :3101  npx @modelcontextprotocol/server-github      env: GITHUB_TOKEN
+  ● slack       :3102  npx @anthropic/mcp-server-slack               env: SLACK_TOKEN
+  ○ linear      :3103  https://mcp.linear.app/mcp                    env: (none)      (stopped)
+```
+
+### Remove a bridge
+
+```console
+$ nemoclaw <name> mcp remove github
+```
+
+Stops the proxy, stops the port forward, and removes the server from the sandbox mcporter configuration.
+
+### Restart after reboot
+
+```console
+$ nemoclaw <name> mcp restart
+```
+
+Reads the saved bridge configuration from `~/.nemoclaw/sandboxes.json` and restarts all proxy processes and port forwards. The sandbox-side mcporter configuration persists and does not need to be rewritten.
+
+### Integration with `nemoclaw start`
+
+MCP bridges would be managed alongside the Telegram bridge and other auxiliary services:
+
+```console
+$ nemoclaw start
+```
+
+```text
+  ┌─────────────────────────────────────────────────────┐
+  │  NemoClaw Services                                  │
+  │                                                     │
+  │  Telegram:    bridge running                        │
+  │  MCP:         2 bridges running (github, slack)     │
+  │                                                     │
+  │  Run 'openshell term' to monitor egress approvals   │
+  └─────────────────────────────────────────────────────┘
+```
+
 ## Security
 
 | Layer | Protection |
