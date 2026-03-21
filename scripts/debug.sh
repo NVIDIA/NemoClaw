@@ -83,6 +83,12 @@ TMPDIR_BASE="${TMPDIR:-/tmp}"
 COLLECT_DIR=$(mktemp -d "${TMPDIR_BASE}/nemoclaw-debug-XXXXXX")
 trap 'rm -rf "$COLLECT_DIR"' EXIT
 
+# Platform detection
+IS_MACOS=false
+if [ "$(uname -s)" = "Darwin" ]; then
+  IS_MACOS=true
+fi
+
 # Detect timeout binary (GNU coreutils; gtimeout on macOS via brew)
 TIMEOUT_BIN=""
 if command -v timeout >/dev/null 2>&1; then
@@ -156,7 +162,11 @@ section "System"
 collect "date" date
 collect "uname" uname -a
 collect "uptime" uptime
-collect "free" free -m
+if [ "$IS_MACOS" = true ]; then
+  collect "memory" sh -c 'echo "Physical: $(($(sysctl -n hw.memsize) / 1048576)) MB"; vm_stat'
+else
+  collect "free" free -m
+fi
 
 if [ "$QUICK" = false ]; then
   collect "df" df -h
@@ -165,11 +175,20 @@ fi
 # -- Processes --
 
 section "Processes"
-collect "ps-cpu" sh -c 'ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head -30'
+if [ "$IS_MACOS" = true ]; then
+  collect "ps-cpu" sh -c 'ps -eo pid,ppid,comm,%mem,%cpu | sort -k5 -rn | head -30'
+else
+  collect "ps-cpu" sh -c 'ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head -30'
+fi
 
 if [ "$QUICK" = false ]; then
-  collect "ps-mem" sh -c 'ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%mem | head -30'
-  collect "top" sh -c 'top -b -n 1 | head -50'
+  if [ "$IS_MACOS" = true ]; then
+    collect "ps-mem" sh -c 'ps -eo pid,ppid,comm,%mem,%cpu | sort -k4 -rn | head -30'
+    collect "top" sh -c 'top -l 1 | head -50'
+  else
+    collect "ps-mem" sh -c 'ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%mem | head -30'
+    collect "top" sh -c 'top -b -n 1 | head -50'
+  fi
 fi
 
 # -- GPU --
@@ -232,10 +251,17 @@ fi
 
 if [ "$QUICK" = false ]; then
   section "Network"
-  collect "ss" ss -ltnp
-  collect "ip-addr" ip addr
-  collect "ip-route" ip route
-  collect "resolv-conf" cat /etc/resolv.conf
+  if [ "$IS_MACOS" = true ]; then
+    collect "listening" sh -c 'netstat -anp tcp | grep LISTEN'
+    collect "ifconfig" ifconfig
+    collect "routes" netstat -rn
+    collect "dns-config" scutil --dns
+  else
+    collect "ss" ss -ltnp
+    collect "ip-addr" ip addr
+    collect "ip-route" ip route
+    collect "resolv-conf" cat /etc/resolv.conf
+  fi
   collect "nslookup" nslookup integrate.api.nvidia.com
   collect "curl-models" sh -c 'code=$(curl -s -o /dev/null -w "%{http_code}" https://integrate.api.nvidia.com/v1/models); echo "HTTP $code"; if [ "$code" -ge 200 ] && [ "$code" -lt 500 ]; then echo "NIM API reachable"; else echo "NIM API unreachable"; exit 1; fi'
   collect "lsof-net" sh -c 'lsof -i -P -n 2>/dev/null | head -50'
@@ -246,14 +272,23 @@ fi
 
 if [ "$QUICK" = false ]; then
   section "Kernel / IO"
-  collect "vmstat" vmstat 1 5
-  collect "iostat" iostat -xz 1 5
+  if [ "$IS_MACOS" = true ]; then
+    collect "vmstat" vm_stat
+    collect "iostat" iostat -c 5 -w 1
+  else
+    collect "vmstat" vmstat 1 5
+    collect "iostat" iostat -xz 1 5
+  fi
 fi
 
 # -- dmesg (always, last 100 lines) --
 
 section "Kernel Messages"
-collect "dmesg" sh -c 'dmesg | tail -100'
+if [ "$IS_MACOS" = true ]; then
+  collect "system-log" sh -c 'log show --last 5m --predicate "eventType == logEvent" --style compact 2>/dev/null | tail -100'
+else
+  collect "dmesg" sh -c 'dmesg | tail -100'
+fi
 
 # ── Produce tarball if requested ─────────────────────────────────
 
