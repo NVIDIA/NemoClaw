@@ -76,14 +76,21 @@ class TestCreateSnapshot:
         assert ".nemoclaw" in str(snap_dir)
         assert "snapshots" in str(snap_dir)
 
-    def test_multiple_snapshots_succeed(self, mock_home):
+    @patch("migrations.snapshot.datetime")
+    def test_multiple_snapshots_have_different_dirs(self, mock_dt, mock_home):
         _create_openclaw_dir(mock_home)
+
+        # Use distinct timestamps so each snapshot gets its own directory
+        mock_dt.now.side_effect = [
+            type("FakeDT", (), {"strftime": lambda self, fmt: "20260101T000000Z"})(),
+            type("FakeDT", (), {"strftime": lambda self, fmt: "20260101T000001Z"})(),
+        ]
         snap1 = create_snapshot()
         snap2 = create_snapshot()
-        # Both calls should succeed; if created in the same second the
-        # timestamp-based directory is reused (dirs_exist_ok=True).
+
         assert snap1 is not None
         assert snap2 is not None
+        assert snap1 != snap2
 
 
 # ---------------------------------------------------------------------------
@@ -193,14 +200,21 @@ class TestListSnapshots:
         assert list_snapshots() == []
 
     def test_lists_snapshots_reverse_chronological(self, mock_home):
-        _create_openclaw_dir(mock_home)
-
-        create_snapshot()
-        create_snapshot()
+        snaps_root = mock_home / ".nemoclaw" / "snapshots"
+        older = snaps_root / "20260101T000000Z"
+        newer = snaps_root / "20260101T000001Z"
+        older.mkdir(parents=True)
+        newer.mkdir(parents=True)
+        (older / "snapshot.json").write_text(
+            json.dumps({"timestamp": "20260101T000000Z", "file_count": 1, "contents": []})
+        )
+        (newer / "snapshot.json").write_text(
+            json.dumps({"timestamp": "20260101T000001Z", "file_count": 2, "contents": []})
+        )
 
         snapshots = list_snapshots()
-        assert len(snapshots) >= 1
-        # Each snapshot should have a path key added
+        assert len(snapshots) == 2
+        assert [s["timestamp"] for s in snapshots] == ["20260101T000001Z", "20260101T000000Z"]
         for s in snapshots:
             assert "path" in s
             assert "timestamp" in s
