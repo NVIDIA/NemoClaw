@@ -39,6 +39,35 @@ describe("nim", () => {
     it("prefixes with nemoclaw-nim-", () => {
       assert.equal(nim.containerName("my-sandbox"), "nemoclaw-nim-my-sandbox");
     });
+
+    it("rejects names with shell metacharacters", () => {
+      assert.throws(() => nim.containerName("foo; rm -rf /"), /Invalid sandbox name/);
+    });
+
+    it("rejects empty string", () => {
+      assert.throws(() => nim.containerName(""), /Invalid sandbox name/);
+    });
+
+    it("rejects names starting with punctuation", () => {
+      assert.throws(() => nim.containerName("-bad"), /Invalid sandbox name/);
+    });
+
+    it("rejects uppercase characters", () => {
+      assert.throws(() => nim.containerName("MyBox"), /Invalid sandbox name/);
+    });
+
+    it("rejects dots and underscores", () => {
+      assert.throws(() => nim.containerName("my_sandbox.v2"), /Invalid sandbox name/);
+    });
+
+    it("rejects names longer than 63 chars", () => {
+      assert.throws(() => nim.containerName("a".repeat(64)), /Invalid sandbox name/);
+    });
+
+    it("accepts valid lowercase alphanumeric names", () => {
+      assert.ok(nim.containerName("my-sandbox-v2"));
+      assert.ok(nim.containerName("a"));
+    });
   });
 
   describe("detectGpu", () => {
@@ -147,7 +176,7 @@ describe("nim", () => {
         platform: "darwin",
         runCapture: mockRunCapture([
           ["memory.total", new Error("no nvidia-smi")],
-          ["name", new Error("no nvidia-smi")],
+          ["query-gpu=name", new Error("no nvidia-smi")],
           ["system_profiler", "Chipset Model: Apple M2 Pro\n      VRAM (Total): 16 GB\n      Total Number of Cores: 19"],
         ]),
       });
@@ -173,6 +202,19 @@ describe("nim", () => {
       assert.equal(gpu.nimCapable, false);
       assert.equal(gpu.totalMemoryMB, 16384);
       assert.equal(gpu.cores, 10);
+    });
+
+    it("omits cores when system_profiler does not report it", () => {
+      const gpu = nim.detectGpu({
+        platform: "darwin",
+        runCapture: mockRunCapture([
+          ["memory.total", new Error("no nvidia-smi")],
+          ["query-gpu=name", new Error("no nvidia-smi")],
+          ["system_profiler", "Chipset Model: Apple M4\n      VRAM (Total): 8 GB"],
+        ]),
+      });
+      assert.equal(gpu.type, "apple");
+      assert.equal("cores" in gpu, false);
     });
 
     it("returns null when no GPU detected", () => {
