@@ -67,6 +67,12 @@ function startChild() {
   const cmd = parts[0];
   const cmdArgs = parts.slice(1);
 
+  // Validate executable — reject path traversal and suspicious characters
+  if (/\.\./.test(cmd) || /[;&|`$]/.test(cmd)) {
+    console.error(`[mcp-proxy] rejected unsafe command executable: ${cmd}`);
+    process.exit(1);
+  }
+
   // Build a minimal env with only the named variables plus essentials
   const childEnv = {
     PATH: process.env.PATH,
@@ -149,10 +155,23 @@ function handleChildMessage(msg) {
   }
 }
 
+const REQUEST_TIMEOUT_MS = 120000; // 2 minutes
+const MAX_INFLIGHT = 100;
+
 function callChild(method, params) {
-  return new Promise((resolve) => {
+  if (responseCallbacks.size >= MAX_INFLIGHT) {
+    return Promise.reject(new Error("Too many in-flight requests"));
+  }
+  return new Promise((resolve, reject) => {
     const id = nextId++;
-    responseCallbacks.set(id, resolve);
+    const timer = setTimeout(() => {
+      responseCallbacks.delete(id);
+      reject(new Error("MCP request timed out"));
+    }, REQUEST_TIMEOUT_MS);
+    responseCallbacks.set(id, (msg) => {
+      clearTimeout(timer);
+      resolve(msg);
+    });
     const msg = { jsonrpc: "2.0", id, method, params };
     if (childReady) {
       sendToChild(msg);
@@ -165,16 +184,8 @@ function callChild(method, params) {
 // ── HTTP server ─────────────────────────────────────────────────
 
 const server = http.createServer(async (req, res) => {
-  // CORS for sandbox access
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  if (req.method === "OPTIONS") {
-    res.writeHead(204);
-    res.end();
-    return;
-  }
+  // No CORS headers — the sandbox accesses this via port forward, not a browser.
+  // Omitting CORS prevents drive-by browser requests to localhost.
 
   if (req.method !== "POST") {
     res.writeHead(405, { "Content-Type": "application/json" });

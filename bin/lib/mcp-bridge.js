@@ -36,10 +36,22 @@ function pidFile(sandboxName, serverName) {
   return path.join(pidDir(sandboxName), `mcp-${serverName}.pid`);
 }
 
+function writePidFile(filePath, pid) {
+  // Store PID and start time to detect recycled PIDs
+  fs.writeFileSync(filePath, `${pid}\n${Date.now()}`);
+}
+
 function isRunning(pidPath) {
   try {
-    const pid = parseInt(fs.readFileSync(pidPath, "utf-8").trim(), 10);
-    process.kill(pid, 0);
+    const content = fs.readFileSync(pidPath, "utf-8").trim();
+    const lines = content.split("\n");
+    const pid = parseInt(lines[0], 10);
+    const startTime = parseInt(lines[1], 10) || 0;
+    process.kill(pid, 0); // probe — throws if not running
+    // If the PID file is older than 30 days, assume recycled
+    if (startTime && Date.now() - startTime > 30 * 24 * 60 * 60 * 1000) {
+      return false;
+    }
     return pid;
   } catch {
     return false;
@@ -139,6 +151,7 @@ function ensureMcporter(sandboxName) {
 // ── Add ─────────────────────────────────────────────────────────
 
 function add(sandboxName, opts) {
+  validateName(sandboxName);
   const { name, command, env = [], port: requestedPort } = opts;
 
   if (!name) {
@@ -196,16 +209,20 @@ function add(sandboxName, opts) {
     proxyArgs.push("--env", v);
   }
 
+  // Build minimal env for the proxy — only PATH, HOME, and named vars
+  const proxyEnv = { PATH: process.env.PATH, HOME: process.env.HOME };
+  for (const v of env) proxyEnv[v] = process.env[v];
+
   const logPath = path.join(dir, `mcp-${name}.log`);
   const logFd = fs.openSync(logPath, "a");
   const proc = spawn("node", [PROXY_SCRIPT, ...proxyArgs], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
-    env: process.env,
+    env: proxyEnv,
   });
   proc.unref();
   fs.closeSync(logFd);
-  fs.writeFileSync(pidFile(sandboxName, name), String(proc.pid));
+  writePidFile(pidFile(sandboxName, name), proc.pid);
   console.log(`  Proxy started (PID ${proc.pid}).`);
 
   // Forward port into sandbox
@@ -253,6 +270,7 @@ function add(sandboxName, opts) {
 // ── Remove ──────────────────────────────────────────────────────
 
 function remove(sandboxName, serverName) {
+  validateName(sandboxName);
   if (!serverName) {
     console.error("  Server name is required.");
     process.exit(1);
@@ -305,6 +323,7 @@ function remove(sandboxName, serverName) {
 // ── List ────────────────────────────────────────────────────────
 
 function list(sandboxName) {
+  validateName(sandboxName);
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox || !sandbox.mcp || Object.keys(sandbox.mcp).length === 0) {
     console.log("");
@@ -337,6 +356,8 @@ function list(sandboxName) {
 // ── Restart ─────────────────────────────────────────────────────
 
 function restart(sandboxName, serverName) {
+  validateName(sandboxName);
+  if (serverName) validateName(serverName);
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox || !sandbox.mcp) {
     console.log("  No MCP bridges to restart.");
@@ -394,16 +415,20 @@ function restart(sandboxName, serverName) {
       proxyArgs.push("--env", v);
     }
 
+    // Build minimal env for the proxy
+    const proxyEnv = { PATH: process.env.PATH, HOME: process.env.HOME };
+    for (const v of entry.env || []) proxyEnv[v] = process.env[v];
+
     const logPath = path.join(dir, `mcp-${name}.log`);
     const logFd = fs.openSync(logPath, "a");
     const proc = spawn("node", [PROXY_SCRIPT, ...proxyArgs], {
       detached: true,
       stdio: ["ignore", logFd, logFd],
-      env: process.env,
+      env: proxyEnv,
     });
     proc.unref();
     fs.closeSync(logFd);
-    fs.writeFileSync(pidFile(sandboxName, name), String(proc.pid));
+    writePidFile(pidFile(sandboxName, name), proc.pid);
 
     // Forward port
     run(
