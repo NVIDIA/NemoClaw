@@ -95,11 +95,12 @@ const { setupInference } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 2);
-    assert.match(commands[0].command, /'--credential' 'NVIDIA_API_KEY'/);
-    assert.doesNotMatch(commands[0].command, /nvapi-secret-value/);
-    assert.match(commands[0].command, /provider' 'create'/);
-    assert.match(commands[1].command, /inference' 'set'/);
+    assert.equal(commands.length, 3);
+    assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
+    assert.match(commands[1].command, /'--credential' 'NVIDIA_API_KEY'/);
+    assert.doesNotMatch(commands[1].command, /nvapi-secret-value/);
+    assert.match(commands[1].command, /provider' 'create'/);
+    assert.match(commands[2].command, /inference' 'set'/);
   });
 
   it("uses native Anthropic provider creation without embedding the secret in argv", () => {
@@ -164,14 +165,15 @@ const { setupInference } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 2);
-    assert.match(commands[0].command, /'--type' 'anthropic'/);
-    assert.match(commands[0].command, /'--credential' 'ANTHROPIC_API_KEY'/);
-    assert.doesNotMatch(commands[0].command, /sk-ant-secret-value/);
-    assert.match(commands[1].command, /'--provider' 'anthropic-prod'/);
+    assert.equal(commands.length, 3);
+    assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
+    assert.match(commands[1].command, /'--type' 'anthropic'/);
+    assert.match(commands[1].command, /'--credential' 'ANTHROPIC_API_KEY'/);
+    assert.doesNotMatch(commands[1].command, /sk-ant-secret-value/);
+    assert.match(commands[2].command, /'--provider' 'anthropic-prod'/);
   });
 
-  it("targets the active gateway endpoint explicitly for gateway-scoped openshell commands", () => {
+  it("targets the selected gateway name explicitly for gateway-scoped openshell commands", () => {
     const repoRoot = path.join(__dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-gateway-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -189,7 +191,7 @@ runner.runCapture = (command) => {
   commands.push(command);
   return "";
 };
-process.env.OPENSHELL_GATEWAY_ENDPOINT = "https://127.0.0.1:8080";
+process.env.OPENSHELL_GATEWAY = "nemoclaw";
 const { runCaptureOpenshell } = require(${onboardPath});
 runCaptureOpenshell(["provider", "list"], { ignoreError: true });
 runCaptureOpenshell(["--version"], { ignoreError: true });
@@ -209,9 +211,9 @@ console.log(JSON.stringify(commands));
 
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim());
-    assert.match(commands[0], /'--gateway-endpoint' 'https:\/\/127\.0\.0\.1:8080' 'provider' 'list'/);
+    assert.match(commands[0], /'-g' 'nemoclaw' 'provider' 'list'/);
     assert.match(commands[1], /'--version'/);
-    assert.doesNotMatch(commands[1], /'--gateway-endpoint'/);
+    assert.doesNotMatch(commands[1], /'-g' 'nemoclaw'/);
   });
 
   it("updates OpenAI-compatible providers without passing an unsupported --type flag", () => {
@@ -235,7 +237,7 @@ let callIndex = 0;
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   callIndex += 1;
-  return { status: callIndex === 1 ? 1 : 0 };
+  return { status: callIndex === 2 ? 1 : 0 };
 };
 runner.runCapture = (command) => {
   if (command.includes("inference") && command.includes("get")) {
@@ -278,11 +280,12 @@ const { setupInference } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
-    assert.match(commands[0].command, /provider' 'create'/);
-    assert.match(commands[1].command, /provider' 'update' 'openai-api'/);
-    assert.doesNotMatch(commands[1].command, /'--type'/);
-    assert.match(commands[2].command, /inference' 'set' '--no-verify'/);
+    assert.equal(commands.length, 4);
+    assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
+    assert.match(commands[1].command, /provider' 'create'/);
+    assert.match(commands[2].command, /provider' 'update' 'openai-api'/);
+    assert.doesNotMatch(commands[2].command, /'--type'/);
+    assert.match(commands[3].command, /inference' 'set' '--no-verify'/);
   });
 
   it("drops stale local sandbox registry entries when the live sandbox is gone", () => {
