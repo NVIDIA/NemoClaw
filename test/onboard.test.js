@@ -11,7 +11,7 @@ const {
 } = require("../bin/lib/onboard");
 
 describe("onboard helpers", () => {
-  it("builds a sandbox sync script that writes config and sets the model", () => {
+  it("builds a sandbox sync script that only writes nemoclaw config", () => {
     const script = buildSandboxConfigSyncScript({
       endpointType: "custom",
       endpointUrl: "https://inference.local/v1",
@@ -27,11 +27,10 @@ describe("onboard helpers", () => {
     assert.match(script, /"model": "nemotron-3-nano:30b"/);
     assert.match(script, /"credentialEnv": "OPENAI_API_KEY"/);
 
-    // Sets the active model via openclaw CLI (writes to agent config, not openclaw.json)
-    assert.match(script, /openclaw models set 'inference\/nemotron-3-nano:30b'/);
-
-    // Must NOT write to openclaw.json — it is immutable (root:root 444)
+    // Must NOT modify openclaw config from inside the sandbox — model routing
+    // is handled by the host-side gateway (openshell inference set)
     assert.doesNotMatch(script, /openclaw\.json/);
+    assert.doesNotMatch(script, /openclaw models set/);
 
     assert.match(script, /^exit$/m);
   });

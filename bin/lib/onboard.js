@@ -19,8 +19,6 @@ const {
 const {
   CLOUD_MODEL_OPTIONS,
   DEFAULT_CLOUD_MODEL,
-  DEFAULT_OLLAMA_MODEL,
-  getOpenClawPrimaryModel,
   getProviderSelectionConfig,
 } = require("./inference-config");
 const {
@@ -102,32 +100,17 @@ function getStableGatewayImageRef(versionOutput = null) {
   return `ghcr.io/nvidia/openshell/cluster:${version}`;
 }
 
-function pythonLiteralJson(value) {
-  return JSON.stringify(JSON.stringify(value));
-}
-
 function buildSandboxConfigSyncScript(selectionConfig) {
-  const providerType =
-    selectionConfig.profile === "inference-local"
-      ? selectionConfig.model === DEFAULT_OLLAMA_MODEL
-        ? "ollama-local"
-        : "nvidia-nim"
-      : selectionConfig.endpointType === "vllm"
-        ? "vllm-local"
-        : "nvidia-nim";
-  const primaryModel = getOpenClawPrimaryModel(providerType, selectionConfig.model);
   // openclaw.json is immutable (root:root 444, Landlock read-only) — never
-  // write to it at runtime.  The inference provider and default model are baked
-  // at image build time.  We only write the NemoClaw selection config (writable
-  // ~/.nemoclaw/) and override the active model via `openclaw models set`,
-  // which writes to the agent-level config in ~/.openclaw-data/ (writable).
+  // write to it at runtime.  Model routing is handled by the host-side
+  // gateway (`openshell inference set` in Step 5), not from inside the
+  // sandbox.  We only write the NemoClaw selection config (~/.nemoclaw/).
   return `
 set -euo pipefail
 mkdir -p ~/.nemoclaw
 cat > ~/.nemoclaw/config.json <<'EOF_NEMOCLAW_CFG'
 ${JSON.stringify(selectionConfig, null, 2)}
 EOF_NEMOCLAW_CFG
-openclaw models set ${shellQuote(primaryModel)} > /dev/null 2>&1 || true
 exit
 `.trim();
 }
