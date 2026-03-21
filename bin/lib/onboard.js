@@ -1102,19 +1102,27 @@ async function setupPolicies(sandboxName) {
       process.exit(1);
     }
     console.log(`  [non-interactive] Applying policy presets: ${selectedPresets.join(", ")}`);
-    for (const name of selectedPresets) {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        try {
-          policies.applyPreset(sandboxName, name);
-          break;
-        } catch (err) {
-          const message = err && err.message ? err.message : String(err);
-          if (!message.includes("sandbox not found") || attempt === 2) {
-            throw err;
+    try {
+      for (const name of selectedPresets) {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          try {
+            policies.applyPreset(sandboxName, name);
+            break;
+          } catch (err) {
+            const message = err && err.message ? err.message : String(err);
+            if (message.includes("Unimplemented")) {
+              console.log("  OpenShell policy updates are not supported by this gateway build. Skipping presets.");
+              return;
+            }
+            if (!message.includes("sandbox not found") || attempt === 2) {
+              throw err;
+            }
+            sleep(2);
           }
-          sleep(2);
         }
       }
+    } catch (err) {
+      throw err;
     }
   } else {
     const answer = await prompt(`  Apply suggested presets (${suggestions.join(", ")})? [Y/n/list]: `);
@@ -1129,12 +1137,30 @@ async function setupPolicies(sandboxName) {
       const picks = await prompt("  Enter preset names (comma-separated): ");
       const selected = picks.split(",").map((s) => s.trim()).filter(Boolean);
       for (const name of selected) {
-        policies.applyPreset(sandboxName, name);
+        try {
+          policies.applyPreset(sandboxName, name);
+        } catch (err) {
+          const message = err && err.message ? err.message : String(err);
+          if (message.includes("Unimplemented")) {
+            console.log("  OpenShell policy updates are not supported by this gateway build. Skipping presets.");
+            return;
+          }
+          throw err;
+        }
       }
     } else {
       // Apply suggested
       for (const name of suggestions) {
-        policies.applyPreset(sandboxName, name);
+        try {
+          policies.applyPreset(sandboxName, name);
+        } catch (err) {
+          const message = err && err.message ? err.message : String(err);
+          if (message.includes("Unimplemented")) {
+            console.log("  OpenShell policy updates are not supported by this gateway build. Skipping presets.");
+            return;
+          }
+          throw err;
+        }
       }
     }
   }
@@ -1203,4 +1229,5 @@ module.exports = {
   runCaptureOpenshell,
   setupInference,
   setupNim,
+  setupPolicies,
 };
