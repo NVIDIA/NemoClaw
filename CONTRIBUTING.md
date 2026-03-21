@@ -95,7 +95,9 @@ We welcome contributions. Every PR requires maintainer review. To keep the revie
 
 ### No External Project Links
 
-Do not add links, references, or integrations pointing to third-party repositories, tools, or services in documentation, README files, or code. This applies to "awesome lists," community template collections, wrapper projects, and similar resources — regardless of popularity or utility.
+Do not add links to third-party code repositories, community collections, or unofficial resources in documentation, README files, or code. This includes "awesome lists," community template repositories, wrapper projects, and similar community-maintained resources — regardless of popularity or utility.
+
+Links to official documentation for tools we depend on (e.g., Node.js, Python, uv) and industry standards (e.g., Conventional Commits) are acceptable.
 
 **Why:** External repositories are outside our control. They can change ownership, inject malicious content, or misrepresent an endorsement by NVIDIA. Keeping references within our own repo avoids these risks entirely.
 
