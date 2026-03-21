@@ -93,6 +93,16 @@ We welcome contributions. Every PR requires maintainer review. To keep the revie
 > [!WARNING]
 > Accounts that repeatedly exceed this limit or submit automated bulk PRs may have their PRs closed or their access restricted.
 
+### No External Project Links
+
+Do not add links, references, or integrations pointing to third-party repositories, tools, or services in documentation, README files, or code. This applies to "awesome lists," community template collections, wrapper projects, and similar resources — regardless of popularity or utility.
+
+**Why:** External repositories are outside our control. They can change ownership, inject malicious content, or misrepresent an endorsement by NVIDIA. Keeping references within our own repo avoids these risks entirely.
+
+If you believe an external resource belongs in our docs, open an issue to discuss it with maintainers first.
+
+### Submitting a Pull Request
+
 Follow these steps to submit a pull request.
 
 1. Create a feature branch from `main`.
