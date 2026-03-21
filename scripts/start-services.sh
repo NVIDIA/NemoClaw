@@ -16,11 +16,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DASHBOARD_PORT="${DASHBOARD_PORT:-18789}"
+DASHBOARD_PORT="${DASHBOARD_PORT:-}"
 
 # ── Parse flags ──────────────────────────────────────────────────
 SANDBOX_NAME="${NEMOCLAW_SANDBOX:-${SANDBOX_NAME:-default}}"
 ACTION="start"
+SANDBOX_RUNTIME="openclaw"
+SANDBOX_SURFACE="openclaw-ui"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -41,6 +43,41 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+
+resolve_sandbox_metadata() {
+  if ! command -v node > /dev/null 2>&1 || [ ! -f "$REPO_DIR/bin/lib/registry.js" ]; then
+    return 0
+  fi
+
+  local resolved resolved_port
+  resolved="$(
+    node -e '
+      const registry = require(process.argv[1]);
+      const requested = process.argv[2];
+      const resolvedName = requested === "default" ? registry.getDefault() : requested;
+      const sandbox = resolvedName ? registry.getSandbox(resolvedName) : null;
+      const runtime = sandbox?.runtime || "openclaw";
+      const surface = sandbox?.surface || registry.defaultSurface(runtime);
+      const port = sandbox?.forwardPort || registry.defaultForwardPort(runtime, surface);
+      process.stdout.write([sandbox?.name || resolvedName || requested, runtime, surface, String(port)].join("\t"));
+    ' "$REPO_DIR/bin/lib/registry.js" "$SANDBOX_NAME" 2>/dev/null || true
+  )"
+  [ -n "$resolved" ] || return 0
+
+  IFS=$'\t' read -r SANDBOX_NAME SANDBOX_RUNTIME SANDBOX_SURFACE resolved_port <<EOF
+$resolved
+EOF
+
+  if [ -z "$DASHBOARD_PORT" ]; then
+    DASHBOARD_PORT="$resolved_port"
+  fi
+}
+
+resolve_sandbox_metadata
+DASHBOARD_PORT="${DASHBOARD_PORT:-18789}"
+export SANDBOX_NAME
+export NEMOCLAW_RUNTIME="$SANDBOX_RUNTIME"
+export NEMOCLAW_SURFACE="$SANDBOX_SURFACE"
 
 PIDDIR="/tmp/nemoclaw-services-${SANDBOX_NAME}"
 
@@ -120,32 +157,51 @@ do_stop() {
 }
 
 do_start() {
-  [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY required"
+  if [ "$SANDBOX_RUNTIME" = "openclaw" ]; then
+    [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY required"
+  fi
 
-  if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+  if [ "$SANDBOX_RUNTIME" = "openclaw" ] && [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
     warn "TELEGRAM_BOT_TOKEN not set — Telegram bridge will not start."
     warn "Create a bot via @BotFather on Telegram and set the token."
   fi
 
-  command -v node > /dev/null || fail "node not found. Install Node.js first."
+  if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ "$SANDBOX_RUNTIME" = "openclaw" ]; then
+    command -v node > /dev/null || fail "node not found. Install Node.js first."
+  fi
 
   # Verify sandbox is running
   if command -v openshell > /dev/null 2>&1; then
     if ! openshell sandbox list 2>&1 | grep -q "Ready"; then
       warn "No sandbox in Ready state. Telegram bridge may not work until sandbox is running."
     fi
+    openshell forward start --background "$DASHBOARD_PORT" "$SANDBOX_NAME" 2>/dev/null || true
+  fi
+
+  if [ "$SANDBOX_SURFACE" = "none" ]; then
+    warn "Sandbox '$SANDBOX_NAME' is configured as '${SANDBOX_RUNTIME}/none'."
+    if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+      warn "Skipping Telegram bridge for headless surface."
+    fi
+    warn "Skipping cloudflared tunnel for headless surface."
+    return 0
   fi
 
   mkdir -p "$PIDDIR"
 
   # Telegram bridge (only if token provided)
-  if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+  if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ "$SANDBOX_RUNTIME" = "openclaw" ]; then
     SANDBOX_NAME="$SANDBOX_NAME" start_service telegram-bridge \
       node "$REPO_DIR/scripts/telegram-bridge.js"
+  elif [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+    warn "Skipping Telegram bridge for runtime '$SANDBOX_RUNTIME'."
   fi
 
   # 3. cloudflared tunnel
-  if command -v cloudflared > /dev/null 2>&1; then
+  if [ "$SANDBOX_SURFACE" = "nullhub" ]; then
+    warn "NullHub surface is available locally at http://127.0.0.1:$DASHBOARD_PORT/."
+    warn "Skipping cloudflared tunnel for nullhub surface; NullHub expects local-origin browser access."
+  elif command -v cloudflared > /dev/null 2>&1; then
     start_service cloudflared \
       cloudflared tunnel --url "http://localhost:$DASHBOARD_PORT"
   else
@@ -167,6 +223,8 @@ do_start() {
 
   # Print banner
   echo ""
+  info "Sandbox: $SANDBOX_NAME ($SANDBOX_RUNTIME/$SANDBOX_SURFACE, localhost:$DASHBOARD_PORT)"
+  echo ""
   echo "  ┌─────────────────────────────────────────────────────┐"
   echo "  │  NemoClaw Services                                  │"
   echo "  │                                                     │"
@@ -178,6 +236,8 @@ do_start() {
 
   if [ -n "$tunnel_url" ]; then
     printf "  │  Public URL:  %-40s│\n" "$tunnel_url"
+  elif [ "$SANDBOX_SURFACE" = "nullhub" ]; then
+    printf "  │  Surface:     %-40s│\n" "NullHub local UI only"
   fi
 
   if is_running telegram-bridge; then

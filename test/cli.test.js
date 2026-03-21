@@ -28,6 +28,7 @@ describe("CLI dispatch", () => {
     assert.ok(r.out.includes("Getting Started"), "missing Getting Started section");
     assert.ok(r.out.includes("Sandbox Management"), "missing Sandbox Management section");
     assert.ok(r.out.includes("Policy Presets"), "missing Policy Presets section");
+    assert.ok(r.out.includes("surfaces: openclaw-ui"), "missing surface help");
   });
 
   it("--help exits 0", () => {

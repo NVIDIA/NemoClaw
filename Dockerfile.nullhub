@@ -1,0 +1,51 @@
+# NemoClaw sandbox image — NullHub surface managing NullClaw inside OpenShell
+
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV HOME=/sandbox
+
+ARG NULLHUB_VERSION=v2026.3.13
+ARG NULLCLAW_VERSION=v2026.3.15
+ARG TARGETARCH
+
+ENV NULLHUB_VERSION=${NULLHUB_VERSION}
+ENV NULLCLAW_VERSION=${NULLCLAW_VERSION}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        iproute2 \
+        tar \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
+    && mkdir -p /sandbox/.nullhub /sandbox/.nullclaw /sandbox/.nemoclaw \
+    && chown -R sandbox:sandbox /sandbox
+
+RUN arch="${TARGETARCH:-$(dpkg --print-architecture)}" \
+    && case "$arch" in \
+        amd64|x86_64) hub_asset="nullhub-linux-x86_64.bin"; claw_asset="nullclaw-linux-x86_64.bin" ;; \
+        arm64|aarch64) hub_asset="nullhub-linux-aarch64.bin"; claw_asset="nullclaw-linux-aarch64.bin" ;; \
+        *) echo "Unsupported TARGETARCH: $arch" >&2; exit 1 ;; \
+      esac \
+    && curl -fsSL "https://github.com/nullclaw/nullhub/releases/download/${NULLHUB_VERSION}/${hub_asset}" -o /usr/local/bin/nullhub \
+    && curl -fsSL "https://github.com/nullclaw/nullclaw/releases/download/${NULLCLAW_VERSION}/${claw_asset}" -o /usr/local/bin/nullclaw \
+    && chmod +x /usr/local/bin/nullhub /usr/local/bin/nullclaw \
+    && /usr/local/bin/nullhub --version >/dev/null \
+    && /usr/local/bin/nullclaw --version >/dev/null \
+    && mkdir -p /opt/nullhub-components \
+    && cp /usr/local/bin/nullclaw "/opt/nullhub-components/nullclaw-${NULLCLAW_VERSION}"
+
+COPY scripts/nullhub-start.sh /usr/local/bin/nullhub-start
+RUN chmod +x /usr/local/bin/nullhub-start
+
+WORKDIR /sandbox
+USER sandbox
+
+RUN mkdir -p /sandbox/.nullhub /sandbox/.nullclaw /sandbox/.nullclaw/workspace \
+    && chmod 700 /sandbox/.nullhub /sandbox/.nullclaw
+
+ENTRYPOINT ["/bin/bash"]
+CMD []

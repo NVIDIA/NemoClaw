@@ -33,8 +33,22 @@ const ALLOWED_CHATS = process.env.ALLOWED_CHAT_IDS
   ? process.env.ALLOWED_CHAT_IDS.split(",").map((s) => s.trim())
   : null;
 
+let sandboxRuntime = process.env.NEMOCLAW_RUNTIME || "openclaw";
+try {
+  const registry = require("../bin/lib/registry");
+  const sandbox = registry.getSandbox(SANDBOX);
+  if (sandbox && sandbox.runtime) {
+    sandboxRuntime = sandbox.runtime;
+  }
+} catch {}
+
 if (!TOKEN) { console.error("TELEGRAM_BOT_TOKEN required"); process.exit(1); }
 if (!API_KEY) { console.error("NVIDIA_API_KEY required"); process.exit(1); }
+if (sandboxRuntime !== "openclaw") {
+  console.error(`Sandbox '${SANDBOX}' uses runtime '${sandboxRuntime}'. Telegram bridge is only supported for openclaw sandboxes.`);
+  console.error("Use NullHub for UI, or a runtime-native integration for nullclaw.");
+  process.exit(1);
+}
 
 let offset = 0;
 const activeSessions = new Map(); // chatId → message history

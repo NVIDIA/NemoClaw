@@ -34,6 +34,21 @@ const nim = require("./nim");
 const policies = require("./policies");
 const { checkPortAvailable } = require("./preflight");
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
+const DEFAULT_RUNTIME = "openclaw";
+const SUPPORTED_RUNTIMES = new Set(["openclaw", "nullclaw"]);
+const SUPPORTED_SURFACES = new Set(["openclaw-ui", "nullhub", "none"]);
+const SURFACE_FORWARD_PORT = {
+  "openclaw-ui": 18789,
+  nullhub: 19800,
+  none: 3000,
+};
+const RUNTIME_GATEWAY_PORT = {
+  openclaw: 18789,
+  nullclaw: 3000,
+};
+const NULLCLAW_DEFAULT_VERSION = "v2026.3.15";
+const NULLCLAW_DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+const NULLHUB_DEFAULT_INSTANCE = "default";
 
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
@@ -93,6 +108,103 @@ function pythonLiteralJson(value) {
   return JSON.stringify(JSON.stringify(value));
 }
 
+function onboardUsage() {
+  console.log(`
+  Usage: nemoclaw onboard [--non-interactive] [--runtime openclaw|nullclaw] [--surface openclaw-ui|nullhub|none]
+
+  Runtime options:
+    openclaw   Default NemoClaw flow with OpenClaw inside the sandbox
+    nullclaw   Experimental runtime using NullClaw inside the sandbox
+
+  Surface options:
+    openclaw-ui  OpenClaw gateway UI (default for openclaw)
+    nullhub      NullHub UI managing NullClaw (default for nullclaw)
+    none         Headless NullClaw gateway only
+`);
+}
+
+function defaultSurface(runtime) {
+  return registry.defaultSurface(runtime);
+}
+
+function forwardPortFor(runtime, surface) {
+  return registry.defaultForwardPort(runtime, surface);
+}
+
+function validateRuntimeSurface(runtime, surface) {
+  if (runtime === "openclaw") {
+    return surface === "openclaw-ui";
+  }
+  if (runtime === "nullclaw") {
+    return surface === "nullhub" || surface === "none";
+  }
+  return false;
+}
+
+function parseOnboardArgs(args = []) {
+  let runtime = DEFAULT_RUNTIME;
+  let surface = null;
+  let nonInteractive = false;
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--help" || arg === "-h") {
+      onboardUsage();
+      process.exit(0);
+    }
+    if (arg === "--non-interactive") {
+      nonInteractive = true;
+      continue;
+    }
+    if (arg === "--runtime") {
+      runtime = args[i + 1];
+      if (!runtime) {
+        console.error("  Missing value for --runtime");
+        onboardUsage();
+        process.exit(1);
+      }
+      i += 1;
+      continue;
+    }
+    if (arg === "--surface") {
+      surface = args[i + 1];
+      if (!surface) {
+        console.error("  Missing value for --surface");
+        onboardUsage();
+        process.exit(1);
+      }
+      i += 1;
+      continue;
+    }
+
+    console.error(`  Unknown onboard option: ${arg}`);
+    onboardUsage();
+    process.exit(1);
+  }
+
+  if (!SUPPORTED_RUNTIMES.has(runtime)) {
+    console.error(`  Unsupported runtime: ${runtime}`);
+    console.error(`  Supported runtimes: ${Array.from(SUPPORTED_RUNTIMES).join(", ")}`);
+    process.exit(1);
+  }
+
+  surface = surface || defaultSurface(runtime);
+
+  if (!SUPPORTED_SURFACES.has(surface)) {
+    console.error(`  Unsupported surface: ${surface}`);
+    console.error(`  Supported surfaces: ${Array.from(SUPPORTED_SURFACES).join(", ")}`);
+    process.exit(1);
+  }
+
+  if (!validateRuntimeSurface(runtime, surface)) {
+    console.error(`  Surface '${surface}' is not valid for runtime '${runtime}'.`);
+    console.error("  Valid combinations: openclaw/openclaw-ui, nullclaw/nullhub, nullclaw/none");
+    process.exit(1);
+  }
+
+  return { runtime, surface, nonInteractive };
+}
+
 function buildSandboxConfigSyncScript(selectionConfig) {
   const providerType =
     selectionConfig.profile === "inference-local"
@@ -150,6 +262,91 @@ PYCFG
 openclaw models set ${shellQuote(primaryModel)} > /dev/null 2>&1 || true
 exit
 `.trim();
+}
+
+function writeSandboxSshConfig(sandboxName) {
+  const sshConfig = runCapture(`openshell sandbox ssh-config ${shellQuote(sandboxName)}`);
+  const confPath = path.join(require("os").tmpdir(), `nemoclaw-ssh-${process.pid}-${Date.now()}.conf`);
+  fs.writeFileSync(confPath, sshConfig, { mode: 0o600 });
+  return confPath;
+}
+
+function runSandboxCommand(sandboxName, remoteCmd) {
+  const confPath = writeSandboxSshConfig(sandboxName);
+  try {
+    run(
+      `ssh -F ${shellQuote(confPath)} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ` +
+      `-o LogLevel=ERROR ${shellQuote(`openshell-${sandboxName}`)} ${shellQuote(remoteCmd)}`
+    );
+  } finally {
+    try {
+      fs.unlinkSync(confPath);
+    } catch {}
+  }
+}
+
+function syncNullclawConfig(sandboxName, model) {
+  console.log("  Syncing NullClaw runtime config...");
+  const remoteCmd = [
+    "nullclaw onboard",
+    `--api-key ${shellQuote("openshell-managed")}`,
+    `--provider ${shellQuote("custom:https://inference.local/v1")}`,
+    `--model ${shellQuote(model || NULLCLAW_DEFAULT_MODEL)}`,
+    "> /tmp/nullclaw-onboard.log 2>&1",
+  ].join(" ");
+
+  runSandboxCommand(sandboxName, remoteCmd);
+  console.log("  ✓ NullClaw runtime config updated");
+}
+
+function syncNullhubConfig(sandboxName, model) {
+  console.log("  Syncing NullHub-managed NullClaw config...");
+  const instanceHome = `"$HOME/.nullhub/instances/nullclaw/${NULLHUB_DEFAULT_INSTANCE}"`;
+  const createPayload = JSON.stringify({
+    instance_name: NULLHUB_DEFAULT_INSTANCE,
+    version: NULLCLAW_DEFAULT_VERSION,
+    provider: "custom:https://inference.local/v1",
+    api_key: "openshell-managed",
+    model: model || NULLCLAW_DEFAULT_MODEL,
+    gateway_port: RUNTIME_GATEWAY_PORT.nullclaw,
+  });
+  const updatePayloadTemplate = JSON.stringify({
+    home: "__INSTANCE_HOME__",
+    provider: "custom:https://inference.local/v1",
+    api_key: "openshell-managed",
+    model: model || NULLCLAW_DEFAULT_MODEL,
+    gateway_port: RUNTIME_GATEWAY_PORT.nullclaw,
+  });
+  const remoteCmd = `
+set -euo pipefail
+HUB_PORT=${SURFACE_FORWARD_PORT.nullhub}
+INSTANCE=${shellQuote(NULLHUB_DEFAULT_INSTANCE)}
+INSTANCE_HOME=${instanceHome}
+if ! curl -sf "http://127.0.0.1:${SURFACE_FORWARD_PORT.nullhub}/api/status" > /dev/null 2>&1; then
+  nohup nullhub serve --host 0.0.0.0 --port "$HUB_PORT" > /tmp/nullhub.log 2>&1 &
+  for _ in $(seq 1 20); do
+    if curl -sf "http://127.0.0.1:${SURFACE_FORWARD_PORT.nullhub}/api/status" > /dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+fi
+if [ -d $INSTANCE_HOME ]; then
+  UPDATE_PAYLOAD=${shellQuote(updatePayloadTemplate)}
+  UPDATE_PAYLOAD="${UPDATE_PAYLOAD/__INSTANCE_HOME__/$INSTANCE_HOME}"
+  nullclaw --from-json "$UPDATE_PAYLOAD" > /tmp/nullhub-sync.log 2>&1
+  nullhub restart "nullclaw/$INSTANCE" > /tmp/nullhub-restart.log 2>&1 || nullhub start "nullclaw/$INSTANCE" > /tmp/nullhub-restart.log 2>&1
+else
+  curl -fsS \
+    -H 'Content-Type: application/json' \
+    --data ${shellQuote(createPayload)} \
+    "http://127.0.0.1:${SURFACE_FORWARD_PORT.nullhub}/api/wizard/nullclaw" \
+    > /tmp/nullhub-sync.log 2>&1
+fi
+`;
+
+  runSandboxCommand(sandboxName, remoteCmd);
+  console.log("  ✓ NullHub runtime config updated");
 }
 
 async function promptCloudModel() {
@@ -266,7 +463,7 @@ function getNonInteractiveModel(providerKey) {
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
-async function preflight() {
+async function preflight(runtime = DEFAULT_RUNTIME, surface = defaultSurface(runtime)) {
   step(1, 7, "Preflight checks");
 
   // Docker
@@ -276,15 +473,15 @@ async function preflight() {
   }
   console.log("  ✓ Docker is running");
 
-  const runtime = getContainerRuntime();
-  if (isUnsupportedMacosRuntime(runtime)) {
+  const containerRuntime = getContainerRuntime();
+  if (isUnsupportedMacosRuntime(containerRuntime)) {
     console.error("  Podman on macOS is not supported by NemoClaw at this time.");
     console.error("  OpenShell currently depends on Docker host-gateway behavior that Podman on macOS does not provide.");
     console.error("  Use Colima or Docker Desktop on macOS instead.");
     process.exit(1);
   }
-  if (runtime !== "unknown") {
-    console.log(`  ✓ Container runtime: ${runtime}`);
+  if (containerRuntime !== "unknown") {
+    console.log(`  ✓ Container runtime: ${containerRuntime}`);
   }
 
   // OpenShell CLI
@@ -305,45 +502,14 @@ async function preflight() {
   const gwInfo = runCapture("openshell gateway info -g nemoclaw 2>/dev/null", { ignoreError: true });
   if (hasStaleGateway(gwInfo)) {
     console.log("  Cleaning up previous NemoClaw session...");
-    run("openshell forward stop 18789 2>/dev/null || true", { ignoreError: true });
+    for (const port of new Set(Object.values(SURFACE_FORWARD_PORT))) {
+      run(`openshell forward stop ${port} 2>/dev/null || true`, { ignoreError: true });
+    }
     run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
     console.log("  ✓ Previous session cleaned up");
   }
 
-  // Required ports — gateway (8080) and dashboard (18789)
-  const requiredPorts = [
-    { port: 8080, label: "OpenShell gateway" },
-    { port: 18789, label: "NemoClaw dashboard" },
-  ];
-  for (const { port, label } of requiredPorts) {
-    const portCheck = await checkPortAvailable(port);
-    if (!portCheck.ok) {
-      console.error("");
-      console.error(`  !! Port ${port} is not available.`);
-      console.error(`     ${label} needs this port.`);
-      console.error("");
-      if (portCheck.process && portCheck.process !== "unknown") {
-        console.error(`     Blocked by: ${portCheck.process}${portCheck.pid ? ` (PID ${portCheck.pid})` : ""}`);
-        console.error("");
-        console.error("     To fix, stop the conflicting process:");
-        console.error("");
-        if (portCheck.pid) {
-          console.error(`       sudo kill ${portCheck.pid}`);
-        } else {
-          console.error(`       lsof -i :${port} -sTCP:LISTEN -P -n`);
-        }
-        console.error("       # or, if it's a systemd service:");
-        console.error("       systemctl --user stop openclaw-gateway.service");
-      } else {
-        console.error(`     Could not identify the process using port ${port}.`);
-        console.error(`     Run: lsof -i :${port} -sTCP:LISTEN`);
-      }
-      console.error("");
-      console.error(`     Detail: ${portCheck.reason}`);
-      process.exit(1);
-    }
-    console.log(`  ✓ Port ${port} available (${label})`);
-  }
+  await ensurePortAvailable(8080, "OpenShell gateway");
 
   // GPU
   const gpu = nim.detectGpu();
@@ -359,10 +525,51 @@ async function preflight() {
   return gpu;
 }
 
-// ── Step 2: Gateway ──────────────────────────────────────────────
+function surfacePortLabel(surface) {
+  if (surface === "nullhub") return "NullHub local surface";
+  if (surface === "none") return "NullClaw gateway";
+  return "NemoClaw dashboard";
+}
+
+async function ensurePortAvailable(port, label) {
+  const portCheck = await checkPortAvailable(port);
+  if (!portCheck.ok) {
+    console.error("");
+    console.error(`  !! Port ${port} is not available.`);
+    console.error(`     ${label} needs this port.`);
+    console.error("");
+    if (portCheck.process && portCheck.process !== "unknown") {
+      console.error(`     Blocked by: ${portCheck.process}${portCheck.pid ? ` (PID ${portCheck.pid})` : ""}`);
+      console.error("");
+      console.error("     To fix, stop the conflicting process:");
+      console.error("");
+      if (portCheck.pid) {
+        console.error(`       sudo kill ${portCheck.pid}`);
+      } else {
+        console.error(`       lsof -i :${port} -sTCP:LISTEN -P -n`);
+      }
+      console.error("       # or, if it's a systemd service:");
+      console.error("       systemctl --user stop openclaw-gateway.service");
+    } else {
+      console.error(`     Could not identify the process using port ${port}.`);
+      console.error(`     Run: lsof -i :${port} -sTCP:LISTEN`);
+    }
+    console.error("");
+    console.error(`     Detail: ${portCheck.reason}`);
+    process.exit(1);
+  }
+  console.log(`  ✓ Port ${port} available (${label})`);
+}
+
+async function ensureSurfacePortAvailable(runtime, surface) {
+  const forwardPort = forwardPortFor(runtime, surface);
+  await ensurePortAvailable(forwardPort, surfacePortLabel(surface));
+}
+
+// ── Step 3: Gateway ──────────────────────────────────────────────
 
 async function startGateway(gpu) {
-  step(2, 7, "Starting OpenShell gateway");
+  step(3, 7, "Starting OpenShell gateway");
 
   // Destroy old gateway
   run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
@@ -400,10 +607,10 @@ async function startGateway(gpu) {
   sleep(5);
 }
 
-// ── Step 3: Sandbox ──────────────────────────────────────────────
+// ── Step 2: Sandbox ──────────────────────────────────────────────
 
-async function createSandbox(gpu) {
-  step(3, 7, "Creating sandbox");
+async function prepareSandbox(runtime, surface) {
+  step(2, 7, "Selecting sandbox");
 
   const nameAnswer = await promptOrDefault(
     "  Sandbox name (lowercase, numbers, hyphens) [my-assistant]: ",
@@ -420,9 +627,10 @@ async function createSandbox(gpu) {
     process.exit(1);
   }
 
-  // Check if sandbox already exists in registry
   const existing = registry.getSandbox(sandboxName);
   if (existing) {
+    const existingRuntime = existing.runtime || DEFAULT_RUNTIME;
+    const existingSurface = existing.surface || defaultSurface(existingRuntime);
     if (isNonInteractive()) {
       if (process.env.NEMOCLAW_RECREATE_SANDBOX !== "1") {
         console.error(`  Sandbox '${sandboxName}' already exists.`);
@@ -431,29 +639,55 @@ async function createSandbox(gpu) {
       }
       console.log(`  [non-interactive] Sandbox '${sandboxName}' exists — recreating`);
     } else {
-      const recreate = await prompt(`  Sandbox '${sandboxName}' already exists. Recreate? [y/N]: `);
+      const recreate = await prompt(
+        `  Sandbox '${sandboxName}' already exists (${existingRuntime}/${existingSurface}). Recreate? [y/N]: `
+      );
       if (recreate.toLowerCase() !== "y") {
         console.log("  Keeping existing sandbox.");
-        return sandboxName;
+        if (runtime !== existingRuntime) {
+          console.log(`  Requested runtime '${runtime}' ignored; existing sandbox uses '${existingRuntime}'.`);
+        }
+        if (surface !== existingSurface) {
+          console.log(`  Requested surface '${surface}' ignored; existing sandbox uses '${existingSurface}'.`);
+        }
+        return { sandboxName, reused: true, runtime: existingRuntime, surface: existingSurface, sandbox: existing };
       }
     }
-    // Destroy old sandbox
     run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
     registry.removeSandbox(sandboxName);
   }
 
-  // Stage build context
-  const { mkdtempSync } = require("fs");
-  const os = require("os");
-  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
-  fs.copyFileSync(path.join(ROOT, "Dockerfile"), path.join(buildCtx, "Dockerfile"));
+  console.log(`  ✓ Runtime: ${runtime}`);
+  console.log(`  ✓ Surface: ${surface}`);
+  return { sandboxName, reused: false, runtime, surface };
+}
+
+function selectSandboxDockerfile(runtime, surface) {
+  if (runtime === "openclaw") return "Dockerfile";
+  if (surface === "nullhub") return "Dockerfile.nullhub";
+  return "Dockerfile.nullclaw";
+}
+
+function stageOpenclawSandboxFiles(buildCtx) {
   run(`cp -r "${path.join(ROOT, "nemoclaw")}" "${buildCtx}/nemoclaw"`);
   run(`cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`);
-  run(`cp -r "${path.join(ROOT, "scripts")}" "${buildCtx}/scripts"`);
   run(`rm -rf "${buildCtx}/nemoclaw/node_modules"`, { ignoreError: true });
+}
 
-  // Create sandbox (use -- echo to avoid dropping into interactive shell)
-  // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
+async function createSandbox({ sandboxName, gpu, runtime, surface, model, provider, nimContainer }) {
+  const runtimeLabel = runtime === "nullclaw" ? "NullClaw" : "OpenClaw";
+  const surfaceLabel = surface === "nullhub" ? "NullHub" : surface === "none" ? "headless" : "OpenClaw UI";
+  step(4, 7, `Creating ${runtimeLabel} sandbox (${surfaceLabel})`);
+
+  const buildCtx = fs.mkdtempSync(path.join(require("os").tmpdir(), "nemoclaw-build-"));
+  const dockerfileName = selectSandboxDockerfile(runtime, surface);
+  fs.copyFileSync(path.join(ROOT, dockerfileName), path.join(buildCtx, "Dockerfile"));
+  run(`cp -r "${path.join(ROOT, "scripts")}" "${buildCtx}/scripts"`);
+
+  if (runtime === "openclaw") {
+    stageOpenclawSandboxFiles(buildCtx);
+  }
+
   const basePolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
   const createArgs = [
     `--from "${buildCtx}/Dockerfile"`,
@@ -462,28 +696,56 @@ async function createSandbox(gpu) {
   ];
   // --gpu is intentionally omitted. See comment in startGateway().
 
+  const forwardPort = forwardPortFor(runtime, surface);
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
-  const chatUiUrl = process.env.CHAT_UI_URL || 'http://127.0.0.1:18789';
-  const envArgs = [`CHAT_UI_URL=${chatUiUrl}`];
-  if (process.env.NVIDIA_API_KEY) {
-    envArgs.push(`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`);
+
+  let createResult;
+  if (runtime === "nullclaw" && surface === "nullhub") {
+    const envArgs = [
+      `PUBLIC_PORT=${shellQuote(String(forwardPort))}`,
+      `NULLHUB_PORT=${shellQuote(String(SURFACE_FORWARD_PORT.nullhub))}`,
+      `NULLHUB_INSTANCE=${shellQuote(NULLHUB_DEFAULT_INSTANCE)}`,
+      `NULLHUB_NULLCLAW_VERSION=${shellQuote(NULLCLAW_DEFAULT_VERSION)}`,
+      `NULLCLAW_GATEWAY_PORT=${shellQuote(String(RUNTIME_GATEWAY_PORT.nullclaw))}`,
+      `NULLCLAW_MODEL=${shellQuote(model || NULLCLAW_DEFAULT_MODEL)}`,
+      `NULLCLAW_PROVIDER=${shellQuote("custom:https://inference.local/v1")}`,
+      `NULLCLAW_API_KEY=${shellQuote("openshell-managed")}`,
+    ];
+    createResult = run(
+      `openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nullhub-start 2>&1`,
+      { ignoreError: true }
+    );
+  } else if (runtime === "nullclaw") {
+    const envArgs = [
+      `PUBLIC_PORT=${shellQuote(String(forwardPort))}`,
+      `NULLCLAW_MODEL=${shellQuote(model || NULLCLAW_DEFAULT_MODEL)}`,
+      `NULLCLAW_PROVIDER=${shellQuote("custom:https://inference.local/v1")}`,
+      `NULLCLAW_API_KEY=${shellQuote("openshell-managed")}`,
+    ];
+    createResult = run(
+      `openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nullclaw-start 2>&1`,
+      { ignoreError: true }
+    );
+  } else {
+    const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${forwardPort}`;
+    const envArgs = [`CHAT_UI_URL=${shellQuote(chatUiUrl)}`];
+    if (process.env.NVIDIA_API_KEY) {
+      envArgs.push(`NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY)}`);
+    }
+    createResult = run(
+      `openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1`,
+      { ignoreError: true }
+    );
   }
 
-  // Run without piping through awk — the pipe masked non-zero exit codes
-  // from openshell because bash returns the status of the last pipeline
-  // command (awk, always 0) unless pipefail is set. Removing the pipe
-  // lets the real exit code flow through to run().
-  const createResult = run(
-    `openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1`,
-    { ignoreError: true }
-  );
-
-  // Clean up build context regardless of outcome
   run(`rm -rf "${buildCtx}"`, { ignoreError: true });
-
   if (createResult.status !== 0) {
+    run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+    if (nimContainer) {
+      nim.stopNimContainer(sandboxName);
+    }
     console.error("");
-    console.error(`  Sandbox creation failed (exit ${createResult.status}).`);
+    console.error(`  Sandbox creation failed (exit ${createResult.status || 1}).`);
     console.error("  Try:  openshell sandbox list        # check gateway state");
     console.error("  Try:  nemoclaw onboard              # retry from scratch");
     process.exit(createResult.status || 1);
@@ -520,17 +782,18 @@ async function createSandbox(gpu) {
     process.exit(1);
   }
 
-  // Release any stale forward on port 18789 before claiming it for the new sandbox.
-  // A previous onboard run may have left the port forwarded to a different sandbox,
-  // which would silently prevent the new sandbox's dashboard from being reachable.
-  run(`openshell forward stop 18789 2>/dev/null || true`, { ignoreError: true });
-  // Forward dashboard port to the new sandbox
-  run(`openshell forward start --background 18789 "${sandboxName}"`, { ignoreError: true });
+  run(`openshell forward stop ${forwardPort} 2>/dev/null || true`, { ignoreError: true });
+  run(`openshell forward start --background ${forwardPort} "${sandboxName}"`, { ignoreError: true });
 
-  // Register only after confirmed ready — prevents phantom entries
   registry.registerSandbox({
     name: sandboxName,
     gpuEnabled: !!gpu,
+    model,
+    provider,
+    nimContainer,
+    runtime,
+    surface,
+    forwardPort,
   });
 
   console.log(`  ✓ Sandbox '${sandboxName}' created`);
@@ -540,7 +803,7 @@ async function createSandbox(gpu) {
 // ── Step 4: NIM ──────────────────────────────────────────────────
 
 async function setupNim(sandboxName, gpu) {
-  step(4, 7, "Configuring inference (NIM)");
+  step(5, 7, "Selecting inference backend");
 
   let model = null;
   let provider = "nvidia-nim";
@@ -658,6 +921,7 @@ async function setupNim(sandboxName, gpu) {
         console.log("  Waiting for NIM to become healthy...");
         if (!nim.waitForNimHealth()) {
           console.error("  NIM failed to start. Falling back to cloud API.");
+          nim.stopNimContainer(sandboxName);
           model = null;
           nimContainer = null;
         } else {
@@ -715,14 +979,13 @@ async function setupNim(sandboxName, gpu) {
   }
 
   registry.updateSandbox(sandboxName, { model, provider, nimContainer });
-
-  return { model, provider };
+  return { model, provider, nimContainer };
 }
 
-// ── Step 5: Inference provider ───────────────────────────────────
+// ── Step 6: Host inference route ─────────────────────────────────
 
 async function setupInference(sandboxName, model, provider) {
-  step(5, 7, "Setting up inference provider");
+  step(6, 7, "Configuring host inference route");
 
   if (provider === "nvidia-nim") {
     // Create nvidia-nim provider
@@ -791,7 +1054,7 @@ async function setupInference(sandboxName, model, provider) {
 // ── Step 6: OpenClaw ─────────────────────────────────────────────
 
 async function setupOpenclaw(sandboxName, model, provider) {
-  step(6, 7, "Setting up OpenClaw inside sandbox");
+  console.log("  Syncing OpenClaw runtime config...");
 
   const selectionConfig = getProviderSelectionConfig(provider, model);
   if (selectionConfig) {
@@ -807,7 +1070,6 @@ EOF_NEMOCLAW_SYNC`, { stdio: ["ignore", "ignore", "inherit"] });
 
   console.log("  ✓ OpenClaw gateway launched inside sandbox");
 }
-
 // ── Step 7: Policy presets ───────────────────────────────────────
 
 async function setupPolicies(sandboxName) {
@@ -921,7 +1183,7 @@ async function setupPolicies(sandboxName) {
 
 // ── Dashboard ────────────────────────────────────────────────────
 
-function printDashboard(sandboxName, model, provider) {
+function printDashboard(sandboxName, model, provider, runtime, surface, forwardPort) {
   const nimStat = nim.nimStatus(sandboxName);
   const nimLabel = nimStat.running ? "running" : "not running";
 
@@ -930,14 +1192,37 @@ function printDashboard(sandboxName, model, provider) {
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
 
+  const runtimeLabel = runtime === "nullclaw" ? "NullClaw" : "OpenClaw";
+  const surfaceLabel =
+    surface === "nullhub"
+      ? "NullHub"
+      : surface === "none"
+        ? "none (headless)"
+        : "OpenClaw UI";
+  const forwardedLabel =
+    surface === "nullhub"
+      ? `http://127.0.0.1:${forwardPort}/`
+      : runtime === "nullclaw"
+        ? `http://127.0.0.1:${forwardPort}/health`
+        : `http://127.0.0.1:${forwardPort}/`;
+  const insideLabel =
+    runtime === "openclaw"
+      ? "openclaw agent --agent main --local"
+      : surface === "nullhub"
+        ? "nullhub status  |  nullclaw agent"
+        : "nullclaw agent";
+
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
-  // console.log(`  Dashboard    http://localhost:18789/`);
+  console.log(`  Runtime      ${runtimeLabel}`);
+  console.log(`  Surface      ${surfaceLabel}`);
   console.log(`  Sandbox      ${sandboxName} (Landlock + seccomp + netns)`);
   console.log(`  Model        ${model} (${providerLabel})`);
+  console.log(`  Forwarded    ${forwardedLabel}`);
   console.log(`  NIM          ${nimLabel}`);
   console.log(`  ${"─".repeat(50)}`);
   console.log(`  Run:         nemoclaw ${sandboxName} connect`);
+  console.log(`  Inside:      ${insideLabel}`);
   console.log(`  Status:      nemoclaw ${sandboxName} status`);
   console.log(`  Logs:        nemoclaw ${sandboxName} logs --follow`);
   console.log(`  ${"─".repeat(50)}`);
@@ -946,8 +1231,13 @@ function printDashboard(sandboxName, model, provider) {
 
 // ── Main ─────────────────────────────────────────────────────────
 
-async function onboard(opts = {}) {
-  NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+async function onboard(args = []) {
+  const {
+    runtime: requestedRuntime,
+    surface: requestedSurface,
+    nonInteractive,
+  } = parseOnboardArgs(args);
+  NON_INTERACTIVE = nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
 
   console.log("");
   console.log("  NemoClaw Onboarding");
@@ -955,13 +1245,51 @@ async function onboard(opts = {}) {
   console.log("  ===================");
 
   const gpu = await preflight();
+  const sandboxSelection = await prepareSandbox(requestedRuntime, requestedSurface);
+  const runtime = sandboxSelection.runtime || requestedRuntime;
+  const surface = sandboxSelection.surface || requestedSurface;
+  const sandboxName = sandboxSelection.sandboxName;
+  const forwardPort =
+    sandboxSelection.sandbox?.forwardPort ||
+    forwardPortFor(runtime, surface);
+
+  await ensureSurfacePortAvailable(runtime, surface);
   await startGateway(gpu);
-  const sandboxName = await createSandbox(gpu);
-  const { model, provider } = await setupNim(sandboxName, gpu);
+
+  if (sandboxSelection.reused) {
+    run(`openshell forward start --background ${forwardPort} "${sandboxName}"`, { ignoreError: true });
+  } else {
+    await createSandbox({
+      sandboxName,
+      gpu,
+      runtime,
+      surface,
+      model: null,
+      provider: null,
+      nimContainer: null,
+    });
+  }
+
+  const { model, provider, nimContainer } = await setupNim(sandboxName, gpu);
+  registry.updateSandbox(sandboxName, { model, provider, nimContainer, runtime, surface, forwardPort });
   await setupInference(sandboxName, model, provider);
-  await setupOpenclaw(sandboxName, model, provider);
+  if (runtime === "openclaw") {
+    await setupOpenclaw(sandboxName, model, provider);
+  } else if (surface === "none") {
+    syncNullclawConfig(sandboxName, model);
+  } else if (surface === "nullhub") {
+    syncNullhubConfig(sandboxName, model);
+  }
   await setupPolicies(sandboxName);
-  printDashboard(sandboxName, model, provider);
+  printDashboard(sandboxName, model, provider, runtime, surface, forwardPort);
 }
 
-module.exports = { buildSandboxConfigSyncScript, hasStaleGateway, isSandboxReady, onboard, setupNim };
+module.exports = {
+  buildSandboxConfigSyncScript,
+  hasStaleGateway,
+  isSandboxReady,
+  onboard,
+  selectSandboxDockerfile,
+  setupNim,
+  stageOpenclawSandboxFiles,
+};

@@ -64,15 +64,7 @@ function exitWithSpawnResult(result) {
 
 async function onboard(args) {
   const { onboard: runOnboard } = require("./lib/onboard");
-  const allowedArgs = new Set(["--non-interactive"]);
-  const unknownArgs = args.filter((arg) => !allowedArgs.has(arg));
-  if (unknownArgs.length > 0) {
-    console.error(`  Unknown onboard option(s): ${unknownArgs.join(", ")}`);
-    console.error("  Usage: nemoclaw onboard [--non-interactive]");
-    process.exit(1);
-  }
-  const nonInteractive = args.includes("--non-interactive");
-  await runOnboard({ nonInteractive });
+  await runOnboard(args);
 }
 
 async function setup() {
@@ -150,7 +142,7 @@ async function deploy(instanceName) {
 
   console.log("  Syncing NemoClaw to VM...");
   run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'mkdir -p /home/ubuntu/nemoclaw'`);
-  run(`rsync -az --delete --exclude node_modules --exclude .git --exclude src -e "ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR" "${ROOT}/scripts" "${ROOT}/Dockerfile" "${ROOT}/nemoclaw" "${ROOT}/nemoclaw-blueprint" "${ROOT}/bin" "${ROOT}/package.json" ${name}:/home/ubuntu/nemoclaw/`);
+  run(`rsync -az --delete --exclude node_modules --exclude .git --exclude src -e "ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR" "${ROOT}/scripts" "${ROOT}/Dockerfile" "${ROOT}/Dockerfile.nullclaw" "${ROOT}/Dockerfile.nullhub" "${ROOT}/nemoclaw" "${ROOT}/nemoclaw-blueprint" "${ROOT}/bin" "${ROOT}/package.json" ${name}:/home/ubuntu/nemoclaw/`);
 
   const envLines = [`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`];
   const ghToken = process.env.GITHUB_TOKEN;
@@ -258,10 +250,12 @@ function listSandboxes() {
     const def = sb.name === defaultSandbox ? " *" : "";
     const model = sb.model || "unknown";
     const provider = sb.provider || "unknown";
+    const runtime = sb.runtime || "openclaw";
+    const surface = sb.surface || registry.defaultSurface(runtime);
     const gpu = sb.gpuEnabled ? "GPU" : "CPU";
     const presets = sb.policies && sb.policies.length > 0 ? sb.policies.join(", ") : "none";
     console.log(`    ${sb.name}${def}`);
-    console.log(`      model: ${model}  provider: ${provider}  ${gpu}  policies: ${presets}`);
+    console.log(`      runtime: ${runtime}  surface: ${surface}  model: ${model}  provider: ${provider}  ${gpu}  policies: ${presets}`);
   }
   console.log("");
   console.log("  * = default sandbox");
@@ -271,18 +265,28 @@ function listSandboxes() {
 // ── Sandbox-scoped actions ───────────────────────────────────────
 
 function sandboxConnect(sandboxName) {
+  const sandbox = registry.getSandbox(sandboxName);
+  const runtime = sandbox?.runtime || "openclaw";
+  const surface = sandbox?.surface || registry.defaultSurface(runtime);
+  const forwardPort = sandbox?.forwardPort || registry.defaultForwardPort(runtime, surface);
   // Ensure port forward is alive before connecting
-  run(`openshell forward start --background 18789 "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+  run(`openshell forward start --background ${forwardPort} "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
   runInteractive(`openshell sandbox connect "${sandboxName}"`);
 }
 
 function sandboxStatus(sandboxName) {
   const sb = registry.getSandbox(sandboxName);
   if (sb) {
+    const runtime = sb.runtime || "openclaw";
+    const surface = sb.surface || registry.defaultSurface(runtime);
+    const forwardPort = sb.forwardPort || registry.defaultForwardPort(runtime, surface);
     console.log("");
     console.log(`  Sandbox: ${sb.name}`);
+    console.log(`    Runtime:  ${runtime}`);
+    console.log(`    Surface:  ${surface}`);
     console.log(`    Model:    ${sb.model || "unknown"}`);
     console.log(`    Provider: ${sb.provider || "unknown"}`);
+    console.log(`    Forward:  localhost:${forwardPort}`);
     console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
   }
@@ -357,7 +361,9 @@ function help() {
   nemoclaw — NemoClaw CLI
 
   Getting Started:
-    nemoclaw onboard                 Interactive setup wizard (recommended)
+    nemoclaw onboard [--non-interactive] [--runtime ...] [--surface ...] Interactive setup wizard (recommended)
+      runtimes: openclaw (default), nullclaw (experimental)
+      surfaces: openclaw-ui (default for openclaw), nullhub (default for nullclaw), none
     nemoclaw setup                   Legacy setup (deprecated, use onboard)
     nemoclaw setup-spark             Set up on DGX Spark (fixes cgroup v2 + Docker)
 

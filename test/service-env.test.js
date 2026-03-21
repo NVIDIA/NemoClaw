@@ -4,6 +4,9 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const { execSync } = require("child_process");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 
 describe("service environment", () => {
@@ -114,6 +117,52 @@ describe("service environment", () => {
         }
       ).trim();
       assert.equal(result, "default");
+    });
+
+    it("start-services.sh restores the forward for headless nullclaw sandboxes", () => {
+      const repoRoot = path.join(__dirname, "..");
+      const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-service-home-"));
+      const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-service-bin-"));
+      const logPath = path.join(tmpHome, "openshell.log");
+      const registryDir = path.join(tmpHome, ".nemoclaw");
+      const registryPath = path.join(registryDir, "sandboxes.json");
+      const openshellPath = path.join(tmpBin, "openshell");
+
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(registryPath, JSON.stringify({
+        sandboxes: {
+          headless: {
+            name: "headless",
+            runtime: "nullclaw",
+            surface: "none",
+            forwardPort: 3000,
+          },
+        },
+        defaultSandbox: "headless",
+      }));
+      fs.writeFileSync(
+        openshellPath,
+        `#!/bin/sh
+echo "$@" >> ${JSON.stringify(logPath)}
+if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then
+  echo "headless Ready"
+fi
+`,
+        { mode: 0o755 }
+      );
+
+      execSync(`bash "${path.join(repoRoot, "scripts", "start-services.sh")}" --sandbox headless`, {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpHome,
+          PATH: `${tmpBin}:${process.env.PATH}`,
+        },
+      });
+
+      const log = fs.readFileSync(logPath, "utf-8");
+      assert.match(log, /forward start --background 3000 headless/);
     });
   });
 });

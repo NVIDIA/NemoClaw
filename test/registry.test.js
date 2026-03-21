@@ -31,6 +31,9 @@ describe("registry", () => {
     const sb = registry.getSandbox("alpha");
     assert.equal(sb.name, "alpha");
     assert.equal(sb.model, "test-model");
+    assert.equal(sb.runtime, "openclaw");
+    assert.equal(sb.surface, "openclaw-ui");
+    assert.equal(sb.forwardPort, 18789);
     assert.equal(registry.getDefault(), "alpha");
   });
 
@@ -88,11 +91,52 @@ describe("registry", () => {
   });
 
   it("persists to disk and survives reload", () => {
-    registry.registerSandbox({ name: "persist", model: "m1" });
+    registry.registerSandbox({ name: "persist", model: "m1", runtime: "nullclaw", surface: "nullhub", forwardPort: 19800 });
     // Read file directly
     const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
     assert.equal(data.sandboxes.persist.model, "m1");
+    assert.equal(data.sandboxes.persist.runtime, "nullclaw");
+    assert.equal(data.sandboxes.persist.surface, "nullhub");
+    assert.equal(data.sandboxes.persist.forwardPort, 19800);
     assert.equal(data.defaultSandbox, "persist");
+  });
+
+  it("normalizes legacy sandboxes without runtime metadata", () => {
+    fs.mkdirSync(path.dirname(regFile), { recursive: true });
+    fs.writeFileSync(regFile, JSON.stringify({
+      sandboxes: {
+        legacy: {
+          name: "legacy",
+          model: "m1",
+        },
+      },
+      defaultSandbox: "legacy",
+    }));
+
+    const sb = registry.getSandbox("legacy");
+    assert.equal(sb.runtime, "openclaw");
+    assert.equal(sb.surface, "openclaw-ui");
+    assert.equal(sb.forwardPort, 18789);
+  });
+
+  it("normalizes legacy nullclaw sandboxes as headless when no surface is stored", () => {
+    fs.mkdirSync(path.dirname(regFile), { recursive: true });
+    fs.writeFileSync(regFile, JSON.stringify({
+      sandboxes: {
+        legacy: {
+          name: "legacy",
+          runtime: "nullclaw",
+          model: "m1",
+          forwardPort: 3000,
+        },
+      },
+      defaultSandbox: "legacy",
+    }));
+
+    const sb = registry.getSandbox("legacy");
+    assert.equal(sb.runtime, "nullclaw");
+    assert.equal(sb.surface, "none");
+    assert.equal(sb.forwardPort, 3000);
   });
 
   it("handles corrupt registry file gracefully", () => {
