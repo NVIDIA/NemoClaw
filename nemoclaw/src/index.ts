@@ -17,6 +17,7 @@ import {
   describeOnboardProvider,
   loadOnboardConfig,
 } from "./onboard/config.js";
+import { registerRuntimeContext } from "./runtime-context.js";
 
 // ---------------------------------------------------------------------------
 // OpenClaw Plugin SDK compatible types (mirrors openclaw/plugin-sdk)
@@ -238,6 +239,10 @@ export default function register(api: OpenClawPluginApi): void {
   const onboardCfg = loadOnboardConfig();
   const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
   api.registerProvider(registeredProviderForConfig(onboardCfg, providerCredentialEnv));
+
+  // 4. Register runtime context injection (sandbox-awareness hook)
+  const pluginConfig = getPluginConfig(api);
+  registerRuntimeContext(api, pluginConfig);
 
   const bannerEndpoint = onboardCfg ? describeOnboardEndpoint(onboardCfg) : "build.nvidia.com";
   const bannerProvider = onboardCfg ? describeOnboardProvider(onboardCfg) : "NVIDIA Endpoint API";
