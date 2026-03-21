@@ -1,0 +1,13 @@
+# Type checking — catches errors before wasting a CI round-trip.
+
+# TypeScript
+echo "pre-push: checking TypeScript types..."
+cd nemoclaw && npx tsc --noEmit || exit 1
+cd ..
+
+# Pyright (Python) — skip if uv is not installed
+if command -v uv >/dev/null 2>&1; then
+  echo "pre-push: checking Python types..."
+  cd nemoclaw-blueprint && uv run --with pyright pyright . || exit 1
+  cd ..
+fi

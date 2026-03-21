@@ -31,9 +31,20 @@
     "type": "git",
     "url": "https://github.com/NVIDIA/NemoClaw.git"
   },
+  "lint-staged": {
+    "nemoclaw/src/**/*.ts": [
+      "sh -c 'cd nemoclaw && npx eslint --fix \"$@\"' _",
+      "sh -c 'cd nemoclaw && npx prettier --write \"$@\"' _"
+    ],
+    "nemoclaw-blueprint/**/*.py": [
+      "uvx ruff check --fix",
+      "uvx ruff format"
+    ]
+  },
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
-    "husky": "^9.1.7"
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0"
   }
 }
