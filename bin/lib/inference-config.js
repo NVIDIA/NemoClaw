@@ -27,7 +27,7 @@ function getProviderSelectionConfig(provider, model) {
         profile: DEFAULT_ROUTE_PROFILE,
         credentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
         provider,
-        providerLabel: "NVIDIA Cloud API",
+        providerLabel: "NVIDIA Endpoint API",
       };
     case "vllm-local":
       return {

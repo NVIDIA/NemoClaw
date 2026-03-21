@@ -32,13 +32,7 @@ Use the NemoClaw status, logs, and TUI tools together to inspect sandbox health,
 Run the status command to view the sandbox state, blueprint run information, and active inference configuration:
 
 ```console
-$ openclaw nemoclaw status
-```
-
-For machine-readable output, add the `--json` flag:
-
-```console
-$ openclaw nemoclaw status --json
+$ nemoclaw <name> status
 ```
 
 Key fields in the output include the following:
@@ -47,33 +41,22 @@ Key fields in the output include the following:
 - Blueprint run ID, which is the identifier for the most recent blueprint execution.
 - Inference provider, which shows the active provider, model, and endpoint.
 
-If you run `openclaw nemoclaw status` from inside the sandbox, the command detects the sandbox context and reports it. Host-level sandbox and inference details are not available from within the sandbox. Run `openshell sandbox list` on the host to check the underlying sandbox state.
+Run `nemoclaw <name> status` on the host to check sandbox state. Use `openshell sandbox list` for the underlying sandbox details.
 
 ## View Blueprint and Sandbox Logs
 
 Stream the most recent log output from the blueprint runner and sandbox:
 
 ```console
-$ openclaw nemoclaw logs
+$ nemoclaw <name> logs
 ```
 
 To follow the log output in real time:
 
 ```console
-$ openclaw nemoclaw logs -f
+$ nemoclaw <name> logs -f
 ```
 
-To display a specific number of log lines:
-
-```console
-$ openclaw nemoclaw logs -n 100
-```
-
-To view logs for a specific blueprint run instead of the most recent one:
-
-```console
-$ openclaw nemoclaw logs --run-id <id>
-```
 
 ## Monitor Network Activity in the TUI
 
@@ -104,8 +87,8 @@ $ openclaw agent --agent main --local -m "Test inference" --session-id debug
 
 If the request fails, check the following:
 
-1. Run `openclaw nemoclaw status` to confirm the active provider and endpoint.
-2. Run `openclaw nemoclaw logs -f` to view error messages from the blueprint runner.
+1. Run `nemoclaw <name> status` to confirm the active provider and endpoint.
+2. Run `nemoclaw <name> logs -f` to view error messages from the blueprint runner.
 3. Verify that the inference endpoint is reachable from the host.
 
 ## Related Topics
