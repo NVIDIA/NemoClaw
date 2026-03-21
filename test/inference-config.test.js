@@ -56,6 +56,25 @@ describe("inference selection config", () => {
     });
   });
 
+  it("maps openrouter to the sandbox inference route", () => {
+    assert.deepEqual(getProviderSelectionConfig("openrouter", "anthropic/claude-sonnet-4"), {
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "anthropic/claude-sonnet-4",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
+      provider: "openrouter",
+      providerLabel: "OpenRouter",
+    });
+  });
+
+  it("uses default cloud model when openrouter model is not specified", () => {
+    const config = getProviderSelectionConfig("openrouter");
+    assert.equal(config.model, "nvidia/nemotron-3-super-120b-a12b");
+    assert.equal(config.providerLabel, "OpenRouter");
+  });
+
   it("builds a qualified OpenClaw primary model for ollama-local", () => {
     assert.equal(
       getOpenClawPrimaryModel("ollama-local", "nemotron-3-nano:30b"),

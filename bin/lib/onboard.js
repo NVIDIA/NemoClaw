@@ -28,7 +28,7 @@ const {
   isUnsupportedMacosRuntime,
   shouldPatchCoredns,
 } = require("./platform");
-const { prompt, ensureApiKey, getCredential } = require("./credentials");
+const { prompt, ensureApiKey, getCredential, saveCredential } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
 const policies = require("./policies");
@@ -256,10 +256,10 @@ function getNonInteractiveProvider() {
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
 
-  const validProviders = new Set(["cloud", "ollama", "vllm", "nim"]);
+  const validProviders = new Set(["cloud", "ollama", "vllm", "nim", "openrouter"]);
   if (!validProviders.has(providerKey)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
-    console.error("  Valid values: cloud, ollama, vllm, nim");
+    console.error("  Valid values: cloud, ollama, vllm, nim, openrouter");
     process.exit(1);
   }
 
@@ -589,6 +589,10 @@ async function setupNim(sandboxName, gpu) {
       "NVIDIA Endpoint API (build.nvidia.com)" +
       (!ollamaRunning && !(EXPERIMENTAL && vllmRunning) ? " (recommended)" : ""),
   });
+  options.push({
+    key: "openrouter",
+    label: "OpenRouter (openrouter.ai)",
+  });
   if (hasOllama || ollamaRunning) {
     options.push({
       key: "ollama",
@@ -720,6 +724,40 @@ async function setupNim(sandboxName, gpu) {
       console.log("  ✓ Using existing vLLM on localhost:8000");
       provider = "vllm-local";
       model = "vllm-local";
+    } else if (selected.key === "openrouter") {
+      provider = "openrouter";
+      if (isNonInteractive()) {
+        if (!process.env.OPENROUTER_API_KEY) {
+          console.error("  OPENROUTER_API_KEY is required for OpenRouter in non-interactive mode.");
+          console.error("  Set it via: OPENROUTER_API_KEY=sk-or-v1-... nemoclaw onboard --non-interactive");
+          process.exit(1);
+        }
+        model = requestedModel || DEFAULT_CLOUD_MODEL;
+      } else {
+        let orKey = getCredential("OPENROUTER_API_KEY");
+        if (!orKey) {
+          console.log("");
+          console.log("  ┌─────────────────────────────────────────────────────────────────┐");
+          console.log("  │  OpenRouter API Key required                                    │");
+          console.log("  │                                                                 │");
+          console.log("  │  1. Go to https://openrouter.ai/keys                            │");
+          console.log("  │  2. Sign in to your OpenRouter account                          │");
+          console.log("  │  3. Create a new API key                                        │");
+          console.log("  │  4. Paste the key below (starts with sk-or-v1-)                 │");
+          console.log("  └─────────────────────────────────────────────────────────────────┘");
+          console.log("");
+          orKey = await prompt("  OpenRouter API Key: ");
+          if (!orKey) {
+            console.error("  API key is required.");
+            process.exit(1);
+          }
+          saveCredential("OPENROUTER_API_KEY", orKey);
+        }
+        process.env.OPENROUTER_API_KEY = orKey;
+        model = await promptCloudModel();
+      }
+      model = model || DEFAULT_CLOUD_MODEL;
+      console.log(`  Using OpenRouter with model: ${model}`);
     }
     // else: cloud — fall through to default below
   }
@@ -808,6 +846,19 @@ async function setupInference(sandboxName, model, provider) {
       console.error(`  ${probe.message}`);
       process.exit(1);
     }
+  } else if (provider === "openrouter") {
+    run(
+      `openshell provider create --name openrouter --type openai ` +
+      `--credential "OPENROUTER_API_KEY=${process.env.OPENROUTER_API_KEY}" ` +
+      `--config "OPENAI_BASE_URL=https://openrouter.ai/api/v1" 2>&1 || ` +
+      `openshell provider update openrouter --credential "OPENROUTER_API_KEY=${process.env.OPENROUTER_API_KEY}" ` +
+      `--config "OPENAI_BASE_URL=https://openrouter.ai/api/v1" 2>&1 || true`,
+      { ignoreError: true }
+    );
+    run(
+      `openshell inference set --no-verify --provider openrouter --model ${model} 2>/dev/null || true`,
+      { ignoreError: true }
+    );
   }
 
   registry.updateSandbox(sandboxName, { model, provider });
@@ -955,6 +1006,7 @@ function printDashboard(sandboxName, model, provider) {
   if (provider === "nvidia-nim") providerLabel = "NVIDIA Endpoint API";
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
+  else if (provider === "openrouter") providerLabel = "OpenRouter";
 
   console.log("");
   console.log(`  ${"─".repeat(50)}`);

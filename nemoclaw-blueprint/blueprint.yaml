@@ -11,6 +11,7 @@ profiles:
   - ncp
   - nim-local
   - vllm
+  - openrouter
 
 description: |
   NemoClaw blueprint: orchestrates OpenClaw sandbox creation, migration,
@@ -53,6 +54,13 @@ components:
         model: "nvidia/nemotron-3-nano-30b-a3b"
         credential_env: "OPENAI_API_KEY"
         credential_default: "dummy"
+
+      openrouter:
+        provider_type: "openai"
+        provider_name: "openrouter"
+        endpoint: "https://openrouter.ai/api/v1"
+        model: ""
+        credential_env: "OPENROUTER_API_KEY"
 
   policy:
     base: "sandboxes/openclaw/policy.yaml"
