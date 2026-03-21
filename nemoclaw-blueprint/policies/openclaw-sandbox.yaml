@@ -10,7 +10,7 @@
 #   strict  — this file. Minimum for onboard + basic agent operation.
 #   relaxed — adds third-party model providers, broader web access.
 #
-# To add endpoints: update this file and re-run `openclaw nemoclaw migrate`
+# To add endpoints: update this file and re-run `nemoclaw onboard`
 # or apply dynamically via `openshell policy set`.
 
 version: 1

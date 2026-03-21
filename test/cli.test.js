@@ -62,4 +62,33 @@ describe("CLI dispatch", () => {
     assert.equal(r.code, 1);
     assert.ok(r.out.includes("Unknown onboard option"));
   });
+
+  it("debug --help exits 0 and shows usage", () => {
+    const r = run("debug --help");
+    assert.equal(r.code, 0);
+    assert.ok(r.out.includes("Collect NemoClaw diagnostic information"), "should show description");
+    assert.ok(r.out.includes("--quick"), "should mention --quick flag");
+    assert.ok(r.out.includes("--output"), "should mention --output flag");
+  });
+
+  it("debug --quick exits 0 and produces diagnostic output", () => {
+    const r = run("debug --quick");
+    assert.equal(r.code, 0, "debug --quick should exit 0");
+    assert.ok(r.out.includes("Collecting diagnostics"), "should show collection header");
+    assert.ok(r.out.includes("System"), "should include System section");
+    assert.ok(r.out.includes("Done"), "should show completion message");
+  });
+
+  it("debug exits 1 on unknown option", () => {
+    const r = run("debug --quik");
+    assert.equal(r.code, 1, "misspelled flag should exit non-zero");
+    assert.ok(r.out.includes("Unknown option"), "should report unknown option");
+  });
+
+  it("help mentions debug command", () => {
+    const r = run("help");
+    assert.equal(r.code, 0);
+    assert.ok(r.out.includes("Troubleshooting"), "missing Troubleshooting section");
+    assert.ok(r.out.includes("nemoclaw debug"), "help should mention debug command");
+  });
 });

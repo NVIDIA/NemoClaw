@@ -75,7 +75,7 @@ Thin plugin, versioned blueprint
 : The plugin stays small and stable. Orchestration logic lives in the blueprint and evolves on its own release cadence.
 
 Respect CLI boundaries
-: The `nemoclaw` CLI is the primary interface. Plugin commands are available under `openclaw nemoclaw` but do not override built-in OpenClaw commands.
+: The `nemoclaw` CLI is the primary interface for sandbox management.
 
 Supply chain safety
 : Blueprint artifacts are immutable, versioned, and digest-verified before execution.
@@ -91,7 +91,7 @@ Reproducible setup
 
 NemoClaw is split into two parts:
 
-- The *plugin* is a TypeScript package that powers the `nemoclaw` CLI and also registers commands under `openclaw nemoclaw`.
+- The *plugin* is a TypeScript package that registers an inference provider and the `/nemoclaw` slash command inside the sandbox.
   It handles user interaction and delegates orchestration work to the blueprint.
 - The *blueprint* is a versioned Python artifact that contains all the logic for creating sandboxes, applying policies, and configuring inference.
   The plugin resolves, verifies, and executes the blueprint as a subprocess.

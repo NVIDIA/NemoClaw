@@ -20,77 +20,7 @@ status: published
 
 # Commands
 
-NemoClaw provides two command interfaces.
-The plugin commands run under the `openclaw nemoclaw` namespace inside the OpenClaw CLI.
-The standalone `nemoclaw` binary handles host-side setup, deployment, and service management.
-Both interfaces are installed when you run `npm install -g nemoclaw`.
-
-## Plugin Commands
-
-### `openclaw nemoclaw launch`
-
-Bootstrap OpenClaw inside an OpenShell sandbox.
-If NemoClaw detects an existing host installation, `launch` stops unless you pass `--force`.
-
-```console
-$ openclaw nemoclaw launch [--force] [--profile <profile>]
-```
-
-`--force`
-: Skip the ergonomics warning and force plugin-driven bootstrap. Without this flag,
-  NemoClaw recommends using `openshell sandbox create` directly for new installs.
-
-`--profile <profile>`
-: Blueprint profile to use. Default: `default`.
-
-### `nemoclaw <name> connect`
-
-Open an interactive shell inside the OpenClaw sandbox.
-Use this after launch to connect and chat with the agent through the TUI or CLI.
-
-```console
-$ nemoclaw my-assistant connect
-```
-
-If the TUI view is not a good fit for very long responses, use the CLI form instead:
-
-```console
-$ openclaw agent --agent main --local -m "<prompt>" --session-id <id>
-```
-
-This is the recommended workaround when you need the full response printed directly in the terminal.
-
-### `openclaw nemoclaw status`
-
-Display sandbox health, blueprint run state, and inference configuration.
-
-```console
-$ openclaw nemoclaw status [--json]
-```
-
-`--json`
-: Output as JSON for programmatic consumption.
-
-When running inside an active OpenShell sandbox, the status command detects the sandbox context and reports "active (inside sandbox)" instead of false negatives.
-Host-side sandbox state and inference configuration are not inspectable from inside the sandbox.
-Run `openshell sandbox list` on the host to check the underlying sandbox state.
-
-### `openclaw nemoclaw logs`
-
-Stream blueprint execution and sandbox logs.
-
-```console
-$ openclaw nemoclaw logs [-f] [-n <count>] [--run-id <id>]
-```
-
-`-f, --follow`
-: Follow log output, similar to `tail -f`.
-
-`-n, --lines <count>`
-: Number of lines to show. Default: `50`.
-
-`--run-id <id>`
-: Show logs for a specific blueprint run instead of the latest.
+The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes. It is installed when you run `npm install -g nemoclaw`.
 
 ### `/nemoclaw` Slash Command
 
