@@ -85,6 +85,19 @@ function step(n, total, msg) {
   console.log(`  ${"─".repeat(50)}`);
 }
 
+function getInstalledOpenshellVersion(versionOutput = null) {
+  const output = String(versionOutput ?? runCapture("openshell -V", { ignoreError: true })).trim();
+  const match = output.match(/openshell\s+([0-9]+\.[0-9]+\.[0-9]+)/i);
+  if (!match) return null;
+  return match[1];
+}
+
+function getStableGatewayImageRef(versionOutput = null) {
+  const version = getInstalledOpenshellVersion(versionOutput);
+  if (!version) return null;
+  return `ghcr.io/nvidia/openshell/cluster:${version}`;
+}
+
 function pythonLiteralJson(value) {
   return JSON.stringify(JSON.stringify(value));
 }
@@ -369,8 +382,21 @@ async function startGateway(gpu) {
   // sandbox itself does not need direct GPU access. Passing --gpu causes
   // FailedPrecondition errors when the gateway's k3s device plugin cannot
   // allocate GPUs. See: https://build.nvidia.com/spark/nemoclaw/instructions
+  const gatewayEnv = {};
+  const openshellVersion = getInstalledOpenshellVersion();
+  const stableGatewayImage = openshellVersion
+    ? `ghcr.io/nvidia/openshell/cluster:${openshellVersion}`
+    : null;
+  if (stableGatewayImage && openshellVersion) {
+    gatewayEnv.OPENSHELL_CLUSTER_IMAGE = stableGatewayImage;
+    gatewayEnv.IMAGE_TAG = openshellVersion;
+    console.log(`  Using pinned OpenShell gateway image: ${stableGatewayImage}`);
+  }
 
-  run(`openshell gateway start ${gwArgs.join(" ")}`, { ignoreError: false });
+  run(`openshell gateway start ${gwArgs.join(" ")}`, {
+    ignoreError: false,
+    env: gatewayEnv,
+  });
 
   // Verify health
   for (let i = 0; i < 5; i++) {
@@ -556,7 +582,7 @@ async function setupNim(sandboxName, gpu) {
   options.push({
     key: "cloud",
     label:
-      "NVIDIA Cloud API (build.nvidia.com)" +
+      "NVIDIA Endpoint API (build.nvidia.com)" +
       (!ollamaRunning && !(EXPERIMENTAL && vllmRunning) ? " (recommended)" : ""),
   });
   if (hasOllama || ollamaRunning) {
@@ -707,7 +733,7 @@ async function setupNim(sandboxName, gpu) {
       model = model || (await promptCloudModel()) || DEFAULT_CLOUD_MODEL;
     }
     model = model || requestedModel || DEFAULT_CLOUD_MODEL;
-    console.log(`  Using NVIDIA Cloud API with model: ${model}`);
+    console.log(`  Using NVIDIA Endpoint API with model: ${model}`);
   }
 
   registry.updateSandbox(sandboxName, { model, provider, nimContainer });
@@ -922,7 +948,7 @@ function printDashboard(sandboxName, model, provider) {
   const nimLabel = nimStat.running ? "running" : "not running";
 
   let providerLabel = provider;
-  if (provider === "nvidia-nim") providerLabel = "NVIDIA Cloud API";
+  if (provider === "nvidia-nim") providerLabel = "NVIDIA Endpoint API";
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
 
@@ -960,4 +986,12 @@ async function onboard(opts = {}) {
   printDashboard(sandboxName, model, provider);
 }
 
-module.exports = { buildSandboxConfigSyncScript, hasStaleGateway, isSandboxReady, onboard, setupNim };
+module.exports = {
+  buildSandboxConfigSyncScript,
+  getInstalledOpenshellVersion,
+  getStableGatewayImageRef,
+  hasStaleGateway,
+  isSandboxReady,
+  onboard,
+  setupNim,
+};

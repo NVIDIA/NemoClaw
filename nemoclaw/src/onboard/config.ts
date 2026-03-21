@@ -35,7 +35,7 @@ export function describeOnboardProvider(config: NemoClawOnboardConfig): string {
 
   switch (config.endpointType) {
     case "build":
-      return "NVIDIA Cloud API";
+      return "NVIDIA Endpoint API";
     case "ollama":
       return "Local Ollama";
     case "vllm":

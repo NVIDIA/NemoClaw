@@ -92,6 +92,17 @@ fi
 SANDBOX_NAME="${1:-nemoclaw}"
 info "Using sandbox name: ${SANDBOX_NAME}"
 
+OPEN_SHELL_VERSION_RAW="$(openshell -V 2>/dev/null || true)"
+OPEN_SHELL_VERSION_LOWER="${OPEN_SHELL_VERSION_RAW,,}"
+if [[ "$OPEN_SHELL_VERSION_LOWER" =~ openshell[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+  export IMAGE_TAG="${BASH_REMATCH[1]}"
+  export OPENSHELL_CLUSTER_IMAGE="ghcr.io/nvidia/openshell/cluster:${BASH_REMATCH[1]}"
+  info "Using pinned OpenShell gateway image: ${OPENSHELL_CLUSTER_IMAGE}"
+elif [[ -n "$OPEN_SHELL_VERSION_RAW" ]]; then
+  warn "Could not parse openshell version from 'openshell -V': ${OPEN_SHELL_VERSION_RAW}"
+  warn "Skipping OpenShell gateway image pinning."
+fi
+
 # 1. Gateway — always start fresh to avoid stale state
 info "Starting OpenShell gateway..."
 openshell gateway destroy -g nemoclaw > /dev/null 2>&1 || true

@@ -86,7 +86,7 @@ When the install completes, a summary confirms the running environment:
 ```
 ──────────────────────────────────────────────────
 Sandbox      my-assistant (Landlock + seccomp + netns)
-Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Cloud API)
+Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoint API)
 ──────────────────────────────────────────────────
 Run:         nemoclaw my-assistant connect
 Status:      nemoclaw my-assistant status
@@ -169,7 +169,7 @@ NemoClaw installs the NVIDIA OpenShell runtime and Nemotron models, then uses a 
 | **Plugin**       | TypeScript CLI commands for launch, connect, status, and logs.                            |
 | **Blueprint**    | Versioned Python artifact that orchestrates sandbox creation, policy, and inference setup. |
 | **Sandbox**      | Isolated OpenShell container running OpenClaw with policy-enforced egress and filesystem.  |
-| **Inference**    | NVIDIA cloud model calls, routed through the OpenShell gateway, transparent to the agent.  |
+| **Inference**    | NVIDIA Endpoint model calls, routed through the OpenShell gateway, transparent to the agent.  |
 
 The blueprint lifecycle follows four stages: resolve the artifact, verify its digest, plan the resources, and apply through the OpenShell CLI.
 
@@ -179,11 +179,11 @@ When something goes wrong, errors may originate from either NemoClaw or the Open
 
 ## Inference
 
-Inference requests from the agent never leave the sandbox directly. OpenShell intercepts every call and routes it to the NVIDIA cloud provider.
+Inference requests from the agent never leave the sandbox directly. OpenShell intercepts every call and routes it to the NVIDIA Endpoint provider.
 
 | Provider     | Model                               | Use Case                                       |
 |--------------|--------------------------------------|-------------------------------------------------|
-| NVIDIA cloud | `nvidia/nemotron-3-super-120b-a12b` | Production. Requires an NVIDIA API key.         |
+| NVIDIA Endpoint | `nvidia/nemotron-3-super-120b-a12b` | Production. Requires an NVIDIA API key.         |
 
 Get an API key from [build.nvidia.com](https://build.nvidia.com). The `nemoclaw onboard` command prompts for this key during setup.
 
@@ -230,7 +230,7 @@ Refer to the documentation for more information on NemoClaw.
 - [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html): Learn what NemoClaw does and how it fits together.
 - [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html): Learn about the plugin, blueprint, and sandbox lifecycle.
 - [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html): Learn about the plugin structure, blueprint lifecycle, and sandbox environment.
-- [Inference Profiles](https://docs.nvidia.com/nemoclaw/latest/reference/inference-profiles.html): Learn about the NVIDIA cloud inference configuration.
+- [Inference Profiles](https://docs.nvidia.com/nemoclaw/latest/reference/inference-profiles.html): Learn about the NVIDIA Endpoint inference configuration.
 - [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html): Learn about egress control and policy customization.
 - [CLI Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html): Learn about the full command reference.
 - [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html): Troubleshoot common issues and resolution steps.

@@ -53,6 +53,35 @@ describe("runner helpers", () => {
     assert.equal(calls[1][2].stdio, "inherit");
   });
 
+  it("preserves process env when opts.env is provided", () => {
+    const calls = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    const originalPath = process.env.PATH;
+    childProcess.spawnSync = (...args) => {
+      calls.push(args);
+      return { status: 0 };
+    };
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      process.env.PATH = "/usr/local/bin:/usr/bin";
+      run("echo test", { env: { OPENSHELL_CLUSTER_IMAGE: "ghcr.io/nvidia/openshell/cluster:0.0.12" } });
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][2].env.OPENSHELL_CLUSTER_IMAGE, "ghcr.io/nvidia/openshell/cluster:0.0.12");
+    assert.equal(calls[0][2].env.PATH, "/usr/local/bin:/usr/bin");
+  });
+
   describe("shellQuote", () => {
     it("wraps in single quotes", () => {
       const { shellQuote } = require(runnerPath);
@@ -69,7 +98,6 @@ describe("runner helpers", () => {
       const dangerous = "test; rm -rf /";
       const quoted = shellQuote(dangerous);
       assert.equal(quoted, "'test; rm -rf /'");
-      // Verify it's actually safe by running through bash
       const result = spawnSync("bash", ["-c", `echo ${quoted}`], { encoding: "utf-8" });
       assert.equal(result.stdout.trim(), dangerous);
     });
@@ -129,7 +157,6 @@ describe("runner helpers", () => {
 
     it("no duplicate shellQuote definitions in bin/", () => {
       const fs = require("fs");
-      const glob = require("path");
       const binDir = path.join(__dirname, "..", "bin");
       const files = [];
       function walk(dir) {
@@ -161,9 +188,6 @@ describe("runner helpers", () => {
         timeout: 10000,
         cwd: path.join(__dirname, ".."),
       });
-      // Should exit non-zero — either "Unknown command" (not in registry)
-      // or "Invalid sandbox name" (validation caught it).
-      // Either way, no shell injection occurs.
       assert.notEqual(result.status, 0, "CLI should reject malicious sandbox name");
     });
 
