@@ -29,8 +29,14 @@ python3 - "$SUMMARY_FILE" "$THRESHOLD_FILE" <<'PY'
 import json, math, sys
 
 summary_path, threshold_path = sys.argv[1], sys.argv[2]
-summary = json.load(open(summary_path))["total"]
-thresholds = json.load(open(threshold_path))
+try:
+    with open(summary_path) as f:
+        summary = json.load(f)["total"]
+    with open(threshold_path) as f:
+        thresholds = json.load(f)
+except (json.JSONDecodeError, KeyError) as e:
+    print(f"ERROR: Failed to parse coverage files: {e}")
+    sys.exit(1)
 
 TOLERANCE = 1
 METRICS = ["lines", "functions", "branches", "statements"]
