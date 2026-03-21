@@ -217,7 +217,7 @@ const DEFAULT_PLUGIN_CONFIG: NemoClawConfig = {
  * Normalizes a sandbox name to lowercase and validates it.
  * Returns the normalized name or the default if invalid.
  */
-function normalizeSandboxName(name: string | unknown, defaultName: string): string {
+export function normalizeSandboxName(name: string | unknown, defaultName: string): string {
   if (typeof name !== "string" || !name) {
     return defaultName;
   }

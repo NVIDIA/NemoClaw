@@ -73,8 +73,10 @@ def openshell_available() -> bool:
     return shutil.which("openshell") is not None
 
 
-def normalize_sandbox_name(name: str) -> str:
+def normalize_sandbox_name(name: object) -> str:
     """Normalize sandbox name to lowercase and validate it."""
+    if not isinstance(name, str):
+        raise ValueError(f"Invalid sandbox name: expected string, got {type(name).__name__!r}.")
     normalized = name.lower()
     # Only lowercase letters, numbers, and hyphens allowed
     if not re.match(r'^[a-z0-9-]+$', normalized):
@@ -122,7 +124,10 @@ def action_plan(
         inference_cfg = {**inference_cfg, "endpoint": endpoint_url}
 
     # Normalize sandbox name to lowercase
-    sandbox_name = normalize_sandbox_name(sandbox_cfg.get("name", "openclaw"))
+    try:
+        sandbox_name = normalize_sandbox_name(sandbox_cfg.get("name", "openclaw"))
+    except ValueError as exc:
+        sys.exit(f"Error: {exc}")
 
     plan: dict[str, Any] = {
         "run_id": rid,
@@ -176,7 +181,10 @@ def action_apply(
     sandbox_cfg: dict[str, Any] = blueprint.get("components", {}).get("sandbox", {})
 
     # Normalize sandbox name to lowercase
-    sandbox_name: str = normalize_sandbox_name(sandbox_cfg.get("name", "openclaw"))
+    try:
+        sandbox_name: str = normalize_sandbox_name(sandbox_cfg.get("name", "openclaw"))
+    except ValueError as exc:
+        sys.exit(f"Error: {exc}")
     sandbox_image: str = sandbox_cfg.get("image", "openclaw")
     forward_ports: list[int] = sandbox_cfg.get("forward_ports", [18789])
 
@@ -299,7 +307,10 @@ def action_rollback(rid: str) -> None:
     if plan_file.exists():
         plan = json.loads(plan_file.read_text())
         # Normalize sandbox name from plan (in case it was saved before normalization)
-        sandbox_name = normalize_sandbox_name(plan.get("sandbox_name", "openclaw"))
+        try:
+            sandbox_name = normalize_sandbox_name(plan.get("sandbox_name", "openclaw"))
+        except ValueError as exc:
+            sys.exit(f"Error: {exc}")
 
         progress(30, f"Stopping sandbox {sandbox_name}")
         run_cmd(
