@@ -6,6 +6,7 @@
 // NEMOCLAW_NON_INTERACTIVE=1 env var for CI/CD pipelines.
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
 const {
@@ -19,8 +20,6 @@ const {
 const {
   CLOUD_MODEL_OPTIONS,
   DEFAULT_CLOUD_MODEL,
-  DEFAULT_OLLAMA_MODEL,
-  getOpenClawPrimaryModel,
   getProviderSelectionConfig,
 } = require("./inference-config");
 const {
@@ -98,67 +97,25 @@ function getStableGatewayImageRef(versionOutput = null) {
   return `ghcr.io/nvidia/openshell/cluster:${version}`;
 }
 
-function pythonLiteralJson(value) {
-  return JSON.stringify(JSON.stringify(value));
-}
-
 function buildSandboxConfigSyncScript(selectionConfig) {
-  const providerType =
-    selectionConfig.profile === "inference-local"
-      ? selectionConfig.model === DEFAULT_OLLAMA_MODEL
-        ? "ollama-local"
-        : "nvidia-nim"
-      : selectionConfig.endpointType === "vllm"
-        ? "vllm-local"
-        : "nvidia-nim";
-  const primaryModel = getOpenClawPrimaryModel(providerType, selectionConfig.model);
-  const providerKey = "inference";
-  const providerConfig = {
-    baseUrl: selectionConfig.endpointUrl,
-    apiKey: "unused",
-    api: "openai-completions",
-    models: [
-      {
-        id: selectionConfig.model,
-        name: selectionConfig.model,
-        reasoning: false,
-        input: ["text"],
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 131072,
-        maxTokens: 4096,
-      },
-    ],
-  };
+  // openclaw.json is immutable (root:root 444, Landlock read-only) — never
+  // write to it at runtime.  Model routing is handled by the host-side
+  // gateway (`openshell inference set` in Step 5), not from inside the
+  // sandbox.  We only write the NemoClaw selection config (~/.nemoclaw/).
   return `
 set -euo pipefail
-mkdir -p ~/.nemoclaw ~/.openclaw
+mkdir -p ~/.nemoclaw
 cat > ~/.nemoclaw/config.json <<'EOF_NEMOCLAW_CFG'
 ${JSON.stringify(selectionConfig, null, 2)}
 EOF_NEMOCLAW_CFG
-python3 - <<'PYCFG'
-import json
-import os
-
-cfg_path = os.path.expanduser('~/.openclaw/openclaw.json')
-cfg = {}
-if os.path.exists(cfg_path):
-    with open(cfg_path) as f:
-        cfg = json.load(f)
-
-cfg.setdefault('agents', {}).setdefault('defaults', {}).setdefault('model', {})['primary'] = ${JSON.stringify(primaryModel)}
-models_cfg = cfg.setdefault('models', {})
-models_cfg.setdefault('mode', 'merge')
-providers_cfg = models_cfg.setdefault('providers', {})
-providers_cfg[${JSON.stringify(providerKey)}] = json.loads(${pythonLiteralJson(providerConfig)})
-
-with open(cfg_path, 'w') as f:
-    json.dump(cfg, f, indent=2)
-
-os.chmod(cfg_path, 0o600)
-PYCFG
-openclaw models set ${shellQuote(primaryModel)} > /dev/null 2>&1 || true
 exit
 `.trim();
+}
+
+function writeSandboxConfigSyncFile(script, tmpDir = os.tmpdir(), now = Date.now()) {
+  const scriptFile = path.join(tmpDir, `nemoclaw-sync-${now}.sh`);
+  fs.writeFileSync(scriptFile, `${script}\n`, { mode: 0o600 });
+  return scriptFile;
 }
 
 async function promptCloudModel() {
@@ -822,9 +779,14 @@ async function setupOpenclaw(sandboxName, model, provider) {
       onboardedAt: new Date().toISOString(),
     };
     const script = buildSandboxConfigSyncScript(sandboxConfig);
-    run(`cat <<'EOF_NEMOCLAW_SYNC' | openshell sandbox connect "${sandboxName}"
-${script}
-EOF_NEMOCLAW_SYNC`, { stdio: ["ignore", "ignore", "inherit"] });
+    const scriptFile = writeSandboxConfigSyncFile(script);
+    try {
+      run(`openshell sandbox connect "${sandboxName}" < ${shellQuote(scriptFile)}`, {
+        stdio: ["ignore", "ignore", "inherit"],
+      });
+    } finally {
+      fs.unlinkSync(scriptFile);
+    }
   }
 
   console.log("  ✓ OpenClaw gateway launched inside sandbox");
@@ -994,4 +956,5 @@ module.exports = {
   isSandboxReady,
   onboard,
   setupNim,
+  writeSandboxConfigSyncFile,
 };

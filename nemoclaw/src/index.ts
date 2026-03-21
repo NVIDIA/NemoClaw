@@ -133,7 +133,9 @@ export interface NemoClawConfig {
   inferenceProvider: string;
 }
 
-function activeModelEntries(onboardCfg: ReturnType<typeof loadOnboardConfig>): ModelProviderEntry[] {
+function activeModelEntries(
+  onboardCfg: ReturnType<typeof loadOnboardConfig>,
+): ModelProviderEntry[] {
   if (!onboardCfg?.model) {
     return [
       {
@@ -188,7 +190,14 @@ function registeredProviderForConfig(
     aliases: ["inference-local", "nemoclaw"],
     envVars: [providerCredentialEnv],
     models: { chat: activeModelEntries(onboardCfg) },
-    auth: [{ type: "bearer", envVar: providerCredentialEnv, headerName: "Authorization", label: authLabel }],
+    auth: [
+      {
+        type: "bearer",
+        envVar: providerCredentialEnv,
+        headerName: "Authorization",
+        label: authLabel,
+      },
+    ],
   };
 }
 
