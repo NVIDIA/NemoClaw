@@ -18,6 +18,7 @@ const { runCapture } = require("./runner");
  *
  * Returns:
  *   { ok: true }
+ *   { ok: true, warning: string }           — probe blocked by EPERM/EACCES
  *   { ok: false, process: string, pid: number|null, reason: string }
  */
 async function checkPortAvailable(port, opts) {
@@ -71,6 +72,13 @@ async function checkPortAvailable(port, opts) {
           process: "unknown",
           pid: null,
           reason: `port ${p} is in use (EADDRINUSE)`,
+        });
+      } else if (err.code === "EPERM" || err.code === "EACCES") {
+        // Bind blocked by sandbox/seccomp/AppArmor policy — not a port
+        // conflict. Degrade gracefully and assume the port is available.
+        resolve({
+          ok: true,
+          warning: `port probe skipped: ${err.code} (${err.message})`,
         });
       } else {
         // Unexpected error — treat port as unavailable
