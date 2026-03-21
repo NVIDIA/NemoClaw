@@ -24,78 +24,52 @@ if [ ! -f "$SUMMARY_FILE" ]; then
   exit 1
 fi
 
-# Extract actual coverage percentages from the vitest JSON summary.
-actual_lines=$(python3 -c "import json; print(json.load(open('$SUMMARY_FILE'))['total']['lines']['pct'])")
-actual_functions=$(python3 -c "import json; print(json.load(open('$SUMMARY_FILE'))['total']['functions']['pct'])")
-actual_branches=$(python3 -c "import json; print(json.load(open('$SUMMARY_FILE'))['total']['branches']['pct'])")
-actual_statements=$(python3 -c "import json; print(json.load(open('$SUMMARY_FILE'))['total']['statements']['pct'])")
+# Single Python invocation handles all parsing, comparison, and output.
+python3 - "$SUMMARY_FILE" "$THRESHOLD_FILE" <<'PY'
+import json, math, sys
 
-# Extract thresholds.
-thresh_lines=$(python3 -c "import json; print(json.load(open('$THRESHOLD_FILE'))['lines'])")
-thresh_functions=$(python3 -c "import json; print(json.load(open('$THRESHOLD_FILE'))['functions'])")
-thresh_branches=$(python3 -c "import json; print(json.load(open('$THRESHOLD_FILE'))['branches'])")
-thresh_statements=$(python3 -c "import json; print(json.load(open('$THRESHOLD_FILE'))['statements'])")
+summary_path, threshold_path = sys.argv[1], sys.argv[2]
+summary = json.load(open(summary_path))["total"]
+thresholds = json.load(open(threshold_path))
 
-TOLERANCE=1
-failed=0
-improved=0
+TOLERANCE = 1
+METRICS = ["lines", "functions", "branches", "statements"]
 
-check_metric() {
-  local name="$1"
-  local actual="$2"
-  local threshold="$3"
+failed = False
+improved = False
 
-  # python3 for float comparison
-  local below
-  below=$(python3 -c "print(1 if $actual < $threshold - $TOLERANCE else 0)")
-  local above
-  above=$(python3 -c "print(1 if $actual > $threshold + $TOLERANCE else 0)")
+print("=== Coverage Ratchet Check ===")
+print()
 
-  if [ "$below" -eq 1 ]; then
-    echo "FAIL: $name coverage is ${actual}%, threshold is ${threshold}% (tolerance ${TOLERANCE}%)"
-    failed=1
-  elif [ "$above" -eq 1 ]; then
-    echo "IMPROVED: $name coverage is ${actual}%, above threshold ${threshold}%"
-    improved=1
-  else
-    echo "OK: $name coverage is ${actual}% (threshold ${threshold}%)"
-  fi
-}
+for metric in METRICS:
+    actual = summary[metric]["pct"]
+    threshold = thresholds[metric]
 
-echo "=== Coverage Ratchet Check ==="
-echo ""
-check_metric "lines" "$actual_lines" "$thresh_lines"
-check_metric "functions" "$actual_functions" "$thresh_functions"
-check_metric "branches" "$actual_branches" "$thresh_branches"
-check_metric "statements" "$actual_statements" "$thresh_statements"
-echo ""
+    if actual < threshold - TOLERANCE:
+        print(f"FAIL: {metric} coverage is {actual}%, threshold is {threshold}% (tolerance {TOLERANCE}%)")
+        failed = True
+    elif actual > threshold + TOLERANCE:
+        print(f"IMPROVED: {metric} coverage is {actual}%, above threshold {threshold}%")
+        improved = True
+    else:
+        print(f"OK: {metric} coverage is {actual}% (threshold {threshold}%)")
 
-if [ "$failed" -eq 1 ]; then
-  echo "Coverage regression detected. Add tests to bring coverage back above the threshold."
-  exit 1
-fi
+print()
 
-if [ "$improved" -eq 1 ]; then
-  # Compute new thresholds: floor of actual coverage to avoid flaky 0.01% diffs.
-  new_json=$(python3 -c "
-import json, math
-new = {
-    'lines': math.floor($actual_lines),
-    'functions': math.floor($actual_functions),
-    'branches': math.floor($actual_branches),
-    'statements': math.floor($actual_statements),
-}
-# Only ratchet upward — never lower a threshold.
-old = json.load(open('$THRESHOLD_FILE'))
-for k in new:
-    new[k] = max(new[k], old[k])
-print(json.dumps(new, indent=2))
-")
-  echo "Coverage improved! Update ci/coverage-threshold.json to ratchet the floor:"
-  echo ""
-  echo "$new_json"
-  echo ""
-  echo "Run:  echo '$new_json' > ci/coverage-threshold.json"
-fi
+if failed:
+    print("Coverage regression detected. Add tests to bring coverage back above the threshold.")
+    sys.exit(1)
 
-echo "Coverage ratchet passed."
+if improved:
+    new = {}
+    for metric in METRICS:
+        new[metric] = max(math.floor(summary[metric]["pct"]), thresholds[metric])
+    new_json = json.dumps(new, indent=2)
+    print("Coverage improved! Update ci/coverage-threshold.json to ratchet the floor:")
+    print()
+    print(new_json)
+    print()
+    print(f"Run:  echo '{new_json}' > ci/coverage-threshold.json")
+
+print("Coverage ratchet passed.")
+PY
