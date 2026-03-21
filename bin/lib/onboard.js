@@ -455,6 +455,14 @@ async function createSandbox(gpu) {
   if (process.env.NVIDIA_API_KEY) {
     envArgs.push(`NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY)}`);
   }
+  const discordToken = getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN;
+  if (discordToken) {
+    envArgs.push(`DISCORD_BOT_TOKEN=${shellQuote(discordToken)}`);
+  }
+  const slackToken = getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN;
+  if (slackToken) {
+    envArgs.push(`SLACK_BOT_TOKEN=${shellQuote(slackToken)}`);
+  }
 
   // Run without piping through awk — the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
