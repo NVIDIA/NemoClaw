@@ -27,6 +27,13 @@ RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
     && apt-get autoremove --purge -y \
     && rm -rf /var/lib/apt/lists/*
 
+# Keep the canonical config path, but back openclaw.json with writable
+# sandbox state so OpenClaw can persist model and auth updates there.
+RUN mkdir -p /sandbox/.openclaw-data \
+    && rm -f /sandbox/.openclaw/openclaw.json \
+    && ln -s /sandbox/.openclaw-data/openclaw.json /sandbox/.openclaw/openclaw.json \
+    && chown -h root:root /sandbox/.openclaw/openclaw.json \
+    && chown -R sandbox:sandbox /sandbox/.openclaw-data
 # Copy built plugin and blueprint into the sandbox
 COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
 COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
@@ -73,10 +80,10 @@ WORKDIR /sandbox
 USER sandbox
 
 # Write the COMPLETE openclaw.json including gateway config and auth token.
-# This file is immutable at runtime (Landlock read-only on /sandbox/.openclaw).
-# No runtime writes to openclaw.json are needed or possible.
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 # Auth token is generated per build so each image has a unique token.
+# The ~/.openclaw/openclaw.json path is a symlink into .openclaw-data so
+# runtime model switches can update it without patching the image.
 RUN python3 -c "\
 import base64, json, os, secrets; \
 from urllib.parse import urlparse; \
@@ -122,22 +129,14 @@ os.chmod(path, 0o600)"
 RUN openclaw doctor --fix > /dev/null 2>&1 || true \
     && openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true
 
-# Lock openclaw.json via DAC: chown to root so the sandbox user cannot modify
-# it at runtime.  This works regardless of Landlock enforcement status.
-# The Landlock policy (/sandbox/.openclaw in read_only) provides defense-in-depth
-# once OpenShell enables enforcement.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/514
-# Lock the entire .openclaw directory tree.
-# SECURITY: chmod 755 (not 1777) — the sandbox user can READ but not WRITE
-# to this directory. This prevents the agent from replacing symlinks
-# (e.g., pointing /sandbox/.openclaw/hooks to an attacker-controlled path).
-# The writable state lives in .openclaw-data, reached via the symlinks.
+# Keep the top-level ~/.openclaw tree immutable while leaving the
+# state-backed openclaw.json target writable under .openclaw-data.
 # hadolint ignore=DL3002
 USER root
 RUN chown root:root /sandbox/.openclaw \
     && find /sandbox/.openclaw -mindepth 1 -maxdepth 1 -exec chown -h root:root {} + \
-    && chmod 755 /sandbox/.openclaw \
-    && chmod 444 /sandbox/.openclaw/openclaw.json
+    && chmod 755 /sandbox/.openclaw
+USER sandbox
 
 # Pin config hash at build time so the entrypoint can verify integrity.
 # Prevents the agent from creating a copy with a tampered config and
