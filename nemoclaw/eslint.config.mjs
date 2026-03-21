@@ -9,7 +9,7 @@ export default [
       parser: tsparser,
       parserOptions: {
         projectService: {
-          allowDefaultProject: ["src/**/*.test.ts"],
+          allowDefaultProject: ["src/*.test.ts", "src/*/*.test.ts"],
         },
         tsconfigRootDir: import.meta.dirname,
       },
