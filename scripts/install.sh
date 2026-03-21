@@ -18,6 +18,84 @@ info()  { echo -e "${GREEN}[install]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[install]${NC} $1"; }
 fail()  { echo -e "${RED}[install]${NC} $1"; exit 1; }
 
+define_runtime_helpers() {
+  socket_exists() {
+    local socket_path="$1"
+
+    if [ -n "${NEMOCLAW_TEST_SOCKET_PATHS:-}" ]; then
+      case ":$NEMOCLAW_TEST_SOCKET_PATHS:" in
+        *":$socket_path:"*) return 0 ;;
+      esac
+    fi
+
+    [ -S "$socket_path" ]
+  }
+
+  find_colima_docker_socket() {
+    local home_dir="${1:-${HOME:-/tmp}}"
+    local socket_path
+
+    for socket_path in \
+      "$home_dir/.colima/default/docker.sock" \
+      "$home_dir/.config/colima/default/docker.sock"
+    do
+      if socket_exists "$socket_path"; then
+        printf '%s\n' "$socket_path"
+        return 0
+      fi
+    done
+
+    return 1
+  }
+
+  find_docker_desktop_socket() {
+    local home_dir="${1:-${HOME:-/tmp}}"
+    local socket_path="$home_dir/.docker/run/docker.sock"
+
+    if socket_exists "$socket_path"; then
+      printf '%s\n' "$socket_path"
+      return 0
+    fi
+
+    return 1
+  }
+
+  detect_docker_host() {
+    if [ -n "${DOCKER_HOST:-}" ]; then
+      printf '%s\n' "$DOCKER_HOST"
+      return 0
+    fi
+
+    local home_dir="${1:-${HOME:-/tmp}}"
+    local socket_path
+
+    if socket_path="$(find_colima_docker_socket "$home_dir")"; then
+      printf 'unix://%s\n' "$socket_path"
+      return 0
+    fi
+
+    if socket_path="$(find_docker_desktop_socket "$home_dir")"; then
+      printf 'unix://%s\n' "$socket_path"
+      return 0
+    fi
+
+    return 1
+  }
+}
+
+SCRIPT_PATH="${BASH_SOURCE[0]-}"
+SCRIPT_DIR=""
+if [ -n "$SCRIPT_PATH" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+fi
+
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/lib/runtime.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$SCRIPT_DIR/lib/runtime.sh"
+else
+  define_runtime_helpers
+fi
+
 # Ensure nvm environment is loaded in the current shell.
 ensure_nvm_loaded() {
   if [ -z "${NVM_DIR:-}" ]; then
@@ -177,6 +255,23 @@ install_docker() {
   if command -v docker > /dev/null 2>&1; then
     # Docker installed but not running
     if [ "$OS" = "Darwin" ]; then
+      local colima_socket=""
+      local docker_desktop_socket=""
+      colima_socket="$(find_colima_docker_socket || true)"
+      docker_desktop_socket="$(find_docker_desktop_socket || true)"
+
+      if [ -n "${DOCKER_HOST:-}" ]; then
+        fail "Docker is installed but the selected runtime is not running. Start the runtime behind DOCKER_HOST (${DOCKER_HOST}) and re-run."
+      fi
+
+      if [ -n "$colima_socket" ] && [ -n "$docker_desktop_socket" ]; then
+        fail "Both Colima and Docker Desktop are available on this Mac. Start the runtime you want explicitly and re-run, or set DOCKER_HOST to select one."
+      fi
+
+      if [ -n "$docker_desktop_socket" ]; then
+        fail "Docker Desktop appears to be installed but is not running. Start Docker Desktop and re-run."
+      fi
+
       if command -v colima > /dev/null 2>&1; then
         info "Starting Colima..."
         colima start
@@ -264,14 +359,68 @@ install_openshell() {
 
 install_openshell
 
+# ── Pre-extract openclaw workaround (GH-503) ────────────────────
+# The openclaw npm tarball is missing directory entries for extensions/,
+# skills/, and dist/plugin-sdk/config/. npm's tar extractor hard-fails on
+# these but system tar handles them fine. We pre-extract openclaw into
+# node_modules BEFORE npm install so npm sees the dep is already satisfied.
+pre_extract_openclaw() {
+  local install_dir="$1"
+  local openclaw_version
+  openclaw_version=$(node -e "console.log(require('${install_dir}/package.json').dependencies.openclaw)" 2>/dev/null) || openclaw_version=""
+
+  if [ -z "$openclaw_version" ]; then
+    warn "Could not determine openclaw version — skipping pre-extraction"
+    return 1
+  fi
+
+  info "Pre-extracting openclaw@${openclaw_version} with system tar (GH-503 workaround)…"
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  if npm pack "openclaw@${openclaw_version}" --pack-destination "$tmpdir" > /dev/null 2>&1; then
+    local tgz
+    tgz="$(find "$tmpdir" -maxdepth 1 -name 'openclaw-*.tgz' -print -quit)"
+    if [ -n "$tgz" ] && [ -f "$tgz" ]; then
+      if mkdir -p "${install_dir}/node_modules/openclaw" \
+        && tar xzf "$tgz" -C "${install_dir}/node_modules/openclaw" --strip-components=1
+      then
+        info "openclaw pre-extracted successfully"
+      else
+        warn "Failed to extract openclaw tarball"
+        rm -rf "$tmpdir"
+        return 1
+      fi
+    else
+      warn "npm pack succeeded but tarball not found"
+      rm -rf "$tmpdir"
+      return 1
+    fi
+  else
+    warn "Failed to download openclaw tarball"
+    rm -rf "$tmpdir"
+    return 1
+  fi
+  rm -rf "$tmpdir"
+}
+
 # ── Install NemoClaw CLI ─────────────────────────────────────────
 
 info "Installing nemoclaw CLI..."
-if [ "$NODE_MGR" = "nodesource" ]; then
-  sudo npm install -g nemoclaw
-else
-  npm install -g nemoclaw
+# Clone first so we can pre-extract openclaw before npm install (GH-503).
+# npm install -g git+https://... does this internally but we can't hook
+# into its extraction pipeline, so we do it ourselves.
+NEMOCLAW_SRC="${HOME}/.nemoclaw/source"
+rm -rf "$NEMOCLAW_SRC"
+mkdir -p "$(dirname "$NEMOCLAW_SRC")"
+git clone --depth 1 https://github.com/NVIDIA/NemoClaw.git "$NEMOCLAW_SRC"
+pre_extract_openclaw "$NEMOCLAW_SRC" || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
+# Use sudo for npm link when the global prefix requires it (e.g., nodesource),
+# but skip sudo if already root (e.g., Docker containers).
+SUDO=""
+if [ "$NODE_MGR" = "nodesource" ] && [ "$(id -u)" -ne 0 ]; then
+  SUDO="sudo"
 fi
+(cd "$NEMOCLAW_SRC" && npm install --ignore-scripts && cd nemoclaw && npm install --ignore-scripts && npm run build && cd .. && $SUDO npm link)
 
 if [ "$NEED_RESHIM" = true ]; then
   info "Reshimming asdf..."

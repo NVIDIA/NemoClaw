@@ -1,63 +1,133 @@
-# Contributing
+# Contributing to NVIDIA NemoClaw
 
-## Signing Your Work
+Thank you for your interest in contributing to NVIDIA NemoClaw. This guide covers how to set up your development environment, run tests, and submit changes.
 
-* We require that all contributors "sign-off" on their commits. This certifies
-  that the contribution is your original work, or you have rights to submit it
-  under the same license, or a compatible license.
+## Before You Open an Issue
 
-  * Any contribution which contains commits that are not Signed-Off will not be
-    accepted.
+Open an issue when you encounter one of the following situations.
 
-* To sign off on a commit you simply use the `--signoff` (or `-s`) option when
-  committing your changes:
+- A real bug that you confirmed and could not fix.
+- A feature proposal with a design — not a "please build this" request.
+- Security vulnerabilities must follow [SECURITY.md](SECURITY.md) — **not** GitHub issues.
 
-  ```bash
-  git commit -s -m "Add cool feature."
-  ```
+## Prerequisites
 
-  This will append the following to your commit message:
+Install the following before you begin.
 
-  ```text
-  Signed-off-by: Your Name <your@email.com>
-  ```
+- Node.js 20+ and npm 10+
+- Python 3.11+ (for blueprint and documentation builds)
+- Docker (running)
+- [uv](https://docs.astral.sh/uv/) (for Python dependency management)
 
-* Full text of the DCO:
+## Getting Started
 
-  ```text
-    Developer Certificate of Origin
-    Version 1.1
+Install the root dependencies and build the TypeScript plugin:
 
-    Copyright (C) 2004, 2006 The Linux Foundation and its contributors.
-    1 Letterman Drive
-    Suite D4700
-    San Francisco, CA, 94129
+```bash
+# Install root dependencies (OpenClaw + CLI entry point)
+npm install
 
-    Everyone is permitted to copy and distribute verbatim copies of this
-    license document, but changing it is not allowed.
-  ```
+# Install and build the TypeScript plugin
+cd nemoclaw && npm install && npm run build && cd ..
 
-  ```text
-    Developer's Certificate of Origin 1.1
+# Install Python deps for the blueprint
+cd nemoclaw-blueprint && uv sync && cd ..
+```
 
-    By making a contribution to this project, I certify that:
+## Building
 
-    (a) The contribution was created in whole or in part by me and I have the
-    right to submit it under the open source license indicated in the file; or
+The TypeScript plugin lives in `nemoclaw/` and compiles with `tsc`:
 
-    (b) The contribution is based upon previous work that, to the best of my
-    knowledge, is covered under an appropriate open source license and I have
-    the right under that license to submit that work with modifications,
-    whether created in whole or in part by me, under the same open source
-    license (unless I am permitted to submit under a different license), as
-    indicated in the file; or
+```bash
+cd nemoclaw
+npm run build        # one-time compile
+npm run dev          # watch mode
+```
 
-    (c) The contribution was provided directly to me by some other person who
-    certified (a), (b) or (c) and I have not modified it.
+## Main Tasks
 
-    (d) I understand and agree that this project and the contribution are
-    public and that a record of the contribution (including all personal
-    information I submit with it, including my sign-off) is maintained
-    indefinitely and may be redistributed consistent with this project or the
-    open source license(s) involved.
-  ```
+These are the primary `make` and `npm` targets for day-to-day development:
+
+| Task | Purpose |
+|------|---------|
+| `make check` | Run all linters (TypeScript + Python) |
+| `make lint` | Same as `make check` |
+| `make format` | Auto-format TypeScript and Python source |
+| `npm test` | Run root-level tests (`test/*.test.js`) |
+| `cd nemoclaw && npm test` | Run plugin unit tests (Vitest) |
+| `make docs` | Build documentation (Sphinx/MyST) |
+| `make docs-live` | Serve docs locally with auto-rebuild |
+
+## Project Structure
+
+The repository is organized as follows.
+
+| Path | Purpose |
+|------|---------|
+| `nemoclaw/` | TypeScript plugin (Commander CLI, OpenClaw extension) |
+| `nemoclaw-blueprint/` | Python blueprint for sandbox orchestration |
+| `bin/` | CLI entry point (`nemoclaw.js`) |
+| `scripts/` | Install helpers and automation scripts |
+| `test/` | Root-level integration tests |
+| `docs/` | User-facing documentation (Sphinx/MyST) |
+
+## Documentation
+
+If your change affects user-facing behavior (new commands, changed defaults, new features, bug fixes that contradict existing docs), update the relevant pages under `docs/` in the same PR.
+
+If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `/update-docs` skill that drafts doc updates. Use them before writing from scratch and follow the style guide in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
+
+To build and preview docs locally:
+
+```bash
+make docs       # build the docs
+make docs-live  # serve locally with auto-rebuild
+```
+
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the full style guide and writing conventions.
+
+## Pull Requests
+
+We welcome contributions. Every PR requires maintainer review. To keep the review queue healthy, limit the number of open PRs you have at any time to fewer than 10.
+
+> [!WARNING]
+> Accounts that repeatedly exceed this limit or submit automated bulk PRs may have their PRs closed or their access restricted.
+
+Follow these steps to submit a pull request.
+
+1. Create a feature branch from `main`.
+2. Make your changes with tests.
+3. Run `make check` and `npm test` to verify.
+4. Open a PR.
+
+### Commit Messages
+
+This project uses [Conventional Commits](https://www.conventionalcommits.org/). All commit messages must follow the format:
+
+```
+<type>(<scope>): <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+**Types:**
+
+- `feat` - New feature
+- `fix` - Bug fix
+- `docs` - Documentation only
+- `chore` - Maintenance tasks (dependencies, build config)
+- `refactor` - Code change that neither fixes a bug nor adds a feature
+- `test` - Adding or updating tests
+- `ci` - CI/CD changes
+- `perf` - Performance improvements
+
+**Examples:**
+
+```
+feat(cli): add --profile flag to nemoclaw onboard
+fix(blueprint): handle missing API key gracefully
+docs: update quickstart for new install wizard
+chore(deps): bump commander to 13.2
+```

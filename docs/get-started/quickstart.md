@@ -20,6 +20,12 @@ status: published
 
 # Quickstart
 
+Follow these steps to get started with NemoClaw and your first sandboxed OpenClaw agent.
+
+:::{note}
+NemoClaw currently requires a fresh installation of OpenClaw.
+:::
+
 ```{include} ../../README.md
 :start-after: <!-- start-quickstart-guide -->
 :end-before: <!-- end-quickstart-guide -->
@@ -32,3 +38,7 @@ status: published
 - [Customize the network policy](../network-policy/customize-network-policy.md) to pre-approve trusted domains.
 - [Deploy to a remote GPU instance](../deployment/deploy-to-remote-gpu.md) for always-on operation.
 - [Monitor sandbox activity](../monitoring/monitor-sandbox-activity.md) through the OpenShell TUI.
+
+### Troubleshooting
+
+If you run into issues during installation or onboarding, refer to the [Troubleshooting guide](../reference/troubleshooting.md) for common error messages and resolution steps.

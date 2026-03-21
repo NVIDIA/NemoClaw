@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: pr-limit
+
+# pull_request_target runs in the base repo context, giving the token write
+# access even for fork PRs. This is safe here because this workflow never
+# checks out or executes code from the PR — it only counts open PRs and
+# closes excess ones. Do NOT add a checkout step or run PR-sourced code
+# in this workflow to prevent injection attacks.
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  check-pr-limit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check open PR count for author
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          OPEN_COUNT=$(gh pr list --repo "$REPO" --author "$AUTHOR" --state open --json number --jq 'length')
+
+          echo "Author $AUTHOR has $OPEN_COUNT open PR(s)"
+
+          if [ "$OPEN_COUNT" -gt 10 ]; then
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
+              "This repository limits contributors to 10 open pull requests. Please close or merge existing PRs before opening new ones."
+            gh pr close "$PR_NUMBER" --repo "$REPO"
+            echo "::error::PR closed — author $AUTHOR exceeds the 10 open PR limit"
+            exit 1
+          fi

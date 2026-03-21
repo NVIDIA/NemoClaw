@@ -1,0 +1,51 @@
+name: Feature Request
+description: Propose a feature with a design. Not a "please build this" request.
+labels: ["enhancement", "status: triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this solve? Why does it matter?
+    validations:
+      required: true
+
+  - type: textarea
+    id: design
+    attributes:
+      label: Proposed Design
+      description: |
+        How should this work? Describe the system behavior, components involved, and user-facing interface.
+        This should be a design, not a wish list.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What other approaches did you evaluate? Why is the proposed design better?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - "enhancement: feature"
+        - "enhancement: provider"
+        - "enhancement: platform"
+        - "enhancement: testing"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+        - label: This is a design proposal, not a "please build this" request
+          required: true

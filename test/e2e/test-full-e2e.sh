@@ -2,17 +2,22 @@
 # Full E2E: install → onboard → verify inference (REAL services, no mocks)
 #
 # Proves the COMPLETE user journey including real inference against
-# the NVIDIA Cloud API. Sends prompts through the sandbox and verifies
-# that responses come back from the model.
+# the NVIDIA Cloud API. Runs install.sh --non-interactive which handles
+# Node.js, openshell, NemoClaw, and onboard setup automatically.
 #
 # Prerequisites:
 #   - Docker running
 #   - NVIDIA_API_KEY set (real key, starts with nvapi-)
-#   - openshell CLI installed
 #   - Network access to integrate.api.nvidia.com
 #
+# Environment variables:
+#   NEMOCLAW_NON_INTERACTIVE=1   — required (enables non-interactive install + onboard)
+#   NEMOCLAW_SANDBOX_NAME        — sandbox name (default: e2e-nightly)
+#   NEMOCLAW_RECREATE_SANDBOX=1  — recreate sandbox if it exists from a previous run
+#   NVIDIA_API_KEY               — required for NVIDIA Cloud API inference
+#
 # Usage:
-#   bash test/e2e/test-full-e2e.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-full-e2e.sh
 #
 # See: https://github.com/NVIDIA/NemoClaw/issues/71
 
@@ -55,7 +60,7 @@ else
   exit 1
 fi
 
-SANDBOX_NAME="e2e-full"
+SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-nightly}"
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 0: Pre-cleanup
@@ -65,8 +70,10 @@ info "Destroying any leftover sandbox/gateway from previous runs..."
 if command -v nemoclaw > /dev/null 2>&1; then
   nemoclaw "$SANDBOX_NAME" destroy 2>/dev/null || true
 fi
-openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
-openshell gateway destroy -g nemoclaw 2>/dev/null || true
+if command -v openshell > /dev/null 2>&1; then
+  openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
+  openshell gateway destroy -g nemoclaw 2>/dev/null || true
+fi
 pass "Pre-cleanup complete"
 
 # ══════════════════════════════════════════════════════════════════
@@ -78,13 +85,6 @@ if docker info > /dev/null 2>&1; then
   pass "Docker is running"
 else
   fail "Docker is not running — cannot continue"
-  exit 1
-fi
-
-if command -v openshell > /dev/null 2>&1; then
-  pass "openshell CLI installed ($(openshell --version 2>&1 || echo unknown))"
-else
-  fail "openshell CLI not found — cannot continue"
   exit 1
 fi
 
@@ -102,32 +102,67 @@ else
   exit 1
 fi
 
-# ══════════════════════════════════════════════════════════════════
-# Phase 2: Install
-# ══════════════════════════════════════════════════════════════════
-section "Phase 2: Install nemoclaw"
-
-cd "$REPO"
-
-# Install from source (same as install.sh's install_nemoclaw does in a repo dir)
-if [ -f "./package.json" ] && grep -q '"name": "nemoclaw"' ./package.json 2>/dev/null; then
-  info "Installing nemoclaw from source (npm install + npm link)..."
-  npm install 2>&1 | tail -3
-  npm link 2>&1 | tail -3
-else
-  info "Installing nemoclaw globally..."
-  npm install -g nemoclaw 2>&1 | tail -3
+if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then
+  fail "NEMOCLAW_NON_INTERACTIVE=1 is required"
+  exit 1
 fi
 
-# Source bashrc in case nvm/asdf modified it
+# ══════════════════════════════════════════════════════════════════
+# Phase 2: Install nemoclaw (non-interactive mode)
+# ══════════════════════════════════════════════════════════════════
+section "Phase 2: Install nemoclaw (non-interactive mode)"
+
+cd "$REPO" || { fail "Could not cd to repo root: $REPO"; exit 1; }
+
+info "Running install.sh --non-interactive..."
+info "This installs Node.js, openshell, NemoClaw, and runs onboard."
+info "Expected duration: 5-10 minutes on first run."
+
+INSTALL_LOG="/tmp/nemoclaw-e2e-install.log"
+# Write to a file instead of piping through tee. openshell's background
+# port-forward inherits pipe file descriptors, which prevents tee from exiting.
+# Use tail -f in the background for real-time output in CI logs.
+bash install.sh --non-interactive > "$INSTALL_LOG" 2>&1 &
+install_pid=$!
+tail -f "$INSTALL_LOG" --pid=$install_pid 2>/dev/null &
+tail_pid=$!
+wait $install_pid
+install_exit=$?
+kill $tail_pid 2>/dev/null || true
+wait $tail_pid 2>/dev/null || true
+
+# Source shell profile to pick up nvm/PATH changes from install.sh
 if [ -f "$HOME/.bashrc" ]; then
   source "$HOME/.bashrc" 2>/dev/null || true
 fi
+# Ensure nvm is loaded in current shell
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+# Ensure ~/.local/bin is on PATH (openshell may be installed there in non-interactive mode)
+if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+  export PATH="$HOME/.local/bin:$PATH"
+fi
 
+if [ $install_exit -eq 0 ]; then
+  pass "install.sh completed (exit 0)"
+else
+  fail "install.sh failed (exit $install_exit)"
+  exit 1
+fi
+
+# Verify nemoclaw is on PATH
 if command -v nemoclaw > /dev/null 2>&1; then
   pass "nemoclaw installed at $(command -v nemoclaw)"
 else
   fail "nemoclaw not found on PATH after install"
+  exit 1
+fi
+
+# Verify openshell was installed
+if command -v openshell > /dev/null 2>&1; then
+  pass "openshell installed ($(openshell --version 2>&1 || echo unknown))"
+else
+  fail "openshell not found on PATH after install"
   exit 1
 fi
 
@@ -136,78 +171,57 @@ nemoclaw --help > /dev/null 2>&1 \
   || fail "nemoclaw --help failed"
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 3: Onboard (real openshell, real gateway, real sandbox)
+# Phase 3: Sandbox verification
 # ══════════════════════════════════════════════════════════════════
-section "Phase 3: Onboard"
+section "Phase 3: Sandbox verification"
 
-# Non-interactive onboard piped inputs:
-#   1. Sandbox name: "e2e-full"
-#   2. Inference choice: "" (empty = default = NVIDIA Cloud API)
-#   3. Policy presets: "Y" (apply suggested)
-# ensureApiKey() does NOT prompt when NVIDIA_API_KEY is in env.
-info "Running nemoclaw onboard (non-interactive)..."
-info "This may take several minutes on first run (builds sandbox image)..."
-# Write to a file instead of $(…) because openshell's background port-forward
-# inherits the pipe's file descriptors, which prevents $(…) from returning.
-ONBOARD_LOG="$(mktemp)"
-printf "${SANDBOX_NAME}\n\nY\n" | nemoclaw onboard > "$ONBOARD_LOG" 2>&1
-onboard_exit=$?
-onboard_output="$(cat "$ONBOARD_LOG")"
-rm -f "$ONBOARD_LOG"
-
-if [ $onboard_exit -eq 0 ]; then
-  pass "nemoclaw onboard completed (exit 0)"
+# 3a: nemoclaw list
+if list_output=$(nemoclaw list 2>&1); then
+  echo "$list_output" | grep -Fq -- "$SANDBOX_NAME" \
+    && pass "nemoclaw list contains '${SANDBOX_NAME}'" \
+    || fail "nemoclaw list does not contain '${SANDBOX_NAME}'"
 else
-  fail "nemoclaw onboard failed (exit $onboard_exit)"
-  echo "$onboard_output" | tail -30
+  fail "nemoclaw list failed: ${list_output:0:200}"
 fi
 
-echo "$onboard_output" | grep -qi "Sandbox.*${SANDBOX_NAME}.*created\|Sandbox '${SANDBOX_NAME}' created" \
-  && pass "Onboard: sandbox '${SANDBOX_NAME}' created" \
-  || fail "Onboard: sandbox creation not confirmed in output"
-
-echo "$onboard_output" | grep -qi "nvidia-nim\|NVIDIA Cloud API" \
-  && pass "Onboard: NVIDIA Cloud API selected" \
-  || fail "Onboard: cloud API not selected"
-
-# ══════════════════════════════════════════════════════════════════
-# Phase 4: Sandbox verification + inference setup
-# ══════════════════════════════════════════════════════════════════
-section "Phase 4: Sandbox verification"
-
-list_output=$(nemoclaw list 2>&1)
-echo "$list_output" | grep -q "$SANDBOX_NAME" \
-  && pass "nemoclaw list contains '${SANDBOX_NAME}'" \
-  || fail "nemoclaw list does not contain '${SANDBOX_NAME}'"
-
+# 3b: nemoclaw status
 status_output=$(nemoclaw "$SANDBOX_NAME" status 2>&1)
-[ $? -eq 0 ] \
-  && pass "nemoclaw ${SANDBOX_NAME} status exits 0" \
-  || fail "nemoclaw ${SANDBOX_NAME} status failed"
-
-# Ensure inference is configured (onboard's openshell inference set may have
-# failed due to --no-verify flag incompatibility — configure it directly)
-inf_check=$(openshell inference get 2>&1)
-if echo "$inf_check" | grep -qi "nvidia-nim"; then
-  pass "Inference already configured via onboard"
+if [ $? -eq 0 ]; then
+  pass "nemoclaw ${SANDBOX_NAME} status exits 0"
 else
-  info "Inference not configured by onboard — setting it directly..."
-  openshell provider create --name nvidia-nim --type openai \
-    --credential "NVIDIA_API_KEY=$NVIDIA_API_KEY" \
-    --config "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1" 2>&1 || true
-  openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b 2>&1
-  inf_verify=$(openshell inference get 2>&1)
-  echo "$inf_verify" | grep -qi "nvidia-nim" \
-    && pass "Inference configured (direct setup)" \
-    || fail "Failed to configure inference"
+  fail "nemoclaw ${SANDBOX_NAME} status failed: ${status_output:0:200}"
+fi
+
+# 3c: Inference must be configured by onboard (no fallback — if onboard
+# failed to configure it, that's a bug we want to catch)
+if inf_check=$(openshell inference get 2>&1); then
+  echo "$inf_check" | grep -qi "nvidia-nim" \
+    && pass "Inference configured via onboard" \
+    || fail "Inference not configured — onboard did not set up nvidia-nim provider"
+else
+  fail "openshell inference get failed: ${inf_check:0:200}"
+fi
+
+# 3d: Policy presets applied
+if policy_output=$(openshell policy get --full "$SANDBOX_NAME" 2>&1); then
+  echo "$policy_output" | grep -qi "network_policies" \
+    && pass "Policy applied to sandbox" \
+    || fail "No network policy found on sandbox"
+
+  # Check that at least npm or pypi preset endpoints are present (onboard auto-suggests these)
+  echo "$policy_output" | grep -qi "registry.npmjs.org\|pypi.org" \
+    && pass "Policy presets (npm/pypi) detected in sandbox policy" \
+    || skip "Could not confirm npm/pypi presets in policy (may vary by environment)"
+else
+  fail "openshell policy get failed: ${policy_output:0:200}"
 fi
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 5: Live inference — the real proof
+# Phase 4: Live inference — the real proof
 # ══════════════════════════════════════════════════════════════════
-section "Phase 5: Live inference"
+section "Phase 4: Live inference"
 
-# ── Test 5a: Direct NVIDIA Cloud API ──
+# ── Test 4a: Direct NVIDIA Cloud API ──
 info "[LIVE] Direct API test → integrate.api.nvidia.com..."
 api_response=$(curl -s --max-time 30 \
   -X POST https://integrate.api.nvidia.com/v1/chat/completions \
@@ -230,7 +244,7 @@ else
   fail "[LIVE] Direct API: empty response from curl"
 fi
 
-# ── Test 5b: Inference through the sandbox (THE definitive test) ──
+# ── Test 4b: Inference through the sandbox (THE definitive test) ──
 info "[LIVE] Sandbox inference test → user → sandbox → gateway → NVIDIA API..."
 ssh_config="$(mktemp)"
 sandbox_response=""
@@ -266,6 +280,26 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
+# Phase 5: NemoClaw CLI operations
+# ══════════════════════════════════════════════════════════════════
+section "Phase 5: NemoClaw CLI operations"
+
+# Note: Policy enforcement (proxy blocking, L4/L7 rules, SSRF protection)
+# and sandbox command execution are tested extensively in OpenShell's own
+# E2E suite (e2e/python/test_sandbox_policy.py, test_sandbox_api.py).
+# NemoClaw tests only that its onboard correctly *configured* the policies
+# (Phase 3d above), not that OpenShell *enforces* them.
+
+# ── Test 5a: nemoclaw logs ──
+info "Testing sandbox log retrieval..."
+logs_output=$(nemoclaw "$SANDBOX_NAME" logs 2>&1) || true
+if [ -n "$logs_output" ]; then
+  pass "nemoclaw logs: produced output ($(echo "$logs_output" | wc -l | tr -d ' ') lines)"
+else
+  fail "nemoclaw logs: no output"
+fi
+
+# ══════════════════════════════════════════════════════════════════
 # Phase 6: Cleanup
 # ══════════════════════════════════════════════════════════════════
 section "Phase 6: Cleanup"
@@ -274,7 +308,7 @@ nemoclaw "$SANDBOX_NAME" destroy 2>&1 | tail -3 || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
 list_after=$(nemoclaw list 2>&1)
-echo "$list_after" | grep -q "$SANDBOX_NAME" \
+echo "$list_after" | grep -Fq -- "$SANDBOX_NAME" \
   && fail "Sandbox ${SANDBOX_NAME} still in list after destroy" \
   || pass "Sandbox ${SANDBOX_NAME} removed"
 

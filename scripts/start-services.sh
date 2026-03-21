@@ -19,7 +19,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DASHBOARD_PORT="${DASHBOARD_PORT:-}"
 
 # ── Parse flags ──────────────────────────────────────────────────
-SANDBOX_NAME="${NEMOCLAW_SANDBOX:-default}"
+SANDBOX_NAME="${NEMOCLAW_SANDBOX:-${SANDBOX_NAME:-default}}"
 ACTION="start"
 SANDBOX_RUNTIME="openclaw"
 SANDBOX_SURFACE="openclaw-ui"
@@ -57,7 +57,7 @@ resolve_sandbox_metadata() {
       const resolvedName = requested === "default" ? registry.getDefault() : requested;
       const sandbox = resolvedName ? registry.getSandbox(resolvedName) : null;
       const runtime = sandbox?.runtime || "openclaw";
-      const surface = sandbox?.surface || (runtime === "nullclaw" ? "none" : "openclaw-ui");
+      const surface = sandbox?.surface || registry.defaultSurface(runtime);
       const port = sandbox?.forwardPort || registry.defaultForwardPort(runtime, surface);
       process.stdout.write([sandbox?.name || resolvedName || requested, runtime, surface, String(port)].join("\t"));
     ' "$REPO_DIR/bin/lib/registry.js" "$SANDBOX_NAME" 2>/dev/null || true
@@ -191,7 +191,7 @@ do_start() {
 
   # Telegram bridge (only if token provided)
   if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ "$SANDBOX_RUNTIME" = "openclaw" ]; then
-    start_service telegram-bridge \
+    SANDBOX_NAME="$SANDBOX_NAME" start_service telegram-bridge \
       node "$REPO_DIR/scripts/telegram-bridge.js"
   elif [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
     warn "Skipping Telegram bridge for runtime '$SANDBOX_RUNTIME'."

@@ -1,5 +1,13 @@
 # NemoClaw sandbox image — OpenClaw + NemoClaw plugin inside OpenShell
 
+# Stage 1: Build TypeScript plugin from source
+FROM node:22-slim AS builder
+COPY nemoclaw/package.json nemoclaw/tsconfig.json /opt/nemoclaw/
+COPY nemoclaw/src/ /opt/nemoclaw/src/
+WORKDIR /opt/nemoclaw
+RUN npm install && npm run build
+
+# Stage 2: Runtime image
 FROM node:22-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -21,8 +29,8 @@ RUN npm install -g openclaw@2026.3.11
 # Install PyYAML for blueprint runner
 RUN pip3 install --break-system-packages pyyaml
 
-# Copy our plugin and blueprint into the sandbox
-COPY nemoclaw/dist/ /opt/nemoclaw/dist/
+# Copy built plugin and blueprint into the sandbox
+COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
 COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
 COPY nemoclaw/package.json /opt/nemoclaw/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
