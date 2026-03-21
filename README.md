@@ -239,7 +239,7 @@ When the agent tries to reach an unlisted host, OpenShell blocks the request and
 ## Configuring Sandbox Policy
 
 The sandbox policy is defined in a declarative YAML file and enforced by the OpenShell runtime.
-NemoClaw ships a strict baseline in `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` that denies all network egress except explicitly listed endpoints.
+NemoClaw ships a default policy in [`nemoclaw-blueprint/policies/openclaw-sandbox.yaml`](https://github.com/NVIDIA/NemoClaw/blob/main/nemoclaw-blueprint/policies/openclaw-sandbox.yaml) that denies all network egress except explicitly listed endpoints.
 
 Operators can customize the policy in two ways:
 
@@ -249,6 +249,8 @@ Operators can customize the policy in two ways:
 | **Dynamic** | Run `openshell policy set <policy-file>` on a running sandbox. | Session only; resets on restart. |
 
 NemoClaw includes preset policy files for common integrations such as PyPI, Docker Hub, Slack, and Jira in `nemoclaw-blueprint/policies/presets/`. Apply a preset as-is or use it as a starting template.
+
+NemoClaw is an open project — we are still determining which presets to ship by default. If you have suggestions, please open an [issue](https://github.com/NVIDIA/NemoClaw/issues) or [discussion](https://github.com/NVIDIA/NemoClaw/discussions).
 
 When the agent attempts to reach an endpoint not covered by the policy, OpenShell blocks the request and surfaces it in the TUI (`openshell term`) for the operator to approve or deny in real time. Approved endpoints persist for the current session only.
 
