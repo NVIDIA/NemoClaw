@@ -1,9 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, vi } from "vitest";
-import register, { getPluginConfig } from "./index.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { OpenClawPluginApi } from "./index.js";
+
+vi.mock("./onboard/config.js", () => ({
+  loadOnboardConfig: vi.fn(),
+  describeOnboardEndpoint: vi.fn(() => "build.nvidia.com"),
+  describeOnboardProvider: vi.fn(() => "NVIDIA Endpoint API"),
+}));
+
+import register, { getPluginConfig } from "./index.js";
+import { loadOnboardConfig } from "./onboard/config.js";
+
+const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
 
 function createMockApi(): OpenClawPluginApi {
   return {
@@ -27,6 +37,11 @@ function createMockApi(): OpenClawPluginApi {
 }
 
 describe("plugin registration", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedLoadOnboardConfig.mockReturnValue(null);
+  });
+
   it("registers a slash command", () => {
     const api = createMockApi();
     register(api);
@@ -46,38 +61,21 @@ describe("plugin registration", () => {
   });
 
   it("registers custom model when onboard config has a model", () => {
+    mockedLoadOnboardConfig.mockReturnValue({
+      endpointType: "build",
+      endpointUrl: "https://api.build.nvidia.com/v1",
+      ncpPartner: null,
+      model: "nvidia/custom-model",
+      profile: "default",
+      credentialEnv: "NVIDIA_API_KEY",
+      onboardedAt: "2026-03-01T00:00:00.000Z",
+    });
     const api = createMockApi();
-    // Seed a config file so loadOnboardConfig returns a model
-    const fs = require("node:fs");
-    const path = require("node:path");
-    const configPath = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "config.json");
-    const original = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf-8") : null;
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
-        endpointType: "build",
-        endpointUrl: "https://api.build.nvidia.com/v1",
-        ncpPartner: null,
-        model: "nvidia/custom-model",
-        profile: "default",
-        credentialEnv: "NVIDIA_API_KEY",
-        onboardedAt: "2026-03-01T00:00:00.000Z",
-      }),
-    );
-    try {
-      register(api);
-      const providerArg = vi.mocked(api.registerProvider).mock.calls[0][0];
-      expect(providerArg.models?.chat).toEqual([
-        expect.objectContaining({ id: "inference/nvidia/custom-model" }),
-      ]);
-    } finally {
-      if (original !== null) {
-        fs.writeFileSync(configPath, original);
-      } else {
-        try { fs.unlinkSync(configPath); } catch { /* ignore */ }
-      }
-    }
+    register(api);
+    const providerArg = vi.mocked(api.registerProvider).mock.calls[0][0];
+    expect(providerArg.models?.chat).toEqual([
+      expect.objectContaining({ id: "inference/nvidia/custom-model" }),
+    ]);
   });
 });
 
