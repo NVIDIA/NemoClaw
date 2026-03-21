@@ -84,7 +84,9 @@ COLLECT_DIR=$(mktemp -d "${TMPDIR_BASE}/nemoclaw-debug-XXXXXX")
 SANDBOX_SSH_CONFIG=""
 cleanup() {
   rm -rf "$COLLECT_DIR"
-  [ -n "$SANDBOX_SSH_CONFIG" ] && rm -f "$SANDBOX_SSH_CONFIG"
+  if [ -n "$SANDBOX_SSH_CONFIG" ]; then
+    rm -f "$SANDBOX_SSH_CONFIG"
+  fi
 }
 trap cleanup EXIT
 
@@ -168,6 +170,7 @@ collect "date" date
 collect "uname" uname -a
 collect "uptime" uptime
 if [ "$IS_MACOS" = true ]; then
+  # shellcheck disable=SC2016
   collect "memory" sh -c 'echo "Physical: $(($(sysctl -n hw.memsize) / 1048576)) MB"; vm_stat'
 else
   collect "free" free -m
@@ -279,6 +282,7 @@ if [ "$QUICK" = false ]; then
     collect "resolv-conf" cat /etc/resolv.conf
   fi
   collect "nslookup" nslookup integrate.api.nvidia.com
+  # shellcheck disable=SC2016
   collect "curl-models" sh -c 'code=$(curl -s -o /dev/null -w "%{http_code}" https://integrate.api.nvidia.com/v1/models); echo "HTTP $code"; if [ "$code" -ge 200 ] && [ "$code" -lt 500 ]; then echo "NIM API reachable"; else echo "NIM API unreachable"; exit 1; fi'
   collect "lsof-net" sh -c 'lsof -i -P -n 2>/dev/null | head -50'
   collect "lsof-18789" lsof -i :18789
