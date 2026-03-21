@@ -3,9 +3,9 @@ title:
   page: "Bridge MCP Servers into a NemoClaw Sandbox"
   nav: "Set Up MCP Bridge"
 description: "Bridge host-side MCP servers into the sandbox so the OpenClaw agent can use external tools without exposing API keys."
-keywords: ["nemoclaw mcp bridge", "mcp server sandbox", "mcporter openclaw", "model context protocol"]
+keywords: ["NemoClaw mcp bridge", "mcp server sandbox", "mcporter OpenClaw", "model context protocol"]
 topics: ["generative_ai", "ai_agents"]
-tags: ["openclaw", "openshell", "mcp", "mcporter", "deployment", "nemoclaw"]
+tags: ["OpenClaw", "OpenShell", "mcp", "mcporter", "deployment", "NemoClaw"]
 content:
   type: how_to
   difficulty: intermediate
@@ -239,7 +239,7 @@ $ nemoclaw start
 | Port forward | OpenShell maps the host port to sandbox localhost. No egress policy needed. |
 | Sandbox isolation | Filesystem, network, and process policies still enforced by OpenShell. |
 
-## Related Topics
+## Next Steps
 
 - [Set Up Telegram Bridge](set-up-telegram-bridge.md) for another auxiliary service pattern.
 - [Commands](../reference/commands.md) for the full CLI reference.
