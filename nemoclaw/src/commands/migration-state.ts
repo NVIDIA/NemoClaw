@@ -666,6 +666,29 @@ export function restoreSnapshotToHost(snapshotDir: string, logger: PluginLogger)
     return false;
   }
 
+  // SECURITY (C-4): Validate that write targets are within the expected home
+  // directory tree. A tampered snapshot.json with stateDir or configPath pointing
+  // outside homeDir would cause arbitrary filesystem writes.
+  const allowedRoot = manifest.homeDir;
+
+  if (!isWithinRoot(manifest.stateDir, allowedRoot)) {
+    logger.error(
+      `Snapshot manifest stateDir is outside the expected home directory. ` +
+        `Refusing to restore. stateDir=${manifest.stateDir}, allowedRoot=${allowedRoot}`,
+    );
+    return false;
+  }
+
+  if (manifest.hasExternalConfig && manifest.configPath !== null) {
+    if (!isWithinRoot(manifest.configPath, allowedRoot)) {
+      logger.error(
+        `Snapshot manifest configPath is outside the expected home directory. ` +
+          `Refusing to restore. configPath=${manifest.configPath}, allowedRoot=${allowedRoot}`,
+      );
+      return false;
+    }
+  }
+
   try {
     if (existsSync(manifest.stateDir)) {
       const archiveName = `${manifest.stateDir}.nemoclaw-archived-${String(Date.now())}`;

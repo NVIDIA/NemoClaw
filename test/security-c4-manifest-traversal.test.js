@@ -1,0 +1,385 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Security regression test: C-4 — Snapshot manifest path traversal.
+//
+// restoreSnapshotToHost() reads manifest.stateDir and manifest.configPath
+// from snapshot.json and uses them as filesystem write targets. Without
+// validation, a tampered manifest can cause writes outside ~/.nemoclaw/.
+//
+// The fix validates both fields are within manifest.homeDir before any write.
+
+"use strict";
+
+const { describe, it } = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
+// ═══════════════════════════════════════════════════════════════════
+// Helpers — simulate restoreSnapshotToHost's vulnerable vs fixed logic
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * isWithinRoot — same logic as migration-state.ts:120-125
+ */
+function isWithinRoot(candidatePath, rootPath) {
+  const candidate = path.resolve(candidatePath);
+  const root = path.resolve(rootPath);
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+/**
+ * copyDirectory — minimal recursive copy matching migration-state.ts:476
+ */
+function copyDirectory(src, dest) {
+  fs.cpSync(src, dest, { recursive: true });
+}
+
+/**
+ * Build a minimal snapshot directory with a tampered manifest.
+ */
+function buildSnapshotDir(parentDir, manifest) {
+  const snapshotDir = path.join(parentDir, "snapshot");
+  fs.mkdirSync(path.join(snapshotDir, "openclaw"), { recursive: true });
+  fs.writeFileSync(
+    path.join(snapshotDir, "openclaw", "sentinel.txt"),
+    "attacker-controlled-content",
+  );
+  fs.mkdirSync(path.join(snapshotDir, "config"), { recursive: true });
+  fs.writeFileSync(
+    path.join(snapshotDir, "config", "openclaw.json"),
+    JSON.stringify({ model: "attacker-model" }),
+  );
+  fs.writeFileSync(
+    path.join(snapshotDir, "snapshot.json"),
+    JSON.stringify(manifest, null, 2),
+  );
+  return snapshotDir;
+}
+
+/**
+ * Simulate restoreSnapshotToHost WITHOUT the fix (vulnerable).
+ * Returns { result, errors, written }.
+ */
+function restoreVulnerable(snapshotDir) {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(snapshotDir, "snapshot.json"), "utf-8"),
+  );
+  const snapshotStateDir = path.join(snapshotDir, "openclaw");
+  const errors = [];
+  let written = false;
+
+  try {
+    // No validation — directly writes to manifest.stateDir
+    fs.mkdirSync(path.dirname(manifest.stateDir), { recursive: true });
+    copyDirectory(snapshotStateDir, manifest.stateDir);
+    written = true;
+
+    if (manifest.hasExternalConfig && manifest.configPath) {
+      const configSrc = path.join(snapshotDir, "config", "openclaw.json");
+      fs.mkdirSync(path.dirname(manifest.configPath), { recursive: true });
+      fs.copyFileSync(configSrc, manifest.configPath);
+    }
+    return { result: true, errors, written };
+  } catch (err) {
+    errors.push(err.message);
+    return { result: false, errors, written };
+  }
+}
+
+/**
+ * Simulate restoreSnapshotToHost WITH the fix (validates paths).
+ * Returns { result, errors, written }.
+ */
+function restoreFixed(snapshotDir) {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(snapshotDir, "snapshot.json"), "utf-8"),
+  );
+  const snapshotStateDir = path.join(snapshotDir, "openclaw");
+  const errors = [];
+  let written = false;
+
+  // FIX: validate write targets are within homeDir
+  if (!isWithinRoot(manifest.stateDir, manifest.homeDir)) {
+    errors.push(
+      `Snapshot manifest stateDir is outside the expected home directory. ` +
+        `stateDir=${manifest.stateDir}, allowedRoot=${manifest.homeDir}`,
+    );
+    return { result: false, errors, written };
+  }
+
+  if (manifest.hasExternalConfig && manifest.configPath !== null) {
+    if (!isWithinRoot(manifest.configPath, manifest.homeDir)) {
+      errors.push(
+        `Snapshot manifest configPath is outside the expected home directory. ` +
+          `configPath=${manifest.configPath}, allowedRoot=${manifest.homeDir}`,
+      );
+      return { result: false, errors, written };
+    }
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(manifest.stateDir), { recursive: true });
+    copyDirectory(snapshotStateDir, manifest.stateDir);
+    written = true;
+
+    if (manifest.hasExternalConfig && manifest.configPath) {
+      const configSrc = path.join(snapshotDir, "config", "openclaw.json");
+      fs.mkdirSync(path.dirname(manifest.configPath), { recursive: true });
+      fs.copyFileSync(configSrc, manifest.configPath);
+    }
+    return { result: true, errors, written };
+  } catch (err) {
+    errors.push(err.message);
+    return { result: false, errors, written };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 1. PoC — vulnerable code writes to traversal target
+// ═══════════════════════════════════════════════════════════════════
+describe("C-4 PoC: vulnerable restoreSnapshotToHost allows path traversal", () => {
+  it("tampered stateDir outside homeDir — vulnerable code writes the file", () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-c4-poc-"));
+    try {
+      const homeDir = path.join(workDir, "home", "victim");
+      const traversalTarget = path.join(workDir, "evil-payload");
+      fs.mkdirSync(homeDir, { recursive: true });
+
+      const snapshotDir = buildSnapshotDir(workDir, {
+        version: 2,
+        createdAt: "2026-03-22T00:00:00.000Z",
+        homeDir,
+        stateDir: traversalTarget, // TAMPERED: outside homeDir
+        configPath: null,
+        hasExternalConfig: false,
+        externalRoots: [],
+        warnings: [],
+      });
+
+      const { result, written } = restoreVulnerable(snapshotDir);
+
+      // Vulnerable code writes to the traversal target
+      assert.ok(result, "vulnerable code should succeed (no validation)");
+      assert.ok(written, "vulnerable code writes to disk");
+      assert.ok(
+        fs.existsSync(path.join(traversalTarget, "sentinel.txt")),
+        "sentinel.txt must exist at traversal target — proves arbitrary write",
+      );
+      assert.equal(
+        fs.readFileSync(path.join(traversalTarget, "sentinel.txt"), "utf-8"),
+        "attacker-controlled-content",
+      );
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("tampered configPath outside homeDir — vulnerable code writes the file", () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-c4-cfg-"));
+    try {
+      const homeDir = path.join(workDir, "home", "victim");
+      const legitimateStateDir = path.join(homeDir, ".openclaw");
+      const evilConfigPath = path.join(workDir, "evil-config.json");
+      fs.mkdirSync(homeDir, { recursive: true });
+
+      const snapshotDir = buildSnapshotDir(workDir, {
+        version: 2,
+        createdAt: "2026-03-22T00:00:00.000Z",
+        homeDir,
+        stateDir: legitimateStateDir,
+        configPath: evilConfigPath, // TAMPERED: outside homeDir
+        hasExternalConfig: true,
+        externalRoots: [],
+        warnings: [],
+      });
+
+      const { result } = restoreVulnerable(snapshotDir);
+
+      assert.ok(result, "vulnerable code should succeed");
+      assert.ok(
+        fs.existsSync(evilConfigPath),
+        "config written to traversal target — proves arbitrary file write",
+      );
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// 2. Fix verification — fixed code rejects traversal
+// ═══════════════════════════════════════════════════════════════════
+describe("C-4 fix: restoreSnapshotToHost rejects path traversal", () => {
+  it("tampered stateDir outside homeDir is rejected", () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-c4-fix-"));
+    try {
+      const homeDir = path.join(workDir, "home", "victim");
+      const traversalTarget = path.join(workDir, "evil-payload");
+      fs.mkdirSync(homeDir, { recursive: true });
+
+      const snapshotDir = buildSnapshotDir(workDir, {
+        version: 2,
+        createdAt: "2026-03-22T00:00:00.000Z",
+        homeDir,
+        stateDir: traversalTarget,
+        configPath: null,
+        hasExternalConfig: false,
+        externalRoots: [],
+        warnings: [],
+      });
+
+      const { result, errors, written } = restoreFixed(snapshotDir);
+
+      assert.equal(result, false, "fixed code must reject traversal");
+      assert.equal(written, false, "no files must be written");
+      assert.ok(!fs.existsSync(traversalTarget), "traversal target must not be created");
+      assert.ok(errors[0].includes("outside the expected home directory"));
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("tampered configPath outside homeDir is rejected", () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-c4-fcfg-"));
+    try {
+      const homeDir = path.join(workDir, "home", "victim");
+      const legitimateStateDir = path.join(homeDir, ".openclaw");
+      const evilConfigPath = path.join(workDir, "evil-config.json");
+      fs.mkdirSync(homeDir, { recursive: true });
+
+      const snapshotDir = buildSnapshotDir(workDir, {
+        version: 2,
+        createdAt: "2026-03-22T00:00:00.000Z",
+        homeDir,
+        stateDir: legitimateStateDir,
+        configPath: evilConfigPath,
+        hasExternalConfig: true,
+        externalRoots: [],
+        warnings: [],
+      });
+
+      const { result, errors } = restoreFixed(snapshotDir);
+
+      assert.equal(result, false, "fixed code must reject configPath traversal");
+      assert.ok(!fs.existsSync(evilConfigPath), "evil config must not be written");
+      assert.ok(errors[0].includes("outside the expected home directory"));
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("sibling path (not a child of homeDir) is also rejected", () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-c4-sib-"));
+    try {
+      const homeDir = path.join(workDir, "home");
+      const siblingDir = path.join(workDir, "not-home");
+      fs.mkdirSync(homeDir, { recursive: true });
+
+      const snapshotDir = buildSnapshotDir(workDir, {
+        version: 2,
+        createdAt: "2026-03-22T00:00:00.000Z",
+        homeDir,
+        stateDir: siblingDir,
+        configPath: null,
+        hasExternalConfig: false,
+        externalRoots: [],
+        warnings: [],
+      });
+
+      const { result } = restoreFixed(snapshotDir);
+      assert.equal(result, false, "sibling path must be rejected");
+      assert.ok(!fs.existsSync(siblingDir));
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("legitimate stateDir within homeDir succeeds", () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-c4-ok-"));
+    try {
+      const homeDir = path.join(workDir, "home", "victim");
+      const legitimateStateDir = path.join(homeDir, ".openclaw");
+      fs.mkdirSync(homeDir, { recursive: true });
+
+      const snapshotDir = buildSnapshotDir(workDir, {
+        version: 2,
+        createdAt: "2026-03-22T00:00:00.000Z",
+        homeDir,
+        stateDir: legitimateStateDir,
+        configPath: null,
+        hasExternalConfig: false,
+        externalRoots: [],
+        warnings: [],
+      });
+
+      const { result, errors, written } = restoreFixed(snapshotDir);
+
+      assert.equal(result, true, "legitimate path must succeed");
+      assert.equal(errors.length, 0);
+      assert.ok(written);
+      assert.ok(fs.existsSync(path.join(legitimateStateDir, "sentinel.txt")));
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("legitimate configPath within homeDir succeeds", () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-c4-cfgok-"));
+    try {
+      const homeDir = path.join(workDir, "home", "victim");
+      const legitimateStateDir = path.join(homeDir, ".openclaw");
+      const legitimateConfigPath = path.join(homeDir, ".config", "openclaw.json");
+      fs.mkdirSync(homeDir, { recursive: true });
+
+      const snapshotDir = buildSnapshotDir(workDir, {
+        version: 2,
+        createdAt: "2026-03-22T00:00:00.000Z",
+        homeDir,
+        stateDir: legitimateStateDir,
+        configPath: legitimateConfigPath,
+        hasExternalConfig: true,
+        externalRoots: [],
+        warnings: [],
+      });
+
+      const { result, errors } = restoreFixed(snapshotDir);
+
+      assert.equal(result, true, "legitimate config path must succeed");
+      assert.equal(errors.length, 0);
+      assert.ok(fs.existsSync(legitimateConfigPath));
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// 3. Regression guard — migration-state.ts must contain the validation
+// ═══════════════════════════════════════════════════════════════════
+describe("C-4 regression: migration-state.ts contains path validation", () => {
+  it("restoreSnapshotToHost calls isWithinRoot for stateDir", () => {
+    const src = fs.readFileSync(
+      path.join(__dirname, "..", "nemoclaw", "src", "commands", "migration-state.ts"),
+      "utf-8",
+    );
+    assert.ok(
+      src.includes("isWithinRoot(manifest.stateDir"),
+      "restoreSnapshotToHost must validate manifest.stateDir with isWithinRoot",
+    );
+  });
+
+  it("restoreSnapshotToHost calls isWithinRoot for configPath", () => {
+    const src = fs.readFileSync(
+      path.join(__dirname, "..", "nemoclaw", "src", "commands", "migration-state.ts"),
+      "utf-8",
+    );
+    assert.ok(
+      src.includes("isWithinRoot(manifest.configPath"),
+      "restoreSnapshotToHost must validate manifest.configPath with isWithinRoot",
+    );
+  });
+});
