@@ -140,40 +140,81 @@ describe("C-2 fix: env var pattern (os.environ) is safe", () => {
 describe("C-2 regression: Dockerfile must not interpolate build-args into Python source", () => {
   it("Dockerfile does not interpolate CHAT_UI_URL into a Python string literal", () => {
     const src = fs.readFileSync(DOCKERFILE, "utf-8");
-    const vulnerablePattern = /'\$\{CHAT_UI_URL\}'/;
+    const vulnerablePattern = /\$\{CHAT_UI_URL\}/;
     const lines = src.split("\n");
+    let inPythonRunBlock = false;
     for (let i = 0; i < lines.length; i++) {
-      if (vulnerablePattern.test(lines[i])) {
+      const line = lines[i];
+      if (/^\s*RUN\b.*python3\s+-c\b/.test(line)) {
+        inPythonRunBlock = true;
+      }
+      if (inPythonRunBlock && vulnerablePattern.test(line)) {
         assert.fail(
           `Dockerfile:${i + 1} interpolates CHAT_UI_URL into a Python string literal.\n` +
-          `  Line: ${lines[i].trim()}\n` +
+          `  Line: ${line.trim()}\n` +
           `  Fix: use os.environ['CHAT_UI_URL'] instead.`,
         );
+      }
+      if (inPythonRunBlock && !/\\\s*$/.test(line)) {
+        inPythonRunBlock = false;
       }
     }
   });
 
   it("Dockerfile does not interpolate NEMOCLAW_MODEL into a Python string literal", () => {
     const src = fs.readFileSync(DOCKERFILE, "utf-8");
-    const vulnerablePattern = /'\$\{NEMOCLAW_MODEL\}'/;
+    const vulnerablePattern = /\$\{NEMOCLAW_MODEL\}/;
     const lines = src.split("\n");
+    let inPythonRunBlock = false;
     for (let i = 0; i < lines.length; i++) {
-      if (vulnerablePattern.test(lines[i])) {
+      const line = lines[i];
+      if (/^\s*RUN\b.*python3\s+-c\b/.test(line)) {
+        inPythonRunBlock = true;
+      }
+      if (inPythonRunBlock && vulnerablePattern.test(line)) {
         assert.fail(
           `Dockerfile:${i + 1} interpolates NEMOCLAW_MODEL into a Python string literal.\n` +
-          `  Line: ${lines[i].trim()}\n` +
+          `  Line: ${line.trim()}\n` +
           `  Fix: use os.environ['NEMOCLAW_MODEL'] instead.`,
         );
+      }
+      if (inPythonRunBlock && !/\\\s*$/.test(line)) {
+        inPythonRunBlock = false;
       }
     }
   });
 
   it("Dockerfile promotes CHAT_UI_URL to ENV before the RUN layer", () => {
     const src = fs.readFileSync(DOCKERFILE, "utf-8");
-    // ENV may span multiple lines via backslash continuation
+    const lines = src.split("\n");
+    let chatUiUrlPromoted = false;
+    let inEnvBlock = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      // Detect start of an ENV instruction
+      if (/^\s*ENV\b/.test(line)) {
+        inEnvBlock = true;
+      }
+      // Check if CHAT_UI_URL is set in the current ENV block (same line or continuation)
+      if (inEnvBlock && /CHAT_UI_URL[=\s]/.test(line)) {
+        chatUiUrlPromoted = true;
+      }
+      // ENV block ends when the line does NOT end with a backslash continuation
+      if (inEnvBlock && !/\\\s*$/.test(line)) {
+        inEnvBlock = false;
+      }
+      // Verify promotion happened before the python3 -c RUN layer
+      if (/^\s*RUN\b.*python3\s+-c\b/.test(line)) {
+        assert.ok(
+          chatUiUrlPromoted,
+          `Dockerfile:${i + 1} has a python3 -c RUN layer but CHAT_UI_URL was not promoted via ENV before it`,
+        );
+        return; // Found the RUN layer and verified — done
+      }
+    }
     assert.ok(
-      /^ENV\s[\s\S]*?CHAT_UI_URL/m.test(src),
-      "Dockerfile must have ENV instruction that promotes CHAT_UI_URL from ARG to env var",
+      chatUiUrlPromoted,
+      "Dockerfile must have ENV instruction that promotes CHAT_UI_URL from ARG to env var before the python3 -c RUN layer",
     );
   });
 
