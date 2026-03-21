@@ -157,15 +157,6 @@ do_stop() {
 }
 
 do_start() {
-  if [ "$SANDBOX_SURFACE" = "none" ]; then
-    warn "Sandbox '$SANDBOX_NAME' is configured as '${SANDBOX_RUNTIME}/none'."
-    if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
-      warn "Skipping Telegram bridge for headless surface."
-    fi
-    warn "Skipping cloudflared tunnel for headless surface."
-    return 0
-  fi
-
   if [ "$SANDBOX_RUNTIME" = "openclaw" ]; then
     [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY required"
   fi
@@ -185,6 +176,15 @@ do_start() {
       warn "No sandbox in Ready state. Telegram bridge may not work until sandbox is running."
     fi
     openshell forward start --background "$DASHBOARD_PORT" "$SANDBOX_NAME" 2>/dev/null || true
+  fi
+
+  if [ "$SANDBOX_SURFACE" = "none" ]; then
+    warn "Sandbox '$SANDBOX_NAME' is configured as '${SANDBOX_RUNTIME}/none'."
+    if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+      warn "Skipping Telegram bridge for headless surface."
+    fi
+    warn "Skipping cloudflared tunnel for headless surface."
+    return 0
   fi
 
   mkdir -p "$PIDDIR"

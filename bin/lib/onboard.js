@@ -310,8 +310,8 @@ function syncNullhubConfig(sandboxName, model) {
     model: model || NULLCLAW_DEFAULT_MODEL,
     gateway_port: RUNTIME_GATEWAY_PORT.nullclaw,
   });
-  const updatePayload = JSON.stringify({
-    home: `$HOME/.nullhub/instances/nullclaw/${NULLHUB_DEFAULT_INSTANCE}`,
+  const updatePayloadTemplate = JSON.stringify({
+    home: "__INSTANCE_HOME__",
     provider: "custom:https://inference.local/v1",
     api_key: "openshell-managed",
     model: model || NULLCLAW_DEFAULT_MODEL,
@@ -332,7 +332,9 @@ if ! curl -sf "http://127.0.0.1:${SURFACE_FORWARD_PORT.nullhub}/api/status" > /d
   done
 fi
 if [ -d $INSTANCE_HOME ]; then
-  nullclaw --from-json ${shellQuote(updatePayload)} > /tmp/nullhub-sync.log 2>&1
+  UPDATE_PAYLOAD=${shellQuote(updatePayloadTemplate)}
+  UPDATE_PAYLOAD="${UPDATE_PAYLOAD/__INSTANCE_HOME__/$INSTANCE_HOME}"
+  nullclaw --from-json "$UPDATE_PAYLOAD" > /tmp/nullhub-sync.log 2>&1
   nullhub restart "nullclaw/$INSTANCE" > /tmp/nullhub-restart.log 2>&1 || nullhub start "nullclaw/$INSTANCE" > /tmp/nullhub-restart.log 2>&1
 else
   curl -fsS \
@@ -507,48 +509,7 @@ async function preflight(runtime = DEFAULT_RUNTIME, surface = defaultSurface(run
     console.log("  ✓ Previous session cleaned up");
   }
 
-  const forwardPort = forwardPortFor(runtime, surface);
-  const surfaceLabel =
-    surface === "nullhub"
-      ? "NullHub local surface"
-      : surface === "none"
-        ? "NullClaw gateway"
-        : "NemoClaw dashboard";
-
-  // Required ports — gateway (8080) and selected surface/gateway port
-  const requiredPorts = [
-    { port: 8080, label: "OpenShell gateway" },
-    { port: forwardPort, label: surfaceLabel },
-  ];
-  for (const { port, label } of requiredPorts) {
-    const portCheck = await checkPortAvailable(port);
-    if (!portCheck.ok) {
-      console.error("");
-      console.error(`  !! Port ${port} is not available.`);
-      console.error(`     ${label} needs this port.`);
-      console.error("");
-      if (portCheck.process && portCheck.process !== "unknown") {
-        console.error(`     Blocked by: ${portCheck.process}${portCheck.pid ? ` (PID ${portCheck.pid})` : ""}`);
-        console.error("");
-        console.error("     To fix, stop the conflicting process:");
-        console.error("");
-        if (portCheck.pid) {
-          console.error(`       sudo kill ${portCheck.pid}`);
-        } else {
-          console.error(`       lsof -i :${port} -sTCP:LISTEN -P -n`);
-        }
-        console.error("       # or, if it's a systemd service:");
-        console.error("       systemctl --user stop openclaw-gateway.service");
-      } else {
-        console.error(`     Could not identify the process using port ${port}.`);
-        console.error(`     Run: lsof -i :${port} -sTCP:LISTEN`);
-      }
-      console.error("");
-      console.error(`     Detail: ${portCheck.reason}`);
-      process.exit(1);
-    }
-    console.log(`  ✓ Port ${port} available (${label})`);
-  }
+  await ensurePortAvailable(8080, "OpenShell gateway");
 
   // GPU
   const gpu = nim.detectGpu();
@@ -564,10 +525,51 @@ async function preflight(runtime = DEFAULT_RUNTIME, surface = defaultSurface(run
   return gpu;
 }
 
-// ── Step 2: Gateway ──────────────────────────────────────────────
+function surfacePortLabel(surface) {
+  if (surface === "nullhub") return "NullHub local surface";
+  if (surface === "none") return "NullClaw gateway";
+  return "NemoClaw dashboard";
+}
+
+async function ensurePortAvailable(port, label) {
+  const portCheck = await checkPortAvailable(port);
+  if (!portCheck.ok) {
+    console.error("");
+    console.error(`  !! Port ${port} is not available.`);
+    console.error(`     ${label} needs this port.`);
+    console.error("");
+    if (portCheck.process && portCheck.process !== "unknown") {
+      console.error(`     Blocked by: ${portCheck.process}${portCheck.pid ? ` (PID ${portCheck.pid})` : ""}`);
+      console.error("");
+      console.error("     To fix, stop the conflicting process:");
+      console.error("");
+      if (portCheck.pid) {
+        console.error(`       sudo kill ${portCheck.pid}`);
+      } else {
+        console.error(`       lsof -i :${port} -sTCP:LISTEN -P -n`);
+      }
+      console.error("       # or, if it's a systemd service:");
+      console.error("       systemctl --user stop openclaw-gateway.service");
+    } else {
+      console.error(`     Could not identify the process using port ${port}.`);
+      console.error(`     Run: lsof -i :${port} -sTCP:LISTEN`);
+    }
+    console.error("");
+    console.error(`     Detail: ${portCheck.reason}`);
+    process.exit(1);
+  }
+  console.log(`  ✓ Port ${port} available (${label})`);
+}
+
+async function ensureSurfacePortAvailable(runtime, surface) {
+  const forwardPort = forwardPortFor(runtime, surface);
+  await ensurePortAvailable(forwardPort, surfacePortLabel(surface));
+}
+
+// ── Step 3: Gateway ──────────────────────────────────────────────
 
 async function startGateway(gpu) {
-  step(2, 7, "Starting OpenShell gateway");
+  step(3, 7, "Starting OpenShell gateway");
 
   // Destroy old gateway
   run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
@@ -605,10 +607,10 @@ async function startGateway(gpu) {
   sleep(5);
 }
 
-// ── Step 3: Sandbox ──────────────────────────────────────────────
+// ── Step 2: Sandbox ──────────────────────────────────────────────
 
 async function prepareSandbox(runtime, surface) {
-  step(3, 7, "Selecting sandbox");
+  step(2, 7, "Selecting sandbox");
 
   const nameAnswer = await promptOrDefault(
     "  Sandbox name (lowercase, numbers, hyphens) [my-assistant]: ",
@@ -660,25 +662,30 @@ async function prepareSandbox(runtime, surface) {
   return { sandboxName, reused: false, runtime, surface };
 }
 
+function selectSandboxDockerfile(runtime, surface) {
+  if (runtime === "openclaw") return "Dockerfile";
+  if (surface === "nullhub") return "Dockerfile.nullhub";
+  return "Dockerfile.nullclaw";
+}
+
+function stageOpenclawSandboxFiles(buildCtx) {
+  run(`cp -r "${path.join(ROOT, "nemoclaw")}" "${buildCtx}/nemoclaw"`);
+  run(`cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`);
+  run(`rm -rf "${buildCtx}/nemoclaw/node_modules"`, { ignoreError: true });
+}
+
 async function createSandbox({ sandboxName, gpu, runtime, surface, model, provider, nimContainer }) {
   const runtimeLabel = runtime === "nullclaw" ? "NullClaw" : "OpenClaw";
   const surfaceLabel = surface === "nullhub" ? "NullHub" : surface === "none" ? "headless" : "OpenClaw UI";
   step(4, 7, `Creating ${runtimeLabel} sandbox (${surfaceLabel})`);
 
   const buildCtx = fs.mkdtempSync(path.join(require("os").tmpdir(), "nemoclaw-build-"));
-  const dockerfileName =
-    runtime === "openclaw"
-      ? "Dockerfile"
-      : surface === "nullhub"
-        ? "Dockerfile.nullhub"
-        : "Dockerfile.nullclaw";
+  const dockerfileName = selectSandboxDockerfile(runtime, surface);
   fs.copyFileSync(path.join(ROOT, dockerfileName), path.join(buildCtx, "Dockerfile"));
   run(`cp -r "${path.join(ROOT, "scripts")}" "${buildCtx}/scripts"`);
 
   if (runtime === "openclaw") {
-    run(`cp -r "${path.join(ROOT, "nemoclaw")}" "${buildCtx}/nemoclaw"`);
-    run(`cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`);
-    run(`rm -rf "${buildCtx}/nemoclaw/node_modules" "${buildCtx}/nemoclaw/src"`, { ignoreError: true });
+    stageOpenclawSandboxFiles(buildCtx);
   }
 
   const basePolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
@@ -1237,8 +1244,7 @@ async function onboard(args = []) {
   if (isNonInteractive()) console.log("  (non-interactive mode)");
   console.log("  ===================");
 
-  const gpu = await preflight(requestedRuntime, requestedSurface);
-  await startGateway(gpu);
+  const gpu = await preflight();
   const sandboxSelection = await prepareSandbox(requestedRuntime, requestedSurface);
   const runtime = sandboxSelection.runtime || requestedRuntime;
   const surface = sandboxSelection.surface || requestedSurface;
@@ -1246,6 +1252,9 @@ async function onboard(args = []) {
   const forwardPort =
     sandboxSelection.sandbox?.forwardPort ||
     forwardPortFor(runtime, surface);
+
+  await ensureSurfacePortAvailable(runtime, surface);
+  await startGateway(gpu);
 
   if (sandboxSelection.reused) {
     run(`openshell forward start --background ${forwardPort} "${sandboxName}"`, { ignoreError: true });
@@ -1275,4 +1284,12 @@ async function onboard(args = []) {
   printDashboard(sandboxName, model, provider, runtime, surface, forwardPort);
 }
 
-module.exports = { buildSandboxConfigSyncScript, hasStaleGateway, isSandboxReady, onboard, setupNim };
+module.exports = {
+  buildSandboxConfigSyncScript,
+  hasStaleGateway,
+  isSandboxReady,
+  onboard,
+  selectSandboxDockerfile,
+  setupNim,
+  stageOpenclawSandboxFiles,
+};
