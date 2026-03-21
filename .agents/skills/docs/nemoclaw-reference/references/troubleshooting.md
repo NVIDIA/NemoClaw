@@ -4,6 +4,12 @@
 
 This page covers common issues you may encounter when installing, onboarding, or running NemoClaw, along with their resolution steps.
 
+## Contents
+
+- Installation: `nemoclaw` not found, unsupported platform, Node.js version, Docker, npm permissions, port conflicts
+- Onboarding: cgroup v2 errors, invalid sandbox name, DGX failures, Colima socket
+- Runtime: sandbox stopped, status inside sandbox, inference timeouts, blocked hosts, blueprint failures
+
 > **Get Help:** :class: tip
 
 If your issue is not listed here, join the [NemoClaw Discord channel](https://discord.gg/XFpfPv9Uvx) to ask questions and get help from the community. You can also [file an issue on GitHub](https://github.com/NVIDIA/NemoClaw/issues/new).

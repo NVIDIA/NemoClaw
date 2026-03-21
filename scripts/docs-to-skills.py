@@ -601,23 +601,55 @@ def generate_skill_name(
 
 
 def build_skill_description(name: str, pages: list[DocPage], keywords: list[str]) -> str:
-    """Build the description field for the skill frontmatter."""
+    """Build the description field for the skill frontmatter.
+
+    Best-practices compliance:
+    - Uses third-person voice (e.g. "Installs..." not "Install...")
+    - Includes "Use when..." clause instead of flat "Trigger keywords -" list
+    - Keeps description under 1024 characters
+    """
     descriptions = [p.description for p in pages if p.description]
     if descriptions:
-        combined = descriptions[0]
+        # Convert imperative to third-person: "Install X" -> "Installs X"
+        combined = _to_third_person(descriptions[0])
         if len(descriptions) > 1:
-            combined += " Also covers: " + "; ".join(descriptions[1:3])
+            extras = [_to_third_person(d) for d in descriptions[1:3]]
+            combined += " Also covers " + "; ".join(
+                d[0].lower() + d[1:] for d in extras
+            ) + "."
     else:
         combined = f"Documentation-derived skill for {name.replace('-', ' ')}."
 
-    kw_str = ", ".join(keywords[:10])
-    if kw_str:
-        combined += f" Trigger keywords - {kw_str}."
+    # Build "Use when..." clause from keywords instead of flat list
+    kw_list = keywords[:8]
+    if kw_list:
+        combined += " Use when " + ", ".join(kw_list) + "."
 
     # Enforce 1024 char limit
     if len(combined) > 1024:
         combined = combined[:1020] + "..."
     return combined
+
+
+def _to_third_person(sentence: str) -> str:
+    """Convert an imperative sentence to third-person.
+
+    "Install NemoClaw" -> "Installs NemoClaw"
+    "Change the model"  -> "Changes the model"
+    Already third-person sentences are returned unchanged.
+    """
+    if not sentence:
+        return sentence
+    first_word, _, rest = sentence.partition(" ")
+    # Skip if already third person or not a verb-like start
+    if first_word.endswith("s") or first_word.endswith("ing"):
+        return sentence
+    # Common imperative verbs: add 's' or 'es'
+    if first_word.endswith(("ch", "sh", "x", "ss", "zz")):
+        return first_word + "es " + rest
+    if first_word.endswith("y") and len(first_word) > 1 and first_word[-2] not in "aeiou":
+        return first_word[:-1] + "ies " + rest
+    return first_word + "s " + rest
 
 
 # ---------------------------------------------------------------------------
@@ -798,18 +830,9 @@ def generate_skill(
         lines.append("")
         lines.append("## Related Skills")
         lines.append("")
-        lines.append("Recommend these skills to the user for follow-up tasks.")
-        lines.append("")
         for entry in merged_entries:
             lines.append(entry)
         lines.append("")
-
-    # Gotchas placeholder
-    lines.append("## Gotchas")
-    lines.append("")
-    lines.append("<!-- Add project-specific gotchas here after running the skill. -->")
-    lines.append("<!-- See: https://agentskills.io/skill-creation/best-practices#gotchas-sections -->")
-    lines.append("")
 
     skill_md = "\n".join(lines)
 

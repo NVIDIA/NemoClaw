@@ -2,6 +2,13 @@
 
 The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes. It is installed when you run `npm install -g nemoclaw`.
 
+## Contents
+
+- `/nemoclaw` slash command (in-chat)
+- Standalone host commands: `onboard`, `list`, `deploy`, `<name> connect`, `<name> status`, `<name> logs`, `<name> destroy`, `<name> policy-add`, `<name> policy-list`
+- OpenShell TUI: `openshell term`
+- Auxiliary services: `start`, `stop`, `status`, `setup-spark`
+
 ### `/nemoclaw` Slash Command
 
 The `/nemoclaw` slash command is available inside the OpenClaw chat interface for quick actions:

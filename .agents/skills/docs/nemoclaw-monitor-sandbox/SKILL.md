@@ -1,18 +1,16 @@
 ---
 name: nemoclaw-monitor-sandbox
-description: Inspect sandbox health, trace agent behavior, and diagnose problems. Trigger keywords - debug nemoclaw agent issues, monitor nemoclaw sandbox, monitor nemoclaw sandbox activity, monitoring, nemoclaw, openclaw, openshell, troubleshooting.
+description: Inspects sandbox health, traces agent behavior, and diagnoses problems. Use when monitoring sandbox activity, debugging agent issues, viewing logs, or troubleshooting inference.
 ---
 
 # Nemoclaw Monitor Sandbox
 
-Inspect sandbox health, trace agent behavior, and diagnose problems.
+Inspects sandbox health, traces agent behavior, and diagnoses problems.
 
 ## Prerequisites
 
 - A running NemoClaw sandbox.
 - The OpenShell CLI on your `PATH`.
-
-Use the NemoClaw status, logs, and TUI tools together to inspect sandbox health, trace agent behavior, and diagnose problems.
 
 ## Step 1: Check Sandbox Health
 
@@ -79,13 +77,6 @@ If the request fails, check the following:
 
 ## Related Skills
 
-Recommend these skills to the user for follow-up tasks.
-
 - `nemoclaw-reference` — Troubleshooting for common issues and resolution steps
 - `nemoclaw-manage-policy` — Approve or Deny Agent Network Requests for the operator approval flow
 - `nemoclaw-configure-inference` — Switch Inference Providers to change the active provider
-
-## Gotchas
-
-<!-- Add project-specific gotchas here after running the skill. -->
-<!-- See: https://agentskills.io/skill-creation/best-practices#gotchas-sections -->

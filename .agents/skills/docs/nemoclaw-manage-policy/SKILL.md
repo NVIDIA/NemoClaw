@@ -1,11 +1,11 @@
 ---
 name: nemoclaw-manage-policy
-description: Review and approve blocked agent network requests in the TUI. Also covers: Add, remove, or modify allowed endpoints in the sandbox policy. Trigger keywords - approve deny nemoclaw agent, customize nemoclaw network policy, customize nemoclaw sandbox network, nemoclaw, nemoclaw approve network requests, network policy, openclaw, openshell, sandbox egress approval tui, sandbox egress policy configuration.
+description: Reviews and approves blocked agent network requests in the TUI. Also covers adding, removing, or modifying allowed endpoints in the sandbox policy. Use when approving or denying agent network requests, customizing sandbox egress policy, or configuring network rules.
 ---
 
 # Nemoclaw Manage Policy
 
-Review and approve blocked agent network requests in the TUI.
+Reviews and approves blocked agent network requests in the TUI.
 
 ## Prerequisites
 
@@ -66,7 +66,7 @@ The walkthrough requires tmux and the `NVIDIA_API_KEY` environment variable.
 
 Add, remove, or modify the endpoints that the sandbox is allowed to reach.
 
-The sandbox policy is defined in a declarative YAML file in the NemoClaw repository and enforced at runtime by [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
+The sandbox policy is defined in a declarative YAML file in the NemoClaw repository and enforced at runtime by NVIDIA OpenShell.
 NemoClaw supports both static policy changes that persist across restarts and dynamic updates applied to a running sandbox through the OpenShell CLI.
 
 ## Step 5: Static Changes
@@ -160,14 +160,5 @@ To include a preset in the baseline, merge its entries into `openclaw-sandbox.ya
 
 ## Related Skills
 
-Recommend these skills to the user for follow-up tasks.
-
 - `nemoclaw-reference` — Network Policies for the full baseline policy reference
 - `nemoclaw-monitor-sandbox` — Monitor Sandbox Activity for general sandbox monitoring
-- OpenShell [Policy Schema](https://docs.nvidia.com/openshell/latest/reference/policy-schema.html) for the full YAML policy schema reference.
-- OpenShell [Sandbox Policies](https://docs.nvidia.com/openshell/latest/sandboxes/policies.html) for applying, iterating, and debugging policies at the OpenShell layer.
-
-## Gotchas
-
-<!-- Add project-specific gotchas here after running the skill. -->
-<!-- See: https://agentskills.io/skill-creation/best-practices#gotchas-sections -->

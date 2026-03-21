@@ -1,22 +1,19 @@
 ---
 name: nemoclaw-deploy-remote
-description: Provision a remote GPU VM with NemoClaw using Brev deployment. Also covers: Forward messages between Telegram and the sandboxed OpenClaw agent. Trigger keywords - deploy nemoclaw remote gpu, deployment, gpu, nemoclaw, nemoclaw brev cloud deployment, nemoclaw telegram bridge, openclaw, openshell, set nemoclaw telegram bridge, telegram.
+description: Provisions a remote GPU VM with NemoClaw using Brev deployment. Also covers forwarding messages between Telegram and the sandboxed OpenClaw agent. Use when deploying to a remote GPU, setting up a Telegram bridge, or configuring cloud deployment.
 ---
 
 # Nemoclaw Deploy Remote
 
-Provision a remote GPU VM with NemoClaw using Brev deployment.
+Provisions a remote GPU VM with NemoClaw using Brev deployment.
 
 ## Prerequisites
 
-- The [Brev CLI](https://brev.nvidia.com) installed and authenticated.
-- An NVIDIA API key from [build.nvidia.com](https://build.nvidia.com).
-- NemoClaw installed locally. Follow the Quickstart (see the `nemoclaw-get-started` skill) install steps.
+- The Brev CLI installed and authenticated.
+- An NVIDIA API key.
+- NemoClaw installed locally (see the `nemoclaw-get-started` skill).
 - A running NemoClaw sandbox, either local or remote.
-- A Telegram bot token from [BotFather](https://t.me/BotFather).
-
-Run NemoClaw on a remote GPU instance through [Brev](https://brev.nvidia.com).
-The deploy command provisions the VM, installs dependencies, and connects you to a running sandbox.
+- A Telegram bot token from BotFather (for the Telegram bridge).
 
 ## Step 1: Deploy the Instance
 
@@ -80,7 +77,7 @@ The Telegram bridge is an auxiliary service managed by `nemoclaw start`.
 
 ## Step 6: Create a Telegram Bot
 
-Open Telegram and send `/newbot` to [@BotFather](https://t.me/BotFather).
+Open Telegram and send `/newbot` to @BotFather.
 Follow the prompts to create a bot and receive a bot token.
 
 ## Step 7: Set the Environment Variable
@@ -140,12 +137,5 @@ $ nemoclaw stop
 
 ## Related Skills
 
-Recommend these skills to the user for follow-up tasks.
-
 - `nemoclaw-monitor-sandbox` — Monitor Sandbox Activity for sandbox monitoring tools
 - `nemoclaw-reference` — Commands for the full `deploy` command reference
-
-## Gotchas
-
-<!-- Add project-specific gotchas here after running the skill. -->
-<!-- See: https://agentskills.io/skill-creation/best-practices#gotchas-sections -->
