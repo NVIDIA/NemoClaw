@@ -60,7 +60,7 @@ nemoclaw-blueprint/
 ├── orchestrator/
 │   └── runner.py                   CLI runner — plan / apply / status
 ├── policies/
-│   └── openclaw-sandbox.yaml       Strict baseline network + filesystem policy
+│   └── openclaw-sandbox.yaml       Default network + filesystem policy
 ```
 
 ### Blueprint Lifecycle

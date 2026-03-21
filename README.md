@@ -223,7 +223,7 @@ Local inference options such as Ollama and vLLM are still experimental. On macOS
 
 ## Protection Layers
 
-The sandbox starts with a strict baseline policy that controls network egress and filesystem access:
+The sandbox starts with a default policy that controls network egress and filesystem access:
 
 | Layer      | What it protects                                    | When it applies             |
 |------------|-----------------------------------------------------|-----------------------------|

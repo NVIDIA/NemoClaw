@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Strict baseline policy for the OpenClaw sandbox.
+# Default policy for the OpenClaw sandbox.
 # Principle: deny by default, allow only what's needed for core functionality.
 # Dynamic updates (network_policies, inference) can be applied post-creation
 # via `openshell policy set`. Static fields are effectively creation-locked.
