@@ -156,18 +156,3 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/npm }
-
-  # ── Messaging — pre-allowed for agent notifications ────────────
-  # Telegram Bot API is open by default so the agent can send
-  # notifications and respond to chats without triggering approval.
-  telegram:
-    name: telegram
-    endpoints:
-      - host: api.telegram.org
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/bot*/**" }
-          - allow: { method: POST, path: "/bot*/**" }

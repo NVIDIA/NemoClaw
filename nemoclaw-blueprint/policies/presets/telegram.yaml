@@ -6,8 +6,8 @@ preset:
   description: "Telegram Bot API access"
 
 network_policies:
-  telegram_bot:
-    name: telegram_bot
+  telegram:
+    name: telegram
     endpoints:
       - host: api.telegram.org
         port: 443
