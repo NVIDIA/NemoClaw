@@ -352,9 +352,7 @@ describe("cliStatus", () => {
       expect(data.nemoclaw.lastAction).toBe("migrate");
       expect(data.nemoclaw.blueprintVersion).toBe("0.1.0");
       expect(data.nemoclaw.lastRunId).toBe("run-a1b2c3d4");
-      expect(data.nemoclaw.migrationSnapshot).toBe(
-        "/root/.nemoclaw/snapshots/pre-migrate.tar.gz",
-      );
+      expect(data.nemoclaw.migrationSnapshot).toBe("/root/.nemoclaw/snapshots/pre-migrate.tar.gz");
     });
   });
 
@@ -392,7 +390,7 @@ describe("cliStatus", () => {
         "inference get": new Error("not configured"),
       });
 
-      const { lines, logger } = captureLogger();
+      const { logger } = captureLogger();
       await cliStatus({ json: true, logger, pluginConfig: defaultConfig });
 
       // Verify exec was called with default name

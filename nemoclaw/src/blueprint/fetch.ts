@@ -36,17 +36,17 @@ export function fetchBlueprint(registry: string, version: string): Promise<Resol
  * Resolve a "latest" version tag to a concrete version string by querying
  * the registry's tag list or release API.
  */
-export async function resolveLatestVersion(registry: string): Promise<string> {
+export function resolveLatestVersion(registry: string): Promise<string> {
   // Future: query OCI tag list or GitHub releases API
   void registry;
-  throw new Error("Latest version resolution not yet implemented.");
+  return Promise.reject(new Error("Latest version resolution not yet implemented."));
 }
 
 /**
  * Download and extract a blueprint tarball into the local cache directory.
  * Returns the local path where the blueprint was extracted.
  */
-export async function downloadAndCache(
+export function downloadAndCache(
   registry: string,
   version: string,
 ): Promise<{ localPath: string; manifest: BlueprintManifest }> {
@@ -57,5 +57,5 @@ export async function downloadAndCache(
   if (!manifest) {
     throw new Error(`Failed to read manifest after download for version ${version}`);
   }
-  return { localPath, manifest };
+  return Promise.resolve({ localPath, manifest });
 }

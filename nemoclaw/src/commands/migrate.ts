@@ -183,7 +183,10 @@ export async function cliMigrate(opts: MigrateOptions): Promise<void> {
 async function buildMigrationArchives(bundle: SnapshotBundle): Promise<void> {
   await createArchiveFromDirectory(bundle.preparedStateDir, stateArchivePath(bundle));
   for (const root of bundle.manifest.externalRoots) {
-    await createArchiveFromDirectory(join(bundle.snapshotDir, root.snapshotRelativePath), rootArchivePath(bundle, root.id));
+    await createArchiveFromDirectory(
+      join(bundle.snapshotDir, root.snapshotRelativePath),
+      rootArchivePath(bundle, root.id),
+    );
   }
 }
 
@@ -192,21 +195,25 @@ function syncSnapshotBundleIntoSandbox(bundle: SnapshotBundle, sandboxName: stri
 
   syncArchive(sandboxName, "state.tar", stateArchivePath(bundle), "/sandbox/.openclaw");
   for (const root of bundle.manifest.externalRoots) {
-    syncArchive(
-      sandboxName,
-      `${root.id}.tar`,
-      rootArchivePath(bundle, root.id),
-      root.sandboxPath,
-    );
+    syncArchive(sandboxName, `${root.id}.tar`, rootArchivePath(bundle, root.id), root.sandboxPath);
   }
 }
 
-function syncArchive(sandboxName: string, archiveName: string, archivePath: string, destinationDir: string): void {
+function syncArchive(
+  sandboxName: string,
+  archiveName: string,
+  archivePath: string,
+  destinationDir: string,
+): void {
   const sandboxArchivePath = pathPosix.join(SANDBOX_ARCHIVE_DIR, archiveName);
-  execFileSync("openshell", ["sandbox", "cp", archivePath, `${sandboxName}:${sandboxArchivePath}`], {
-    encoding: "utf-8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  execFileSync(
+    "openshell",
+    ["sandbox", "cp", archivePath, `${sandboxName}:${sandboxArchivePath}`],
+    {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
 
   const extractCommand = [
     "sh",
