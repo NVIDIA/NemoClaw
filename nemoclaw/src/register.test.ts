@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, vi } from "vitest";
-import register from "./index.js";
+import register, { getPluginConfig } from "./index.js";
 import type { OpenClawPluginApi } from "./index.js";
 
 function createMockApi(): OpenClawPluginApi {
@@ -43,5 +43,75 @@ describe("plugin registration", () => {
     const api = createMockApi();
     // registerCli should not exist on the API interface after removal
     expect("registerCli" in api).toBe(false);
+  });
+
+  it("registers custom model when onboard config has a model", () => {
+    const api = createMockApi();
+    // Seed a config file so loadOnboardConfig returns a model
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const configPath = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "config.json");
+    const original = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf-8") : null;
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        endpointType: "build",
+        endpointUrl: "https://api.build.nvidia.com/v1",
+        ncpPartner: null,
+        model: "nvidia/custom-model",
+        profile: "default",
+        credentialEnv: "NVIDIA_API_KEY",
+        onboardedAt: "2026-03-01T00:00:00.000Z",
+      }),
+    );
+    try {
+      register(api);
+      const providerArg = vi.mocked(api.registerProvider).mock.calls[0][0];
+      expect(providerArg.models?.chat).toEqual([
+        expect.objectContaining({ id: "inference/nvidia/custom-model" }),
+      ]);
+    } finally {
+      if (original !== null) {
+        fs.writeFileSync(configPath, original);
+      } else {
+        try { fs.unlinkSync(configPath); } catch { /* ignore */ }
+      }
+    }
+  });
+});
+
+describe("getPluginConfig", () => {
+  it("returns defaults when pluginConfig is undefined", () => {
+    const api = createMockApi();
+    api.pluginConfig = undefined;
+    const config = getPluginConfig(api);
+    expect(config.blueprintVersion).toBe("latest");
+    expect(config.blueprintRegistry).toBe("ghcr.io/nvidia/nemoclaw-blueprint");
+    expect(config.sandboxName).toBe("openclaw");
+    expect(config.inferenceProvider).toBe("nvidia");
+  });
+
+  it("returns defaults when pluginConfig has non-string values", () => {
+    const api = createMockApi();
+    api.pluginConfig = { blueprintVersion: 42, sandboxName: true };
+    const config = getPluginConfig(api);
+    expect(config.blueprintVersion).toBe("latest");
+    expect(config.sandboxName).toBe("openclaw");
+  });
+
+  it("uses string values from pluginConfig", () => {
+    const api = createMockApi();
+    api.pluginConfig = {
+      blueprintVersion: "2.0.0",
+      blueprintRegistry: "ghcr.io/custom/registry",
+      sandboxName: "custom-sandbox",
+      inferenceProvider: "openai",
+    };
+    const config = getPluginConfig(api);
+    expect(config.blueprintVersion).toBe("2.0.0");
+    expect(config.blueprintRegistry).toBe("ghcr.io/custom/registry");
+    expect(config.sandboxName).toBe("custom-sandbox");
+    expect(config.inferenceProvider).toBe("openai");
   });
 });
