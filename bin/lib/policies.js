@@ -6,7 +6,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { ROOT, run, runCapture } = require("./runner");
+const { ROOT, run, runCapture, shellQuote } = require("./runner");
 const registry = require("./registry");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
@@ -29,7 +29,11 @@ function listPresets() {
 }
 
 function loadPreset(name) {
-  const file = path.join(PRESETS_DIR, `${name}.yaml`);
+  const file = path.resolve(PRESETS_DIR, `${name}.yaml`);
+  if (!file.startsWith(PRESETS_DIR + path.sep) && file !== PRESETS_DIR) {
+    console.error(`  Invalid preset name: ${name}`);
+    return null;
+  }
   if (!fs.existsSync(file)) {
     console.error(`  Preset not found: ${name}`);
     return null;
@@ -73,14 +77,14 @@ function parseCurrentPolicy(raw) {
  * Build the openshell policy set command with properly quoted arguments.
  */
 function buildPolicySetCommand(policyFile, sandboxName) {
-  return `openshell policy set --policy "${policyFile}" --wait "${sandboxName}"`;
+  return `openshell policy set --policy ${shellQuote(policyFile)} --wait ${shellQuote(sandboxName)}`;
 }
 
 /**
  * Build the openshell policy get command with properly quoted arguments.
  */
 function buildPolicyGetCommand(sandboxName) {
-  return `openshell policy get --full "${sandboxName}" 2>/dev/null`;
+  return `openshell policy get --full ${shellQuote(sandboxName)} 2>/dev/null`;
 }
 
 function applyPreset(sandboxName, presetName) {
@@ -166,15 +170,17 @@ function applyPreset(sandboxName, presetName) {
   }
 
   // Write temp file and apply
-  const tmpFile = path.join(os.tmpdir(), `nemoclaw-policy-${Date.now()}.yaml`);
-  fs.writeFileSync(tmpFile, merged, "utf-8");
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
+  const tmpFile = path.join(tmpDir, "policy.yaml");
+  fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
 
   try {
     run(buildPolicySetCommand(tmpFile, sandboxName));
 
     console.log(`  Applied preset: ${presetName}`);
   } finally {
-    fs.unlinkSync(tmpFile);
+    try { fs.unlinkSync(tmpFile); } catch {}
+    try { fs.rmdirSync(tmpDir); } catch {}
   }
 
   // Update registry
