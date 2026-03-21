@@ -163,6 +163,7 @@ async function deploy(instanceName) {
   fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
   try {
     run(`scp -q -o StrictHostKeyChecking=no -o LogLevel=ERROR ${shellQuote(envTmp)} ${qname}:/home/ubuntu/nemoclaw/.env`);
+    run(`ssh -q -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'chmod 600 /home/ubuntu/nemoclaw/.env'`);
   } finally {
     try { fs.unlinkSync(envTmp); } catch {}
     try { fs.rmdirSync(envDir); } catch {}
