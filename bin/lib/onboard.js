@@ -355,18 +355,22 @@ async function startGateway(gpu) {
     env: gatewayEnv,
   });
 
-  // Verify health
-  for (let i = 0; i < 5; i++) {
+  // Verify health (increased retries to handle slow connection establishment)
+  for (let i = 0; i < 10; i++) {
     const status = runCapture("openshell status 2>&1", { ignoreError: true });
     if (status.includes("Connected")) {
       console.log("  ✓ Gateway is healthy");
       break;
     }
-    if (i === 4) {
-      console.error("  Gateway failed to start. Run: openshell gateway info");
+    if (i === 9) {
+      console.error("  Gateway failed to start. Check 'openshell gateway info' for details.");
       process.exit(1);
     }
+<<<<<<< HEAD
     sleep(2);
+=======
+    require("child_process").spawnSync("sleep", ["3"]);
+>>>>>>> 304fb65 (fix(onboard): robustify health checks and wait for dashboard readiness)
   }
 
   // CoreDNS fix — always run. k3s-inside-Docker has broken DNS on all platforms.
@@ -465,30 +469,39 @@ async function createSandbox(gpu) {
     { ignoreError: true }
   );
 
-  // Clean up build context regardless of outcome
-  run(`rm -rf "${buildCtx}"`, { ignoreError: true });
 
-  if (createResult.status !== 0) {
+  // Clean up build context regardless of outcome
+  if (!ready) {
+    // Clean up the orphaned sandbox so the next onboard retry with the same
+    // name doesn't fail on "sandbox already exists".
+    const delResult = run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
     console.error("");
-    console.error(`  Sandbox creation failed (exit ${createResult.status}).`);
-    console.error("  Try:  openshell sandbox list        # check gateway state");
-    console.error("  Try:  nemoclaw onboard              # retry from scratch");
-    process.exit(createResult.status || 1);
+    console.error(`  Sandbox '${sandboxName}' was created but did not become ready within 60s.`);
+    if (delResult.status === 0) {
+      console.error("  The orphaned sandbox has been removed — you can safely retry.");
+    } else {
+      console.error(`  Could not remove the orphaned sandbox. Manual cleanup:`);
+      console.error(`    openshell sandbox delete "${sandboxName}"`);
+    }
+    console.error("  Retry: nemoclaw onboard");
+    process.exit(1);
   }
 
-  // Wait for sandbox to reach Ready state in k3s before registering.
-  // On WSL2 + Docker Desktop the pod can take longer to initialize;
-  // without this gate, NemoClaw registers a phantom sandbox that
-  // causes "sandbox not found" on every subsequent connect/status call.
-  console.log("  Waiting for sandbox to become ready...");
-  let ready = false;
-  for (let i = 0; i < 30; i++) {
-    const list = runCapture("openshell sandbox list 2>&1", { ignoreError: true });
-    if (isSandboxReady(list, sandboxName)) {
-      ready = true;
+  // Wait for NemoClaw dashboard to become fully ready (web server live)
+  // This prevents port forwards from connecting to a non-existent port
+  // or seeing 502/503 errors during initial load.
+  console.log("  Waiting for NemoClaw dashboard to become ready...");
+  for (let i = 0; i < 15; i++) {
+    const readyMatch = runCapture(`openshell sandbox exec ${sandboxName} curl -sf http://localhost:18789/ 2>/dev/null || echo "no"`, { ignoreError: true });
+    if (readyMatch && !readyMatch.includes("no")) {
+      console.log("  ✓ Dashboard is live");
       break;
     }
-    require("child_process").spawnSync("sleep", ["2"]);
+    if (i === 14) {
+      console.warn("  Dashboard taking longer than expected to start. Continuing...");
+    } else {
+      require("child_process").spawnSync("sleep", ["2"]);
+    }
   }
 
   if (!ready) {
