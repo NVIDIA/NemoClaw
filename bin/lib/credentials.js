@@ -32,21 +32,17 @@ function getCredential(key) {
 }
 
 function prompt(question) {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    rl.question(question, (answer) => {
-      rl.close();
-      if (!process.stdin.isTTY) {
-        if (typeof process.stdin.pause === "function") {
-          process.stdin.pause();
-        }
-        if (typeof process.stdin.unref === "function") {
-          process.stdin.unref();
-        }
-      }
-      resolve(answer.trim());
-    });
+  // Use bash `read` instead of Node.js readline to avoid readline hanging
+  // after heavy spawnSync/execSync usage (gateway start, preflight checks).
+  // Node.js readline's internal terminal mode management can get corrupted
+  // when many synchronous child processes have run before the first prompt.
+  const { spawnSync } = require("child_process");
+  process.stderr.write(question);
+  const result = spawnSync("bash", ["-c", 'read -r line && printf "%s" "$line"'], {
+    stdio: ["inherit", "pipe", "inherit"],
+    encoding: "utf-8",
   });
+  return Promise.resolve((result.stdout || "").trim());
 }
 
 async function ensureApiKey() {
