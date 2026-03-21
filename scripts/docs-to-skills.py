@@ -636,20 +636,32 @@ def _to_third_person(sentence: str) -> str:
 
     "Install NemoClaw" -> "Installs NemoClaw"
     "Change the model"  -> "Changes the model"
+    "Access the API"    -> "Accesses the API"
     Already third-person sentences are returned unchanged.
     """
     if not sentence:
         return sentence
     first_word, _, rest = sentence.partition(" ")
-    # Skip if already third person or not a verb-like start
-    if first_word.endswith("s") or first_word.endswith("ing"):
+    suffix = (" " + rest) if rest else ""
+    # Skip gerunds and words that are already third-person inflections
+    # (e.g. "Provides", "Configures") but NOT base verbs that happen to
+    # end in 's' (e.g. "Access", "Process").  We treat a word as already
+    # inflected only when it ends with a common third-person marker AND
+    # is not a known base-form verb.
+    _BASE_VERBS_ENDING_IN_S = {
+        "access", "process", "address", "discuss", "bypass", "express",
+        "compress", "assess", "stress", "progress", "focus", "canvas",
+    }
+    if first_word.endswith("ing"):
+        return sentence
+    if first_word.endswith("s") and first_word.lower() not in _BASE_VERBS_ENDING_IN_S:
         return sentence
     # Common imperative verbs: add 's' or 'es'
     if first_word.endswith(("ch", "sh", "x", "ss", "zz")):
-        return first_word + "es " + rest
+        return first_word + "es" + suffix
     if first_word.endswith("y") and len(first_word) > 1 and first_word[-2] not in "aeiou":
-        return first_word[:-1] + "ies " + rest
-    return first_word + "s " + rest
+        return first_word[:-1] + "ies" + suffix
+    return first_word + "s" + suffix
 
 
 # ---------------------------------------------------------------------------
