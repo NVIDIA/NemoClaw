@@ -185,7 +185,10 @@ async function start() {
 }
 
 function stop() {
-  run(`bash "${SCRIPTS}/start-services.sh" --stop`);
+  const { defaultSandbox } = registry.listSandboxes();
+  const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
+  const sandboxEnv = safeName ? `SANDBOX_NAME="${safeName}"` : "";
+  run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh" --stop`);
 }
 
 function debug(args) {
@@ -240,7 +243,9 @@ function showStatus() {
   }
 
   // Show service status
-  run(`bash "${SCRIPTS}/start-services.sh" --status`);
+  const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
+  const sandboxEnv = safeName ? `SANDBOX_NAME="${safeName}"` : "";
+  run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh" --status`);
 }
 
 function listSandboxes() {
