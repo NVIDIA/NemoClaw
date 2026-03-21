@@ -236,6 +236,16 @@ function getNonInteractiveModel(providerKey) {
 async function preflight() {
   step(1, 7, "Preflight checks");
 
+  // Bootstrap .env from .env.example on first run so port defaults are
+  // discoverable and editable.  This doesn't affect the current process
+  // (ports.js is already loaded), but ensures .env exists for future runs.
+  const envFile = path.join(ROOT, ".env");
+  const envExample = path.join(ROOT, ".env.example");
+  if (!fs.existsSync(envFile) && fs.existsSync(envExample)) {
+    fs.copyFileSync(envExample, envFile);
+    console.log("  ✓ Created .env from .env.example");
+  }
+
   // Docker
   if (!isDockerRunning()) {
     console.error("  Docker is not running. Please start Docker and try again.");
@@ -279,10 +289,10 @@ async function preflight() {
 
   // Required ports — gateway and dashboard
   const requiredPorts = [
-    { port: GATEWAY_PORT, label: "OpenShell gateway" },
-    { port: DASHBOARD_PORT, label: "NemoClaw dashboard" },
+    { port: GATEWAY_PORT, label: "OpenShell gateway", envVar: "NEMOCLAW_GATEWAY_PORT" },
+    { port: DASHBOARD_PORT, label: "NemoClaw dashboard", envVar: "NEMOCLAW_DASHBOARD_PORT" },
   ];
-  for (const { port, label } of requiredPorts) {
+  for (const { port, label, envVar } of requiredPorts) {
     const portCheck = await checkPortAvailable(port);
     if (!portCheck.ok) {
       console.error("");
@@ -292,7 +302,7 @@ async function preflight() {
       if (portCheck.process && portCheck.process !== "unknown") {
         console.error(`     Blocked by: ${portCheck.process}${portCheck.pid ? ` (PID ${portCheck.pid})` : ""}`);
         console.error("");
-        console.error("     To fix, stop the conflicting process:");
+        console.error("     To fix, either stop the conflicting process:");
         console.error("");
         if (portCheck.pid) {
           console.error(`       sudo kill ${portCheck.pid}`);
@@ -305,6 +315,9 @@ async function preflight() {
         console.error(`     Could not identify the process using port ${port}.`);
         console.error(`     Run: lsof -i :${port} -sTCP:LISTEN`);
       }
+      console.error("");
+      console.error(`     Or use a different port by adding to .env.local:`);
+      console.error(`       echo '${envVar}=<port>' >> .env.local`);
       console.error("");
       console.error(`     Detail: ${portCheck.reason}`);
       process.exit(1);
