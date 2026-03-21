@@ -18,6 +18,31 @@ info()  { echo -e "${GREEN}[install]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[install]${NC} $1"; }
 fail()  { echo -e "${RED}[install]${NC} $1"; exit 1; }
 
+# Ensure nvm environment is loaded in the current shell.
+ensure_nvm_loaded() {
+  if [ -z "${NVM_DIR:-}" ]; then
+    export NVM_DIR="$HOME/.nvm"
+  fi
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    # shellcheck source=/dev/null
+    . "$NVM_DIR/nvm.sh"
+  fi
+}
+
+# Refresh PATH so that npm global bin is discoverable.
+refresh_path() {
+  ensure_nvm_loaded
+
+  local npm_bin
+  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  if [ -n "$npm_bin" ] && [ -d "$npm_bin" ]; then
+    case ":$PATH:" in
+      *":$npm_bin:"*) ;;  # already on PATH
+      *) export PATH="$npm_bin:$PATH" ;;
+    esac
+  fi
+}
+
 MIN_NODE_MAJOR=20
 MIN_NPM_MAJOR=10
 RECOMMENDED_NODE_MAJOR=22
@@ -48,6 +73,9 @@ NEED_RESHIM=false
 if command -v asdf > /dev/null 2>&1 && asdf plugin list 2>/dev/null | grep -q nodejs; then
   NODE_MGR="asdf"
 elif [ -n "${NVM_DIR:-}" ] && [ -s "${NVM_DIR}/nvm.sh" ]; then
+  NODE_MGR="nvm"
+elif [ -s "$HOME/.nvm/nvm.sh" ]; then
+  export NVM_DIR="$HOME/.nvm"
   NODE_MGR="nvm"
 elif command -v fnm > /dev/null 2>&1; then
   NODE_MGR="fnm"
@@ -239,17 +267,41 @@ install_openshell
 # ── Install NemoClaw CLI ─────────────────────────────────────────
 
 info "Installing nemoclaw CLI..."
-npm install -g nemoclaw
+if [ "$NODE_MGR" = "nodesource" ]; then
+  sudo npm install -g nemoclaw
+else
+  npm install -g nemoclaw
+fi
 
 if [ "$NEED_RESHIM" = true ]; then
   info "Reshimming asdf..."
   asdf reshim nodejs
 fi
 
+refresh_path
+
 # ── Verify ───────────────────────────────────────────────────────
 
 if ! command -v nemoclaw > /dev/null 2>&1; then
-  fail "nemoclaw not found in PATH after install. Check your Node.js bin directory."
+  # Try refreshing PATH one more time
+  refresh_path
+fi
+
+if ! command -v nemoclaw > /dev/null 2>&1; then
+  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  if [ -n "$npm_bin" ] && [ -x "$npm_bin/nemoclaw" ]; then
+    warn "nemoclaw installed at $npm_bin/nemoclaw but not on current PATH."
+    warn ""
+    warn "Add it to your shell profile:"
+    warn "  echo 'export PATH=\"$npm_bin:\$PATH\"' >> ~/.bashrc"
+    warn "  source ~/.bashrc"
+    warn ""
+    warn "Or for zsh:"
+    warn "  echo 'export PATH=\"$npm_bin:\$PATH\"' >> ~/.zshrc"
+    warn "  source ~/.zshrc"
+  else
+    fail "nemoclaw installation failed. Binary not found."
+  fi
 fi
 
 echo ""
@@ -258,3 +310,24 @@ info "nemoclaw $(nemoclaw --version 2>/dev/null || echo 'v0.1.0') is ready."
 echo ""
 echo "  Run \`nemoclaw onboard\` to get started"
 echo ""
+
+# ── Post-install: shell reload instructions ──────────────────
+
+if [ "$NODE_MGR" = "nvm" ] || [ "$NODE_MGR" = "fnm" ]; then
+  profile="$HOME/.bashrc"
+  if [ -n "${ZSH_VERSION:-}" ] || [ "$(basename "${SHELL:-}")" = "zsh" ]; then
+    profile="$HOME/.zshrc"
+  elif [ ! -f "$HOME/.bashrc" ] && [ -f "$HOME/.profile" ]; then
+    profile="$HOME/.profile"
+  fi
+  echo "  ──────────────────────────────────────────────────"
+  warn "Your current shell may not have the updated PATH."
+  echo ""
+  echo "  To use nemoclaw now, run:"
+  echo ""
+  echo "    source $profile"
+  echo ""
+  echo "  Or open a new terminal window."
+  echo "  ──────────────────────────────────────────────────"
+  echo ""
+fi

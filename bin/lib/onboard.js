@@ -10,7 +10,6 @@ const { prompt, ensureApiKey, getCredential } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
 const policies = require("./policies");
-const { checkCgroupConfig } = require("./preflight");
 const HOST_GATEWAY_URL = "http://host.openshell.internal";
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 
@@ -42,7 +41,7 @@ function isOpenshellInstalled() {
 
 function installOpenshell() {
   console.log("  Installing openshell CLI...");
-  run(`bash "${path.join(SCRIPTS, "install.sh")}"`, { ignoreError: true });
+  run(`bash "${path.join(SCRIPTS, "install-openshell.sh")}"`, { ignoreError: true });
   return isOpenshellInstalled();
 }
 
@@ -69,27 +68,6 @@ async function preflight() {
   }
   console.log(`  ✓ openshell CLI: ${runCapture("openshell --version 2>/dev/null || echo unknown", { ignoreError: true })}`);
 
-  // cgroup v2 + Docker cgroupns
-  const cgroup = checkCgroupConfig();
-  if (!cgroup.ok) {
-    console.error("");
-    console.error("  !! cgroup v2 detected but Docker is not configured for cgroupns=host.");
-    console.error("     OpenShell's gateway runs k3s inside Docker, which will fail with:");
-    console.error("");
-    console.error("       openat2 /sys/fs/cgroup/kubepods/pids.max: no such file or directory");
-    console.error("");
-    console.error("     To fix, run:");
-    console.error("");
-    console.error("       nemoclaw setup-spark");
-    console.error("");
-    console.error("     This adds \"default-cgroupns-mode\": \"host\" to /etc/docker/daemon.json");
-    console.error("     (preserving any existing settings) and restarts Docker.");
-    console.error("");
-    console.error(`     Detail: ${cgroup.reason}`);
-    process.exit(1);
-  }
-  console.log("  ✓ cgroup configuration OK");
-
   // GPU
   const gpu = nim.detectGpu();
   if (gpu && gpu.type === "nvidia") {
@@ -113,7 +91,11 @@ async function startGateway(gpu) {
   run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
 
   const gwArgs = ["--name", "nemoclaw"];
-  if (gpu && gpu.nimCapable) gwArgs.push("--gpu");
+  // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
+  // routed through a host-side provider (Ollama, vLLM, or cloud API) — the
+  // sandbox itself does not need direct GPU access. Passing --gpu causes
+  // FailedPrecondition errors when the gateway's k3s device plugin cannot
+  // allocate GPUs. See: https://build.nvidia.com/spark/nemoclaw/instructions
 
   run(`openshell gateway start ${gwArgs.join(" ")}`, { ignoreError: false });
 
@@ -143,6 +125,7 @@ async function startGateway(gpu) {
   }
   // Give DNS a moment to propagate
   require("child_process").spawnSync("sleep", ["5"]);
+
 }
 
 // ── Step 3: Sandbox ──────────────────────────────────────────────
@@ -193,7 +176,7 @@ async function createSandbox(gpu) {
     `--name "${sandboxName}"`,
     `--policy "${basePolicyPath}"`,
   ];
-  if (gpu && gpu.nimCapable) createArgs.push("--gpu");
+  // --gpu is intentionally omitted. See comment in startGateway().
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const chatUiUrl = process.env.CHAT_UI_URL || 'http://127.0.0.1:18789';
@@ -201,9 +184,15 @@ async function createSandbox(gpu) {
   if (process.env.NVIDIA_API_KEY) {
     envArgs.push(`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`);
   }
-  run(`openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`);
+  // set -o pipefail ensures the openshell exit code propagates through the awk pipe.
+  // Without it, awk's exit code (always 0) would mask a failed sandbox create.
+  run(`set -o pipefail; openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`);
 
-  // Forward dashboard port separately
+  // Release any stale forward on port 18789 before claiming it for the new sandbox.
+  // A previous onboard run may have left the port forwarded to a different sandbox,
+  // which would silently prevent the new sandbox's dashboard from being reachable.
+  run(`openshell forward stop 18789 2>/dev/null || true`, { ignoreError: true });
+  // Forward dashboard port to the new sandbox
   run(`openshell forward start --background 18789 "${sandboxName}"`, { ignoreError: true });
 
   // Clean up build context

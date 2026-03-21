@@ -20,24 +20,36 @@ NVIDIA NemoClaw is an open source stack that simplifies running [OpenClaw](https
 
 ## Quick Start
 
-<!-- start-quickstart-guide -->
-
 Follow these steps to get started with NemoClaw and your first sandboxed OpenClaw agent.
 
-:::{note}
-NemoClaw currently requires a fresh installation of OpenClaw.
-:::
+> [!NOTE]
+> NemoClaw currently requires a fresh installation of OpenClaw.
+
+<!-- start-quickstart-guide -->
 
 ### Prerequisites
 
 Check the prerequisites before you start to ensure you have the necessary software and hardware to run NemoClaw.
 
+#### Hardware
+
+| Resource | Minimum        | Recommended      |
+|----------|----------------|------------------|
+| CPU      | 4 vCPU         | 4+ vCPU          |
+| RAM      | 8 GB           | 16 GB            |
+| Disk     | 20 GB free     | 40 GB free       |
+
+The sandbox image is approximately 2.4 GB compressed. During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline, which buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer. If you cannot add memory, configuring at least 8 GB of swap can work around the issue at the cost of slower performance.
+
 #### Software
 
-- Linux Ubuntu 22.04 LTS releases and later
-- Node.js 20+ and npm 10+ (the installer recommends Node.js 22)
-- Docker installed and running
-- [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) installed
+| Dependency | Version                          |
+|------------|----------------------------------|
+| Linux      | Ubuntu 22.04 LTS or later |
+| Node.js    | 20 or later |
+| npm        | 10 or later |
+| Docker     | Installed and running |
+| [OpenShell](https://github.com/NVIDIA/OpenShell) | Installed |
 
 ### Install NemoClaw and Onboard OpenClaw Agent
 
@@ -146,7 +158,7 @@ Run these on the host to set up, connect to, and manage sandboxes.
 | Command                              | Description                                            |
 |--------------------------------------|--------------------------------------------------------|
 | `nemoclaw onboard`                  | Interactive setup wizard: gateway, providers, sandbox. |
-| `nemoclaw deploy <instance>`         | Deploy to a remote GPU instance through Brev.          |
+| `nemoclaw deploy <instance>` (**experimental**)         | Deploy to a remote GPU instance through Brev.          |
 | `nemoclaw <name> connect`            | Open an interactive shell inside the sandbox.          |
 | `openshell term`                     | Launch the OpenShell TUI for monitoring and approvals. |
 | `nemoclaw start` / `stop` / `status` | Manage auxiliary services (Telegram bridge, tunnel).   |

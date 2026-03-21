@@ -20,6 +20,12 @@ status: published
 
 # Quickstart
 
+Follow these steps to get started with NemoClaw and your first sandboxed OpenClaw agent.
+
+:::{note}
+NemoClaw currently requires a fresh installation of OpenClaw.
+:::
+
 ```{include} ../../README.md
 :start-after: <!-- start-quickstart-guide -->
 :end-before: <!-- end-quickstart-guide -->

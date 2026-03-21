@@ -13,11 +13,25 @@ export async function validateApiKey(
   apiKey: string,
   endpointUrl: string,
 ): Promise<ValidationResult> {
-  return observeLatency(
-    "tool_api_validate",
-    { endpoint: endpointUrl },
-    () => validateApiKeyInternal(apiKey, endpointUrl),
-  );
+  try {
+    return await observeLatency(
+      "tool_api_validate",
+      { endpoint: endpointUrl },
+      async () => {
+        const result = await validateApiKeyInternal(apiKey, endpointUrl);
+        if (!result.valid) {
+          throw new Error(result.error ?? "Validation failed");
+        }
+        return result;
+      },
+    );
+  } catch (err) {
+    return {
+      valid: false,
+      models: [],
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 async function validateApiKeyInternal(

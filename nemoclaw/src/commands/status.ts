@@ -2,11 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { exec } from "node:child_process";
+import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import type { PluginLogger, NemoClawConfig } from "../index.js";
 import { loadState } from "../blueprint/state.js";
 
 const execAsync = promisify(exec);
+
+/**
+ * Detect whether the plugin is running inside an OpenShell sandbox.
+ * Inside sandboxes the root filesystem is mounted at /sandbox and openshell
+ * host commands are not available, so querying `openshell sandbox status`
+ * would always fail — producing false-negative "not running" reports.
+ */
+function isInsideSandbox(): boolean {
+  return existsSync("/sandbox/.openclaw") || existsSync("/sandbox/.nemoclaw");
+}
 
 export interface StatusOptions {
   json: boolean;
@@ -18,10 +29,11 @@ export async function cliStatus(opts: StatusOptions): Promise<void> {
   const { json: jsonOutput, logger } = opts;
   const state = loadState();
   const sandboxName = state.sandboxName ?? "openclaw";
+  const insideSandbox = isInsideSandbox();
 
   const [sandbox, inference] = await Promise.all([
-    getSandboxStatus(sandboxName),
-    getInferenceStatus(),
+    getSandboxStatus(sandboxName, insideSandbox),
+    getInferenceStatus(insideSandbox),
   ]);
 
   const statusData = {
@@ -35,6 +47,7 @@ export async function cliStatus(opts: StatusOptions): Promise<void> {
     },
     sandbox,
     inference,
+    insideSandbox,
   };
 
   if (jsonOutput) {
@@ -45,6 +58,13 @@ export async function cliStatus(opts: StatusOptions): Promise<void> {
   logger.info("NemoClaw Status");
   logger.info("===============");
   logger.info("");
+
+  if (insideSandbox) {
+    logger.info("Context: running inside an active OpenShell sandbox");
+    logger.info("  Host sandbox state is not inspectable from inside the sandbox.");
+    logger.info("  Run 'openshell sandbox status' on the host for full details.");
+    logger.info("");
+  }
 
   logger.info("Plugin State:");
   if (state.lastAction) {
@@ -62,6 +82,10 @@ export async function cliStatus(opts: StatusOptions): Promise<void> {
     logger.info(`  Name:    ${sandbox.name}`);
     logger.info("  Status:  running");
     logger.info(`  Uptime:  ${sandbox.uptime ?? "unknown"}`);
+  } else if (sandbox.insideSandbox) {
+    logger.info(`  Name:    ${sandbox.name}`);
+    logger.info("  Status:  active (inside sandbox)");
+    logger.info("  Note:    Cannot query host sandbox state from within the sandbox.");
   } else {
     logger.info("  Status:  not running");
   }
@@ -72,6 +96,9 @@ export async function cliStatus(opts: StatusOptions): Promise<void> {
     logger.info(`  Provider:  ${inference.provider ?? "unknown"}`);
     logger.info(`  Model:     ${inference.model ?? "unknown"}`);
     logger.info(`  Endpoint:  ${inference.endpoint ?? "unknown"}`);
+  } else if (inference.insideSandbox) {
+    logger.info("  Status:  unable to query from inside sandbox");
+    logger.info("  Note:    Run 'openshell inference get' on the host to check.");
   } else {
     logger.info("  Not configured");
   }
@@ -88,6 +115,7 @@ interface SandboxStatus {
   name: string;
   running: boolean;
   uptime: string | null;
+  insideSandbox: boolean;
 }
 
 interface SandboxStatusResponse {
@@ -95,7 +123,10 @@ interface SandboxStatusResponse {
   uptime?: string;
 }
 
-async function getSandboxStatus(sandboxName: string): Promise<SandboxStatus> {
+async function getSandboxStatus(sandboxName: string, insideSandbox: boolean): Promise<SandboxStatus> {
+  if (insideSandbox) {
+    return { name: sandboxName, running: false, uptime: null, insideSandbox: true };
+  }
   try {
     const { stdout } = await execAsync(`openshell sandbox status ${sandboxName} --json`, {
       timeout: 5000,
@@ -105,9 +136,10 @@ async function getSandboxStatus(sandboxName: string): Promise<SandboxStatus> {
       name: sandboxName,
       running: parsed.state === "running",
       uptime: parsed.uptime ?? null,
+      insideSandbox: false,
     };
   } catch {
-    return { name: sandboxName, running: false, uptime: null };
+    return { name: sandboxName, running: false, uptime: null, insideSandbox: false };
   }
 }
 
@@ -116,6 +148,7 @@ interface InferenceStatus {
   provider: string | null;
   model: string | null;
   endpoint: string | null;
+  insideSandbox: boolean;
 }
 
 interface InferenceStatusResponse {
@@ -124,7 +157,10 @@ interface InferenceStatusResponse {
   endpoint?: string;
 }
 
-async function getInferenceStatus(): Promise<InferenceStatus> {
+async function getInferenceStatus(insideSandbox: boolean): Promise<InferenceStatus> {
+  if (insideSandbox) {
+    return { configured: false, provider: null, model: null, endpoint: null, insideSandbox: true };
+  }
   try {
     const { stdout } = await execAsync("openshell inference get --json", {
       timeout: 5000,
@@ -135,8 +171,9 @@ async function getInferenceStatus(): Promise<InferenceStatus> {
       provider: parsed.provider ?? null,
       model: parsed.model ?? null,
       endpoint: parsed.endpoint ?? null,
+      insideSandbox: false,
     };
   } catch {
-    return { configured: false, provider: null, model: null, endpoint: null };
+    return { configured: false, provider: null, model: null, endpoint: null, insideSandbox: false };
   }
 }

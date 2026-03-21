@@ -36,11 +36,18 @@ export async function execBlueprint(
   options: BlueprintRunOptions,
   logger: PluginLogger,
 ): Promise<BlueprintRunResult> {
-  return observeLatency(
-    "blueprint_execution",
-    { action: options.action, profile: options.profile },
-    () => execBlueprintInternal(options, logger),
-  );
+  try {
+    return await observeLatency(
+      "blueprint_execution",
+      { action: options.action, profile: options.profile },
+      () => execBlueprintInternal(options, logger),
+    );
+  } catch (err) {
+    if (err && typeof err === "object" && "success" in err) {
+      return err as BlueprintRunResult;
+    }
+    return failResult(options.action, err instanceof Error ? err.message : String(err));
+  }
 }
 
 async function execBlueprintInternal(
@@ -52,7 +59,7 @@ async function execBlueprintInternal(
   if (!existsSync(runnerPath)) {
     const msg = `Blueprint runner not found at ${runnerPath}. Is the blueprint installed correctly?`;
     logger.error(msg);
-    return failResult(options.action, msg);
+    throw failResult(options.action, msg);
   }
 
   const args: string[] = [runnerPath, options.action, "--profile", options.profile];
@@ -65,7 +72,7 @@ async function execBlueprintInternal(
 
   logger.info(`Running blueprint: ${options.action} (profile: ${options.profile})`);
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const chunks: string[] = [];
     const proc = spawn("python3", args, {
       cwd: options.blueprintPath,
@@ -90,13 +97,19 @@ async function execBlueprintInternal(
     proc.on("close", (code) => {
       const output = chunks.join("");
       const runIdMatch = output.match(/^RUN_ID:(.+)$/m);
-      resolve({
+      const result = {
         success: code === 0,
         runId: runIdMatch?.[1] ?? "unknown",
         action: options.action,
         output,
         exitCode: code ?? 1,
-      });
+      };
+
+      if (code === 0) {
+        resolve(result);
+      } else {
+        reject(result);
+      }
     });
 
     proc.on("error", (err) => {
@@ -104,7 +117,7 @@ async function execBlueprintInternal(
         ? "python3 not found. The blueprint runner requires Python 3.11+."
         : `Failed to start blueprint runner: ${err.message}`;
       logger.error(msg);
-      resolve(failResult(options.action, msg));
+      reject(failResult(options.action, msg));
     });
   });
 }

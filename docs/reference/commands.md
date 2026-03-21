@@ -63,6 +63,8 @@ $ openclaw nemoclaw status [--json]
 `--json`
 : Output as JSON for programmatic consumption.
 
+When you run `status` inside an active OpenShell sandbox, host-level commands like `openshell sandbox status` are unavailable. The status command detects this and reports the sandbox context instead of showing false negatives. Run `openshell sandbox status` on the host for full details.
+
 ### `openclaw nemoclaw logs`
 
 Stream blueprint execution and sandbox logs.
@@ -104,6 +106,14 @@ $ nemoclaw onboard
 
 The first run prompts for your NVIDIA API key and saves it to `~/.nemoclaw/credentials.json`.
 
+The onboard wizard runs a preflight check before creating the gateway. On systems with cgroup v2, such as Ubuntu 24.04 and DGX Spark, the preflight verifies that Docker is configured with `"default-cgroupns-mode": "host"` in `/etc/docker/daemon.json`. If this setting is missing, `nemoclaw onboard` exits with an error and directs you to run `nemoclaw setup-spark` to apply the fix.
+
+By default, the onboard menu shows NVIDIA cloud inference options only. To enable experimental local inference options (NIM, vLLM, Ollama), set the `NEMOCLAW_EXPERIMENTAL` environment variable before running onboard:
+
+```console
+$ NEMOCLAW_EXPERIMENTAL=1 nemoclaw onboard
+```
+
 ### `nemoclaw list`
 
 List all registered sandboxes with their model, provider, and policy presets.
@@ -113,6 +123,10 @@ $ nemoclaw list
 ```
 
 ### `nemoclaw deploy`
+
+:::{warning}
+The `nemoclaw deploy` command is experimental and may not work as expected.
+:::
 
 Deploy NemoClaw to a remote GPU instance through [Brev](https://brev.nvidia.com).
 The deploy script installs Docker, NVIDIA Container Toolkit if a GPU is present, and OpenShell on the VM, then runs the nemoclaw setup and connects to the sandbox.

@@ -231,12 +231,15 @@ verify_nemoclaw() {
     warn "Or for zsh:"
     warn "  echo 'export PATH=\"$npm_bin:\$PATH\"' >> ~/.zshrc"
     warn "  source ~/.zshrc"
+    warn ""
+    warn "Continuing — nemoclaw is installed but requires a PATH update."
+    return 0
   else
     warn "Could not locate the nemoclaw executable."
     warn "Try running:  npm install -g nemoclaw"
   fi
 
-  error "Installation failed: nemoclaw --help could not be executed."
+  error "Installation failed: nemoclaw binary not found."
 }
 
 # ---------------------------------------------------------------------------
@@ -245,6 +248,38 @@ verify_nemoclaw() {
 run_onboard() {
   info "Running nemoclaw onboard…"
   nemoclaw onboard
+}
+
+# ---------------------------------------------------------------------------
+# 6. Post-install message
+# ---------------------------------------------------------------------------
+post_install_message() {
+  # Only show shell reload instructions when Node was installed via a
+  # version manager that modifies PATH in shell profile files.
+  # nvm and fnm require sourcing the profile; nodesource/brew install to
+  # system paths already on PATH.
+  if [[ ! -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]]; then
+    return 0
+  fi
+
+  local profile="$HOME/.bashrc"
+  if [[ -n "${ZSH_VERSION:-}" ]] || [[ "$(basename "${SHELL:-}")" == "zsh" ]]; then
+    profile="$HOME/.zshrc"
+  elif [[ ! -f "$HOME/.bashrc" && -f "$HOME/.profile" ]]; then
+    profile="$HOME/.profile"
+  fi
+
+  echo ""
+  echo "  ──────────────────────────────────────────────────"
+  warn "Your current shell may not have the updated PATH."
+  echo ""
+  echo "  To use nemoclaw now, run:"
+  echo ""
+  echo "    source $profile"
+  echo ""
+  echo "  Or open a new terminal window."
+  echo "  ──────────────────────────────────────────────────"
+  echo ""
 }
 
 # ---------------------------------------------------------------------------
@@ -258,6 +293,7 @@ main() {
   # install_or_upgrade_ollama
   install_nemoclaw
   verify_nemoclaw
+  post_install_message
   run_onboard
 
   info "=== Installation complete ==="
