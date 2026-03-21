@@ -81,6 +81,7 @@ done
 
 TMPDIR_BASE="${TMPDIR:-/tmp}"
 COLLECT_DIR=$(mktemp -d "${TMPDIR_BASE}/nemoclaw-debug-XXXXXX")
+trap 'rm -rf "$COLLECT_DIR"' EXIT
 
 # Detect timeout binary (GNU coreutils; gtimeout on macOS via brew)
 TIMEOUT_BIN=""
@@ -262,10 +263,6 @@ if [ -n "$OUTPUT" ]; then
   warn "Known secrets are auto-redacted, but please review for any remaining sensitive data before sharing."
   info "Attach this file to your GitHub issue."
 fi
-
-# ── Cleanup ──────────────────────────────────────────────────────
-
-rm -rf "$COLLECT_DIR"
 
 echo ""
 info "Done. If filing a bug, run with --output and attach the tarball to your issue:"
