@@ -110,6 +110,57 @@ describe("checkPortAvailable", () => {
     assert.equal(typeof result.ok, "boolean");
   });
 
+  // Helper: monkey-patch net.createServer to emit a specific error code on listen.
+  function mockBindError(code, message) {
+    const origCreate = net.createServer;
+    net.createServer = function () {
+      const srv = origCreate.call(net);
+      srv.listen = function () {
+        process.nextTick(() => {
+          const err = new Error(message);
+          err.code = code;
+          srv.emit("error", err);
+        });
+        return srv;
+      };
+      return srv;
+    };
+    return origCreate;
+  }
+
+  it("degrades gracefully when bind is blocked by EPERM", async () => {
+    const restore = mockBindError("EPERM", "listen EPERM: operation not permitted 127.0.0.1");
+    try {
+      const result = await checkPortAvailable(9999, { skipLsof: true });
+      assert.equal(result.ok, true);
+      assert.ok(result.warning && result.warning.includes("EPERM"));
+    } finally {
+      net.createServer = restore;
+    }
+  });
+
+  it("degrades gracefully when bind is blocked by EACCES", async () => {
+    const restore = mockBindError("EACCES", "listen EACCES: permission denied 127.0.0.1");
+    try {
+      const result = await checkPortAvailable(9999, { skipLsof: true });
+      assert.equal(result.ok, true);
+      assert.ok(result.warning && result.warning.includes("EACCES"));
+    } finally {
+      net.createServer = restore;
+    }
+  });
+
+  it("treats unexpected bind errors as port unavailable", async () => {
+    const restore = mockBindError("ENOTFOUND", "getaddrinfo ENOTFOUND 127.0.0.1");
+    try {
+      const result = await checkPortAvailable(9999, { skipLsof: true });
+      assert.equal(result.ok, false);
+      assert.ok(result.reason.includes("port probe failed"));
+    } finally {
+      net.createServer = restore;
+    }
+  });
+
   it("checks gateway port 8080", async () => {
     const freePort = await new Promise((resolve) => {
       const srv = net.createServer();
