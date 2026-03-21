@@ -51,6 +51,7 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | Dependency | Version                          |
 |------------|----------------------------------|
 | Linux      | Ubuntu 22.04 LTS or later |
+* macOS 13 (Ventura) or later with [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
 | Node.js    | 20 or later |
 | npm        | 10 or later |
 | Container runtime | Supported runtime installed and running |
