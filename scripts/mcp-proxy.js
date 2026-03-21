@@ -22,11 +22,14 @@ const { spawn } = require("child_process");
 // ── Parse args ──────────────────────────────────────────────────
 
 function parseArgs(argv) {
-  const args = { command: null, env: [], port: 3101 };
+  const args = { exe: null, cmdArgs: [], env: [], port: 3101 };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
-      case "--command":
-        args.command = argv[++i];
+      case "--exe":
+        args.exe = argv[++i];
+        break;
+      case "--arg":
+        args.cmdArgs.push(argv[++i]);
         break;
       case "--env":
         args.env.push(argv[++i]);
@@ -41,9 +44,9 @@ function parseArgs(argv) {
 
 const config = parseArgs(process.argv.slice(2));
 
-if (!config.command) {
+if (!config.exe) {
   console.error(
-    "Usage: mcp-proxy.js --command <cmd> [--env VAR ...] [--port PORT]",
+    "Usage: mcp-proxy.js --exe <binary> [--arg <arg> ...] [--env VAR ...] [--port PORT]",
   );
   process.exit(1);
 }
@@ -63,13 +66,11 @@ let childReady = false;
 let pendingRequests = [];
 
 function startChild() {
-  const parts = config.command.split(/\s+/);
-  const cmd = parts[0];
-  const cmdArgs = parts.slice(1);
+  const { exe, cmdArgs } = config;
 
   // Validate executable — reject path traversal and suspicious characters
-  if (/\.\./.test(cmd) || /[;&|`$]/.test(cmd)) {
-    console.error(`[mcp-proxy] rejected unsafe command executable: ${cmd}`);
+  if (/\.\./.test(exe) || /[;&|`$]/.test(exe)) {
+    console.error(`[mcp-proxy] rejected unsafe executable: ${exe}`);
     process.exit(1);
   }
 
@@ -85,7 +86,7 @@ function startChild() {
     childEnv[name] = process.env[name];
   }
 
-  child = spawn(cmd, cmdArgs, {
+  child = spawn(exe, cmdArgs, {
     stdio: ["pipe", "pipe", "pipe"],
     env: childEnv,
   });
@@ -243,7 +244,9 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(config.port, "127.0.0.1", () => {
   console.log(`[mcp-proxy] listening on 127.0.0.1:${config.port}`);
-  console.log(`[mcp-proxy] command: ${config.command}`);
+  console.log(
+    `[mcp-proxy] exe: ${config.exe} args: ${config.cmdArgs.join(" ")}`,
+  );
   console.log(`[mcp-proxy] env: ${config.env.join(", ") || "(none)"}`);
   startChild();
 });

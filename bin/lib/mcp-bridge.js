@@ -204,7 +204,14 @@ function add(sandboxName, opts) {
   const dir = pidDir(sandboxName);
   fs.mkdirSync(dir, { recursive: true });
 
-  const proxyArgs = ["--command", command, "--port", String(port)];
+  // Split command into exe + args at add-time so the stored values are pre-split
+  const cmdParts = command.split(/\s+/);
+  const exe = cmdParts[0];
+  const cmdArgs = cmdParts.slice(1);
+  const proxyArgs = ["--exe", exe, "--port", String(port)];
+  for (const arg of cmdArgs) {
+    proxyArgs.push("--arg", arg);
+  }
   for (const v of env) {
     proxyArgs.push("--env", v);
   }
@@ -248,16 +255,32 @@ function add(sandboxName, opts) {
     return;
   }
 
-  sshExec(
+  const configOut = sshExec(
     sandboxName,
-    `/sandbox/.local/node_modules/.bin/mcporter config add ${name} --url http://localhost:${port} --scope home 2>&1 || true`,
+    `/sandbox/.local/node_modules/.bin/mcporter config add ${name} --url http://localhost:${port} --scope home 2>&1`,
   );
+  if (!configOut || /error/i.test(configOut)) {
+    console.error("  mcporter config add failed. Rolling back...");
+    console.error(`  ${(configOut || "no output").trim()}`);
+    try {
+      process.kill(proc.pid, "SIGTERM");
+    } catch {}
+    try {
+      fs.unlinkSync(pidFile(sandboxName, name));
+    } catch {}
+    run(`openshell forward stop ${port} 2>/dev/null || true`, {
+      ignoreError: true,
+    });
+    return;
+  }
 
   // Save to registry
   const mcp = sandbox.mcp || {};
   mcp[name] = {
     type: "stdio",
     command,
+    exe,
+    args: cmdArgs,
     env,
     port,
     addedAt: new Date().toISOString(),
@@ -405,12 +428,13 @@ function restart(sandboxName, serverName) {
     const dir = pidDir(sandboxName);
     fs.mkdirSync(dir, { recursive: true });
 
-    const proxyArgs = [
-      "--command",
-      entry.command,
-      "--port",
-      String(entry.port),
-    ];
+    // Use stored exe/args if available, fall back to splitting command for older entries
+    const exe = entry.exe || entry.command.split(/\s+/)[0];
+    const entryArgs = entry.args || entry.command.split(/\s+/).slice(1);
+    const proxyArgs = ["--exe", exe, "--port", String(entry.port)];
+    for (const arg of entryArgs) {
+      proxyArgs.push("--arg", arg);
+    }
     for (const v of entry.env || []) {
       proxyArgs.push("--env", v);
     }
