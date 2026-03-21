@@ -12,4 +12,4 @@ check:
 	ruff format --check .
 
 test:
-	python -m pytest tests/ -v
+	uv run --extra test pytest tests/ -v
