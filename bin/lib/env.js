@@ -91,3 +91,5 @@ for (const file of ENV_FILES) {
     parseEnvFile(path.join(dir, file));
   }
 }
+
+module.exports = { parseEnvFile, findGitRoot };

@@ -28,7 +28,10 @@ fail() { echo -e "${RED}[brev]${NC} $1"; exit 1; }
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Load port overrides if present
+# shellcheck source=/dev/null
 [ -f "${SCRIPT_DIR}/../.env" ] && set -a && . "${SCRIPT_DIR}/../.env" && set +a
+# shellcheck source=/dev/null
+[ -f "${SCRIPT_DIR}/../.env.local" ] && set -a && . "${SCRIPT_DIR}/../.env.local" && set +a
 
 [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY not set"
 

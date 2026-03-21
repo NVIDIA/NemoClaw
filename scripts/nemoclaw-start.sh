@@ -11,6 +11,12 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=/dev/null
+[ -f "${SCRIPT_DIR}/../.env" ] && set -a && . "${SCRIPT_DIR}/../.env" && set +a
+# shellcheck source=/dev/null
+[ -f "${SCRIPT_DIR}/../.env.local" ] && set -a && . "${SCRIPT_DIR}/../.env.local" && set +a
+
 NEMOCLAW_CMD=("$@")
 PUBLIC_PORT="${NEMOCLAW_DASHBOARD_PORT:-${PUBLIC_PORT:-18789}}"
 CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${PUBLIC_PORT}}"

@@ -26,6 +26,12 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=/dev/null
+[ -f "${SCRIPT_DIR}/../.env" ] && set -a && . "${SCRIPT_DIR}/../.env" && set +a
+# shellcheck source=/dev/null
+[ -f "${SCRIPT_DIR}/../.env.local" ] && set -a && . "${SCRIPT_DIR}/../.env.local" && set +a
+
 info()    { echo -e "${GREEN}[debug]${NC} $1"; }
 warn()    { echo -e "${YELLOW}[debug]${NC} $1"; }
 fail()    { echo -e "${RED}[debug]${NC} $1"; exit 1; }

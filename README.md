@@ -179,7 +179,7 @@ export NEMOCLAW_VLLM_PORT=9000
 nemoclaw onboard
 ```
 
-Or create a `.env` file at the project root (see `.env.example`).
+Or create a `.env` file at the project root (see `.env.example`). For personal overrides that should never be committed, use `.env.local` — it is loaded after `.env` and takes precedence.
 
 > **ℹ️ Note**
 >
