@@ -17,6 +17,7 @@ const {
 const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
+const mcpBridge = require("./lib/mcp-bridge");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -350,6 +351,46 @@ function sandboxDestroy(sandboxName) {
   console.log(`  ✓ Sandbox '${sandboxName}' destroyed`);
 }
 
+// ── MCP bridge ──────────────────────────────────────────────────
+
+function parseMcpArgs(actionArgs) {
+  const opts = { name: null, command: null, env: [], port: null, server: null };
+  for (let i = 0; i < actionArgs.length; i++) {
+    switch (actionArgs[i]) {
+      case "--name":    opts.name = actionArgs[++i]; break;
+      case "--command": opts.command = actionArgs[++i]; break;
+      case "--env":     opts.env.push(actionArgs[++i]); break;
+      case "--port":    opts.port = parseInt(actionArgs[++i], 10); break;
+      default:
+        if (!opts.server && !actionArgs[i].startsWith("-")) opts.server = actionArgs[i];
+        break;
+    }
+  }
+  return opts;
+}
+
+async function sandboxMcp(sandboxName, actionArgs) {
+  const sub = actionArgs[0];
+  const subArgs = actionArgs.slice(1);
+  const opts = parseMcpArgs(subArgs);
+
+  switch (sub) {
+    case "add":     mcpBridge.add(sandboxName, opts); break;
+    case "remove":  mcpBridge.remove(sandboxName, opts.server || subArgs[0]); break;
+    case "list":    mcpBridge.list(sandboxName); break;
+    case "restart": mcpBridge.restart(sandboxName, opts.server || subArgs[0]); break;
+    default:
+      console.error(`  Usage: nemoclaw <sandbox> mcp <add|remove|list|restart>`);
+      console.error("");
+      console.error("  Commands:");
+      console.error("    add      --name <id> --command <cmd> [--env VAR ...] [--port PORT]");
+      console.error("    remove   <name>");
+      console.error("    list");
+      console.error("    restart  [<name>]");
+      process.exit(1);
+  }
+}
+
 // ── Help ─────────────────────────────────────────────────────────
 
 function help() {
@@ -371,6 +412,12 @@ function help() {
   Policy Presets:
     nemoclaw <name> policy-add       Add a policy preset to a sandbox
     nemoclaw <name> policy-list      List presets (● = applied)
+
+  MCP Bridges:
+    nemoclaw <name> mcp add          Bridge a host MCP server into the sandbox
+    nemoclaw <name> mcp remove       Remove an MCP bridge
+    nemoclaw <name> mcp list         List MCP bridges (● = running)
+    nemoclaw <name> mcp restart      Restart MCP bridge proxies
 
   Deploy:
     nemoclaw deploy <instance>       Deploy to a Brev VM and start services
@@ -439,9 +486,10 @@ const [cmd, ...args] = process.argv.slice(2);
       case "policy-add":  await sandboxPolicyAdd(cmd); break;
       case "policy-list": sandboxPolicyList(cmd); break;
       case "destroy":     sandboxDestroy(cmd); break;
+      case "mcp":         await sandboxMcp(cmd, actionArgs); break;
       default:
         console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, destroy`);
+        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, mcp, destroy`);
         process.exit(1);
     }
     return;
