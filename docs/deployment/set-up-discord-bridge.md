@@ -40,7 +40,8 @@ Create a Discord application and add a bot user to obtain the token the bridge n
 2. Give the application a name and select **Create**.
 3. Go to the **Bot** tab and select **Add Bot**.
 4. Under **Token**, select **Reset Token** and copy the token.
-   Store it securely. Discord does not show it again.
+   Store it securely.
+   Discord does not show it again.
 5. Under **Privileged Gateway Intents**, enable **Message Content Intent**.
    The bridge requires this intent to read message text.
 6. Select **Save Changes**.
@@ -130,7 +131,7 @@ To find a guild ID, open Discord, go to **Settings → Advanced**, enable **Deve
 
 ## Stop the Services
 
-To stop the Discord bridge and all other auxiliary services.
+To stop the Discord bridge and all other auxiliary services, run the following command.
 
 ```console
 $ nemoclaw stop
