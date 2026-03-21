@@ -40,7 +40,8 @@
       "uvx ruff check --fix",
       "uvx ruff format"
     ],
-    "**/*.sh": "npx shellcheck"
+    "**/*.sh": "npx shellcheck",
+    ".husky/{pre-commit,pre-push,commit-msg}": "npx shellcheck"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",
