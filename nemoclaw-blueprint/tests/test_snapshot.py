@@ -122,6 +122,10 @@ class TestRestoreIntoSandbox:
         mock_run.return_value = type("Result", (), {"returncode": 1})()
 
         assert restore_into_sandbox(tmp_path) is False
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args.args[0]
+        assert cmd[0:3] == ["openshell", "sandbox", "cp"]
+        assert cmd[-1] == "openclaw:/sandbox/.openclaw"
 
 
 # ---------------------------------------------------------------------------
