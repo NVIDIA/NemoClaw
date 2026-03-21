@@ -209,7 +209,7 @@ When the agent tries to reach an unlisted host, OpenShell blocks the request and
 ## Configuring Sandbox Policy
 
 The sandbox policy is defined in a declarative YAML file and enforced by the OpenShell runtime.
-NemoClaw ships a strict baseline in `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` that denies all network egress except explicitly listed endpoints.
+NemoClaw ships a strict baseline in [`nemoclaw-blueprint/policies/openclaw-sandbox.yaml`](https://github.com/NVIDIA/NemoClaw/blob/main/nemoclaw-blueprint/policies/openclaw-sandbox.yaml) that denies all network egress except explicitly listed endpoints.
 
 Operators can customize the policy in two ways:
 
