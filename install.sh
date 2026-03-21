@@ -154,9 +154,13 @@ get_ollama_version() {
 }
 
 detect_gpu() {
-  # Returns 0 if a GPU is detected
+  # Returns 0 if a GPU is detected (NVIDIA or Apple Silicon)
   if command_exists nvidia-smi; then
     nvidia-smi &>/dev/null && return 0
+  fi
+  # Apple Silicon — unified GPU is always present on M-series chips
+  if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
+    return 0
   fi
   return 1
 }
@@ -178,6 +182,18 @@ get_vram_mb() {
   echo 0
 }
 
+install_ollama_platform() {
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    if command_exists brew; then
+      brew install ollama || brew upgrade ollama
+    else
+      error "Homebrew is required to install Ollama on macOS. Install it from https://brew.sh"
+    fi
+  else
+    curl -fsSL https://ollama.com/install.sh | sh
+  fi
+}
+
 install_or_upgrade_ollama() {
   if detect_gpu && command_exists ollama; then
     local current
@@ -186,14 +202,14 @@ install_or_upgrade_ollama() {
       info "Ollama v${current} meets minimum requirement (>= v${OLLAMA_MIN_VERSION})"
     else
       info "Ollama v${current:-unknown} is below v${OLLAMA_MIN_VERSION} — upgrading…"
-      curl -fsSL https://ollama.com/install.sh | sh
+      install_ollama_platform
       info "Ollama upgraded to $(get_ollama_version)"
     fi
   else
     # No ollama — only install if a GPU is present
     if detect_gpu; then
       info "GPU detected — installing Ollama…"
-      curl -fsSL https://ollama.com/install.sh | sh
+      install_ollama_platform
       info "Ollama installed: v$(get_ollama_version)"
     else
       warn "No GPU detected — skipping Ollama installation."
