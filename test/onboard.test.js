@@ -170,4 +170,75 @@ const { setupInference } = require(${onboardPath});
     assert.doesNotMatch(commands[0].command, /sk-ant-secret-value/);
     assert.match(commands[1].command, /'--provider' 'anthropic-prod'/);
   });
+
+  it("updates OpenAI-compatible providers without passing an unsupported --type flag", () => {
+    const repoRoot = path.join(__dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-openai-update-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-openai-update-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+
+const commands = [];
+let callIndex = 0;
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  callIndex += 1;
+  return { status: callIndex === 1 ? 1 : 0 };
+};
+runner.runCapture = (command) => {
+  if (command.includes("inference") && command.includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: openai-api",
+      "  Model: gpt-5.4",
+      "  Version: 1",
+    ].join("\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+
+process.env.OPENAI_API_KEY = "sk-secret-value";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference("test-box", "gpt-5.4", "openai-api", "https://api.openai.com/v1", "OPENAI_API_KEY");
+  console.log(JSON.stringify(commands));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const commands = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.equal(commands.length, 3);
+    assert.match(commands[0].command, /provider' 'create'/);
+    assert.match(commands[1].command, /provider' 'update' 'openai-api'/);
+    assert.doesNotMatch(commands[1].command, /'--type'/);
+    assert.match(commands[2].command, /inference' 'set' '--no-verify'/);
+  });
 });
