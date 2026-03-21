@@ -97,12 +97,18 @@ async function deploy(instanceName) {
     console.error("    nemoclaw deploy nemoclaw-test");
     process.exit(1);
   }
+  let name;
+  try {
+    name = validateName(instanceName, "instance name");
+  } catch (err) {
+    console.error(`  ${err.message}`);
+    process.exit(1);
+  }
+
   await ensureApiKey();
   if (isRepoPrivate("NVIDIA/OpenShell")) {
     await ensureGithubToken();
   }
-  validateName(instanceName, "instance name");
-  const name = instanceName;
   const qname = shellQuote(name);
   const gpu = process.env.NEMOCLAW_GPU || "a2-highgpu-1g:nvidia-tesla-a100:1";
 

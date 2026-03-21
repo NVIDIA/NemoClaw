@@ -91,4 +91,18 @@ describe("CLI dispatch", () => {
     assert.ok(r.out.includes("Troubleshooting"), "missing Troubleshooting section");
     assert.ok(r.out.includes("nemoclaw debug"), "help should mention debug command");
   });
+
+  it("deploy rejects invalid instance names before credential prompts", () => {
+    const r = run("deploy \"foo;bar\"");
+    assert.equal(r.code, 1);
+    assert.ok(r.out.includes("Invalid instance name"), "should report invalid instance name");
+    assert.ok(!r.out.includes("NVIDIA API Key required"), "should fail before API key prompt");
+  });
+
+  it("deploy rejects command-substitution instance names", () => {
+    const r = run("deploy \"$(id)\"");
+    assert.equal(r.code, 1);
+    assert.ok(r.out.includes("Invalid instance name"), "should reject shell metacharacters");
+    assert.ok(!r.out.includes("NVIDIA API Key required"), "should fail before API key prompt");
+  });
 });
