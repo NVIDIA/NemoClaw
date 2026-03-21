@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Nightly full E2E: install → onboard → live inference against NVIDIA Cloud API.
+# Nightly full E2E: install → onboard → live inference against NVIDIA Endpoint API.
 # Runs directly on the runner (not inside Docker) because OpenShell bootstraps
 # a K3s cluster inside a privileged Docker container — nesting would break networking.
 #

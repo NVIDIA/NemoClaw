@@ -560,7 +560,7 @@ async function setupNim(sandboxName, gpu) {
   options.push({
     key: "cloud",
     label:
-      "NVIDIA Cloud API (build.nvidia.com)" +
+      "NVIDIA Endpoint API (build.nvidia.com)" +
       (!ollamaRunning && !(EXPERIMENTAL && vllmRunning) ? " (recommended)" : ""),
   });
   if (hasOllama || ollamaRunning) {
@@ -711,7 +711,7 @@ async function setupNim(sandboxName, gpu) {
       model = model || (await promptCloudModel()) || DEFAULT_CLOUD_MODEL;
     }
     model = model || requestedModel || DEFAULT_CLOUD_MODEL;
-    console.log(`  Using NVIDIA Cloud API with model: ${model}`);
+    console.log(`  Using NVIDIA Endpoint API with model: ${model}`);
   }
 
   registry.updateSandbox(sandboxName, { model, provider, nimContainer });
@@ -926,7 +926,7 @@ function printDashboard(sandboxName, model, provider) {
   const nimLabel = nimStat.running ? "running" : "not running";
 
   let providerLabel = provider;
-  if (provider === "nvidia-nim") providerLabel = "NVIDIA Cloud API";
+  if (provider === "nvidia-nim") providerLabel = "NVIDIA Endpoint API";
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
 

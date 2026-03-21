@@ -127,7 +127,7 @@ CLI commands for launching, connecting, monitoring, and managing sandboxes.
 :link: reference/inference-profiles
 :link-type: doc
 
-NVIDIA cloud inference configuration and available models.
+NVIDIA endpoint inference configuration and available models.
 
 +++
 {bdg-secondary}`Reference`

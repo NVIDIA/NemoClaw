@@ -113,7 +113,7 @@ After the sandbox starts, the agent runs inside it with all network, filesystem,
 
 Inference requests from the agent never leave the sandbox directly.
 OpenShell intercepts every inference call and routes it to the configured provider.
-NemoClaw routes inference to NVIDIA cloud, specifically Nemotron 3 Super 120B through [build.nvidia.com](https://build.nvidia.com). You can switch models at runtime without restarting the sandbox.
+NemoClaw routes inference to NVIDIA Endpoints, specifically Nemotron 3 Super 120B through [build.nvidia.com](https://build.nvidia.com). You can switch models at runtime without restarting the sandbox.
 
 ## Network and Filesystem Policy
 
