@@ -31,6 +31,8 @@ warn() { echo -e "${YELLOW}>>>${NC} $1"; }
 fail() { echo -e "${RED}>>>${NC} $1"; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/runtime.sh
+source "$SCRIPT_DIR/lib/runtime.sh"
 
 # ── Pre-flight checks ─────────────────────────────────────────────
 
@@ -59,6 +61,28 @@ if [ -n "$REAL_USER" ]; then
     info "Adding '$REAL_USER' to docker group..."
     usermod -aG docker "$REAL_USER"
     info "Added. Group will take effect on next login (or use 'newgrp docker')."
+  fi
+fi
+
+# ── 1b. Check for conflicting Kubernetes installations ────────────
+#
+# If another kubelet is running on the host, cgroupns=host causes
+# cgroup path conflicts → CrashLoopBackOff.
+# See: https://github.com/NVIDIA/NemoClaw/issues/431
+
+if detect_kubelet_conflict; then
+  warn_kubelet_conflict "$KUBELET_CONFLICT_DETAIL"
+  warn ""
+
+  if [ -t 0 ]; then
+    if ! read -rp "Continue anyway? [y/N] " reply; then
+      fail "Aborted (no input). Stop the conflicting Kubernetes service and retry."
+    fi
+    if [[ ! "$reply" =~ ^[Yy] ]]; then
+      fail "Aborted. Stop the conflicting Kubernetes service and retry."
+    fi
+  else
+    fail "Conflicting Kubernetes detected. Stop it first or run interactively to override."
   fi
 fi
 

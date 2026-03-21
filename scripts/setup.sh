@@ -92,6 +92,12 @@ fi
 SANDBOX_NAME="${1:-nemoclaw}"
 info "Using sandbox name: ${SANDBOX_NAME}"
 
+# 0. Check for conflicting Kubernetes — cgroupns=host + host kubelet = crash loop
+# See: https://github.com/NVIDIA/NemoClaw/issues/431
+if detect_kubelet_conflict; then
+  warn_kubelet_conflict "$KUBELET_CONFLICT_DETAIL"
+fi
+
 # 1. Gateway — always start fresh to avoid stale state
 info "Starting OpenShell gateway..."
 openshell gateway destroy -g nemoclaw > /dev/null 2>&1 || true
