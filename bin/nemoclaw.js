@@ -376,7 +376,7 @@ function help() {
     nemoclaw deploy <instance>       Deploy to a Brev VM and start services
 
   Services:
-    nemoclaw start                   Start services (Telegram, tunnel)
+    nemoclaw start                   Start services (gateway, port fwd, Telegram, tunnel)
     nemoclaw stop                    Stop all services
     nemoclaw status                  Show sandbox list and service status
 

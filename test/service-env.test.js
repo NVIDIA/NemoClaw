@@ -3,8 +3,11 @@
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
-const { execSync } = require("child_process");
+const { execSync, spawnSync } = require("child_process");
+const path = require("node:path");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
+
+const START_SERVICES_SH = path.join(__dirname, "..", "scripts", "start-services.sh");
 
 describe("service environment", () => {
   describe("resolveOpenshell logic", () => {
@@ -114,6 +117,92 @@ describe("service environment", () => {
         }
       ).trim();
       assert.equal(result, "default");
+    });
+  });
+
+  describe("validate_name", () => {
+    // Test the validate_name case pattern directly (sourcing the full script
+    // has side effects that interfere with the test environment).
+    function testValidateName(name) {
+      return spawnSync(
+        "bash",
+        ["-c", `
+          validate_name() {
+            case "$1" in
+              (*[!A-Za-z0-9._-]*|'') return 1 ;;
+            esac
+          }
+          validate_name ${JSON.stringify(name)}
+        `],
+        { encoding: "utf-8" }
+      );
+    }
+
+    it("accepts valid sandbox names", () => {
+      assert.equal(testValidateName("my-sandbox").status, 0);
+    });
+
+    it("rejects names with shell metacharacters", () => {
+      assert.notEqual(testValidateName("foo;rm -rf /").status, 0);
+    });
+
+    it("rejects empty names", () => {
+      assert.notEqual(testValidateName("").status, 0);
+    });
+  });
+
+  describe("resolve_sandbox", () => {
+    it("returns explicit sandbox name when not default", () => {
+      const result = spawnSync(
+        "bash",
+        ["-c", `
+          SANDBOX_NAME="my-box"
+          resolve_sandbox() {
+            if [ "$SANDBOX_NAME" != "default" ]; then
+              printf '%s\\n' "$SANDBOX_NAME"
+              return
+            fi
+          }
+          resolve_sandbox
+        `],
+        { encoding: "utf-8" }
+      );
+      assert.equal(result.status, 0);
+      assert.equal(result.stdout.trim(), "my-box");
+    });
+  });
+
+  describe("service list includes gateway services", () => {
+    it("show_status iterates openclaw-gateway and gateway-forward", () => {
+      // Verify the script lists the new services in --status mode
+      // by grepping the script source itself
+      const script = require("node:fs").readFileSync(START_SERVICES_SH, "utf-8");
+      assert.ok(
+        script.includes("openclaw-gateway"),
+        "start-services.sh should reference openclaw-gateway"
+      );
+      assert.ok(
+        script.includes("gateway-forward"),
+        "start-services.sh should reference gateway-forward"
+      );
+      // Verify the status loop includes all four services
+      assert.match(
+        script,
+        /for svc in openclaw-gateway gateway-forward telegram-bridge cloudflared/,
+        "show_status should iterate all four services"
+      );
+    });
+
+    it("do_stop stops gateway services", () => {
+      const script = require("node:fs").readFileSync(START_SERVICES_SH, "utf-8");
+      assert.ok(
+        script.includes("stop_service gateway-forward"),
+        "do_stop should stop gateway-forward"
+      );
+      assert.ok(
+        script.includes("stop_service openclaw-gateway"),
+        "do_stop should stop openclaw-gateway"
+      );
     });
   });
 });

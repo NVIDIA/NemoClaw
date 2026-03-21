@@ -2,8 +2,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Start NemoClaw auxiliary services: Telegram bridge
-# and cloudflared tunnel for public access.
+# Start NemoClaw services: OpenClaw gateway (inside sandbox),
+# port forwarding, Telegram bridge, and cloudflared tunnel.
 #
 # Usage:
 #   TELEGRAM_BOT_TOKEN=... ./scripts/start-services.sh         # start all
@@ -53,6 +53,24 @@ info()  { echo -e "${GREEN}[services]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[services]${NC} $1"; }
 fail()  { echo -e "${RED}[services]${NC} $1"; exit 1; }
 
+# Validate sandbox/gateway names to prevent shell injection
+validate_name() {
+  case "$1" in
+    (*[!A-Za-z0-9._-]*|'') fail "Invalid identifier: '$1'" ;;
+  esac
+}
+
+# Resolve sandbox name: explicit flag > auto-detect from openshell
+resolve_sandbox() {
+  if [ "$SANDBOX_NAME" != "default" ]; then
+    printf '%s\n' "$SANDBOX_NAME"
+    return
+  fi
+  if command -v openshell > /dev/null 2>&1; then
+    openshell sandbox list 2>/dev/null | awk '/Ready/{print $1; exit}' || true
+  fi
+}
+
 is_running() {
   local pidfile="$PIDDIR/$1.pid"
   if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
@@ -94,7 +112,7 @@ stop_service() {
 show_status() {
   mkdir -p "$PIDDIR"
   echo ""
-  for svc in telegram-bridge cloudflared; do
+  for svc in openclaw-gateway gateway-forward telegram-bridge cloudflared; do
     if is_running "$svc"; then
       echo -e "  ${GREEN}●${NC} $svc  (PID $(cat "$PIDDIR/$svc.pid"))"
     else
@@ -116,6 +134,8 @@ do_stop() {
   mkdir -p "$PIDDIR"
   stop_service cloudflared
   stop_service telegram-bridge
+  stop_service gateway-forward
+  stop_service openclaw-gateway
   info "All services stopped."
 }
 
@@ -137,6 +157,40 @@ do_start() {
   fi
 
   mkdir -p "$PIDDIR"
+
+  # ── OpenClaw gateway inside sandbox ──────────────────────────────
+  # Start the OpenClaw gateway inside the sandbox and forward
+  # port 18789 to the host so external dashboards (e.g. Mission
+  # Control) can reach the gateway after a reboot.
+  if command -v openshell > /dev/null 2>&1; then
+    local sandbox
+    sandbox="$(resolve_sandbox)"
+    if [ -n "$sandbox" ]; then
+      validate_name "$sandbox"
+
+      # Start gateway inside sandbox (idempotent — skips if already running).
+      # Run `openclaw gateway run` in the foreground (inside sandbox) so the
+      # host-side nohup wrapper keeps a live PID for status tracking.
+      if ! is_running "openclaw-gateway"; then
+        info "Starting OpenClaw gateway inside sandbox '$sandbox'..."
+        start_service openclaw-gateway \
+          openshell sandbox exec "$sandbox" -- openclaw gateway run
+        # Give the gateway a moment to bind its port
+        sleep 3
+      fi
+
+      # Forward dashboard port from sandbox to host (idempotent).
+      # Do NOT pass --background; start_service already runs under nohup &.
+      if ! is_running "gateway-forward"; then
+        info "Forwarding port $DASHBOARD_PORT from sandbox '$sandbox'..."
+        start_service gateway-forward \
+          openshell forward start "$DASHBOARD_PORT" "$sandbox"
+      fi
+    else
+      warn "No sandbox found. Gateway and port forwarding skipped."
+      warn "Run 'nemoclaw onboard' first to create a sandbox."
+    fi
+  fi
 
   # Telegram bridge (only if token provided)
   if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
@@ -178,6 +232,16 @@ do_start() {
 
   if [ -n "$tunnel_url" ]; then
     printf "  │  Public URL:  %-40s│\n" "$tunnel_url"
+  fi
+
+  if is_running openclaw-gateway; then
+    printf "  │  Gateway:     %-40s│\n" "running (port $DASHBOARD_PORT)"
+  else
+    printf "  │  Gateway:     %-40s│\n" "not started"
+  fi
+
+  if is_running gateway-forward; then
+    printf "  │  Port fwd:    %-40s│\n" "$DASHBOARD_PORT -> sandbox"
   fi
 
   if is_running telegram-bridge; then

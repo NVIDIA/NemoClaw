@@ -30,6 +30,12 @@ describe("CLI dispatch", () => {
     assert.ok(r.out.includes("Policy Presets"), "missing Policy Presets section");
   });
 
+  it("help mentions gateway in start description", () => {
+    const r = run("help");
+    assert.equal(r.code, 0);
+    assert.ok(r.out.includes("gateway"), "help should mention gateway in start description");
+  });
+
   it("--help exits 0", () => {
     assert.equal(run("--help").code, 0);
   });
