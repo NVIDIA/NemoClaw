@@ -1,0 +1,97 @@
+# NemoClaw Public Installer Test on K8s
+# Tests the unattended install flow with Dynamo vLLM endpoint
+#
+# Prerequisites:
+#   - Dynamo vLLM serving a model (e.g., in robert namespace)
+#   - PR #318 merged (non-interactive mode) + PR #365 (Dynamo provider support)
+#
+# Usage:
+#   kubectl apply -f nemoclaw-installer-test.yaml
+#   kubectl logs -f nemoclaw-installer -n nemoclaw -c installer
+#
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nemoclaw-installer
+  namespace: nemoclaw
+  labels:
+    app: nemoclaw-installer
+spec:
+  containers:
+    # Docker daemon (DinD) - OpenShell runs k3s inside Docker
+    - name: dind
+      image: docker:24-dind
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - name: docker-storage
+          mountPath: /var/lib/docker
+        - name: docker-socket
+          mountPath: /var/run
+        - name: docker-config
+          mountPath: /etc/docker
+      env:
+        - name: DOCKER_TLS_CERTDIR
+          value: ""
+      command:
+        - dockerd
+        - --host=unix:///var/run/docker.sock
+      resources:
+        requests:
+          memory: "8Gi"
+          cpu: "2"
+
+    # Installer container - runs the public NemoClaw installer
+    - name: installer
+      image: ubuntu:22.04
+      command: ["sleep", "infinity"]
+      workingDir: /root
+      env:
+        - name: DOCKER_HOST
+          value: unix:///var/run/docker.sock
+        # Unattended install configuration (PR #318)
+        - name: NEMOCLAW_NON_INTERACTIVE
+          value: "1"
+        - name: NEMOCLAW_SANDBOX_NAME
+          value: "nemoclaw-k8s"
+        # Dynamo provider configuration (PR #365)
+        - name: NEMOCLAW_PROVIDER
+          value: "dynamo"
+        - name: NEMOCLAW_DYNAMO_ENDPOINT
+          value: "http://vllm-agg-frontend.robert.svc.cluster.local:8000/v1"
+        - name: NEMOCLAW_DYNAMO_MODEL
+          value: "meta-llama/Llama-3.1-8B-Instruct"
+        # Skip policies for faster testing
+        - name: NEMOCLAW_POLICY_MODE
+          value: "skip"
+      volumeMounts:
+        - name: docker-socket
+          mountPath: /var/run
+        - name: docker-config
+          mountPath: /etc/docker
+      resources:
+        requests:
+          memory: "4Gi"
+          cpu: "1"
+
+  initContainers:
+    # Configure Docker daemon for cgroup v2 compatibility
+    - name: init-docker-config
+      image: busybox
+      command:
+        - sh
+        - -c
+        - echo '{"default-cgroupns-mode":"host"}' > /etc/docker/daemon.json
+      volumeMounts:
+        - name: docker-config
+          mountPath: /etc/docker
+
+  volumes:
+    - name: docker-storage
+      emptyDir: {}
+    - name: docker-socket
+      emptyDir: {}
+    - name: docker-config
+      emptyDir: {}
+
+  restartPolicy: Never

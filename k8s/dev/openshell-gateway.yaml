@@ -1,0 +1,83 @@
+# OpenShell Gateway on K8s using Docker-in-Docker
+# OpenShell runs k3s inside Docker, so we need DinD to run it on K8s
+apiVersion: v1
+kind: Pod
+metadata:
+  name: openshell-gateway
+  namespace: default
+  labels:
+    app: openshell-gateway
+spec:
+  containers:
+    # Docker daemon (DinD) - runs the actual Docker that OpenShell needs
+    - name: dind
+      image: docker:24-dind
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - name: docker-storage
+          mountPath: /var/lib/docker
+        - name: docker-socket
+          mountPath: /var/run
+        - name: docker-config
+          mountPath: /etc/docker
+      env:
+        - name: DOCKER_TLS_CERTDIR
+          value: ""
+      command:
+        - dockerd
+        - --host=unix:///var/run/docker.sock
+      resources:
+        requests:
+          memory: "8Gi"
+          cpu: "2"
+        # No limits - sandbox image builds need headroom
+
+    # Workspace container - run openshell commands here
+    - name: workspace
+      image: node:22
+      command: ["sleep", "infinity"]
+      workingDir: /workspace
+      env:
+        - name: DOCKER_HOST
+          value: unix:///var/run/docker.sock
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: openshell-state
+          mountPath: /root/.openshell
+        - name: docker-socket
+          mountPath: /var/run
+        - name: docker-config
+          mountPath: /etc/docker
+      resources:
+        requests:
+          memory: "2Gi"
+          cpu: "1"
+        # No limits - builds need headroom
+
+  initContainers:
+    # Configure Docker daemon for cgroup v2 compatibility
+    - name: init-docker-config
+      image: busybox
+      command:
+        - sh
+        - -c
+        - echo '{"default-cgroupns-mode":"host"}' > /etc/docker/daemon.json
+      volumeMounts:
+        - name: docker-config
+          mountPath: /etc/docker
+
+  volumes:
+    - name: docker-storage
+      emptyDir: {}
+    - name: docker-socket
+      emptyDir: {}
+    - name: docker-config
+      emptyDir: {}
+    - name: workspace
+      emptyDir: {}
+    - name: openshell-state
+      emptyDir: {}
+
+  restartPolicy: Never

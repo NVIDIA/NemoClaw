@@ -1,0 +1,174 @@
+# NemoClaw on Kubernetes
+# Init containers: build NemoClaw, install openshell
+# Workspace: installs packages at startup, runs onboard
+#
+# NOTE: Uses hostPath for Docker storage (/mnt/k8s-disks) to avoid
+# ephemeral storage exhaustion during sandbox image builds.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nemoclaw
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nemoclaw
+  namespace: nemoclaw
+  labels:
+    app: nemoclaw
+spec:
+  containers:
+    # Docker daemon (DinD)
+    - name: dind
+      image: docker:24-dind
+      securityContext:
+        privileged: true
+      env:
+        - name: DOCKER_TLS_CERTDIR
+          value: ""
+      command: ["dockerd", "--host=unix:///var/run/docker.sock"]
+      volumeMounts:
+        - name: docker-storage
+          mountPath: /var/lib/docker
+        - name: docker-socket
+          mountPath: /var/run
+        - name: docker-config
+          mountPath: /etc/docker
+      resources:
+        requests:
+          memory: "8Gi"
+          cpu: "2"
+
+    # Workspace - installs packages, starts socat, runs onboard
+    - name: workspace
+      image: node:22
+      command:
+        - bash
+        - -c
+        - |
+          set -e
+
+          # Install packages (apt packages don't persist from init containers)
+          echo "[1/5] Installing packages..."
+          apt-get update -qq
+          apt-get install -y -qq docker.io socat >/dev/null 2>&1
+
+          # Start socat proxy for K8s DNS bridge
+          echo "[2/5] Starting socat proxy..."
+          socat TCP-LISTEN:8000,fork,reuseaddr TCP:$DYNAMO_HOST &
+          sleep 1
+
+          # Wait for Docker
+          echo "[3/5] Waiting for Docker daemon..."
+          for i in $(seq 1 30); do
+            if docker info >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          docker info >/dev/null 2>&1 || { echo "Docker not ready"; exit 1; }
+          echo "Docker ready"
+
+          # Run NemoClaw onboard
+          echo "[4/5] Running NemoClaw onboard..."
+          cd /workspace/NemoClaw
+          node ./bin/nemoclaw.js onboard
+
+          # Keep running after onboard
+          echo "[5/5] Onboard complete. Container staying alive."
+          exec sleep infinity
+      workingDir: /workspace/NemoClaw
+      env:
+        - name: DOCKER_HOST
+          value: unix:///var/run/docker.sock
+        # Dynamo endpoint (raw host:port for socat) - UPDATE THIS FOR YOUR CLUSTER
+        - name: DYNAMO_HOST
+          value: "vllm-frontend.dynamo.svc.cluster.local:8000"
+        # NemoClaw config (uses host.openshell.internal via socat)
+        - name: NEMOCLAW_NON_INTERACTIVE
+          value: "1"
+        - name: NEMOCLAW_PROVIDER
+          value: "dynamo"
+        - name: NEMOCLAW_DYNAMO_ENDPOINT
+          value: "http://host.openshell.internal:8000/v1"
+        - name: NEMOCLAW_DYNAMO_MODEL
+          value: "meta-llama/Llama-3.1-8B-Instruct"
+        - name: NEMOCLAW_SANDBOX_NAME
+          value: "my-assistant"
+        - name: NEMOCLAW_POLICY_MODE
+          value: "skip"
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: opt-bin
+          mountPath: /opt/bin
+        - name: nemoclaw-state
+          mountPath: /root/.openshell
+        - name: docker-socket
+          mountPath: /var/run
+        - name: docker-config
+          mountPath: /etc/docker
+      resources:
+        requests:
+          memory: "4Gi"
+          cpu: "2"
+
+  initContainers:
+    # 1. Configure Docker daemon for cgroup v2
+    - name: init-docker-config
+      image: busybox
+      command: ["sh", "-c", "echo '{\"default-cgroupns-mode\":\"host\"}' > /etc/docker/daemon.json"]
+      volumeMounts:
+        - name: docker-config
+          mountPath: /etc/docker
+
+    # 2. Install OpenShell CLI (static binary, no deps)
+    - name: init-install-openshell
+      image: alpine
+      command:
+        - sh
+        - -c
+        - |
+          apk add --no-cache curl
+          curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/latest/download/openshell-x86_64-unknown-linux-musl.tar.gz" | tar xz -C /opt/bin
+          chmod +x /opt/bin/openshell
+          /opt/bin/openshell --version
+      volumeMounts:
+        - name: opt-bin
+          mountPath: /opt/bin
+
+    # 3. Clone and build NemoClaw
+    - name: init-build-nemoclaw
+      image: node:22
+      command:
+        - bash
+        - -c
+        - |
+          set -e
+          apt-get update -qq && apt-get install -y -qq git >/dev/null 2>&1
+          cd /workspace
+          git clone --depth 1 --branch rwipfelnv/dynamo-support https://github.com/rwipfelnv/NemoClaw.git
+          cd NemoClaw
+          npm install --silent
+          cd nemoclaw && npm install --silent && npm run build
+          echo "NemoClaw built successfully"
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+
+  volumes:
+    - name: docker-storage
+      hostPath:
+        path: /mnt/k8s-disks/nemoclaw-docker
+        type: DirectoryOrCreate
+    - name: docker-socket
+      emptyDir: {}
+    - name: docker-config
+      emptyDir: {}
+    - name: workspace
+      emptyDir: {}
+    - name: nemoclaw-state
+      emptyDir: {}
+    - name: opt-bin
+      emptyDir: {}
+
+  restartPolicy: Never
