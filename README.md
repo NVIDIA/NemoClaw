@@ -56,6 +56,12 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | Container runtime | Supported runtime installed and running |
 | [OpenShell](https://github.com/NVIDIA/OpenShell) | Installed |
 
+#### API Keys
+
+| Key | Source | Purpose |
+|-----|--------|---------|
+| `NVIDIA_API_KEY` | [build.nvidia.com](https://build.nvidia.com) | Required for cloud-hosted inference. |
+
 #### Container Runtime Support
 
 | Platform | Supported runtimes | Notes |
@@ -160,6 +166,24 @@ curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uni
 
 ---
 
+## Troubleshooting
+
+### Docker Permission Denied
+If the installer or `onboard` command reports that Docker is not running, ensure your user has permission to access the Docker socket:
+```console
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### cgroup v2 Issues
+On systems with cgroup v2 (like Ubuntu 22.04+), Docker must be configured for host cgroup namespace sharing to run the OpenShell gateway. If prompted, run:
+```console
+nemoclaw setup-spark
+```
+This will update `/etc/docker/daemon.json` and restart the Docker service.
+
+---
+
 ## How It Works
 
 NemoClaw installs the NVIDIA OpenShell runtime and Nemotron models, then uses a versioned blueprint to create a sandboxed environment where every network request, file access, and inference call is governed by declarative policy. The `nemoclaw` CLI orchestrates the full stack: OpenShell gateway, sandbox, inference provider, and network policy.
@@ -216,8 +240,9 @@ Run these on the host to set up, connect to, and manage sandboxes.
 |--------------------------------------|--------------------------------------------------------|
 | `nemoclaw onboard`                  | Interactive setup wizard: gateway, providers, sandbox. |
 | `nemoclaw <name> connect`            | Open an interactive shell inside the sandbox.          |
+| `nemoclaw <name> status`             | Show specific sandbox health and model info.           |
+| `nemoclaw <name> logs [--follow]`    | Stream sandbox and blueprint logs.                     |
 | `openshell term`                     | Launch the OpenShell TUI for monitoring and approvals. |
-| `nemoclaw start` / `stop` / `status` | Manage auxiliary services (Telegram bridge, tunnel).   |
 
 See the full [CLI reference](https://docs.nvidia.com/nemoclaw/latest/reference/commands.md) for all commands, flags, and options.
 
