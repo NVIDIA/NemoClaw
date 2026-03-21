@@ -7,7 +7,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { execSync, execFileSync } = require("child_process");
+const { execSync, execFileSync, spawnSync } = require("child_process");
 const os = require("os");
 const { ROOT, SCRIPTS, run, runCapture } = require("./runner");
 const {
@@ -261,7 +261,7 @@ function installOpenshell() {
 }
 
 function sleep(seconds) {
-  require("child_process").spawnSync("sleep", [String(seconds)]);
+  spawnSync("sleep", [String(seconds)]);
 }
 
 function waitForSandboxReady(sandboxName, attempts = 10, delaySeconds = 2) {
