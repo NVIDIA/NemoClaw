@@ -245,13 +245,13 @@ if command -v openshell &>/dev/null \
   SANDBOX_SSH_CONFIG=$(mktemp "${TMPDIR_BASE}/nemoclaw-ssh-XXXXXX")
   if openshell sandbox ssh-config "$SANDBOX_NAME" > "$SANDBOX_SSH_CONFIG" 2>/dev/null; then
     SANDBOX_SSH_HOST="openshell-${SANDBOX_NAME}"
-    sandbox_ssh() { ssh -F "$SANDBOX_SSH_CONFIG" -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$SANDBOX_SSH_HOST" "$@"; }
+    SANDBOX_SSH_OPTS=(-F "$SANDBOX_SSH_CONFIG" -o StrictHostKeyChecking=no -o ConnectTimeout=10)
 
-    collect "sandbox-ps" sandbox_ssh ps -ef
-    collect "sandbox-free" sandbox_ssh free -m
+    collect "sandbox-ps" ssh "${SANDBOX_SSH_OPTS[@]}" "$SANDBOX_SSH_HOST" ps -ef
+    collect "sandbox-free" ssh "${SANDBOX_SSH_OPTS[@]}" "$SANDBOX_SSH_HOST" free -m
     if [ "$QUICK" = false ]; then
-      collect "sandbox-top" sandbox_ssh 'top -b -n 1 | head -50'
-      collect "sandbox-gateway-log" sandbox_ssh tail -200 /tmp/gateway.log
+      collect "sandbox-top" ssh "${SANDBOX_SSH_OPTS[@]}" "$SANDBOX_SSH_HOST" 'top -b -n 1 | head -50'
+      collect "sandbox-gateway-log" ssh "${SANDBOX_SSH_OPTS[@]}" "$SANDBOX_SSH_HOST" tail -200 /tmp/gateway.log
     fi
   else
     warn "Could not generate SSH config for sandbox '${SANDBOX_NAME}', skipping internals"
