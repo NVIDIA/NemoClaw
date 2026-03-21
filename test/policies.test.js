@@ -3,6 +3,8 @@
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const policies = require("../bin/lib/policies");
@@ -112,6 +114,51 @@ describe("policies", () => {
       for (const p of policies.listPresets()) {
         const content = policies.loadPreset(p.name);
         assert.ok(content.includes("network_policies:"), `${p.name} missing network_policies`);
+      }
+    });
+  });
+
+  describe("applyPreset", () => {
+    it("adds a version header before appending preset entries to versionless policies", () => {
+      const fakeBinDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-"));
+      const capturedPolicy = path.join(fakeBinDir, "captured-policy.yaml");
+      const fakeOpenShell = path.join(fakeBinDir, "openshell");
+      const originalPath = process.env.PATH || "";
+      const originalCaptureFile = process.env.TEST_CAPTURE_FILE;
+
+      fs.writeFileSync(fakeOpenShell, `#!/bin/sh
+if [ "$1" = "policy" ] && [ "$2" = "get" ] && [ "$3" = "--full" ]; then
+  printf 'filesystem:\\n  mode: strict\\n'
+  exit 0
+fi
+if [ "$1" = "policy" ] && [ "$2" = "set" ]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--policy" ]; then
+      cp "$2" "$TEST_CAPTURE_FILE"
+      exit 0
+    fi
+    shift
+  done
+fi
+exit 1
+`, { mode: 0o755 });
+
+      process.env.PATH = `${fakeBinDir}:${originalPath}`;
+      process.env.TEST_CAPTURE_FILE = capturedPolicy;
+
+      try {
+        assert.equal(policies.applyPreset("demo", "telegram"), true);
+        const merged = fs.readFileSync(capturedPolicy, "utf-8");
+        assert.match(merged, /^version: 1\nfilesystem:\n  mode: strict\n\nnetwork_policies:\n/m);
+        assert.match(merged, /name: telegram/);
+        assert.match(merged, /host: api\.telegram\.org/);
+      } finally {
+        process.env.PATH = originalPath;
+        if (originalCaptureFile === undefined) {
+          delete process.env.TEST_CAPTURE_FILE;
+        } else {
+          process.env.TEST_CAPTURE_FILE = originalCaptureFile;
+        }
       }
     });
   });
