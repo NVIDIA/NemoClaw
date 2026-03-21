@@ -161,4 +161,5 @@ network_policies:
   # Telegram and Discord are NOT included in the baseline policy.
   # Any process in the sandbox can reach these endpoints when enabled,
   # making them data exfiltration channels (C-3). Users who need
-  # messaging can opt in: nemoclaw preset apply telegram|discord
+  # messaging can opt in via `nemoclaw onboard` (suggested presets) or
+  # by running `nemoclaw <sandbox> policy-add telegram|discord`.

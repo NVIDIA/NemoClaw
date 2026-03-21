@@ -75,7 +75,7 @@ describe("C-3: baseline policy must not contain messaging exfiltration channels"
         continue;
       }
       if (!inNetworkPolicies) continue;
-      if (/^  \w/.test(line) && line.trimEnd().endsWith(":")) {
+      if (/^ {2}(?!#)\S.*:\s*$/.test(line)) {
         if (currentBlock) blocks.push(currentBlock);
         currentBlock = { name: line.trim().replace(/:$/, ""), startLine: i + 1, lines: [line] };
         continue;
@@ -108,15 +108,15 @@ describe("C-3: messaging presets exist as opt-in path", () => {
     const presetPath = path.join(PRESETS_DIR, "telegram.yaml");
     assert.ok(fs.existsSync(presetPath), "telegram.yaml preset must exist");
     const content = fs.readFileSync(presetPath, "utf-8");
-    assert.ok(content.includes("api.telegram.org"));
-    assert.ok(content.includes("network_policies:"));
+    assert.ok(content.includes("api.telegram.org"), "telegram.yaml must include api.telegram.org");
+    assert.ok(content.includes("network_policies:"), "telegram.yaml must include network_policies:");
   });
 
   it("discord.yaml preset exists and contains discord.com", () => {
     const presetPath = path.join(PRESETS_DIR, "discord.yaml");
     assert.ok(fs.existsSync(presetPath), "discord.yaml preset must exist");
     const content = fs.readFileSync(presetPath, "utf-8");
-    assert.ok(content.includes("discord.com"));
-    assert.ok(content.includes("network_policies:"));
+    assert.ok(content.includes("discord.com"), "discord.yaml must include discord.com");
+    assert.ok(content.includes("network_policies:"), "discord.yaml must include network_policies:");
   });
 });
