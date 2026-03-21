@@ -1,0 +1,135 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Auto-update docs/about/release-notes.md with new commits on push to main.
+
+name: Update Release Notes
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  update-release-notes:
+    runs-on: ubuntu-latest
+    # Skip if the last commit was from this workflow (avoid infinite loop)
+    if: "!contains(github.event.head_commit.message, '[release-notes]')"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for commit log
+
+      - name: Generate and update release notes
+        run: |
+          set -euo pipefail
+
+          NOTES_FILE="docs/about/release-notes.md"
+
+          # Find the last release-notes commit or tag to scope the diff.
+          # Priority: last tag > last [release-notes] commit > all history
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          if [ -n "$LAST_TAG" ]; then
+            SINCE="$LAST_TAG"
+            echo "Commits since tag: $SINCE"
+          else
+            SINCE=$(git log --all --oneline --grep='\[release-notes\]' --format='%H' -1 2>/dev/null || true)
+            if [ -n "$SINCE" ]; then
+              echo "Commits since last release-notes update: ${SINCE:0:7}"
+            else
+              echo "No prior marker found, using last 20 commits"
+              SINCE=$(git log --format='%H' --skip=20 -1 2>/dev/null || git rev-list --max-parents=0 HEAD)
+              echo "Commits since: ${SINCE:0:7}"
+            fi
+          fi
+
+          COMMITS=$(git log "${SINCE}..HEAD" --no-merges --format="%s" \
+            | grep -v "\[release-notes\]" \
+            | grep -v "^Merge " \
+            || true)
+
+          if [ -z "$COMMITS" ]; then
+            echo "No new commits to document. Skipping."
+            exit 0
+          fi
+
+          # Categorize commits (case-insensitive matching)
+          FEATURES=""
+          FIXES=""
+          OTHER=""
+
+          while IFS= read -r msg; do
+            [ -z "$msg" ] && continue
+            # Lowercase the message for matching, keep original for display
+            lower=$(echo "$msg" | tr '[:upper:]' '[:lower:]')
+            case "$lower" in
+              feat:*|feat\(*|add:*|add\ *|implement\ *|support\ *)
+                FEATURES="${FEATURES}\n- ${msg}"
+                ;;
+              fix:*|fix\(*|fix\ *|fixed\ *|bugfix:*|hotfix:*)
+                FIXES="${FIXES}\n- ${msg}"
+                ;;
+              revert:*|revert\ *|chore:*|docs:*|test:*|ci:*|refactor:*|style:*)
+                # Skip chores, reverts, docs-only, test-only, CI, style changes
+                ;;
+              *bump*opacity*|*more\ fix*|*update\ readme*|*run\ style*|*initial\ commit*)
+                # Skip low-signal commits
+                ;;
+              *)
+                OTHER="${OTHER}\n- ${msg}"
+                ;;
+            esac
+          done <<< "$COMMITS"
+
+          # Skip update if nothing meaningful was categorized
+          if [ -z "$FEATURES" ] && [ -z "$FIXES" ] && [ -z "$OTHER" ]; then
+            echo "No meaningful commits to add. Skipping."
+            exit 0
+          fi
+
+          # Build the new changelog block
+          DATE=$(date -u +%Y-%m-%d)
+          BLOCK="### ${DATE}\n"
+
+          if [ -n "$FEATURES" ]; then
+            BLOCK="${BLOCK}\n**Features**\n${FEATURES}\n"
+          fi
+          if [ -n "$FIXES" ]; then
+            BLOCK="${BLOCK}\n**Fixes**\n${FIXES}\n"
+          fi
+          if [ -n "$OTHER" ]; then
+            BLOCK="${BLOCK}\n**Other**\n${OTHER}\n"
+          fi
+
+          # Insert the block after the "Unreleased" heading
+          TMPFILE=$(mktemp)
+
+          awk -v block="$(printf '%b' "$BLOCK")" '
+            /^## .*Unreleased/ {
+              print
+              getline
+              print ""
+              print block
+              next
+            }
+            { print }
+          ' "$NOTES_FILE" > "$TMPFILE"
+
+          mv "$TMPFILE" "$NOTES_FILE"
+
+          echo "=== Updated release notes ==="
+          head -80 "$NOTES_FILE"
+
+      - name: Commit updated release notes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/about/release-notes.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -s -m "docs: update release notes [release-notes]"
+          git push
