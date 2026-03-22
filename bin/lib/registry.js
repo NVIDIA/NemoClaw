@@ -13,7 +13,18 @@ function load() {
     if (fs.existsSync(REGISTRY_FILE)) {
       return JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf-8"));
     }
-  } catch {}
+  } catch {
+    // Registry file exists but is corrupted — back it up and warn
+    const backupFile = REGISTRY_FILE + ".corrupt." + Date.now();
+    try {
+      fs.copyFileSync(REGISTRY_FILE, backupFile);
+    } catch {
+      // Best-effort backup — if the copy fails (e.g., disk full), we still
+      // warn the user and reset the registry. The corrupt file remains in place.
+    }
+    console.error(`  [warn] Registry file is corrupted. Backed up to: ${path.basename(backupFile)}`);
+    console.error("  [warn] Sandbox list has been reset. Run 'nemoclaw onboard' to recreate.");
+  }
   return { sandboxes: {}, defaultSandbox: null };
 }
 

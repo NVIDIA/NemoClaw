@@ -130,6 +130,10 @@ fi
 info "Setting up inference providers..."
 
 # nvidia-nim (build.nvidia.com)
+# Pass the credential value directly from the env var. The literal key
+# still appears in the transient openshell child process args (unavoidable
+# without upstream --credential-file support), but it no longer appears
+# in shell history or parent process args. See #325.
 upsert_provider \
   "nvidia-nim" \
   "openai" \
@@ -190,9 +194,11 @@ rm -rf "$BUILD_CTX/nemoclaw/node_modules"
 # detect failures. The raw log is kept on failure for debugging.
 CREATE_LOG=$(mktemp /tmp/nemoclaw-create-XXXXXX.log)
 set +e
+# NVIDIA_API_KEY is inherited from the parent process environment
+# instead of being passed as a CLI argument visible in ps aux (#325).
 openshell sandbox create --from "$BUILD_CTX/Dockerfile" --name "$SANDBOX_NAME" \
   --provider nvidia-nim \
-  -- env NVIDIA_API_KEY="$NVIDIA_API_KEY" > "$CREATE_LOG" 2>&1
+  -- nemoclaw-start > "$CREATE_LOG" 2>&1
 CREATE_RC=$?
 set -e
 rm -rf "$BUILD_CTX"

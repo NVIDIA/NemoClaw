@@ -70,6 +70,89 @@ describe("policies", () => {
     });
   });
 
+  describe("extractPresetEntries", () => {
+    it("extracts entries from a preset with network_policies key", () => {
+      const content = `preset:
+  name: test
+  description: "Test preset"
+
+network_policies:
+  test:
+    name: test
+    endpoints:
+      - host: example.com
+        port: 443`;
+      const entries = policies.extractPresetEntries(content);
+      assert.ok(entries);
+      assert.ok(entries.includes("test:"));
+      assert.ok(entries.includes("host: example.com"));
+    });
+
+    it("returns null when network_policies key is missing", () => {
+      const content = `preset:
+  name: test
+  description: "No policies here"`;
+      assert.equal(policies.extractPresetEntries(content), null);
+    });
+
+    it("handles preset with only network_policies section", () => {
+      const content = `network_policies:
+  minimal:
+    name: minimal`;
+      const entries = policies.extractPresetEntries(content);
+      assert.ok(entries);
+      assert.ok(entries.includes("minimal:"));
+    });
+
+    it("extracts entries from all real presets without error", () => {
+      for (const p of policies.listPresets()) {
+        const content = policies.loadPreset(p.name);
+        const entries = policies.extractPresetEntries(content);
+        assert.ok(entries, `${p.name} failed to extract entries`);
+        assert.ok(entries.length > 0, `${p.name} has empty entries`);
+      }
+    });
+  });
+
+  describe("parseCurrentPolicy", () => {
+    it("strips metadata header before ---", () => {
+      const raw = `Version: 1
+Hash: abc123
+---
+version: 1
+
+network_policies:
+  test:
+    name: test`;
+      const parsed = policies.parseCurrentPolicy(raw);
+      assert.ok(parsed.startsWith("version: 1"));
+      assert.ok(!parsed.includes("Hash:"));
+    });
+
+    it("returns raw content when no --- separator exists", () => {
+      const raw = `version: 1
+network_policies:
+  test:
+    name: test`;
+      assert.equal(policies.parseCurrentPolicy(raw), raw);
+    });
+
+    it("returns empty string for null input", () => {
+      assert.equal(policies.parseCurrentPolicy(null), "");
+    });
+
+    it("returns empty string for empty input", () => {
+      assert.equal(policies.parseCurrentPolicy(""), "");
+    });
+
+    it("handles --- at the very beginning", () => {
+      const raw = `---
+version: 1`;
+      const parsed = policies.parseCurrentPolicy(raw);
+      assert.equal(parsed, "version: 1");
+    });
+  });
+
   describe("buildPolicySetCommand", () => {
     it("shell-quotes sandbox name to prevent injection", () => {
       const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
@@ -118,6 +201,20 @@ describe("policies", () => {
         const content = policies.loadPreset(p.name);
         assert.ok(content.includes("network_policies:"), `${p.name} missing network_policies`);
       }
+    });
+
+    it("every preset name in YAML matches its filename", () => {
+      for (const p of policies.listPresets()) {
+        const expectedName = p.file.replace(".yaml", "");
+        assert.equal(p.name, expectedName, `${p.file}: YAML name '${p.name}' does not match filename`);
+      }
+    });
+  });
+
+  describe("getAppliedPresets", () => {
+    it("returns empty array for nonexistent sandbox", () => {
+      const applied = policies.getAppliedPresets("no-such-sandbox");
+      assert.deepEqual(applied, []);
     });
   });
 });

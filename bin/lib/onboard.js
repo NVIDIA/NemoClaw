@@ -533,18 +533,10 @@ async function createSandbox(gpu) {
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const chatUiUrl = process.env.CHAT_UI_URL || 'http://127.0.0.1:18789';
+  // NVIDIA_API_KEY, DISCORD_BOT_TOKEN, and SLACK_BOT_TOKEN are inherited
+  // via process.env instead of CLI args to avoid ps aux exposure (#325).
+  // nemoclaw-start.sh reads them from the environment.
   const envArgs = [`CHAT_UI_URL=${shellQuote(chatUiUrl)}`];
-  if (process.env.NVIDIA_API_KEY) {
-    envArgs.push(`NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY)}`);
-  }
-  const discordToken = getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN;
-  if (discordToken) {
-    envArgs.push(`DISCORD_BOT_TOKEN=${shellQuote(discordToken)}`);
-  }
-  const slackToken = getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN;
-  if (slackToken) {
-    envArgs.push(`SLACK_BOT_TOKEN=${shellQuote(slackToken)}`);
-  }
 
   // Run without piping through awk — the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
@@ -805,12 +797,16 @@ async function setupInference(sandboxName, model, provider) {
   step(5, 7, "Setting up inference provider");
 
   if (provider === "nvidia-nim") {
-    // Create nvidia-nim provider
+    // Pass credential via env var reference so the literal key value does not
+    // appear in the parent bash process args. The openshell child process will
+    // still receive the expanded value in its args (unavoidable without upstream
+    // --credential-file support), but the exposure window is limited to the
+    // short-lived openshell subprocess. See #325.
     run(
       `openshell provider create --name nvidia-nim --type openai ` +
-      `--credential ${shellQuote("NVIDIA_API_KEY=" + process.env.NVIDIA_API_KEY)} ` +
+      `--credential "NVIDIA_API_KEY=$NEMOCLAW_CRED" ` +
       `--config "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1" 2>&1 || true`,
-      { ignoreError: true }
+      { ignoreError: true, env: { NEMOCLAW_CRED: process.env.NVIDIA_API_KEY } }
     );
     run(
       `openshell inference set --no-verify --provider nvidia-nim --model ${shellQuote(model)} 2>/dev/null || true`,
@@ -1030,6 +1026,84 @@ function printDashboard(sandboxName, model, provider) {
   console.log("");
 }
 
+// ── State Machine Pipeline ────────────────────────────────────────
+//
+// Each onboarding step is a { name, execute, rollback } object.
+// On failure at step N, rollback runs steps N-1 through 0 in reverse.
+// SIGINT/SIGTERM triggers the same rollback chain.
+
+class OnboardPipeline {
+  constructor() {
+    this.completedSteps = [];
+    this.aborted = false;
+    this._signalHandler = null;
+  }
+
+  _registerSignalHandlers() {
+    // Use a synchronous handler to guarantee rollback completes before exit.
+    // All rollback actions use spawnSync, so no async work is needed.
+    this._signalHandler = () => {
+      if (this.aborted) return; // Prevent re-entry
+      this.aborted = true;
+      console.log("");
+      console.log("  ⚠  Interrupted — cleaning up...");
+      this._rollback();
+      process.exit(130);
+    };
+    process.on("SIGINT", this._signalHandler);
+    process.on("SIGTERM", this._signalHandler);
+  }
+
+  _removeSignalHandlers() {
+    if (this._signalHandler) {
+      process.removeListener("SIGINT", this._signalHandler);
+      process.removeListener("SIGTERM", this._signalHandler);
+      this._signalHandler = null;
+    }
+  }
+
+  // Synchronous rollback — safe to call from both signal handlers and catch
+  // blocks since all rollback actions use spawnSync (no async work).
+  _rollback() {
+    for (let i = this.completedSteps.length - 1; i >= 0; i--) {
+      const step = this.completedSteps[i];
+      if (step.rollback) {
+        try {
+          console.log(`  Rolling back: ${step.name}...`);
+          step.rollback();
+        } catch (err) {
+          console.error(`  [warn] Rollback failed for ${step.name}: ${err.message || err}`);
+        }
+      }
+    }
+    this.completedSteps = [];
+  }
+
+  async run(steps) {
+    this._registerSignalHandlers();
+    try {
+      for (const step of steps) {
+        if (this.aborted) break;
+        const result = await step.execute();
+        this.completedSteps.push(step);
+        if (result !== undefined) {
+          step.result = result;
+        }
+      }
+    } catch (err) {
+      console.error("");
+      console.error(`  ✗ Onboarding failed at step: ${this.completedSteps.length + 1}`);
+      console.error(`    ${err.message || err}`);
+      console.error("");
+      console.error("  Cleaning up partial state...");
+      this._rollback();
+      this._removeSignalHandlers();
+      throw err;
+    }
+    this._removeSignalHandlers();
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────
 
 async function onboard(opts = {}) {
@@ -1040,14 +1114,101 @@ async function onboard(opts = {}) {
   if (isNonInteractive()) note("  (non-interactive mode)");
   console.log("  ===================");
 
-  const gpu = await preflight();
-  await startGateway(gpu);
-  const sandboxName = await createSandbox(gpu);
-  const { model, provider } = await setupNim(sandboxName, gpu);
-  await setupInference(sandboxName, model, provider);
-  await setupOpenclaw(sandboxName, model, provider);
-  await setupPolicies(sandboxName);
-  printDashboard(sandboxName, model, provider);
+  // Shared state across steps — populated as each step completes.
+  // gatewayStarted / sandboxCreated track ownership so rollback only
+  // undoes resources THIS run created, not pre-existing ones.
+  const state = {
+    gpu: null,
+    sandboxName: null,
+    model: null,
+    provider: null,
+    gatewayStarted: false,
+    sandboxCreated: false,
+  };
+
+  const pipeline = new OnboardPipeline();
+
+  const steps = [
+    {
+      name: "Preflight checks",
+      execute: async () => { state.gpu = await preflight(); },
+      // Preflight is read-only — no rollback needed.
+      rollback: null,
+    },
+    {
+      name: "Start gateway",
+      execute: async () => {
+        await startGateway(state.gpu);
+        state.gatewayStarted = true;
+      },
+      rollback: () => {
+        if (state.gatewayStarted) {
+          run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
+        }
+      },
+    },
+    {
+      name: "Create sandbox",
+      execute: async () => {
+        // Snapshot ALL registry entries so we can compare by returned name
+        // (the user may type a different name than the env var default).
+        const allBefore = {};
+        for (const sb of registry.listSandboxes().sandboxes) {
+          allBefore[sb.name] = sb.createdAt;
+        }
+        state.sandboxName = await createSandbox(state.gpu);
+        const after = registry.getSandbox(state.sandboxName);
+        // If the entry existed before with the same createdAt, the user
+        // chose "keep existing" — rollback must not destroy it.
+        const beforeCreatedAt = allBefore[state.sandboxName];
+        state.sandboxCreated = !(beforeCreatedAt && after && beforeCreatedAt === after.createdAt);
+      },
+      rollback: () => {
+        if (state.sandboxName && state.sandboxCreated) {
+          run(`openshell sandbox delete "${state.sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+          registry.removeSandbox(state.sandboxName);
+        }
+      },
+    },
+    {
+      name: "Configure inference (NIM)",
+      execute: async () => {
+        const result = await setupNim(state.sandboxName, state.gpu);
+        state.model = result.model;
+        state.provider = result.provider;
+      },
+      rollback: () => {
+        if (state.sandboxName) {
+          nim.stopNimContainer(state.sandboxName);
+        }
+      },
+    },
+    {
+      name: "Set up inference provider",
+      execute: async () => {
+        await setupInference(state.sandboxName, state.model, state.provider);
+      },
+      rollback: null, // Provider creation is idempotent
+    },
+    {
+      name: "Set up OpenClaw",
+      execute: async () => {
+        await setupOpenclaw(state.sandboxName, state.model, state.provider);
+      },
+      rollback: null, // Config inside sandbox is cleaned up by sandbox deletion
+    },
+    {
+      name: "Apply policy presets",
+      execute: async () => {
+        await setupPolicies(state.sandboxName);
+      },
+      rollback: null, // Policies are cleaned up by sandbox deletion
+    },
+  ];
+
+  await pipeline.run(steps);
+
+  printDashboard(state.sandboxName, state.model, state.provider);
 }
 
 module.exports = {
@@ -1059,4 +1220,5 @@ module.exports = {
   onboard,
   setupNim,
   writeSandboxConfigSyncFile,
+  OnboardPipeline,
 };

@@ -20,6 +20,7 @@ const R = _useColor ? "\x1b[0m" : "";
 const RD = _useColor ? "\x1b[1;31m" : "";
 const YW = _useColor ? "\x1b[1;33m" : "";
 
+const logger = require("./lib/logger");
 const { ROOT, SCRIPTS, run, runCapture, runInteractive, shellQuote, validateName } = require("./lib/runner");
 const {
   ensureApiKey,
@@ -30,6 +31,14 @@ const {
 const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
+
+// ── Global flags ─────────────────────────────────────────────────
+
+// Parse --verbose / --debug from anywhere in argv before command dispatch.
+// These are stripped from args below so commands don't see them as unknown flags.
+if (process.argv.includes("--verbose") || process.argv.includes("--debug")) {
+  logger.setLevel("debug");
+}
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -97,7 +106,9 @@ async function setup() {
 
 async function setupSpark() {
   await ensureApiKey();
-  run(`sudo -E NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY)} bash "${SCRIPTS}/setup-spark.sh"`);
+  // Use sudo -E to preserve the parent environment (including NVIDIA_API_KEY)
+  // instead of passing the key as a CLI argument visible in ps aux (#325).
+  run(`sudo -E bash "${SCRIPTS}/setup-spark.sh"`);
 }
 
 async function deploy(instanceName) {
@@ -432,6 +443,10 @@ function help() {
     --keep-openshell                 Leave the openshell binary installed
     --delete-models                  Remove NemoClaw-pulled Ollama models
 
+  ${G}Global Flags:${R}
+    --verbose, --debug           Show detailed output for debugging
+    LOG_LEVEL=debug              Same as --verbose (env var)
+
   ${D}Powered by NVIDIA OpenShell · Nemotron · Agent Toolkit
   Credentials saved in ~/.nemoclaw/credentials.json (mode 600)${R}
   ${D}https://www.nvidia.com/nemoclaw${R}
@@ -440,7 +455,8 @@ function help() {
 
 // ── Dispatch ─────────────────────────────────────────────────────
 
-const [cmd, ...args] = process.argv.slice(2);
+const GLOBAL_FLAGS = new Set(["--verbose", "--debug"]);
+const [cmd, ...args] = process.argv.slice(2).filter((a) => !GLOBAL_FLAGS.has(a));
 
 (async () => {
   // No command → help
