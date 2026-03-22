@@ -92,7 +92,7 @@ exit 98
       cwd: path.join(__dirname, ".."),
       encoding: "utf-8",
       env: {
-        ...process.env,
+        ...process.env, NVM_DIR: "", FNM_DIR: "",
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
       },
@@ -189,7 +189,7 @@ exit 98
       cwd: tmp,
       encoding: "utf-8",
       env: {
-        ...process.env,
+        ...process.env, NVM_DIR: "", FNM_DIR: "",
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
@@ -271,7 +271,7 @@ exit 98
       cwd: tmp,
       encoding: "utf-8",
       env: {
-        ...process.env,
+        ...process.env, NVM_DIR: "", FNM_DIR: "",
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
@@ -352,7 +352,7 @@ echo "Darwin"
       cwd: path.join(__dirname, ".."),
       encoding: "utf-8",
       env: {
-        ...process.env,
+        ...process.env, NVM_DIR: "", FNM_DIR: "",
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_TEST_SOCKET_PATHS: `${colimaSocket}:${dockerDesktopSocket}`,
@@ -465,7 +465,7 @@ exit 0
       input: scriptContents,
       encoding: "utf-8",
       env: {
-        ...process.env,
+        ...process.env, NVM_DIR: "", FNM_DIR: "",
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
@@ -732,7 +732,7 @@ exit 0
       cwd: tmp,
       encoding: "utf-8",
       env: {
-        ...process.env,
+        ...process.env, NVM_DIR: "", FNM_DIR: "",
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
