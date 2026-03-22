@@ -141,9 +141,11 @@ function restoreFixed(snapshotDir, trustedRoot) {
     return { result: false, errors, written };
   }
 
-  if (manifest.hasExternalConfig && manifest.configPath !== null) {
-    if (typeof manifest.configPath !== "string") {
-      errors.push(`Snapshot manifest configPath is not a string.`);
+  if (manifest.hasExternalConfig) {
+    if (typeof manifest.configPath !== "string" || !manifest.configPath.trim()) {
+      errors.push(
+        `Snapshot manifest has hasExternalConfig=true but configPath is missing or empty.`,
+      );
       return { result: false, errors, written };
     }
 
@@ -428,25 +430,47 @@ describe("C-4 fix: restoreSnapshotToHost rejects path traversal", () => {
 // 3. Regression guard — migration-state.ts must contain the validation
 // ═══════════════════════════════════════════════════════════════════
 describe("C-4 regression: migration-state.ts contains path validation", () => {
-  it("restoreSnapshotToHost calls isWithinRoot for stateDir", () => {
+  /** Extract the restoreSnapshotToHost function body from the source. */
+  function getRestoreFnBody() {
     const src = fs.readFileSync(
       path.join(__dirname, "..", "nemoclaw", "src", "commands", "migration-state.ts"),
       "utf-8",
     );
+    const fnStart = src.indexOf("function restoreSnapshotToHost");
+    assert.ok(fnStart !== -1, "restoreSnapshotToHost must exist in migration-state.ts");
+    return src.slice(fnStart);
+  }
+
+  it("restoreSnapshotToHost calls isWithinRoot on manifest.stateDir", () => {
+    const fnBody = getRestoreFnBody();
     assert.ok(
-      src.includes("isWithinRoot(manifest.stateDir"),
-      "restoreSnapshotToHost must validate manifest.stateDir with isWithinRoot",
+      /isWithinRoot\s*\(\s*manifest\.stateDir/.test(fnBody),
+      "restoreSnapshotToHost must call isWithinRoot on manifest.stateDir",
     );
   });
 
-  it("restoreSnapshotToHost calls isWithinRoot for configPath", () => {
-    const src = fs.readFileSync(
-      path.join(__dirname, "..", "nemoclaw", "src", "commands", "migration-state.ts"),
-      "utf-8",
-    );
+  it("restoreSnapshotToHost calls isWithinRoot on manifest.configPath", () => {
+    const fnBody = getRestoreFnBody();
     assert.ok(
-      src.includes("isWithinRoot(manifest.configPath"),
-      "restoreSnapshotToHost must validate manifest.configPath with isWithinRoot",
+      /isWithinRoot\s*\(\s*manifest\.configPath/.test(fnBody),
+      "restoreSnapshotToHost must call isWithinRoot on manifest.configPath",
+    );
+  });
+
+  it("restoreSnapshotToHost validates manifest.homeDir against trusted root", () => {
+    const fnBody = getRestoreFnBody();
+    assert.ok(
+      /isWithinRoot\s*\(\s*manifest\.homeDir/.test(fnBody),
+      "restoreSnapshotToHost must call isWithinRoot on manifest.homeDir",
+    );
+  });
+
+  it("restoreSnapshotToHost fails closed when hasExternalConfig is true with missing configPath", () => {
+    const fnBody = getRestoreFnBody();
+    assert.ok(
+      /manifest\.hasExternalConfig\b/.test(fnBody) &&
+        /typeof\s+manifest\.configPath\s*!==\s*["']string["']/.test(fnBody),
+      "restoreSnapshotToHost must type-check manifest.configPath when hasExternalConfig is true",
     );
   });
 });
