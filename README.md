@@ -173,10 +173,10 @@ NemoClaw uses four network ports. All are configurable via environment variables
 
 To use non-default ports, set the environment variables before running `nemoclaw onboard`:
 
-```bash
-export NEMOCLAW_GATEWAY_PORT=9080
-export NEMOCLAW_VLLM_PORT=9000
-nemoclaw onboard
+```console
+$ export NEMOCLAW_GATEWAY_PORT=9080
+$ export NEMOCLAW_VLLM_PORT=9000
+$ nemoclaw onboard
 ```
 
 Or create a `.env` file at the project root (see `.env.example`). For personal overrides that should never be committed, use `.env.local` — it is loaded after `.env` and takes precedence.
