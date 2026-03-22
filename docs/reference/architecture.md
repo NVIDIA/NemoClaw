@@ -20,9 +20,31 @@ status: published
 
 # Architecture
 
-NemoClaw has two main components: a TypeScript plugin that integrates with the OpenClaw CLI, and a Python blueprint that orchestrates OpenShell resources.
+NemoClaw has three layers: a host CLI for sandbox lifecycle management, a TypeScript plugin that runs inside the sandbox, and a Python blueprint that orchestrates OpenShell resources.
 
-## NemoClaw Plugin
+## Host CLI
+
+The `nemoclaw` binary runs on the host machine and manages the full sandbox lifecycle.
+It is installed via `npm install -g nemoclaw`.
+
+```text
+bin/
+├── nemoclaw.js                     CLI entry point — command dispatch
+└── lib/
+    ├── runner.js                   Shell execution (shellQuote, validateName)
+    ├── onboard.js                  Interactive setup wizard
+    ├── credentials.js              Credential storage and retrieval
+    ├── registry.js                 Sandbox registry (~/.nemoclaw/sandboxes.json)
+    ├── policies.js                 Network policy preset loading and merging
+    ├── nim.js                      NIM container lifecycle
+    ├── inference-config.js         Inference provider selection
+    ├── local-inference.js          Local inference health checks
+    ├── platform.js                 OS and container runtime detection
+    ├── preflight.js                Pre-flight validation checks
+    └── resolve-openshell.js        OpenShell binary resolution
+```
+
+## Sandbox Plugin
 
 The plugin is a thin TypeScript package that registers an inference provider and the `/nemoclaw` slash command.
 It runs in-process with the OpenClaw gateway inside the sandbox.
@@ -30,20 +52,14 @@ It runs in-process with the OpenClaw gateway inside the sandbox.
 ```text
 nemoclaw/
 ├── src/
-│   ├── index.ts                    Plugin entry — registers all commands
-│   ├── cli.ts                      Commander.js subcommand wiring
+│   ├── index.ts                    Plugin entry — registers provider and slash command
 │   ├── commands/
-│   │   ├── launch.ts               Fresh install into OpenShell
-│   │   ├── connect.ts              Interactive shell into sandbox
-│   │   ├── status.ts               Blueprint run state + sandbox health
-│   │   ├── logs.ts                 Stream blueprint and sandbox logs
-│   │   └── slash.ts                /nemoclaw chat command handler
-│   └── blueprint/
-│       ├── resolve.ts              Version resolution, cache management
-│       ├── fetch.ts                Download blueprint from OCI registry
-│       ├── verify.ts               Digest verification, compatibility checks
-│       ├── exec.ts                 Subprocess execution of blueprint runner
-│       └── state.ts                Persistent state (run IDs)
+│   │   ├── slash.ts                /nemoclaw chat command handler
+│   │   └── migration-state.ts      Snapshot creation and restoration
+│   ├── blueprint/
+│   │   └── state.ts                Persistent state (run IDs)
+│   └── onboard/
+│       └── config.ts               Onboarding configuration
 ├── openclaw.plugin.json            Plugin manifest
 └── package.json                    Commands declared under openclaw.extensions
 ```
@@ -51,7 +67,7 @@ nemoclaw/
 ## NemoClaw Blueprint
 
 The blueprint is a versioned Python artifact with its own release stream.
-The plugin resolves, verifies, and executes the blueprint as a subprocess.
+The host CLI invokes the blueprint runner as a subprocess during onboarding.
 The blueprint drives all interactions with the OpenShell CLI.
 
 ```text
@@ -67,17 +83,15 @@ nemoclaw-blueprint/
 
 ```{mermaid}
 flowchart LR
-    A[resolve] --> B[verify digest]
-    B --> C[plan]
-    C --> D[apply]
-    D --> E[status]
+    A[resolve] --> B[plan]
+    B --> C[apply]
+    C --> D[status]
 ```
 
-1. Resolve. The plugin locates the blueprint artifact and checks the version against `min_openshell_version` and `min_openclaw_version` constraints in `blueprint.yaml`.
-2. Verify. The plugin checks the artifact digest against the expected value.
-3. Plan. The runner determines what OpenShell resources to create or update, such as the gateway, providers, sandbox, inference route, and policy.
-4. Apply. The runner executes the plan by calling `openshell` CLI commands.
-5. Status. The runner reports current state.
+1. Resolve. The host CLI locates the blueprint artifact and checks the version against `min_openshell_version` and `min_openclaw_version` constraints in `blueprint.yaml`.
+2. Plan. The runner determines what OpenShell resources to create or update, such as the gateway, providers, sandbox, inference route, and policy.
+3. Apply. The runner executes the plan by calling `openshell` CLI commands.
+4. Status. The runner reports current state.
 
 ## Sandbox Environment
 
