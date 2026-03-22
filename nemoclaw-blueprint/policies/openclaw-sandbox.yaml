@@ -102,7 +102,7 @@ network_policies:
 
   # ── OpenClaw "phone home" ────────────────────────────────────────────
   # Minimum viable set for OpenClaw to authenticate, discover plugins,
-  # and reach ClawHub. Binary-restricted to openclaw only.
+  # and reach ClawHub. Binary-restricted to openclaw and node.
   # Docs access is read-only (GET). ClawHub and openclaw.ai are
   # restricted to GET+POST (auth flows, plugin discovery).
 

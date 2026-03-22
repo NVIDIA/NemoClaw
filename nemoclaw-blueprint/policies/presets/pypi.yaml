@@ -27,3 +27,4 @@ network_policies:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/pip3 }
+      - { path: /usr/local/bin/pip }

@@ -139,9 +139,16 @@ describe("policies", () => {
       }
     });
 
-    it("pypi preset allows pip3 but not curl or python3", () => {
+    it("npm preset allows npm and yarn binaries", () => {
+      const content = policies.loadPreset("npm");
+      assert.ok(content.includes("/usr/local/bin/npm"), "npm missing npm in binaries");
+      assert.ok(content.includes("/usr/local/bin/yarn"), "npm missing yarn in binaries");
+    });
+
+    it("pypi preset allows pip3 and pip but not curl or python3", () => {
       const content = policies.loadPreset("pypi");
       assert.ok(content.includes("/usr/bin/pip3"), "pypi missing pip3 in binaries");
+      assert.ok(content.includes("/usr/local/bin/pip"), "pypi missing pip in binaries");
       assert.ok(!content.includes("/usr/bin/curl"), "pypi should not allow curl");
       assert.ok(!content.includes("/usr/bin/python3"), "pypi should not allow python3");
     });
