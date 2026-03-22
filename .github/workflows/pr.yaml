@@ -69,7 +69,7 @@ jobs:
           npm run build
 
       - name: Run root unit tests
-        run: node --test --experimental-test-coverage test/*.test.js
+        run: npx vitest run
 
       - name: Run TypeScript unit tests with coverage
         working-directory: nemoclaw
