@@ -56,6 +56,38 @@ describe("inference selection config", () => {
     });
   });
 
+  it("maps custom to the sandbox inference route with user-specified model", () => {
+    assert.deepEqual(getProviderSelectionConfig("custom", "gemini-2.5-flash"), {
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "gemini-2.5-flash",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
+      provider: "custom",
+      providerLabel: "Custom Provider",
+    });
+  });
+
+  it("returns null model for custom provider when no model specified", () => {
+    const config = getProviderSelectionConfig("custom");
+    assert.equal(config.model, null);
+    assert.equal(config.providerLabel, "Custom Provider");
+  });
+
+  it("returns all expected fields for custom provider", () => {
+    const config = getProviderSelectionConfig("custom", "gemini-2.5-flash");
+    assert.equal(config.endpointType, "custom");
+    assert.equal(config.endpointUrl, INFERENCE_ROUTE_URL);
+    assert.equal(config.ncpPartner, null);
+    assert.equal(config.credentialEnv, DEFAULT_ROUTE_CREDENTIAL_ENV);
+    assert.equal(config.profile, DEFAULT_ROUTE_PROFILE);
+  });
+
+  it("returns null for unknown provider", () => {
+    assert.equal(getProviderSelectionConfig("unknown-provider"), null);
+  });
+
   it("builds a qualified OpenClaw primary model for ollama-local", () => {
     assert.equal(
       getOpenClawPrimaryModel("ollama-local", "nemotron-3-nano:30b"),

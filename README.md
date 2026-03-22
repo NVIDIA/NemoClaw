@@ -179,13 +179,16 @@ When something goes wrong, errors may originate from either NemoClaw or the Open
 
 ## Inference
 
-Inference requests from the agent never leave the sandbox directly. OpenShell intercepts every call and routes it to the NVIDIA Endpoint provider.
+Inference requests from the agent never leave the sandbox directly. OpenShell intercepts every call and routes it through the gateway proxy.
 
 | Provider     | Model                               | Use Case                                       |
 |--------------|--------------------------------------|-------------------------------------------------|
 | NVIDIA Endpoint | `nvidia/nemotron-3-super-120b-a12b` | Production. Requires an NVIDIA API key.         |
+| Custom OpenAI-compatible | User-specified | Any provider with an OpenAI-compatible `/v1/chat/completions` endpoint. |
 
-Get an API key from [build.nvidia.com](https://build.nvidia.com). The `nemoclaw onboard` command prompts for this key during setup.
+For the NVIDIA endpoint, get an API key from [build.nvidia.com](https://build.nvidia.com). The `nemoclaw onboard` command prompts for this key during setup.
+
+For custom providers, select "Custom OpenAI-compatible endpoint" during `nemoclaw onboard` and provide the base URL, API key, and model name. Any provider that exposes an OpenAI-compatible `/v1/chat/completions` endpoint will work. For non-interactive mode, set `NEMOCLAW_PROVIDER=custom`, `NEMOCLAW_CUSTOM_BASE_URL`, `NEMOCLAW_CUSTOM_API_KEY`, and `NEMOCLAW_MODEL`.
 
 Local inference options such as Ollama and vLLM are still experimental. On macOS, they also depend on OpenShell host-routing support in addition to the local service itself being reachable on the host.
 

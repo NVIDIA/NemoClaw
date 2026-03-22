@@ -28,7 +28,7 @@ const {
   isUnsupportedMacosRuntime,
   shouldPatchCoredns,
 } = require("./platform");
-const { prompt, ensureApiKey, getCredential } = require("./credentials");
+const { prompt, ensureApiKey, getCredential, saveCredential } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
 const policies = require("./policies");
@@ -299,10 +299,10 @@ function getNonInteractiveProvider() {
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
 
-  const validProviders = new Set(["cloud", "ollama", "vllm", "nim"]);
+  const validProviders = new Set(["cloud", "ollama", "vllm", "nim", "custom"]);
   if (!validProviders.has(providerKey)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
-    console.error("  Valid values: cloud, ollama, vllm, nim");
+    console.error("  Valid values: cloud, ollama, vllm, nim, custom");
     process.exit(1);
   }
 
@@ -625,6 +625,7 @@ async function setupNim(sandboxName, gpu) {
   let model = null;
   let provider = "nvidia-nim";
   let nimContainer = null;
+  let customCreds = null;
 
   // Detect local inference options
   const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
@@ -662,6 +663,8 @@ async function setupNim(sandboxName, gpu) {
   if (!hasOllama && process.platform === "darwin") {
     options.push({ key: "install-ollama", label: "Install Ollama (macOS)" });
   }
+
+  options.push({ key: "custom", label: "Custom OpenAI-compatible endpoint (bring your own)" });
 
   if (options.length > 1) {
     let selected;
@@ -774,6 +777,83 @@ async function setupNim(sandboxName, gpu) {
       console.log("  ✓ Using existing vLLM on localhost:8000");
       provider = "vllm-local";
       model = "vllm-local";
+    } else if (selected.key === "custom") {
+      provider = "custom";
+      let customBaseUrl;
+      let customApiKey;
+      if (isNonInteractive()) {
+        customBaseUrl = (process.env.NEMOCLAW_CUSTOM_BASE_URL || "").trim();
+        customApiKey = (process.env.NEMOCLAW_CUSTOM_API_KEY || "").trim();
+        model = requestedModel;
+        if (!customBaseUrl || !customApiKey || !model) {
+          console.error("  Custom provider requires NEMOCLAW_CUSTOM_BASE_URL, NEMOCLAW_CUSTOM_API_KEY, and NEMOCLAW_MODEL.");
+          process.exit(1);
+        }
+      } else {
+        console.log("");
+        console.log("  ┌─────────────────────────────────────────────────────────────────┐");
+        console.log("  │  Custom OpenAI-compatible provider                              │");
+        console.log("  │                                                                 │");
+        console.log("  │  Provide a base URL and API key for any provider that           │");
+        console.log("  │  exposes an OpenAI-compatible /v1/chat/completions endpoint.    │");
+        console.log("  │                                                                 │");
+        console.log("  │  Examples:                                                      │");
+        console.log("  │    Google Gemini  https://generativelanguage.googleapis.com/v1beta/openai │");
+        console.log("  │    OpenRouter     https://openrouter.ai/api/v1                  │");
+        console.log("  │    Together AI    https://api.together.xyz/v1                   │");
+        console.log("  │    LiteLLM        http://localhost:4000/v1                      │");
+        console.log("  └─────────────────────────────────────────────────────────────────┘");
+        console.log("");
+
+        customBaseUrl = (await prompt("  Base URL: ")).trim();
+        if (!customBaseUrl) {
+          console.error("  Base URL is required.");
+          process.exit(1);
+        }
+
+        const previousBaseUrl = getCredential("CUSTOM_PROVIDER_BASE_URL");
+        saveCredential("CUSTOM_PROVIDER_BASE_URL", customBaseUrl);
+
+        customApiKey = previousBaseUrl === customBaseUrl
+          ? getCredential("CUSTOM_PROVIDER_API_KEY")
+          : null;
+        if (!customApiKey) {
+          if (previousBaseUrl && previousBaseUrl !== customBaseUrl) {
+            console.log("  Base URL changed — please enter a new API key.");
+          }
+          customApiKey = (await prompt("  API Key: ")).trim();
+          if (!customApiKey) {
+            console.error("  API key is required.");
+            process.exit(1);
+          }
+          saveCredential("CUSTOM_PROVIDER_API_KEY", customApiKey);
+          console.log("  Key saved to ~/.nemoclaw/credentials.json");
+        } else {
+          console.log("  Using saved API key from credentials.");
+        }
+
+        model = await prompt("  Model name (e.g. gemini-2.5-flash): ");
+        if (!model) {
+          console.error("  Model name is required.");
+          process.exit(1);
+        }
+      }
+
+      // Validate base URL
+      try {
+        const parsed = new URL(customBaseUrl);
+        if (parsed.protocol === "http:" && !["localhost", "127.0.0.1", "::1"].includes(parsed.hostname)) {
+          console.error("  Insecure http:// URLs are only allowed for localhost. Use https:// for remote endpoints.");
+          process.exit(1);
+        }
+      } catch {
+        console.error(`  Invalid URL: ${customBaseUrl}`);
+        process.exit(1);
+      }
+
+      // Store credentials for setupInference to use
+      customCreds = { baseUrl: customBaseUrl, apiKey: customApiKey };
+      console.log(`  ✓ Using custom provider with model: ${model}`);
     }
     // else: cloud — fall through to default below
   }
@@ -796,12 +876,12 @@ async function setupNim(sandboxName, gpu) {
 
   registry.updateSandbox(sandboxName, { model, provider, nimContainer });
 
-  return { model, provider };
+  return { model, provider, customCreds };
 }
 
 // ── Step 5: Inference provider ───────────────────────────────────
 
-async function setupInference(sandboxName, model, provider) {
+async function setupInference(sandboxName, model, provider, customCreds) {
   step(5, 7, "Setting up inference provider");
 
   if (provider === "nvidia-nim") {
@@ -862,6 +942,22 @@ async function setupInference(sandboxName, model, provider) {
       console.error(`  ${probe.message}`);
       process.exit(1);
     }
+  } else if (provider === "custom") {
+    const baseUrl = customCreds?.baseUrl || getCredential("CUSTOM_PROVIDER_BASE_URL");
+    const apiKey = customCreds?.apiKey || getCredential("CUSTOM_PROVIDER_API_KEY");
+    run(
+      `openshell provider create --name custom-provider --type openai ` +
+      `--credential ${shellQuote("OPENAI_API_KEY=" + apiKey)} ` +
+      `--config ${shellQuote("OPENAI_BASE_URL=" + baseUrl)} 2>&1 || ` +
+      `openshell provider update custom-provider ` +
+      `--credential ${shellQuote("OPENAI_API_KEY=" + apiKey)} ` +
+      `--config ${shellQuote("OPENAI_BASE_URL=" + baseUrl)} 2>&1 || true`,
+      { ignoreError: true }
+    );
+    run(
+      `openshell inference set --no-verify --provider custom-provider --model ${shellQuote(model)} 2>/dev/null || true`,
+      { ignoreError: true }
+    );
   }
 
   registry.updateSandbox(sandboxName, { model, provider });
@@ -1014,6 +1110,7 @@ function printDashboard(sandboxName, model, provider) {
   if (provider === "nvidia-nim") providerLabel = "NVIDIA Endpoint API";
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
+  else if (provider === "custom") providerLabel = "Custom Provider";
 
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
@@ -1043,8 +1140,8 @@ async function onboard(opts = {}) {
   const gpu = await preflight();
   await startGateway(gpu);
   const sandboxName = await createSandbox(gpu);
-  const { model, provider } = await setupNim(sandboxName, gpu);
-  await setupInference(sandboxName, model, provider);
+  const { model, provider, customCreds } = await setupNim(sandboxName, gpu);
+  await setupInference(sandboxName, model, provider, customCreds);
   await setupOpenclaw(sandboxName, model, provider);
   await setupPolicies(sandboxName);
   printDashboard(sandboxName, model, provider);

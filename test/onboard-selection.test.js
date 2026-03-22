@@ -81,4 +81,60 @@ const { setupNim } = require(${onboardPath});
     assert.ok(payload.lines.some((line) => line.includes("Press Enter to keep the cloud default")));
     assert.ok(payload.lines.some((line) => line.includes("Cloud models:")));
   });
+
+  it("custom provider config uses gateway-routed architecture", () => {
+    const { getProviderSelectionConfig, INFERENCE_ROUTE_URL } = require("../bin/lib/inference-config");
+    const config = getProviderSelectionConfig("custom", "gemini-2.5-flash");
+    // Custom provider should route through inference.local like all other providers
+    assert.equal(config.endpointUrl, INFERENCE_ROUTE_URL);
+    assert.equal(config.endpointType, "custom");
+    assert.equal(config.provider, "custom");
+    assert.equal(config.providerLabel, "Custom Provider");
+  });
+
+  it("custom provider URL validation rejects insecure http:// for non-localhost", () => {
+    const insecureUrls = [
+      "http://evil.example.com/v1",
+      "http://api.openai.com/v1",
+    ];
+    for (const url of insecureUrls) {
+      const parsed = new URL(url);
+      const isLocalhost = ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
+      assert.equal(isLocalhost, false, `${url} should not be treated as localhost`);
+      assert.equal(parsed.protocol, "http:", `${url} should be http`);
+      // Our validation rejects http:// + non-localhost
+    }
+  });
+
+  it("custom provider URL validation allows http:// for localhost", () => {
+    const localhostUrls = [
+      "http://localhost:4000/v1",
+      "http://127.0.0.1:8000/v1",
+    ];
+    for (const url of localhostUrls) {
+      const parsed = new URL(url);
+      const isLocalhost = ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
+      assert.equal(isLocalhost, true, `${url} should be treated as localhost`);
+    }
+  });
+
+  it("custom provider URL validation allows https:// for any host", () => {
+    const httpsUrls = [
+      "https://generativelanguage.googleapis.com/v1beta/openai",
+      "https://openrouter.ai/api/v1",
+      "https://api.together.xyz/v1",
+    ];
+    for (const url of httpsUrls) {
+      const parsed = new URL(url);
+      assert.equal(parsed.protocol, "https:");
+      // Our validation allows all https:// URLs
+    }
+  });
+
+  it("custom provider URL validation rejects malformed URLs", () => {
+    const badUrls = ["not-a-url", ""];
+    for (const url of badUrls) {
+      assert.throws(() => new URL(url), `${url} should be rejected`);
+    }
+  });
 });

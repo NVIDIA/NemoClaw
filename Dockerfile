@@ -113,7 +113,7 @@ config = { \
             'baseUrl': 'https://inference.local/v1', \
             'apiKey': 'unused', \
             'api': 'openai-completions', \
-            'models': [{'id': model, 'name': model, 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}] \
+            'models': [{'id': model, 'name': model, 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096, 'compat': {'supportsStore': False}}] \
         } \
     }}, \
     'channels': {'defaults': {'configWrites': False}}, \

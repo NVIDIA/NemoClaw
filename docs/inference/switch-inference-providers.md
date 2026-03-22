@@ -67,6 +67,44 @@ You can switch to any of these models at runtime.
 | `nvidia/llama-3.3-nemotron-super-49b-v1.5` | Nemotron Super 49B v1.5 | 131,072 | 4,096 |
 | `nvidia/nemotron-3-nano-30b-a3b` | Nemotron 3 Nano 30B | 131,072 | 4,096 |
 
+## Custom OpenAI-Compatible Providers
+
+You can use any provider that exposes an OpenAI-compatible `/v1/chat/completions` endpoint.
+
+During `nemoclaw onboard`, select **"Custom OpenAI-compatible endpoint"** and provide:
+
+- **Base URL** — the provider's API base (e.g. `https://generativelanguage.googleapis.com/v1beta/openai`)
+- **API key** — your provider credential
+- **Model name** — the model identifier (e.g. `gemini-2.5-flash`)
+
+Examples of compatible providers:
+
+| Provider | Base URL |
+|---|---|
+| Google AI Studio (Gemini) | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| OpenRouter | `https://openrouter.ai/api/v1` |
+| Together AI | `https://api.together.xyz/v1` |
+| LiteLLM (local) | `http://localhost:4000/v1` |
+
+To switch to a custom provider at runtime:
+
+```console
+$ openshell provider create --name custom-provider --type openai \
+    --credential "OPENAI_API_KEY=<your-key>" \
+    --config "OPENAI_BASE_URL=<base-url>"
+$ openshell inference set --no-verify --provider custom-provider --model <model-name>
+```
+
+For non-interactive onboarding:
+
+```console
+$ NEMOCLAW_PROVIDER=custom \
+  NEMOCLAW_CUSTOM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai \
+  NEMOCLAW_CUSTOM_API_KEY=AIza... \
+  NEMOCLAW_MODEL=gemini-2.5-flash \
+  nemoclaw onboard --non-interactive
+```
+
 ## Related Topics
 
 - [Inference Profiles](../reference/inference-profiles.md) for full profile configuration details.

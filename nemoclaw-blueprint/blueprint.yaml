@@ -11,6 +11,7 @@ profiles:
   - ncp
   - nim-local
   - vllm
+  - custom
 
 description: |
   NemoClaw blueprint: orchestrates OpenClaw sandbox creation, migration,
@@ -53,6 +54,13 @@ components:
         model: "nvidia/nemotron-3-nano-30b-a3b"
         credential_env: "OPENAI_API_KEY"
         credential_default: "dummy"
+
+      custom:
+        provider_type: "openai"
+        provider_name: "custom-provider"
+        endpoint: ""
+        model: ""
+        credential_env: "OPENAI_API_KEY"
 
   policy:
     base: "sandboxes/openclaw/policy.yaml"
