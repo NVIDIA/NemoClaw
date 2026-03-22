@@ -140,7 +140,7 @@ describe("C-2 fix: env var pattern (os.environ) is safe", () => {
 describe("C-2 regression: Dockerfile must not interpolate build-args into Python source", () => {
   it("Dockerfile does not interpolate CHAT_UI_URL into a Python string literal", () => {
     const src = fs.readFileSync(DOCKERFILE, "utf-8");
-    const vulnerablePattern = /\$\{CHAT_UI_URL\}/;
+    const vulnerablePattern = /\$(?:\{CHAT_UI_URL\}|CHAT_UI_URL\b)/;
     const lines = src.split("\n");
     let inPythonRunBlock = false;
     for (let i = 0; i < lines.length; i++) {
@@ -163,7 +163,7 @@ describe("C-2 regression: Dockerfile must not interpolate build-args into Python
 
   it("Dockerfile does not interpolate NEMOCLAW_MODEL into a Python string literal", () => {
     const src = fs.readFileSync(DOCKERFILE, "utf-8");
-    const vulnerablePattern = /\$\{NEMOCLAW_MODEL\}/;
+    const vulnerablePattern = /\$(?:\{NEMOCLAW_MODEL\}|NEMOCLAW_MODEL\b)/;
     const lines = src.split("\n");
     let inPythonRunBlock = false;
     for (let i = 0; i < lines.length; i++) {
@@ -191,6 +191,11 @@ describe("C-2 regression: Dockerfile must not interpolate build-args into Python
     let inEnvBlock = false;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
+      // Reset on new build stage — ENV must be in the same stage as the RUN layer
+      if (/^\s*FROM\b/.test(line)) {
+        chatUiUrlPromoted = false;
+        inEnvBlock = false;
+      }
       // Detect start of an ENV instruction
       if (/^\s*ENV\b/.test(line)) {
         inEnvBlock = true;
@@ -220,11 +225,94 @@ describe("C-2 regression: Dockerfile must not interpolate build-args into Python
 
   it("Python script uses os.environ to read CHAT_UI_URL", () => {
     const src = fs.readFileSync(DOCKERFILE, "utf-8");
-    const hasEnvRead =
-      src.includes("os.environ['CHAT_UI_URL']") ||
-      src.includes('os.environ["CHAT_UI_URL"]') ||
-      src.includes("os.environ.get('CHAT_UI_URL'") ||
-      src.includes('os.environ.get("CHAT_UI_URL"');
-    assert.ok(hasEnvRead, "Python script must read CHAT_UI_URL via os.environ");
+    const lines = src.split("\n");
+    let inPythonRunBlock = false;
+    let hasEnvRead = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^\s*RUN\b.*python3\s+-c\b/.test(line)) {
+        inPythonRunBlock = true;
+      }
+      if (inPythonRunBlock) {
+        if (
+          line.includes("os.environ['CHAT_UI_URL']") ||
+          line.includes('os.environ["CHAT_UI_URL"]') ||
+          line.includes("os.environ.get('CHAT_UI_URL'") ||
+          line.includes('os.environ.get("CHAT_UI_URL"')
+        ) {
+          hasEnvRead = true;
+        }
+      }
+      if (inPythonRunBlock && !/\\\s*$/.test(line)) {
+        inPythonRunBlock = false;
+      }
+    }
+    assert.ok(hasEnvRead, "Python script in the python3 -c RUN block must read CHAT_UI_URL via os.environ");
+  });
+
+  it("Dockerfile promotes NEMOCLAW_MODEL to ENV before the RUN layer", () => {
+    const src = fs.readFileSync(DOCKERFILE, "utf-8");
+    const lines = src.split("\n");
+    let nemoModelPromoted = false;
+    let inEnvBlock = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      // Reset on new build stage — ENV must be in the same stage as the RUN layer
+      if (/^\s*FROM\b/.test(line)) {
+        nemoModelPromoted = false;
+        inEnvBlock = false;
+      }
+      // Detect start of an ENV instruction
+      if (/^\s*ENV\b/.test(line)) {
+        inEnvBlock = true;
+      }
+      // Check if NEMOCLAW_MODEL is set in the current ENV block (same line or continuation)
+      if (inEnvBlock && /NEMOCLAW_MODEL[=\s]/.test(line)) {
+        nemoModelPromoted = true;
+      }
+      // ENV block ends when the line does NOT end with a backslash continuation
+      if (inEnvBlock && !/\\\s*$/.test(line)) {
+        inEnvBlock = false;
+      }
+      // Verify promotion happened before the python3 -c RUN layer
+      if (/^\s*RUN\b.*python3\s+-c\b/.test(line)) {
+        assert.ok(
+          nemoModelPromoted,
+          `Dockerfile:${i + 1} has a python3 -c RUN layer but NEMOCLAW_MODEL was not promoted via ENV before it`,
+        );
+        return; // Found the RUN layer and verified — done
+      }
+    }
+    assert.ok(
+      nemoModelPromoted,
+      "Dockerfile must have ENV instruction that promotes NEMOCLAW_MODEL from ARG to env var before the python3 -c RUN layer",
+    );
+  });
+
+  it("Python script uses os.environ to read NEMOCLAW_MODEL", () => {
+    const src = fs.readFileSync(DOCKERFILE, "utf-8");
+    const lines = src.split("\n");
+    let inPythonRunBlock = false;
+    let hasEnvRead = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^\s*RUN\b.*python3\s+-c\b/.test(line)) {
+        inPythonRunBlock = true;
+      }
+      if (inPythonRunBlock) {
+        if (
+          line.includes("os.environ['NEMOCLAW_MODEL']") ||
+          line.includes('os.environ["NEMOCLAW_MODEL"]') ||
+          line.includes("os.environ.get('NEMOCLAW_MODEL'") ||
+          line.includes('os.environ.get("NEMOCLAW_MODEL"')
+        ) {
+          hasEnvRead = true;
+        }
+      }
+      if (inPythonRunBlock && !/\\\s*$/.test(line)) {
+        inPythonRunBlock = false;
+      }
+    }
+    assert.ok(hasEnvRead, "Python script in the python3 -c RUN block must read NEMOCLAW_MODEL via os.environ");
   });
 });
