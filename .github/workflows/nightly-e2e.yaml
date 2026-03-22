@@ -47,3 +47,29 @@ jobs:
           name: install-log
           path: /tmp/nemoclaw-e2e-install.log
           if-no-files-found: ignore
+
+  cloud-experimental-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run cloud-experimental E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_POLICY_MODE: "custom"
+          NEMOCLAW_POLICY_PRESETS: "npm,pypi"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-e2e-cloud-experimental.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log-cloud-experimental
+          path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore
