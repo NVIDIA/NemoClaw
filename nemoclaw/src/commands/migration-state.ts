@@ -661,8 +661,31 @@ export function loadSnapshotManifest(snapshotDir: string): SnapshotManifest {
 export function restoreSnapshotToHost(snapshotDir: string, logger: PluginLogger): boolean {
   const manifest = readSnapshotManifest(snapshotDir);
   const snapshotStateDir = path.join(snapshotDir, "openclaw");
+  const missingComponents: string[] = [];
+
   if (!existsSync(snapshotStateDir)) {
-    logger.error(`Snapshot directory not found: ${snapshotStateDir}`);
+    missingComponents.push(`Primary state: ${snapshotStateDir}`);
+  }
+
+  if (manifest.hasExternalConfig && manifest.configPath) {
+    const configSnapshotPath = path.join(snapshotDir, "config", "openclaw.json");
+    if (!existsSync(configSnapshotPath)) {
+      missingComponents.push(`External config: ${configSnapshotPath}`);
+    }
+  }
+
+  for (const root of manifest.externalRoots) {
+    const rootSnapshotPath = path.join(snapshotDir, root.snapshotRelativePath);
+    if (!existsSync(rootSnapshotPath)) {
+      missingComponents.push(`External ${root.kind} (${root.id}): ${rootSnapshotPath}`);
+    }
+  }
+
+  if (missingComponents.length > 0) {
+    logger.error("Restoration aborted. The following snapshot components are missing:");
+    for (const component of missingComponents) {
+      logger.error(` - ${component}`);
+    }
     return false;
   }
 
@@ -685,16 +708,14 @@ export function restoreSnapshotToHost(snapshotDir: string, logger: PluginLogger)
 
     for (const root of manifest.externalRoots) {
       const rootSnapshotPath = path.join(snapshotDir, root.snapshotRelativePath);
-      if (existsSync(rootSnapshotPath)) {
-        if (existsSync(root.sourcePath)) {
-          const rootArchiveName = `${root.sourcePath}.nemoclaw-archived-${String(Date.now())}`;
-          renameSync(root.sourcePath, rootArchiveName);
-          logger.info(`Archived host ${root.kind} directory to ${rootArchiveName}`);
-        }
-        mkdirSync(path.dirname(root.sourcePath), { recursive: true });
-        copyDirectory(rootSnapshotPath, root.sourcePath);
-        logger.info(`Restored external ${root.kind} to ${root.sourcePath}`);
+      if (existsSync(root.sourcePath)) {
+        const rootArchiveName = `${root.sourcePath}.nemoclaw-archived-${String(Date.now())}`;
+        renameSync(root.sourcePath, rootArchiveName);
+        logger.info(`Archived host ${root.kind} directory to ${rootArchiveName}`);
       }
+      mkdirSync(path.dirname(root.sourcePath), { recursive: true });
+      copyDirectory(rootSnapshotPath, root.sourcePath);
+      logger.info(`Restored external ${root.kind} to ${root.sourcePath}`);
     }
 
     logger.info("Host OpenClaw state and external roots restored.");
