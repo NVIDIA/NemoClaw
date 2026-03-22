@@ -24,6 +24,9 @@ draft_newsletter_*
 *_ed25519
 *_ecdsa
 credentials.json
+service-account*.json
+Thumbs.db
+desktop.ini
 
 # Security: prevent accidental commit of disclosure drafts
 DRAFT-*.md

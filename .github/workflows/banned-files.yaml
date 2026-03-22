@@ -1,0 +1,100 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: banned-files
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for banned files
+        run: |
+          # Banned file patterns and reasons.
+          # Add new entries here — one pattern per line, tab-separated.
+          BANNED_PATTERNS=(
+            '.env'                    'May contain API keys or secrets'
+            '.env.*'                  'May contain API keys or secrets'
+            '.envrc'                  'direnv secrets file'
+            '*.pem'                   'Private key or certificate'
+            '*.key'                   'Private key'
+            '*.p12'                   'PKCS#12 keystore'
+            '*.pfx'                   'PKCS#12 keystore'
+            '*.jks'                   'Java keystore'
+            '*.keystore'              'Keystore file'
+            'credentials.json'        'Cloud provider credentials'
+            'service-account*.json'   'Cloud provider service account'
+            '.npmrc'                  'May contain registry tokens'
+            '.netrc'                  'May contain login credentials'
+            '*_rsa'                   'SSH private key'
+            '*_ed25519'               'SSH private key'
+            '*_ecdsa'                 'SSH private key'
+            '.DS_Store'               'macOS Finder metadata'
+            'Thumbs.db'               'Windows Explorer metadata'
+            'desktop.ini'             'Windows Explorer metadata'
+            '*.pyc'                   'Python bytecode'
+          )
+
+          # Paths exempt from the check (test fixtures, etc.)
+          EXEMPT_DIRS="^(test/fixtures/|testdata/)"
+
+          # Get files changed in this PR
+          CHANGED=$(git diff --name-only --diff-filter=ACR "${{ github.event.pull_request.base.sha }}" HEAD)
+
+          if [ -z "$CHANGED" ]; then
+            echo "No changed files to check."
+            exit 0
+          fi
+
+          FAILED=0
+          VIOLATIONS=""
+
+          i=0
+          while [ $i -lt ${#BANNED_PATTERNS[@]} ]; do
+            pattern="${BANNED_PATTERNS[$i]}"
+            reason="${BANNED_PATTERNS[$((i+1))]}"
+            i=$((i+2))
+
+            # Convert glob to grep pattern: *.ext -> \.ext$, exact -> /exact$|^exact$
+            while IFS= read -r file; do
+              # Skip exempt paths
+              if echo "$file" | grep -qE "$EXEMPT_DIRS"; then
+                continue
+              fi
+
+              # Match the basename against the glob pattern
+              basename=$(basename "$file")
+              if [[ "$basename" == $pattern ]]; then
+                VIOLATIONS="${VIOLATIONS}\n  ❌ ${file} — ${reason}"
+                FAILED=1
+              fi
+            done <<< "$CHANGED"
+          done
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "============================================"
+            echo " Banned files detected in this PR"
+            echo "============================================"
+            echo -e "$VIOLATIONS"
+            echo ""
+            echo "These files should not be committed to the repository."
+            echo "If this is a false positive (e.g., a test fixture),"
+            echo "place the file under test/fixtures/ or testdata/."
+            echo ""
+            exit 1
+          fi
+
+          echo "✅ No banned files found."
