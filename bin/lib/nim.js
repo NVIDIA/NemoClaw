@@ -70,6 +70,25 @@ function detectGpu() {
     }
   } catch {}
 
+  // VMware virtual GPU (SVGA) — present when 3D acceleration is enabled in VMware settings
+  if (process.platform === "linux") {
+    try {
+      const lspciOutput = runCapture("lspci 2>/dev/null", { ignoreError: true });
+      if (lspciOutput && lspciOutput.toLowerCase().includes("vmware svga")) {
+        const nameMatch = lspciOutput.match(/VMware SVGA[^\n]*/i);
+        const name = nameMatch ? nameMatch[0].replace(/^\S+\s+/, "").trim() : "VMware SVGA";
+        return {
+          type: "vmware",
+          name,
+          count: 1,
+          totalMemoryMB: null,
+          perGpuMB: null,
+          nimCapable: false,
+        };
+      }
+    } catch {}
+  }
+
   // macOS: detect Apple Silicon or discrete GPU
   if (process.platform === "darwin") {
     try {

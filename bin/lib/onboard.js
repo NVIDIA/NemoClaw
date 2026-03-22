@@ -408,6 +408,9 @@ async function preflight() {
   } else if (gpu && gpu.type === "apple") {
     console.log(`  ✓ Apple GPU detected: ${gpu.name}${gpu.cores ? ` (${gpu.cores} cores)` : ""}, ${gpu.totalMemoryMB} MB unified memory`);
     console.log("  ⓘ NIM requires NVIDIA GPU — will use cloud inference");
+  } else if (gpu && gpu.type === "vmware") {
+    console.log(`  ✓ VMware virtual GPU detected: ${gpu.name}`);
+    console.log("  ⓘ NIM requires NVIDIA GPU — will use cloud inference");
   } else {
     console.log("  ⓘ No GPU detected — will use cloud inference");
   }
