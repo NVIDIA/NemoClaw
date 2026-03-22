@@ -465,6 +465,16 @@ async function startGateway(gpu) {
     console.log("  Patching CoreDNS for Colima...");
     run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" nemoclaw 2>&1 || true`, { ignoreError: true });
   }
+
+  // Fix inference.local DNS on macOS — required for local Ollama/vLLM inference.
+  // On macOS, the OpenShell gateway does not inject inference.local into k3s
+  // CoreDNS, so sandbox pods cannot resolve the inference proxy endpoint.
+  // See: https://github.com/NVIDIA/NemoClaw/issues/260
+  if (process.platform === "darwin") {
+    console.log("  Patching inference.local DNS for macOS...");
+    run(`bash "${path.join(SCRIPTS, "fix-inference-dns-macos.sh")}" nemoclaw 2>&1 || true`, { ignoreError: true });
+  }
+
   // Give DNS a moment to propagate
   sleep(5);
 }
