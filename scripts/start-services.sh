@@ -94,7 +94,7 @@ stop_service() {
 show_status() {
   mkdir -p "$PIDDIR"
   echo ""
-  for svc in telegram-bridge cloudflared; do
+  for svc in telegram-bridge discord-bridge slack-bridge cloudflared; do
     if is_running "$svc"; then
       echo -e "  ${GREEN}●${NC} $svc  (PID $(cat "$PIDDIR/$svc.pid"))"
     else
@@ -115,6 +115,8 @@ show_status() {
 do_stop() {
   mkdir -p "$PIDDIR"
   stop_service cloudflared
+  stop_service slack-bridge
+  stop_service discord-bridge
   stop_service telegram-bridge
   info "All services stopped."
 }
@@ -138,13 +140,21 @@ do_start() {
 
   mkdir -p "$PIDDIR"
 
-  # Telegram bridge (only if token provided)
+  # Messaging bridges — start each if its token is set
   if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
     SANDBOX_NAME="$SANDBOX_NAME" start_service telegram-bridge \
-      node "$REPO_DIR/scripts/telegram-bridge.js"
+      node "$REPO_DIR/scripts/bridge.js" telegram
+  fi
+  if [ -n "${DISCORD_BOT_TOKEN:-}" ]; then
+    SANDBOX_NAME="$SANDBOX_NAME" start_service discord-bridge \
+      node "$REPO_DIR/scripts/bridge.js" discord
+  fi
+  if [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n "${SLACK_APP_TOKEN:-}" ]; then
+    SANDBOX_NAME="$SANDBOX_NAME" start_service slack-bridge \
+      node "$REPO_DIR/scripts/bridge.js" slack
   fi
 
-  # 3. cloudflared tunnel
+  # cloudflared tunnel
   if command -v cloudflared > /dev/null 2>&1; then
     start_service cloudflared \
       cloudflared tunnel --url "http://localhost:$DASHBOARD_PORT"

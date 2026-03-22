@@ -54,6 +54,33 @@ components:
         credential_env: "OPENAI_API_KEY"
         credential_default: "dummy"
 
+  bridges:
+    telegram:
+      type: messaging
+      adapter: telegram
+      credential_env: "TELEGRAM_BOT_TOKEN"
+      allowed_env: "ALLOWED_TELEGRAM_CHAT_IDS"
+      session_prefix: tg
+      max_chunk_size: 4000
+
+    discord:
+      type: messaging
+      adapter: discord
+      credential_env: "DISCORD_BOT_TOKEN"
+      allowed_env: "ALLOWED_DISCORD_CHANNEL_IDS"
+      session_prefix: dc
+      max_chunk_size: 1900
+
+    slack:
+      type: messaging
+      adapter: slack
+      credential_env: "SLACK_BOT_TOKEN"
+      extra_credential_env:
+        - "SLACK_APP_TOKEN"
+      allowed_env: "ALLOWED_SLACK_CHANNEL_IDS"
+      session_prefix: sl
+      max_chunk_size: 3000
+
   policy:
     base: "sandboxes/openclaw/policy.yaml"
     additions:

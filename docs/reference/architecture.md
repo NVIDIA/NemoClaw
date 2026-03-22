@@ -100,3 +100,31 @@ Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA Endpoint (build
 ```
 
 Refer to [Inference Profiles](../reference/inference-profiles.md) for provider configuration details.
+
+## Credential Handling
+
+All user-provided secrets follow the same pattern:
+
+1. Stored on the host in `~/.nemoclaw/credentials.json` (mode 0600) or as environment variables.
+2. Retrieved via `getCredential(key)` which checks env vars first, then the credentials file.
+3. Passed into the sandbox as environment variables at creation time.
+4. Never written to `openclaw.json` (immutable at runtime).
+
+### Credential Inventory
+
+| Credential | Passed to sandbox | Used inside sandbox | Used on host | Notes |
+|---|---|---|---|---|
+| `NVIDIA_API_KEY` | Yes (env var) | Yes — startup script writes `auth-profiles.json` | Yes — deploy, Telegram bridge | OpenClaw requires a specific JSON file format; `nemoclaw-start.sh` handles the translation |
+| `DISCORD_BOT_TOKEN` | Yes (env var) | Yes — OpenClaw reads env var directly, auto-enables Discord channel | No | |
+| `SLACK_BOT_TOKEN` | Yes (env var) | Yes — OpenClaw reads env var directly, auto-enables Slack channel | No | |
+| `TELEGRAM_BOT_TOKEN` | Yes (env var) | Available but unused — bridge runs on host | Yes — Telegram bridge (host-side) | Bridge uses SSH to relay messages into sandbox |
+| `GITHUB_TOKEN` | Deploy path only | No | Yes — private repo access | Not needed inside sandbox |
+| Gateway auth token | No — baked at build time | Yes — `openclaw.json` (root:root 444) | N/A | Per-build unique, immutable security boundary |
+
+### Why Telegram runs on the host
+
+The Telegram bridge (`scripts/telegram-bridge.js`) runs on the host and communicates with the sandbox via OpenShell SSH. This is intentional:
+
+- It avoids giving the sandbox direct Telegram API access beyond what the network policy allows.
+- It allows the bridge to manage multiple sandboxes from one host process.
+- The `TELEGRAM_BOT_TOKEN` is still passed into the sandbox for future OpenClaw channel plugin support.

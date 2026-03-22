@@ -200,11 +200,107 @@ describe("runner helpers", () => {
       }
     });
 
-    it("telegram bridge validates SANDBOX_NAME on startup", () => {
+    it("bridge-core validates SANDBOX_NAME on startup", () => {
+      const fs = require("fs");
+      const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "bridge-core.js"), "utf-8");
+      assert.ok(src.includes("validateName(SANDBOX"), "bridge-core.js must validate SANDBOX_NAME");
+      assert.ok(!src.includes("execSync"), "bridge-core.js should not use execSync");
+    });
+
+    it("bridge runner uses bridge-core for sandbox relay", () => {
+      const fs = require("fs");
+      const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "bridge.js"), "utf-8");
+      assert.ok(src.includes("require(\"./bridge-core\")"), "bridge.js must use bridge-core");
+      assert.ok(src.includes("runAgentInSandbox"), "bridge.js must use runAgentInSandbox");
+    });
+
+    it("each messaging adapter exists and exports a function", () => {
+      const fs = require("fs");
+      const adaptersDir = path.join(__dirname, "..", "scripts", "adapters", "messaging");
+      for (const name of ["telegram", "discord", "slack"]) {
+        const adapterPath = path.join(adaptersDir, `${name}.js`);
+        assert.ok(fs.existsSync(adapterPath), `adapter ${name}.js must exist`);
+        const src = fs.readFileSync(adapterPath, "utf-8");
+        assert.ok(src.includes("module.exports"), `${name}.js must export a function`);
+      }
+    });
+
+    it("blueprint.yaml defines bridge configs for all messaging platforms", () => {
+      const fs = require("fs");
+      const yaml = require("js-yaml");
+      const bp = yaml.load(fs.readFileSync(path.join(__dirname, "..", "nemoclaw-blueprint", "blueprint.yaml"), "utf-8"));
+      const bridges = bp.components.bridges;
+      for (const name of ["telegram", "discord", "slack"]) {
+        assert.ok(bridges[name], `blueprint must define ${name} bridge`);
+        assert.ok(bridges[name].credential_env, `${name} bridge must specify credential_env`);
+        assert.ok(bridges[name].session_prefix, `${name} bridge must specify session_prefix`);
+        assert.ok(bridges[name].adapter, `${name} bridge must specify adapter`);
+      }
+    });
+
+    it("blueprint bridge configs use credential_env naming consistent with inference profiles", () => {
+      const fs = require("fs");
+      const yaml = require("js-yaml");
+      const bp = yaml.load(fs.readFileSync(path.join(__dirname, "..", "nemoclaw-blueprint", "blueprint.yaml"), "utf-8"));
+      const bridges = bp.components.bridges;
+      // Verify field naming matches inference profile convention (credential_env, not token_env)
+      for (const [name, config] of Object.entries(bridges)) {
+        assert.ok(!config.token_env, `${name} bridge should use credential_env, not token_env`);
+        assert.equal(typeof config.credential_env, "string", `${name} bridge credential_env must be a string`);
+      }
+    });
+
+    it("slack bridge config lists SLACK_APP_TOKEN in extra_credential_env", () => {
+      const fs = require("fs");
+      const yaml = require("js-yaml");
+      const bp = yaml.load(fs.readFileSync(path.join(__dirname, "..", "nemoclaw-blueprint", "blueprint.yaml"), "utf-8"));
+      const slack = bp.components.bridges.slack;
+      assert.ok(Array.isArray(slack.extra_credential_env), "slack must have extra_credential_env array");
+      assert.ok(slack.extra_credential_env.includes("SLACK_APP_TOKEN"), "slack must require SLACK_APP_TOKEN");
+    });
+
+    it("telegram-bridge.js backwards-compat wrapper delegates to bridge.js", () => {
       const fs = require("fs");
       const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "telegram-bridge.js"), "utf-8");
-      assert.ok(src.includes("validateName(SANDBOX"), "telegram-bridge.js must validate SANDBOX_NAME");
-      assert.ok(!src.includes("execSync"), "telegram-bridge.js should not use execSync");
+      assert.ok(src.includes("require(\"./bridge\")"), "telegram-bridge.js must delegate to bridge.js");
+      assert.ok(src.includes("telegram"), "telegram-bridge.js must inject 'telegram' arg");
+    });
+
+    it("bridge.js loads configs from blueprint.yaml, not separate files", () => {
+      const fs = require("fs");
+      const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "bridge.js"), "utf-8");
+      assert.ok(src.includes("blueprint.yaml"), "bridge.js must reference blueprint.yaml");
+      assert.ok(!src.includes("bridges/messaging"), "bridge.js must not reference separate bridge files");
+    });
+
+    it("bridge.js logs metadata only, never raw message content", () => {
+      const fs = require("fs");
+      const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "bridge.js"), "utf-8");
+      // Ensure log lines use length, not content
+      assert.ok(src.includes("inbound (len="), "bridge.js must log message length, not content");
+      assert.ok(src.includes("response (len="), "bridge.js must log response length, not content");
+      // Ensure console.log calls never interpolate raw msg.text (length is ok)
+      const logLines = src.split("\n").filter((l) => l.includes("console.log"));
+      for (const line of logLines) {
+        const hasRawText = line.includes("msg.text}") || line.includes("msg.text,") || line.includes("msg.text)");
+        assert.ok(!hasRawText, `log line must not include raw text: ${line.trim()}`);
+      }
+    });
+
+    it("onboard auto-starts bridges when messaging tokens detected", () => {
+      const fs = require("fs");
+      const src = fs.readFileSync(path.join(__dirname, "..", "bin", "lib", "onboard.js"), "utf-8");
+      assert.ok(src.includes("startMessagingBridges"), "onboard must call startMessagingBridges");
+      assert.ok(src.includes("start-services.sh"), "startMessagingBridges must delegate to start-services.sh");
+      assert.ok(src.includes("RISKY CHANGE"), "auto-start must be annotated as risky migration");
+    });
+
+    it("onboard passes all four credential types via getCredential pattern", () => {
+      const fs = require("fs");
+      const src = fs.readFileSync(path.join(__dirname, "..", "bin", "lib", "onboard.js"), "utf-8");
+      for (const token of ["NVIDIA_API_KEY", "DISCORD_BOT_TOKEN", "SLACK_BOT_TOKEN", "TELEGRAM_BOT_TOKEN"]) {
+        assert.ok(src.includes(`getCredential("${token}")`), `onboard must use getCredential for ${token}`);
+      }
     });
   });
 });

@@ -443,9 +443,15 @@ async function createSandbox(gpu) {
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const chatUiUrl = process.env.CHAT_UI_URL || 'http://127.0.0.1:18789';
+  // Pass user-provided secrets into the sandbox as environment variables.
+  // All tokens follow the same pattern: getCredential() checks env first,
+  // then ~/.nemoclaw/credentials.json. OpenClaw auto-enables channels when
+  // it detects the corresponding env var (e.g., DISCORD_BOT_TOKEN).
+  // See docs/reference/architecture.md "Credential Handling" for the full inventory.
   const envArgs = [`CHAT_UI_URL=${shellQuote(chatUiUrl)}`];
-  if (process.env.NVIDIA_API_KEY) {
-    envArgs.push(`NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY)}`);
+  const apiKey = getCredential("NVIDIA_API_KEY") || process.env.NVIDIA_API_KEY;
+  if (apiKey) {
+    envArgs.push(`NVIDIA_API_KEY=${shellQuote(apiKey)}`);
   }
   const discordToken = getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN;
   if (discordToken) {
@@ -454,6 +460,10 @@ async function createSandbox(gpu) {
   const slackToken = getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN;
   if (slackToken) {
     envArgs.push(`SLACK_BOT_TOKEN=${shellQuote(slackToken)}`);
+  }
+  const tgToken = getCredential("TELEGRAM_BOT_TOKEN") || process.env.TELEGRAM_BOT_TOKEN;
+  if (tgToken) {
+    envArgs.push(`TELEGRAM_BOT_TOKEN=${shellQuote(tgToken)}`);
   }
 
   // Run without piping through awk — the pipe masked non-zero exit codes
@@ -953,7 +963,41 @@ async function onboard(opts = {}) {
   await setupInference(sandboxName, model, provider);
   await setupOpenclaw(sandboxName, model, provider);
   await setupPolicies(sandboxName);
+  startMessagingBridges(sandboxName);
   printDashboard(sandboxName, model, provider);
+}
+
+// ── Auto-start messaging bridges ────────────────────────────────
+// RISKY CHANGE: This is a migration path to standardize messaging
+// configuration. We auto-start host-side bridges when tokens are
+// detected, which takes over from the in-sandbox OpenClaw plugin
+// (Discord/Slack enforce single gateway connections per token).
+// The in-sandbox env var passthrough (#601) is kept for backwards
+// compatibility during this transition.
+
+function startMessagingBridges(sandboxName) {
+  // Rehydrate file-backed credentials into process.env so start-services.sh
+  // and bridge.js can see them (they only check process.env, not credentials.json).
+  const bridgeTokens = ["TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"];
+  for (const key of bridgeTokens) {
+    if (!process.env[key]) {
+      const val = getCredential(key);
+      if (val) process.env[key] = val;
+    }
+  }
+
+  const hasMessagingToken =
+    process.env.TELEGRAM_BOT_TOKEN ||
+    process.env.DISCORD_BOT_TOKEN ||
+    process.env.SLACK_BOT_TOKEN;
+
+  if (!hasMessagingToken) return;
+
+  console.log("");
+  console.log("  Starting messaging bridges...");
+  const safeName = sandboxName && /^[a-zA-Z0-9._-]+$/.test(sandboxName) ? sandboxName : null;
+  const sandboxEnv = safeName ? `SANDBOX_NAME=${shellQuote(safeName)}` : "";
+  run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh"`, { ignoreError: true });
 }
 
 module.exports = {
