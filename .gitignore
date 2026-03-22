@@ -30,3 +30,4 @@ DRAFT-*.md
 
 # Claude Code worktrees and local state
 .claude/
+.mcp.json
