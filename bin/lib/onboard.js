@@ -363,6 +363,9 @@ async function preflight() {
     console.log("  Cleaning up previous NemoClaw session...");
     run("openshell forward stop 18789 2>/dev/null || true", { ignoreError: true });
     run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
+    // Sandboxes under the destroyed gateway no longer exist in OpenShell —
+    // clear the local registry so `nemoclaw list` stays consistent. (#532)
+    registry.clearAll();
     console.log("  ✓ Previous session cleaned up");
   }
 
@@ -420,8 +423,9 @@ async function preflight() {
 async function startGateway(gpu) {
   step(2, 7, "Starting OpenShell gateway");
 
-  // Destroy old gateway
+  // Destroy old gateway — also clear registry since its sandboxes are gone. (#532)
   run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
+  registry.clearAll();
 
   const gwArgs = ["--name", "nemoclaw"];
   // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
