@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: ghcr
+  description: "GitHub Container Registry access"
+
+network_policies:
+  ghcr_registry:
+    name: ghcr_registry
+    endpoints:
+      - host: ghcr.io
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/bin/docker }
