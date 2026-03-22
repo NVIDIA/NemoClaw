@@ -166,6 +166,16 @@ Egress control, operator approval flow, and policy configuration.
 {bdg-secondary}`Reference`
 :::
 
+:::{grid-item-card} Workspace Files
+:link: workspace/workspace-files
+:link-type: doc
+
+Understand SOUL.md, USER.md, and other workspace files, plus backup and restore.
+
++++
+{bdg-secondary}`Concept`
+:::
+
 :::{grid-item-card} How-To Guides
 :link: inference/switch-inference-providers
 :link-type: doc
@@ -221,6 +231,14 @@ Customize the Network Policy <network-policy/customize-network-policy>
 
 Deploy to a Remote GPU Instance <deployment/deploy-to-remote-gpu>
 Set Up the Telegram Bridge <deployment/set-up-telegram-bridge>
+```
+
+```{toctree}
+:caption: Workspace
+:hidden:
+
+Workspace Files <workspace/workspace-files>
+Backup & Restore <workspace/backup-restore>
 ```
 
 ```{toctree}
