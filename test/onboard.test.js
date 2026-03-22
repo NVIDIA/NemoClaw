@@ -11,6 +11,7 @@ const {
   buildSandboxConfigSyncScript,
   getInstalledOpenshellVersion,
   getStableGatewayImageRef,
+  patchDockerfileModel,
   writeSandboxConfigSyncFile,
 } = require("../bin/lib/onboard");
 
@@ -57,6 +58,47 @@ describe("onboard helpers", () => {
       const scriptFile = writeSandboxConfigSyncFile("echo test", tmpDir, 1234);
       assert.equal(scriptFile, path.join(tmpDir, "nemoclaw-sync-1234.sh"));
       assert.equal(fs.readFileSync(scriptFile, "utf8"), "echo test\n");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patches Dockerfile NEMOCLAW_MODEL to the user-selected model (#628)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dockerfile-test-"));
+    try {
+      const dockerfilePath = path.join(tmpDir, "Dockerfile");
+      const original = [
+        "FROM node:22-slim",
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        'RUN echo "${NEMOCLAW_MODEL}"',
+      ].join("\n");
+      fs.writeFileSync(dockerfilePath, original);
+
+      patchDockerfileModel(dockerfilePath, "nemotron-3-nano:30b");
+
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_MODEL=nemotron-3-nano:30b$/m);
+      // Other ARGs must not be affected
+      assert.match(patched, /^ARG CHAT_UI_URL=http:\/\/127\.0\.0\.1:18789$/m);
+      // Must not contain the old default
+      assert.doesNotMatch(patched, /nemotron-3-super-120b-a12b/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patchDockerfileModel is a no-op when ARG line is absent", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dockerfile-test-"));
+    try {
+      const dockerfilePath = path.join(tmpDir, "Dockerfile");
+      const original = "FROM node:22-slim\nRUN echo hello\n";
+      fs.writeFileSync(dockerfilePath, original);
+
+      patchDockerfileModel(dockerfilePath, "nemotron-3-nano:30b");
+
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.equal(patched, original);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
