@@ -1,0 +1,872 @@
+/*!
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+ *
+ * NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+ * property and proprietary rights in and to this material, related
+ * documentation and any modifications thereto. Any use, reproduction,
+ * disclosure or distribution of this material and related documentation
+ * without an express license agreement from NVIDIA CORPORATION or
+ * its affiliates is strictly prohibited.
+ */
+
+/* Color themes for light and dark modes */
+:root {
+    /* Brand Colors */
+    --nv-color-green: #74B900;
+    --nv-color-green-2: #004B31;
+    --nv-color-black: #000000;
+    --nv-color-white: #FFFFFF;
+
+    /* Grey Scale - Light */
+    --nv-light-grey-1: #f7f7f7;
+    --nv-light-grey-2: #EEEEEE;
+    --nv-light-grey-3: #DDDDDD;
+    --nv-light-grey-4: #CCCCCC;
+    --nv-light-grey-5: #999999;
+
+    /* Grey Scale - Dark */
+    --nv-dark-grey-1: #111111;
+    --nv-dark-grey-2: #1A1A1A;
+    --nv-dark-grey-3: #222222;
+    --nv-dark-grey-4: #333333;
+    --nv-dark-grey-5: #666666;
+
+    /* Colors by Usage */
+    --nv-color-text: #000000;
+    --nv-color-bg-default: #FFFFFF;
+    --nv-color-bg-alt: #f7f7f7;
+    --nv-color-success: #76B900;
+    --nv-color-error: #f44336;
+
+    /* Theme-independent settings */
+    --rounded: 999px;
+}
+main {
+    min-height: calc(100vh - 200px);
+  }
+/* Typography - Headers */
+h1 {
+    font-size: 36px;
+    font-weight: 700;
+    line-height: 1.25em; /* 45px */
+}
+
+h2 {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.25em; /* 35px */
+}
+
+h3 {
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.25em; /* 30px */
+}
+
+h4 {
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.25em; /* 25px */
+}
+
+/* Typography - Paragraphs */
+.prose{
+    color: var(--nv-dark-grey-2) !important;
+}
+.dark .prose{
+    color: var(--nv-light-grey-2) !important;
+}
+p {
+    text-decoration-thickness: 3px;
+}
+.fern-mdx-link {
+    color: var(--tw-prose-body);
+    text-decoration-color: var(--accent);
+    font-weight: var(--font-weight-normal);
+}
+
+/* Badge links: hide redundant external-link icon (badges already indicate links) */
+.badge-links .fern-mdx-link svg {
+    display: none;
+}
+
+/* Light theme (default) */
+html:not([data-theme]),html[data-theme=light] {
+    --pst-color-background: #fff;
+    --pst-color-on-background: #fff;
+    --pst-color-shadow: #ccc;
+    --pst-color-heading: #000;
+    --pst-color-text-base: #1a1a1a;
+    --pst-color-text-muted: #666;
+    --pst-color-surface: #f7f7f7;
+    --pst-color-on-surface: #333;
+    --pst-color-primary: var(--nv-color-green-2);
+    --pst-color-table-row-hover-bg: var(--nv-color-green);
+    --pst-color-link: var(--pst-color-text-base);
+    --pst-color-link-hover: var(--pst-color-text-base);
+    --pst-color-inline-code: var(--pst-color-primary);
+    --pst-color-inline-code-links: var(--pst-color-primary);
+    --pst-color-secondary: var(--pst-color-primary);
+    --pst-color-secondary-bg: var(--nv-color-green);
+    --pst-color-accent: var(--nv-color-green);
+}
+
+/* Dark theme */
+html[data-theme=dark] {
+    --pst-color-background: #111;
+    --pst-color-on-background: #000;
+    --pst-color-shadow: #000;
+    --pst-color-heading: #fff;
+    --pst-color-text-base: #eee;
+    --pst-color-text-muted: #999;
+    --pst-color-surface: #1a1a1a;
+    --pst-color-on-surface: #ddd;
+    --pst-color-primary: var(--nv-color-green);
+    --pst-color-table-row-hover-bg: var(--nv-color-green-2);
+    --pst-color-link: var(--pst-color-text-base);
+    --pst-color-link-hover: var(--pst-color-text-base);
+    --pst-color-inline-code: var(--pst-color-primary);
+    --pst-color-inline-code-links: var(--pst-color-primary);
+    --pst-color-secondary: var(--pst-color-primary);
+    --pst-color-secondary-bg: var(--nv-color-green-2);
+    --pst-color-accent: var(--nv-color-green);
+}
+
+/* Product and verion selector styling */
+
+.fern-product-selector {
+  border-radius: 8px;
+  pointer-events: none !important;
+  padding-right: 2px;
+}
+
+.product-dropdown-trigger svg{
+    display: none !important;
+}
+
+.fern-product-selector .product-dropdown-trigger p{
+    font-weight: bold !important;
+}
+.fern-product-selector-radio-group {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    max-width: 1000px;
+}
+
+@media (max-width: 768px) {
+    .fern-product-selector-radio-group {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+.fern-version-selector {
+    transform: translateY(-1px);
+}
+
+.fern-version-selector .version-dropdown-trigger{
+    outline: 1px solid var(--border, var(--grayscale-a5)) !important;
+    border-radius: 5px;
+    transition: box-shadow 0.3s ease, outline 0.3s ease;
+}
+.product-dropdown-trigger{
+    padding-left: 0px !important;
+}
+
+.product-dropdown-trigger, .version-dropdown-trigger{
+    background-color: transparent !important;
+}
+.product-dropdown-trigger svg:hover{
+    stroke: var(--nv-color-green) !important;
+}
+.version-dropdown-trigger:hover{
+    box-shadow: 0 0 0 1px var(--nv-color-green) !important;
+}
+.version-dropdown-trigger svg:hover{
+    stroke: var(--nv-color-green) !important;
+}
+/* Sidebar styling */
+#fern-sidebar {
+    border-right: 1px solid var(--border, var(--grayscale-a5)) !important;
+    height: 100vh !important;
+}
+.fern-sidebar-link:not(:hover){
+    background-color: transparent !important;
+}
+.fern-sidebar-link {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+    padding-top: 0.5rem !important;
+    padding-bottom: 0.5rem !important;
+    border-radius: 0px !important;
+    &.nested {
+        padding-left: 1rem !important;
+    }
+}
+/* Section-level sidebar links (pages that have children) should match sidebar heading padding */
+.fern-sidebar-group > li > .fern-sidebar-link:has(+ .fern-sidebar-group) {
+    padding-left: 0.25rem !important;
+}
+.fern-sidebar-group{
+    padding: 0 !important
+}
+#fern-sidebar-scroll-area{
+    padding-right: 0 !important
+}
+
+/* header styling */
+.fern-header-content{
+    padding-left: 18.5px;
+    margin-top: -5px;
+    margin-bottom: -5px;
+}
+#fern-header {
+    border-color: var(--border, var(--grayscale-a5)) !important;
+}
+@keyframes header-background-fade {
+    0% {
+      background-color: transparent;
+    }
+    100% {
+      background-color: var(--header-background);
+    }
+  }
+
+[data-theme=default]#fern-header {
+animation: header-background-fade linear;
+animation-timeline: scroll();
+animation-range: 0 50px;
+}
+.fern-header-navbar-links .fern-button{
+    background-color: transparent !important;
+}
+.fern-header-navbar-links > button{
+    background-color: transparent !important;
+}
+.fern-header-logo-container > div > div > a > img{
+    padding-right: 0.5rem;
+}
+.fern-header-logo-container .font-heading{
+    font-size: 16px !important;
+    font-weight: bold !important;
+    color: var(--grayscale-a12) !important;
+    border-inline: 1px solid var(--border, var(--grayscale-a5));
+    padding: 15px 1rem;
+    margin: -20px 0.5rem;
+}
+@media (max-width: 1024px) {
+    .fern-header-logo-container .font-heading{
+        display: none !important;
+    }
+}
+/* Search bar styling */
+#fern-search-button{
+    background-color: transparent !important;
+    border-radius: var(--rounded);
+    transition: box-shadow 0.3s ease, outline 0.3s ease;
+}
+#fern-search-button:hover{
+    box-shadow: 0 0 0 1px var(--nv-color-green) !important;
+}
+#fern-search-button .fern-kbd{
+    display: none;
+}
+
+.fern-layout-footer-toolbar button{
+    background-color: transparent !important;
+    border-color: transparent !important;
+    padding-inline: 0px !important;
+}
+
+/* ========== Custom footer (native React component) – 1:1 with original ========== */
+.bd-footer {
+  border-top: 1px solid var(--border, var(--grayscale-a5)) !important;
+  font-family: NVIDIA, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+  font-size: 0.875rem;
+  padding: 2rem 0;
+  width: 100%;
+}
+.bd-footer * {
+  font-family: inherit;
+}
+.bd-footer__inner {
+  padding: 0 2rem;
+}
+.footer-items__start {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+.footer-logos-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 1rem;
+}
+.footer-brand {
+  display: inline-block;
+  text-decoration: none;
+}
+.footer-brand .logo__image {
+  height: 24px;
+  width: auto;
+  transition: opacity 0.2s ease;
+}
+.footer-brand:hover .logo__image {
+  opacity: 0.8;
+}
+.footer-brand-fern {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+/* Logo theme visibility – .dark is on ancestor in Fern */
+.only-light {
+  display: block;
+  filter: invert(1);
+}
+.only-dark {
+  display: none;
+}
+.dark .only-light {
+  display: none;
+}
+.dark .only-dark {
+  display: block;
+  filter: none;
+}
+.footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  line-height: 1.65;
+  margin: 0;
+  padding: 0;
+}
+.footer-links a {
+  color: var(--grayscale-a11);
+  text-decoration: none;
+  transition: color 0.2s ease;
+  white-space: nowrap;
+}
+.pipe-separator {
+  color: var(--grayscale-a11);
+  white-space: nowrap;
+}
+.copyright {
+  color: var(--grayscale-a11);
+  font-size: 0.875rem;
+  line-height: 1.65;
+  margin: 0;
+}
+@media (max-width: 768px) {
+  .bd-footer { padding: 1.5rem 0; }
+  .bd-footer__inner { padding: 0 1.5rem; }
+  .footer-items__start { gap: 1rem; }
+  .footer-links { flex-direction: row; gap: 0.5rem 0.75rem; }
+  .footer-links a { white-space: normal; word-break: break-word; }
+}
+@media (max-width: 480px) {
+  .footer-links { gap: 0.5rem; }
+  .footer-links a { font-size: 0.8125rem; }
+  .copyright { font-size: 0.8125rem; }
+}
+/* Built with Fern link + tooltip */
+.built-with-fern-link {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  text-decoration: none;
+  position: relative;
+}
+.built-with-fern-logo {
+  height: 1rem;
+  margin: 0;
+  transition: filter 150ms ease;
+}
+.built-with-fern-logo path { fill: var(--grayscale-a12); }
+.built-with-fern-link:hover .built-with-fern-logo { filter: saturate(1) opacity(1); }
+.built-with-fern-link:hover .built-with-fern-logo path:nth-child(2) { fill: #51C233; }
+.built-with-fern-tooltip {
+  position: absolute;
+  top: 50%;
+  right: calc(100%);
+  bottom: auto;
+  left: auto;
+  transform: translateY(-50%);
+  margin: 0;
+  margin-right: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background-color: #FFFFFF;
+  color: #000000;
+  font-size: 0.85rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--grayscale-a5);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms ease;
+  transition-delay: 0s;
+  z-index: 50;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  width: max-content;
+}
+.built-with-fern-link:hover .built-with-fern-tooltip {
+  opacity: 1;
+  transition-delay: 0.75s;
+}
+.dark .built-with-fern-tooltip {
+  background-color: #000000;
+  color: #FFFFFF;
+}
+.built-with-fern-logo-dark { display: none; }
+.dark .built-with-fern-logo-light { display: none; }
+.dark .built-with-fern-logo-dark { display: block; }
+@media (prefers-color-scheme: dark) {
+  .built-with-fern-logo-light { display: none; }
+  .built-with-fern-logo-dark { display: block; }
+}
+
+/* Footer styling */
+.fern-footer-nav{
+    border-radius: var(--rounded);
+    background-color: transparent !important;
+    transition: box-shadow 0.3s ease, outline 0.3s ease;
+}
+/* Hide line numbers */
+.code-block-line-gutter {
+    display: none !important;
+}
+.fern-footer-prev h4, .fern-footer-next h4{
+    font-size: inherit !important;
+}
+.fern-sidebar-link.nested[data-state="active"]:before {
+    left: -0px !important;
+    bottom: -0px !important;
+    top: -0px !important;
+    width: 2px !important;
+}
+.fern-sidebar-link[data-state="active"] {
+    color: unset !important;
+}
+
+.fern-selection-item .fern-selection-item-icon{
+    border-color: transparent !important;
+}
+/* Button styling */
+.fern-button{
+    border-radius: var(--rounded);
+    font-weight: bold;
+}
+.fern-button.filled.primary{
+    color: var(--nv-color-black);
+}
+.dark .fern-button.filled.primary{
+    background-color: var(--nv-color-white);
+}
+.dark .fern-button.filled.primary:hover{
+    background-color: var(--nv-light-grey-2);
+}
+.fern-button.outlined.normal{
+    background-color: transparent;
+    --tw-ring-color: transparent;
+    color: var(--nv-color-black);
+}
+.fern-button.outlined.normal:hover{
+    color: var(--nv-color-green)
+}
+.dark .fern-button.outlined.normal{
+    color: var(--nv-color-white);
+}
+.dark .fern-button.outlined.normal:hover{
+    color: var(--nv-color-green);
+}
+/* Card styling */
+.fern-card{
+    transition: box-shadow 0.3s ease, outline 0.3s ease;
+}
+svg.card-icon{
+    height: 24px !important;
+    width: 24px !important;
+}
+.card-icon{
+    background-color: transparent !important;
+}
+.fern-card:hover{
+    box-shadow: 0 0 0 1px var(--nv-color-green) !important;
+}
+.fern-docs-badge{
+    border-radius: var(--rounded);
+}
+.fern-page-actions button:hover{
+    background-color: transparent !important;
+}
+.fern-page-actions a:hover{
+    background-color: transparent !important;
+}
+/* Moving logo to footer */
+#builtwithfern, #builtwithfern * {
+    display: none !important;
+}
+
+/* Landing Page Gradients */
+/* Top: Simple radial gradient (no mask, responsive) */
+.landing-gradient-top {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 800px;
+    background: radial-gradient(ellipse 100% 100% at 50% 10%,
+        rgba(191, 242, 48, 0.15) 0%,
+        rgba(158, 228, 179, 0.12) 30%,
+        rgba(124, 215, 254, 0.12) 50%,
+        rgba(124, 215, 254, 0.06) 75%,
+        transparent 100%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* Bottom: Masked gradient for organic transition */
+.landing-gradient-bottom {
+    position: absolute;
+    bottom: -282px;
+    left: 0;
+    right: 0;
+    height: 1232px;
+    background: linear-gradient(85deg, #BFF230 41.98%, #7CD7FE 99.52%);
+    opacity: 0.05;
+    pointer-events: none;
+    z-index: 5;
+    mask-image: url('https://www.figma.com/api/mcp/asset/27509afa-9c16-46bb-8415-4395e2e5a347');
+    mask-repeat: no-repeat;
+    mask-position: 0% -17px;
+    mask-size: 100% auto;
+    -webkit-mask-image: url('https://www.figma.com/api/mcp/asset/27509afa-9c16-46bb-8415-4395e2e5a347');
+    -webkit-mask-repeat: no-repeat;
+    -webkit-mask-position: 0% -17px;
+    -webkit-mask-size: 100% auto;
+}
+
+/* Landing Page Gradients Wrapper */
+.landing-page-gradients {
+    position: relative;
+    width: 100%;
+    margin-top: -100px;
+    padding-top: 100px;
+    overflow: visible;
+    background: #181818;
+}
+
+/* Hero Section (Landing page only) */
+.hero-section {
+    position: relative;
+    width: 100%;
+    padding: 3rem 6rem;
+    margin: 0 auto;
+    overflow: visible;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    z-index: 10;
+}
+
+/* Hero Section Content - constrain width */
+.hero-section > * {
+    position: relative;
+    z-index: 100;
+    max-width: 1440px;
+    width: 100%;
+}
+
+/* Tablet and Mobile: fix spacing and layout */
+@media (max-width: 1024px) {
+    /* Extend dark background behind header */
+    .landing-page body, .landing-page html, .landing-page main {
+        background: #181818 !important;
+    }
+
+    .landing-page-gradients {
+        margin-top: -100px;
+        padding-top: 100px;
+    }
+
+    .hero-section {
+        padding: 2rem 2rem;
+    }
+
+    .hero-section > * {
+        max-width: none;
+    }
+
+    .hero-content-grid {
+        grid-template-columns: 1fr;
+        gap: 2rem;
+    }
+
+    .hero-heading {
+        font-size: 36px;
+    }
+
+    .hero-subtitle {
+        font-size: 16px;
+    }
+
+    .hero-title-section {
+        margin-bottom: 2rem;
+    }
+}
+
+/* Small mobile only */
+@media (max-width: 600px) {
+    .hero-heading {
+        font-size: 28px;
+    }
+
+    .hero-section {
+        padding: 1.5rem 1.5rem;
+    }
+}
+
+.hero-section h1,
+.hero-section h2,
+.hero-section h3,
+.hero-section h4,
+.hero-section h5,
+.hero-section h6 {
+    pointer-events: none !important;
+}
+/* Hero Title Section */
+.hero-title-section {
+    text-align: center;
+    margin-bottom: 4rem;
+    position: relative;
+    z-index: 100;
+}
+
+.hero-heading {
+    font-size: 48px;
+    font-weight: 700;
+    line-height: 1.2;
+    margin: 0 0 1rem 0;
+    color: var(--nv-color-white);
+}
+
+.hero-subtitle {
+    font-size: 18px;
+    line-height: 1.5;
+    margin: 0;
+    color: var(--nv-color-white);
+}
+
+/* Hero Content Grid */
+.hero-content-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 3rem;
+    align-items: start;
+    position: relative;
+    z-index: 100;
+}
+
+.hero-column {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.hero-column-title {
+    font-size: 24px;
+    font-weight: 700;
+    margin: 0;
+    color: var(--nv-color-white);
+}
+
+.hero-column-subtitle {
+    font-size: 16px;
+    margin: 0 0 1rem 0;
+    color: var(--nv-color-white);
+}
+
+/* Hero Card Container (Left Column) */
+.hero-card-container {
+    display: flex;
+    flex-direction: column;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border, var(--grayscale-a5));
+    margin-top: 1.5rem !important;
+    background: rgba(26, 26, 26, 0.2);
+    backdrop-filter: blur(6px);
+}
+
+.hero-card-image {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+.hero-card-content {
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: row;
+    gap: 1rem;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(26, 26, 26, 0.2);
+    backdrop-filter: blur(6px);
+}
+
+.hero-card-text-wrapper {
+    flex: 1;
+}
+
+.hero-card-text {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--nv-color-white);
+}
+
+.hero-card-button-wrapper {
+    flex-shrink: 0;
+}
+.hero-card-button-wrapper .fern-mdx-link{
+    text-decoration: none !important;
+}
+
+.hero-card-button {
+    white-space: nowrap;
+}
+
+/* Hero Cards */
+
+.hero-column .fern-card {
+    padding: 9px 17px;
+    background-color: rgba(26, 26, 26, 0.2) !important;
+    backdrop-filter: blur(6px);
+}
+
+.hero-section .fern-card{
+    color: white !important;
+}
+
+.hero-column .card-icon {
+    font-size: 64px !important;
+    width: 64px !important;
+    height: 64px !important;
+}
+
+.hero-column .card-icon svg,
+.hero-column .card-icon i {
+    font-size: 64px !important;
+    width: 64px !important;
+    height: 64px !important;
+}
+
+.hero-column .fern-card-title {
+    font-size: 16px;
+    font-weight: 500;
+    line-height: 24px;
+}
+
+.hero-column .fern-card p {
+    font-size: 14px;
+    line-height: 20px;
+    color: white !important;
+}
+
+/* Body Section */
+.body-section {
+    display: flex;
+    padding: 4rem 16rem;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 4rem;
+    align-self: stretch;
+    position: relative;
+    z-index: 1;
+    background: #181818;
+}
+
+/* Body Section Content - constrain width */
+.body-section > * {
+    max-width: 1440px;
+    width: 100%;
+    position: relative;
+    z-index: 10;
+}
+
+.code-block .fern-code-link{
+    text-decoration: underline !important;
+    text-decoration-color: var(--accent) !important;
+    text-underline-offset: 1px !important;
+    text-decoration-style: underline !important;
+}
+
+/* Mobile Styles */
+@media (max-width: 768px) {
+    .hero-section {
+        padding: 2rem 1.5rem;
+    }
+
+    .hero-title-section {
+        margin-bottom: 2rem;
+    }
+
+    .hero-heading {
+        font-size: 32px;
+    }
+
+    .hero-subtitle {
+        font-size: 16px;
+    }
+
+    .hero-content-grid {
+        grid-template-columns: 1fr;
+        gap: 2rem;
+    }
+
+    .hero-column-title {
+        font-size: 20px;
+    }
+
+    .hero-column-subtitle {
+        font-size: 14px;
+    }
+
+    .hero-card-content {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .hero-card-button-wrapper {
+        align-self: flex-start;
+    }
+
+    .hero-column .card-icon,
+    .hero-column .card-icon svg,
+    .hero-column .card-icon i {
+        font-size: 40px !important;
+        width: 40px !important;
+        height: 40px !important;
+    }
+
+    .hero-column .fern-card-title {
+        font-size: 14px;
+    }
+
+    .hero-column .fern-card p {
+        font-size: 11px;
+    }
+
+    .body-section {
+        padding: 2rem 1.5rem;
+    }
+
+    .fern-selection-item-icon.use-icon {
+        display: none !important;
+    }
+}

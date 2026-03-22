@@ -1,0 +1,112 @@
+instances:
+  - url: https://nemoclaw.docs.buildwithfern.com
+    custom-domain: docs.nvidia.com/nemoclaw
+
+title: NVIDIA NemoClaw
+
+footer: ./components/CustomFooter.tsx
+
+layout:
+  searchbar-placement: header
+  page-width: 1376px
+  sidebar-width: 248px
+  content-width: 812px
+  tabs-placement: header
+  hide-feedback: true
+
+colors:
+  accentPrimary:
+    dark: "#76B900"
+    light: "#76B900"
+  background:
+    light: "#FFFFFF"
+    dark: "#000000"
+
+theme:
+  page-actions: toolbar
+  footer-nav: minimal
+
+logo:
+  dark: ./assets/NVIDIA_dark.svg
+  light: ./assets/NVIDIA_light.svg
+  height: 20
+  href: /
+  right-text: NemoClaw
+
+favicon: ./assets/NVIDIA_symbol.svg
+
+css:
+  - ./main.css
+
+navbar-links:
+  - type: github
+    value: https://github.com/NVIDIA/NemoClaw
+
+experimental:
+  mdx-components:
+    - ./components
+
+tabs:
+  docs:
+    display-name: Documentation
+    icon: book-open
+
+navigation:
+  - tab: docs
+    layout:
+      - page: Home
+        path: latest/pages/index.mdx
+
+      - section: About NemoClaw
+        contents:
+          - page: Overview
+            path: latest/pages/about/overview.mdx
+          - page: How It Works
+            path: latest/pages/about/how-it-works.mdx
+          - page: Release Notes
+            path: latest/pages/about/release-notes.mdx
+
+      - section: Get Started
+        contents:
+          - page: Quickstart
+            path: latest/pages/get-started/quickstart.mdx
+
+      - section: Inference
+        contents:
+          - page: Switch Inference Providers
+            path: latest/pages/inference/switch-inference-providers.mdx
+
+      - section: Network Policy
+        contents:
+          - page: Approve or Deny Network Requests
+            path: latest/pages/network-policy/approve-network-requests.mdx
+          - page: Customize the Network Policy
+            path: latest/pages/network-policy/customize-network-policy.mdx
+
+      - section: Deployment
+        contents:
+          - page: Deploy to a Remote GPU Instance
+            path: latest/pages/deployment/deploy-to-remote-gpu.mdx
+          - page: Set Up the Telegram Bridge
+            path: latest/pages/deployment/set-up-telegram-bridge.mdx
+
+      - section: Monitoring
+        contents:
+          - page: Monitor Sandbox Activity
+            path: latest/pages/monitoring/monitor-sandbox-activity.mdx
+
+      - section: Reference
+        contents:
+          - page: Architecture
+            path: latest/pages/reference/architecture.mdx
+          - page: Commands
+            path: latest/pages/reference/commands.mdx
+          - page: Inference Profiles
+            path: latest/pages/reference/inference-profiles.mdx
+          - page: Network Policies
+            path: latest/pages/reference/network-policies.mdx
+
+      - section: Resources
+        contents:
+          - page: License
+            path: latest/pages/resources/license.mdx

@@ -1,0 +1,83 @@
+---
+title: "NemoClaw Quickstart — Install, Launch, and Run Your First Agent"
+description: "Install NemoClaw, launch a sandbox, and run your first agent prompt."
+---
+{/* SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-License-Identifier: Apache-2.0 */}
+
+# Quickstart
+
+Follow these steps to get started with NemoClaw and your first sandboxed OpenClaw agent.
+
+<Note>
+NemoClaw currently requires a fresh installation of OpenClaw.
+</Note>
+
+### Prerequisites
+
+Check the prerequisites before you start to ensure you have the necessary software and hardware to run NemoClaw.
+
+#### Software
+
+- Linux Ubuntu 22.04 LTS releases and later
+- Node.js 20+ and npm 10+ (the installer recommends Node.js 22)
+- Docker installed and running
+- [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) installed
+
+### Install NemoClaw and Onboard OpenClaw Agent
+
+Download and run the installer script.
+The script installs Node.js if it is not already present, then runs the guided onboard wizard to create a sandbox, configure inference, and apply security policies.
+
+```console
+$ curl -fsSL https://nvidia.com/nemoclaw.sh | bash
+```
+
+When the install completes, a summary confirms the running environment:
+
+```
+──────────────────────────────────────────────────
+Sandbox      my-assistant (Landlock + seccomp + netns)
+Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Cloud API)
+──────────────────────────────────────────────────
+Run:         nemoclaw my-assistant connect
+Status:      nemoclaw my-assistant status
+Logs:        nemoclaw my-assistant logs --follow
+──────────────────────────────────────────────────
+
+[INFO]  === Installation complete ===
+```
+
+### Chat with the Agent
+
+Connect to the sandbox, then chat with the agent through the TUI or the CLI.
+
+```console
+$ nemoclaw my-assistant connect
+```
+
+#### OpenClaw TUI
+
+The OpenClaw TUI opens an interactive chat interface. Type a message and press Enter to send it to the agent:
+
+```console
+sandbox@my-assistant:~$ openclaw tui
+```
+
+Send a test message to the agent and verify you receive a response.
+
+#### OpenClaw CLI
+
+Use the OpenClaw CLI to send a single message and print the response:
+
+```console
+sandbox@my-assistant:~$ openclaw agent --agent main --local -m "hello" --session-id test
+```
+
+### Next Steps
+
+- [Switch inference providers](/inference/switch-inference-providers) to use a different model or endpoint.
+- [Approve or deny network requests](/network-policy/approve-network-requests) when the agent tries to reach external hosts.
+- [Customize the network policy](/network-policy/customize-network-policy) to pre-approve trusted domains.
+- [Deploy to a remote GPU instance](/deployment/deploy-to-remote-gpu) for always-on operation.
+- [Monitor sandbox activity](/monitoring/monitor-sandbox-activity) through the OpenShell TUI.
