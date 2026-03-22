@@ -206,8 +206,8 @@ get_local_provider_base_url() {
   local provider="${1:-}"
 
   case "$provider" in
-    vllm-local) printf 'http://host.openshell.internal:8000/v1\n' ;;
-    ollama-local) printf 'http://host.openshell.internal:11434/v1\n' ;;
+    vllm-local) printf 'http://host.openshell.internal:%s/v1\n' "${NEMOCLAW_VLLM_PORT:-8000}" ;;
+    ollama-local) printf 'http://host.openshell.internal:%s/v1\n' "${NEMOCLAW_OLLAMA_PORT:-11434}" ;;
     *) return 1 ;;
   esac
 }
@@ -217,10 +217,10 @@ check_local_provider_health() {
 
   case "$provider" in
     vllm-local)
-      curl -sf http://localhost:8000/v1/models > /dev/null 2>&1
+      curl -sf "http://localhost:${NEMOCLAW_VLLM_PORT:-8000}/v1/models" > /dev/null 2>&1
       ;;
     ollama-local)
-      curl -sf http://localhost:11434/api/tags > /dev/null 2>&1
+      curl -sf "http://localhost:${NEMOCLAW_OLLAMA_PORT:-11434}/api/tags" > /dev/null 2>&1
       ;;
     *)
       return 1

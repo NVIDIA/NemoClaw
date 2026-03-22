@@ -17,6 +17,7 @@ Protocol:
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -29,27 +30,84 @@ import yaml
 
 
 def log(msg: str) -> None:
+    """Print a message to stdout with immediate flush."""
     print(msg, flush=True)
 
 
 def progress(pct: int, label: str) -> None:
+    """Emit a PROGRESS:<pct>:<label> line for the TS plugin to parse."""
     print(f"PROGRESS:{pct}:{label}", flush=True)
 
 
 def emit_run_id() -> str:
+    """Generate a unique run ID and print it as a RUN_ID:<id> line."""
     rid = f"nc-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     print(f"RUN_ID:{rid}", flush=True)
     return rid
 
 
 def load_blueprint() -> dict[str, Any]:
+    """Load blueprint.yaml from NEMOCLAW_BLUEPRINT_PATH and apply port overrides."""
     blueprint_path = Path(os.environ.get("NEMOCLAW_BLUEPRINT_PATH", "."))
     bp_file = blueprint_path / "blueprint.yaml"
     if not bp_file.exists():
         log(f"ERROR: blueprint.yaml not found at {bp_file}")
         sys.exit(1)
     with bp_file.open() as f:
-        return yaml.safe_load(f)
+        bp = yaml.safe_load(f)
+    _apply_port_overrides(bp)
+    return bp
+
+
+def _parse_port_env(env_var: str) -> int | None:
+    """Read and validate a port from an environment variable.
+
+    Returns the port as an int, or None if the variable is unset/empty.
+    Exits with a clear error for invalid values (matching ports.js behavior).
+    """
+    raw = os.environ.get(env_var, "")
+    if not raw:
+        return None
+    try:
+        port = int(raw)
+    except ValueError:
+        log(f'ERROR: {env_var}="{raw}" is not a valid port number')
+        sys.exit(1)
+    if port < 1024 or port > 65535:
+        log(f"ERROR: {env_var}={port} — must be between 1024 and 65535")
+        sys.exit(1)
+    return port
+
+
+def _apply_port_overrides(bp: dict[str, Any]) -> None:
+    """Override hardcoded ports from NEMOCLAW_*_PORT env vars.
+
+    Keeps blueprint.yaml as a readable reference of defaults while allowing
+    runtime configuration without editing YAML.
+    """
+    components = bp.setdefault("components", {})
+
+    # Dashboard / forward port
+    dashboard_port = _parse_port_env("NEMOCLAW_DASHBOARD_PORT")
+    if dashboard_port:
+        sandbox = components.setdefault("sandbox", {})
+        sandbox["forward_ports"] = [dashboard_port]
+
+    # vLLM / NIM inference port
+    vllm_port = _parse_port_env("NEMOCLAW_VLLM_PORT")
+    if vllm_port:
+        profiles = components.get("inference", {}).get("profiles", {})
+        for key in ("nim-local", "vllm"):
+            if key in profiles:
+                old_endpoint = profiles[key].get("endpoint", "")
+                # Replace the port in endpoint URL (matches any numeric port)
+                profiles[key]["endpoint"] = re.sub(r":\d+(/|$)", f":{vllm_port}\\1", old_endpoint)
+
+        # Policy addition: nim_service port
+        additions = components.get("policy", {}).get("additions", {})
+        nim_svc = additions.get("nim_service", {})
+        for ep in nim_svc.get("endpoints", []):
+            ep["port"] = vllm_port
 
 
 def run_cmd(
@@ -310,6 +368,7 @@ def action_rollback(rid: str) -> None:
 
 
 def main() -> None:
+    """Parse CLI arguments and dispatch to the requested action."""
     parser = argparse.ArgumentParser(description="NemoClaw Blueprint Runner")
     parser.add_argument("action", choices=["plan", "apply", "status", "rollback"])
     parser.add_argument("--profile", default="default")

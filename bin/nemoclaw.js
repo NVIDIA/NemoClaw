@@ -7,6 +7,9 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
+// Load .env files before any module reads process.env (e.g. ports.js)
+require("./lib/env");
+
 // ---------------------------------------------------------------------------
 // Color / style — respects NO_COLOR and non-TTY environments.
 // Uses exact NVIDIA green #76B900 on truecolor terminals; 256-color otherwise.
@@ -30,6 +33,7 @@ const {
 const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
+const { DASHBOARD_PORT } = require("./lib/ports");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -299,7 +303,7 @@ function listSandboxes() {
 function sandboxConnect(sandboxName) {
   const qn = shellQuote(sandboxName);
   // Ensure port forward is alive before connecting
-  run(`openshell forward start --background 18789 ${qn} 2>/dev/null || true`, { ignoreError: true });
+  run(`openshell forward start --background ${DASHBOARD_PORT} ${qn} 2>/dev/null || true`, { ignoreError: true });
   runInteractive(`openshell sandbox connect ${qn}`);
 }
 

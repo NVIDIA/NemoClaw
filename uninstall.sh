@@ -106,6 +106,36 @@ print_bye() {
 }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── Load .env so custom port overrides are visible ──────────────────
+_load_env() {
+  local env_file="$1"
+  [[ -f "$env_file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Trim leading/trailing whitespace
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    # Skip blank lines and full-line comments
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" == *=* ]] || continue
+    local key="${line%%=*}"
+    local val="${line#*=}"
+    # Handle quoted values (preserve # inside quotes), then strip inline comments on unquoted
+    if [[ "$val" == \"*\"* ]]; then
+      val="${val#\"}" ; val="${val%%\"*}"
+    elif [[ "$val" == \'*\'* ]]; then
+      val="${val#\'}" ; val="${val%%\'*}"
+    else
+      val="${val%%[[:space:]]\#*}"
+    fi
+    if [[ -z "${!key+x}" ]]; then
+      export "$key=$val"
+    fi
+  done < "$env_file"
+}
+_load_env "$SCRIPT_DIR/.env.local"
+_load_env "$SCRIPT_DIR/.env"
+
 NEMOCLAW_STATE_DIR="${HOME}/.nemoclaw"
 OPENSHELL_CONFIG_DIR="${HOME}/.config/openshell"
 NEMOCLAW_CONFIG_DIR="${HOME}/.config/nemoclaw"
@@ -253,7 +283,7 @@ stop_openshell_forward_processes() {
   while IFS= read -r pid; do
     [ -n "$pid" ] || continue
     pids+=("$pid")
-  done < <(pgrep -f 'openshell.*forward.*18789' 2>/dev/null || true)
+  done < <(pgrep -f "openshell.*forward.*${NEMOCLAW_DASHBOARD_PORT:-18789}" 2>/dev/null || true)
 
   if [ "${#pids[@]}" -eq 0 ]; then
     info "No local OpenShell forward processes found"

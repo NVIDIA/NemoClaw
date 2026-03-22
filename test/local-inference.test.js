@@ -18,33 +18,34 @@ const {
   validateOllamaModel,
   validateLocalProvider,
 } = require("../bin/lib/local-inference");
+const { VLLM_PORT, OLLAMA_PORT } = require("../bin/lib/ports");
 
 describe("local inference helpers", () => {
   it("returns the expected base URL for vllm-local", () => {
     assert.equal(
       getLocalProviderBaseUrl("vllm-local"),
-      "http://host.openshell.internal:8000/v1",
+      `http://host.openshell.internal:${VLLM_PORT}/v1`,
     );
   });
 
   it("returns the expected base URL for ollama-local", () => {
     assert.equal(
       getLocalProviderBaseUrl("ollama-local"),
-      "http://host.openshell.internal:11434/v1",
+      `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
     );
   });
 
   it("returns the expected health check command for ollama-local", () => {
     assert.equal(
       getLocalProviderHealthCheck("ollama-local"),
-      "curl -sf http://localhost:11434/api/tags 2>/dev/null",
+      `curl -sf http://localhost:${OLLAMA_PORT}/api/tags 2>/dev/null`,
     );
   });
 
   it("returns the expected container reachability command for ollama-local", () => {
     assert.equal(
       getLocalProviderContainerReachabilityCheck("ollama-local"),
-      `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:11434/api/tags 2>/dev/null`,
+      `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:${OLLAMA_PORT}/api/tags 2>/dev/null`,
     );
   });
 
@@ -61,7 +62,7 @@ describe("local inference helpers", () => {
   it("returns a clear error when ollama-local is unavailable", () => {
     const result = validateLocalProvider("ollama-local", () => "");
     assert.equal(result.ok, false);
-    assert.match(result.message, /http:\/\/localhost:11434/);
+    assert.match(result.message, new RegExp(`http://localhost:${OLLAMA_PORT}`));
   });
 
   it("returns a clear error when ollama-local is not reachable from containers", () => {
@@ -71,14 +72,14 @@ describe("local inference helpers", () => {
       return callCount === 1 ? '{"models":[]}' : "";
     });
     assert.equal(result.ok, false);
-    assert.match(result.message, /host\.openshell\.internal:11434/);
-    assert.match(result.message, /0\.0\.0\.0:11434/);
+    assert.match(result.message, new RegExp(`host\\.openshell\\.internal:${OLLAMA_PORT}`));
+    assert.match(result.message, new RegExp(`0\\.0\\.0\\.0:${OLLAMA_PORT}`));
   });
 
   it("returns a clear error when vllm-local is unavailable", () => {
     const result = validateLocalProvider("vllm-local", () => "");
     assert.equal(result.ok, false);
-    assert.match(result.message, /http:\/\/localhost:8000/);
+    assert.match(result.message, new RegExp(`http://localhost:${VLLM_PORT}`));
   });
 
   it("parses model names from ollama list output", () => {
@@ -121,14 +122,14 @@ describe("local inference helpers", () => {
 
   it("builds a background warmup command for ollama models", () => {
     const command = getOllamaWarmupCommand("nemotron-3-nano:30b");
-    assert.match(command, /^nohup curl -s http:\/\/localhost:11434\/api\/generate /);
+    assert.match(command, new RegExp(`^nohup curl -s http://localhost:${OLLAMA_PORT}/api/generate `));
     assert.match(command, /"model":"nemotron-3-nano:30b"/);
     assert.match(command, /"keep_alive":"15m"/);
   });
 
   it("builds a foreground probe command for ollama models", () => {
     const command = getOllamaProbeCommand("nemotron-3-nano:30b");
-    assert.match(command, /^curl -sS --max-time 120 http:\/\/localhost:11434\/api\/generate /);
+    assert.match(command, new RegExp(`^curl -sS --max-time 120 http://localhost:${OLLAMA_PORT}/api/generate `));
     assert.match(command, /"model":"nemotron-3-nano:30b"/);
   });
 

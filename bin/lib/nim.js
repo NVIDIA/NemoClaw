@@ -4,17 +4,21 @@
 // NIM container management — pull, start, stop, health-check NIM images.
 
 const { run, runCapture, shellQuote } = require("./runner");
+const { VLLM_PORT } = require("./ports");
 const nimImages = require("./nim-images.json");
 
+/** Return the Docker container name for a NIM instance tied to a sandbox. */
 function containerName(sandboxName) {
   return `nemoclaw-nim-${sandboxName}`;
 }
 
+/** Look up the Docker image for a model name; returns null if unknown. */
 function getImageForModel(modelName) {
   const entry = nimImages.models.find((m) => m.name === modelName);
   return entry ? entry.image : null;
 }
 
+/** Return all available NIM models with their image and memory requirements. */
 function listModels() {
   return nimImages.models.map((m) => ({
     name: m.name,
@@ -23,6 +27,7 @@ function listModels() {
   }));
 }
 
+/** Detect GPU hardware and return type, count, and memory; null if none found. */
 function detectGpu() {
   // Try NVIDIA first — query VRAM
   try {
@@ -114,6 +119,7 @@ function detectGpu() {
   return null;
 }
 
+/** Pull the Docker image for the given NIM model. Exits on unknown model. */
 function pullNimImage(model) {
   const image = getImageForModel(model);
   if (!image) {
@@ -125,7 +131,8 @@ function pullNimImage(model) {
   return image;
 }
 
-function startNimContainer(sandboxName, model, port = 8000) {
+/** Start a NIM container for the given sandbox and model, mapped to the configured port. */
+function startNimContainer(sandboxName, model, port = VLLM_PORT) {
   const name = containerName(sandboxName);
   const image = getImageForModel(model);
   if (!image) {
@@ -139,12 +146,14 @@ function startNimContainer(sandboxName, model, port = 8000) {
 
   console.log(`  Starting NIM container: ${name}`);
   run(
+    // Right-hand :8000 is the NIM image's internal port — fixed by the image, not configurable.
     `docker run -d --gpus all -p ${Number(port)}:8000 --name ${qn} --shm-size 16g ${shellQuote(image)}`
   );
   return name;
 }
 
-function waitForNimHealth(port = 8000, timeout = 300) {
+/** Poll the NIM health endpoint until it responds or the timeout (seconds) elapses. */
+function waitForNimHealth(port = VLLM_PORT, timeout = 300) {
   const start = Date.now();
   const interval = 5000;
   const safePort = Number(port);
@@ -167,6 +176,7 @@ function waitForNimHealth(port = 8000, timeout = 300) {
   return false;
 }
 
+/** Stop and remove the NIM container for a sandbox. */
 function stopNimContainer(sandboxName) {
   const name = containerName(sandboxName);
   const qn = shellQuote(name);
@@ -175,8 +185,10 @@ function stopNimContainer(sandboxName) {
   run(`docker rm ${qn} 2>/dev/null || true`, { ignoreError: true });
 }
 
-function nimStatus(sandboxName) {
+/** Check NIM container state and health for a sandbox. */
+function nimStatus(sandboxName, port = VLLM_PORT) {
   const name = containerName(sandboxName);
+  const safePort = Number(port);
   try {
     const state = runCapture(
       `docker inspect --format '{{.State.Status}}' ${shellQuote(name)} 2>/dev/null`,
@@ -186,7 +198,7 @@ function nimStatus(sandboxName) {
 
     let healthy = false;
     if (state === "running") {
-      const health = runCapture(`curl -sf http://localhost:8000/v1/models 2>/dev/null`, {
+      const health = runCapture(`curl -sf http://localhost:${safePort}/v1/models 2>/dev/null`, {
         ignoreError: true,
       });
       healthy = !!health;
