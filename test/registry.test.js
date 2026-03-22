@@ -59,6 +59,13 @@ describe("registry", () => {
     assert.equal(sb.model, "new-model");
   });
 
+  it("registerSandbox and updateSandbox store nimPort", () => {
+    registry.registerSandbox({ name: "nim-sb", nimPort: 9000 });
+    assert.equal(registry.getSandbox("nim-sb").nimPort, 9000);
+    registry.updateSandbox("nim-sb", { nimPort: 9001 });
+    assert.equal(registry.getSandbox("nim-sb").nimPort, 9001);
+  });
+
   it("updateSandbox returns false for nonexistent sandbox", () => {
     assert.equal(registry.updateSandbox("nope", {}), false);
   });
@@ -101,5 +108,23 @@ describe("registry", () => {
     // Should not throw, returns empty
     const { sandboxes } = registry.listSandboxes();
     assert.equal(sandboxes.length, 0);
+  });
+});
+
+describe("registry + nim port", () => {
+  const nim = require("../bin/lib/nim");
+
+  it("getNimPortForSandbox returns default when sandbox has no nimPort", () => {
+    registry.registerSandbox({ name: "no-port" });
+    assert.equal(nim.getNimPortForSandbox("no-port"), nim.DEFAULT_NIM_PORT);
+  });
+
+  it("getNimPortForSandbox returns stored nimPort", () => {
+    registry.registerSandbox({ name: "with-port", nimPort: 9000 });
+    assert.equal(nim.getNimPortForSandbox("with-port"), 9000);
+  });
+
+  it("getNimPortForSandbox returns default for nonexistent sandbox", () => {
+    assert.equal(nim.getNimPortForSandbox("nonexistent-xyz"), nim.DEFAULT_NIM_PORT);
   });
 });
