@@ -54,12 +54,15 @@ function note(message) {
 // otherwise prompts the user interactively.
 async function promptOrDefault(question, envVar, defaultValue) {
   if (isNonInteractive()) {
-    const val = envVar ? process.env[envVar] : null;
+    const raw = envVar ? process.env[envVar] : null;
+    const val = (raw || "").trim();
     const result = val || defaultValue;
     note(`  [non-interactive] ${question.trim()} → ${result}`);
     return result;
   }
-  return prompt(question);
+  const promptFn = _promptOverride || prompt;
+  const answer = (await promptFn(question) || "").trim();
+  return answer || defaultValue;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -478,7 +481,7 @@ async function createSandbox(gpu) {
     "  Sandbox name (lowercase, numbers, hyphens) [my-assistant]: ",
     "NEMOCLAW_SANDBOX_NAME", "my-assistant"
   );
-  const sandboxName = (nameAnswer || "my-assistant").trim().toLowerCase();
+  const sandboxName = nameAnswer.toLowerCase();
 
   // Validate: RFC 1123 subdomain — lowercase alphanumeric and hyphens,
   // must start and end with alphanumeric (required by Kubernetes/OpenShell)
@@ -1050,13 +1053,29 @@ async function onboard(opts = {}) {
   printDashboard(sandboxName, model, provider);
 }
 
+// Test-only: allows tests to toggle non-interactive mode without calling onboard().
+function _setNonInteractiveForTest(value) { NON_INTERACTIVE = Boolean(value); }
+
+// Test-only: inject a replacement for the interactive prompt function.
+// Pass null to restore the real prompt.
+let _promptOverride = null;
+function _setPromptForTest(fn) {
+  if (fn != null && typeof fn !== "function") {
+    throw new TypeError(`_setPromptForTest expects a function or null, got ${typeof fn}`);
+  }
+  _promptOverride = fn || null;
+}
+
 module.exports = {
+  _setNonInteractiveForTest,
+  _setPromptForTest,
   buildSandboxConfigSyncScript,
   getInstalledOpenshellVersion,
   getStableGatewayImageRef,
   hasStaleGateway,
   isSandboxReady,
   onboard,
+  promptOrDefault,
   setupNim,
   writeSandboxConfigSyncFile,
 };
