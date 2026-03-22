@@ -318,31 +318,52 @@ install_openshell() {
     return 0
   fi
 
-  info "Installing openshell CLI..."
+  OPENSHELL_VERSION="v0.0.8"
+  info "Installing openshell CLI (${OPENSHELL_VERSION})..."
 
   case "$OS" in
     Darwin)
       case "$ARCH_LABEL" in
-        x86_64)  ASSET="openshell-x86_64-apple-darwin.tar.gz" ;;
-        aarch64) ASSET="openshell-aarch64-apple-darwin.tar.gz" ;;
+        aarch64)
+          ASSET="openshell-aarch64-apple-darwin.tar.gz"
+          EXPECTED_SHA="8b0945ad046b48b9f1b82d14f45c68c7a9ab6138af27778a644193a9973e0048"
+          ;;
+        *)
+          fail "OpenShell ${OPENSHELL_VERSION} does not support Intel-based Macs (x86_64). Please use an Apple Silicon Mac or build OpenShell from source."
+          ;;
       esac
       ;;
     Linux)
       case "$ARCH_LABEL" in
-        x86_64)  ASSET="openshell-x86_64-unknown-linux-musl.tar.gz" ;;
-        aarch64) ASSET="openshell-aarch64-unknown-linux-musl.tar.gz" ;;
+        x86_64)
+          ASSET="openshell-x86_64-unknown-linux-musl.tar.gz"
+          EXPECTED_SHA="203a4732b8a8974c4f612132ea0325f2a1b298dff0fe639dc8f9aff4f26f8cc3"
+          ;;
+        aarch64)
+          ASSET="openshell-aarch64-unknown-linux-musl.tar.gz"
+          EXPECTED_SHA="e5efa57bf80bbc8fce4d47cc7f7fc7ccaaa65d57e9cca8094e1cd72c0a7ff72e"
+          ;;
       esac
       ;;
   esac
 
   tmpdir="$(mktemp -d)"
   if command -v gh > /dev/null 2>&1; then
-    GH_TOKEN="${GITHUB_TOKEN:-}" gh release download --repo NVIDIA/OpenShell \
+    GH_TOKEN="${GITHUB_TOKEN:-}" gh release download "${OPENSHELL_VERSION}" --repo NVIDIA/OpenShell \
       --pattern "$ASSET" --dir "$tmpdir"
   else
-    # Fallback: curl latest release
-    curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/latest/download/$ASSET" \
+    # Fallback: curl pinned release
+    curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/$ASSET" \
       -o "$tmpdir/$ASSET"
+  fi
+
+  # Verify checksum
+  if command -v sha256sum > /dev/null 2>&1; then
+    echo "${EXPECTED_SHA}  $tmpdir/$ASSET" | sha256sum -c -
+  elif command -v shasum > /dev/null 2>&1; then
+    echo "${EXPECTED_SHA}  $tmpdir/$ASSET" | shasum -a 256 -c -
+  else
+    fail "sha256sum or shasum not found. Cannot verify binary integrity."
   fi
 
   tar xzf "$tmpdir/$ASSET" -C "$tmpdir"
