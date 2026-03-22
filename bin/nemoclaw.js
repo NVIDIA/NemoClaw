@@ -32,6 +32,11 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
+function buildSandboxEnvPrefix(defaultSandbox) {
+  const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
+  return safeName ? `SANDBOX_NAME="${safeName}"` : "";
+}
+
 function resolveUninstallScript() {
   const candidates = [
     path.join(ROOT, "uninstall.sh"),
@@ -179,15 +184,13 @@ async function deploy(instanceName) {
 async function start() {
   await ensureApiKey();
   const { defaultSandbox } = registry.listSandboxes();
-  const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
-  const sandboxEnv = safeName ? `SANDBOX_NAME="${safeName}"` : "";
+  const sandboxEnv = buildSandboxEnvPrefix(defaultSandbox);
   run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh"`);
 }
 
 function stop() {
   const { defaultSandbox } = registry.listSandboxes();
-  const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
-  const sandboxEnv = safeName ? `SANDBOX_NAME="${safeName}"` : "";
+  const sandboxEnv = buildSandboxEnvPrefix(defaultSandbox);
   run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh" --stop`);
 }
 
@@ -243,8 +246,7 @@ function showStatus() {
   }
 
   // Show service status
-  const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
-  const sandboxEnv = safeName ? `SANDBOX_NAME="${safeName}"` : "";
+  const sandboxEnv = buildSandboxEnvPrefix(defaultSandbox);
   run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh" --status`);
 }
 
