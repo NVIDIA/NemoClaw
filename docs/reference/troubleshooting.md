@@ -107,7 +107,13 @@ Then retry onboarding.
 ### Cgroup v2 errors during onboard
 
 On Ubuntu 24.04, DGX Spark, and WSL2, Docker may not be configured for cgroup v2 delegation.
-The onboard preflight check detects this and fails with a clear error message.
+The gateway's embedded k3s fails to start because it cannot find cgroup v1-style paths.
+You may see errors such as:
+
+```
+openat2 /sys/fs/cgroup/kubepods/pids.max: no
+Failed to start ContainerManager: failed to initialize top level QOS containers
+```
 
 Run the Spark setup script to fix the Docker cgroup configuration, then retry onboarding:
 
@@ -115,6 +121,29 @@ Run the Spark setup script to fix the Docker cgroup configuration, then retry on
 $ sudo nemoclaw setup-spark
 $ nemoclaw onboard
 ```
+
+The script sets `"default-cgroupns-mode": "host"` in `/etc/docker/daemon.json` and restarts Docker.
+You can also apply this fix manually.
+Refer to the [DGX Spark manual setup](../get-started/dgx-spark.md) for step-by-step instructions.
+
+### Docker permission denied on DGX Spark
+
+If Docker commands fail with a permission error such as:
+
+```
+Error in the hyper legacy client: client error (Connect)
+  Permission denied (os error 13)
+```
+
+Your user is not in the `docker` group.
+Run the following commands, then log out and back in or run `newgrp docker`:
+
+```console
+$ sudo usermod -aG docker $USER
+$ newgrp docker
+```
+
+The `nemoclaw setup-spark` command applies this fix automatically.
 
 ### Invalid sandbox name
 
@@ -130,6 +159,17 @@ On DGX machines, sandbox creation can fail if the gateway's DNS has not finished
 
 Run `nemoclaw onboard` to retry.
 The wizard cleans up stale port forwards and waits for gateway readiness automatically.
+
+### CoreDNS CrashLoop after setup on DGX Spark
+
+After completing onboarding on DGX Spark, the sandbox may fail to resolve DNS because the CoreDNS pod is stuck in a CrashLoopBackOff.
+This happens when CoreDNS is configured to use `127.0.0.11` (the Docker embedded DNS) as its upstream, which is not reachable from inside the k3s network namespace.
+
+Run the CoreDNS fix script to reconfigure the upstream DNS to the container gateway IP:
+
+```console
+$ bash scripts/fix-coredns.sh
+```
 
 ### Colima socket not detected (macOS)
 
@@ -178,6 +218,19 @@ $ openshell term
 
 To permanently allow an endpoint, add it to the network policy.
 Refer to [Customize the Network Policy](../network-policy/customize-network-policy.md) for details.
+
+### Image pull failure after gateway restart
+
+If the sandbox image was pushed to the gateway's embedded registry and the gateway is later destroyed and recreated, the registry loses the image.
+Sandbox creation fails because k3s cannot find the image.
+
+Destroy the gateway, restart it, then re-run the onboard wizard to rebuild and push the image:
+
+```console
+$ openshell gateway destroy
+$ openshell gateway start
+$ nemoclaw onboard
+```
 
 ### Blueprint run failed
 

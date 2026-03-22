@@ -67,7 +67,7 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 
 > **💡 Tip**
 >
-> For DGX Spark, follow the [DGX Spark setup guide](https://github.com/NVIDIA/NemoClaw/blob/main/spark-install.md). It covers Spark-specific prerequisites, such as cgroup v2 and Docker configuration, before running the standard installer.
+> For DGX Spark, follow the [DGX Spark setup guide](https://docs.nvidia.com/nemoclaw/latest/get-started/dgx-spark.html). It covers Spark-specific prerequisites, such as cgroup v2 and Docker configuration, before running the standard installer.
 
 ### Install NemoClaw and Onboard OpenClaw Agent
 

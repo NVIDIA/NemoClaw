@@ -198,6 +198,7 @@ Release Notes <about/release-notes>
 :hidden:
 
 Quickstart <get-started/quickstart>
+DGX Spark <get-started/dgx-spark>
 ```
 
 ```{toctree}
