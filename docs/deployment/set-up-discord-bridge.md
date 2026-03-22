@@ -72,8 +72,8 @@ $ export SANDBOX_NAME=<your-sandbox-name>
 $ export NEMOCLAW_MODEL=nvidia/nemotron-3-nano-30b-a3b
 ```
 
-`SANDBOX_NAME` selects which sandbox the bridge connects to (default: `default`).
-`NEMOCLAW_MODEL` sets the model the agent uses for inference (default: `nvidia/nemotron-3-super-120b-a12b`).
+`SANDBOX_NAME` selects which sandbox the bridge connects to. The default is `default`.
+`NEMOCLAW_MODEL` sets the model the agent uses for inference. The default is `nvidia/nemotron-3-super-120b-a12b`.
 
 ## Start Auxiliary Services
 
@@ -88,7 +88,7 @@ The `start` command launches the following services:
 - The Discord bridge forwards messages between Discord channels and the agent.
 - The cloudflared tunnel provides external access to the sandbox.
 
-The Discord bridge starts only when the `DISCORD_BOT_TOKEN` environment variable is set.
+Set the `DISCORD_BOT_TOKEN` environment variable before running `nemoclaw start` to enable the Discord bridge.
 
 ## Verify the Services
 
