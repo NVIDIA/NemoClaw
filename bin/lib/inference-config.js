@@ -51,6 +51,17 @@ function getProviderSelectionConfig(provider, model) {
         provider,
         providerLabel: "Local Ollama",
       };
+    case "openrouter":
+      return {
+        endpointType: "custom",
+        endpointUrl: INFERENCE_ROUTE_URL,
+        ncpPartner: null,
+        model: model || DEFAULT_CLOUD_MODEL,
+        profile: DEFAULT_ROUTE_PROFILE,
+        credentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
+        provider,
+        providerLabel: "OpenRouter",
+      };
     default:
       return null;
   }

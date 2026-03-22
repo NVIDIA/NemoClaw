@@ -6,7 +6,14 @@ import { join } from "node:path";
 
 const CONFIG_DIR = join(process.env.HOME ?? "/tmp", ".nemoclaw");
 
-export type EndpointType = "build" | "ncp" | "nim-local" | "vllm" | "ollama" | "custom";
+export type EndpointType =
+  | "build"
+  | "ncp"
+  | "nim-local"
+  | "vllm"
+  | "ollama"
+  | "openrouter"
+  | "custom";
 
 export interface NemoClawOnboardConfig {
   endpointType: EndpointType;
@@ -44,6 +51,8 @@ export function describeOnboardProvider(config: NemoClawOnboardConfig): string {
       return "Local NIM";
     case "ncp":
       return "NVIDIA Cloud Partner";
+    case "openrouter":
+      return "OpenRouter";
     case "custom":
       return "Managed Inference Route";
     default:
