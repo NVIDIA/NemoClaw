@@ -254,15 +254,24 @@ upsert_provider() {
   local credential="$3"
   local config="$4"
 
-  if openshell provider create --name "$name" --type "$type" \
+  local output rc
+  set +e
+  output=$(openshell provider create --name "$name" --type "$type" \
     --credential "$credential" \
-    --config "$config" 2>&1 | grep -q "AlreadyExists"; then
+    --config "$config" 2>&1)
+  rc=$?
+  set -e
+
+  if [ "$rc" -eq 0 ]; then
+    info "Created $name provider"
+  elif echo "$output" | grep -q "AlreadyExists"; then
     openshell provider update "$name" \
       --credential "$credential" \
       --config "$config" > /dev/null
     info "Updated $name provider"
   else
-    info "Created $name provider"
+    echo "$output" >&2
+    fail "Failed to create provider $name (exit $rc)"
   fi
 }
 
@@ -273,15 +282,6 @@ upsert_provider \
   "openai" \
   "NVIDIA_API_KEY=$NVIDIA_API_KEY" \
   "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1"
-
-# Ollama provider (Jetson local inference)
-if command -v ollama > /dev/null 2>&1; then
-  upsert_provider \
-    "ollama-local" \
-    "openai" \
-    "OPENAI_API_KEY=ollama" \
-    "OPENAI_BASE_URL=http://host.openshell.internal:11434/v1"
-fi
 
 # vllm-local (if vLLM is running)
 if curl -s http://localhost:8000/v1/models > /dev/null 2>&1; then
@@ -371,43 +371,51 @@ done
 
 # SSH into the sandbox and fire off all the requests (they'll all 403,
 # but that's the point — the proxy records each as a draft rule)
-ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
   -o "ProxyCommand=openshell ssh-proxy --gateway-name nemoclaw --name nemoclaw" \
-  sandbox@openshell-nemoclaw "$CURL_CMDS" > /dev/null 2>&1 || true
-
-info "Draft rules generated — approve them in 'openshell term'"
+  sandbox@openshell-nemoclaw "$CURL_CMDS" > /dev/null 2>&1; then
+  info "Draft rules generated — approve them in 'openshell term'"
+else
+  warn "SSH into sandbox failed — draft rules may not have been generated. You can trigger them manually after connecting."
+fi
 
 # ── 7. Ollama (optional local inference) ──────────────────────────
 
 if ! command -v ollama > /dev/null 2>&1; then
   info "Installing Ollama (requires sudo)..."
-  curl -fsSL https://ollama.com/install.sh | sudo sh
+  if ! curl -fsSL https://ollama.com/install.sh | sudo sh; then
+    warn "Ollama installation failed — skipping local inference setup"
+  fi
 fi
 
 if command -v ollama > /dev/null 2>&1; then
   info "Ollama available (no model pulled — use 'ollama pull <model>' for local inference)"
+  upsert_provider \
+    "ollama-local" \
+    "openai" \
+    "OPENAI_API_KEY=ollama" \
+    "OPENAI_BASE_URL=http://host.openshell.internal:11434/v1"
 fi
 
 # ── 8. Fix CoreDNS (Jetson-specific) ────────────────────────────
 
-CLUSTER=$(docker ps --filter "name=openshell-cluster" --format '{{.Names}}' | head -1)
-if [ -n "$CLUSTER" ]; then
-  DNS_IP=$(docker exec "$CLUSTER" cat /etc/rancher/k3s/resolv.conf 2>/dev/null \
+if docker ps --format '{{.Names}}' | grep -qx "$CLUSTER_CONTAINER"; then
+  DNS_IP=$(docker exec "$CLUSTER_CONTAINER" cat /etc/rancher/k3s/resolv.conf 2>/dev/null \
     | grep nameserver | awk '{print $2}')
 
   if [ -n "$DNS_IP" ] && [[ "$DNS_IP" != 127.* ]]; then
-    CURRENT_FWD=$(docker exec "$CLUSTER" kubectl get configmap coredns -n kube-system \
+    CURRENT_FWD=$(docker exec "$CLUSTER_CONTAINER" kubectl get configmap coredns -n kube-system \
       -o jsonpath='{.data.Corefile}' 2>/dev/null | grep -oP 'forward \. \K\S+' || true)
 
     if [ "$CURRENT_FWD" != "$DNS_IP" ]; then
       info "Patching CoreDNS to forward to $DNS_IP..."
-      docker exec "$CLUSTER" kubectl patch configmap coredns -n kube-system --type merge \
+      docker exec "$CLUSTER_CONTAINER" kubectl patch configmap coredns -n kube-system --type merge \
         -p "{\"data\":{\"Corefile\":\".:53 {\\n    errors\\n    health\\n    ready\\n    kubernetes cluster.local in-addr.arpa ip6.arpa {\\n      pods insecure\\n      fallthrough in-addr.arpa ip6.arpa\\n    }\\n    hosts /etc/coredns/NodeHosts {\\n      ttl 60\\n      reload 15s\\n      fallthrough\\n    }\\n    prometheus :9153\\n    cache 30\\n    loop\\n    reload\\n    loadbalance\\n    forward . $DNS_IP\\n}\\n\"}}" > /dev/null
-      docker exec "$CLUSTER" kubectl rollout restart deploy/coredns -n kube-system > /dev/null
-      docker exec "$CLUSTER" kubectl rollout status deploy/coredns -n kube-system --timeout=30s > /dev/null 2>&1
+      docker exec "$CLUSTER_CONTAINER" kubectl rollout restart deploy/coredns -n kube-system > /dev/null
+      docker exec "$CLUSTER_CONTAINER" kubectl rollout status deploy/coredns -n kube-system --timeout=30s > /dev/null 2>&1
       info "CoreDNS patched"
 
-      docker exec "$CLUSTER" kubectl delete pod -n openshell -l app=nemoclaw --ignore-not-found > /dev/null 2>&1 || true
+      docker exec "$CLUSTER_CONTAINER" kubectl delete pod -n openshell -l app=nemoclaw --ignore-not-found > /dev/null 2>&1 || true
     else
       info "CoreDNS already forwarding to $DNS_IP"
     fi

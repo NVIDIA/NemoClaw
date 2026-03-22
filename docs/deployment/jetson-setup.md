@@ -35,10 +35,10 @@ iptables backend.
 
 ## Install
 
-```bash
-git clone https://github.com/NVIDIA/NemoClaw.git
-cd NemoClaw
-cd nemoclaw && npm install && npm run build && cd ..
+```console
+$ git clone https://github.com/NVIDIA/NemoClaw.git
+$ cd NemoClaw
+$ cd nemoclaw && npm install && npm run build && cd ..
 ```
 
 ## Run the Setup
@@ -46,9 +46,9 @@ cd nemoclaw && npm install && npm run build && cd ..
 The script runs as your **normal user** (not sudo). It uses sudo internally
 only for kernel module loading and Docker daemon configuration.
 
-```bash
-export NVIDIA_API_KEY=nvapi-...
-bash scripts/setup-jetson.sh
+```console
+$ export NVIDIA_API_KEY=nvapi-...
+$ bash scripts/setup-jetson.sh
 ```
 
 The script:
@@ -69,8 +69,8 @@ After the setup completes, you must activate the network policy once:
 
 1. Open the OpenShell TUI:
 
-   ```bash
-   openshell term
+   ```console
+   $ openshell term
    ```
 
 2. Approve the pending network policy rules in the TUI.
@@ -83,14 +83,14 @@ until the gateway is destroyed.
 
 ## Connect and Test
 
-```bash
-openshell sandbox connect nemoclaw
+```console
+$ openshell sandbox connect nemoclaw
 ```
 
 Inside the sandbox, test inference:
 
-```bash
-openclaw agent --agent main --local -m 'hello' --session-id test1
+```console
+$ openclaw agent --agent main --local -m 'hello' --session-id test1
 ```
 
 ## Local Inference with Ollama
@@ -98,9 +98,9 @@ openclaw agent --agent main --local -m 'hello' --session-id test1
 By default, inference routes through NVIDIA cloud. To use local inference
 on the Jetson GPU:
 
-```bash
-ollama pull nemotron-3-nano:4b
-openshell inference set --provider ollama-local --model nemotron-3-nano:4b
+```console
+$ ollama pull nemotron-3-nano:4b
+$ openshell inference set --provider ollama-local --model nemotron-3-nano:4b
 ```
 
 ## What's Different on Jetson
