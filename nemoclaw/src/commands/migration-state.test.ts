@@ -652,7 +652,11 @@ describe("commands/migration-state", () => {
         expect(result).toBe(true);
         expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("restored"));
       } finally {
-        process.env.HOME = origHome;
+        if (origHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = origHome;
+        }
       }
     });
 
@@ -681,7 +685,11 @@ describe("commands/migration-state", () => {
         expect(result).toBe(true);
         expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("external config"));
       } finally {
-        process.env.HOME = origHome;
+        if (origHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = origHome;
+        }
         if (origConfigPath === undefined) {
           delete process.env.OPENCLAW_CONFIG_PATH;
         } else {
@@ -712,7 +720,11 @@ describe("commands/migration-state", () => {
         expect(result).toBe(false);
         expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("homeDir is outside"));
       } finally {
-        process.env.HOME = origHome;
+        if (origHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = origHome;
+        }
       }
     });
 
@@ -738,7 +750,11 @@ describe("commands/migration-state", () => {
         expect(result).toBe(false);
         expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("stateDir is outside"));
       } finally {
-        process.env.HOME = origHome;
+        if (origHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = origHome;
+        }
       }
     });
 
@@ -768,7 +784,11 @@ describe("commands/migration-state", () => {
           expect.stringContaining("does not match OPENCLAW_STATE_DIR"),
         );
       } finally {
-        process.env.HOME = origHome;
+        if (origHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = origHome;
+        }
         if (origStateDir === undefined) {
           delete process.env.OPENCLAW_STATE_DIR;
         } else {
@@ -799,7 +819,11 @@ describe("commands/migration-state", () => {
         expect(result).toBe(false);
         expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("configPath is missing"));
       } finally {
-        process.env.HOME = origHome;
+        if (origHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = origHome;
+        }
       }
     });
 
@@ -825,7 +849,11 @@ describe("commands/migration-state", () => {
         expect(result).toBe(false);
         expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("configPath is outside"));
       } finally {
-        process.env.HOME = origHome;
+        if (origHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = origHome;
+        }
       }
     });
 
@@ -855,7 +883,11 @@ describe("commands/migration-state", () => {
           expect.stringContaining("does not match OPENCLAW_CONFIG_PATH"),
         );
       } finally {
-        process.env.HOME = origHome;
+        if (origHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = origHome;
+        }
         if (origConfigPath === undefined) {
           delete process.env.OPENCLAW_CONFIG_PATH;
         } else {
