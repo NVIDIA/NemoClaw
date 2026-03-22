@@ -96,6 +96,63 @@ describe("policies", () => {
     });
   });
 
+  describe("extractPresetEntries", () => {
+    it("extracts network_policies entries from a real preset", () => {
+      const content = policies.loadPreset("telegram");
+      const entries = policies.extractPresetEntries(content);
+      assert.ok(entries, "expected non-null entries");
+      assert.ok(entries.includes("telegram_bot:"), "expected telegram_bot entry");
+      assert.ok(entries.includes("api.telegram.org"), "expected telegram host");
+      // Should NOT include the preset: metadata header
+      assert.ok(!entries.includes("preset:"), "must strip preset metadata");
+    });
+
+    it("returns null when content has no network_policies key", () => {
+      const content = "preset:\n  name: broken\n  description: test\n";
+      assert.equal(policies.extractPresetEntries(content), null);
+    });
+
+    it("trims trailing whitespace from entries", () => {
+      const content = "network_policies:\n  entry: value\n\n\n";
+      const entries = policies.extractPresetEntries(content);
+      assert.ok(entries);
+      assert.ok(!entries.endsWith("\n"), "trailing newlines must be trimmed");
+    });
+
+    it("returns empty string when network_policies has no entries", () => {
+      const content = "preset:\n  name: empty\nnetwork_policies:\n";
+      const entries = policies.extractPresetEntries(content);
+      assert.equal(entries, "");
+    });
+  });
+
+  describe("parseCurrentPolicy", () => {
+    it("returns empty string for falsy input", () => {
+      assert.equal(policies.parseCurrentPolicy(""), "");
+      assert.equal(policies.parseCurrentPolicy(null), "");
+      assert.equal(policies.parseCurrentPolicy(undefined), "");
+    });
+
+    it("returns raw content when no --- separator", () => {
+      const raw = "version: 1\nnetwork_policies:\n  test: value";
+      assert.equal(policies.parseCurrentPolicy(raw), raw);
+    });
+
+    it("strips metadata header before --- separator", () => {
+      const raw = "Version: 2\nHash: abc123\n---\nversion: 1\nnetwork_policies:\n  entry: value";
+      const parsed = policies.parseCurrentPolicy(raw);
+      assert.ok(parsed.startsWith("version: 1"), "must start with content after ---");
+      assert.ok(!parsed.includes("Hash:"), "must not include metadata header");
+    });
+
+    it("splits on first --- only", () => {
+      const raw = "Header\n---\nversion: 1\n---\nextra";
+      const parsed = policies.parseCurrentPolicy(raw);
+      assert.ok(parsed.includes("---"), "content after first --- may contain more ---");
+      assert.ok(parsed.includes("extra"), "must preserve content after second ---");
+    });
+  });
+
   describe("preset YAML schema", () => {
     it("no preset has rules at NetworkPolicyRuleDef level", () => {
       // rules must be inside endpoints, not as sibling of endpoints/binaries
