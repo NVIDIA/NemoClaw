@@ -27,10 +27,8 @@ NEMOCLAW_VERSION="$(resolve_installer_version)"
 if [[ -z "${NO_COLOR:-}" && -t 1 ]]; then
   if [[ "${COLORTERM:-}" == "truecolor" || "${COLORTERM:-}" == "24bit" ]]; then
     C_GREEN=$'\033[38;2;118;185;0m'   # #76B900 — exact NVIDIA green
-    C_CLAW=$'\033[38;2;255;77;77m'    # #ff4d4d — OpenClaw red
   else
     C_GREEN=$'\033[38;5;148m'          # closest 256-color on dark backgrounds
-    C_CLAW=$'\033[38;5;210m'           # closest 256-color for #ff4d4d
   fi
   C_BOLD=$'\033[1m'
   C_DIM=$'\033[2m'
@@ -39,7 +37,7 @@ if [[ -z "${NO_COLOR:-}" && -t 1 ]]; then
   C_CYAN=$'\033[1;36m'
   C_RESET=$'\033[0m'
 else
-  C_GREEN='' C_CLAW='' C_BOLD='' C_DIM='' C_RED='' C_YELLOW='' C_CYAN='' C_RESET=''
+  C_GREEN='' C_BOLD='' C_DIM='' C_RED='' C_YELLOW='' C_CYAN='' C_RESET=''
 fi
 
 # ---------------------------------------------------------------------------
@@ -87,12 +85,12 @@ step() {
 print_banner() {
   printf "\n"
   # ANSI Shadow ASCII art — hand-crafted, no figlet dependency
-  printf "  ${C_GREEN}${C_BOLD} ███╗   ██╗███████╗███╗   ███╗ ██████╗  ${C_RESET}${C_CLAW}${C_BOLD}██████╗██╗      █████╗ ██╗    ██╗${C_RESET}\n"
-  printf "  ${C_GREEN}${C_BOLD} ████╗  ██║██╔════╝████╗ ████║██╔═══██╗${C_RESET}${C_CLAW}${C_BOLD}██╔════╝██║     ██╔══██╗██║    ██║${C_RESET}\n"
-  printf "  ${C_GREEN}${C_BOLD} ██╔██╗ ██║█████╗  ██╔████╔██║██║   ██║${C_RESET}${C_CLAW}${C_BOLD}██║     ██║     ███████║██║ █╗ ██║${C_RESET}\n"
-  printf "  ${C_GREEN}${C_BOLD} ██║╚██╗██║██╔══╝  ██║╚██╔╝██║██║   ██║${C_RESET}${C_CLAW}${C_BOLD}██║     ██║     ██╔══██║██║███╗██║${C_RESET}\n"
-  printf "  ${C_GREEN}${C_BOLD} ██║ ╚████║███████╗██║ ╚═╝ ██║╚██████╔╝${C_RESET}${C_CLAW}${C_BOLD}╚██████╗███████╗██║  ██║╚███╔███╔╝${C_RESET}\n"
-  printf "  ${C_GREEN}${C_BOLD} ╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝ ╚═════╝  ${C_RESET}${C_CLAW}${C_BOLD}╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ███╗   ██╗███████╗███╗   ███╗ ██████╗  ██████╗██╗      █████╗ ██╗    ██╗${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ████╗  ██║██╔════╝████╗ ████║██╔═══██╗██╔════╝██║     ██╔══██╗██║    ██║${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ██╔██╗ ██║█████╗  ██╔████╔██║██║   ██║██║     ██║     ███████║██║ █╗ ██║${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ██║╚██╗██║██╔══╝  ██║╚██╔╝██║██║   ██║██║     ██║     ██╔══██║██║███╗██║${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ██║ ╚████║███████╗██║ ╚═╝ ██║╚██████╔╝╚██████╗███████╗██║  ██║╚███╔███╔╝${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝ ╚═════╝  ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝${C_RESET}\n"
   printf "\n"
   printf "  ${C_DIM}Deploy more secure, always-on AI assistants with a single command.  v%s${C_RESET}\n" "$NEMOCLAW_VERSION"
   printf "\n"
@@ -104,11 +102,10 @@ print_done() {
   sandbox_name="$(resolve_default_sandbox_name)"
   info "=== Installation complete ==="
   printf "\n"
-  printf "  ${C_GREEN}${C_BOLD}Nemo${C_RESET}${C_CLAW}${C_BOLD}Claw${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$elapsed"
+  printf "  ${C_GREEN}${C_BOLD}NemoClaw${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$elapsed"
   printf "\n"
-  printf "  Your secured AI agent stack is live.\n"
+  printf "  ${C_GREEN}Your OpenClaw Sandbox is live.${C_RESET}\n"
   printf "  ${C_DIM}Sandbox in, break things, and tell us what you find.${C_RESET}\n"
-  printf "\n"
   printf "  ${C_GREEN}Next:${C_RESET}\n"
   printf "  %s$%s nemoclaw %s connect\n" "$C_GREEN" "$C_RESET" "$sandbox_name"
   printf "  %ssandbox@%s$%s openclaw tui\n" "$C_GREEN" "$sandbox_name" "$C_RESET"
@@ -567,20 +564,11 @@ main() {
   for arg in "$@"; do
     case "$arg" in
       --non-interactive) NON_INTERACTIVE=1 ;;
-      --version | -v)
-        printf "nemoclaw-installer v%s\n" "$NEMOCLAW_VERSION"
-        exit 0
-        ;;
-      --help | -h)
-        usage
-        exit 0
-        ;;
-      *)
-        usage
-        error "Unknown option: $arg"
-        ;;
-      esac
-    done
+      --version|-v) printf "nemoclaw-installer v%s\n" "$NEMOCLAW_VERSION"; exit 0 ;;
+      --help|-h) usage; exit 0 ;;
+      *) usage; error "Unknown option: $arg" ;;
+    esac
+  done
   # Also honor env var
   NON_INTERACTIVE="${NON_INTERACTIVE:-${NEMOCLAW_NON_INTERACTIVE:-}}"
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"

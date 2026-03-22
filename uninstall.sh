@@ -22,19 +22,16 @@ set -euo pipefail
 if [[ -z "${NO_COLOR:-}" && -t 1 ]]; then
   if [[ "${COLORTERM:-}" == "truecolor" || "${COLORTERM:-}" == "24bit" ]]; then
     C_GREEN=$'\033[38;2;118;185;0m'   # #76B900 — exact NVIDIA green
-    C_CLAW=$'\033[38;2;255;77;77m'    # #ff4d4d — OpenClaw red
   else
     C_GREEN=$'\033[38;5;148m'          # closest 256-color on dark backgrounds
-    C_CLAW=$'\033[38;5;210m'           # closest 256-color for #ff4d4d
   fi
   C_BOLD=$'\033[1m'
   C_DIM=$'\033[2m'
   C_RED=$'\033[1;31m'
   C_YELLOW=$'\033[1;33m'
-  C_WHITE=$'\033[1;37m'
   C_RESET=$'\033[0m'
 else
-  C_GREEN='' C_CLAW='' C_BOLD='' C_DIM='' C_RED='' C_YELLOW='' C_WHITE='' C_RESET=''
+  C_GREEN='' C_BOLD='' C_DIM='' C_RED='' C_YELLOW='' C_RESET=''
 fi
 
 info() { printf "${C_GREEN}[uninstall]${C_RESET} %s\n" "$*"; }
@@ -92,23 +89,23 @@ step() {
 
 print_banner() {
   printf "\n"
-  printf "  ${C_GREEN}${C_BOLD} ███╗   ██╗███████╗███╗   ███╗ ██████╗  ${C_RESET}${C_CLAW}${C_BOLD}██████╗██╗      █████╗ ██╗    ██╗${C_RESET}\n"
-  printf "  ${C_GREEN}${C_BOLD} ████╗  ██║██╔════╝████╗ ████║██╔═══██╗${C_RESET}${C_CLAW}${C_BOLD}██╔════╝██║     ██╔══██╗██║    ██║${C_RESET}\n"
-  printf "  ${C_GREEN}${C_BOLD} ██╔██╗ ██║█████╗  ██╔████╔██║██║   ██║${C_RESET}${C_CLAW}${C_BOLD}██║     ██║     ███████║██║ █╗ ██║${C_RESET}\n"
-  printf "  ${C_GREEN}${C_BOLD} ██║╚██╗██║██╔══╝  ██║╚██╔╝██║██║   ██║${C_RESET}${C_CLAW}${C_BOLD}██║     ██║     ██╔══██║██║███╗██║${C_RESET}\n"
-  printf "  ${C_GREEN}${C_BOLD} ██║ ╚████║███████╗██║ ╚═╝ ██║╚██████╔╝${C_RESET}${C_CLAW}${C_BOLD}╚██████╗███████╗██║  ██║╚███╔███╔╝${C_RESET}\n"
-  printf "  ${C_GREEN}${C_BOLD} ╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝ ╚═════╝  ${C_RESET}${C_CLAW}${C_BOLD}╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ███╗   ██╗███████╗███╗   ███╗ ██████╗  ██████╗██╗      █████╗ ██╗    ██╗${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ████╗  ██║██╔════╝████╗ ████║██╔═══██╗██╔════╝██║     ██╔══██╗██║    ██║${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ██╔██╗ ██║█████╗  ██╔████╔██║██║   ██║██║     ██║     ███████║██║ █╗ ██║${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ██║╚██╗██║██╔══╝  ██║╚██╔╝██║██║   ██║██║     ██║     ██╔══██║██║███╗██║${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ██║ ╚████║███████╗██║ ╚═╝ ██║╚██████╔╝╚██████╗███████╗██║  ██║╚███╔███╔╝${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝ ╚═════╝  ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝${C_RESET}\n"
   printf "\n"
-  printf "  ${C_DIM}Uninstaller — This will remove all NemoClaw-managed resources.${C_RESET}\n"
+  printf "  ${C_DIM}Uninstaller — This will remove all NemoClaw resources.${C_RESET}\n"
   printf "  ${C_DIM}Docker, Node.js, Ollama, and npm are preserved.${C_RESET}\n"
   printf "\n"
 }
 
 print_bye() {
   printf "\n"
-  printf "  ${C_GREEN}${C_BOLD}Nemo${C_RESET}${C_CLAW}${C_BOLD}Claw${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD}NemoClaw${C_RESET}\n"
   printf "\n"
-  printf "  ${C_BOLD}${C_WHITE}Claws retracted.${C_RESET}  ${C_DIM}Until next time.${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD}Claws retracted.${C_RESET}  ${C_DIM}Until next time.${C_RESET}\n"
   printf "\n"
   printf "  ${C_DIM}https://www.nvidia.com/nemoclaw${C_RESET}\n"
   printf "\n"
@@ -173,7 +170,7 @@ confirm() {
 
   printf "\n"
   printf "  ${C_YELLOW}What will be removed:${C_RESET}\n"
-  printf "  ${C_DIM}  · All OpenShell sandboxes, gateway, and NemoClaw-managed providers${C_RESET}\n"
+  printf "  ${C_DIM}  · All OpenShell sandboxes, gateway, and NemoClaw providers${C_RESET}\n"
   printf "  ${C_DIM}  · Related Docker containers, images, and volumes${C_RESET}\n"
   printf "  ${C_DIM}  · ~/.nemoclaw  ~/.config/openshell  ~/.config/nemoclaw${C_RESET}\n"
   printf "  ${C_DIM}  · Global nemoclaw npm package${C_RESET}\n"

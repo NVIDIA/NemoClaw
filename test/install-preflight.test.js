@@ -640,11 +640,24 @@ fi`,
     assert.match(output, /NemoClaw Installer/);
     assert.match(output, /--non-interactive/);
     assert.match(output, /--version/);
+    assert.match(output, /NEMOCLAW_PROVIDER/);
+    assert.match(output, /NEMOCLAW_POLICY_MODE/);
+    assert.match(output, /NEMOCLAW_SANDBOX_NAME/);
     assert.match(output, /nvidia\.com\/nemoclaw\.sh/);
   });
 
   it("--version exits 0 and prints the version number", () => {
     const result = spawnSync("bash", [INSTALLER, "--version"], {
+      cwd: path.join(__dirname, ".."),
+      encoding: "utf-8",
+    });
+
+    assert.equal(result.status, 0);
+    assert.match(`${result.stdout}${result.stderr}`, /nemoclaw-installer v\d+\.\d+\.\d+/);
+  });
+
+  it("-v exits 0 and prints the version number", () => {
+    const result = spawnSync("bash", [INSTALLER, "-v"], {
       cwd: path.join(__dirname, ".."),
       encoding: "utf-8",
     });
@@ -665,7 +678,14 @@ fi`,
     writeNpmStub(
       fakeBin,
       `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
+if [ "$1" = "pack" ]; then
+  tmpdir="$4"
+  mkdir -p "$tmpdir/package"
+  tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
+  exit 0
+fi
 if [ "$1" = "install" ]; then exit 0; fi
+if [ "$1" = "run" ] && [ "$2" = "build" ]; then exit 0; fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
@@ -682,6 +702,11 @@ fi`,
     fs.writeFileSync(
       path.join(tmp, "package.json"),
       JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+    );
+    fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, "nemoclaw", "package.json"),
+      JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
     );
 
     const result = spawnSync("bash", [INSTALLER], {
@@ -714,8 +739,30 @@ fi`,
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
-    // npm install -g fails with a recognisable message
-    writeNpmStub(fakeBin, `echo "ENOTFOUND simulated network error" >&2; exit 1`);
+    writeExecutable(
+      path.join(fakeBin, "git"),
+      `#!/usr/bin/env bash
+if [ "$1" = "clone" ]; then
+  target="\${@: -1}"
+  mkdir -p "$target/nemoclaw"
+  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
+  exit 0
+fi
+exit 0
+`,
+    );
+    writeNpmStub(
+      fakeBin,
+      `if [ "$1" = "pack" ]; then
+  echo "ENOTFOUND simulated network error" >&2
+  exit 1
+fi
+if [ "$1" = "install" ] || [ "$1" = "run" ] || [ "$1" = "link" ]; then
+  echo "ENOTFOUND simulated network error" >&2
+  exit 1
+fi`,
+    );
 
     const result = spawnSync("bash", [INSTALLER], {
       cwd: tmp,
