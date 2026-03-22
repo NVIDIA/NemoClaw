@@ -1,11 +1,14 @@
 # NemoClaw on DGX Spark
 
-> **WIP** — This page is actively being updated as we work through Spark installs. Expect changes.
-
 ## Quick Start
 
 ```bash
-# Clone and install
+# Download and review the installer before running
+curl -fsSL https://nvidia.com/nemoclaw.sh -o nemoclaw-install.sh
+less nemoclaw-install.sh  # review the script
+sudo bash nemoclaw-install.sh
+
+# Or clone and install manually
 git clone https://github.com/NVIDIA/NemoClaw.git
 cd NemoClaw
 sudo npm install -g .
@@ -18,7 +21,7 @@ That's it. `setup-spark` handles everything below automatically.
 
 ## What's Different on Spark
 
-DGX Spark ships **Ubuntu 24.04 + Docker 28.x** but no k8s/k3s. OpenShell embeds k3s inside a Docker container, which hits two problems on Spark:
+DGX Spark ships **Ubuntu 24.04 (Noble) + Docker 28.x/29.x** on **aarch64 (Grace CPU + GB10 GPU)** but no k8s/k3s. OpenShell embeds k3s inside a Docker container, which hits two problems on Spark:
 
 ### 1. Docker permissions
 
@@ -104,6 +107,9 @@ nemoclaw onboard
 | CoreDNS CrashLoop after setup | Fixed in `fix-coredns.sh` | Uses container gateway IP, not 127.0.0.11 |
 | Image pull failure (k3s can't find built image) | OpenShell bug | `openshell gateway destroy && openshell gateway start`, re-run setup |
 | GPU passthrough | Untested on Spark | Should work with `--gpu` flag if NVIDIA Container Toolkit is configured |
+| `pip install` fails with system packages | Known | Use a venv (recommended) or `--break-system-packages` (last resort, can break system tools) |
+| Port 3000 conflict with AI Workbench | Known | AI Workbench Traefik proxy uses port 3000 (and 10000); use a different port for other services |
+| Network policy blocks NVIDIA cloud API | By design | Ensure `integrate.api.nvidia.com` is in the sandbox network policy if using cloud inference |
 
 ## Verifying Your Install
 
@@ -121,13 +127,65 @@ nemoclaw-start openclaw agent --agent main --local -m 'hello' --session-id test
 openshell term
 ```
 
-## Architecture Notes
+## Web Dashboard
+
+The OpenClaw gateway includes a built-in web UI. Access it at:
 
 ```
-DGX Spark (Ubuntu 24.04, cgroup v2)
-  └── Docker (28.x, cgroupns=host)
-       └── OpenShell gateway container
-            └── k3s (embedded)
-                 └── nemoclaw sandbox pod
-                      └── OpenClaw agent + NemoClaw plugin
+http://127.0.0.1:18789/#token=<your-gateway-token>
+```
+
+Find your gateway token in `~/.openclaw/openclaw.json` under `gateway.auth.token` inside the sandbox.
+
+> **Important**: Use `127.0.0.1` (not `localhost`) — the gateway's origin check requires an exact match. External dashboards like Mission Control cannot currently connect due to the gateway resetting `controlUi.allowedOrigins` on every config reload (see [openclaw#49950](https://github.com/openclaw/openclaw/issues/49950)).
+
+## Using Local LLMs
+
+DGX Spark has 128 GB unified memory shared between CPU and GPU. You can run local models alongside the sandbox:
+
+```bash
+# Build llama.cpp for GB10 (sm_121)
+git clone https://github.com/ggml-org/llama.cpp.git
+cd llama.cpp
+PATH=/usr/local/cuda/bin:$PATH cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=121
+cmake --build build --config Release -j$(nproc)
+
+# Run a model (e.g. Nemotron-3-Super-120B Q4_K_M ~78 GB)
+./build/bin/llama-server --model <path-to-gguf> --host 0.0.0.0 --port 8000 \
+  --n-gpu-layers 999 --ctx-size 32768
+```
+
+Then configure your sandbox to use the local model by updating `~/.openclaw/openclaw.json` inside the sandbox:
+
+```json
+{
+  "models": {
+    "providers": {
+      "local": {
+        "baseUrl": "http://host.containers.internal:8000/v1",
+        "apiKey": "not-needed",
+        "api": "openai-completions",
+        "models": [{ "id": "my-model", "name": "Local Model" }]
+      }
+    }
+  },
+  "agents": {
+    "defaults": { "model": { "primary": "local/my-model" } }
+  }
+}
+```
+
+> **Note**: The sandbox egress proxy blocks direct access to the host network. Use `inference.local` with `"apiKey": "openshell-managed"` if your model is configured via NIM or `nemoclaw setup-spark`.
+
+> **Note**: Some NIM containers (e.g., Nemotron-3-Super-120B-A12B) ship native arm64 images and run on the Spark. However, many NIM images are amd64-only and will fail with `exec format error`. Check the image architecture before pulling. GGUF models with llama.cpp are a reliable alternative for models without arm64 NIM support.
+
+## Architecture Notes
+
+```text
+DGX Spark (Ubuntu 24.04, aarch64, cgroup v2, 128 GB unified memory)
+  └── Docker (28.x/29.x, cgroupns=host)
+  │    └── OpenShell gateway container (k3s embedded)
+  │         └── nemoclaw sandbox pod
+  │              └── OpenClaw agent + NemoClaw plugin
+  └── llama-server (optional, local inference on GB10 GPU)
 ```
