@@ -625,7 +625,14 @@ function removeAuthProfileFiles(preparedStateDir: string): void {
 }
 
 function walkAndRemoveFile(dirPath: string, targetName: string): void {
-  for (const entry of readdirSync(dirPath)) {
+  let entries: string[];
+  try {
+    entries = readdirSync(dirPath);
+  } catch (err) {
+    console.warn(`[credential-sanitize] Unable to read directory ${dirPath}: ${err}`);
+    return;
+  }
+  for (const entry of entries) {
     const fullPath = path.join(dirPath, entry);
     try {
       const stat = lstatSync(fullPath);
@@ -634,8 +641,8 @@ function walkAndRemoveFile(dirPath: string, targetName: string): void {
       } else if (entry === targetName) {
         rmSync(fullPath, { force: true });
       }
-    } catch {
-      // Non-fatal: skip files that disappeared or lack permissions
+    } catch (err) {
+      console.warn(`[credential-sanitize] Unable to process ${fullPath}: ${err}`);
     }
   }
 }
