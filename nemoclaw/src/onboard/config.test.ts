@@ -115,6 +115,12 @@ describe("onboard/config", () => {
       store.set(configPath, JSON.stringify(config));
       expect(loadOnboardConfig()).toEqual(config);
     });
+
+    it("returns null when config file contains malformed JSON", () => {
+      const configPath = `${process.env.HOME ?? "/tmp"}/.nemoclaw/config.json`;
+      store.set(configPath, "corrupt data here");
+      expect(loadOnboardConfig()).toBeNull();
+    });
   });
 
   describe("saveOnboardConfig", () => {
