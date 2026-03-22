@@ -1,15 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+import { describe, it, expect } from "vitest";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 
-const SMOKE_SCRIPT = path.join(__dirname, "..", "scripts", "smoke-macos-install.sh");
+const SMOKE_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "smoke-macos-install.sh");
 
 describe("macOS smoke install script guardrails", () => {
   it("prints help", () => {
     const result = spawnSync("bash", [SMOKE_SCRIPT, "--help"], {
-      cwd: path.join(__dirname, ".."),
+      cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
     });
 
@@ -19,7 +20,7 @@ describe("macOS smoke install script guardrails", () => {
 
   it("requires NVIDIA_API_KEY", () => {
     const result = spawnSync("bash", [SMOKE_SCRIPT], {
-      cwd: path.join(__dirname, ".."),
+      cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
       env: { ...process.env, NVIDIA_API_KEY: "" },
     });
@@ -30,7 +31,7 @@ describe("macOS smoke install script guardrails", () => {
 
   it("rejects invalid sandbox names", () => {
     const result = spawnSync("bash", [SMOKE_SCRIPT, "--sandbox-name", "Bad Name"], {
-      cwd: path.join(__dirname, ".."),
+      cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
       env: { ...process.env, NVIDIA_API_KEY: "nvapi-test" },
     });
@@ -41,7 +42,7 @@ describe("macOS smoke install script guardrails", () => {
 
   it("rejects unsupported runtimes", () => {
     const result = spawnSync("bash", [SMOKE_SCRIPT, "--runtime", "podman"], {
-      cwd: path.join(__dirname, ".."),
+      cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
       env: { ...process.env, NVIDIA_API_KEY: "nvapi-test" },
     });
@@ -52,7 +53,7 @@ describe("macOS smoke install script guardrails", () => {
 
   it("fails when a requested runtime socket is unavailable", () => {
     const result = spawnSync("bash", [SMOKE_SCRIPT, "--runtime", "docker-desktop"], {
-      cwd: path.join(__dirname, ".."),
+      cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
       env: {
         ...process.env,
@@ -87,7 +88,7 @@ describe("macOS smoke install script guardrails", () => {
     `;
 
     const result = spawnSync("bash", ["-lc", script], {
-      cwd: path.join(__dirname, ".."),
+      cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
       env: { ...process.env, NVIDIA_API_KEY: "nvapi-test" },
     });

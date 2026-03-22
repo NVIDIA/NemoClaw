@@ -9,11 +9,10 @@
 //
 // The fix validates both fields are within manifest.homeDir before any write.
 
-"use strict";
-
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
+import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 // ═══════════════════════════════════════════════════════════════════
 // Helpers — simulate restoreSnapshotToHost's vulnerable vs fixed logic
@@ -419,7 +418,7 @@ describe("C-4 regression: migration-state.ts contains path validation", () => {
   /** Extract the restoreSnapshotToHost function body from the source. */
   function getRestoreFnBody() {
     const src = fs.readFileSync(
-      path.join(__dirname, "..", "nemoclaw", "src", "commands", "migration-state.ts"),
+      path.join(import.meta.dirname, "..", "nemoclaw", "src", "commands", "migration-state.ts"),
       "utf-8",
     );
     const fnStart = src.indexOf("function restoreSnapshotToHost");

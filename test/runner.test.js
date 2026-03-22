@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const path = require("node:path");
-const childProcess = require("node:child_process");
+import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import childProcess from "node:child_process";
 const { spawnSync } = childProcess;
 
-const runnerPath = path.join(__dirname, "..", "bin", "lib", "runner");
+const runnerPath = path.join(import.meta.dirname, "..", "bin", "lib", "runner");
 
 describe("runner helpers", () => {
   it("does not let child commands consume installer stdin", () => {
@@ -19,7 +22,7 @@ describe("runner helpers", () => {
     `;
 
     const result = spawnSync("node", ["-e", script], {
-      cwd: path.join(__dirname, ".."),
+      cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
       input: "preserved-answer\n",
     });
@@ -143,8 +146,8 @@ describe("runner helpers", () => {
 
   describe("regression guards", () => {
     it("nemoclaw.js does not use execSync", () => {
-      const fs = require("fs");
-      const src = fs.readFileSync(path.join(__dirname, "..", "bin", "nemoclaw.js"), "utf-8");
+
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"), "utf-8");
       const lines = src.split("\n");
       for (let i = 0; i < lines.length; i++) {
         if (lines[i].includes("execSync") && !lines[i].includes("execFileSync")) {
@@ -154,8 +157,8 @@ describe("runner helpers", () => {
     });
 
     it("no duplicate shellQuote definitions in bin/", () => {
-      const fs = require("fs");
-      const binDir = path.join(__dirname, "..", "bin");
+
+      const binDir = path.join(import.meta.dirname, "..", "bin");
       const files = [];
       function walk(dir) {
         for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -177,19 +180,19 @@ describe("runner helpers", () => {
     });
 
     it("CLI rejects malicious sandbox names before shell commands (e2e)", () => {
-      const fs = require("fs");
-      const os = require("os");
+
+
       const canaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-canary-"));
       const canary = path.join(canaryDir, "executed");
       try {
         const result = spawnSync("node", [
-          path.join(__dirname, "..", "bin", "nemoclaw.js"),
+          path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
           `test; touch ${canary}`,
           "connect",
         ], {
           encoding: "utf-8",
           timeout: 10000,
-          cwd: path.join(__dirname, ".."),
+          cwd: path.join(import.meta.dirname, ".."),
         });
         expect(result.status).not.toBe(0);
         expect(fs.existsSync(canary)).toBe(false);
@@ -199,8 +202,8 @@ describe("runner helpers", () => {
     });
 
     it("telegram bridge validates SANDBOX_NAME on startup", () => {
-      const fs = require("fs");
-      const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "telegram-bridge.js"), "utf-8");
+
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "scripts", "telegram-bridge.js"), "utf-8");
       expect(src.includes("validateName(SANDBOX")).toBeTruthy();
       expect(!src.includes("execSync")).toBeTruthy();
     });

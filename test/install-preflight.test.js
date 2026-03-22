@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 
-const INSTALLER = path.join(__dirname, "..", "install.sh");
-const CURL_PIPE_INSTALLER = path.join(__dirname, "..", "scripts", "install.sh");
+const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
+const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "..", "scripts", "install.sh");
 const GITHUB_INSTALL_URL = "git+https://github.com/NVIDIA/NemoClaw.git";
 const TEST_SYSTEM_PATH = "/usr/bin:/bin";
 
@@ -87,7 +88,7 @@ exit 98
     );
 
     const result = spawnSync("bash", [INSTALLER], {
-      cwd: path.join(__dirname, ".."),
+      cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
       env: {
         ...process.env,
@@ -347,7 +348,7 @@ echo "Darwin"
     );
 
     const result = spawnSync("bash", [CURL_PIPE_INSTALLER], {
-      cwd: path.join(__dirname, ".."),
+      cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
       env: {
         ...process.env,
@@ -479,7 +480,7 @@ exit 0
 
   it("--help exits 0 and shows install usage", () => {
     const result = spawnSync("bash", [INSTALLER, "--help"], {
-      cwd: path.join(__dirname, ".."),
+      cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
     });
 
@@ -496,7 +497,7 @@ exit 0
 
   it("--version exits 0 and prints the version number", () => {
     const result = spawnSync("bash", [INSTALLER, "--version"], {
-      cwd: path.join(__dirname, ".."),
+      cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
     });
 
@@ -506,7 +507,7 @@ exit 0
 
   it("-v exits 0 and prints the version number", () => {
     const result = spawnSync("bash", [INSTALLER, "-v"], {
-      cwd: path.join(__dirname, ".."),
+      cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
     });
 

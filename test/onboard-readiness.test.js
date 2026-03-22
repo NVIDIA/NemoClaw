@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { buildPolicySetCommand, buildPolicyGetCommand } = require("../bin/lib/policies");
-const { hasStaleGateway, isSandboxReady } = require("../bin/lib/onboard");
+import { describe, it, expect } from "vitest";
+import { applyPreset, buildPolicySetCommand, buildPolicyGetCommand } from "../bin/lib/policies";
+import { hasStaleGateway, isSandboxReady } from "../bin/lib/onboard";
 
 describe("sandbox readiness parsing", () => {
   it("detects Ready sandbox", () => {
@@ -101,13 +102,12 @@ describe("WSL sandbox name handling", () => {
   });
 
   it("applyPreset rejects truncated/invalid sandbox name", () => {
-    const policies = require("../bin/lib/policies");
     // Empty name
-    expect(() => policies.applyPreset("", "npm")).toThrow(/Invalid or truncated sandbox name/);
+    expect(() => applyPreset("", "npm")).toThrow(/Invalid or truncated sandbox name/);
     // Name with uppercase (not valid per RFC 1123)
-    expect(() => policies.applyPreset("My-Assistant", "npm")).toThrow(/Invalid or truncated sandbox name/);
+    expect(() => applyPreset("My-Assistant", "npm")).toThrow(/Invalid or truncated sandbox name/);
     // Name starting with hyphen
-    expect(() => policies.applyPreset("-broken", "npm")).toThrow(/Invalid or truncated sandbox name/);
+    expect(() => applyPreset("-broken", "npm")).toThrow(/Invalid or truncated sandbox name/);
   });
 
   it("readiness check uses exact match preventing truncated name false-positive", () => {

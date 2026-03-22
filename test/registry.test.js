@@ -1,14 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const fs = require("fs");
-const path = require("path");
-const os = require("os");
+import { describe, it, expect, beforeEach } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { createRequire } from "node:module";
 
-// Use a temp dir so tests don't touch real ~/.nemoclaw
+// Use a temp dir so tests don't touch real ~/.nemoclaw.
+// HOME must be set before loading registry (it reads HOME at require time),
+// so we use createRequire instead of a static import.
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-test-"));
 process.env.HOME = tmpDir;
 
+const require = createRequire(import.meta.url);
 const registry = require("../bin/lib/registry");
 
 const regFile = path.join(tmpDir, ".nemoclaw", "sandboxes.json");

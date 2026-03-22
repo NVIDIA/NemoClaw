@@ -68,11 +68,7 @@ jobs:
           npm install
           npm run build
 
-      - name: Run root unit tests
-        run: npx vitest run
-
-      - name: Run TypeScript unit tests with coverage
-        working-directory: nemoclaw
+      - name: Run all unit tests with coverage
         run: npx vitest run --coverage
 
       - name: Check coverage ratchet

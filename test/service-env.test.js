@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { execSync } = require("child_process");
-const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
+import { describe, it, expect } from "vitest";
+import { execSync } from "node:child_process";
+import { resolveOpenshell } from "../bin/lib/resolve-openshell";
 
 describe("service environment", () => {
   describe("resolveOpenshell logic", () => {

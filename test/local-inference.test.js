@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const {
+import { describe, it, expect } from "vitest";
+
+import {
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
   getDefaultOllamaModel,
@@ -14,7 +16,7 @@ const {
   parseOllamaList,
   validateOllamaModel,
   validateLocalProvider,
-} = require("../bin/lib/local-inference");
+} from "../bin/lib/local-inference";
 
 describe("local inference helpers", () => {
   it("returns the expected base URL for vllm-local", () => {

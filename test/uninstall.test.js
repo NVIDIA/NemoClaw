@@ -1,17 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 
-const UNINSTALL_SCRIPT = path.join(__dirname, "..", "uninstall.sh");
+const UNINSTALL_SCRIPT = path.join(import.meta.dirname, "..", "uninstall.sh");
 
 describe("uninstall CLI flags", () => {
   it("--help exits 0 and shows usage", () => {
     const result = spawnSync("bash", [UNINSTALL_SCRIPT, "--help"], {
-      cwd: path.join(__dirname, ".."),
+      cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
     });
 
@@ -35,13 +36,13 @@ describe("uninstall CLI flags", () => {
       }
 
       const result = spawnSync("bash", [UNINSTALL_SCRIPT, "--yes"], {
-        cwd: path.join(__dirname, ".."),
+        cwd: path.join(import.meta.dirname, ".."),
         encoding: "utf-8",
         env: {
           ...process.env,
           HOME: tmp,
           PATH: `${fakeBin}:/usr/bin:/bin`,
-          SCRIPT_DIR: path.join(__dirname, ".."),
+          SCRIPT_DIR: path.join(import.meta.dirname, ".."),
         },
       });
 
@@ -62,7 +63,7 @@ describe("uninstall helpers", () => {
       "bash",
       ["-lc", `source "${UNINSTALL_SCRIPT}"; gateway_volume_candidates nemoclaw`],
       {
-        cwd: path.join(__dirname, ".."),
+        cwd: path.join(import.meta.dirname, ".."),
         encoding: "utf-8",
       },
     );
@@ -82,7 +83,7 @@ describe("uninstall helpers", () => {
       "bash",
       ["-lc", `HOME="${tmp}" source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_cli`],
       {
-        cwd: path.join(__dirname, ".."),
+        cwd: path.join(import.meta.dirname, ".."),
         encoding: "utf-8",
       },
     );

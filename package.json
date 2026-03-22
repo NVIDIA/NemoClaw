@@ -51,9 +51,10 @@
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
+    "@vitest/coverage-v8": "^4.1.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "shellcheck": "^4.1.0",
-    "vitest": "^3.1.1"
+    "vitest": "^4.1.0"
   }
 }

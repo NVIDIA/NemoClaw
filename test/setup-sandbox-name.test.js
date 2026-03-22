@@ -6,11 +6,12 @@
 //
 // See: https://github.com/NVIDIA/NemoClaw/issues/197
 
-const fs = require("node:fs");
-const path = require("node:path");
-const { execSync } = require("node:child_process");
+import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { execSync } from "node:child_process";
 
-const ROOT = path.resolve(__dirname, "..");
+const ROOT = path.resolve(import.meta.dirname, "..");
 
 describe("setup.sh sandbox name parameterization (#197)", () => {
   const content = fs.readFileSync(path.join(ROOT, "scripts/setup.sh"), "utf-8");

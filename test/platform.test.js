@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const path = require("node:path");
+import { describe, it, expect } from "vitest";
+import path from "node:path";
 
-const {
+import {
   detectDockerHost,
   findColimaDockerSocket,
   getDockerSocketCandidates,
@@ -11,7 +12,7 @@ const {
   isUnsupportedMacosRuntime,
   isWsl,
   shouldPatchCoredns,
-} = require("../bin/lib/platform");
+} from "../bin/lib/platform";
 
 describe("platform helpers", () => {
   describe("isWsl", () => {

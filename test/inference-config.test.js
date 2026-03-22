@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const {
+import { describe, it, expect } from "vitest";
+
+import {
   CLOUD_MODEL_OPTIONS,
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_ROUTE_CREDENTIAL_ENV,
@@ -10,7 +12,7 @@ const {
   MANAGED_PROVIDER_ID,
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
-} = require("../bin/lib/inference-config");
+} from "../bin/lib/inference-config";
 
 describe("inference selection config", () => {
   it("exposes the curated cloud model picker options", () => {

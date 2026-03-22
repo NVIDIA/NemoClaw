@@ -1,16 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
+import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-const {
+import {
   buildSandboxConfigSyncScript,
   getInstalledOpenshellVersion,
   getStableGatewayImageRef,
   writeSandboxConfigSyncFile,
-} = require("../bin/lib/onboard");
+} from "../bin/lib/onboard";
 
 describe("onboard helpers", () => {
   it("builds a sandbox sync script that only writes nemoclaw config", () => {

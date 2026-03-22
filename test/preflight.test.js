@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const net = require("net");
-const { checkPortAvailable } = require("../bin/lib/preflight");
+import { describe, it, expect } from "vitest";
+import net from "node:net";
+import { checkPortAvailable } from "../bin/lib/preflight";
 
 describe("checkPortAvailable", () => {
   it("falls through to net probe when lsof output is empty", async () => {

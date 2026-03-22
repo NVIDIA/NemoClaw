@@ -1,5 +1,4 @@
 #!/bin/sh
 set -e
 npx --no -- lint-staged
-cd nemoclaw
-npx vitest run
+npx vitest run --project plugin

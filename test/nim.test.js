@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const nim = require("../bin/lib/nim");
+import { describe, it, expect } from "vitest";
+import nim from "../bin/lib/nim";
 
 describe("nim", () => {
   describe("listModels", () => {

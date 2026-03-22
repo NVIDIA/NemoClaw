@@ -1,18 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 
-const RUNTIME_SH = path.join(__dirname, "..", "scripts", "lib", "runtime.sh");
-
-afterEach(() => {});
+const RUNTIME_SH = path.join(import.meta.dirname, "..", "scripts", "lib", "runtime.sh");
 
 function runShell(script, env = {}) {
   return spawnSync("bash", ["-lc", script], {
-    cwd: path.join(__dirname, ".."),
+    cwd: path.join(import.meta.dirname, ".."),
     encoding: "utf-8",
     env: { ...process.env, ...env },
   });

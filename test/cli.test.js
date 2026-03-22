@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { execSync } = require("child_process");
-const path = require("path");
+import { describe, it, expect } from "vitest";
+import { execSync } from "node:child_process";
+import path from "node:path";
 
-const CLI = path.join(__dirname, "..", "bin", "nemoclaw.js");
+const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 
 function run(args) {
   try {
