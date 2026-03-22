@@ -324,13 +324,12 @@ install_openshell() {
   case "$OS" in
     Darwin)
       case "$ARCH_LABEL" in
-        x86_64)
-          ASSET="openshell-x86_64-apple-darwin.tar.gz"
-          EXPECTED_SHA="da39a3ee5e6b4b0d3255bfef95601890afd80709" # Placeholder for macOS
-          ;;
         aarch64)
           ASSET="openshell-aarch64-apple-darwin.tar.gz"
           EXPECTED_SHA="8b0945ad046b48b9f1b82d14f45c68c7a9ab6138af27778a644193a9973e0048"
+          ;;
+        *)
+          fail "OpenShell ${OPENSHELL_VERSION} does not support Intel-based Macs (x86_64). Please use an Apple Silicon Mac or build OpenShell from source."
           ;;
       esac
       ;;
@@ -364,7 +363,7 @@ install_openshell() {
   elif command -v shasum > /dev/null 2>&1; then
     echo "${EXPECTED_SHA}  $tmpdir/$ASSET" | shasum -a 256 -c -
   else
-    warn "sha256sum not found, skipping checksum verification"
+    fail "sha256sum or shasum not found. Cannot verify binary integrity."
   fi
 
   tar xzf "$tmpdir/$ASSET" -C "$tmpdir"
