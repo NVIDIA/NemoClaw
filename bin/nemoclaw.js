@@ -186,16 +186,21 @@ async function deploy(instanceName) {
   runInteractive(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw'`);
 }
 
-async function start() {
-  await ensureApiKey();
+function sandboxEnvPrefix() {
   const { defaultSandbox } = registry.listSandboxes();
   const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
-  const sandboxEnv = safeName ? `SANDBOX_NAME=${shellQuote(safeName)}` : "";
-  run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh"`);
+  return safeName ? `SANDBOX_NAME=${shellQuote(safeName)}` : "";
+}
+
+async function start() {
+  await ensureApiKey();
+  const envPrefix = sandboxEnvPrefix();
+  run(`${envPrefix} bash "${SCRIPTS}/start-services.sh"`);
 }
 
 function stop() {
-  run(`bash "${SCRIPTS}/start-services.sh" --stop`);
+  const envPrefix = sandboxEnvPrefix();
+  run(`${envPrefix} bash "${SCRIPTS}/start-services.sh" --stop`);
 }
 
 function debug(args) {
@@ -250,7 +255,8 @@ function showStatus() {
   }
 
   // Show service status
-  run(`bash "${SCRIPTS}/start-services.sh" --status`);
+  const envPrefix = sandboxEnvPrefix();
+  run(`${envPrefix} bash "${SCRIPTS}/start-services.sh" --status`);
 }
 
 function listSandboxes() {
