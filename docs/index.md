@@ -166,6 +166,16 @@ Egress control, operator approval flow, and policy configuration.
 {bdg-secondary}`Reference`
 :::
 
+:::{grid-item-card} Workspace Files
+:link: workspace/workspace-files
+:link-type: doc
+
+Understand agent identity, memory, and configuration files that persist in the sandbox.
+
++++
+{bdg-secondary}`Concept`
+:::
+
 :::{grid-item-card} How-To Guides
 :link: inference/switch-inference-providers
 :link-type: doc
@@ -228,6 +238,14 @@ Set Up the Telegram Bridge <deployment/set-up-telegram-bridge>
 :hidden:
 
 Monitor Sandbox Activity <monitoring/monitor-sandbox-activity>
+```
+
+```{toctree}
+:caption: Workspace
+:hidden:
+
+Workspace Files <workspace/workspace-files>
+Back Up and Restore <workspace/backup-restore>
 ```
 
 ```{toctree}
