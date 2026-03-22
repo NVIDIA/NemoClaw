@@ -4,8 +4,6 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
 
 const {
   buildSandboxConfigSyncScript,
@@ -27,36 +25,33 @@ describe("onboard helpers", () => {
     });
 
     // Writes NemoClaw selection config to writable ~/.nemoclaw/
-    assert.match(script, /cat > ~\/\.nemoclaw\/config\.json/);
-    assert.match(script, /"model": "nemotron-3-nano:30b"/);
-    assert.match(script, /"credentialEnv": "OPENAI_API_KEY"/);
+    expect(script).toMatch(/cat > ~\/\.nemoclaw\/config\.json/);
+    expect(script).toMatch(/"model": "nemotron-3-nano:30b"/);
+    expect(script).toMatch(/"credentialEnv": "OPENAI_API_KEY"/);
 
     // Must NOT modify openclaw config from inside the sandbox — model routing
     // is handled by the host-side gateway (openshell inference set)
-    assert.doesNotMatch(script, /openclaw\.json/);
-    assert.doesNotMatch(script, /openclaw models set/);
+    expect(script).not.toMatch(/openclaw\.json/);
+    expect(script).not.toMatch(/openclaw models set/);
 
-    assert.match(script, /^exit$/m);
+    expect(script).toMatch(/^exit$/m);
   });
 
   it("pins the gateway image to the installed OpenShell release version", () => {
-    assert.equal(getInstalledOpenshellVersion("openshell 0.0.12"), "0.0.12");
-    assert.equal(getInstalledOpenshellVersion("openshell 0.0.13-dev.8+gbbcaed2ea"), "0.0.13");
-    assert.equal(getInstalledOpenshellVersion("bogus"), null);
-    assert.equal(
-      getStableGatewayImageRef("openshell 0.0.12"),
-      "ghcr.io/nvidia/openshell/cluster:0.0.12"
-    );
-    assert.equal(getStableGatewayImageRef("openshell 0.0.13-dev.8+gbbcaed2ea"), "ghcr.io/nvidia/openshell/cluster:0.0.13");
-    assert.equal(getStableGatewayImageRef("bogus"), null);
+    expect(getInstalledOpenshellVersion("openshell 0.0.12")).toBe("0.0.12");
+    expect(getInstalledOpenshellVersion("openshell 0.0.13-dev.8+gbbcaed2ea")).toBe("0.0.13");
+    expect(getInstalledOpenshellVersion("bogus")).toBe(null);
+    expect(getStableGatewayImageRef("openshell 0.0.12")).toBe("ghcr.io/nvidia/openshell/cluster:0.0.12");
+    expect(getStableGatewayImageRef("openshell 0.0.13-dev.8+gbbcaed2ea")).toBe("ghcr.io/nvidia/openshell/cluster:0.0.13");
+    expect(getStableGatewayImageRef("bogus")).toBe(null);
   });
 
   it("writes sandbox sync scripts to a temp file for stdin redirection", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-test-"));
     try {
       const scriptFile = writeSandboxConfigSyncFile("echo test", tmpDir, 1234);
-      assert.equal(scriptFile, path.join(tmpDir, "nemoclaw-sync-1234.sh"));
-      assert.equal(fs.readFileSync(scriptFile, "utf8"), "echo test\n");
+      expect(scriptFile).toBe(path.join(tmpDir, "nemoclaw-sync-1234.sh"));
+      expect(fs.readFileSync(scriptFile, "utf8")).toBe("echo test\n");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

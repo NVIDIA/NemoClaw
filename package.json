@@ -7,7 +7,7 @@
     "nemoclaw": "./bin/nemoclaw.js"
   },
   "scripts": {
-    "test": "node --test test/*.test.js",
+    "test": "vitest run",
     "prepare": "husky || true",
     "prepublishOnly": "cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
@@ -53,6 +53,7 @@
     "@commitlint/config-conventional": "^20.5.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
-    "shellcheck": "^4.1.0"
+    "shellcheck": "^4.1.0",
+    "vitest": "^3.1.1"
   }
 }

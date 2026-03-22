@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
 const path = require("path");
 
 const policies = require("../bin/lib/policies");
@@ -11,37 +9,37 @@ describe("policies", () => {
   describe("listPresets", () => {
     it("returns all 9 presets", () => {
       const presets = policies.listPresets();
-      assert.equal(presets.length, 9);
+      expect(presets.length).toBe(9);
     });
 
     it("each preset has name and description", () => {
       for (const p of policies.listPresets()) {
-        assert.ok(p.name, `preset missing name: ${p.file}`);
-        assert.ok(p.description, `preset missing description: ${p.file}`);
+        expect(p.name).toBeTruthy();
+        expect(p.description).toBeTruthy();
       }
     });
 
     it("returns expected preset names", () => {
       const names = policies.listPresets().map((p) => p.name).sort();
       const expected = ["discord", "docker", "huggingface", "jira", "npm", "outlook", "pypi", "slack", "telegram"];
-      assert.deepEqual(names, expected);
+      expect(names).toEqual(expected);
     });
   });
 
   describe("loadPreset", () => {
     it("loads existing preset", () => {
       const content = policies.loadPreset("outlook");
-      assert.ok(content);
-      assert.ok(content.includes("network_policies:"));
+      expect(content).toBeTruthy();
+      expect(content.includes("network_policies:")).toBeTruthy();
     });
 
     it("returns null for nonexistent preset", () => {
-      assert.equal(policies.loadPreset("nonexistent"), null);
+      expect(policies.loadPreset("nonexistent")).toBe(null);
     });
 
     it("rejects path traversal attempts", () => {
-      assert.equal(policies.loadPreset("../../etc/passwd"), null);
-      assert.equal(policies.loadPreset("../../../etc/shadow"), null);
+      expect(policies.loadPreset("../../etc/passwd")).toBe(null);
+      expect(policies.loadPreset("../../../etc/shadow")).toBe(null);
     });
   });
 
@@ -49,23 +47,23 @@ describe("policies", () => {
     it("extracts hosts from outlook preset", () => {
       const content = policies.loadPreset("outlook");
       const hosts = policies.getPresetEndpoints(content);
-      assert.ok(hosts.includes("graph.microsoft.com"));
-      assert.ok(hosts.includes("login.microsoftonline.com"));
-      assert.ok(hosts.includes("outlook.office365.com"));
-      assert.ok(hosts.includes("outlook.office.com"));
+      expect(hosts.includes("graph.microsoft.com")).toBeTruthy();
+      expect(hosts.includes("login.microsoftonline.com")).toBeTruthy();
+      expect(hosts.includes("outlook.office365.com")).toBeTruthy();
+      expect(hosts.includes("outlook.office.com")).toBeTruthy();
     });
 
     it("extracts hosts from telegram preset", () => {
       const content = policies.loadPreset("telegram");
       const hosts = policies.getPresetEndpoints(content);
-      assert.deepEqual(hosts, ["api.telegram.org"]);
+      expect(hosts).toEqual(["api.telegram.org"]);
     });
 
     it("every preset has at least one endpoint", () => {
       for (const p of policies.listPresets()) {
         const content = policies.loadPreset(p.name);
         const hosts = policies.getPresetEndpoints(content);
-        assert.ok(hosts.length > 0, `${p.name} has no endpoints`);
+        expect(hosts.length > 0).toBeTruthy();
       }
     });
   });
@@ -73,26 +71,26 @@ describe("policies", () => {
   describe("buildPolicySetCommand", () => {
     it("shell-quotes sandbox name to prevent injection", () => {
       const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-      assert.equal(cmd, "openshell policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'");
+      expect(cmd).toBe("openshell policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'");
     });
 
     it("escapes shell metacharacters in sandbox name", () => {
       const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test; whoami");
-      assert.ok(cmd.includes("'test; whoami'"), "metacharacters must be shell-quoted");
+      expect(cmd.includes("'test; whoami'")).toBeTruthy();
     });
 
     it("places --wait before the sandbox name", () => {
       const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test-box");
       const waitIdx = cmd.indexOf("--wait");
       const nameIdx = cmd.indexOf("'test-box'");
-      assert.ok(waitIdx < nameIdx, "--wait must come before sandbox name");
+      expect(waitIdx < nameIdx).toBeTruthy();
     });
   });
 
   describe("buildPolicyGetCommand", () => {
     it("shell-quotes sandbox name", () => {
       const cmd = policies.buildPolicyGetCommand("my-assistant");
-      assert.equal(cmd, "openshell policy get --full 'my-assistant' 2>/dev/null");
+      expect(cmd).toBe("openshell policy get --full 'my-assistant' 2>/dev/null");
     });
   });
 
@@ -107,7 +105,9 @@ describe("policies", () => {
           // rules: at 4-space indent (same level as endpoints:) is wrong
           // rules: at 8+ space indent (inside an endpoint) is correct
           if (/^\s{4}rules:/.test(line)) {
-            assert.fail(`${p.name} line ${i + 1}: rules at policy level (should be inside endpoint)`);
+            expect.unreachable(
+              `${p.name} line ${i + 1}: rules at policy level (should be inside endpoint)`
+            );
           }
         }
       }
@@ -116,7 +116,7 @@ describe("policies", () => {
     it("every preset has network_policies section", () => {
       for (const p of policies.listPresets()) {
         const content = policies.loadPreset(p.name);
-        assert.ok(content.includes("network_policies:"), `${p.name} missing network_policies`);
+        expect(content.includes("network_policies:")).toBeTruthy();
       }
     });
   });

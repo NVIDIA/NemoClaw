@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -99,11 +97,11 @@ exit 98
     });
 
     const output = `${result.stdout}${result.stderr}`;
-    assert.notEqual(result.status, 0);
-    assert.match(output, /Unsupported runtime detected/);
-    assert.match(output, /Node\.js >=20 and npm >=10/);
-    assert.match(output, /v18\.19\.1/);
-    assert.match(output, /9\.8\.1/);
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(/Unsupported runtime detected/);
+    expect(output).toMatch(/Node\.js >=20 and npm >=10/);
+    expect(output).toMatch(/v18\.19\.1/);
+    expect(output).toMatch(/9\.8\.1/);
   });
 
   it("uses the HTTPS GitHub fallback when not installing from a repo checkout", () => {
@@ -198,8 +196,8 @@ exit 98
       },
     });
 
-    assert.equal(result.status, 0);
-    assert.match(fs.readFileSync(gitLog, "utf-8"), /clone.*NemoClaw\.git/);
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(gitLog, "utf-8")).toMatch(/clone.*NemoClaw\.git/);
   });
 
   it("prints the HTTPS GitHub remediation when the binary is missing", () => {
@@ -280,9 +278,9 @@ exit 98
     });
 
     const output = `${result.stdout}${result.stderr}`;
-    assert.notEqual(result.status, 0);
-    assert.match(output, new RegExp(GITHUB_INSTALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    assert.doesNotMatch(output, /npm install -g nemoclaw/);
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(new RegExp(GITHUB_INSTALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    expect(output).not.toMatch(/npm install -g nemoclaw/);
   });
 
   it("does not silently prefer Colima when both macOS runtimes are available", () => {
@@ -360,9 +358,9 @@ echo "Darwin"
     });
 
     const output = `${result.stdout}${result.stderr}`;
-    assert.notEqual(result.status, 0);
-    assert.match(output, /Both Colima and Docker Desktop are available/);
-    assert.doesNotMatch(output, /colima should not be started/);
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(/Both Colima and Docker Desktop are available/);
+    expect(output).not.toMatch(/colima should not be started/);
   });
 
   it("can run via stdin without a sibling runtime.sh file", () => {
@@ -474,9 +472,9 @@ exit 0
     });
 
     const output = `${result.stdout}${result.stderr}`;
-    assert.equal(result.status, 0);
-    assert.match(output, /Installation complete!/);
-    assert.match(output, /nemoclaw v0\.1\.0-test is ready/);
+    expect(result.status).toBe(0);
+    expect(output).toMatch(/Installation complete!/);
+    expect(output).toMatch(/nemoclaw v0\.1\.0-test is ready/);
   });
 
   it("--help exits 0 and shows install usage", () => {
@@ -485,15 +483,15 @@ exit 0
       encoding: "utf-8",
     });
 
-    assert.equal(result.status, 0);
+    expect(result.status).toBe(0);
     const output = `${result.stdout}${result.stderr}`;
-    assert.match(output, /NemoClaw Installer/);
-    assert.match(output, /--non-interactive/);
-    assert.match(output, /--version/);
-    assert.match(output, /NEMOCLAW_PROVIDER/);
-    assert.match(output, /NEMOCLAW_POLICY_MODE/);
-    assert.match(output, /NEMOCLAW_SANDBOX_NAME/);
-    assert.match(output, /nvidia\.com\/nemoclaw\.sh/);
+    expect(output).toMatch(/NemoClaw Installer/);
+    expect(output).toMatch(/--non-interactive/);
+    expect(output).toMatch(/--version/);
+    expect(output).toMatch(/NEMOCLAW_PROVIDER/);
+    expect(output).toMatch(/NEMOCLAW_POLICY_MODE/);
+    expect(output).toMatch(/NEMOCLAW_SANDBOX_NAME/);
+    expect(output).toMatch(/nvidia\.com\/nemoclaw\.sh/);
   });
 
   it("--version exits 0 and prints the version number", () => {
@@ -502,8 +500,8 @@ exit 0
       encoding: "utf-8",
     });
 
-    assert.equal(result.status, 0);
-    assert.match(`${result.stdout}${result.stderr}`, /nemoclaw-installer v\d+\.\d+\.\d+/);
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/nemoclaw-installer v\d+\.\d+\.\d+/);
   });
 
   it("-v exits 0 and prints the version number", () => {
@@ -512,8 +510,8 @@ exit 0
       encoding: "utf-8",
     });
 
-    assert.equal(result.status, 0);
-    assert.match(`${result.stdout}${result.stderr}`, /nemoclaw-installer v\d+\.\d+\.\d+/);
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/nemoclaw-installer v\d+\.\d+\.\d+/);
   });
 
   it("uses npm install + npm link for a source checkout (no -g)", () => {
@@ -572,13 +570,13 @@ fi`,
       },
     });
 
-    assert.equal(result.status, 0);
+    expect(result.status).toBe(0);
     const log = fs.readFileSync(npmLog, "utf-8");
     // install (no -g) and link must both have been called
-    assert.match(log, /^install(?!\s+-g)/m);
-    assert.match(log, /^link/m);
+    expect(log).toMatch(/^install(?!\s+-g)/m);
+    expect(log).toMatch(/^link/m);
     // the GitHub URL must NOT appear — this is a local install
-    assert.doesNotMatch(log, new RegExp(GITHUB_INSTALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    expect(log).not.toMatch(new RegExp(GITHUB_INSTALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   });
 
   it("spin() non-TTY: dumps wrapped-command output and exits non-zero on failure", () => {
@@ -626,8 +624,8 @@ fi`,
       },
     });
 
-    assert.notEqual(result.status, 0);
-    assert.match(`${result.stdout}${result.stderr}`, /ENOTFOUND simulated network error/);
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/ENOTFOUND simulated network error/);
   });
 
   it("creates a user-local shim when npm installs outside the current PATH", () => {
@@ -741,8 +739,8 @@ exit 0
     });
 
     const shimPath = path.join(tmp, ".local", "bin", "nemoclaw");
-    assert.equal(result.status, 0);
-    assert.equal(fs.readlinkSync(shimPath), path.join(prefix, "bin", "nemoclaw"));
-    assert.match(`${result.stdout}${result.stderr}`, /Created user-local shim/);
+    expect(result.status).toBe(0);
+    expect(fs.readlinkSync(shimPath)).toBe(path.join(prefix, "bin", "nemoclaw"));
+    expect(`${result.stdout}${result.stderr}`).toMatch(/Created user-local shim/);
   });
 });

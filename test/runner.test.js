@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
 const path = require("node:path");
 const childProcess = require("node:child_process");
 const { spawnSync } = childProcess;
@@ -26,8 +24,8 @@ describe("runner helpers", () => {
       input: "preserved-answer\n",
     });
 
-    assert.equal(result.status, 0);
-    assert.equal(result.stdout, "preserved-answer\n");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("preserved-answer\n");
   });
 
   it("uses inherited stdio for interactive commands only", () => {
@@ -48,9 +46,9 @@ describe("runner helpers", () => {
       delete require.cache[require.resolve(runnerPath)];
     }
 
-    assert.equal(calls.length, 2);
-    assert.deepEqual(calls[0][2].stdio, ["ignore", "inherit", "inherit"]);
-    assert.equal(calls[1][2].stdio, "inherit");
+    expect(calls.length).toBe(2);
+    expect(calls[0][2].stdio).toEqual(["ignore", "inherit", "inherit"]);
+    expect(calls[1][2].stdio).toBe("inherit");
   });
 
   it("preserves process env when opts.env is provided", () => {
@@ -77,29 +75,29 @@ describe("runner helpers", () => {
       delete require.cache[require.resolve(runnerPath)];
     }
 
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0][2].env.OPENSHELL_CLUSTER_IMAGE, "ghcr.io/nvidia/openshell/cluster:0.0.12");
-    assert.equal(calls[0][2].env.PATH, "/usr/local/bin:/usr/bin");
+    expect(calls.length).toBe(1);
+    expect(calls[0][2].env.OPENSHELL_CLUSTER_IMAGE).toBe("ghcr.io/nvidia/openshell/cluster:0.0.12");
+    expect(calls[0][2].env.PATH).toBe("/usr/local/bin:/usr/bin");
   });
 
   describe("shellQuote", () => {
     it("wraps in single quotes", () => {
       const { shellQuote } = require(runnerPath);
-      assert.equal(shellQuote("hello"), "'hello'");
+      expect(shellQuote("hello")).toBe("'hello'");
     });
 
     it("escapes embedded single quotes", () => {
       const { shellQuote } = require(runnerPath);
-      assert.equal(shellQuote("it's"), "'it'\\''s'");
+      expect(shellQuote("it's")).toBe("'it'\\''s'");
     });
 
     it("neutralizes shell metacharacters", () => {
       const { shellQuote } = require(runnerPath);
       const dangerous = "test; rm -rf /";
       const quoted = shellQuote(dangerous);
-      assert.equal(quoted, "'test; rm -rf /'");
+      expect(quoted).toBe("'test; rm -rf /'");
       const result = spawnSync("bash", ["-c", `echo ${quoted}`], { encoding: "utf-8" });
-      assert.equal(result.stdout.trim(), dangerous);
+      expect(result.stdout.trim()).toBe(dangerous);
     });
 
     it("handles backticks and dollar signs", () => {
@@ -107,39 +105,39 @@ describe("runner helpers", () => {
       const payload = "test`whoami`$HOME";
       const quoted = shellQuote(payload);
       const result = spawnSync("bash", ["-c", `echo ${quoted}`], { encoding: "utf-8" });
-      assert.equal(result.stdout.trim(), payload);
+      expect(result.stdout.trim()).toBe(payload);
     });
   });
 
   describe("validateName", () => {
     it("accepts valid RFC 1123 names", () => {
       const { validateName } = require(runnerPath);
-      assert.equal(validateName("my-sandbox"), "my-sandbox");
-      assert.equal(validateName("test123"), "test123");
-      assert.equal(validateName("a"), "a");
+      expect(validateName("my-sandbox")).toBe("my-sandbox");
+      expect(validateName("test123")).toBe("test123");
+      expect(validateName("a")).toBe("a");
     });
 
     it("rejects names with shell metacharacters", () => {
       const { validateName } = require(runnerPath);
-      assert.throws(() => validateName("test; whoami"), /Invalid/);
-      assert.throws(() => validateName("test`id`"), /Invalid/);
-      assert.throws(() => validateName("test$(cat /etc/passwd)"), /Invalid/);
-      assert.throws(() => validateName("../etc/passwd"), /Invalid/);
+      expect(() => validateName("test; whoami")).toThrow(/Invalid/);
+      expect(() => validateName("test`id`")).toThrow(/Invalid/);
+      expect(() => validateName("test$(cat /etc/passwd)")).toThrow(/Invalid/);
+      expect(() => validateName("../etc/passwd")).toThrow(/Invalid/);
     });
 
     it("rejects empty and overlength names", () => {
       const { validateName } = require(runnerPath);
-      assert.throws(() => validateName(""), /required/);
-      assert.throws(() => validateName(null), /required/);
-      assert.throws(() => validateName("a".repeat(64)), /too long/);
+      expect(() => validateName("")).toThrow(/required/);
+      expect(() => validateName(null)).toThrow(/required/);
+      expect(() => validateName("a".repeat(64))).toThrow(/too long/);
     });
 
     it("rejects uppercase and special characters", () => {
       const { validateName } = require(runnerPath);
-      assert.throws(() => validateName("MyBox"), /Invalid/);
-      assert.throws(() => validateName("my_box"), /Invalid/);
-      assert.throws(() => validateName("-leading"), /Invalid/);
-      assert.throws(() => validateName("trailing-"), /Invalid/);
+      expect(() => validateName("MyBox")).toThrow(/Invalid/);
+      expect(() => validateName("my_box")).toThrow(/Invalid/);
+      expect(() => validateName("-leading")).toThrow(/Invalid/);
+      expect(() => validateName("trailing-")).toThrow(/Invalid/);
     });
   });
 
@@ -150,7 +148,7 @@ describe("runner helpers", () => {
       const lines = src.split("\n");
       for (let i = 0; i < lines.length; i++) {
         if (lines[i].includes("execSync") && !lines[i].includes("execFileSync")) {
-          assert.fail(`bin/nemoclaw.js:${i + 1} uses execSync — use execFileSync instead`);
+          expect.unreachable(`bin/nemoclaw.js:${i + 1} uses execSync — use execFileSync instead`);
         }
       }
     });
@@ -174,8 +172,8 @@ describe("runner helpers", () => {
           defs.push(file.replace(binDir, "bin"));
         }
       }
-      assert.equal(defs.length, 1, `Expected 1 shellQuote definition, found ${defs.length}: ${defs.join(", ")}`);
-      assert.ok(defs[0].includes("runner"), `shellQuote should be in runner.js, found in ${defs[0]}`);
+      expect(defs.length).toBe(1);
+      expect(defs[0].includes("runner")).toBeTruthy();
     });
 
     it("CLI rejects malicious sandbox names before shell commands (e2e)", () => {
@@ -193,8 +191,8 @@ describe("runner helpers", () => {
           timeout: 10000,
           cwd: path.join(__dirname, ".."),
         });
-        assert.notEqual(result.status, 0, "CLI should reject malicious sandbox name");
-        assert.equal(fs.existsSync(canary), false, "shell payload must never execute");
+        expect(result.status).not.toBe(0);
+        expect(fs.existsSync(canary)).toBe(false);
       } finally {
         fs.rmSync(canaryDir, { recursive: true, force: true });
       }
@@ -203,8 +201,8 @@ describe("runner helpers", () => {
     it("telegram bridge validates SANDBOX_NAME on startup", () => {
       const fs = require("fs");
       const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "telegram-bridge.js"), "utf-8");
-      assert.ok(src.includes("validateName(SANDBOX"), "telegram-bridge.js must validate SANDBOX_NAME");
-      assert.ok(!src.includes("execSync"), "telegram-bridge.js should not use execSync");
+      expect(src.includes("validateName(SANDBOX")).toBeTruthy();
+      expect(!src.includes("execSync")).toBeTruthy();
     });
   });
 });

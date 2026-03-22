@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -17,12 +15,12 @@ describe("uninstall CLI flags", () => {
       encoding: "utf-8",
     });
 
-    assert.equal(result.status, 0);
+    expect(result.status).toBe(0);
     const output = `${result.stdout}${result.stderr}`;
-    assert.match(output, /NemoClaw Uninstaller/);
-    assert.match(output, /--yes/);
-    assert.match(output, /--keep-openshell/);
-    assert.match(output, /--delete-models/);
+    expect(output).toMatch(/NemoClaw Uninstaller/);
+    expect(output).toMatch(/--yes/);
+    expect(output).toMatch(/--keep-openshell/);
+    expect(output).toMatch(/--delete-models/);
   });
 
   it("--yes skips the confirmation prompt and completes successfully", () => {
@@ -47,11 +45,11 @@ describe("uninstall CLI flags", () => {
         },
       });
 
-      assert.equal(result.status, 0);
+      expect(result.status).toBe(0);
       // Banner and bye statement should be present
       const output = `${result.stdout}${result.stderr}`;
-      assert.match(output, /NemoClaw/);
-      assert.match(output, /Claws retracted/);
+      expect(output).toMatch(/NemoClaw/);
+      expect(output).toMatch(/Claws retracted/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -69,8 +67,8 @@ describe("uninstall helpers", () => {
       },
     );
 
-    assert.equal(result.status, 0);
-    assert.equal(result.stdout.trim(), "openshell-cluster-nemoclaw");
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("openshell-cluster-nemoclaw");
   });
 
   it("removes the user-local nemoclaw shim", () => {
@@ -89,7 +87,7 @@ describe("uninstall helpers", () => {
       },
     );
 
-    assert.equal(result.status, 0);
-    assert.equal(fs.existsSync(shimPath), false);
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(shimPath)).toBe(false);
   });
 });

@@ -11,8 +11,6 @@
 
 "use strict";
 
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -200,16 +198,10 @@ describe("C-4 PoC: vulnerable restoreSnapshotToHost allows path traversal", () =
       const { result, written } = restoreVulnerable(snapshotDir);
 
       // Vulnerable code writes to the traversal target
-      assert.ok(result, "vulnerable code should succeed (no validation)");
-      assert.ok(written, "vulnerable code writes to disk");
-      assert.ok(
-        fs.existsSync(path.join(traversalTarget, "sentinel.txt")),
-        "sentinel.txt must exist at traversal target — proves arbitrary write",
-      );
-      assert.equal(
-        fs.readFileSync(path.join(traversalTarget, "sentinel.txt"), "utf-8"),
-        "attacker-controlled-content",
-      );
+      expect(result).toBeTruthy();
+      expect(written).toBeTruthy();
+      expect(fs.existsSync(path.join(traversalTarget, "sentinel.txt"))).toBeTruthy();
+      expect(fs.readFileSync(path.join(traversalTarget, "sentinel.txt"), "utf-8")).toBe("attacker-controlled-content");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -236,11 +228,8 @@ describe("C-4 PoC: vulnerable restoreSnapshotToHost allows path traversal", () =
 
       const { result } = restoreVulnerable(snapshotDir);
 
-      assert.ok(result, "vulnerable code should succeed");
-      assert.ok(
-        fs.existsSync(evilConfigPath),
-        "config written to traversal target — proves arbitrary file write",
-      );
+      expect(result).toBeTruthy();
+      expect(fs.existsSync(evilConfigPath)).toBeTruthy();
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -272,10 +261,10 @@ describe("C-4 fix: restoreSnapshotToHost rejects path traversal", () => {
       // Pass homeDir as trustedRoot to simulate resolveHostHome()
       const { result, errors, written } = restoreFixed(snapshotDir, homeDir);
 
-      assert.equal(result, false, "fixed code must reject traversal");
-      assert.equal(written, false, "no files must be written");
-      assert.ok(!fs.existsSync(traversalTarget), "traversal target must not be created");
-      assert.ok(errors[0].includes("outside the trusted host root"));
+      expect(result).toBe(false);
+      expect(written).toBe(false);
+      expect(!fs.existsSync(traversalTarget)).toBeTruthy();
+      expect(errors[0].includes("outside the trusted host root")).toBeTruthy();
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -302,9 +291,9 @@ describe("C-4 fix: restoreSnapshotToHost rejects path traversal", () => {
 
       const { result, errors } = restoreFixed(snapshotDir, homeDir);
 
-      assert.equal(result, false, "fixed code must reject configPath traversal");
-      assert.ok(!fs.existsSync(evilConfigPath), "evil config must not be written");
-      assert.ok(errors[0].includes("outside the trusted host root"));
+      expect(result).toBe(false);
+      expect(!fs.existsSync(evilConfigPath)).toBeTruthy();
+      expect(errors[0].includes("outside the trusted host root")).toBeTruthy();
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -329,8 +318,8 @@ describe("C-4 fix: restoreSnapshotToHost rejects path traversal", () => {
       });
 
       const { result } = restoreFixed(snapshotDir, homeDir);
-      assert.equal(result, false, "sibling path must be rejected");
-      assert.ok(!fs.existsSync(siblingDir));
+      expect(result).toBe(false);
+      expect(!fs.existsSync(siblingDir)).toBeTruthy();
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -355,12 +344,9 @@ describe("C-4 fix: restoreSnapshotToHost rejects path traversal", () => {
 
       const { result, errors, written } = restoreFixed(snapshotDir, trustedRoot);
 
-      assert.equal(result, false, "homeDir=/ must be rejected");
-      assert.equal(written, false, "no files must be written");
-      assert.ok(
-        errors[0].includes("homeDir is outside the trusted host root"),
-        `expected homeDir rejection, got: ${errors[0]}`,
-      );
+      expect(result).toBe(false);
+      expect(written).toBe(false);
+      expect(errors[0].includes("homeDir is outside the trusted host root")).toBeTruthy();
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -387,10 +373,10 @@ describe("C-4 fix: restoreSnapshotToHost rejects path traversal", () => {
       // trustedRoot = homeDir (simulates resolveHostHome() returning this dir)
       const { result, errors, written } = restoreFixed(snapshotDir, homeDir);
 
-      assert.equal(result, true, "legitimate path must succeed");
-      assert.equal(errors.length, 0);
-      assert.ok(written);
-      assert.ok(fs.existsSync(path.join(legitimateStateDir, "sentinel.txt")));
+      expect(result).toBe(true);
+      expect(errors.length).toBe(0);
+      expect(written).toBeTruthy();
+      expect(fs.existsSync(path.join(legitimateStateDir, "sentinel.txt"))).toBeTruthy();
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -417,9 +403,9 @@ describe("C-4 fix: restoreSnapshotToHost rejects path traversal", () => {
 
       const { result, errors } = restoreFixed(snapshotDir, homeDir);
 
-      assert.equal(result, true, "legitimate config path must succeed");
-      assert.equal(errors.length, 0);
-      assert.ok(fs.existsSync(legitimateConfigPath));
+      expect(result).toBe(true);
+      expect(errors.length).toBe(0);
+      expect(fs.existsSync(legitimateConfigPath)).toBeTruthy();
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -437,40 +423,28 @@ describe("C-4 regression: migration-state.ts contains path validation", () => {
       "utf-8",
     );
     const fnStart = src.indexOf("function restoreSnapshotToHost");
-    assert.ok(fnStart !== -1, "restoreSnapshotToHost must exist in migration-state.ts");
+    expect(fnStart !== -1).toBeTruthy();
     return src.slice(fnStart);
   }
 
   it("restoreSnapshotToHost calls isWithinRoot on manifest.stateDir", () => {
     const fnBody = getRestoreFnBody();
-    assert.ok(
-      /isWithinRoot\s*\(\s*manifest\.stateDir/.test(fnBody),
-      "restoreSnapshotToHost must call isWithinRoot on manifest.stateDir",
-    );
+    expect(/isWithinRoot\s*\(\s*manifest\.stateDir/.test(fnBody)).toBeTruthy();
   });
 
   it("restoreSnapshotToHost calls isWithinRoot on manifest.configPath", () => {
     const fnBody = getRestoreFnBody();
-    assert.ok(
-      /isWithinRoot\s*\(\s*manifest\.configPath/.test(fnBody),
-      "restoreSnapshotToHost must call isWithinRoot on manifest.configPath",
-    );
+    expect(/isWithinRoot\s*\(\s*manifest\.configPath/.test(fnBody)).toBeTruthy();
   });
 
   it("restoreSnapshotToHost validates manifest.homeDir against trusted root", () => {
     const fnBody = getRestoreFnBody();
-    assert.ok(
-      /isWithinRoot\s*\(\s*manifest\.homeDir/.test(fnBody),
-      "restoreSnapshotToHost must call isWithinRoot on manifest.homeDir",
-    );
+    expect(/isWithinRoot\s*\(\s*manifest\.homeDir/.test(fnBody)).toBeTruthy();
   });
 
   it("restoreSnapshotToHost fails closed when hasExternalConfig is true with missing configPath", () => {
     const fnBody = getRestoreFnBody();
-    assert.ok(
-      /manifest\.hasExternalConfig\b/.test(fnBody) &&
-        /typeof\s+manifest\.configPath\s*!==\s*["']string["']/.test(fnBody),
-      "restoreSnapshotToHost must type-check manifest.configPath when hasExternalConfig is true",
-    );
+    expect(/manifest\.hasExternalConfig\b/.test(fnBody) &&
+      /typeof\s+manifest\.configPath\s*!==\s*["']string["']/.test(fnBody)).toBeTruthy();
   });
 });

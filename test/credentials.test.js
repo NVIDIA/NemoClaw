@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
@@ -27,6 +25,6 @@ describe("credential prompts", () => {
       timeout: 5000,
     });
 
-    assert.equal(result.status, 0);
+    expect(result.status).toBe(0);
   });
 });
