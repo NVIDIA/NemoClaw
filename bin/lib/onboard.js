@@ -8,6 +8,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const crypto = require("crypto");
 const { spawn, spawnSync } = require("child_process");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
 const {
@@ -805,13 +806,20 @@ async function setupInference(sandboxName, model, provider) {
   step(5, 7, "Setting up inference provider");
 
   if (provider === "nvidia-nim") {
-    // Create nvidia-nim provider
-    run(
-      `openshell provider create --name nvidia-nim --type openai ` +
-      `--credential ${shellQuote("NVIDIA_API_KEY=" + process.env.NVIDIA_API_KEY)} ` +
-      `--config "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1" 2>&1 || true`,
-      { ignoreError: true }
-    );
+    // Create nvidia-nim provider — credential written to temp file to avoid
+    // exposing the API key in process arguments visible via ps/proc (#325)
+    const credPath = path.join(os.tmpdir(), `nemoclaw-cred-${crypto.randomBytes(8).toString("hex")}`);
+    fs.writeFileSync(credPath, process.env.NVIDIA_API_KEY, { mode: 0o600, flag: "wx" });
+    try {
+      run(
+        `openshell provider create --name nvidia-nim --type openai ` +
+        `--credential "NVIDIA_API_KEY=$(cat ${shellQuote(credPath)})" ` +
+        `--config "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1" 2>&1 || true`,
+        { ignoreError: true }
+      );
+    } finally {
+      try { fs.unlinkSync(credPath); } catch {}
+    }
     run(
       `openshell inference set --no-verify --provider nvidia-nim --model ${shellQuote(model)} 2>/dev/null || true`,
       { ignoreError: true }

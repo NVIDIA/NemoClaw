@@ -97,7 +97,9 @@ async function setup() {
 
 async function setupSpark() {
   await ensureApiKey();
-  run(`sudo -E NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY)} bash "${SCRIPTS}/setup-spark.sh"`);
+  // Pass API key via environment, not command string, to avoid exposing it
+  // in process arguments visible via ps/proc (#325)
+  run(`sudo --preserve-env=NVIDIA_API_KEY bash "${SCRIPTS}/setup-spark.sh"`);
 }
 
 async function deploy(instanceName) {
