@@ -60,7 +60,7 @@ jobs:
           cache: npm
 
       - name: Install root dependencies
-        run: npm install
+        run: npm ci
 
       - name: Install and build TypeScript plugin
         working-directory: nemoclaw
