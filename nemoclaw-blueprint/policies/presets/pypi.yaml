@@ -11,15 +11,16 @@ network_policies:
     endpoints:
       - host: pypi.org
         port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
+        access: full
       - host: files.pythonhosted.org
         port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
+        access: full
+    binaries:
+      - { path: /usr/bin/python3* }
+      - { path: /usr/bin/pip* }
+      - { path: /usr/local/bin/python3* }
+      - { path: /usr/local/bin/pip* }
+      - { path: /sandbox/.venv/bin/python* }
+      - { path: /sandbox/.venv/bin/pip* }
+      - { path: /sandbox/.uv/python/**/python* }
+      - { path: /sandbox/.local/bin/pip* }

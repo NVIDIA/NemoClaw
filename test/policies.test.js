@@ -119,5 +119,45 @@ describe("policies", () => {
         assert.ok(content.includes("network_policies:"), `${p.name} missing network_policies`);
       }
     });
+
+    it("package-manager presets use access: full (not tls: terminate)", () => {
+      // Package managers (pip, npm, yarn) use CONNECT tunneling which breaks
+      // under tls: terminate. Ensure these presets use access: full like the
+      // github policy in openclaw-sandbox.yaml.
+      const packagePresets = ["pypi", "npm"];
+      for (const name of packagePresets) {
+        const content = policies.loadPreset(name);
+        assert.ok(content, `preset not found: ${name}`);
+        assert.ok(
+          !content.includes("tls: terminate"),
+          `${name} preset must not use tls: terminate (breaks CONNECT tunneling)`
+        );
+        assert.ok(
+          content.includes("access: full"),
+          `${name} preset must use access: full for package manager compatibility`
+        );
+      }
+    });
+
+    it("package-manager presets include binaries section", () => {
+      // Without binaries, the proxy can't match pip/npm traffic to the policy
+      // and returns 403.
+      const packagePresets = [
+        { name: "pypi", expectedBinary: "python" },
+        { name: "npm", expectedBinary: "npm" },
+      ];
+      for (const { name, expectedBinary } of packagePresets) {
+        const content = policies.loadPreset(name);
+        assert.ok(content, `preset not found: ${name}`);
+        assert.ok(
+          content.includes("binaries:"),
+          `${name} preset must include a binaries section`
+        );
+        assert.ok(
+          content.includes(expectedBinary),
+          `${name} preset binaries must include ${expectedBinary}`
+        );
+      }
+    });
   });
 });
