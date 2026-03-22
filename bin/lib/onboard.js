@@ -8,6 +8,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { spawn, spawnSync } = require("child_process");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
 const {
   getDefaultOllamaModel,
@@ -33,6 +34,9 @@ const nim = require("./nim");
 const policies = require("./policies");
 const { checkPortAvailable } = require("./preflight");
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
+const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
+const DIM = USE_COLOR ? "\x1b[2m" : "";
+const RESET = USE_COLOR ? "\x1b[0m" : "";
 
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
@@ -42,13 +46,17 @@ function isNonInteractive() {
   return NON_INTERACTIVE;
 }
 
+function note(message) {
+  console.log(`${DIM}${message}${RESET}`);
+}
+
 // Prompt wrapper: returns env var value or default in non-interactive mode,
 // otherwise prompts the user interactively.
 async function promptOrDefault(question, envVar, defaultValue) {
   if (isNonInteractive()) {
     const val = envVar ? process.env[envVar] : null;
     const result = val || defaultValue;
-    console.log(`  [non-interactive] ${question.trim()} → ${result}`);
+    note(`  [non-interactive] ${question.trim()} → ${result}`);
     return result;
   }
   return prompt(question);
@@ -76,6 +84,63 @@ function isSandboxReady(output, sandboxName) {
  */
 function hasStaleGateway(gwInfoOutput) {
   return typeof gwInfoOutput === "string" && gwInfoOutput.length > 0 && gwInfoOutput.includes("nemoclaw");
+}
+
+function streamSandboxCreate(command) {
+  const child = spawn("bash", ["-lc", command], {
+    cwd: ROOT,
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  const lines = [];
+  let pending = "";
+  let lastPrintedLine = "";
+  let sawProgress = false;
+
+  function shouldShowLine(line) {
+    return (
+      /^  Building image /.test(line) ||
+      /^  Context: /.test(line) ||
+      /^  Gateway: /.test(line) ||
+      /^Successfully built /.test(line) ||
+      /^Successfully tagged /.test(line) ||
+      /^  Built image /.test(line) ||
+      /^  Pushing image /.test(line) ||
+      /^\s*\[progress\]/.test(line) ||
+      /^  Image .*available in the gateway/.test(line) ||
+      /^Created sandbox: /.test(line) ||
+      /^✓ /.test(line)
+    );
+  }
+
+  function flushLine(rawLine) {
+    const line = rawLine.replace(/\r/g, "").trimEnd();
+    if (!line) return;
+    lines.push(line);
+    if (shouldShowLine(line) && line !== lastPrintedLine) {
+      console.log(line);
+      lastPrintedLine = line;
+      sawProgress = true;
+    }
+  }
+
+  function onChunk(chunk) {
+    pending += chunk.toString();
+    const parts = pending.split("\n");
+    pending = parts.pop();
+    parts.forEach(flushLine);
+  }
+
+  child.stdout.on("data", onChunk);
+  child.stderr.on("data", onChunk);
+
+  return new Promise((resolve) => {
+    child.on("close", (code) => {
+      if (pending) flushLine(pending);
+      resolve({ status: code ?? 1, output: lines.join("\n"), sawProgress });
+    });
+  });
 }
 
 function step(n, total, msg) {
@@ -173,7 +238,19 @@ function isOpenshellInstalled() {
 
 function installOpenshell() {
   console.log("  Installing openshell CLI...");
-  run(`bash "${path.join(SCRIPTS, "install-openshell.sh")}"`, { ignoreError: true });
+  const result = spawnSync("bash", [path.join(SCRIPTS, "install-openshell.sh")], {
+    cwd: ROOT,
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+  });
+  if (result.status !== 0) {
+    const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
+    if (output) {
+      console.error(output);
+    }
+    return false;
+  }
   const localBin = process.env.XDG_BIN_HOME || path.join(process.env.HOME || "", ".local", "bin");
   if (fs.existsSync(path.join(localBin, "openshell")) && !process.env.PATH.split(path.delimiter).includes(localBin)) {
     process.env.PATH = `${localBin}${path.delimiter}${process.env.PATH}`;
@@ -408,7 +485,7 @@ async function createSandbox(gpu) {
         console.error("  Set NEMOCLAW_RECREATE_SANDBOX=1 to recreate it in non-interactive mode.");
         process.exit(1);
       }
-      console.log(`  [non-interactive] Sandbox '${sandboxName}' exists — recreating`);
+      note(`  [non-interactive] Sandbox '${sandboxName}' exists — recreating`);
     } else {
       const recreate = await prompt(`  Sandbox '${sandboxName}' already exists. Recreate? [y/N]: `);
       if (recreate.toLowerCase() !== "y") {
@@ -460,9 +537,8 @@ async function createSandbox(gpu) {
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
   // lets the real exit code flow through to run().
-  const createResult = run(
-    `openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1`,
-    { ignoreError: true }
+  const createResult = await streamSandboxCreate(
+    `openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1`
   );
 
   // Clean up build context regardless of outcome
@@ -471,6 +547,10 @@ async function createSandbox(gpu) {
   if (createResult.status !== 0) {
     console.error("");
     console.error(`  Sandbox creation failed (exit ${createResult.status}).`);
+    if (createResult.output) {
+      console.error("");
+      console.error(createResult.output);
+    }
     console.error("  Try:  openshell sandbox list        # check gateway state");
     console.error("  Try:  nemoclaw onboard              # retry from scratch");
     process.exit(createResult.status || 1);
@@ -580,7 +660,7 @@ async function setupNim(sandboxName, gpu) {
         console.error(`  Requested provider '${providerKey}' is not available in this environment.`);
         process.exit(1);
       }
-      console.log(`  [non-interactive] Provider: ${selected.key}`);
+      note(`  [non-interactive] Provider: ${selected.key}`);
     } else {
       const suggestions = [];
       if (vllmRunning) suggestions.push("vLLM");
@@ -621,7 +701,7 @@ async function setupNim(sandboxName, gpu) {
           } else {
             sel = models[0];
           }
-          console.log(`  [non-interactive] NIM model: ${sel.name}`);
+          note(`  [non-interactive] NIM model: ${sel.name}`);
         } else {
           console.log("");
           console.log("  Models that fit your GPU:");
@@ -824,21 +904,12 @@ async function setupPolicies(sandboxName) {
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
 
-  console.log("");
-  console.log("  Available policy presets:");
-  allPresets.forEach((p) => {
-    const marker = applied.includes(p.name) ? "●" : "○";
-    const suggested = suggestions.includes(p.name) ? " (suggested)" : "";
-    console.log(`    ${marker} ${p.name} — ${p.description}${suggested}`);
-  });
-  console.log("");
-
   if (isNonInteractive()) {
     const policyMode = (process.env.NEMOCLAW_POLICY_MODE || "suggested").trim().toLowerCase();
     let selectedPresets = suggestions;
 
     if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
-      console.log("  [non-interactive] Skipping policy presets.");
+      note("  [non-interactive] Skipping policy presets.");
       return;
     }
 
@@ -870,7 +941,7 @@ async function setupPolicies(sandboxName) {
       console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
       process.exit(1);
     }
-    console.log(`  [non-interactive] Applying policy presets: ${selectedPresets.join(", ")}`);
+    note(`  [non-interactive] Applying policy presets: ${selectedPresets.join(", ")}`);
     for (const name of selectedPresets) {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
@@ -886,6 +957,15 @@ async function setupPolicies(sandboxName) {
       }
     }
   } else {
+    console.log("");
+    console.log("  Available policy presets:");
+    allPresets.forEach((p) => {
+      const marker = applied.includes(p.name) ? "●" : "○";
+      const suggested = suggestions.includes(p.name) ? " (suggested)" : "";
+      console.log(`    ${marker} ${p.name} — ${p.description}${suggested}`);
+    });
+    console.log("");
+
     const answer = await prompt(`  Apply suggested presets (${suggestions.join(", ")})? [Y/n/list]: `);
 
     if (answer.toLowerCase() === "n") {
@@ -943,7 +1023,7 @@ async function onboard(opts = {}) {
 
   console.log("");
   console.log("  NemoClaw Onboarding");
-  if (isNonInteractive()) console.log("  (non-interactive mode)");
+  if (isNonInteractive()) note("  (non-interactive mode)");
   console.log("  ===================");
 
   const gpu = await preflight();

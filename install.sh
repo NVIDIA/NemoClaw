@@ -90,7 +90,7 @@ print_banner() {
   printf "  ${C_GREEN}${C_BOLD} ██║ ╚████║███████╗██║ ╚═╝ ██║╚██████╔╝╚██████╗███████╗██║  ██║╚███╔███╔╝${C_RESET}\n"
   printf "  ${C_GREEN}${C_BOLD} ╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝ ╚═════╝  ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝${C_RESET}\n"
   printf "\n"
-  printf "  ${C_DIM}Deploy more secure, always-on AI assistants with a single command.  v%s${C_RESET}\n" "$NEMOCLAW_VERSION"
+  printf "  ${C_DIM}Launch OpenClaw in an OpenShell sandbox.  v%s${C_RESET}\n" "$NEMOCLAW_VERSION"
   printf "\n"
 }
 
@@ -434,9 +434,9 @@ install_nemoclaw() {
   if [[ -f "./package.json" ]] && grep -q '"name": "nemoclaw"' ./package.json 2>/dev/null; then
     info "NemoClaw package.json found in current directory — installing from source…"
     pre_extract_openclaw "$(pwd)" || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
-    npm install --ignore-scripts
-    (cd nemoclaw && npm install --ignore-scripts && npm run build)
-    npm link
+    spin "Installing NemoClaw dependencies" npm install --ignore-scripts
+    spin "Building NemoClaw plugin" bash -lc 'cd nemoclaw && npm install --ignore-scripts && npm run build'
+    spin "Linking NemoClaw CLI" npm link
   else
     info "Installing NemoClaw from GitHub…"
     # Clone first so we can pre-extract openclaw before npm install (GH-503).
@@ -445,9 +445,11 @@ install_nemoclaw() {
     local nemoclaw_src="${HOME}/.nemoclaw/source"
     rm -rf "$nemoclaw_src"
     mkdir -p "$(dirname "$nemoclaw_src")"
-    git clone --depth 1 https://github.com/NVIDIA/NemoClaw.git "$nemoclaw_src"
+    spin "Cloning NemoClaw source" git clone --depth 1 https://github.com/NVIDIA/NemoClaw.git "$nemoclaw_src"
     pre_extract_openclaw "$nemoclaw_src" || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
-    (cd "$nemoclaw_src" && npm install --ignore-scripts && cd nemoclaw && npm install --ignore-scripts && npm run build && cd .. && npm link)
+    spin "Installing NemoClaw dependencies" bash -lc "cd \"$nemoclaw_src\" && npm install --ignore-scripts"
+    spin "Building NemoClaw plugin" bash -lc "cd \"$nemoclaw_src\"/nemoclaw && npm install --ignore-scripts && npm run build"
+    spin "Linking NemoClaw CLI" bash -lc "cd \"$nemoclaw_src\" && npm link"
   fi
 
   refresh_path
