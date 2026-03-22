@@ -22,7 +22,7 @@ function run(cmd, opts = {}) {
     env: { ...process.env, ...opts.env },
   });
   if (result.status !== 0 && !opts.ignoreError) {
-    console.error(`  Command failed (exit ${result.status}): ${cmd.slice(0, 80)}`);
+    console.error(`  Command failed (exit ${result.status}): ${redact(cmd.slice(0, 80))}`);
     process.exit(result.status || 1);
   }
   return result;
@@ -37,7 +37,7 @@ function runInteractive(cmd, opts = {}) {
     env: { ...process.env, ...opts.env },
   });
   if (result.status !== 0 && !opts.ignoreError) {
-    console.error(`  Command failed (exit ${result.status}): ${cmd.slice(0, 80)}`);
+    console.error(`  Command failed (exit ${result.status}): ${redact(cmd.slice(0, 80))}`);
     process.exit(result.status || 1);
   }
   return result;
@@ -56,6 +56,27 @@ function runCapture(cmd, opts = {}) {
     if (opts.ignoreError) return "";
     throw err;
   }
+}
+
+/**
+ * Redact known secret patterns from a string to prevent accidental leaks
+ * in CLI log and error output. Covers NVIDIA API keys, bearer tokens,
+ * generic API key assignments, and base64-style long tokens.
+ */
+const SECRET_PATTERNS = [
+  /nvapi-[A-Za-z0-9_-]{10,}/g,
+  /nvcf-[A-Za-z0-9_-]{10,}/g,
+  /(?<=Bearer\s)[A-Za-z0-9_.+/=-]{10,}/gi,
+  /(?<=(?:API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]['"]?)[A-Za-z0-9_.+/=-]{10,}/gi,
+];
+
+function redact(str) {
+  if (typeof str !== "string") return str;
+  let out = str;
+  for (const pat of SECRET_PATTERNS) {
+    out = out.replace(pat, (match) => match.slice(0, 4) + "*".repeat(Math.min(match.length - 4, 20)));
+  }
+  return out;
 }
 
 /**
@@ -85,4 +106,4 @@ function validateName(name, label = "name") {
   return name;
 }
 
-module.exports = { ROOT, SCRIPTS, run, runCapture, runInteractive, shellQuote, validateName };
+module.exports = { ROOT, SCRIPTS, redact, run, runCapture, runInteractive, shellQuote, validateName };

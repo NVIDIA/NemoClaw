@@ -168,6 +168,44 @@ describe("validateName", () => {
   });
 });
 
+describe("redact", () => {
+  it("masks NVIDIA API keys", () => {
+    const { redact } = require(runnerPath);
+    expect(redact("key is nvapi-abc123XYZ_def456")).toBe("key is nvap******************");
+  });
+
+  it("masks NVCF keys", () => {
+    const { redact } = require(runnerPath);
+    expect(redact("nvcf-abcdef1234567890")).toBe("nvcf*****************");
+  });
+
+  it("masks bearer tokens", () => {
+    const { redact } = require(runnerPath);
+    expect(redact("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload")).toBe(
+      "Authorization: Bearer eyJh********************"
+    );
+  });
+
+  it("masks key assignments in commands", () => {
+    const { redact } = require(runnerPath);
+    expect(redact("export NVIDIA_API_KEY=nvapi-realkey12345")).toContain("nvap");
+    expect(redact("export NVIDIA_API_KEY=nvapi-realkey12345")).not.toContain("realkey12345");
+  });
+
+  it("leaves non-secret strings untouched", () => {
+    const { redact } = require(runnerPath);
+    expect(redact("docker run --name my-sandbox")).toBe("docker run --name my-sandbox");
+    expect(redact("openshell sandbox list")).toBe("openshell sandbox list");
+  });
+
+  it("handles non-string input gracefully", () => {
+    const { redact } = require(runnerPath);
+    expect(redact(null)).toBe(null);
+    expect(redact(undefined)).toBe(undefined);
+    expect(redact(42)).toBe(42);
+  });
+});
+
 describe("regression guards", () => {
   it("nemoclaw.js does not use execSync", () => {
     const src = fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"), "utf-8");
