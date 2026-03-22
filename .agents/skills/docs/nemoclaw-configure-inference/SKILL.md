@@ -1,20 +1,23 @@
 ---
 name: nemoclaw-configure-inference
-description: Changes the active inference model without restarting the sandbox. Use when switching inference runtime, changing models, or configuring openclaw/openshell inference routing.
+description: Changes the active inference model without restarting the sandbox. Use when change inference runtime, inference routing, openclaw, openshell, switch nemoclaw inference model, switch nemoclaw inference models.
 ---
 
 # Nemoclaw Configure Inference
 
-Changes the active inference model without restarting the sandbox.
+Change the active inference model without restarting the sandbox.
 
 ## Prerequisites
 
 - A running NemoClaw sandbox.
 - The OpenShell CLI on your `PATH`.
 
+Change the active inference model while the sandbox is running.
+No restart is required.
+
 ## Step 1: Switch to a Different Model
 
-Set the provider to `nvidia-nim` and specify a model:
+Set the provider to `nvidia-nim` and specify a model from [build.nvidia.com](https://build.nvidia.com):
 
 ```console
 $ openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b
@@ -42,6 +45,7 @@ The output includes the active provider, model, and endpoint.
 ## Step 3: Available Models
 
 The following table lists the models registered with the `nvidia-nim` provider.
+You can switch to any of these models at runtime.
 
 | Model ID | Label | Context Window | Max Output |
 |---|---|---|---|

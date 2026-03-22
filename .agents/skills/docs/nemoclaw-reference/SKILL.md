@@ -1,16 +1,16 @@
 ---
 name: nemoclaw-reference
-description: Provides reference documentation for NemoClaw architecture, CLI commands, inference profiles, network policies, and troubleshooting. Use when looking up commands, checking policy schemas, reviewing architecture, or debugging issues.
+description: Plugins structure, blueprint lifecycle, sandbox environment, and inference routing. Also covers fulls CLI reference for plugin and standalone NemoClaw commands.; configurations reference for NVIDIA Endpoint inference profiles.. Use when blueprints, cli, inference routing, llms, nemoclaw, nemoclaw architecture, nemoclaw architecture plugin blueprint, nemoclaw cli commands.
 ---
 
 # Nemoclaw Reference
 
-Provides reference documentation for NemoClaw architecture, CLI commands, inference profiles, network policies, and troubleshooting.
+Plugin structure, blueprint lifecycle, sandbox environment, and inference routing.
 
 ## Reference
 
-- [Architecture](references/architecture.md) — plugin structure, blueprint lifecycle, sandbox environment
-- [CLI Commands](references/commands.md) — full command reference for plugin and standalone commands
-- [Inference Profiles](references/inference-profiles.md) — NVIDIA Endpoint configuration
-- [Network Policies](references/network-policies.md) — baseline rules and operator approval flow
-- [Troubleshooting](references/troubleshooting.md) — common issues and resolution steps
+- [NemoClaw Architecture — Plugin, Blueprint, and Sandbox Structure](references/architecture.md)
+- [NemoClaw CLI Commands Reference](references/commands.md)
+- [NemoClaw Inference Profiles — NVIDIA Endpoint](references/inference-profiles.md)
+- [NemoClaw Network Policies — Baseline Rules and Operator Approval](references/network-policies.md)
+- [NemoClaw Troubleshooting Guide](references/troubleshooting.md)

@@ -1,14 +1,8 @@
 # Network Policies
 
-NemoClaw runs with a strict-by-default network policy.
+NemoClaw runs with a deny-by-default network policy.
 The sandbox can only reach endpoints that are explicitly allowed.
 Any request to an unlisted destination is intercepted by OpenShell, and the operator is prompted to approve or deny it in real time through the TUI.
-
-## Contents
-
-- Baseline policy: filesystem rules, network endpoint groups, inference routing
-- Operator approval flow
-- Modifying the policy: static changes, dynamic changes
 
 ## Baseline Policy
 

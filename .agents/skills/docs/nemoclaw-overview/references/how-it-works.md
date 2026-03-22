@@ -24,7 +24,7 @@ flowchart TB
     subgraph Sandbox["OpenShell Sandbox"]
         AGENT[OpenClaw agent]
         INF[NVIDIA inference, routed]
-        NET[strict network policy]
+        NET[default network policy]
         FS[filesystem isolation]
 
         AGENT --- INF
@@ -97,7 +97,7 @@ NemoClaw routes inference to NVIDIA Endpoints, specifically Nemotron 3 Super 120
 
 ## Network and Filesystem Policy
 
-The sandbox starts with a strict baseline policy defined in `openclaw-sandbox.yaml`.
+The sandbox starts with a default policy defined in `openclaw-sandbox.yaml`.
 This policy controls which network endpoints the agent can reach and which filesystem paths it can access.
 
 - For network, only endpoints listed in the policy are allowed.
