@@ -229,7 +229,12 @@ function setDefault(name) {
   });
 }
 
+function clearAll() {
+  save({ sandboxes: {}, defaultSandbox: null });
+}
+
 module.exports = {
+  clearAll,
   load,
   save,
   getSandbox,
