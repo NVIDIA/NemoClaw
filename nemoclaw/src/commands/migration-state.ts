@@ -682,9 +682,7 @@ export function restoreSnapshotToHost(snapshotDir: string, logger: PluginLogger)
 
   // Validate stateDir type and containment
   if (typeof manifest.stateDir !== "string") {
-    logger.error(
-      `Snapshot manifest stateDir is not a string. Refusing to restore.`,
-    );
+    logger.error(`Snapshot manifest stateDir is not a string. Refusing to restore.`);
     return false;
   }
 

@@ -689,5 +689,179 @@ describe("commands/migration-state", () => {
         }
       }
     });
+
+    it("rejects when homeDir is outside trusted root", () => {
+      const logger = makeLogger();
+      const origHome = process.env.HOME;
+      process.env.HOME = "/home/user";
+      try {
+        const manifest: SnapshotManifest = {
+          version: 2,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/tmp/evil",
+          stateDir: "/tmp/evil/.openclaw",
+          configPath: null,
+          hasExternalConfig: false,
+          externalRoots: [],
+          warnings: [],
+        };
+        addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
+        addDir("/snapshots/snap1/openclaw");
+
+        const result = restoreSnapshotToHost("/snapshots/snap1", logger);
+        expect(result).toBe(false);
+        expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("homeDir is outside"));
+      } finally {
+        process.env.HOME = origHome;
+      }
+    });
+
+    it("rejects when stateDir is outside trusted root", () => {
+      const logger = makeLogger();
+      const origHome = process.env.HOME;
+      process.env.HOME = "/home/user";
+      try {
+        const manifest: SnapshotManifest = {
+          version: 2,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/tmp/evil/.openclaw",
+          configPath: null,
+          hasExternalConfig: false,
+          externalRoots: [],
+          warnings: [],
+        };
+        addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
+        addDir("/snapshots/snap1/openclaw");
+
+        const result = restoreSnapshotToHost("/snapshots/snap1", logger);
+        expect(result).toBe(false);
+        expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("stateDir is outside"));
+      } finally {
+        process.env.HOME = origHome;
+      }
+    });
+
+    it("rejects when stateDir does not match OPENCLAW_STATE_DIR", () => {
+      const logger = makeLogger();
+      const origHome = process.env.HOME;
+      const origStateDir = process.env.OPENCLAW_STATE_DIR;
+      process.env.HOME = "/home/user";
+      process.env.OPENCLAW_STATE_DIR = "/home/user/.custom-state";
+      try {
+        const manifest: SnapshotManifest = {
+          version: 2,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configPath: null,
+          hasExternalConfig: false,
+          externalRoots: [],
+          warnings: [],
+        };
+        addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
+        addDir("/snapshots/snap1/openclaw");
+
+        const result = restoreSnapshotToHost("/snapshots/snap1", logger);
+        expect(result).toBe(false);
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.stringContaining("does not match OPENCLAW_STATE_DIR"),
+        );
+      } finally {
+        process.env.HOME = origHome;
+        if (origStateDir === undefined) {
+          delete process.env.OPENCLAW_STATE_DIR;
+        } else {
+          process.env.OPENCLAW_STATE_DIR = origStateDir;
+        }
+      }
+    });
+
+    it("rejects when hasExternalConfig is true but configPath is null", () => {
+      const logger = makeLogger();
+      const origHome = process.env.HOME;
+      process.env.HOME = "/home/user";
+      try {
+        const manifest: SnapshotManifest = {
+          version: 2,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configPath: null,
+          hasExternalConfig: true,
+          externalRoots: [],
+          warnings: [],
+        };
+        addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
+        addDir("/snapshots/snap1/openclaw");
+
+        const result = restoreSnapshotToHost("/snapshots/snap1", logger);
+        expect(result).toBe(false);
+        expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("configPath is missing"));
+      } finally {
+        process.env.HOME = origHome;
+      }
+    });
+
+    it("rejects when configPath is outside trusted root", () => {
+      const logger = makeLogger();
+      const origHome = process.env.HOME;
+      process.env.HOME = "/home/user";
+      try {
+        const manifest: SnapshotManifest = {
+          version: 2,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configPath: "/tmp/evil/openclaw.json",
+          hasExternalConfig: true,
+          externalRoots: [],
+          warnings: [],
+        };
+        addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
+        addDir("/snapshots/snap1/openclaw");
+
+        const result = restoreSnapshotToHost("/snapshots/snap1", logger);
+        expect(result).toBe(false);
+        expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("configPath is outside"));
+      } finally {
+        process.env.HOME = origHome;
+      }
+    });
+
+    it("rejects when configPath does not match OPENCLAW_CONFIG_PATH", () => {
+      const logger = makeLogger();
+      const origHome = process.env.HOME;
+      const origConfigPath = process.env.OPENCLAW_CONFIG_PATH;
+      process.env.HOME = "/home/user";
+      process.env.OPENCLAW_CONFIG_PATH = "/home/user/my-config.json";
+      try {
+        const manifest: SnapshotManifest = {
+          version: 2,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configPath: "/etc/openclaw.json",
+          hasExternalConfig: true,
+          externalRoots: [],
+          warnings: [],
+        };
+        addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
+        addDir("/snapshots/snap1/openclaw");
+
+        const result = restoreSnapshotToHost("/snapshots/snap1", logger);
+        expect(result).toBe(false);
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.stringContaining("does not match OPENCLAW_CONFIG_PATH"),
+        );
+      } finally {
+        process.env.HOME = origHome;
+        if (origConfigPath === undefined) {
+          delete process.env.OPENCLAW_CONFIG_PATH;
+        } else {
+          process.env.OPENCLAW_CONFIG_PATH = origConfigPath;
+        }
+      }
+    });
   });
 });
