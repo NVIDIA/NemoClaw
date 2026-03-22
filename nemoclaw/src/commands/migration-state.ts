@@ -550,6 +550,7 @@ function setConfigValue(
  * at runtime via OpenShell's provider credential mechanism, not baked
  * into the sandbox filesystem.
  */
+// keyRef is metadata (points to env var source), not a secret value — excluded intentionally.
 const CREDENTIAL_FIELDS = new Set([
   "apiKey",
   "api_key",
@@ -557,14 +558,28 @@ const CREDENTIAL_FIELDS = new Set([
   "secret",
   "password",
   "resolvedKey",
-  "keyRef",
 ]);
+
+/**
+ * Pattern-based detection for credential field names not covered by the
+ * explicit set above.  Matches common suffixes like accessToken, privateKey,
+ * clientSecret, etc.
+ */
+const CREDENTIAL_FIELD_PATTERN =
+  /(?:access|refresh|client|bearer|auth|api|private|public|signing|session)(?:Token|Key|Secret|Password)$/;
+
+/**
+ * Check whether a JSON key is a credential field that must be stripped.
+ */
+function isCredentialField(key: string): boolean {
+  return CREDENTIAL_FIELDS.has(key) || CREDENTIAL_FIELD_PATTERN.test(key);
+}
 
 /**
  * Recursively strip credential fields from a JSON-like object.
  * Returns a new object with sensitive values replaced by a placeholder.
  * Any value type (string, object, boolean, number, null) is stripped if
- * the key matches CREDENTIAL_FIELDS.
+ * the key matches CREDENTIAL_FIELDS or CREDENTIAL_FIELD_PATTERN.
  */
 function stripCredentials(obj: unknown): unknown {
   if (obj === null || obj === undefined) return obj;
@@ -573,7 +588,7 @@ function stripCredentials(obj: unknown): unknown {
 
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-    if (CREDENTIAL_FIELDS.has(key)) {
+    if (isCredentialField(key)) {
       result[key] = "[STRIPPED_BY_MIGRATION]";
     } else {
       result[key] = stripCredentials(value);
@@ -598,7 +613,7 @@ function sanitizeCredentialsInBundle(preparedStateDir: string): void {
   const configPath = path.join(preparedStateDir, "openclaw.json");
   if (existsSync(configPath)) {
     const raw = readFileSync(configPath, "utf-8");
-    const config = JSON.parse(raw) as Record<string, unknown>;
+    const config = JSON5.parse(raw) as Record<string, unknown>;
     const sanitized = stripCredentials(config) as Record<string, unknown>;
     writeFileSync(configPath, JSON.stringify(sanitized, null, 2));
   }
@@ -633,11 +648,13 @@ function walkAndStripCredentials(dirPath: string, targetName: string): void {
     const fullPath = path.join(dirPath, entry);
     try {
       const stat = lstatSync(fullPath);
+      // Skip symlinks — only sanitize real files within the snapshot
+      if (stat.isSymbolicLink()) continue;
       if (stat.isDirectory()) {
         walkAndStripCredentials(fullPath, targetName);
       } else if (entry === targetName) {
         const raw = readFileSync(fullPath, "utf-8");
-        const config = JSON.parse(raw) as Record<string, unknown>;
+        const config = JSON5.parse(raw) as Record<string, unknown>;
         const sanitized = stripCredentials(config) as Record<string, unknown>;
         writeFileSync(fullPath, JSON.stringify(sanitized, null, 2));
       }
@@ -669,6 +686,8 @@ function walkAndRemoveFile(dirPath: string, targetName: string): void {
     const fullPath = path.join(dirPath, entry);
     try {
       const stat = lstatSync(fullPath);
+      // Skip symlinks — only operate on real files within the snapshot
+      if (stat.isSymbolicLink()) continue;
       if (stat.isDirectory()) {
         walkAndRemoveFile(fullPath, targetName);
       } else if (entry === targetName) {
