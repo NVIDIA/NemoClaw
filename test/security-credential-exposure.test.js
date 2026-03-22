@@ -31,6 +31,7 @@ function isCredentialField(key) {
   return CREDENTIAL_FIELDS.has(key) || CREDENTIAL_FIELD_PATTERN.test(key);
 }
 
+/** Local reimplementation of stripCredentials for test isolation. */
 function stripCredentials(obj) {
   if (obj === null || obj === undefined) return obj;
   if (typeof obj !== "object") return obj;
@@ -66,6 +67,7 @@ function walkAndRemoveFile(dirPath, targetName) {
 // ═══════════════════════════════════════════════════════════════════
 // Helper: create a mock ~/.openclaw directory with credential files
 // ═══════════════════════════════════════════════════════════════════
+/** Create a mock ~/.openclaw directory tree populated with fake credential files. */
 function createMockOpenClawHome(tmpDir) {
   const stateDir = path.join(tmpDir, ".openclaw");
   fs.mkdirSync(stateDir, { recursive: true });

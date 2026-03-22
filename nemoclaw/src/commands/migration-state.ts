@@ -674,6 +674,7 @@ function removeAuthProfileFiles(preparedStateDir: string): void {
   walkAndRemoveFile(agentsDir, "auth-profiles.json");
 }
 
+/** Recursively walk dirPath and remove any files matching targetName. */
 function walkAndRemoveFile(dirPath: string, targetName: string): void {
   let entries: string[];
   try {
