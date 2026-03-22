@@ -11,6 +11,7 @@ profiles:
   - ncp
   - nim-local
   - vllm
+  - ollama
 
 description: |
   NemoClaw blueprint: orchestrates OpenClaw sandbox creation, migration,
@@ -53,6 +54,14 @@ components:
         model: "nvidia/nemotron-3-nano-30b-a3b"
         credential_env: "OPENAI_API_KEY"
         credential_default: "dummy"
+
+      ollama:
+        provider_type: "openai"
+        provider_name: "ollama-local"
+        endpoint: "http://host.docker.internal:11434/v1"
+        model: "nemotron-3-nano:4b"
+        credential_env: "OPENAI_API_KEY"
+        credential_default: "ollama"
 
   policy:
     base: "sandboxes/openclaw/policy.yaml"
