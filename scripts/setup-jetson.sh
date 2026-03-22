@@ -176,7 +176,10 @@ sleep 3
 # pulls the upstream image from the registry, which would overwrite
 # any earlier patch.
 
-GATEWAY_IMAGE="ghcr.io/nvidia/openshell/cluster:0.0.8"
+# Derive the cluster image tag from the installed openshell CLI version
+# so the patch targets the image that `openshell gateway start` actually pulls.
+OPENSHELL_VERSION=$(openshell --version 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
+GATEWAY_IMAGE="ghcr.io/nvidia/openshell/cluster:${OPENSHELL_VERSION:-0.0.8}"
 
 CURRENT_IPT=$(docker run --rm --entrypoint iptables "$GATEWAY_IMAGE" --version 2>&1 || true)
 if echo "$CURRENT_IPT" | grep -q "legacy"; then
@@ -305,12 +308,12 @@ cp "$REPO_DIR/Dockerfile" "$BUILD_CTX/"
 cp -r "$REPO_DIR/nemoclaw" "$BUILD_CTX/nemoclaw"
 cp -r "$REPO_DIR/nemoclaw-blueprint" "$BUILD_CTX/nemoclaw-blueprint"
 cp -r "$REPO_DIR/scripts" "$BUILD_CTX/scripts"
-rm -rf "$BUILD_CTX/nemoclaw/node_modules" "$BUILD_CTX/nemoclaw/src"
+rm -rf "$BUILD_CTX/nemoclaw/node_modules"
 
-# Verify nemoclaw/dist/ exists (TypeScript must be pre-built)
-if [ ! -d "$BUILD_CTX/nemoclaw/dist" ] || [ -z "$(ls -A "$BUILD_CTX/nemoclaw/dist" 2>/dev/null)" ]; then
+# Verify nemoclaw/src/ exists (Dockerfile builds from source in a multi-stage build)
+if [ ! -d "$BUILD_CTX/nemoclaw/src" ] || [ -z "$(ls -A "$BUILD_CTX/nemoclaw/src" 2>/dev/null)" ]; then
   rm -rf "$BUILD_CTX"
-  fail "nemoclaw/dist/ is missing or empty. Run 'cd nemoclaw && npm install && npm run build' first."
+  fail "nemoclaw/src/ is missing or empty. Are you running from a valid NemoClaw checkout?"
 fi
 
 CREATE_LOG=$(mktemp /tmp/nemoclaw-create-XXXXXX.log)
@@ -340,6 +343,39 @@ if ! echo "$SANDBOX_LINE" | grep -q "Ready"; then
   SANDBOX_PHASE=$(echo "$SANDBOX_LINE" | awk '{print $NF}')
   fail "Sandbox created but not Ready (phase: ${SANDBOX_PHASE:-unknown}). Check 'openshell sandbox get nemoclaw'."
 fi
+
+# ── 6b. Pre-populate network policy draft rules ──────────────────
+#
+# On Jetson, kube-router's network policy controller is disabled (ipset
+# panics on L4T), so egress goes through OpenShell's HTTP proxy. The
+# proxy generates draft rules only when traffic actually hits it.
+# Trigger connections to every endpoint in the policy so the rules are
+# ready and waiting when the user opens `openshell term` to approve.
+
+info "Triggering network policy rule generation..."
+POLICY_HOSTS=(
+  api.anthropic.com statsig.anthropic.com sentry.io
+  integrate.api.nvidia.com inference-api.nvidia.com
+  github.com api.github.com
+  clawhub.com openclaw.ai docs.openclaw.ai
+  registry.npmjs.org
+  api.telegram.org
+  discord.com gateway.discord.gg cdn.discordapp.com
+)
+
+# Build a one-liner that curls every host from inside the sandbox
+CURL_CMDS=""
+for host in "${POLICY_HOSTS[@]}"; do
+  CURL_CMDS="${CURL_CMDS}curl -sf -o /dev/null --connect-timeout 3 https://${host} 2>/dev/null || true; "
+done
+
+# SSH into the sandbox and fire off all the requests (they'll all 403,
+# but that's the point — the proxy records each as a draft rule)
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+  -o "ProxyCommand=openshell ssh-proxy --gateway-name nemoclaw --name nemoclaw" \
+  sandbox@openshell-nemoclaw "$CURL_CMDS" > /dev/null 2>&1 || true
+
+info "Draft rules generated — approve them in 'openshell term'"
 
 # ── 7. Ollama (optional local inference) ──────────────────────────
 
