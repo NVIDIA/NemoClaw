@@ -6,6 +6,7 @@ const assert = require("node:assert/strict");
 
 const net = require("net");
 const { checkPortAvailable } = require("../bin/lib/preflight");
+const { DASHBOARD_PORT } = require("../bin/lib/ports");
 
 describe("checkPortAvailable", () => {
   it("falls through to net probe when lsof output is empty", async () => {
@@ -104,7 +105,7 @@ describe("checkPortAvailable", () => {
     assert.equal(result.ok, true);
   });
 
-  it("defaults to port 18789 when no args given", async () => {
+  it(`defaults to port ${DASHBOARD_PORT} when no args given`, async () => {
     // Should not throw — just verify it returns a valid result object
     const result = await checkPortAvailable();
     assert.equal(typeof result.ok, "boolean");

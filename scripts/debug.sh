@@ -26,6 +26,12 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=/dev/null
+[ -f "${SCRIPT_DIR}/../.env" ] && set -a && . "${SCRIPT_DIR}/../.env" && set +a
+# shellcheck source=/dev/null
+[ -f "${SCRIPT_DIR}/../.env.local" ] && set -a && . "${SCRIPT_DIR}/../.env.local" && set +a
+
 info()    { echo -e "${GREEN}[debug]${NC} $1"; }
 warn()    { echo -e "${YELLOW}[debug]${NC} $1"; }
 fail()    { echo -e "${RED}[debug]${NC} $1"; exit 1; }
@@ -285,7 +291,7 @@ if [ "$QUICK" = false ]; then
   # shellcheck disable=SC2016
   collect "curl-models" sh -c 'code=$(curl -s -o /dev/null -w "%{http_code}" https://integrate.api.nvidia.com/v1/models); echo "HTTP $code"; if [ "$code" -ge 200 ] && [ "$code" -lt 500 ]; then echo "NIM API reachable"; else echo "NIM API unreachable"; exit 1; fi'
   collect "lsof-net" sh -c 'lsof -i -P -n 2>/dev/null | head -50'
-  collect "lsof-18789" lsof -i :18789
+  collect "lsof-dashboard" lsof -i :"${NEMOCLAW_DASHBOARD_PORT:-18789}"
 fi
 
 # -- Kernel / IO (full mode only) --

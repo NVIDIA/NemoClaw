@@ -31,6 +31,11 @@ NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Load port overrides if present (.env.local takes precedence)
+[ -f "${REPO_DIR}/.env" ] && set -a && . "${REPO_DIR}/.env" && set +a
+[ -f "${REPO_DIR}/.env.local" ] && set -a && . "${REPO_DIR}/.env.local" && set +a
+
 # shellcheck source=./lib/runtime.sh
 . "$SCRIPT_DIR/lib/runtime.sh"
 
@@ -106,7 +111,7 @@ fi
 # 1. Gateway — always start fresh to avoid stale state
 info "Starting OpenShell gateway..."
 openshell gateway destroy -g nemoclaw > /dev/null 2>&1 || true
-GATEWAY_ARGS=(--name nemoclaw)
+GATEWAY_ARGS=(--name nemoclaw --port "${NEMOCLAW_GATEWAY_PORT:-8080}")
 command -v nvidia-smi > /dev/null 2>&1 && GATEWAY_ARGS+=(--gpu)
 openshell gateway start "${GATEWAY_ARGS[@]}" 2>&1 | grep -E "Gateway|✓|Error|error" || true
 
@@ -156,7 +161,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
     # Start Ollama service if not running
     if ! check_local_provider_health "ollama-local"; then
       info "Starting Ollama service..."
-      OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &
+      OLLAMA_HOST="0.0.0.0:${NEMOCLAW_OLLAMA_PORT:-11434}" ollama serve > /dev/null 2>&1 &
       sleep 2
     fi
     OLLAMA_LOCAL_BASE_URL="$(get_local_provider_base_url "ollama-local")"

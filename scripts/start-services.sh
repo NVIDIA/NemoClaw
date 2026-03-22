@@ -16,7 +16,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DASHBOARD_PORT="${DASHBOARD_PORT:-18789}"
+
+# Load port overrides if present (.env.local takes precedence)
+[ -f "${REPO_DIR}/.env" ] && set -a && . "${REPO_DIR}/.env" && set +a
+[ -f "${REPO_DIR}/.env.local" ] && set -a && . "${REPO_DIR}/.env.local" && set +a
+
+DASHBOARD_PORT="${NEMOCLAW_DASHBOARD_PORT:-${DASHBOARD_PORT:-18789}}"
 
 # ── Parse flags ──────────────────────────────────────────────────
 SANDBOX_NAME="${NEMOCLAW_SANDBOX:-${SANDBOX_NAME:-default}}"

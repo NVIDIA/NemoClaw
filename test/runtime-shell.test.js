@@ -119,13 +119,13 @@ describe("shell runtime helpers", () => {
   it("returns the vllm-local base URL", () => {
     const result = runShell(`source "${RUNTIME_SH}"; get_local_provider_base_url vllm-local`);
     assert.equal(result.status, 0);
-    assert.equal(result.stdout.trim(), "http://host.openshell.internal:8000/v1");
+    assert.equal(result.stdout.trim(), `http://host.openshell.internal:${process.env.NEMOCLAW_VLLM_PORT || "8000"}/v1`);
   });
 
   it("returns the ollama-local base URL", () => {
     const result = runShell(`source "${RUNTIME_SH}"; get_local_provider_base_url ollama-local`);
     assert.equal(result.status, 0);
-    assert.equal(result.stdout.trim(), "http://host.openshell.internal:11434/v1");
+    assert.equal(result.stdout.trim(), `http://host.openshell.internal:${process.env.NEMOCLAW_OLLAMA_PORT || "11434"}/v1`);
   });
 
   it("rejects unknown local providers", () => {

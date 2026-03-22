@@ -4,8 +4,10 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
+require("../bin/lib/env");
 const { buildPolicySetCommand, buildPolicyGetCommand } = require("../bin/lib/policies");
 const { hasStaleGateway, isSandboxReady } = require("../bin/lib/onboard");
+const { GATEWAY_PORT } = require("../bin/lib/ports");
 
 describe("sandbox readiness parsing", () => {
   it("detects Ready sandbox", () => {
@@ -135,7 +137,7 @@ describe("stale gateway detection", () => {
       "Gateway Info",
       "",
       "  Gateway: nemoclaw",
-      "  Gateway endpoint: https://127.0.0.1:8080",
+      `  Gateway endpoint: https://127.0.0.1:${GATEWAY_PORT}`,
     ].join("\n");
     assert.ok(hasStaleGateway(output));
   });
@@ -144,7 +146,7 @@ describe("stale gateway detection", () => {
     const output =
       "\x1b[1m\x1b[36mGateway Info\x1b[39m\x1b[0m\n\n" +
       "  \x1b[2mGateway:\x1b[0m nemoclaw\n" +
-      "  \x1b[2mGateway endpoint:\x1b[0m https://127.0.0.1:8080";
+      `  \x1b[2mGateway endpoint:\x1b[0m https://127.0.0.1:${GATEWAY_PORT}`;
     assert.ok(hasStaleGateway(output));
   });
 
@@ -168,7 +170,7 @@ describe("stale gateway detection", () => {
       "Gateway Info",
       "",
       "  Gateway: my-other-gateway",
-      "  Gateway endpoint: https://127.0.0.1:8080",
+      `  Gateway endpoint: https://127.0.0.1:${GATEWAY_PORT}`,
     ].join("\n");
     assert.ok(!hasStaleGateway(output));
   });
