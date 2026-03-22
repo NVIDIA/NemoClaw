@@ -127,6 +127,8 @@ PYAUTOPAIR
 }
 
 echo 'Setting up NemoClaw...'
+[ -f .env ] && chmod 600 .env
+
 # openclaw doctor --fix and openclaw plugins install already ran at build time
 # (Dockerfile Step 28). At runtime they fail with EPERM against the locked
 # /sandbox/.openclaw directory and accomplish nothing.
