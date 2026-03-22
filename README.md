@@ -245,6 +245,20 @@ See the full [CLI reference](https://docs.nvidia.com/nemoclaw/latest/reference/c
 
 ---
 
+## Community Agent Templates
+
+Get started quickly with pre-built SOUL.md templates. The [awesome-openclaw-agents](https://github.com/mergisi/awesome-openclaw-agents) repository has 177 production-ready agent configs across 24 categories.
+
+```console
+$ git clone https://github.com/mergisi/awesome-openclaw-agents.git
+$ cp awesome-openclaw-agents/agents/business/sdr-outbound/SOUL.md /sandbox/agents/
+$ nemoclaw my-agent connect
+```
+
+Categories include: Business, Development, Marketing, DevOps, Finance, Healthcare, HR, Legal, Security, E-Commerce, Education, Creative, SaaS, Compliance, Voice, Automation, and more.
+
+---
+
 ## Learn More
 
 Refer to the documentation for more information on NemoClaw.
