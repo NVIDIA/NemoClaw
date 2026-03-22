@@ -3,6 +3,8 @@
 
 import { describe, it, expect } from "vitest";
 import { execSync } from "node:child_process";
+import path from "node:path";
+import fs from "node:fs";
 import { resolveOpenshell } from "../bin/lib/resolve-openshell";
 
 describe("service environment", () => {
@@ -93,6 +95,43 @@ describe("service environment", () => {
         }
       ).trim();
       expect(result).toBe("default");
+    });
+  });
+
+  describe("SANDBOX_NAME consistency across start/stop/status (#587)", () => {
+    it("stop() passes SANDBOX_NAME via sandboxEnvPrefix", () => {
+      const src = fs.readFileSync(
+        path.join(__dirname, "..", "bin", "nemoclaw.js"),
+        "utf-8"
+      );
+      // stop() must use sandboxEnvPrefix so the PIDDIR matches start()
+      const stopFn = src.match(/function stop\(\)[^}]*\}/s);
+      expect(stopFn).toBeTruthy();
+      expect(
+        stopFn[0].includes("sandboxEnvPrefix")
+      ).toBe(true);
+    });
+
+    it("showStatus() passes SANDBOX_NAME via sandboxEnvPrefix", () => {
+      const src = fs.readFileSync(
+        path.join(__dirname, "..", "bin", "nemoclaw.js"),
+        "utf-8"
+      );
+      const statusFn = src.match(/function showStatus\(\)[^]*?^}/m);
+      expect(statusFn).toBeTruthy();
+      expect(
+        statusFn[0].includes("sandboxEnvPrefix")
+      ).toBe(true);
+    });
+
+    it("sandboxEnvPrefix() is a shared helper used by start, stop, and status", () => {
+      const src = fs.readFileSync(
+        path.join(__dirname, "..", "bin", "nemoclaw.js"),
+        "utf-8"
+      );
+      const uses = (src.match(/sandboxEnvPrefix\(\)/g) || []).length;
+      // At least 3 call sites: start(), stop(), showStatus()
+      expect(uses).toBeGreaterThanOrEqual(3);
     });
   });
 });
