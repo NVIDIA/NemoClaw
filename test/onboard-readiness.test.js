@@ -5,7 +5,7 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
 const { buildPolicySetCommand, buildPolicyGetCommand } = require("../bin/lib/policies");
-const { hasStaleGateway, isSandboxReady } = require("../bin/lib/onboard");
+const { hasStaleGateway, isSandboxReady, parseSandboxStatus } = require("../bin/lib/onboard");
 
 describe("sandbox readiness parsing", () => {
   it("detects Ready sandbox", () => {
@@ -122,6 +122,65 @@ describe("WSL sandbox name handling", () => {
     assert.ok(!isSandboxReady("my-assistant   Ready   2m ago", "m"));
     assert.ok(!isSandboxReady("my-assistant   Ready   2m ago", "my"));
     assert.ok(!isSandboxReady("my-assistant   Ready   2m ago", "my-"));
+  });
+});
+
+describe("parseSandboxStatus", () => {
+  it("returns status for a matching sandbox", () => {
+    assert.equal(parseSandboxStatus("my-assistant   Ready   2m ago", "my-assistant"), "Ready");
+  });
+
+  it("returns Pending status", () => {
+    assert.equal(parseSandboxStatus("my-assistant   Pending   10s ago", "my-assistant"), "Pending");
+  });
+
+  it("returns ContainerCreating status", () => {
+    assert.equal(parseSandboxStatus("my-assistant   ContainerCreating   5s ago", "my-assistant"), "ContainerCreating");
+  });
+
+  it("returns Failed status", () => {
+    assert.equal(parseSandboxStatus("my-assistant   Failed   1m ago", "my-assistant"), "Failed");
+  });
+
+  it("returns CrashLoopBackOff status", () => {
+    assert.equal(parseSandboxStatus("my-assistant   CrashLoopBackOff   3m ago", "my-assistant"), "CrashLoopBackOff");
+  });
+
+  it("returns null when sandbox not found", () => {
+    assert.equal(parseSandboxStatus("other-box   Ready   2m ago", "my-assistant"), null);
+  });
+
+  it("returns null for empty output", () => {
+    assert.equal(parseSandboxStatus("", "my-assistant"), null);
+  });
+
+  it("returns null for null/undefined input", () => {
+    assert.equal(parseSandboxStatus(null, "my-assistant"), null);
+    assert.equal(parseSandboxStatus(undefined, "my-assistant"), null);
+  });
+
+  it("strips ANSI codes before parsing", () => {
+    assert.equal(
+      parseSandboxStatus("\x1b[1mmy-assistant\x1b[0m   \x1b[33mPending\x1b[0m   10s", "my-assistant"),
+      "Pending"
+    );
+  });
+
+  it("exact-matches sandbox name in first column", () => {
+    assert.equal(parseSandboxStatus("my-assistant   Ready   2m ago", "my"), null);
+  });
+
+  it("picks correct sandbox from multi-line output", () => {
+    const output = [
+      "NAME           STATUS              AGE",
+      "dev-box        NotReady            5m ago",
+      "my-assistant   ContainerCreating   10s ago",
+      "staging        Ready               10m ago",
+    ].join("\n");
+    assert.equal(parseSandboxStatus(output, "my-assistant"), "ContainerCreating");
+    assert.equal(parseSandboxStatus(output, "dev-box"), "NotReady");
+    assert.equal(parseSandboxStatus(output, "staging"), "Ready");
+    assert.equal(parseSandboxStatus(output, "prod"), null);
   });
 });
 

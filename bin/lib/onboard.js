@@ -65,15 +65,28 @@ async function promptOrDefault(question, envVar, defaultValue) {
 // ── Helpers ──────────────────────────────────────────────────────
 
 /**
- * Check if a sandbox is in Ready state from `openshell sandbox list` output.
+ * Find the columns for a named sandbox from `openshell sandbox list` output.
  * Strips ANSI codes and exact-matches the sandbox name in the first column.
+ * Returns the split columns array or null if the sandbox is not found.
  */
-function isSandboxReady(output, sandboxName) {
+function parseSandboxRow(output, sandboxName) {
+  if (!output || typeof output !== "string") return null;
   const clean = output.replace(/\x1b\[[0-9;]*m/g, "");
-  return clean.split("\n").some((l) => {
-    const cols = l.trim().split(/\s+/);
-    return cols[0] === sandboxName && cols.includes("Ready") && !cols.includes("NotReady");
-  });
+  for (const line of clean.split("\n")) {
+    const cols = line.trim().split(/\s+/);
+    if (cols[0] === sandboxName) return cols;
+  }
+  return null;
+}
+
+function isSandboxReady(output, sandboxName) {
+  const cols = parseSandboxRow(output, sandboxName);
+  return cols !== null && cols.includes("Ready") && !cols.includes("NotReady");
+}
+
+function parseSandboxStatus(output, sandboxName) {
+  const cols = parseSandboxRow(output, sandboxName);
+  return cols && cols.length >= 2 ? cols[1] : null;
 }
 
 /**
@@ -1057,6 +1070,7 @@ module.exports = {
   hasStaleGateway,
   isSandboxReady,
   onboard,
+  parseSandboxStatus,
   setupNim,
   writeSandboxConfigSyncFile,
 };
