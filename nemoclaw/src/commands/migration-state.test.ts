@@ -629,46 +629,65 @@ describe("commands/migration-state", () => {
 
     it("restores state directory from snapshot", () => {
       const logger = makeLogger();
-      const manifest: SnapshotManifest = {
-        version: 2,
-        createdAt: "2026-03-01T00:00:00.000Z",
-        homeDir: "/home/user",
-        stateDir: "/home/user/.openclaw",
-        configPath: null,
-        hasExternalConfig: false,
-        externalRoots: [],
-        warnings: [],
-      };
-      addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
-      addDir("/snapshots/snap1/openclaw");
-      addFile("/snapshots/snap1/openclaw/openclaw.json", JSON.stringify({ restored: true }));
-      // Existing state dir to be archived
-      addDir("/home/user/.openclaw");
+      const origHome = process.env.HOME;
+      process.env.HOME = "/home/user";
+      try {
+        const manifest: SnapshotManifest = {
+          version: 2,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configPath: null,
+          hasExternalConfig: false,
+          externalRoots: [],
+          warnings: [],
+        };
+        addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
+        addDir("/snapshots/snap1/openclaw");
+        addFile("/snapshots/snap1/openclaw/openclaw.json", JSON.stringify({ restored: true }));
+        // Existing state dir to be archived
+        addDir("/home/user/.openclaw");
 
-      const result = restoreSnapshotToHost("/snapshots/snap1", logger);
-      expect(result).toBe(true);
-      expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("restored"));
+        const result = restoreSnapshotToHost("/snapshots/snap1", logger);
+        expect(result).toBe(true);
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("restored"));
+      } finally {
+        process.env.HOME = origHome;
+      }
     });
 
     it("restores external config when hasExternalConfig", () => {
       const logger = makeLogger();
-      const manifest: SnapshotManifest = {
-        version: 2,
-        createdAt: "2026-03-01T00:00:00.000Z",
-        homeDir: "/home/user",
-        stateDir: "/home/user/.openclaw",
-        configPath: "/etc/openclaw.json",
-        hasExternalConfig: true,
-        externalRoots: [],
-        warnings: [],
-      };
-      addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
-      addDir("/snapshots/snap1/openclaw");
-      addFile("/snapshots/snap1/config/openclaw.json", JSON.stringify({ external: true }));
+      const origHome = process.env.HOME;
+      const origConfigPath = process.env.OPENCLAW_CONFIG_PATH;
+      process.env.HOME = "/home/user";
+      process.env.OPENCLAW_CONFIG_PATH = "/etc/openclaw.json";
+      try {
+        const manifest: SnapshotManifest = {
+          version: 2,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configPath: "/etc/openclaw.json",
+          hasExternalConfig: true,
+          externalRoots: [],
+          warnings: [],
+        };
+        addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
+        addDir("/snapshots/snap1/openclaw");
+        addFile("/snapshots/snap1/config/openclaw.json", JSON.stringify({ external: true }));
 
-      const result = restoreSnapshotToHost("/snapshots/snap1", logger);
-      expect(result).toBe(true);
-      expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("external config"));
+        const result = restoreSnapshotToHost("/snapshots/snap1", logger);
+        expect(result).toBe(true);
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("external config"));
+      } finally {
+        process.env.HOME = origHome;
+        if (origConfigPath === undefined) {
+          delete process.env.OPENCLAW_CONFIG_PATH;
+        } else {
+          process.env.OPENCLAW_CONFIG_PATH = origConfigPath;
+        }
+      }
     });
   });
 });
