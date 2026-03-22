@@ -43,7 +43,7 @@ print_dashboard_urls() {
   token="$(python3 - <<'PYTOKEN'
 import json
 import os
-path = os.path.expanduser('~/.openclaw/openclaw.json')
+path = os.environ.get('OPENCLAW_CONFIG_PATH') or os.path.expanduser('~/.openclaw/openclaw.json')
 try:
     cfg = json.load(open(path))
 except Exception:
@@ -126,10 +126,32 @@ PYAUTOPAIR
   echo "[gateway] auto-pair watcher launched (pid $!)"
 }
 
+prepare_writable_config() {
+  # openclaw.json is baked at build time and locked (root:root 444) to prevent
+  # agent tampering.  However, the user may legitimately need to modify config
+  # at runtime (e.g. `openclaw onboard` to add a Discord token — see #606).
+  #
+  # Solution: copy the immutable config to the writable state directory and
+  # redirect OpenClaw via OPENCLAW_CONFIG_PATH.  The original file stays
+  # intact as a read-only reference; runtime writes go to the copy.
+  local immutable_cfg="${HOME}/.openclaw/openclaw.json"
+  local writable_cfg="${HOME}/.openclaw-data/openclaw.json"
+
+  if [ ! -f "$writable_cfg" ] && [ -f "$immutable_cfg" ]; then
+    cp "$immutable_cfg" "$writable_cfg"
+    chmod 600 "$writable_cfg"
+  fi
+
+  if [ -f "$writable_cfg" ]; then
+    export OPENCLAW_CONFIG_PATH="$writable_cfg"
+  fi
+}
+
 echo 'Setting up NemoClaw...'
 # openclaw doctor --fix and openclaw plugins install already ran at build time
 # (Dockerfile Step 28). At runtime they fail with EPERM against the locked
 # /sandbox/.openclaw directory and accomplish nothing.
+prepare_writable_config
 write_auth_profile
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
