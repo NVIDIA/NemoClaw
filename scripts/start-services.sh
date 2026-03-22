@@ -68,6 +68,11 @@ start_service() {
     info "$name already running (PID $(cat "$PIDDIR/$name.pid"))"
     return 0
   fi
+  # Safety check for cloudflared: don't start if another one is already tunneling the same port
+  if [[ "$name" == "cloudflared" ]] && pgrep -f "cloudflared tunnel --url http://localhost:$DASHBOARD_PORT" > /dev/null; then
+    info "cloudflared tunnel for port $DASHBOARD_PORT already active (system check)"
+    return 0
+  fi
   nohup "$@" > "$PIDDIR/$name.log" 2>&1 &
   echo $! > "$PIDDIR/$name.pid"
   info "$name started (PID $!)"
