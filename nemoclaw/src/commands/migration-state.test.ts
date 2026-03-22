@@ -605,6 +605,16 @@ describe("commands/migration-state", () => {
       const loaded = loadSnapshotManifest("/snapshots/snap1");
       expect(loaded).toEqual(manifest);
     });
+
+    it("throws when snapshot.json contains malformed JSON", () => {
+      addFile("/snapshots/bad/snapshot.json", "not valid json");
+      expect(() => loadSnapshotManifest("/snapshots/bad")).toThrow();
+    });
+
+    it("throws when snapshot.json is an array instead of object", () => {
+      addFile("/snapshots/bad/snapshot.json", "[1, 2, 3]");
+      expect(() => loadSnapshotManifest("/snapshots/bad")).toThrow(/not a JSON object/);
+    });
   });
 
   describe("restoreSnapshotToHost", () => {

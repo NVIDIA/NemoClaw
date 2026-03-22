@@ -57,6 +57,14 @@ describe("blueprint/state", () => {
       store.set(STATE_PATH, JSON.stringify(saved));
       expect(loadState()).toEqual(saved);
     });
+
+    it("returns blank state when file contains malformed JSON", () => {
+      store.set(STATE_PATH, "not valid json {{{");
+      const state = loadState();
+      expect(state.lastRunId).toBeNull();
+      expect(state.lastAction).toBeNull();
+      expect(state.updatedAt).toBeDefined();
+    });
   });
 
   describe("saveState", () => {

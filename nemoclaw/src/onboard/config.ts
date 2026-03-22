@@ -71,7 +71,11 @@ export function loadOnboardConfig(): NemoClawOnboardConfig | null {
   if (!existsSync(path)) {
     return null;
   }
-  return JSON.parse(readFileSync(path, "utf-8")) as NemoClawOnboardConfig;
+  try {
+    return JSON.parse(readFileSync(path, "utf-8")) as NemoClawOnboardConfig;
+  } catch {
+    return null;
+  }
 }
 
 export function saveOnboardConfig(config: NemoClawOnboardConfig): void {

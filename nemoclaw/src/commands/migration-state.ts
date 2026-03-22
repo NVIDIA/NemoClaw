@@ -484,9 +484,12 @@ function writeSnapshotManifest(snapshotDir: string, manifest: SnapshotManifest):
 }
 
 function readSnapshotManifest(snapshotDir: string): SnapshotManifest {
-  return JSON.parse(
-    readFileSync(path.join(snapshotDir, "snapshot.json"), "utf-8"),
-  ) as SnapshotManifest;
+  const filePath = path.join(snapshotDir, "snapshot.json");
+  const parsed: unknown = JSON.parse(readFileSync(filePath, "utf-8"));
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`Snapshot manifest at ${filePath} is not a JSON object.`);
+  }
+  return parsed as SnapshotManifest;
 }
 
 function resolveConfigSourcePath(manifest: SnapshotManifest, snapshotDir: string): string {
