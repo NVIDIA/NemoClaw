@@ -194,11 +194,7 @@ function nimStatusByName(name) {
     runCapture("command -v docker", { ignoreError: false });
 
     const state = runCapture(
-<<<<<<< HEAD
       `docker inspect --format '{{.State.Status}}' ${shellQuote(name)} 2>/dev/null`,
-=======
-      `docker inspect --format '{{.State.Status}}' "${name}" 2>/dev/null`,
->>>>>>> fc43952 (fix: quote shell interpolations and add timeouts in nim.js)
       { ignoreError: true }
     );
     if (!state) return { running: false, container: name };
