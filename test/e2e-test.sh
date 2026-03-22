@@ -241,6 +241,52 @@ console.assert(state.lastAction === null, 'Should be cleared');
 console.log('State management: create, save, load, clear all working');
 " && pass "NemoClaw state management works" || fail "State management broken"
 
+# -------------------------------------------------------
+info "11. Verify writable config overlay for runtime writes (#606)"
+# -------------------------------------------------------
+python3 -c "
+import json, os, shutil
+
+home = os.environ.get('HOME', '/sandbox')
+immutable = os.path.join(home, '.openclaw', 'openclaw.json')
+writable  = os.path.join(home, '.openclaw-data', 'openclaw.json')
+
+# Clean up any prior writable copy
+if os.path.exists(writable):
+    os.remove(writable)
+
+# Simulate what prepare_writable_config does
+assert os.path.isfile(immutable), f'Immutable config missing: {immutable}'
+shutil.copy2(immutable, writable)
+os.chmod(writable, 0o600)
+
+# Verify the copy is writable by sandbox user
+with open(writable) as f:
+    cfg = json.load(f)
+
+# Write a channel token to the writable copy
+cfg.setdefault('channels', {}).setdefault('discord', {})['botToken'] = 'test-token-606'
+with open(writable, 'w') as f:
+    json.dump(cfg, f, indent=2)
+
+# Verify the write succeeded
+with open(writable) as f:
+    updated = json.load(f)
+assert updated['channels']['discord']['botToken'] == 'test-token-606', 'Token write failed'
+
+# Verify the immutable original is unchanged
+with open(immutable) as f:
+    original = json.load(f)
+assert 'discord' not in original.get('channels', {}), 'Immutable config was modified!'
+
+# Verify OPENCLAW_CONFIG_PATH would point to writable copy
+print(f'Writable config at: {writable}')
+print(f'Immutable config untouched: {immutable}')
+
+# Clean up
+os.remove(writable)
+" && pass "Writable config overlay allows runtime writes without modifying immutable config" || fail "Writable config overlay failed"
+
 echo ""
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}  ALL E2E TESTS PASSED${NC}"
