@@ -59,6 +59,26 @@ To reconnect after closing the session, run the deploy command again:
 $ nemoclaw deploy <instance-name>
 ```
 
+## Remote dashboard access
+
+When you access the dashboard from your laptop via SSH port-forward, set `CHAT_UI_URL` to the URL your browser uses.
+This ensures the gateway allows that origin and websocket connections succeed.
+
+The gateway inside the sandbox binds to all interfaces (`0.0.0.0`) by default so that port-forwarding works.
+The sandbox Control UI disables device auth; use the token in the dashboard URL to authenticate.
+
+1. On the remote host, ensure the sandbox is started with the origin you use in the browser, for example:
+   ```console
+   $ export CHAT_UI_URL="http://YOUR_HOST_IP_OR_NAME:18789"
+   ```
+2. From your laptop, forward the dashboard port to the remote host:
+   ```console
+   $ ssh -L 18789:localhost:18789 <instance-name>
+   ```
+3. Open `http://127.0.0.1:18789/` (or the URL shown after sandbox start, including the `#token=...` fragment) in your browser.
+
+To bind the gateway to loopback only (e.g. when not using remote access), set `GATEWAY_BIND=loopback` in the sandbox environment.
+
 ## Monitor the Remote Sandbox
 
 SSH to the instance and run the OpenShell TUI to monitor activity and approve network requests:

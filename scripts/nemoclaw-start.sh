@@ -7,13 +7,19 @@
 #
 # Optional env:
 #   NVIDIA_API_KEY   API key for NVIDIA-hosted inference
-#   CHAT_UI_URL      Browser origin that will access the forwarded dashboard
+#   CHAT_UI_URL      Browser origin that will access the forwarded dashboard (e.g. http://your-host:18789 for SSH port-forward)
+#   GATEWAY_BIND     Gateway bind mode: 'lan' (0.0.0.0, default for remote access) or 'loopback' (127.0.0.1 only)
 
 set -euo pipefail
 
 NEMOCLAW_CMD=("$@")
 CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:18789}"
 PUBLIC_PORT=18789
+
+fix_openclaw_config() {
+  SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+  python3 "${SCRIPTS_DIR}/write-openclaw-gateway-config.py"
+}
 
 write_auth_profile() {
   if [ -z "${NVIDIA_API_KEY:-}" ]; then
@@ -131,6 +137,8 @@ echo 'Setting up NemoClaw...'
 # (Dockerfile Step 28). At runtime they fail with EPERM against the locked
 # /sandbox/.openclaw directory and accomplish nothing.
 write_auth_profile
+export CHAT_UI_URL PUBLIC_PORT
+fix_openclaw_config
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exec "${NEMOCLAW_CMD[@]}"
