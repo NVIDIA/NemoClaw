@@ -157,44 +157,9 @@ network_policies:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/npm }
 
-  # ── Messaging — pre-allowed for agent notifications ────────────
-  # Telegram and Discord are open by default so the agent can send
-  # notifications and respond to chats without triggering approval.
-  telegram:
-    name: telegram
-    endpoints:
-      - host: api.telegram.org
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/bot*/**" }
-          - allow: { method: POST, path: "/bot*/**" }
-
-  discord:
-    name: discord
-    endpoints:
-      - host: discord.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: gateway.discord.gg
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: cdn.discordapp.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
+  # ── Messaging — opt-in only via presets ────────────────────────────
+  # Telegram and Discord are NOT included in the baseline policy.
+  # Any process in the sandbox can reach these endpoints when enabled,
+  # making them data exfiltration channels (C-3). Users who need
+  # messaging can opt in via `nemoclaw onboard` (suggested presets) or
+  # by running `nemoclaw <sandbox> policy-add telegram|discord`.
