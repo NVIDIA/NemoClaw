@@ -612,6 +612,39 @@ function sanitizeCredentialsInBundle(preparedStateDir: string): void {
 function sanitizeExternalRootSnapshot(rootSnapshotDir: string): void {
   // Remove auth-profiles.json anywhere in the external root
   walkAndRemoveFile(rootSnapshotDir, "auth-profiles.json");
+
+  // Strip credential fields from any openclaw.json found in the external root
+  walkAndStripCredentials(rootSnapshotDir, "openclaw.json");
+}
+
+/**
+ * Recursively find files matching targetName and strip credential fields
+ * from their JSON content.
+ */
+function walkAndStripCredentials(dirPath: string, targetName: string): void {
+  let entries: string[];
+  try {
+    entries = readdirSync(dirPath);
+  } catch (err) {
+    console.warn(`[credential-sanitize] Unable to read directory ${dirPath}: ${err}`);
+    return;
+  }
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry);
+    try {
+      const stat = lstatSync(fullPath);
+      if (stat.isDirectory()) {
+        walkAndStripCredentials(fullPath, targetName);
+      } else if (entry === targetName) {
+        const raw = readFileSync(fullPath, "utf-8");
+        const config = JSON.parse(raw) as Record<string, unknown>;
+        const sanitized = stripCredentials(config) as Record<string, unknown>;
+        writeFileSync(fullPath, JSON.stringify(sanitized, null, 2));
+      }
+    } catch (err) {
+      console.warn(`[credential-sanitize] Unable to process ${fullPath}: ${err}`);
+    }
+  }
 }
 
 /**
