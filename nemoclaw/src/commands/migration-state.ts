@@ -544,6 +544,142 @@ function setConfigValue(
   (current as Record<string, unknown>)[finalToken] = value;
 }
 
+/**
+ * Credential field names that MUST be stripped from config and auth files
+ * before they are sent into the sandbox. Credentials should be injected
+ * at runtime via OpenShell's provider credential mechanism, not baked
+ * into the sandbox filesystem.
+ */
+const CREDENTIAL_FIELDS = new Set([
+  "apiKey",
+  "api_key",
+  "token",
+  "secret",
+  "password",
+  "resolvedKey",
+  "keyRef",
+]);
+
+/**
+ * Recursively strip credential fields from a JSON-like object.
+ * Returns a new object with sensitive values replaced by a placeholder.
+ * Any value type (string, object, boolean, number, null) is stripped if
+ * the key matches CREDENTIAL_FIELDS.
+ */
+function stripCredentials(obj: unknown): unknown {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map(stripCredentials);
+
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    if (CREDENTIAL_FIELDS.has(key)) {
+      result[key] = "[STRIPPED_BY_MIGRATION]";
+    } else {
+      result[key] = stripCredentials(value);
+    }
+  }
+  return result;
+}
+
+/**
+ * Remove auth-profiles.json from the agents/ subtree and strip credential
+ * fields from openclaw.json inside the prepared sandbox state directory.
+ *
+ * Note: when hasExternalConfig is true, prepareSandboxState has already
+ * merged the external config into openclaw.json — so stripping that file
+ * covers both the inline and external config cases.
+ */
+function sanitizeCredentialsInBundle(preparedStateDir: string): void {
+  // Remove auth-profiles.json files from agents/ subtree
+  removeAuthProfileFiles(preparedStateDir);
+
+  // Strip credential fields from openclaw.json
+  const configPath = path.join(preparedStateDir, "openclaw.json");
+  if (existsSync(configPath)) {
+    const raw = readFileSync(configPath, "utf-8");
+    const config = JSON.parse(raw) as Record<string, unknown>;
+    const sanitized = stripCredentials(config) as Record<string, unknown>;
+    writeFileSync(configPath, JSON.stringify(sanitized, null, 2));
+  }
+}
+
+/**
+ * Sanitize a snapshot directory for an external root (agentDir, workspace,
+ * skills) before it is archived and sent into the sandbox. External roots
+ * may contain their own auth-profiles.json or credential files.
+ */
+function sanitizeExternalRootSnapshot(rootSnapshotDir: string): void {
+  // Remove auth-profiles.json anywhere in the external root
+  walkAndRemoveFile(rootSnapshotDir, "auth-profiles.json");
+
+  // Strip credential fields from any openclaw.json found in the external root
+  walkAndStripCredentials(rootSnapshotDir, "openclaw.json");
+}
+
+/**
+ * Recursively find files matching targetName and strip credential fields
+ * from their JSON content.
+ */
+function walkAndStripCredentials(dirPath: string, targetName: string): void {
+  let entries: string[];
+  try {
+    entries = readdirSync(dirPath);
+  } catch (err) {
+    console.warn(`[credential-sanitize] Unable to read directory ${dirPath}: ${err}`);
+    return;
+  }
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry);
+    try {
+      const stat = lstatSync(fullPath);
+      if (stat.isDirectory()) {
+        walkAndStripCredentials(fullPath, targetName);
+      } else if (entry === targetName) {
+        const raw = readFileSync(fullPath, "utf-8");
+        const config = JSON.parse(raw) as Record<string, unknown>;
+        const sanitized = stripCredentials(config) as Record<string, unknown>;
+        writeFileSync(fullPath, JSON.stringify(sanitized, null, 2));
+      }
+    } catch (err) {
+      console.warn(`[credential-sanitize] Unable to process ${fullPath}: ${err}`);
+    }
+  }
+}
+
+/**
+ * Remove auth-profiles.json files from known OpenClaw credential locations.
+ * Scoped to the agents/ subtree to avoid traversing large workspace directories.
+ */
+function removeAuthProfileFiles(preparedStateDir: string): void {
+  const agentsDir = path.join(preparedStateDir, "agents");
+  if (!existsSync(agentsDir)) return;
+  walkAndRemoveFile(agentsDir, "auth-profiles.json");
+}
+
+function walkAndRemoveFile(dirPath: string, targetName: string): void {
+  let entries: string[];
+  try {
+    entries = readdirSync(dirPath);
+  } catch (err) {
+    console.warn(`[credential-sanitize] Unable to read directory ${dirPath}: ${err}`);
+    return;
+  }
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry);
+    try {
+      const stat = lstatSync(fullPath);
+      if (stat.isDirectory()) {
+        walkAndRemoveFile(fullPath, targetName);
+      } else if (entry === targetName) {
+        rmSync(fullPath, { force: true });
+      }
+    } catch (err) {
+      console.warn(`[credential-sanitize] Unable to process ${fullPath}: ${err}`);
+    }
+  }
+}
+
 function prepareSandboxState(snapshotDir: string, manifest: SnapshotManifest): string {
   const preparedStateDir = path.join(snapshotDir, "sandbox-bundle", "openclaw");
   rmSync(preparedStateDir, { recursive: true, force: true });
@@ -560,6 +696,13 @@ function prepareSandboxState(snapshotDir: string, manifest: SnapshotManifest): s
   }
 
   writeFileSync(path.join(preparedStateDir, "openclaw.json"), JSON.stringify(config, null, 2));
+
+  // SECURITY: Strip all credentials from the bundle before it enters the sandbox.
+  // Credentials must be injected at runtime via OpenShell's provider credential
+  // mechanism, not baked into the sandbox filesystem where a compromised agent
+  // can read them.
+  sanitizeCredentialsInBundle(preparedStateDir);
+
   return preparedStateDir;
 }
 
@@ -597,6 +740,9 @@ export function createSnapshotBundle(
       const destination = path.join(parentDir, root.snapshotRelativePath);
       mkdirSync(path.dirname(destination), { recursive: true });
       copyDirectory(root.sourcePath, destination);
+      // SECURITY: strip credential files from external root snapshots
+      // before they are archived and sent into the sandbox.
+      sanitizeExternalRootSnapshot(destination);
       externalRoots.push({
         ...root,
         symlinkPaths: collectSymlinkPaths(root.sourcePath),
