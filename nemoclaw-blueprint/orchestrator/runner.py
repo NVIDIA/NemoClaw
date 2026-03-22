@@ -17,6 +17,7 @@ Protocol:
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,16 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+RUN_ID_PATTERN = re.compile(r"^nc-\d{8}-\d{6}-[0-9a-f]{8}$")
+
+
+def validate_run_id(rid: str) -> None:
+    """Ensure the RUN_ID is a valid format to prevent path traversal and misuse."""
+    if not RUN_ID_PATTERN.fullmatch(rid):
+        log(f"ERROR: Invalid Run ID format: {rid}")
+        log("Expected format: nc-YYYYMMDD-HHMMSS-xxxxxxxx")
+        sys.exit(1)
 
 
 def log(msg: str) -> None:
@@ -130,6 +141,11 @@ def action_plan(
         "dry_run": dry_run,
     }
 
+    progress(85, "Saving plan")
+    state_dir = Path.home() / ".nemoclaw" / "state" / "runs" / rid
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "plan.json").write_text(json.dumps(plan, indent=2))
+
     progress(100, "Plan complete")
     log(json.dumps(plan, indent=2))
     return plan
@@ -142,23 +158,44 @@ def action_apply(
     endpoint_url: str | None = None,
 ) -> None:
     """Apply the plan: create sandbox, configure provider, set inference route."""
-    rid = emit_run_id()
-
-    # Load plan if provided, otherwise generate one
+    # Reuse plan ID if provided, otherwise generate one
     if plan_path:
-        # In a real implementation, load the saved plan
-        pass
+        rid = plan_path
+        # The TS layer needs to see the RUN_ID line to confirm tracking
+        print(f"RUN_ID:{rid}", flush=True)
+    else:
+        rid = emit_run_id()
 
-    inference_profiles: dict[str, Any] = (
-        blueprint.get("components", {}).get("inference", {}).get("profiles", {})
-    )
-    inference_cfg: dict[str, Any] = inference_profiles.get(profile, {})
+    # If --plan is provided, it is the AUTHORITATIVE source of truth.
+    # We ignore the current blueprint and profile to ensure we apply exactly what was planned.
+    if plan_path:
+        plan_file = Path.home() / ".nemoclaw" / "state" / "runs" / plan_path / "plan.json"
+        if not plan_file.exists():
+            log(f"ERROR: Plan file not found at {plan_file}")
+            sys.exit(1)
 
-    # Override endpoint if provided (e.g., NCP dynamic endpoint)
+        plan_data = json.loads(plan_file.read_text())
+        inference_cfg = plan_data.get("inference", {})
+        sandbox_cfg = plan_data.get("sandbox", {})
+
+        # Log that we are using a stored plan
+        log(f"Applying stored plan for run {rid}")
+    else:
+        # No plan: resolve from current blueprint and profile
+        inference_profiles: dict[str, Any] = (
+            blueprint.get("components", {}).get("inference", {}).get("profiles", {})
+        )
+        if profile not in inference_profiles:
+            available = ", ".join(inference_profiles.keys())
+            log(f"ERROR: Profile '{profile}' not found. Available: {available}")
+            sys.exit(1)
+
+        inference_cfg = inference_profiles.get(profile, {})
+        sandbox_cfg = blueprint.get("components", {}).get("sandbox", {})
+
+    # Override endpoint if provided (e.g., NCP dynamic endpoint override during apply)
     if endpoint_url:
         inference_cfg = {**inference_cfg, "endpoint": endpoint_url}
-
-    sandbox_cfg: dict[str, Any] = blueprint.get("components", {}).get("sandbox", {})
 
     sandbox_name: str = sandbox_cfg.get("name", "openclaw")
     sandbox_image: str = sandbox_cfg.get("image", "openclaw")
@@ -224,11 +261,11 @@ def action_apply(
         capture=True,
     )
 
-    # Step 4: Save run state
+    # Step 4: Save run state (separate from plan.json)
     progress(85, "Saving run state")
     state_dir = Path.home() / ".nemoclaw" / "state" / "runs" / rid
     state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / "plan.json").write_text(
+    (state_dir / "run.json").write_text(
         json.dumps(
             {
                 "run_id": rid,
@@ -236,6 +273,7 @@ def action_apply(
                 "sandbox_name": sandbox_name,
                 "inference": inference_cfg,
                 "timestamp": datetime.now(UTC).isoformat(),
+                "status": "applied",
             },
             indent=2,
         )
@@ -257,14 +295,22 @@ def action_status(rid: str | None = None) -> None:
         if not state_dir.exists():
             log("No runs found.")
             sys.exit(0)
-        runs = sorted(state_dir.iterdir(), reverse=True)
+        runs = sorted(
+            [d for d in state_dir.iterdir() if d.is_dir() and RUN_ID_PATTERN.fullmatch(d.name)],
+            key=lambda x: x.name,
+            reverse=True,
+        )
         if not runs:
             log("No runs found.")
             sys.exit(0)
         run_dir = runs[0]
 
+    run_file = run_dir / "run.json"
     plan_file = run_dir / "plan.json"
-    if plan_file.exists():
+
+    if run_file.exists():
+        log(run_file.read_text())
+    elif plan_file.exists():
         log(plan_file.read_text())
     else:
         log(json.dumps({"run_id": run_dir.name, "status": "unknown"}))
@@ -279,10 +325,10 @@ def action_rollback(rid: str) -> None:
         log(f"ERROR: Run {rid} not found.")
         sys.exit(1)
 
-    plan_file = state_dir / "plan.json"
-    if plan_file.exists():
-        plan = json.loads(plan_file.read_text())
-        sandbox_name = plan.get("sandbox_name", "openclaw")
+    run_file = state_dir / "run.json"
+    if run_file.exists():
+        run_data = json.loads(run_file.read_text())
+        sandbox_name = run_data.get("sandbox_name", "openclaw")
 
         progress(30, f"Stopping sandbox {sandbox_name}")
         run_cmd(
@@ -297,6 +343,9 @@ def action_rollback(rid: str) -> None:
             check=False,
             capture=True,
         )
+    else:
+        log(f"ERROR: No run state found for {rid}. Cannot rollback.")
+        sys.exit(1)
 
     progress(90, "Cleaning up run state")
     (state_dir / "rolled_back").write_text(datetime.now(UTC).isoformat())
@@ -330,15 +379,20 @@ def main() -> None:
     if args.action == "plan":
         action_plan(args.profile, blueprint, dry_run=args.dry_run, endpoint_url=args.endpoint_url)
     elif args.action == "apply":
+        if args.plan_path:
+            validate_run_id(args.plan_path)
         action_apply(
             args.profile, blueprint, plan_path=args.plan_path, endpoint_url=args.endpoint_url
         )
     elif args.action == "status":
+        if args.run_id:
+            validate_run_id(args.run_id)
         action_status(rid=args.run_id)
     elif args.action == "rollback":
         if not args.run_id:
             log("ERROR: --run-id is required for rollback")
             sys.exit(1)
+        validate_run_id(args.run_id)
         action_rollback(args.run_id)
 
 
