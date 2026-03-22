@@ -83,6 +83,12 @@ ARG CHAT_UI_URL=http://127.0.0.1:18789
 # Pass --build-arg NEMOCLAW_BUILD_ID=$(date +%s) to bust the cache.
 ARG NEMOCLAW_BUILD_ID=default
 
+# SECURITY: Promote build-args to env vars so the Python script reads them
+# via os.environ, never via string interpolation into Python source code.
+# Direct ARG interpolation into python3 -c is a code injection vector (C-2).
+ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
+    CHAT_UI_URL=${CHAT_UI_URL}
+
 WORKDIR /sandbox
 USER sandbox
 
@@ -94,8 +100,8 @@ USER sandbox
 RUN python3 -c "\
 import json, os, secrets; \
 from urllib.parse import urlparse; \
-model = '${NEMOCLAW_MODEL}'; \
-chat_ui_url = '${CHAT_UI_URL}'; \
+model = os.environ['NEMOCLAW_MODEL']; \
+chat_ui_url = os.environ['CHAT_UI_URL']; \
 parsed = urlparse(chat_ui_url); \
 chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \
 origins = ['http://127.0.0.1:18789']; \
