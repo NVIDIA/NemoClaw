@@ -106,6 +106,7 @@ print_done() {
   printf "\n"
   printf "  ${C_GREEN}Your OpenClaw Sandbox is live.${C_RESET}\n"
   printf "  ${C_DIM}Sandbox in, break things, and tell us what you find.${C_RESET}\n"
+  printf "\n"
   printf "  ${C_GREEN}Next:${C_RESET}\n"
   printf "  %s$%s nemoclaw %s connect\n" "$C_GREEN" "$C_RESET" "$sandbox_name"
   printf "  %ssandbox@%s$%s openclaw tui\n" "$C_GREEN" "$sandbox_name" "$C_RESET"

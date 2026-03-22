@@ -77,27 +77,31 @@ describe("uninstall CLI flags", () => {
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
 
-    // Provide stub executables so the uninstaller can run its steps as no-ops
-    for (const cmd of ["npm", "openshell", "docker", "ollama", "pgrep"]) {
-      fs.writeFileSync(path.join(fakeBin, cmd), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    try {
+      // Provide stub executables so the uninstaller can run its steps as no-ops
+      for (const cmd of ["npm", "openshell", "docker", "ollama", "pgrep"]) {
+        fs.writeFileSync(path.join(fakeBin, cmd), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+      }
+
+      const result = spawnSync("bash", [UNINSTALL_SCRIPT, "--yes"], {
+        cwd: path.join(__dirname, ".."),
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmp,
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+          SCRIPT_DIR: path.join(__dirname, ".."),
+        },
+      });
+
+      assert.equal(result.status, 0);
+      // Banner and bye statement should be present
+      const output = `${result.stdout}${result.stderr}`;
+      assert.match(output, /NemoClaw/);
+      assert.match(output, /Claws retracted/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
     }
-
-    const result = spawnSync("bash", [UNINSTALL_SCRIPT, "--yes"], {
-      cwd: path.join(__dirname, ".."),
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: `${fakeBin}:/usr/bin:/bin`,
-        SCRIPT_DIR: path.join(__dirname, ".."),
-      },
-    });
-
-    assert.equal(result.status, 0);
-    // Banner and bye statement should be present
-    const output = `${result.stdout}${result.stderr}`;
-    assert.match(output, /NemoClaw/);
-    assert.match(output, /Claws retracted/);
   });
 });
 
