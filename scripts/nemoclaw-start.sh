@@ -33,9 +33,11 @@ json.dump({
         'profileId': 'nvidia:manual',
     }
 }, open(path, 'w'))
-# Enforce 600 for all auth profiles across all agents
-find ~/.openclaw -name "auth-profiles.json" -exec chmod 600 {} + 2>/dev/null || true
+os.chmod(path, 0o600)
 PYAUTH
+
+  # Enforce 600 for all auth profiles across all agents
+  find ~/.openclaw -name "auth-profiles.json" -exec chmod 600 {} + 2>/dev/null || true
 }
 
 print_dashboard_urls() {
