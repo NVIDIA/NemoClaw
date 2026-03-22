@@ -295,6 +295,24 @@ function isSafeModelId(value) {
   return /^[A-Za-z0-9._:/-]+$/.test(value);
 }
 
+/**
+ * Rewrite the NEMOCLAW_MODEL build arg default in a copied Dockerfile so that
+ * openclaw.json is baked with the user-selected model at image build time.
+ *
+ * Only touches lines matching `ARG NEMOCLAW_MODEL=...`.
+ *
+ * @param {string} dockerfilePath  Path to the (already-copied) Dockerfile.
+ * @param {string} model           Model identifier chosen during onboarding.
+ */
+function patchDockerfileModel(dockerfilePath, model) {
+  const content = fs.readFileSync(dockerfilePath, "utf8");
+  const patched = content.replace(
+    /^ARG NEMOCLAW_MODEL=.+$/m,
+    `ARG NEMOCLAW_MODEL=${model}`,
+  );
+  fs.writeFileSync(dockerfilePath, patched);
+}
+
 function getNonInteractiveProvider() {
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
@@ -469,10 +487,10 @@ async function startGateway(gpu) {
   sleep(5);
 }
 
-// ── Step 3: Sandbox ──────────────────────────────────────────────
+// ── Step 4: Sandbox ──────────────────────────────────────────────
 
-async function createSandbox(gpu) {
-  step(3, 7, "Creating sandbox");
+async function createSandbox(gpu, model) {
+  step(4, 7, "Creating sandbox");
 
   const nameAnswer = await promptOrDefault(
     "  Sandbox name (lowercase, numbers, hyphens) [my-assistant]: ",
@@ -516,6 +534,15 @@ async function createSandbox(gpu) {
   const os = require("os");
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
   fs.copyFileSync(path.join(ROOT, "Dockerfile"), path.join(buildCtx, "Dockerfile"));
+
+  // Patch the Dockerfile to bake the user-selected model into openclaw.json.
+  // The Dockerfile uses ARG NEMOCLAW_MODEL with a default value; we rewrite
+  // that default so the immutable openclaw.json reflects the actual provider
+  // and model, not the hardcoded cloud default.  (Fixes #628)
+  if (model) {
+    patchDockerfileModel(path.join(buildCtx, "Dockerfile"), model);
+  }
+
   run(`cp -r "${path.join(ROOT, "nemoclaw")}" "${buildCtx}/nemoclaw"`);
   run(`cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`);
   run(`cp -r "${path.join(ROOT, "scripts")}" "${buildCtx}/scripts"`);
@@ -617,10 +644,10 @@ async function createSandbox(gpu) {
   return sandboxName;
 }
 
-// ── Step 4: NIM ──────────────────────────────────────────────────
+// ── Step 3: Inference ────────────────────────────────────────────
 
-async function setupNim(sandboxName, gpu) {
-  step(4, 7, "Configuring inference (NIM)");
+async function selectInference(gpu) {
+  step(3, 7, "Configuring inference");
 
   let model = null;
   let provider = "nvidia-nim";
@@ -732,17 +759,8 @@ async function setupNim(sandboxName, gpu) {
         console.log(`  Pulling NIM image for ${model}...`);
         nim.pullNimImage(model);
 
-        console.log("  Starting NIM container...");
-        nimContainer = nim.startNimContainer(sandboxName, model);
-
-        console.log("  Waiting for NIM to become healthy...");
-        if (!nim.waitForNimHealth()) {
-          console.error("  NIM failed to start. Falling back to cloud API.");
-          model = null;
-          nimContainer = null;
-        } else {
-          provider = "vllm-local";
-        }
+        // NIM container will be started after sandbox creation (startNimContainer)
+        provider = "vllm-local";
       }
     } else if (selected.key === "ollama") {
       if (!ollamaRunning) {
@@ -794,9 +812,22 @@ async function setupNim(sandboxName, gpu) {
     console.log(`  Using NVIDIA Endpoint API with model: ${model}`);
   }
 
-  registry.updateSandbox(sandboxName, { model, provider, nimContainer });
-
   return { model, provider };
+}
+
+/**
+ * Start NIM container for a sandbox.  Called after sandbox creation
+ * so the container name can be derived from the sandbox name.
+ */
+function startNim(sandboxName, model) {
+  console.log("  Starting NIM container...");
+  const nimContainer = nim.startNimContainer(sandboxName, model);
+  console.log("  Waiting for NIM to become healthy...");
+  if (!nim.waitForNimHealth()) {
+    console.error("  NIM failed to start. Falling back to cloud API.");
+    return null;
+  }
+  return nimContainer;
 }
 
 // ── Step 5: Inference provider ───────────────────────────────────
@@ -1042,8 +1073,28 @@ async function onboard(opts = {}) {
 
   const gpu = await preflight();
   await startGateway(gpu);
-  const sandboxName = await createSandbox(gpu);
-  const { model, provider } = await setupNim(sandboxName, gpu);
+
+  // Select inference provider and model BEFORE building the sandbox so the
+  // chosen model is baked into the immutable openclaw.json at image build
+  // time.  Previously the sandbox was built first with the hardcoded cloud
+  // default, causing openclaw.json to always show the cloud model even when
+  // the user selected Local Ollama.  (Fixes #628)
+  const { model, provider } = await selectInference(gpu);
+  const sandboxName = await createSandbox(gpu, model);
+
+  // For NIM provider, start the NIM container now that we have a sandbox name
+  let nimContainer = null;
+  if (provider === "vllm-local" && model && model !== "vllm-local") {
+    nimContainer = startNim(sandboxName, model);
+    if (!nimContainer) {
+      // NIM failed — fall back handled inside startNim, but model stays
+      console.warn("  Continuing with cloud fallback for gateway route.");
+    }
+  }
+
+  // Register model/provider in the sandbox registry
+  registry.updateSandbox(sandboxName, { model, provider, nimContainer });
+
   await setupInference(sandboxName, model, provider);
   await setupOpenclaw(sandboxName, model, provider);
   await setupPolicies(sandboxName);
@@ -1057,6 +1108,7 @@ module.exports = {
   hasStaleGateway,
   isSandboxReady,
   onboard,
-  setupNim,
+  patchDockerfileModel,
+  selectInference,
   writeSandboxConfigSyncFile,
 };
