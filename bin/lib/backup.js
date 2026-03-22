@@ -11,10 +11,17 @@ const registry = require("./registry");
 
 const BACKUP_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw", "backups");
 
+/**
+ * Ensures the backup directory exists with appropriate permissions.
+ */
 function ensureBackupDir() {
   fs.mkdirSync(BACKUP_DIR, { recursive: true, mode: 0o700 });
 }
 
+/**
+ * Lists all sandbox backups in the backup directory.
+ * @returns {Array<{name: string, createdAt: string, path: string, size: number}>}
+ */
 function listBackups() {
   ensureBackupDir();
   const files = fs.readdirSync(BACKUP_DIR).filter((f) => f.endsWith(".json"));
@@ -35,6 +42,12 @@ function listBackups() {
   return backups.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
+/**
+ * Exports a sandbox to a backup file.
+ * @param {string} sandboxName - Name of the sandbox to export.
+ * @param {string} [outputPath] - Optional output path for the backup file.
+ * @returns {string|null} Path to the created backup file, or null if sandbox not found.
+ */
 function exportSandbox(sandboxName, outputPath) {
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) {
@@ -86,6 +99,12 @@ function exportSandbox(sandboxName, outputPath) {
   return backupPath;
 }
 
+/**
+ * Imports a sandbox from a backup file.
+ * @param {string} backupPath - Path to the backup file.
+ * @param {string} [newName] - Optional new name for the imported sandbox.
+ * @returns {boolean} True if import succeeded, false otherwise.
+ */
 function importSandbox(backupPath, newName) {
   if (!fs.existsSync(backupPath)) {
     console.error(`  Backup file not found: ${backupPath}`);
@@ -151,6 +170,11 @@ function importSandbox(backupPath, newName) {
   return true;
 }
 
+/**
+ * Deletes a backup file.
+ * @param {string} backupPath - Path to the backup file to delete.
+ * @returns {boolean} True if deletion succeeded, false otherwise.
+ */
 function deleteBackup(backupPath) {
   if (!fs.existsSync(backupPath)) {
     console.error(`  Backup not found: ${backupPath}`);
