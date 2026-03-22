@@ -36,8 +36,9 @@ def progress(pct: int, label: str) -> None:
     print(f"PROGRESS:{pct}:{label}", flush=True)
 
 
-def emit_run_id() -> str:
-    rid = f"nc-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+def emit_run_id(rid: str | None = None) -> str:
+    if not rid:
+        rid = f"nc-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     print(f"RUN_ID:{rid}", flush=True)
     return rid
 
@@ -81,11 +82,12 @@ def action_plan(
     profile: str,
     blueprint: dict[str, Any],
     *,
+    rid: str | None = None,
     dry_run: bool = False,
     endpoint_url: str | None = None,
 ) -> dict[str, Any]:
     """Plan the deployment: validate inputs, resolve profile, check prerequisites."""
-    rid = emit_run_id()
+    rid = emit_run_id(rid)
     progress(10, "Validating blueprint")
 
     inference_profiles: dict[str, Any] = (
@@ -138,11 +140,13 @@ def action_plan(
 def action_apply(
     profile: str,
     blueprint: dict[str, Any],
+    *,
+    rid: str | None = None,
     plan_path: str | None = None,
     endpoint_url: str | None = None,
 ) -> None:
     """Apply the plan: create sandbox, configure provider, set inference route."""
-    rid = emit_run_id()
+    rid = emit_run_id(rid)
 
     # Load plan if provided, otherwise generate one
     if plan_path:
@@ -328,10 +332,20 @@ def main() -> None:
     blueprint = load_blueprint()
 
     if args.action == "plan":
-        action_plan(args.profile, blueprint, dry_run=args.dry_run, endpoint_url=args.endpoint_url)
+        action_plan(
+            args.profile,
+            blueprint,
+            rid=args.run_id,
+            dry_run=args.dry_run,
+            endpoint_url=args.endpoint_url,
+        )
     elif args.action == "apply":
         action_apply(
-            args.profile, blueprint, plan_path=args.plan_path, endpoint_url=args.endpoint_url
+            args.profile,
+            blueprint,
+            rid=args.run_id,
+            plan_path=args.plan_path,
+            endpoint_url=args.endpoint_url,
         )
     elif args.action == "status":
         action_status(rid=args.run_id)
