@@ -125,17 +125,6 @@ List available policy presets and show which ones are applied to the sandbox.
 $ nemoclaw my-assistant policy-list
 ```
 
-### `openshell term`
-
-Open the OpenShell TUI to monitor sandbox activity and approve network egress requests.
-Run this on the host where the sandbox is running.
-
-```console
-$ openshell term
-```
-
-For a remote Brev instance, SSH to the instance and run `openshell term` there, or use a port-forward to the gateway.
-
 ### `nemoclaw start`
 
 Start auxiliary services, such as the Telegram bridge and cloudflared tunnel.
