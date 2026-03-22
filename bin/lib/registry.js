@@ -91,7 +91,12 @@ function setDefault(name) {
   return true;
 }
 
+function clearAll() {
+  save({ sandboxes: {}, defaultSandbox: null });
+}
+
 module.exports = {
+  clearAll,
   load,
   save,
   getSandbox,

@@ -102,4 +102,29 @@ describe("registry", () => {
     const { sandboxes } = registry.listSandboxes();
     assert.equal(sandboxes.length, 0);
   });
+
+  it("clearAll removes all sandboxes and resets default", () => {
+    registry.registerSandbox({ name: "alpha" });
+    registry.registerSandbox({ name: "beta" });
+    registry.setDefault("beta");
+    registry.clearAll();
+    const { sandboxes, defaultSandbox } = registry.listSandboxes();
+    assert.equal(sandboxes.length, 0);
+    assert.equal(defaultSandbox, null);
+  });
+
+  it("clearAll persists empty state to disk", () => {
+    registry.registerSandbox({ name: "persist-me" });
+    registry.clearAll();
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    assert.deepEqual(data.sandboxes, {});
+    assert.equal(data.defaultSandbox, null);
+  });
+
+  it("clearAll is safe to call on empty registry", () => {
+    registry.clearAll();
+    const { sandboxes, defaultSandbox } = registry.listSandboxes();
+    assert.equal(sandboxes.length, 0);
+    assert.equal(defaultSandbox, null);
+  });
 });
