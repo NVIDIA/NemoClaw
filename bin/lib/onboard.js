@@ -538,10 +538,15 @@ async function createSandbox(gpu) {
   // nemoclaw-start.sh reads them from the environment.
   const envArgs = [`CHAT_UI_URL=${shellQuote(chatUiUrl)}`];
 
+  // Run without piping through awk — the pipe masked non-zero exit codes
+  // from openshell because bash returns the status of the last pipeline
+  // command (awk, always 0) unless pipefail is set. Removing the pipe
+  // lets the real exit code flow through to run().
   const createResult = await streamSandboxCreate(
     `openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1`
   );
 
+  // Clean up build context regardless of outcome
   run(`rm -rf "${buildCtx}"`, { ignoreError: true });
 
   if (createResult.status !== 0) {
@@ -556,6 +561,10 @@ async function createSandbox(gpu) {
     process.exit(createResult.status || 1);
   }
 
+  // Wait for sandbox to reach Ready state in k3s before registering.
+  // On WSL2 + Docker Desktop the pod can take longer to initialize;
+  // without this gate, NemoClaw registers a phantom sandbox that
+  // causes "sandbox not found" on every subsequent connect/status call.
   console.log("  Waiting for sandbox to become ready...");
   let ready = false;
   for (let i = 0; i < 30; i++) {
@@ -568,6 +577,8 @@ async function createSandbox(gpu) {
   }
 
   if (!ready) {
+    // Clean up the orphaned sandbox so the next onboard retry with the same
+    // name doesn't fail on "sandbox already exists".
     const delResult = run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
     console.error("");
     console.error(`  Sandbox '${sandboxName}' was created but did not become ready within 60s.`);

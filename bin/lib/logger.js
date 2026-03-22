@@ -17,10 +17,6 @@ function setLevel(level) {
   }
 }
 
-function isVerbose() {
-  return currentLevel >= LOG_LEVELS.debug;
-}
-
 function debug(...args) {
   if (currentLevel >= LOG_LEVELS.debug) {
     console.error("  [debug]", ...args);
@@ -33,4 +29,4 @@ if (envLevel && LOG_LEVELS[envLevel] !== undefined) {
   setLevel(envLevel);
 }
 
-module.exports = { LOG_LEVELS, setLevel, isVerbose, debug };
+module.exports = { LOG_LEVELS, setLevel, debug };

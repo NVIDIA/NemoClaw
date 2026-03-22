@@ -35,9 +35,8 @@ const policies = require("./lib/policies");
 // ── Global flags ─────────────────────────────────────────────────
 
 // Parse --verbose / --debug from anywhere in argv before command dispatch.
-// These are stripped from args so commands don't see them as unknown flags.
-const rawArgs = process.argv.slice(2);
-if (rawArgs.includes("--verbose") || rawArgs.includes("--debug")) {
+// These are stripped from args below so commands don't see them as unknown flags.
+if (process.argv.includes("--verbose") || process.argv.includes("--debug")) {
   logger.setLevel("debug");
 }
 

@@ -13,7 +13,7 @@ function load() {
     if (fs.existsSync(REGISTRY_FILE)) {
       return JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf-8"));
     }
-  } catch (err) {
+  } catch {
     // Registry file exists but is corrupted — back it up and warn
     const backupFile = REGISTRY_FILE + ".corrupt." + Date.now();
     try {
