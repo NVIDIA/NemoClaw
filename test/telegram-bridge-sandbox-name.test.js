@@ -8,7 +8,32 @@ const path = require("node:path");
 
 const ROOT = path.resolve(__dirname, "..");
 const SCRIPT = fs.readFileSync(path.join(ROOT, "scripts", "telegram-bridge.js"), "utf-8");
-const RESOLVE_SANDBOX_NAME_SOURCE = SCRIPT.match(/function resolveSandboxName\(\) \{[\s\S]*?\n\}/)?.[0];
+
+function extractFunctionSource(source, name) {
+  const signature = `function ${name}()`;
+  const start = source.indexOf(signature);
+  assert.notEqual(start, -1, `expected source to include ${signature}`);
+
+  const bodyStart = source.indexOf("{", start);
+  assert.notEqual(bodyStart, -1, `expected ${name} to have a function body`);
+
+  let depth = 0;
+  for (let i = bodyStart; i < source.length; i += 1) {
+    const char = source[i];
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(start, i + 1);
+      }
+    }
+  }
+
+  assert.fail(`expected ${name}() to have balanced braces`);
+}
+
+const RESOLVE_SANDBOX_NAME_SOURCE = extractFunctionSource(SCRIPT, "resolveSandboxName");
 
 function resolveSandboxNameWith({ env = {}, registryDefault, registryThrows = false } = {}) {
   assert.ok(RESOLVE_SANDBOX_NAME_SOURCE, "expected telegram bridge to define resolveSandboxName()");
