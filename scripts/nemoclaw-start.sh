@@ -150,15 +150,20 @@ fix_openclaw_data_ownership() {
 
   # Fix ownership if the top-level data dir is not owned by us (common when
   # the entire tree was created as root during installation).
-  if find "$data_dir" -maxdepth 0 ! -user "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
+  if find "$data_dir" -maxdepth 2 ! -user "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
     chown -R "$(id -u):$(id -g)" "$data_dir" 2>/dev/null || true
     echo "[setup] fixed ownership on ${data_dir}"
   fi
 
   # Ensure the identity symlink exists (may be missing on native installs).
-  if [ ! -e "${openclaw_dir}/identity" ] && [ -d "${data_dir}/identity" ]; then
+  # Remove any broken symlinks first to prevent conflicts.
+  if [ ! -L "${openclaw_dir}/identity" ] && [ ! -e "${openclaw_dir}/identity" ] && [ -d "${data_dir}/identity" ]; then
     ln -sf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null || true
     echo "[setup] created identity symlink"
+  elif [ -L "${openclaw_dir}/identity" ] && [ ! -e "${openclaw_dir}/identity" ]; then
+    rm -f "${openclaw_dir}/identity"
+    ln -sf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null || true
+    echo "[setup] replaced broken identity symlink"
   fi
 }
 fix_openclaw_data_ownership
