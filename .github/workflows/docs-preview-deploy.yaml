@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Download PR metadata
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: docs-preview-metadata
           run-id: ${{ github.event.workflow_run.id }}
@@ -54,7 +54,7 @@ jobs:
 
       - name: Download docs artifact
         if: steps.meta.outputs.action != 'closed' && steps.meta.outputs.same-repo == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: docs-preview
           path: docs-preview-html/
@@ -63,7 +63,7 @@ jobs:
 
       - name: Checkout repository
         if: steps.meta.outputs.action != 'closed' && steps.meta.outputs.same-repo == 'true' || steps.meta.outputs.action == 'closed'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Deploy preview
         if: steps.meta.outputs.action != 'closed' && steps.meta.outputs.same-repo == 'true'
