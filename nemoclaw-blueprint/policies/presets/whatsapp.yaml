@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: whatsapp
+  description: "WhatsApp Web & API access"
+
+network_policies:
+  whatsapp_web:
+    name: whatsapp_web
+    endpoints:
+      - host: web.whatsapp.com
+        port: 443
+        access: full
+      - host: "*.whatsapp.net"
+        port: 443
+        access: full
+      - host: "*.whatsapp.com"
+        port: 443
+        access: full
+      - host: "*.facebook.com"
+        port: 443
+        access: full
+      - host: "*.fbcdn.net"
+        port: 443
+        access: full

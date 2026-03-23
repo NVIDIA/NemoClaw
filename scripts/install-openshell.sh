@@ -19,6 +19,16 @@ fail() {
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 
+# On macOS, check for Apple Silicon even if running under Rosetta
+if [[ "$OS" == "Darwin" ]]; then
+  if [[ "$ARCH" == "x86_64" ]]; then
+    if [[ "$(sysctl -n hw.optional.arm64 2>/dev/null)" == "1" ]]; then
+      ARCH="arm64"
+      info "Detected Apple Silicon (arm64) running under Rosetta"
+    fi
+  fi
+fi
+
 case "$OS" in
   Darwin) OS_LABEL="macOS" ;;
   Linux) OS_LABEL="Linux" ;;
