@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import nim from "../bin/lib/nim";
 
-function withMockedRunner({ runResult, runCaptureResults = [] }, callback) {
+function withMockedRunner({ runResult, runCaptureResults = [], runCaptureImpl }, callback) {
   const nimPath = require.resolve("../bin/lib/nim");
   const runnerPath = require.resolve("../bin/lib/runner");
   const savedNim = require.cache[nimPath];
@@ -26,6 +26,9 @@ function withMockedRunner({ runResult, runCaptureResults = [] }, callback) {
       },
       runCapture(command, options) {
         calls.runCapture.push({ command, options });
+        if (runCaptureImpl) {
+          return runCaptureImpl(command, options, calls);
+        }
         return runCaptureResults.shift() ?? "";
       },
     },
@@ -132,8 +135,29 @@ describe("nim", () => {
           );
           assert.equal(
             calls.runCapture[2].command,
-            "curl -sf --connect-timeout 5 http://localhost:8000/v1/models 2>/dev/null",
+            "curl -sf --connect-timeout 5 --max-time 5 http://localhost:8000/v1/models 2>/dev/null",
           );
+        },
+      );
+    });
+
+    it("returns not running when docker is unavailable", () => {
+      withMockedRunner(
+        {
+          runCaptureImpl(command) {
+            if (command === "command -v docker") {
+              throw new Error("docker missing");
+            }
+            return "";
+          },
+        },
+        (mockedNim, calls) => {
+          const st = mockedNim.nimStatus("my-sandbox");
+          expect(st).toEqual({
+            running: false,
+            container: "nemoclaw-nim-my-sandbox",
+          });
+          expect(calls.runCapture).toHaveLength(1);
         },
       );
     });
@@ -181,7 +205,7 @@ describe("nim", () => {
         assert.equal(mockedNim.waitForNimHealth(9000, 1), true);
         assert.equal(
           calls.runCapture[0].command,
-          "curl -sf --connect-timeout 5 http://localhost:9000/v1/models",
+          "curl -sf --connect-timeout 5 --max-time 5 http://localhost:9000/v1/models",
         );
         assert.equal(calls.spawnSync.length, 0);
       });

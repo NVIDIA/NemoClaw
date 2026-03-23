@@ -156,7 +156,7 @@ function waitForNimHealth(port = 8000, timeout = 300) {
 
   while ((Date.now() - start) / 1000 < timeout) {
     try {
-      const result = runCapture(`curl -sf --connect-timeout 5 http://localhost:${safePort}/v1/models`, {
+      const result = runCapture(`curl -sf --connect-timeout 5 --max-time 5 http://localhost:${safePort}/v1/models`, {
         ignoreError: true,
       });
       if (result) {
@@ -201,7 +201,7 @@ function nimStatusByName(name) {
 
     let healthy = false;
     if (state === "running") {
-      const health = runCapture(`curl -sf --connect-timeout 5 http://localhost:8000/v1/models 2>/dev/null`, {
+      const health = runCapture(`curl -sf --connect-timeout 5 --max-time 5 http://localhost:8000/v1/models 2>/dev/null`, {
         ignoreError: true,
       });
       healthy = !!health;
