@@ -69,8 +69,8 @@ If another process is already bound to this port, onboarding fails.
 Identify the conflicting process, verify it is safe to stop, and terminate it:
 
 ```console
-$ lsof -i :18789
-$ kill <PID>
+$ sudo lsof -i :18789
+$ sudo kill <PID>
 ```
 
 If the process does not exit, use `kill -9 <PID>` to force-terminate it.
