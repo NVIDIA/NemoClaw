@@ -91,6 +91,7 @@ vi.mock("node:fs", async (importOriginal) => {
     unlinkSync: vi.fn((p: string) => {
       store.delete(p);
     }),
+    chmodSync: vi.fn(),
   };
 });
 
