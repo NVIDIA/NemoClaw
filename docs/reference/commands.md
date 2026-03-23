@@ -52,6 +52,7 @@ Uppercase letters are automatically lowercased.
 
 Before creating the gateway, the wizard runs preflight checks.
 On systems with cgroup v2 (Ubuntu 24.04, DGX Spark, WSL2), it verifies that Docker is configured with `"default-cgroupns-mode": "host"` and provides fix instructions if the setting is missing.
+It also checks if the default gateway port (8080) is available, and automatically increments to the next free port if it is in use. You can explicitly override the target port by setting the `NEMOCLAW_PORT` environment variable.
 
 ### `nemoclaw list`
 
