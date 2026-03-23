@@ -16,11 +16,11 @@ Follow these steps to get started with NemoClaw and your first sandboxed OpenCla
 
 > **Note:** NemoClaw currently requires a fresh installation of OpenClaw.
 
-### Prerequisites
+## Prerequisites
 
 Check the prerequisites before you start to ensure you have the necessary software and hardware to run NemoClaw.
 
-#### Hardware
+### Hardware
 
 | Resource | Minimum        | Recommended      |
 |----------|----------------|------------------|
@@ -67,7 +67,7 @@ If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.
 
 When the install completes, a summary confirms the running environment:
 
-```
+```text
 ──────────────────────────────────────────────────
 Sandbox      my-assistant (Landlock + seccomp + netns)
 Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoint API)
@@ -139,10 +139,6 @@ For example, to skip the confirmation prompt:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash -s -- --yes
 ```
-
-### Troubleshooting
-
-If you run into issues during installation or onboarding, refer to the Troubleshooting guide (see the `nemoclaw-reference` skill) for common error messages and resolution steps.
 
 ## Related Skills
 

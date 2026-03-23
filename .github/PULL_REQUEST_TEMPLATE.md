@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD041 -->
 ## Summary
 <!-- 1-3 sentences: what this PR does and why. -->
 
@@ -23,6 +24,7 @@
 ## Checklist
 
 ### General
+
 - [ ] I have read and followed the [contributing guide](CONTRIBUTING.md).
 - [ ] I have read and followed the [style guide](docs/CONTRIBUTING.md). (for doc-only changes)
 

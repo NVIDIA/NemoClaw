@@ -83,7 +83,7 @@ If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.
 
 When the install completes, a summary confirms the running environment:
 
-```
+```text
 ──────────────────────────────────────────────────
 Sandbox      my-assistant (Landlock + seccomp + netns)
 Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoint API)

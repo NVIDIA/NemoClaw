@@ -58,6 +58,50 @@ from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
+# Heading normalization
+# ---------------------------------------------------------------------------
+
+
+def normalize_heading_levels(text: str) -> str:
+    """Ensure markdown headings increment by at most one level at a time.
+
+    After resolving includes the document may contain heading-level gaps
+    (e.g. ``# Title`` followed by ``### Sub`` with no intervening ``##``).
+    This function promotes headings so the nesting never skips a level,
+    preserving the relative depth of sibling and child headings.
+    """
+    lines = text.split("\n")
+    heading_re = re.compile(r"^(#{1,6})\s")
+    # First pass: collect all heading levels in order.
+    heading_levels: list[tuple[int, int]] = []  # (line_index, level)
+    for i, line in enumerate(lines):
+        m = heading_re.match(line)
+        if m:
+            heading_levels.append((i, len(m.group(1))))
+
+    if not heading_levels:
+        return text
+
+    # Second pass: compute the minimum level each heading should have
+    # so that no heading exceeds its predecessor by more than 1.
+    max_allowed = 0
+    remap: dict[int, int] = {}  # line_index -> new_level
+    for idx, level in heading_levels:
+        new_level = min(level, max_allowed + 1)
+        remap[idx] = new_level
+        max_allowed = new_level
+
+    # Third pass: rewrite headings.
+    for idx, new_level in remap.items():
+        m = heading_re.match(lines[idx])
+        if m:
+            old_prefix = m.group(1)
+            lines[idx] = "#" * new_level + lines[idx][len(old_prefix) :]
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Frontmatter / doc parsing
 # ---------------------------------------------------------------------------
 
@@ -917,7 +961,7 @@ def generate_skill(
                 cut = _safe_truncation_point(body_lines, 60)
                 trimmed = "\n".join(body_lines[:cut])
                 ref_name = cp.path.stem + ".md"
-                trimmed += f"\n\n> Full details in `references/{ref_name}`."
+                trimmed += f"\n\n*Full details in `references/{ref_name}`.*"
                 lines.append(trimmed)
             else:
                 lines.append(body)
@@ -1020,13 +1064,13 @@ def generate_skill(
             lines.append(entry)
         lines.append("")
 
-    skill_md = "\n".join(lines)
+    skill_md = normalize_heading_levels("\n".join(lines))
 
     # --- Build reference files ---
     ref_files: dict[str, str] = {}
     for rp in reference_pages + context_pages:
         ref_name = rp.path.stem + ".md"
-        body = _clean(rp.body, rp)
+        body = normalize_heading_levels(_clean(rp.body, rp))
         ref_files[ref_name] = body
 
     # --- Write output ---
@@ -1044,13 +1088,13 @@ def generate_skill(
         return summary
 
     skill_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
+    (skill_dir / "SKILL.md").write_text(skill_md.rstrip("\n") + "\n", encoding="utf-8")
 
     if ref_files:
         refs_dir = skill_dir / "references"
         refs_dir.mkdir(exist_ok=True)
         for fname, content in ref_files.items():
-            (refs_dir / fname).write_text(content, encoding="utf-8")
+            (refs_dir / fname).write_text(content.rstrip("\n") + "\n", encoding="utf-8")
 
     return summary
 
