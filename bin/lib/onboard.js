@@ -414,7 +414,7 @@ async function preflight() {
         console.error("       systemctl --user stop openclaw-gateway.service");
       } else {
         console.error(`     Could not identify the process using port ${port}.`);
-        console.error(`     Run: lsof -i :${port} -sTCP:LISTEN`);
+        console.error(`     Run: sudo lsof -i :${port} -sTCP:LISTEN`);
       }
       console.error("");
       console.error(`     Detail: ${portCheck.reason}`);
