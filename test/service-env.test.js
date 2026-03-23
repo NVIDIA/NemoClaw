@@ -119,6 +119,12 @@ describe("service environment", () => {
         ["-n", "/^PROXY_HOST=/,/^export NO_PROXY=/p", scriptPath],
         { encoding: "utf-8" }
       );
+      if (!proxyBlock.trim()) {
+        throw new Error(
+          "Failed to extract proxy configuration from scripts/nemoclaw-start.sh — " +
+          "the PROXY_HOST/NO_PROXY block may have been moved or renamed"
+        );
+      }
       const wrapper = [
         "#!/usr/bin/env bash",
         proxyBlock.trimEnd(),
@@ -169,12 +175,13 @@ describe("service environment", () => {
       const noProxy = vars.NO_PROXY.split(",");
       expect(noProxy).toContain("localhost");
       expect(noProxy).toContain("127.0.0.1");
+      expect(noProxy).toContain("::1");
       expect(noProxy).toContain("inference.local");
     });
 
-    it("NO_PROXY excludes OpenShell virtual network range", () => {
+    it("NO_PROXY excludes OpenShell gateway IP (undici does not support CIDR)", () => {
       const vars = extractProxyVars();
-      expect(vars.NO_PROXY).toContain("10.200.0.0/16");
+      expect(vars.NO_PROXY).toContain("10.200.0.1");
     });
   });
 });

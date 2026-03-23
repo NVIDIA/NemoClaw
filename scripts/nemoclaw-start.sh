@@ -151,7 +151,7 @@ export HTTP_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
 export HTTPS_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
 # Bypass proxy for loopback, sandbox-local, and the OpenShell virtual network
 # so internal gateway calls (openclaw dashboard, inference.local) stay fast.
-export NO_PROXY="localhost,127.0.0.1,::1,inference.local,10.200.0.0/16"
+export NO_PROXY="localhost,127.0.0.1,::1,inference.local,10.200.0.1"
 
 write_auth_profile
 
