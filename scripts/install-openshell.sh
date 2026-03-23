@@ -40,8 +40,8 @@ version_gte() {
   # Returns 0 (true) if $1 >= $2 — portable, no sort -V (BSD compat)
   local IFS=.
   local -a a b
-  read -r -a a <<< "$1"
-  read -r -a b <<< "$2"
+  read -r -a a <<<"$1"
+  read -r -a b <<<"$2"
   for i in 0 1 2; do
     local ai=${a[$i]:-0} bi=${b[$i]:-0}
     if ((ai > bi)); then return 0; fi
