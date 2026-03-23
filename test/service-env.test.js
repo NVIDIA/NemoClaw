@@ -105,7 +105,7 @@ describe("service environment", () => {
         "utf-8"
       );
       // stop() must use sandboxEnvPrefix so the PIDDIR matches start()
-      const stopFn = src.match(/function stop\(\)[^}]*\}/s);
+      const stopFn = src.match(/function stop\(\)\s*\{[\s\S]*?\n\}/);
       expect(stopFn).toBeTruthy();
       expect(
         stopFn[0].includes("sandboxEnvPrefix")
@@ -117,7 +117,7 @@ describe("service environment", () => {
         path.join(__dirname, "..", "bin", "nemoclaw.js"),
         "utf-8"
       );
-      const statusFn = src.match(/function showStatus\(\)[^]*?^}/m);
+      const statusFn = src.match(/function showStatus\(\)\s*\{[\s\S]*?\n\}/);
       expect(statusFn).toBeTruthy();
       expect(
         statusFn[0].includes("sandboxEnvPrefix")
