@@ -320,6 +320,31 @@ function getNonInteractiveModel(providerKey) {
   return model;
 }
 
+/**
+ * Build a human-readable hint for resolving a port conflict.
+ * Returned as a single string (may contain newlines).
+ */
+function formatPortConflictHint(port, portCheck) {
+  const lines = [];
+  if (portCheck.process && portCheck.process !== "unknown") {
+    lines.push(`     Blocked by: ${portCheck.process}${portCheck.pid ? ` (PID ${portCheck.pid})` : ""}`);
+    lines.push("");
+    lines.push("     To fix, stop the conflicting process:");
+    lines.push("");
+    if (portCheck.pid) {
+      lines.push(`       sudo kill ${portCheck.pid}`);
+    } else {
+      lines.push(`       sudo lsof -i :${port} -sTCP:LISTEN -P -n`);
+    }
+    lines.push("       # or, if it's a systemd service:");
+    lines.push("       systemctl --user stop openclaw-gateway.service");
+  } else {
+    lines.push(`     Could not identify the process using port ${port}.`);
+    lines.push(`     Run: sudo lsof -i :${port} -sTCP:LISTEN`);
+  }
+  return lines.join("\n");
+}
+
 // ── Step 1: Preflight ────────────────────────────────────────────
 
 async function preflight() {
@@ -378,22 +403,7 @@ async function preflight() {
       console.error(`  !! Port ${port} is not available.`);
       console.error(`     ${label} needs this port.`);
       console.error("");
-      if (portCheck.process && portCheck.process !== "unknown") {
-        console.error(`     Blocked by: ${portCheck.process}${portCheck.pid ? ` (PID ${portCheck.pid})` : ""}`);
-        console.error("");
-        console.error("     To fix, stop the conflicting process:");
-        console.error("");
-        if (portCheck.pid) {
-          console.error(`       sudo kill ${portCheck.pid}`);
-        } else {
-          console.error(`       lsof -i :${port} -sTCP:LISTEN -P -n`);
-        }
-        console.error("       # or, if it's a systemd service:");
-        console.error("       systemctl --user stop openclaw-gateway.service");
-      } else {
-        console.error(`     Could not identify the process using port ${port}.`);
-        console.error(`     Run: lsof -i :${port} -sTCP:LISTEN`);
-      }
+      console.error(formatPortConflictHint(port, portCheck));
       console.error("");
       console.error(`     Detail: ${portCheck.reason}`);
       process.exit(1);
@@ -1056,6 +1066,7 @@ async function onboard(opts = {}) {
 
 module.exports = {
   buildSandboxConfigSyncScript,
+  formatPortConflictHint,
   getInstalledOpenshellVersion,
   getStableGatewayImageRef,
   hasStaleGateway,

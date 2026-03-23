@@ -8,6 +8,7 @@ import path from "node:path";
 
 import {
   buildSandboxConfigSyncScript,
+  formatPortConflictHint,
   getInstalledOpenshellVersion,
   getStableGatewayImageRef,
   writeSandboxConfigSyncFile,
@@ -45,6 +46,30 @@ describe("onboard helpers", () => {
     expect(getStableGatewayImageRef("openshell 0.0.12")).toBe("ghcr.io/nvidia/openshell/cluster:0.0.12");
     expect(getStableGatewayImageRef("openshell 0.0.13-dev.8+gbbcaed2ea")).toBe("ghcr.io/nvidia/openshell/cluster:0.0.13");
     expect(getStableGatewayImageRef("bogus")).toBe(null);
+  });
+
+  it("suggests sudo lsof when process is unknown (fixes #726)", () => {
+    const hint = formatPortConflictHint(8080, {
+      process: "unknown",
+      pid: null,
+    });
+    expect(hint).toContain("sudo lsof -i :8080");
+  });
+
+  it("suggests sudo kill when process is known with PID", () => {
+    const hint = formatPortConflictHint(8080, {
+      process: "docker-pr",
+      pid: 190242,
+    });
+    expect(hint).toContain("sudo kill 190242");
+  });
+
+  it("suggests sudo lsof when process is known but PID is missing", () => {
+    const hint = formatPortConflictHint(8080, {
+      process: "docker-pr",
+      pid: null,
+    });
+    expect(hint).toContain("sudo lsof -i :8080");
   });
 
   it("writes sandbox sync scripts to a temp file for stdin redirection", () => {
