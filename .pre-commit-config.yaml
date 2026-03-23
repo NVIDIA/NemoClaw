@@ -160,6 +160,12 @@ repos:
         name: gitleaks (secret scan)
         priority: 10
 
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.22.0
+    hooks:
+      - id: markdownlint-cli2
+        priority: 10
+
   # ── Priority 20: project-level checks (pre-commit) ─────────────────────────
   - repo: local
     hooks:
