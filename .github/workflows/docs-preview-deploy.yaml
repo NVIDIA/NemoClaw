@@ -61,6 +61,10 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Checkout repository
+        if: steps.meta.outputs.action != 'closed' && steps.meta.outputs.same-repo == 'true' || steps.meta.outputs.action == 'closed'
+        uses: actions/checkout@v4
+
       - name: Deploy preview
         if: steps.meta.outputs.action != 'closed' && steps.meta.outputs.same-repo == 'true'
         uses: rossjrw/pr-preview-action@v1

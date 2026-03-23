@@ -60,7 +60,7 @@ jobs:
         with:
           name: docs-preview
           path: docs/_build/html/
-          retention-days: 1
+          retention-days: 3
 
       - name: Save PR metadata
         run: |
@@ -78,7 +78,7 @@ jobs:
           path: |
             pr-number.txt
             same-repo.txt
-          retention-days: 1
+          retention-days: 3
 
   # On PR close, trigger the deploy workflow to clean up the preview.
   close:
@@ -98,4 +98,4 @@ jobs:
           path: |
             pr-number.txt
             pr-action.txt
-          retention-days: 1
+          retention-days: 3
