@@ -33,6 +33,19 @@ repos:
         args: ["--fix=lf"]
         priority: 0
 
+  # ── Priority 0: reject force-added ignored files ───────────────────────────
+  # Catches `git add -f` of files that .gitignore would normally block.
+  # Single source of truth stays in .gitignore — no duplicate list here.
+  - repo: local
+    hooks:
+      - id: no-force-added-ignored
+        name: Reject force-added ignored files
+        entry: bash -c 'IGNORED=$(git ls-files --ignored --exclude-standard --cached -- "$@") && if [ -n "$IGNORED" ]; then echo "Force-added files that .gitignore would block:" && echo "$IGNORED" && exit 1; fi' --
+        language: system
+        always_run: true
+        pass_filenames: false
+        priority: 0
+
   # ── Priority 5: formatters ────────────────────────────────────────────────
   - repo: https://github.com/scop/pre-commit-shfmt
     rev: v3.12.0-2
