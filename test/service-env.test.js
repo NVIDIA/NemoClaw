@@ -101,7 +101,7 @@ describe("service environment", () => {
   describe("SANDBOX_NAME consistency across start/stop/status (#587)", () => {
     it("stop() passes SANDBOX_NAME via sandboxEnvPrefix", () => {
       const src = fs.readFileSync(
-        path.join(__dirname, "..", "bin", "nemoclaw.js"),
+        path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
         "utf-8"
       );
       // stop() must use sandboxEnvPrefix so the PIDDIR matches start()
@@ -114,7 +114,7 @@ describe("service environment", () => {
 
     it("showStatus() passes SANDBOX_NAME via sandboxEnvPrefix", () => {
       const src = fs.readFileSync(
-        path.join(__dirname, "..", "bin", "nemoclaw.js"),
+        path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
         "utf-8"
       );
       const statusFn = src.match(/function showStatus\(\)\s*\{[\s\S]*?\n\}/);
@@ -126,12 +126,14 @@ describe("service environment", () => {
 
     it("sandboxEnvPrefix() is a shared helper used by start, stop, and status", () => {
       const src = fs.readFileSync(
-        path.join(__dirname, "..", "bin", "nemoclaw.js"),
+        path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
         "utf-8"
       );
-      const uses = (src.match(/sandboxEnvPrefix\(\)/g) || []).length;
-      // At least 3 call sites: start(), stop(), showStatus()
-      expect(uses).toBeGreaterThanOrEqual(3);
+      const uses = (
+        src.match(/\bconst\s+envPrefix\s*=\s*sandboxEnvPrefix\(\)/g) || []
+      ).length;
+      // Exactly 3 call sites: start(), stop(), showStatus()
+      expect(uses).toBe(3);
     });
   });
 });

@@ -100,7 +100,7 @@ elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
   warn "Installed openshell to $target_dir/openshell (user-local path)"
 
   # Auto-configure PATH if needed
-  if ! echo "$PATH" | grep -q "$target_dir"; then
+  if [[ ":$PATH:" != *":$target_dir:"* ]]; then
     # Detect shell and choose rc file
     case "${SHELL##*/}" in
       bash) rc_file="$HOME/.bashrc" ;;
@@ -109,9 +109,10 @@ elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
     esac
 
     # Add PATH export if not already present
-    if ! grep -qF 'export PATH="$HOME/.local/bin:$PATH"' "$rc_file" 2>/dev/null; then
-      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$rc_file"
-      info "Added ~/.local/bin to PATH in $rc_file"
+    path_export="export PATH=\"$target_dir:\$PATH\""
+    if ! grep -qF "$path_export" "$rc_file" 2>/dev/null; then
+      printf '%s\n' "$path_export" >> "$rc_file"
+      info "Added $target_dir to PATH in $rc_file"
       info "Run 'source $rc_file' or open a new terminal to update PATH"
     fi
   fi
