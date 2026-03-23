@@ -39,7 +39,11 @@ export DEBIAN_FRONTEND=noninteractive
 # --- 0. Node.js (needed for services) ---
 if ! command -v node >/dev/null 2>&1; then
   info "Installing Node.js..."
-  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - >/dev/null 2>&1
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+    | sudo gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
+  echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
+    | sudo tee /etc/apt/sources.list.d/nodesource.list >/dev/null
+  sudo apt-get update -qq >/dev/null 2>&1
   sudo apt-get install -y -qq nodejs >/dev/null 2>&1
   info "Node.js $(node --version) installed"
 else
