@@ -384,7 +384,13 @@ async function preflight() {
 
   // Required ports — gateway (default 8080) and dashboard (18789)
   const dashboardPort = 18789;
-  const targetGatewayPort = parseInt(process.env.NEMOCLAW_PORT || "8080", 10);
+  const portEnv = process.env.NEMOCLAW_PORT || "8080";
+  const targetGatewayPort = parseInt(portEnv, 10);
+  if (Number.isNaN(targetGatewayPort) || targetGatewayPort < 1 || targetGatewayPort > 65535) {
+    console.error(`  Invalid NEMOCLAW_PORT: ${portEnv}`);
+    console.error("  Must be a number between 1 and 65535.");
+    process.exit(1);
+  }
   let gatewayPort = targetGatewayPort;
 
   // Check OpenShell gateway port with auto-fallback
