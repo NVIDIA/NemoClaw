@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Step 2 of 2: Deploy (or clean up) the docs preview built by docs-preview-pr.yaml.
+# Runs via workflow_run so it always has write access to gh-pages.
+
+name: Docs PR Preview Deploy
+
+on:
+  workflow_run:
+    workflows: ["Docs PR Preview"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download PR metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: docs-preview-metadata
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read PR metadata
+        id: meta
+        run: |
+          echo "pr-number=$(cat pr-number.txt)" >> "$GITHUB_OUTPUT"
+          if [ -f pr-action.txt ]; then
+            echo "action=$(cat pr-action.txt)" >> "$GITHUB_OUTPUT"
+          else
+            echo "action=deploy" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download docs artifact
+        if: steps.meta.outputs.action != 'closed'
+        uses: actions/download-artifact@v4
+        with:
+          name: docs-preview
+          path: docs-preview-html/
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy preview
+        if: steps.meta.outputs.action != 'closed'
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: ./docs-preview-html/
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview
+          action: deploy
+          pr-number: ${{ steps.meta.outputs.pr-number }}
+
+      - name: Remove preview
+        if: steps.meta.outputs.action == 'closed'
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview
+          action: remove
+          pr-number: ${{ steps.meta.outputs.pr-number }}
