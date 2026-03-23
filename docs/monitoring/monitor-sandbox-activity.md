@@ -51,13 +51,13 @@ the dashboard to local port `18789` on the host that is running the sandbox.
 If you already use the connect command, NemoClaw refreshes the port forward for you:
 
 ```console
-$ nemoclaw my-assistant connect
+nemoclaw <sandbox-name> connect
 ```
 
 To start or refresh the dashboard forward without opening an interactive shell:
 
 ```console
-$ openshell forward start --background 18789 my-assistant
+openshell forward start --background 18789 <sandbox-name>
 ```
 
 Then open `http://127.0.0.1:18789` in your browser.
@@ -69,7 +69,7 @@ local workstation before opening the URL.
 For example, replace `<user>@<remote-host>` with your actual SSH login and run:
 
 ```console
-$ ssh -L 18789:127.0.0.1:18789 <user>@<remote-host>
+ssh -L 18789:127.0.0.1:18789 <user>@<remote-host>
 ```
 
 After the tunnel is established, open `http://127.0.0.1:18789` on your workstation.
