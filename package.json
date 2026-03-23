@@ -8,7 +8,7 @@
   },
   "scripts": {
     "test": "vitest run",
-    "prepare": "if [ -d .git ]; then prek install; fi",
+    "prepare": "if [ -d .git ] && command -v prek >/dev/null 2>&1; then prek install; fi",
     "prepublishOnly": "cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
   "dependencies": {
