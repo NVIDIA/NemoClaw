@@ -192,6 +192,20 @@ describe("redact", () => {
     expect(redact("export NVIDIA_API_KEY=nvapi-realkey12345")).not.toContain("realkey12345");
   });
 
+  it("masks variables ending in _KEY", () => {
+    const { redact } = require(runnerPath);
+    const output = redact('export SERVICE_KEY="supersecretvalue12345"');
+    expect(output).not.toContain("supersecretvalue12345");
+    expect(output).toContain('export SERVICE_KEY="supe');
+  });
+
+  it("masks bare GitHub personal access tokens", () => {
+    const { redact } = require(runnerPath);
+    const output = redact("token ghp_abcdefghijklmnopqrstuvwxyz1234567890");
+    expect(output).toContain("ghp_");
+    expect(output).not.toContain("abcdefghijklmnopqrstuvwxyz1234567890");
+  });
+
   it("leaves non-secret strings untouched", () => {
     const { redact } = require(runnerPath);
     expect(redact("docker run --name my-sandbox")).toBe("docker run --name my-sandbox");
@@ -207,6 +221,35 @@ describe("redact", () => {
 });
 
 describe("regression guards", () => {
+  it("runCapture redacts secrets before rethrowing errors", () => {
+    const originalExecSync = childProcess.execSync;
+    childProcess.execSync = () => {
+      throw new Error(
+        'command failed: export SERVICE_KEY="supersecretvalue12345" ghp_abcdefghijklmnopqrstuvwxyz1234567890'
+      );
+    };
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { runCapture } = require(runnerPath);
+
+      let error;
+      try {
+        runCapture("echo nope");
+      } catch (err) {
+        error = err;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toContain("ghp_");
+      expect(error.message).not.toContain("supersecretvalue12345");
+      expect(error.message).not.toContain("abcdefghijklmnopqrstuvwxyz1234567890");
+    } finally {
+      childProcess.execSync = originalExecSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+  });
+
   it("nemoclaw.js does not use execSync", () => {
     const src = fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"), "utf-8");
     const lines = src.split("\n");

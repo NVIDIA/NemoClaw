@@ -54,7 +54,7 @@ function runCapture(cmd, opts = {}) {
     }).trim();
   } catch (err) {
     if (opts.ignoreError) return "";
-    throw err;
+    throw redactError(err);
   }
 }
 
@@ -66,8 +66,9 @@ function runCapture(cmd, opts = {}) {
 const SECRET_PATTERNS = [
   /nvapi-[A-Za-z0-9_-]{10,}/g,
   /nvcf-[A-Za-z0-9_-]{10,}/g,
+  /ghp_[A-Za-z0-9_-]{10,}/g,
   /(?<=Bearer\s)[A-Za-z0-9_.+/=-]{10,}/gi,
-  /(?<=(?:API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]['"]?)[A-Za-z0-9_.+/=-]{10,}/gi,
+  /(?<=(?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]['"]?)[A-Za-z0-9_.+/=-]{10,}/gi,
 ];
 
 function redact(str) {
@@ -77,6 +78,14 @@ function redact(str) {
     out = out.replace(pat, (match) => match.slice(0, 4) + "*".repeat(Math.min(match.length - 4, 20)));
   }
   return out;
+}
+
+function redactError(err) {
+  if (!err || typeof err !== "object") return err;
+  if (typeof err.message === "string") err.message = redact(err.message);
+  if (typeof err.stdout === "string") err.stdout = redact(err.stdout);
+  if (typeof err.stderr === "string") err.stderr = redact(err.stderr);
+  return err;
 }
 
 /**
