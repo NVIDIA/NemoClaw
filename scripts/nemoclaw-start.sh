@@ -102,12 +102,14 @@ print(f'[auto-pair] watcher launched (timeout={timeout}s)')
 
 def run(*args):
     """Run a subprocess and return (returncode, stdout, stderr)."""
-    remaining = max(1, int(DEADLINE - time.time()))
+    remaining = DEADLINE - time.time()
+    if remaining <= 0:
+        return 124, '', 'watcher deadline exceeded'
     try:
         proc = subprocess.run(args, capture_output=True, text=True, timeout=remaining)
         return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
     except subprocess.TimeoutExpired:
-        return 124, '', f'subprocess timed out after {remaining}s'
+        return 124, '', f'subprocess timed out after {remaining:.0f}s'
 
 while time.time() < DEADLINE:
     rc, out, err = run('openclaw', 'devices', 'list', '--json')
