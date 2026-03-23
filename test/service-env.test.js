@@ -105,23 +105,30 @@ describe("service environment", () => {
     // proxy and does not attempt to resolve DNS locally inside the sandbox.
 
     function extractProxyVars(env = {}) {
-      // Write the proxy-variable snippet from nemoclaw-start.sh to a temp script
-      // and execute it so that bash variable assignments and expansions work
-      // correctly without interference from JSON.stringify quote-escaping.
-      const script = [
+      // Source the proxy-variable block directly from scripts/nemoclaw-start.sh
+      // so that tests always validate the actual implementation rather than a
+      // hand-maintained copy.  If the script changes its defaults or variable
+      // names, these tests will catch the regression.
+      //
+      // Implementation: extract the proxy block (PROXY_HOST= through
+      // export NO_PROXY=) via sed, then run it in a minimal bash wrapper that
+      // echoes the three variables we care about.
+      const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+      const proxyBlock = execFileSync(
+        "sed",
+        ["-n", "/^PROXY_HOST=/,/^export NO_PROXY=/p", scriptPath],
+        { encoding: "utf-8" }
+      );
+      const wrapper = [
         "#!/usr/bin/env bash",
-        'PROXY_HOST="${NEMOCLAW_PROXY_HOST:-10.200.0.1}"',
-        'PROXY_PORT="${NEMOCLAW_PROXY_PORT:-3128}"',
-        'HTTP_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"',
-        'HTTPS_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"',
-        'NO_PROXY="localhost,127.0.0.1,::1,inference.local,10.200.0.0/16"',
+        proxyBlock.trimEnd(),
         'echo "HTTP_PROXY=${HTTP_PROXY}"',
         'echo "HTTPS_PROXY=${HTTPS_PROXY}"',
         'echo "NO_PROXY=${NO_PROXY}"',
       ].join("\n");
       const tmpFile = join(tmpdir(), `nemoclaw-proxy-test-${process.pid}.sh`);
       try {
-        writeFileSync(tmpFile, script, { mode: 0o700 });
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
         const out = execFileSync("bash", [tmpFile], {
           encoding: "utf-8",
           env: { ...process.env, ...env },
