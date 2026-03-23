@@ -139,7 +139,7 @@ repos:
     hooks:
       - id: vitest-plugin
         name: Vitest (plugin project)
-        entry: bash -c 'cd nemoclaw && npx vitest run --project plugin'
+        entry: npx vitest run --project plugin
         language: system
         pass_filenames: false
         files: ^nemoclaw/
