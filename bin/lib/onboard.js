@@ -12,6 +12,13 @@ const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
 
+/**
+ * Find the next available TCP port starting from startPort.
+ *
+ * @param {number} startPort - The port to start checking from.
+ * @param {number} maxAttempts - The maximum number of ports to probe (default 100).
+ * @returns {Promise<number>} - Resolves with the first available port.
+ */
 function findFreePort(startPort, maxAttempts = 100) {
   return new Promise((resolve, reject) => {
     if (maxAttempts <= 0) {
@@ -338,6 +345,12 @@ function getNonInteractiveModel(providerKey) {
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
+/**
+ * Run preflight checks to ensure the environment is ready for onboarding.
+ * Checks Docker, container runtime, OpenShell CLI, and port availability.
+ *
+ * @returns {Promise<{gpu: Object, gatewayPort: number}>} - Detected GPU info and decided gateway port.
+ */
 async function preflight() {
   step(1, 7, "Preflight checks");
 
@@ -447,6 +460,13 @@ async function preflight() {
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
+/**
+ * Start the OpenShell gateway with the specified configuration.
+ *
+ * @param {Object} gpu - Detected GPU information.
+ * @param {number} gatewayPort - The host port to map to the gateway.
+ * @returns {Promise<void>}
+ */
 async function startGateway(gpu, gatewayPort) {
   step(2, 7, "Starting OpenShell gateway");
 
