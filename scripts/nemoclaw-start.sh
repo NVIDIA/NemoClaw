@@ -148,7 +148,8 @@ fix_openclaw_data_ownership() {
     mkdir -p "${data_dir}/${sub}" 2>/dev/null || true
   done
 
-  # Fix ownership if any files are not owned by us.
+  # Fix ownership if the top-level data dir is not owned by us (common when
+  # the entire tree was created as root during installation).
   if find "$data_dir" -maxdepth 0 ! -user "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
     chown -R "$(id -u):$(id -g)" "$data_dir" 2>/dev/null || true
     echo "[setup] fixed ownership on ${data_dir}"
