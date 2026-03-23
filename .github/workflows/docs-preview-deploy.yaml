@@ -3,6 +3,8 @@
 
 # Step 2 of 2: Deploy (or clean up) the docs preview built by docs-preview-pr.yaml.
 # Runs via workflow_run so it always has write access to gh-pages.
+# Only deploys previews for same-repo PRs to prevent fork PRs from
+# publishing arbitrary content to the GitHub Pages domain.
 
 name: Docs PR Preview Deploy
 
@@ -38,9 +40,20 @@ jobs:
           else
             echo "action=deploy" >> "$GITHUB_OUTPUT"
           fi
+          if [ -f same-repo.txt ]; then
+            echo "same-repo=$(cat same-repo.txt)" >> "$GITHUB_OUTPUT"
+          else
+            echo "same-repo=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip fork PRs
+        if: steps.meta.outputs.action != 'closed' && steps.meta.outputs.same-repo != 'true'
+        run: |
+          echo "::notice::Skipping preview deploy for fork PR #${{ steps.meta.outputs.pr-number }}"
+          exit 0
 
       - name: Download docs artifact
-        if: steps.meta.outputs.action != 'closed'
+        if: steps.meta.outputs.action != 'closed' && steps.meta.outputs.same-repo == 'true'
         uses: actions/download-artifact@v4
         with:
           name: docs-preview
@@ -49,7 +62,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Deploy preview
-        if: steps.meta.outputs.action != 'closed'
+        if: steps.meta.outputs.action != 'closed' && steps.meta.outputs.same-repo == 'true'
         uses: rossjrw/pr-preview-action@v1
         with:
           source-dir: ./docs-preview-html/

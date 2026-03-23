@@ -63,13 +63,21 @@ jobs:
           retention-days: 1
 
       - name: Save PR metadata
-        run: echo "${{ github.event.pull_request.number }}" > pr-number.txt
+        run: |
+          echo "${{ github.event.pull_request.number }}" > pr-number.txt
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+            echo "true" > same-repo.txt
+          else
+            echo "false" > same-repo.txt
+          fi
 
       - name: Upload PR metadata
         uses: actions/upload-artifact@v4
         with:
           name: docs-preview-metadata
-          path: pr-number.txt
+          path: |
+            pr-number.txt
+            same-repo.txt
           retention-days: 1
 
   # On PR close, trigger the deploy workflow to clean up the preview.
