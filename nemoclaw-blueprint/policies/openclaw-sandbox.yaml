@@ -171,6 +171,13 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/bot*/**" }
           - allow: { method: POST, path: "/bot*/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node* }
+      - { path: /usr/bin/node* }
+      - { path: /usr/bin/python3* }
+      - { path: /usr/local/bin/python3* }
+      - { path: /usr/bin/curl }
 
   discord:
     name: discord
@@ -198,3 +205,10 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node* }
+      - { path: /usr/bin/node* }
+      - { path: /usr/bin/python3* }
+      - { path: /usr/local/bin/python3* }
+      - { path: /usr/bin/curl }

@@ -32,3 +32,13 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node* }
+      - { path: /usr/bin/node* }
+      - { path: /usr/bin/python3* }
+      - { path: /usr/local/bin/python3* }
+      - { path: /usr/local/bin/huggingface-cli }
+      - { path: /usr/bin/curl }
+      - { path: /usr/bin/git }
+      - { path: /usr/bin/git-remote-http* }

@@ -119,5 +119,15 @@ describe("policies", () => {
         expect(content.includes("network_policies:")).toBeTruthy();
       }
     });
+
+    it("every preset includes a binaries section", () => {
+      // Without binaries, the OPA rego policy in OpenShell's proxy can't
+      // match traffic to the network policy and returns 403 Forbidden.
+      // See: https://github.com/NVIDIA/NemoClaw/issues/19
+      for (const p of policies.listPresets()) {
+        const content = policies.loadPreset(p.name);
+        expect(content.includes("binaries:")).toBeTruthy();
+      }
+    });
   });
 });
