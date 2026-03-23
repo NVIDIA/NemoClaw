@@ -181,7 +181,7 @@ repos:
 
       - id: pyright-check
         name: Pyright (nemoclaw-blueprint)
-        entry: bash -c 'cd nemoclaw-blueprint && uv run --with pyright pyright .'
+        entry: bash -c 'cd nemoclaw-blueprint && uv run --with pyright pyright'
         language: system
         pass_filenames: false
         always_run: true
