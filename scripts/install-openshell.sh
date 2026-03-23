@@ -98,7 +98,23 @@ elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
   mkdir -p "$target_dir"
   install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
   warn "Installed openshell to $target_dir/openshell (user-local path)"
-  warn "Ensure $target_dir is on PATH for future shells."
+
+  # Auto-configure PATH if needed
+  if ! echo "$PATH" | grep -q "$target_dir"; then
+    # Detect shell and choose rc file
+    case "${SHELL##*/}" in
+      bash) rc_file="$HOME/.bashrc" ;;
+      zsh) rc_file="$HOME/.zshrc" ;;
+      *) rc_file="$HOME/.profile" ;;
+    esac
+
+    # Add PATH export if not already present
+    if ! grep -qF 'export PATH="$HOME/.local/bin:$PATH"' "$rc_file" 2>/dev/null; then
+      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$rc_file"
+      info "Added ~/.local/bin to PATH in $rc_file"
+      info "Run 'source $rc_file' or open a new terminal to update PATH"
+    fi
+  fi
 else
   sudo install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
 fi
