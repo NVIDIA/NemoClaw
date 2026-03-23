@@ -98,7 +98,8 @@ elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
   mkdir -p "$target_dir"
   install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
   warn "Installed openshell to $target_dir/openshell (user-local path)"
-  warn "Ensure $target_dir is on PATH for future shells."
+  warn "For future shells, run: export PATH=\"$target_dir:\$PATH\""
+  warn "Add that export to your shell profile, or open a new shell before using openshell directly."
 else
   sudo install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
 fi

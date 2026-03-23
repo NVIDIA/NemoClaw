@@ -250,6 +250,13 @@ function isOpenshellInstalled() {
   }
 }
 
+function getFutureShellPathHint(binDir, pathValue = process.env.PATH || "") {
+  if (String(pathValue).split(path.delimiter).includes(binDir)) {
+    return null;
+  }
+  return `export PATH="${binDir}:$PATH"`;
+}
+
 function installOpenshell() {
   const result = spawnSync("bash", [path.join(SCRIPTS, "install-openshell.sh")], {
     cwd: ROOT,
@@ -262,13 +269,21 @@ function installOpenshell() {
     if (output) {
       console.error(output);
     }
-    return false;
+    return { installed: false, localBin: null, futureShellPathHint: null };
   }
   const localBin = process.env.XDG_BIN_HOME || path.join(process.env.HOME || "", ".local", "bin");
-  if (fs.existsSync(path.join(localBin, "openshell")) && !process.env.PATH.split(path.delimiter).includes(localBin)) {
+  const openshellPath = path.join(localBin, "openshell");
+  const futureShellPathHint = fs.existsSync(openshellPath)
+    ? getFutureShellPathHint(localBin, process.env.PATH)
+    : null;
+  if (fs.existsSync(openshellPath) && futureShellPathHint) {
     process.env.PATH = `${localBin}${path.delimiter}${process.env.PATH}`;
   }
-  return isOpenshellInstalled();
+  return {
+    installed: isOpenshellInstalled(),
+    localBin,
+    futureShellPathHint,
+  };
 }
 
 function sleep(seconds) {
@@ -344,15 +359,22 @@ async function preflight() {
   }
 
   // OpenShell CLI
+  let openshellInstall = { localBin: null, futureShellPathHint: null };
   if (!isOpenshellInstalled()) {
     console.log("  openshell CLI not found. Installing...");
-    if (!installOpenshell()) {
+    openshellInstall = installOpenshell();
+    if (!openshellInstall.installed) {
       console.error("  Failed to install openshell CLI.");
       console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
       process.exit(1);
     }
   }
   console.log(`  ✓ openshell CLI: ${runCapture("openshell --version 2>/dev/null || echo unknown", { ignoreError: true })}`);
+  if (openshellInstall.futureShellPathHint) {
+    console.log(`  Note: openshell was installed to ${openshellInstall.localBin} for this onboarding run.`);
+    console.log(`  Future shells may still need: ${openshellInstall.futureShellPathHint}`);
+    console.log("  Add that export to your shell profile, or open a new terminal before running openshell directly.");
+  }
 
   // Clean up stale NemoClaw session before checking ports.
   // A previous onboard run may have left the gateway container and port
@@ -1052,6 +1074,7 @@ async function onboard(opts = {}) {
 
 module.exports = {
   buildSandboxConfigSyncScript,
+  getFutureShellPathHint,
   getInstalledOpenshellVersion,
   getStableGatewayImageRef,
   hasStaleGateway,
