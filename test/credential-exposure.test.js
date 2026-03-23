@@ -7,14 +7,19 @@
 // there is no reason to pass the secret itself on the command line where it
 // would be visible in `ps aux` output.
 
-"use strict";
+import fs from "node:fs";
+import path from "node:path";
+import { describe, it, expect } from "vitest";
 
-const fs = require("node:fs");
-const path = require("node:path");
-
-const ONBOARD_JS = path.join(__dirname, "..", "bin", "lib", "onboard.js");
+const ONBOARD_JS = path.join(
+  import.meta.dirname,
+  "..",
+  "bin",
+  "lib",
+  "onboard.js",
+);
 const RUNNER_PY = path.join(
-  __dirname,
+  import.meta.dirname,
   "..",
   "nemoclaw-blueprint",
   "orchestrator",
