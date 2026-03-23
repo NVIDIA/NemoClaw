@@ -7,9 +7,11 @@ import policies from "../bin/lib/policies";
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 9 presets", () => {
+    const expected = ["apt", "cargo", "discord", "docker", "ghcr", "go", "huggingface", "jira", "npm", "outlook", "pypi", "slack", "telegram"];
+
+    it("returns all presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(9);
+      expect(presets.length).toBe(expected.length);
     });
 
     it("each preset has name and description", () => {
@@ -21,7 +23,6 @@ describe("policies", () => {
 
     it("returns expected preset names", () => {
       const names = policies.listPresets().map((p) => p.name).sort();
-      const expected = ["discord", "docker", "huggingface", "jira", "npm", "outlook", "pypi", "slack", "telegram"];
       expect(names).toEqual(expected);
     });
   });
@@ -118,6 +119,38 @@ describe("policies", () => {
         const content = policies.loadPreset(p.name);
         expect(content.includes("network_policies:")).toBeTruthy();
       }
+    });
+  });
+
+  describe("new preset endpoints", () => {
+    it("cargo preset has crates.io endpoints", () => {
+      const content = policies.loadPreset("cargo");
+      const hosts = policies.getPresetEndpoints(content);
+      expect(hosts.includes("crates.io")).toBeTruthy();
+      expect(hosts.includes("static.crates.io")).toBeTruthy();
+      expect(hosts.includes("index.crates.io")).toBeTruthy();
+    });
+
+    it("go preset has proxy and sum endpoints", () => {
+      const content = policies.loadPreset("go");
+      const hosts = policies.getPresetEndpoints(content);
+      expect(hosts.includes("proxy.golang.org")).toBeTruthy();
+      expect(hosts.includes("sum.golang.org")).toBeTruthy();
+      expect(hosts.includes("storage.googleapis.com")).toBeTruthy();
+    });
+
+    it("apt preset has ubuntu and debian endpoints", () => {
+      const content = policies.loadPreset("apt");
+      const hosts = policies.getPresetEndpoints(content);
+      expect(hosts.includes("archive.ubuntu.com")).toBeTruthy();
+      expect(hosts.includes("security.ubuntu.com")).toBeTruthy();
+      expect(hosts.includes("deb.debian.org")).toBeTruthy();
+    });
+
+    it("ghcr preset has registry endpoint", () => {
+      const content = policies.loadPreset("ghcr");
+      const hosts = policies.getPresetEndpoints(content);
+      expect(hosts.includes("ghcr.io")).toBeTruthy();
     });
   });
 });

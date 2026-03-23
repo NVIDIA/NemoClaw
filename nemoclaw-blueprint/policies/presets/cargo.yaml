@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: cargo
+  description: "Rust Cargo registry access"
+
+network_policies:
+  cargo_registry:
+    name: cargo_registry
+    endpoints:
+      - host: crates.io
+        port: 443
+        access: full
+      - host: static.crates.io
+        port: 443
+        access: full
+      - host: index.crates.io
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/cargo/bin/cargo }

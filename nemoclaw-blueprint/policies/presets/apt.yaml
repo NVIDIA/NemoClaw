@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: apt
+  description: "Debian and Ubuntu package repositories"
+
+network_policies:
+  apt_repositories:
+    name: apt_repositories
+    endpoints:
+      - host: archive.ubuntu.com
+        port: 443
+        access: full
+      - host: security.ubuntu.com
+        port: 443
+        access: full
+      - host: deb.debian.org
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/bin/apt-get }
+      - { path: /usr/bin/apt }

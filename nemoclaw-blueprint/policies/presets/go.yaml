@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: go
+  description: "Go module proxy and checksum database"
+
+network_policies:
+  go_proxy:
+    name: go_proxy
+    endpoints:
+      - host: proxy.golang.org
+        port: 443
+        access: full
+      - host: sum.golang.org
+        port: 443
+        access: full
+      # Module archives are served from Google Cloud Storage
+      - host: storage.googleapis.com
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/go/bin/go }
