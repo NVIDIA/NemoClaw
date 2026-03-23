@@ -209,8 +209,10 @@ def action_apply(
         "--type",
         provider_type,
     ]
+    target_cred_env = "OPENAI_API_KEY"
     if credential:
-        provider_args.extend(["--credential", f"OPENAI_API_KEY={credential}"])
+        os.environ[target_cred_env] = credential
+        provider_args.extend(["--credential", target_cred_env])
     if endpoint:
         provider_args.extend(["--config", f"OPENAI_BASE_URL={endpoint}"])
 
