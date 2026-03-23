@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
 # Double onboard: verify that consecutive `nemoclaw onboard` runs recover
 # automatically from stale state (gateway, port forward, registry entries)
 # left behind by a previous run.
@@ -26,11 +29,26 @@ FAIL=0
 SKIP=0
 TOTAL=0
 
-pass() { ((PASS++)); ((TOTAL++)); printf '\033[32m  PASS: %s\033[0m\n' "$1"; }
-fail() { ((FAIL++)); ((TOTAL++)); printf '\033[31m  FAIL: %s\033[0m\n' "$1"; }
-skip() { ((SKIP++)); ((TOTAL++)); printf '\033[33m  SKIP: %s\033[0m\n' "$1"; }
-section() { echo ""; printf '\033[1;36m=== %s ===\033[0m\n' "$1"; }
-info()  { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
+pass() {
+  ((PASS++))
+  ((TOTAL++))
+  printf '\033[32m  PASS: %s\033[0m\n' "$1"
+}
+fail() {
+  ((FAIL++))
+  ((TOTAL++))
+  printf '\033[31m  FAIL: %s\033[0m\n' "$1"
+}
+skip() {
+  ((SKIP++))
+  ((TOTAL++))
+  printf '\033[33m  SKIP: %s\033[0m\n' "$1"
+}
+section() {
+  echo ""
+  printf '\033[1;36m=== %s ===\033[0m\n' "$1"
+}
+info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
 SANDBOX_A="e2e-double-a"
 SANDBOX_B="e2e-double-b"
@@ -45,7 +63,7 @@ info "Destroying any leftover test sandboxes/gateway from previous runs..."
 # the nemoclaw registry at ~/.nemoclaw/sandboxes.json.  Stale registry
 # entries from a previous run would cause Phase 2 to exit with
 # "Sandbox already exists" before the test even starts.
-if command -v nemoclaw > /dev/null 2>&1; then
+if command -v nemoclaw >/dev/null 2>&1; then
   nemoclaw "$SANDBOX_A" destroy 2>/dev/null || true
   nemoclaw "$SANDBOX_B" destroy 2>/dev/null || true
 fi
@@ -60,21 +78,21 @@ pass "Pre-cleanup complete"
 # ══════════════════════════════════════════════════════════════════
 section "Phase 1: Prerequisites"
 
-if docker info > /dev/null 2>&1; then
+if docker info >/dev/null 2>&1; then
   pass "Docker is running"
 else
   fail "Docker is not running — cannot continue"
   exit 1
 fi
 
-if command -v openshell > /dev/null 2>&1; then
+if command -v openshell >/dev/null 2>&1; then
   pass "openshell CLI installed"
 else
   fail "openshell CLI not found — cannot continue"
   exit 1
 fi
 
-if command -v nemoclaw > /dev/null 2>&1; then
+if command -v nemoclaw >/dev/null 2>&1; then
   pass "nemoclaw CLI installed"
 else
   fail "nemoclaw CLI not found — cannot continue"
@@ -99,7 +117,7 @@ ONBOARD_LOG="$(mktemp)"
 NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_A" \
   NEMOCLAW_POLICY_MODE=skip \
-  nemoclaw onboard --non-interactive > "$ONBOARD_LOG" 2>&1
+  nemoclaw onboard --non-interactive >"$ONBOARD_LOG" 2>&1
 exit1=$?
 output1="$(cat "$ONBOARD_LOG")"
 rm -f "$ONBOARD_LOG"
@@ -119,7 +137,7 @@ openshell gateway info -g nemoclaw 2>/dev/null | grep -q "nemoclaw" \
   && pass "Gateway is still running (stale state)" \
   || fail "Gateway is not running after first onboard"
 
-openshell sandbox get "$SANDBOX_A" > /dev/null 2>&1 \
+openshell sandbox get "$SANDBOX_A" >/dev/null 2>&1 \
   && pass "Sandbox '$SANDBOX_A' exists in openshell" \
   || fail "Sandbox '$SANDBOX_A' not found in openshell"
 
@@ -140,7 +158,7 @@ NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_A" \
   NEMOCLAW_RECREATE_SANDBOX=1 \
   NEMOCLAW_POLICY_MODE=skip \
-  nemoclaw onboard --non-interactive > "$ONBOARD_LOG" 2>&1
+  nemoclaw onboard --non-interactive >"$ONBOARD_LOG" 2>&1
 exit2=$?
 output2="$(cat "$ONBOARD_LOG")"
 rm -f "$ONBOARD_LOG"
@@ -156,7 +174,7 @@ echo "$output2" | grep -q "Cleaning up previous NemoClaw session" \
   && pass "Stale session cleanup fired on second onboard" \
   || fail "Stale session cleanup did NOT fire (regression: #397)"
 
-echo "$output2" | grep -q "Port 8080 is not available" \
+echo "$output2" | grep -q "Port 8080 in use, trying" \
   && fail "Port 8080 conflict detected (regression: #21)" \
   || pass "No port 8080 conflict"
 
@@ -182,7 +200,7 @@ ONBOARD_LOG="$(mktemp)"
 NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_B" \
   NEMOCLAW_POLICY_MODE=skip \
-  nemoclaw onboard --non-interactive > "$ONBOARD_LOG" 2>&1
+  nemoclaw onboard --non-interactive >"$ONBOARD_LOG" 2>&1
 exit3=$?
 output3="$(cat "$ONBOARD_LOG")"
 rm -f "$ONBOARD_LOG"
@@ -197,7 +215,7 @@ echo "$output3" | grep -q "Cleaning up previous NemoClaw session" \
   && pass "Stale session cleanup fired on third onboard" \
   || fail "Stale session cleanup did NOT fire on third onboard"
 
-echo "$output3" | grep -q "Port 8080 is not available" \
+echo "$output3" | grep -q "Port 8080 in use, trying" \
   && fail "Port 8080 conflict on third onboard (regression)" \
   || pass "No port 8080 conflict on third onboard"
 
@@ -221,11 +239,11 @@ openshell sandbox delete "$SANDBOX_B" 2>/dev/null || true
 openshell forward stop 18789 2>/dev/null || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
-openshell sandbox get "$SANDBOX_A" > /dev/null 2>&1 \
+openshell sandbox get "$SANDBOX_A" >/dev/null 2>&1 \
   && fail "Sandbox '$SANDBOX_A' still exists after cleanup" \
   || pass "Sandbox '$SANDBOX_A' cleaned up"
 
-openshell sandbox get "$SANDBOX_B" > /dev/null 2>&1 \
+openshell sandbox get "$SANDBOX_B" >/dev/null 2>&1 \
   && fail "Sandbox '$SANDBOX_B' still exists after cleanup" \
   || pass "Sandbox '$SANDBOX_B' cleaned up"
 
