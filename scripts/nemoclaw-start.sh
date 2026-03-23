@@ -130,6 +130,38 @@ echo 'Setting up NemoClaw...'
 # openclaw doctor --fix and openclaw plugins install already ran at build time
 # (Dockerfile Step 28). At runtime they fail with EPERM against the locked
 # /sandbox/.openclaw directory and accomplish nothing.
+
+# Ensure writable state directories exist and are owned by the current user.
+# The Docker build (Dockerfile) sets this up correctly, but the native curl
+# installer may create these directories as root, causing EACCES when openclaw
+# tries to write device-auth.json or other state files.  Ref: #692
+fix_openclaw_data_ownership() {
+  local data_dir="${HOME}/.openclaw-data"
+  local openclaw_dir="${HOME}/.openclaw"
+
+  # Only act when the split layout (.openclaw-data + symlinks) is present.
+  [ -d "$data_dir" ] || return 0
+
+  # Create any missing writable subdirectories (mirrors Dockerfile setup).
+  local subdirs="agents/main/agent extensions workspace skills hooks identity devices canvas cron"
+  for sub in $subdirs; do
+    mkdir -p "${data_dir}/${sub}" 2>/dev/null || true
+  done
+
+  # Fix ownership if any files are not owned by us.
+  if find "$data_dir" -maxdepth 0 ! -user "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
+    chown -R "$(id -u):$(id -g)" "$data_dir" 2>/dev/null || true
+    echo "[setup] fixed ownership on ${data_dir}"
+  fi
+
+  # Ensure the identity symlink exists (may be missing on native installs).
+  if [ ! -e "${openclaw_dir}/identity" ] && [ -d "${data_dir}/identity" ]; then
+    ln -sf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null || true
+    echo "[setup] created identity symlink"
+  fi
+}
+fix_openclaw_data_ownership
+
 write_auth_profile
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
