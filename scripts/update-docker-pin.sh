@@ -12,6 +12,14 @@
 
 set -euo pipefail
 
+case "${1:-}" in
+  "" | --check) ;;
+  *)
+    echo "Usage: scripts/update-docker-pin.sh [--check]" >&2
+    exit 2
+    ;;
+esac
+
 IMAGE="node"
 TAG="22-slim"
 DOCKERFILE="${DOCKERFILE:-Dockerfile}"
@@ -25,7 +33,9 @@ resolve_latest_digest() {
   local token manifest
 
   # Step 1: get an auth token for the Docker Hub library repo
-  token=$(curl -sf "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/${IMAGE}:pull" \
+  token=$(curl -fsSL --retry 3 --retry-delay 1 --retry-all-errors \
+    --connect-timeout 10 --max-time 30 \
+    "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/${IMAGE}:pull" \
     | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 
   if [[ -z "$token" ]]; then
@@ -34,7 +44,8 @@ resolve_latest_digest() {
   fi
 
   # Step 2: fetch the manifest list and pick the linux/amd64 digest
-  manifest=$(curl -sf \
+  manifest=$(curl -fsSL --retry 3 --retry-delay 1 --retry-all-errors \
+    --connect-timeout 10 --max-time 30 \
     -H "Authorization: Bearer ${token}" \
     -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json" \
     "https://registry-1.docker.io/v2/library/${IMAGE}/manifests/${TAG}")
