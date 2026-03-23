@@ -2140,6 +2140,23 @@ async function setupPolicies(sandboxName) {
 const CONTROL_UI_PORT = 18789;
 const CONTROL_UI_CHAT_PATH = "/chat?session=main";
 
+/**
+ * Extract gateway auth token from sandbox connect output.
+ * The output may contain shell noise; looks for a line matching TOKEN:<value>.
+ * Exported for unit tests.
+ */
+function parseTokenFromOutput(output) {
+  if (!output || typeof output !== "string") return null;
+  for (const line of output.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("TOKEN:") && trimmed.length > 6) {
+      const token = trimmed.slice(6).trim();
+      if (token) return token;
+    }
+  }
+  return null;
+}
+
 function findOpenclawJsonPath(dir) {
   if (!fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -2178,8 +2195,8 @@ function fetchGatewayAuthTokenFromSandbox(sandboxName) {
   } finally {
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
-      // ignore cleanup errors
+    } catch (e) {
+      console.error(`  Failed to remove temp dir ${tmpDir}: ${e.message}`);
     }
   }
 }
@@ -2214,10 +2231,13 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
 
   const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
+  const dashboardUrl = token
+    ? `http://localhost:${CONTROL_UI_PORT}/#token=${encodeURIComponent(token)}`
+    : `http://localhost:${CONTROL_UI_PORT}/`;
 
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
-  // console.log(`  Dashboard    http://localhost:18789/`);
+  console.log(`  Dashboard    ${dashboardUrl}`);
   console.log(`  Sandbox      ${sandboxName} (Landlock + seccomp + netns)`);
   console.log(`  Model        ${model} (${providerLabel})`);
   console.log(`  NIM          ${nimLabel}`);
@@ -2282,6 +2302,7 @@ module.exports = {
   hasStaleGateway,
   isSandboxReady,
   onboard,
+  parseTokenFromOutput,
   pruneStaleSandboxEntry,
   runCaptureOpenshell,
   setupInference,
