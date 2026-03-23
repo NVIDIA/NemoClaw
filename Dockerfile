@@ -56,7 +56,8 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
     && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
 
 # Install OpenClaw CLI and PyYAML for blueprint runner (single layer)
-RUN npm install -g openclaw@2026.3.11 \
+ARG OPENCLAW_VERSION=2026.3.22
+RUN npm install -g openclaw@${OPENCLAW_VERSION} \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
 
 # Copy built plugin and blueprint into the sandbox
