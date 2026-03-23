@@ -40,7 +40,8 @@ PYAUTH
 print_dashboard_urls() {
   local token chat_ui_base local_url remote_url
 
-  token="$(python3 - <<'PYTOKEN'
+  token="$(
+    python3 - <<'PYTOKEN'
 import json
 import os
 path = os.path.expanduser('~/.openclaw/openclaw.json')
@@ -51,7 +52,7 @@ except Exception:
 else:
     print(cfg.get('gateway', {}).get('auth', {}).get('token', ''))
 PYTOKEN
-)"
+  )"
 
   chat_ui_base="${CHAT_UI_URL%/}"
   local_url="http://127.0.0.1:${PUBLIC_PORT}/"
@@ -66,7 +67,7 @@ PYTOKEN
 }
 
 start_auto_pair() {
-  nohup python3 - <<'PYAUTOPAIR' >> /tmp/gateway.log 2>&1 &
+  nohup python3 - <<'PYAUTOPAIR' >>/tmp/gateway.log 2>&1 &
 import json
 import subprocess
 import time
@@ -130,13 +131,35 @@ echo 'Setting up NemoClaw...'
 # openclaw doctor --fix and openclaw plugins install already ran at build time
 # (Dockerfile Step 28). At runtime they fail with EPERM against the locked
 # /sandbox/.openclaw directory and accomplish nothing.
+
+# Configure outbound proxy so Node.js (openclaw/undici) routes HTTP/HTTPS
+# requests through the OpenShell egress proxy at 10.200.0.1:3128.
+#
+# Without this, Node.js resolves DNS locally before the CONNECT tunnel is
+# opened, hitting `getaddrinfo EAI_AGAIN` because the sandbox network
+# namespace has no DNS resolver configured.  The proxy handles DNS on behalf
+# of the sandbox, so exporting HTTPS_PROXY causes undici/node:http to skip
+# local resolution entirely.  curl already does this correctly (it uses the
+# proxy's DNS), and these env vars bring parity to Node.js callers.
+#
+# NEMOCLAW_PROXY_HOST can be set at sandbox creation time to override the
+# default if the gateway IP changes in a future OpenShell release.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/626
+PROXY_HOST="${NEMOCLAW_PROXY_HOST:-10.200.0.1}"
+PROXY_PORT="${NEMOCLAW_PROXY_PORT:-3128}"
+export HTTP_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
+export HTTPS_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
+# Bypass proxy for loopback, sandbox-local, and the OpenShell virtual network
+# so internal gateway calls (openclaw dashboard, inference.local) stay fast.
+export NO_PROXY="localhost,127.0.0.1,::1,inference.local,10.200.0.0/16"
+
 write_auth_profile
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exec "${NEMOCLAW_CMD[@]}"
 fi
 
-nohup openclaw gateway run > /tmp/gateway.log 2>&1 &
+nohup openclaw gateway run >/tmp/gateway.log 2>&1 &
 echo "[gateway] openclaw gateway launched (pid $!)"
 start_auto_pair
 print_dashboard_urls
