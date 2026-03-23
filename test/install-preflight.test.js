@@ -5,6 +5,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 
 const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
