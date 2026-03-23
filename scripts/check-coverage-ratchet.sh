@@ -20,7 +20,7 @@ fi
 
 if [ ! -f "$SUMMARY_FILE" ]; then
   echo "ERROR: Coverage summary not found: $SUMMARY_FILE"
-  echo "Run 'npx vitest run --coverage' in nemoclaw/ first."
+  echo "Run 'npx vitest run --coverage' first."
   exit 1
 fi
 
