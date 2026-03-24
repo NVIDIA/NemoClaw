@@ -42,7 +42,6 @@ function isSafeFile(filePath) {
 function recordEvent(type, data = {}) {
   try {
     if (!METRICS_FILE) return;
-    if (!isSafeFile(METRICS_FILE)) return;
 
     // Strip reserved keys so callers cannot overwrite ts/type.
     const cleaned = {};
@@ -56,7 +55,18 @@ function recordEvent(type, data = {}) {
       ts: new Date().toISOString(),
       type,
     };
-    fs.appendFileSync(METRICS_FILE, JSON.stringify(event) + "\n", { mode: 0o600 });
+    // Open with O_NOFOLLOW to atomically reject symlinks (no TOCTOU gap).
+    const flags = fs.constants;
+    const fd = fs.openSync(
+      METRICS_FILE,
+      flags.O_WRONLY | flags.O_CREAT | flags.O_APPEND | flags.O_NOFOLLOW,
+      0o600,
+    );
+    try {
+      fs.writeSync(fd, JSON.stringify(event) + "\n");
+    } finally {
+      fs.closeSync(fd);
+    }
   } catch {
     // Metrics are best-effort — never crash the CLI.
   }
@@ -73,6 +83,7 @@ function recordEvent(type, data = {}) {
  */
 function loadEvents(opts = {}) {
   if (!METRICS_FILE || !fs.existsSync(METRICS_FILE)) return [];
+  if (!isSafeFile(METRICS_FILE)) return [];
 
   const lines = fs.readFileSync(METRICS_FILE, "utf-8").trim().split("\n").filter(Boolean);
   let events = [];
@@ -142,7 +153,7 @@ function getStats(sandboxName) {
  */
 function resetMetrics() {
   try {
-    if (METRICS_FILE && fs.existsSync(METRICS_FILE)) {
+    if (METRICS_FILE && fs.existsSync(METRICS_FILE) && isSafeFile(METRICS_FILE)) {
       fs.unlinkSync(METRICS_FILE);
     }
   } catch {

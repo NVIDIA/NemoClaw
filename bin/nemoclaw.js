@@ -104,7 +104,6 @@ async function setupSpark() {
 }
 
 async function deploy(instanceName) {
-  metrics.recordEvent("deploy", { instance: instanceName || "" });
   if (!instanceName) {
     console.error("  Usage: nemoclaw deploy <instance-name>");
     console.error("");
@@ -114,6 +113,7 @@ async function deploy(instanceName) {
     console.error("    nemoclaw deploy nemoclaw-test");
     process.exit(1);
   }
+  metrics.recordEvent("deploy", { instance: instanceName });
   await ensureApiKey();
   if (isRepoPrivate("NVIDIA/OpenShell")) {
     await ensureGithubToken();

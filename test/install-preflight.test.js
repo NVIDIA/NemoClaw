@@ -442,6 +442,21 @@ exit 98
     );
 
     writeExecutable(
+      path.join(fakeBin, "uname"),
+      `#!/usr/bin/env bash
+if [ "$1" = "-s" ]; then
+  echo "Darwin"
+  exit 0
+fi
+if [ "$1" = "-m" ]; then
+  echo "arm64"
+  exit 0
+fi
+echo "Darwin"
+`,
+    );
+
+    writeExecutable(
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
