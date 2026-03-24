@@ -845,10 +845,11 @@ async function setupInference(sandboxName, model, provider) {
   step(5, 7, "Setting up inference provider");
 
   if (provider === "nvidia-nim") {
-    // Create nvidia-nim provider
     run(
       `openshell provider create --name nvidia-nim --type openai ` +
       `--credential ${shellQuote("NVIDIA_API_KEY")} ` +
+      `--config "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1" 2>&1 || ` +
+      `openshell provider update nvidia-nim --credential ${shellQuote("NVIDIA_API_KEY")} ` +
       `--config "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1" 2>&1 || true`,
       { ignoreError: true }
     );
