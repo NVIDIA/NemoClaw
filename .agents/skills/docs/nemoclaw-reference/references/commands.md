@@ -1,6 +1,7 @@
 # Commands
 
-The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes. It is installed when you run `npm install -g nemoclaw`.
+The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes.
+It is installed automatically by the installer (`curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`).
 
 ## `/nemoclaw` Slash Command
 
