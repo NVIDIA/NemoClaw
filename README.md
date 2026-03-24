@@ -51,6 +51,7 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | Dependency | Version                          |
 |------------|----------------------------------|
 | Linux      | Ubuntu 22.04 LTS or later |
+| macOS      | [Prerequisites Guide](docs/get-started/install-macos.md) |
 | Node.js    | 20 or later |
 | npm        | 10 or later |
 | Container runtime | Supported runtime installed and running |
@@ -61,7 +62,7 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | Platform | Supported runtimes | Notes |
 |----------|--------------------|-------|
 | Linux | Docker | Primary supported path today |
-| macOS (Apple Silicon) | Colima, Docker Desktop | Recommended runtimes for supported macOS setups |
+| macOS (Apple Silicon) | Colima, Docker Desktop | See the [macOS Installation Guide](docs/get-started/install-macos.md) for details. |
 | macOS | Podman | Not supported yet. NemoClaw currently depends on OpenShell support for Podman on macOS. |
 | Windows WSL | Docker Desktop (WSL backend) | Supported target path |
 

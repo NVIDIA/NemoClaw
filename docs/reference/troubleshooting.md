@@ -189,3 +189,18 @@ $ nemoclaw <name> logs
 ```
 
 Use `--follow` to stream logs in real time while debugging.
+
+### `xcode-select` errors on macOS
+
+If you see errors related to `xcrun` or missing headers during installation on macOS, ensure the Xcode Command Line Tools are correctly installed and configured:
+
+1.  **Install tools:** `xcode-select --install`
+2.  **Reset path:** `sudo xcode-select --reset`
+
+For a complete walkthrough, see the [macOS Installation Guide](../get-started/install-macos.md).
+
+:::{admonition} Get Help
+:class: tip
+
+If your issue is not listed here, join the [NemoClaw Discord channel](https://discord.gg/XFpfPv9Uvx) to ask questions and get help from the community. You can also [file an issue on GitHub](https://github.com/NVIDIA/NemoClaw/issues/new).
+:::
