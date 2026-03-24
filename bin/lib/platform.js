@@ -44,7 +44,11 @@ function getColimaDockerSocketCandidates(opts = {}) {
 
 function findColimaDockerSocket(opts = {}) {
   const existsSync = opts.existsSync ?? require("fs").existsSync;
-  return getColimaDockerSocketCandidates(opts).find((socketPath) => existsSync(socketPath)) ?? null;
+  return (
+    getColimaDockerSocketCandidates(opts).find((socketPath) =>
+      existsSync(socketPath),
+    ) ?? null
+  );
 }
 
 function getPodmanSocketCandidates(opts = {}) {
@@ -58,10 +62,7 @@ function getPodmanSocketCandidates(opts = {}) {
     ];
   }
 
-  return [
-    `/run/user/${uid}/podman/podman.sock`,
-    "/run/podman/podman.sock",
-  ];
+  return [`/run/user/${uid}/podman/podman.sock`, "/run/podman/podman.sock"];
 }
 
 function getDockerSocketCandidates(opts = {}) {
