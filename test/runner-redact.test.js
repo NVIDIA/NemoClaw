@@ -68,6 +68,18 @@ describe("redactSecrets", () => {
     expect(result).toContain("GITHUB_TOKEN=***");
   });
 
+  it("redacts double-quoted secret values", () => {
+    const result = redactSecrets('GITHUB_TOKEN="ghp_secretValue123"');
+    expect(result).not.toContain("ghp_secretValue123");
+    expect(result).toBe("GITHUB_TOKEN=***");
+  });
+
+  it("redacts single-quoted secret values", () => {
+    const result = redactSecrets("NVIDIA_API_KEY='nvapi-secretValue123'");
+    expect(result).not.toContain("nvapi-secretValue123");
+    expect(result).toBe("NVIDIA_API_KEY=***");
+  });
+
   it("handles empty string", () => {
     expect(redactSecrets("")).toBe("");
   });

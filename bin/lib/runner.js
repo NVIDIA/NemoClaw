@@ -14,25 +14,24 @@ if (dockerHost) {
 }
 
 // Redact known secret patterns from command strings for logging and error output.
-// Patterns are created inside the function to avoid shared /g lastIndex state.
+// Handles unquoted (KEY=val), double-quoted (KEY="val"), and single-quoted (KEY='val') forms.
 function redactSecrets(str) {
-  const patterns = [
-    /NVIDIA_API_KEY=[^\s"']*/g,
-    /nvapi-[A-Za-z0-9_-]+/g,
-    /GITHUB_TOKEN=[^\s"']*/g,
-    /TELEGRAM_BOT_TOKEN=[^\s"']*/g,
-    /OPENAI_API_KEY=[^\s"']*/g,
-    /SLACK_BOT_TOKEN=[^\s"']*/g,
-    /DISCORD_BOT_TOKEN=[^\s"']*/g,
+  const keyedSecrets = [
+    "NVIDIA_API_KEY",
+    "GITHUB_TOKEN",
+    "TELEGRAM_BOT_TOKEN",
+    "OPENAI_API_KEY",
+    "SLACK_BOT_TOKEN",
+    "DISCORD_BOT_TOKEN",
   ];
   let result = str;
-  for (const pattern of patterns) {
-    result = result.replace(pattern, (match) => {
-      const eqIdx = match.indexOf("=");
-      if (eqIdx > 0) return match.slice(0, eqIdx + 1) + "***";
-      return match.slice(0, 8) + "***";
-    });
+  for (const key of keyedSecrets) {
+    // Match KEY="quoted" or KEY='quoted' or KEY=unquoted
+    const pattern = new RegExp(`${key}=(?:"[^"]*"|'[^']*'|[^\\s"']*)`, "g");
+    result = result.replace(pattern, `${key}=***`);
   }
+  // Bare nvapi- tokens (e.g., in Bearer headers)
+  result = result.replace(/nvapi-[A-Za-z0-9_-]+/g, (match) => match.slice(0, 8) + "***");
   return result;
 }
 
@@ -84,6 +83,9 @@ function runCapture(cmd, opts = {}) {
     }
     if (err.stderr) {
       err.stderr = redactSecrets(err.stderr);
+    }
+    if (err.stdout) {
+      err.stdout = redactSecrets(err.stdout);
     }
     throw err;
   }
