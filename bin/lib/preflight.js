@@ -13,7 +13,7 @@ async function probePortAvailability(port, opts = {}) {
 
   return new Promise((resolve) => {
     const srv = net.createServer();
-    srv.once("error", (err) => {
+    srv.once("error", (/** @type {NodeJS.ErrnoException} */ err) => {
       if (err.code === "EADDRINUSE") {
         resolve({
           ok: false,
