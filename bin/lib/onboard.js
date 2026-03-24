@@ -474,88 +474,19 @@ async function setupNim(sandboxName, gpu) {
   const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
   const requestedModel = isNonInteractive() ? getNonInteractiveModel(requestedProvider || "cloud") : null;
 
-  // Auto-select only with NEMOCLAW_EXPERIMENTAL=1 (prevents silent misconfiguration)
-  if (EXPERIMENTAL) {
-    if (vllmRunning) {
-      console.log("  ✓ vLLM detected on localhost:8000 — using it [experimental]");
-      provider = "vllm-local";
-      model = "vllm-local";
-      registry.updateSandbox(sandboxName, { model, provider, nimContainer });
-      return { model, provider };
+  // Non-interactive Dynamo provider: handle before the interactive options flow
+  if (isNonInteractive() && requestedProvider === "dynamo") {
+    const dynamoEndpoint = (process.env.NEMOCLAW_DYNAMO_ENDPOINT || "").trim();
+    if (!dynamoEndpoint) {
+      console.error("  NEMOCLAW_DYNAMO_ENDPOINT is required when NEMOCLAW_PROVIDER=dynamo.");
+      process.exit(1);
     }
-    if (ollamaRunning) {
-      console.log("  ✓ Ollama detected on localhost:11434 — using it [experimental]");
-      provider = "ollama-local";
-      model = "nemotron-3-nano";
-      registry.updateSandbox(sandboxName, { model, provider, nimContainer });
-      return { model, provider };
-    }
-  }
+    console.log(`  [non-interactive] Using Dynamo provider`);
 
-  // Non-interactive: honor NEMOCLAW_PROVIDER before building interactive options
-  if (isNonInteractive() && requestedProvider) {
-    const providerKey = requestedProvider;
-    console.log(`  [non-interactive] Provider: ${providerKey}`);
-    if (providerKey === "dynamo") {
-      // Dynamo: external vLLM endpoint (e.g., K8s service)
-      const dynamoEndpointRaw = (process.env.NEMOCLAW_DYNAMO_ENDPOINT || "").trim();
-      if (!dynamoEndpointRaw) {
-        console.error("  NEMOCLAW_DYNAMO_ENDPOINT is required when NEMOCLAW_PROVIDER=dynamo.");
-        process.exit(1);
-      }
-      // Validate URL format and protocol
-      let parsedUrl;
-      try {
-        parsedUrl = new URL(dynamoEndpointRaw);
-      } catch {
-        console.error(`  Invalid NEMOCLAW_DYNAMO_ENDPOINT URL: ${dynamoEndpointRaw}`);
-        process.exit(1);
-      }
-      if (!["http:", "https:"].includes(parsedUrl.protocol)) {
-        console.error(`  NEMOCLAW_DYNAMO_ENDPOINT must use http or https: ${dynamoEndpointRaw}`);
-        process.exit(1);
-      }
-      // Build sanitized URL for logging and storage (no credentials or query params)
-      const safeUrl = `${parsedUrl.protocol}//${parsedUrl.host}${parsedUrl.pathname}`;
-      const redacted = [];
-      if (parsedUrl.username || parsedUrl.password) redacted.push("credentials");
-      if (parsedUrl.search) redacted.push("query");
-      console.log(`  Using Dynamo endpoint: ${safeUrl}${redacted.length ? ` [REDACTED: ${redacted.join(", ")}]` : ""}`);
-
-      provider = "dynamo";
-      model = (process.env.NEMOCLAW_DYNAMO_MODEL || "").trim() || "dynamo";
-      // Store sanitized URL in registry (no credentials), pass raw URL to setupInference
-      registry.updateSandbox(sandboxName, { model, provider, nimContainer, dynamoEndpoint: safeUrl });
-      return { model, provider, dynamoEndpoint: dynamoEndpointRaw };
-    } else if (providerKey === "ollama") {
-      if (!ollamaRunning) {
-        console.error("  Ollama is not running on localhost:11434. Start it first.");
-        process.exit(1);
-      }
-      provider = "ollama-local";
-      model = requestedModel || "nemotron-3-nano";
-      registry.updateSandbox(sandboxName, { model, provider, nimContainer });
-      return { model, provider };
-    } else if (providerKey === "vllm") {
-      if (!vllmRunning) {
-        console.error("  vLLM is not running on localhost:8000. Start it first.");
-        process.exit(1);
-      }
-      provider = "vllm-local";
-      model = requestedModel || "vllm-local";
-      registry.updateSandbox(sandboxName, { model, provider, nimContainer });
-      return { model, provider };
-    } else if (providerKey === "nim") {
-      if (!EXPERIMENTAL) {
-        console.error("  NEMOCLAW_PROVIDER=nim requires NEMOCLAW_EXPERIMENTAL=1.");
-        process.exit(1);
-      }
-      if (!gpu || !gpu.nimCapable) {
-        console.error("  Local NIM requires a compatible NVIDIA GPU.");
-        process.exit(1);
-      }
-    }
-    // "cloud" or "nim" fall through to normal flow below
+    provider = "dynamo";
+    model = (process.env.NEMOCLAW_DYNAMO_MODEL || "").trim() || "dynamo";
+    registry.updateSandbox(sandboxName, { model, provider, nimContainer });
+    return { model, provider, dynamoEndpoint };
   }
 
   // Build options list — only show local options with NEMOCLAW_EXPERIMENTAL=1
