@@ -45,10 +45,11 @@ bp = yaml.safe_load(open('/opt/nemoclaw-blueprint/blueprint.yaml'))
 assert bp['version'] == '0.1.0', f'Bad version: {bp[\"version\"]}'
 profiles = bp['components']['inference']['profiles']
 assert 'default' in profiles, 'Missing default profile'
+assert 'ncp' in profiles, 'Missing ncp profile'
 assert 'vllm' in profiles, 'Missing vllm profile'
 assert 'nim-local' in profiles, 'Missing nim-local profile'
 print(f'Profiles: {list(profiles.keys())}')
-" && pass "Blueprint YAML valid with all 3 profiles" || fail "Blueprint YAML invalid"
+" && pass "Blueprint YAML valid with all 4 profiles" || fail "Blueprint YAML invalid"
 
 # -------------------------------------------------------
 info "4. Verify blueprint runner plan command"
