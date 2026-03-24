@@ -357,10 +357,6 @@ function pruneStaleSandboxEntry(sandboxName) {
   return liveExists;
 }
 
-function _pythonLiteralJson(value) {
-  return JSON.stringify(JSON.stringify(value));
-}
-
 function buildSandboxConfigSyncScript(selectionConfig) {
   // openclaw.json is immutable (root:root 444, Landlock read-only) — never
   // write to it at runtime.  Model routing is handled by the host-side
@@ -631,23 +627,6 @@ async function validateOpenAiLikeSelection(
       process.exit(1);
     }
     console.log(`  ${retryMessage}`);
-    console.log("");
-    return null;
-  }
-  console.log(`  ${probe.label} available — OpenClaw will use ${probe.api}.`);
-  return probe.api;
-}
-
-async function _validateAnthropicSelection(label, endpointUrl, model, credentialEnv) {
-  const apiKey = getCredential(credentialEnv);
-  const probe = probeAnthropicEndpoint(endpointUrl, model, apiKey);
-  if (!probe.ok) {
-    console.error(`  ${label} endpoint validation failed.`);
-    console.error(`  ${probe.message}`);
-    if (isNonInteractive()) {
-      process.exit(1);
-    }
-    console.log("  Please choose a provider/model again.");
     console.log("");
     return null;
   }
