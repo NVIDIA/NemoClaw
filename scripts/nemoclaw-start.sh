@@ -24,7 +24,7 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # own name as $1 would cause infinite recursion via the NEMOCLAW_CMD exec path.
 # Only strip from $1 — later args with this name are legitimate user arguments.
 case "${1:-}" in
-nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
+  nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
 esac
 NEMOCLAW_CMD=("$@")
 CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:18789}"
