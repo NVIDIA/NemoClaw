@@ -5,12 +5,7 @@ import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-const SMOKE_SCRIPT = path.join(
-  import.meta.dirname,
-  "..",
-  "scripts",
-  "smoke-macos-install.sh",
-);
+const SMOKE_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "smoke-macos-install.sh");
 
 describe("macOS smoke install script guardrails", () => {
   it("prints help", () => {
@@ -20,9 +15,7 @@ describe("macOS smoke install script guardrails", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(
-      /Usage: \.\/scripts\/smoke-macos-install\.sh/,
-    );
+    expect(result.stdout).toMatch(/Usage: \.\/scripts\/smoke-macos-install\.sh/);
   });
 
   it("requires NVIDIA_API_KEY", () => {
@@ -33,21 +26,15 @@ describe("macOS smoke install script guardrails", () => {
     });
 
     expect(result.status).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(
-      /NVIDIA_API_KEY must be set/,
-    );
+    expect(`${result.stdout}${result.stderr}`).toMatch(/NVIDIA_API_KEY must be set/);
   });
 
   it("rejects invalid sandbox names", () => {
-    const result = spawnSync(
-      "bash",
-      [SMOKE_SCRIPT, "--sandbox-name", "Bad Name"],
-      {
-        cwd: path.join(import.meta.dirname, ".."),
-        encoding: "utf-8",
-        env: { ...process.env, NVIDIA_API_KEY: "nvapi-test" },
-      },
-    );
+    const result = spawnSync("bash", [SMOKE_SCRIPT, "--sandbox-name", "Bad Name"], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: { ...process.env, NVIDIA_API_KEY: "nvapi-test" },
+    });
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toMatch(/Invalid sandbox name/);
@@ -61,9 +48,7 @@ describe("macOS smoke install script guardrails", () => {
     });
 
     expect(result.status).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(
-      /Unsupported runtime 'lxc'/,
-    );
+    expect(`${result.stdout}${result.stderr}`).toMatch(/Unsupported runtime 'lxc'/);
   });
 
   it("accepts podman as a runtime option", () => {
@@ -78,30 +63,22 @@ describe("macOS smoke install script guardrails", () => {
     });
 
     expect(result.status).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(
-      /no Podman socket was found/,
-    );
+    expect(`${result.stdout}${result.stderr}`).toMatch(/no Podman socket was found/);
   });
 
   it("fails when a requested runtime socket is unavailable", () => {
-    const result = spawnSync(
-      "bash",
-      [SMOKE_SCRIPT, "--runtime", "docker-desktop"],
-      {
-        cwd: path.join(import.meta.dirname, ".."),
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          NVIDIA_API_KEY: "nvapi-test",
-          HOME: "/tmp/nemoclaw-smoke-no-runtime",
-        },
+    const result = spawnSync("bash", [SMOKE_SCRIPT, "--runtime", "docker-desktop"], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        NVIDIA_API_KEY: "nvapi-test",
+        HOME: "/tmp/nemoclaw-smoke-no-runtime",
       },
-    );
+    });
 
     expect(result.status).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(
-      /no Docker Desktop socket was found/,
-    );
+    expect(`${result.stdout}${result.stderr}`).toMatch(/no Docker Desktop socket was found/);
   });
 
   it("stages the policy preset no answer after sandbox setup", () => {

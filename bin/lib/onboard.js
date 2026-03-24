@@ -25,14 +25,12 @@ const {
   DEFAULT_CLOUD_MODEL,
   getProviderSelectionConfig,
 } = require("./inference-config");
-const { inferContainerRuntime, shouldPatchCoredns } = require("./platform");
-const { resolveOpenshell } = require("./resolve-openshell");
 const {
-  prompt,
-  ensureApiKey,
-  getCredential,
-  saveCredential,
-} = require("./credentials");
+  inferContainerRuntime,
+  shouldPatchCoredns,
+} = require("./platform");
+const { resolveOpenshell } = require("./resolve-openshell");
+const { prompt, ensureApiKey, getCredential, saveCredential } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
 const policies = require("./policies");
@@ -47,8 +45,7 @@ const GATEWAY_NAME = "nemoclaw";
 const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
-const GEMINI_ENDPOINT_URL =
-  "https://generativelanguage.googleapis.com/v1beta/openai/";
+const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 
 const REMOTE_PROVIDER_CONFIG = {
   build: {
@@ -117,8 +114,17 @@ const REMOTE_PROVIDER_CONFIG = {
 };
 
 const REMOTE_MODEL_OPTIONS = {
-  openai: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4-pro-2026-03-05"],
-  anthropic: ["claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"],
+  openai: [
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "gpt-5.4-pro-2026-03-05",
+  ],
+  anthropic: [
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+    "claude-opus-4-6",
+  ],
   gemini: [
     "gemini-3.1-pro-preview",
     "gemini-3.1-flash-lite-preview",
@@ -163,11 +169,7 @@ function isSandboxReady(output, sandboxName) {
   const clean = output.replace(/\x1b\[[0-9;]*m/g, "");
   return clean.split("\n").some((l) => {
     const cols = l.trim().split(/\s+/);
-    return (
-      cols[0] === sandboxName &&
-      cols.includes("Ready") &&
-      !cols.includes("NotReady")
-    );
+    return cols[0] === sandboxName && cols.includes("Ready") && !cols.includes("NotReady");
   });
 }
 
@@ -178,11 +180,7 @@ function isSandboxReady(output, sandboxName) {
  * @returns {boolean}
  */
 function hasStaleGateway(gwInfoOutput) {
-  return (
-    typeof gwInfoOutput === "string" &&
-    gwInfoOutput.length > 0 &&
-    gwInfoOutput.includes(GATEWAY_NAME)
-  );
+  return typeof gwInfoOutput === "string" && gwInfoOutput.length > 0 && gwInfoOutput.includes(GATEWAY_NAME);
 }
 
 function streamSandboxCreate(command, env = process.env) {
@@ -240,10 +238,9 @@ function streamSandboxCreate(command, env = process.env) {
       if (settled) return;
       settled = true;
       if (pending) flushLine(pending);
-      const detail =
-        error && error.code
-          ? `spawn failed: ${error.message} (${error.code})`
-          : `spawn failed: ${error.message}`;
+      const detail = error && error.code
+        ? `spawn failed: ${error.message} (${error.code})`
+        : `spawn failed: ${error.message}`;
       lines.push(detail);
       resolve({ status: 1, output: lines.join("\n"), sawProgress: false });
     });
@@ -264,9 +261,7 @@ function step(n, total, msg) {
 }
 
 function getInstalledOpenshellVersion(versionOutput = null) {
-  const output = String(
-    versionOutput ?? runCapture("openshell -V", { ignoreError: true }),
-  ).trim();
+  const output = String(versionOutput ?? runCapture("openshell -V", { ignoreError: true })).trim();
   const match = output.match(/openshell\s+([0-9]+\.[0-9]+\.[0-9]+)/i);
   if (!match) return null;
   return match[1];
@@ -283,9 +278,7 @@ function getOpenshellBinary() {
   const resolved = resolveOpenshell();
   if (!resolved) {
     console.error("  openshell CLI not found.");
-    console.error(
-      "  Install manually: https://github.com/NVIDIA/OpenShell/releases",
-    );
+    console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
     process.exit(1);
   }
   OPENSHELL_BIN = resolved;
@@ -293,10 +286,7 @@ function getOpenshellBinary() {
 }
 
 function openshellShellCommand(args) {
-  return [
-    shellQuote(getOpenshellBinary()),
-    ...args.map((arg) => shellQuote(arg)),
-  ].join(" ");
+  return [shellQuote(getOpenshellBinary()), ...args.map((arg) => shellQuote(arg))].join(" ");
 }
 
 function runOpenshell(args, opts = {}) {
@@ -318,16 +308,7 @@ function getCurlTimingArgs() {
 function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
   const args =
     action === "create"
-      ? [
-          "provider",
-          "create",
-          "--name",
-          name,
-          "--type",
-          type,
-          "--credential",
-          credentialEnv,
-        ]
+      ? ["provider", "create", "--name", name, "--type", type, "--credential", credentialEnv]
       : ["provider", "update", name, "--credential", credentialEnv];
   if (baseUrl && type === "openai") {
     args.push("--config", `OPENAI_BASE_URL=${baseUrl}`);
@@ -338,23 +319,11 @@ function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
 }
 
 function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
-  const createArgs = buildProviderArgs(
-    "create",
-    name,
-    type,
-    credentialEnv,
-    baseUrl,
-  );
+  const createArgs = buildProviderArgs("create", name, type, credentialEnv, baseUrl);
   const createResult = runOpenshell(createArgs, { ignoreError: true, env });
   if (createResult.status === 0) return;
 
-  const updateArgs = buildProviderArgs(
-    "update",
-    name,
-    type,
-    credentialEnv,
-    baseUrl,
-  );
+  const updateArgs = buildProviderArgs("update", name, type, credentialEnv, baseUrl);
   const updateResult = runOpenshell(updateArgs, { ignoreError: true, env });
   if (updateResult.status !== 0) {
     console.error(`  Failed to create or update provider '${name}'.`);
@@ -363,22 +332,15 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
 }
 
 function verifyInferenceRoute(provider, model) {
-  const output = runCaptureOpenshell(["inference", "get"], {
-    ignoreError: true,
-  });
-  if (
-    !output ||
-    /Gateway inference:\s*[\r\n]+\s*Not configured/i.test(output)
-  ) {
+  const output = runCaptureOpenshell(["inference", "get"], { ignoreError: true });
+  if (!output || /Gateway inference:\s*[\r\n]+\s*Not configured/i.test(output)) {
     console.error("  OpenShell inference route was not configured.");
     process.exit(1);
   }
 }
 
 function sandboxExistsInGateway(sandboxName) {
-  const output = runCaptureOpenshell(["sandbox", "get", sandboxName], {
-    ignoreError: true,
-  });
+  const output = runCaptureOpenshell(["sandbox", "get", sandboxName], { ignoreError: true });
   return Boolean(output);
 }
 
@@ -410,11 +372,7 @@ exit
 `.trim();
 }
 
-function writeSandboxConfigSyncFile(
-  script,
-  tmpDir = os.tmpdir(),
-  now = Date.now(),
-) {
+function writeSandboxConfigSyncFile(script, tmpDir = os.tmpdir(), now = Date.now()) {
   const scriptFile = path.join(tmpDir, `nemoclaw-sync-${now}.sh`);
   fs.writeFileSync(scriptFile, `${script}\n`, { mode: 0o600 });
   return scriptFile;
@@ -424,11 +382,7 @@ function encodeDockerJsonArg(value) {
   return Buffer.from(JSON.stringify(value || {}), "utf8").toString("base64");
 }
 
-function getSandboxInferenceConfig(
-  model,
-  provider = null,
-  preferredInferenceApi = null,
-) {
+function getSandboxInferenceConfig(model, provider = null, preferredInferenceApi = null) {
   let providerKey = "inference";
   let primaryModelRef = model;
   let inferenceBaseUrl = "https://inference.local/v1";
@@ -469,23 +423,10 @@ function getSandboxInferenceConfig(
       break;
   }
 
-  return {
-    providerKey,
-    primaryModelRef,
-    inferenceBaseUrl,
-    inferenceApi,
-    inferenceCompat,
-  };
+  return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
 }
 
-function patchStagedDockerfile(
-  dockerfilePath,
-  model,
-  chatUiUrl,
-  buildId = String(Date.now()),
-  provider = null,
-  preferredInferenceApi = null,
-) {
+function patchStagedDockerfile(dockerfilePath, model, chatUiUrl, buildId = String(Date.now()), provider = null, preferredInferenceApi = null) {
   const {
     providerKey,
     primaryModelRef,
@@ -496,35 +437,35 @@ function patchStagedDockerfile(
   let dockerfile = fs.readFileSync(dockerfilePath, "utf8");
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_MODEL=.*$/m,
-    `ARG NEMOCLAW_MODEL=${model}`,
+    `ARG NEMOCLAW_MODEL=${model}`
   );
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_PROVIDER_KEY=.*$/m,
-    `ARG NEMOCLAW_PROVIDER_KEY=${providerKey}`,
+    `ARG NEMOCLAW_PROVIDER_KEY=${providerKey}`
   );
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_PRIMARY_MODEL_REF=.*$/m,
-    `ARG NEMOCLAW_PRIMARY_MODEL_REF=${primaryModelRef}`,
+    `ARG NEMOCLAW_PRIMARY_MODEL_REF=${primaryModelRef}`
   );
   dockerfile = dockerfile.replace(
     /^ARG CHAT_UI_URL=.*$/m,
-    `ARG CHAT_UI_URL=${chatUiUrl}`,
+    `ARG CHAT_UI_URL=${chatUiUrl}`
   );
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_INFERENCE_BASE_URL=.*$/m,
-    `ARG NEMOCLAW_INFERENCE_BASE_URL=${inferenceBaseUrl}`,
+    `ARG NEMOCLAW_INFERENCE_BASE_URL=${inferenceBaseUrl}`
   );
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_INFERENCE_API=.*$/m,
-    `ARG NEMOCLAW_INFERENCE_API=${inferenceApi}`,
+    `ARG NEMOCLAW_INFERENCE_API=${inferenceApi}`
   );
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_INFERENCE_COMPAT_B64=.*$/m,
-    `ARG NEMOCLAW_INFERENCE_COMPAT_B64=${encodeDockerJsonArg(inferenceCompat)}`,
+    `ARG NEMOCLAW_INFERENCE_COMPAT_B64=${encodeDockerJsonArg(inferenceCompat)}`
   );
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_BUILD_ID=.*$/m,
-    `ARG NEMOCLAW_BUILD_ID=${buildId}`,
+    `ARG NEMOCLAW_BUILD_ID=${buildId}`
   );
   fs.writeFileSync(dockerfilePath, dockerfile);
 }
@@ -562,17 +503,16 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
       url: `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
       body: JSON.stringify({
         model,
-        messages: [{ role: "user", content: "Reply with exactly: OK" }],
+        messages: [
+          { role: "user", content: "Reply with exactly: OK" },
+        ],
       }),
     },
   ];
 
   const failures = [];
   for (const probe of probes) {
-    const bodyFile = path.join(
-      os.tmpdir(),
-      `nemoclaw-probe-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
-    );
+    const bodyFile = path.join(os.tmpdir(), `nemoclaw-probe-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
     try {
       const cmd = [
         "curl -sS",
@@ -580,9 +520,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
         `-o ${shellQuote(bodyFile)}`,
         "-w '%{http_code}'",
         "-H 'Content-Type: application/json'",
-        ...(apiKey
-          ? ['-H "Authorization: Bearer $NEMOCLAW_PROBE_API_KEY"']
-          : []),
+        ...(apiKey ? ['-H "Authorization: Bearer $NEMOCLAW_PROBE_API_KEY"'] : []),
         `-d ${shellQuote(probe.body)}`,
         shellQuote(probe.url),
       ].join(" ");
@@ -594,9 +532,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
           NEMOCLAW_PROBE_API_KEY: apiKey,
         },
       });
-      const body = fs.existsSync(bodyFile)
-        ? fs.readFileSync(bodyFile, "utf8")
-        : "";
+      const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
       const status = Number(String(result.stdout || "").trim());
       if (result.status === 0 && status >= 200 && status < 300) {
         return { ok: true, api: probe.api, label: probe.name };
@@ -614,18 +550,13 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
 
   return {
     ok: false,
-    message: failures
-      .map((failure) => `${failure.name}: ${failure.message}`)
-      .join(" | "),
+    message: failures.map((failure) => `${failure.name}: ${failure.message}`).join(" | "),
     failures,
   };
 }
 
 function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
-  const bodyFile = path.join(
-    os.tmpdir(),
-    `nemoclaw-anthropic-probe-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
-  );
+  const bodyFile = path.join(os.tmpdir(), `nemoclaw-anthropic-probe-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
   try {
     const cmd = [
       "curl -sS",
@@ -635,13 +566,11 @@ function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
       '-H "x-api-key: $NEMOCLAW_PROBE_API_KEY"',
       "-H 'anthropic-version: 2023-06-01'",
       "-H 'content-type: application/json'",
-      `-d ${shellQuote(
-        JSON.stringify({
-          model,
-          max_tokens: 16,
-          messages: [{ role: "user", content: "Reply with exactly: OK" }],
-        }),
-      )}`,
+      `-d ${shellQuote(JSON.stringify({
+        model,
+        max_tokens: 16,
+        messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      }))}`,
       shellQuote(`${String(endpointUrl).replace(/\/+$/, "")}/v1/messages`),
     ].join(" ");
     const result = spawnSync("bash", ["-c", cmd], {
@@ -652,16 +581,10 @@ function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
         NEMOCLAW_PROBE_API_KEY: apiKey,
       },
     });
-    const body = fs.existsSync(bodyFile)
-      ? fs.readFileSync(bodyFile, "utf8")
-      : "";
+    const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     const status = Number(String(result.stdout || "").trim());
     if (result.status === 0 && status >= 200 && status < 300) {
-      return {
-        ok: true,
-        api: "anthropic-messages",
-        label: "Anthropic Messages API",
-      };
+      return { ok: true, api: "anthropic-messages", label: "Anthropic Messages API" };
     }
     return {
       ok: false,
@@ -693,7 +616,7 @@ async function validateOpenAiLikeSelection(
   endpointUrl,
   model,
   credentialEnv = null,
-  retryMessage = "Please choose a provider/model again.",
+  retryMessage = "Please choose a provider/model again."
 ) {
   const apiKey = credentialEnv ? getCredential(credentialEnv) : "";
   const probe = probeOpenAiLikeEndpoint(endpointUrl, model, apiKey);
@@ -711,12 +634,7 @@ async function validateOpenAiLikeSelection(
   return probe.api;
 }
 
-async function validateAnthropicSelection(
-  label,
-  endpointUrl,
-  model,
-  credentialEnv,
-) {
+async function validateAnthropicSelection(label, endpointUrl, model, credentialEnv) {
   const apiKey = getCredential(credentialEnv);
   const probe = probeAnthropicEndpoint(endpointUrl, model, apiKey);
   if (!probe.ok) {
@@ -738,7 +656,7 @@ async function validateAnthropicSelectionWithRetryMessage(
   endpointUrl,
   model,
   credentialEnv,
-  retryMessage = "Please choose a provider/model again.",
+  retryMessage = "Please choose a provider/model again."
 ) {
   const apiKey = getCredential(credentialEnv);
   const probe = probeAnthropicEndpoint(endpointUrl, model, apiKey);
@@ -756,12 +674,7 @@ async function validateAnthropicSelectionWithRetryMessage(
   return probe.api;
 }
 
-async function validateCustomOpenAiLikeSelection(
-  label,
-  endpointUrl,
-  model,
-  credentialEnv,
-) {
+async function validateCustomOpenAiLikeSelection(label, endpointUrl, model, credentialEnv) {
   const apiKey = getCredential(credentialEnv);
   const probe = probeOpenAiLikeEndpoint(endpointUrl, model, apiKey);
   if (probe.ok) {
@@ -783,12 +696,7 @@ async function validateCustomOpenAiLikeSelection(
   return { ok: false, retry: "model" };
 }
 
-async function validateCustomAnthropicSelection(
-  label,
-  endpointUrl,
-  model,
-  credentialEnv,
-) {
+async function validateCustomAnthropicSelection(label, endpointUrl, model, credentialEnv) {
   const apiKey = getCredential(credentialEnv);
   const probe = probeAnthropicEndpoint(endpointUrl, model, apiKey);
   if (probe.ok) {
@@ -811,10 +719,7 @@ async function validateCustomAnthropicSelection(
 }
 
 function fetchNvidiaEndpointModels(apiKey) {
-  const bodyFile = path.join(
-    os.tmpdir(),
-    `nemoclaw-nvidia-models-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
-  );
+  const bodyFile = path.join(os.tmpdir(), `nemoclaw-nvidia-models-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
   try {
     const cmd = [
       "curl -sS",
@@ -833,15 +738,10 @@ function fetchNvidiaEndpointModels(apiKey) {
         NEMOCLAW_PROBE_API_KEY: apiKey,
       },
     });
-    const body = fs.existsSync(bodyFile)
-      ? fs.readFileSync(bodyFile, "utf8")
-      : "";
+    const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     const status = Number(String(result.stdout || "").trim());
     if (result.status !== 0 || !(status >= 200 && status < 300)) {
-      return {
-        ok: false,
-        message: summarizeProbeError(body, status || result.status || 0),
-      };
+      return { ok: false, message: summarizeProbeError(body, status || result.status || 0) };
     }
     const parsed = JSON.parse(body);
     const ids = Array.isArray(parsed?.data)
@@ -873,10 +773,7 @@ function validateNvidiaEndpointModel(model, apiKey) {
 }
 
 function fetchOpenAiLikeModels(endpointUrl, apiKey) {
-  const bodyFile = path.join(
-    os.tmpdir(),
-    `nemoclaw-openai-models-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
-  );
+  const bodyFile = path.join(os.tmpdir(), `nemoclaw-openai-models-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
   try {
     const cmd = [
       "curl -sS",
@@ -894,16 +791,10 @@ function fetchOpenAiLikeModels(endpointUrl, apiKey) {
         NEMOCLAW_PROBE_API_KEY: apiKey,
       },
     });
-    const body = fs.existsSync(bodyFile)
-      ? fs.readFileSync(bodyFile, "utf8")
-      : "";
+    const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     const status = Number(String(result.stdout || "").trim());
     if (result.status !== 0 || !(status >= 200 && status < 300)) {
-      return {
-        ok: false,
-        status,
-        message: summarizeProbeError(body, status || result.status || 0),
-      };
+      return { ok: false, status, message: summarizeProbeError(body, status || result.status || 0) };
     }
     const parsed = JSON.parse(body);
     const ids = Array.isArray(parsed?.data)
@@ -918,10 +809,7 @@ function fetchOpenAiLikeModels(endpointUrl, apiKey) {
 }
 
 function fetchAnthropicModels(endpointUrl, apiKey) {
-  const bodyFile = path.join(
-    os.tmpdir(),
-    `nemoclaw-anthropic-models-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
-  );
+  const bodyFile = path.join(os.tmpdir(), `nemoclaw-anthropic-models-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
   try {
     const cmd = [
       "curl -sS",
@@ -940,22 +828,14 @@ function fetchAnthropicModels(endpointUrl, apiKey) {
         NEMOCLAW_PROBE_API_KEY: apiKey,
       },
     });
-    const body = fs.existsSync(bodyFile)
-      ? fs.readFileSync(bodyFile, "utf8")
-      : "";
+    const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     const status = Number(String(result.stdout || "").trim());
     if (result.status !== 0 || !(status >= 200 && status < 300)) {
-      return {
-        ok: false,
-        status,
-        message: summarizeProbeError(body, status || result.status || 0),
-      };
+      return { ok: false, status, message: summarizeProbeError(body, status || result.status || 0) };
     }
     const parsed = JSON.parse(body);
     const ids = Array.isArray(parsed?.data)
-      ? parsed.data
-          .map((item) => item && (item.id || item.name))
-          .filter(Boolean)
+      ? parsed.data.map((item) => item && (item.id || item.name)).filter(Boolean)
       : [];
     return { ok: true, ids };
   } catch (error) {
@@ -1042,17 +922,11 @@ async function promptCloudModel() {
   return promptManualModelId(
     "  NVIDIA Endpoints model id: ",
     "NVIDIA Endpoints",
-    (model) =>
-      validateNvidiaEndpointModel(model, getCredential("NVIDIA_API_KEY")),
+    (model) => validateNvidiaEndpointModel(model, getCredential("NVIDIA_API_KEY"))
   );
 }
 
-async function promptRemoteModel(
-  label,
-  providerKey,
-  defaultModel,
-  validator = null,
-) {
+async function promptRemoteModel(label, providerKey, defaultModel, validator = null) {
   const options = REMOTE_MODEL_OPTIONS[providerKey] || [];
   const defaultIndex = Math.max(0, options.indexOf(defaultModel));
 
@@ -1094,24 +968,19 @@ async function promptInputModel(label, defaultModel, validator = null) {
 
 async function promptOllamaModel(gpu = null) {
   const installed = getOllamaModelOptions(runCapture);
-  const options =
-    installed.length > 0 ? installed : getBootstrapOllamaModelOptions(gpu);
+  const options = installed.length > 0 ? installed : getBootstrapOllamaModelOptions(gpu);
   const defaultModel = getDefaultOllamaModel(runCapture, gpu);
   const defaultIndex = Math.max(0, options.indexOf(defaultModel));
 
   console.log("");
-  console.log(
-    installed.length > 0 ? "  Ollama models:" : "  Ollama starter models:",
-  );
+  console.log(installed.length > 0 ? "  Ollama models:" : "  Ollama starter models:");
   options.forEach((option, index) => {
     console.log(`    ${index + 1}) ${option}`);
   });
   console.log(`    ${options.length + 1}) Other...`);
   if (installed.length === 0) {
     console.log("");
-    console.log(
-      "  No local Ollama models are installed yet. Choose one to pull and load now.",
-    );
+    console.log("  No local Ollama models are installed yet. Choose one to pull and load now.");
   }
   console.log("");
 
@@ -1178,16 +1047,12 @@ function getFutureShellPathHint(binDir, pathValue = process.env.PATH || "") {
 }
 
 function installOpenshell() {
-  const result = spawnSync(
-    "bash",
-    [path.join(SCRIPTS, "install-openshell.sh")],
-    {
-      cwd: ROOT,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf-8",
-    },
-  );
+  const result = spawnSync("bash", [path.join(SCRIPTS, "install-openshell.sh")], {
+    cwd: ROOT,
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+  });
   if (result.status !== 0) {
     const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
     if (output) {
@@ -1195,9 +1060,7 @@ function installOpenshell() {
     }
     return { installed: false, localBin: null, futureShellPathHint: null };
   }
-  const localBin =
-    process.env.XDG_BIN_HOME ||
-    path.join(process.env.HOME || "", ".local", "bin");
+  const localBin = process.env.XDG_BIN_HOME || path.join(process.env.HOME || "", ".local", "bin");
   const openshellPath = path.join(localBin, "openshell");
   const futureShellPathHint = fs.existsSync(openshellPath)
     ? getFutureShellPathHint(localBin, process.env.PATH)
@@ -1251,9 +1114,7 @@ async function ensureNamedCredential(envName, label, helpUrl = null) {
 
 function waitForSandboxReady(sandboxName, attempts = 10, delaySeconds = 2) {
   for (let i = 0; i < attempts; i += 1) {
-    const exists = runCaptureOpenshell(["sandbox", "get", sandboxName], {
-      ignoreError: true,
-    });
+    const exists = runCaptureOpenshell(["sandbox", "get", sandboxName], { ignoreError: true });
     if (exists) return true;
     sleep(delaySeconds);
   }
@@ -1272,9 +1133,7 @@ function isSafeModelId(value) {
 }
 
 function getNonInteractiveProvider() {
-  const providerKey = (process.env.NEMOCLAW_PROVIDER || "")
-    .trim()
-    .toLowerCase();
+  const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
   const aliases = {
     cloud: "build",
@@ -1283,22 +1142,10 @@ function getNonInteractiveProvider() {
     anthropiccompatible: "anthropicCompatible",
   };
   const normalized = aliases[providerKey] || providerKey;
-  const validProviders = new Set([
-    "build",
-    "openai",
-    "anthropic",
-    "anthropicCompatible",
-    "gemini",
-    "ollama",
-    "custom",
-    "nim-local",
-    "vllm",
-  ]);
+  const validProviders = new Set(["build", "openai", "anthropic", "anthropicCompatible", "gemini", "ollama", "custom", "nim-local", "vllm"]);
   if (!validProviders.has(normalized)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
-    console.error(
-      "  Valid values: build, openai, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm",
-    );
+    console.error("  Valid values: build, openai, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm");
     process.exit(1);
   }
 
@@ -1309,12 +1156,8 @@ function getNonInteractiveModel(providerKey) {
   const model = (process.env.NEMOCLAW_MODEL || "").trim();
   if (!model) return null;
   if (!isSafeModelId(model)) {
-    console.error(
-      `  Invalid NEMOCLAW_MODEL for provider '${providerKey}': ${model}`,
-    );
-    console.error(
-      "  Model values may only contain letters, numbers, '.', '_', ':', '/', and '-'.",
-    );
+    console.error(`  Invalid NEMOCLAW_MODEL for provider '${providerKey}': ${model}`);
+    console.error("  Model values may only contain letters, numbers, '.', '_', ':', '/', and '-'.");
     process.exit(1);
   }
   return model;
@@ -1327,9 +1170,7 @@ async function preflight() {
 
   // Docker
   if (!isDockerRunning()) {
-    console.error(
-      "  Docker is not running. Please start Docker and try again.",
-    );
+    console.error("  Docker is not running. Please start Docker and try again.");
     process.exit(1);
   }
   console.log("  ✓ Docker is running");
@@ -1346,40 +1187,26 @@ async function preflight() {
     openshellInstall = installOpenshell();
     if (!openshellInstall.installed) {
       console.error("  Failed to install openshell CLI.");
-      console.error(
-        "  Install manually: https://github.com/NVIDIA/OpenShell/releases",
-      );
+      console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
       process.exit(1);
     }
   }
-  console.log(
-    `  ✓ openshell CLI: ${runCaptureOpenshell(["--version"], { ignoreError: true }) || "unknown"}`,
-  );
+  console.log(`  ✓ openshell CLI: ${runCaptureOpenshell(["--version"], { ignoreError: true }) || "unknown"}`);
   if (openshellInstall.futureShellPathHint) {
-    console.log(
-      `  Note: openshell was installed to ${openshellInstall.localBin} for this onboarding run.`,
-    );
-    console.log(
-      `  Future shells may still need: ${openshellInstall.futureShellPathHint}`,
-    );
-    console.log(
-      "  Add that export to your shell profile, or open a new terminal before running openshell directly.",
-    );
+    console.log(`  Note: openshell was installed to ${openshellInstall.localBin} for this onboarding run.`);
+    console.log(`  Future shells may still need: ${openshellInstall.futureShellPathHint}`);
+    console.log("  Add that export to your shell profile, or open a new terminal before running openshell directly.");
   }
 
   // Clean up stale NemoClaw session before checking ports.
   // A previous onboard run may have left the gateway container and port
   // forward running.  If a NemoClaw-owned gateway is still present, tear
   // it down so the port check below doesn't fail on our own leftovers.
-  const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
-    ignoreError: true,
-  });
+  const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
   if (hasStaleGateway(gwInfo)) {
     console.log("  Cleaning up previous NemoClaw session...");
     runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
-    runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], {
-      ignoreError: true,
-    });
+    runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
     console.log("  ✓ Previous session cleaned up");
   }
 
@@ -1396,9 +1223,7 @@ async function preflight() {
       console.error(`     ${label} needs this port.`);
       console.error("");
       if (portCheck.process && portCheck.process !== "unknown") {
-        console.error(
-          `     Blocked by: ${portCheck.process}${portCheck.pid ? ` (PID ${portCheck.pid})` : ""}`,
-        );
+        console.error(`     Blocked by: ${portCheck.process}${portCheck.pid ? ` (PID ${portCheck.pid})` : ""}`);
         console.error("");
         console.error("     To fix, stop the conflicting process:");
         console.error("");
@@ -1410,9 +1235,7 @@ async function preflight() {
         console.error("       # or, if it's a systemd service:");
         console.error("       systemctl --user stop openclaw-gateway.service");
       } else {
-        console.error(
-          `     Could not identify the process using port ${port}.`,
-        );
+        console.error(`     Could not identify the process using port ${port}.`);
         console.error(`     Run: lsof -i :${port} -sTCP:LISTEN`);
       }
       console.error("");
@@ -1425,13 +1248,9 @@ async function preflight() {
   // GPU
   const gpu = nim.detectGpu();
   if (gpu && gpu.type === "nvidia") {
-    console.log(
-      `  ✓ NVIDIA GPU detected: ${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`,
-    );
+    console.log(`  ✓ NVIDIA GPU detected: ${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`);
   } else if (gpu && gpu.type === "apple") {
-    console.log(
-      `  ✓ Apple GPU detected: ${gpu.name}${gpu.cores ? ` (${gpu.cores} cores)` : ""}, ${gpu.totalMemoryMB} MB unified memory`,
-    );
+    console.log(`  ✓ Apple GPU detected: ${gpu.name}${gpu.cores ? ` (${gpu.cores} cores)` : ""}, ${gpu.totalMemoryMB} MB unified memory`);
     console.log("  ⓘ NIM requires NVIDIA GPU — will use cloud inference");
   } else {
     console.log("  ⓘ No GPU detected — will use cloud inference");
@@ -1446,9 +1265,7 @@ async function startGateway(gpu) {
   step(3, 7, "Starting OpenShell gateway");
 
   // Destroy old gateway
-  runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], {
-    ignoreError: true,
-  });
+  runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
 
   const gwArgs = ["--name", GATEWAY_NAME];
   // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
@@ -1464,15 +1281,10 @@ async function startGateway(gpu) {
   if (stableGatewayImage && openshellVersion) {
     gatewayEnv.OPENSHELL_CLUSTER_IMAGE = stableGatewayImage;
     gatewayEnv.IMAGE_TAG = openshellVersion;
-    console.log(
-      `  Using pinned OpenShell gateway image: ${stableGatewayImage}`,
-    );
+    console.log(`  Using pinned OpenShell gateway image: ${stableGatewayImage}`);
   }
 
-  runOpenshell(["gateway", "start", ...gwArgs], {
-    ignoreError: false,
-    env: gatewayEnv,
-  });
+  runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: false, env: gatewayEnv });
 
   // Verify health
   for (let i = 0; i < 5; i++) {
@@ -1491,10 +1303,7 @@ async function startGateway(gpu) {
   const runtime = getContainerRuntime();
   if (shouldPatchCoredns(runtime)) {
     console.log(`  Patching CoreDNS for ${runtime}...`);
-    run(
-      `bash "${path.join(SCRIPTS, "fix-coredns.sh")}" ${GATEWAY_NAME} 2>&1 || true`,
-      { ignoreError: true },
-    );
+    run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" ${GATEWAY_NAME} 2>&1 || true`, { ignoreError: true });
   }
   // Give DNS a moment to propagate
   sleep(5);
@@ -1504,18 +1313,12 @@ async function startGateway(gpu) {
 
 // ── Step 3: Sandbox ──────────────────────────────────────────────
 
-async function createSandbox(
-  gpu,
-  model,
-  provider,
-  preferredInferenceApi = null,
-) {
+async function createSandbox(gpu, model, provider, preferredInferenceApi = null) {
   step(5, 7, "Creating sandbox");
 
   const nameAnswer = await promptOrDefault(
     "  Sandbox name (lowercase, numbers, hyphens) [my-assistant]: ",
-    "NEMOCLAW_SANDBOX_NAME",
-    "my-assistant",
+    "NEMOCLAW_SANDBOX_NAME", "my-assistant"
   );
   const sandboxName = (nameAnswer || "my-assistant").trim().toLowerCase();
 
@@ -1523,9 +1326,7 @@ async function createSandbox(
   // must start and end with alphanumeric (required by Kubernetes/OpenShell)
   if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName)) {
     console.error(`  Invalid sandbox name: '${sandboxName}'`);
-    console.error(
-      "  Names must be lowercase, contain only letters, numbers, and hyphens,",
-    );
+    console.error("  Names must be lowercase, contain only letters, numbers, and hyphens,");
     console.error("  and must start and end with a letter or number.");
     process.exit(1);
   }
@@ -1537,16 +1338,12 @@ async function createSandbox(
     if (isNonInteractive()) {
       if (process.env.NEMOCLAW_RECREATE_SANDBOX !== "1") {
         console.error(`  Sandbox '${sandboxName}' already exists.`);
-        console.error(
-          "  Set NEMOCLAW_RECREATE_SANDBOX=1 to recreate it in non-interactive mode.",
-        );
+        console.error("  Set NEMOCLAW_RECREATE_SANDBOX=1 to recreate it in non-interactive mode.");
         process.exit(1);
       }
       note(`  [non-interactive] Sandbox '${sandboxName}' exists — recreating`);
     } else {
-      const recreate = await prompt(
-        `  Sandbox '${sandboxName}' already exists. Recreate? [y/N]: `,
-      );
+      const recreate = await prompt(`  Sandbox '${sandboxName}' already exists. Recreate? [y/N]: `);
       if (recreate.toLowerCase() !== "y") {
         console.log("  Keeping existing sandbox.");
         return sandboxName;
@@ -1564,54 +1361,33 @@ async function createSandbox(
   const stagedDockerfile = path.join(buildCtx, "Dockerfile");
   fs.copyFileSync(path.join(ROOT, "Dockerfile"), stagedDockerfile);
   run(`cp -r "${path.join(ROOT, "nemoclaw")}" "${buildCtx}/nemoclaw"`);
-  run(
-    `cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`,
-  );
+  run(`cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`);
   run(`cp -r "${path.join(ROOT, "scripts")}" "${buildCtx}/scripts"`);
   run(`rm -rf "${buildCtx}/nemoclaw/node_modules"`, { ignoreError: true });
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
-  const basePolicyPath = path.join(
-    ROOT,
-    "nemoclaw-blueprint",
-    "policies",
-    "openclaw-sandbox.yaml",
-  );
+  const basePolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
   const createArgs = [
-    "--from",
-    `${buildCtx}/Dockerfile`,
-    "--name",
-    sandboxName,
-    "--policy",
-    basePolicyPath,
+    "--from", `${buildCtx}/Dockerfile`,
+    "--name", sandboxName,
+    "--policy", basePolicyPath,
   ];
   // --gpu is intentionally omitted. See comment in startGateway().
 
-  console.log(
-    `  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`,
-  );
+  console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const chatUiUrl = process.env.CHAT_UI_URL || "http://127.0.0.1:18789";
-  patchStagedDockerfile(
-    stagedDockerfile,
-    model,
-    chatUiUrl,
-    String(Date.now()),
-    provider,
-    preferredInferenceApi,
-  );
+  patchStagedDockerfile(stagedDockerfile, model, chatUiUrl, String(Date.now()), provider, preferredInferenceApi);
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
   const sandboxEnv = { ...process.env };
   if (process.env.NVIDIA_API_KEY) {
     sandboxEnv.NVIDIA_API_KEY = process.env.NVIDIA_API_KEY;
   }
-  const discordToken =
-    getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN;
+  const discordToken = getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN;
   if (discordToken) {
     sandboxEnv.DISCORD_BOT_TOKEN = discordToken;
   }
-  const slackToken =
-    getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN;
+  const slackToken = getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN;
   if (slackToken) {
     sandboxEnv.SLACK_BOT_TOKEN = slackToken;
   }
@@ -1641,9 +1417,7 @@ async function createSandbox(
       console.error("");
       console.error(createResult.output);
     }
-    console.error(
-      "  Try:  openshell sandbox list        # check gateway state",
-    );
+    console.error("  Try:  openshell sandbox list        # check gateway state");
     console.error("  Try:  nemoclaw onboard              # retry from scratch");
     process.exit(createResult.status || 1);
   }
@@ -1655,9 +1429,7 @@ async function createSandbox(
   console.log("  Waiting for sandbox to become ready...");
   let ready = false;
   for (let i = 0; i < 30; i++) {
-    const list = runCaptureOpenshell(["sandbox", "list"], {
-      ignoreError: true,
-    });
+    const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
     if (isSandboxReady(list, sandboxName)) {
       ready = true;
       break;
@@ -1668,17 +1440,11 @@ async function createSandbox(
   if (!ready) {
     // Clean up the orphaned sandbox so the next onboard retry with the same
     // name doesn't fail on "sandbox already exists".
-    const delResult = runOpenshell(["sandbox", "delete", sandboxName], {
-      ignoreError: true,
-    });
+    const delResult = runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
     console.error("");
-    console.error(
-      `  Sandbox '${sandboxName}' was created but did not become ready within 60s.`,
-    );
+    console.error(`  Sandbox '${sandboxName}' was created but did not become ready within 60s.`);
     if (delResult.status === 0) {
-      console.error(
-        "  The orphaned sandbox has been removed — you can safely retry.",
-      );
+      console.error("  The orphaned sandbox has been removed — you can safely retry.");
     } else {
       console.error(`  Could not remove the orphaned sandbox. Manual cleanup:`);
       console.error(`    openshell sandbox delete "${sandboxName}"`);
@@ -1692,9 +1458,7 @@ async function createSandbox(
   // which would silently prevent the new sandbox's dashboard from being reachable.
   runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
   // Forward dashboard port to the new sandbox
-  runOpenshell(["forward", "start", "--background", "18789", sandboxName], {
-    ignoreError: true,
-  });
+  runOpenshell(["forward", "start", "--background", "18789", sandboxName], { ignoreError: true });
 
   // Register only after confirmed ready — prevents phantom entries
   registry.registerSandbox({
@@ -1720,36 +1484,21 @@ async function setupNim(gpu) {
 
   // Detect local inference options
   const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
-  const ollamaRunning = !!runCapture(
-    "curl -sf http://localhost:11434/api/tags 2>/dev/null",
-    { ignoreError: true },
-  );
-  const vllmRunning = !!runCapture(
-    "curl -sf http://localhost:8000/v1/models 2>/dev/null",
-    { ignoreError: true },
-  );
-  const requestedProvider = isNonInteractive()
-    ? getNonInteractiveProvider()
-    : null;
-  const requestedModel = isNonInteractive()
-    ? getNonInteractiveModel(requestedProvider || "build")
-    : null;
+  const ollamaRunning = !!runCapture("curl -sf http://localhost:11434/api/tags 2>/dev/null", { ignoreError: true });
+  const vllmRunning = !!runCapture("curl -sf http://localhost:8000/v1/models 2>/dev/null", { ignoreError: true });
+  const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
+  const requestedModel = isNonInteractive() ? getNonInteractiveModel(requestedProvider || "build") : null;
   const options = [];
   options.push({
     key: "build",
     label:
       "NVIDIA Endpoints" +
-      (!ollamaRunning && !(EXPERIMENTAL && vllmRunning)
-        ? " (recommended)"
-        : ""),
+      (!ollamaRunning && !(EXPERIMENTAL && vllmRunning) ? " (recommended)" : ""),
   });
   options.push({ key: "openai", label: "OpenAI" });
   options.push({ key: "custom", label: "Other OpenAI-compatible endpoint" });
   options.push({ key: "anthropic", label: "Anthropic" });
-  options.push({
-    key: "anthropicCompatible",
-    label: "Other Anthropic-compatible endpoint",
-  });
+  options.push({ key: "anthropicCompatible", label: "Other Anthropic-compatible endpoint" });
   options.push({ key: "gemini", label: "Google Gemini" });
   if (hasOllama || ollamaRunning) {
     options.push({
@@ -1760,10 +1509,7 @@ async function setupNim(gpu) {
     });
   }
   if (EXPERIMENTAL && gpu && gpu.nimCapable) {
-    options.push({
-      key: "nim-local",
-      label: "Local NVIDIA NIM [experimental]",
-    });
+    options.push({ key: "nim-local", label: "Local NVIDIA NIM [experimental]" });
   }
   if (EXPERIMENTAL && vllmRunning) {
     options.push({
@@ -1778,468 +1524,366 @@ async function setupNim(gpu) {
   }
 
   if (options.length > 1) {
-    selectionLoop: while (true) {
-      let selected;
+    selectionLoop:
+    while (true) {
+    let selected;
 
-      if (isNonInteractive()) {
-        const providerKey = requestedProvider || "build";
-        selected = options.find((o) => o.key === providerKey);
-        if (!selected) {
-          console.error(
-            `  Requested provider '${providerKey}' is not available in this environment.`,
-          );
-          process.exit(1);
-        }
-        note(`  [non-interactive] Provider: ${selected.key}`);
-      } else {
-        const suggestions = [];
-        if (vllmRunning) suggestions.push("vLLM");
-        if (ollamaRunning) suggestions.push("Ollama");
-        if (suggestions.length > 0) {
-          console.log(
-            `  Detected local inference option${suggestions.length > 1 ? "s" : ""}: ${suggestions.join(", ")}`,
-          );
-          console.log(
-            "  Select one explicitly to use it. Press Enter to keep NVIDIA Endpoints.",
-          );
-          console.log("");
-        }
-
+    if (isNonInteractive()) {
+      const providerKey = requestedProvider || "build";
+      selected = options.find((o) => o.key === providerKey);
+      if (!selected) {
+        console.error(`  Requested provider '${providerKey}' is not available in this environment.`);
+        process.exit(1);
+      }
+      note(`  [non-interactive] Provider: ${selected.key}`);
+    } else {
+      const suggestions = [];
+      if (vllmRunning) suggestions.push("vLLM");
+      if (ollamaRunning) suggestions.push("Ollama");
+      if (suggestions.length > 0) {
+        console.log(`  Detected local inference option${suggestions.length > 1 ? "s" : ""}: ${suggestions.join(", ")}`);
+        console.log("  Select one explicitly to use it. Press Enter to keep NVIDIA Endpoints.");
         console.log("");
-        console.log("  Inference options:");
-        options.forEach((o, i) => {
-          console.log(`    ${i + 1}) ${o.label}`);
-        });
-        console.log("");
-
-        const defaultIdx = options.findIndex((o) => o.key === "build") + 1;
-        const choice = await prompt(`  Choose [${defaultIdx}]: `);
-        const idx = parseInt(choice || String(defaultIdx), 10) - 1;
-        selected = options[idx] || options[defaultIdx - 1];
       }
 
-      if (REMOTE_PROVIDER_CONFIG[selected.key]) {
-        const remoteConfig = REMOTE_PROVIDER_CONFIG[selected.key];
-        provider = remoteConfig.providerName;
-        credentialEnv = remoteConfig.credentialEnv;
-        endpointUrl = remoteConfig.endpointUrl;
-        preferredInferenceApi = null;
+      console.log("");
+      console.log("  Inference options:");
+      options.forEach((o, i) => {
+        console.log(`    ${i + 1}) ${o.label}`);
+      });
+      console.log("");
 
-        if (selected.key === "custom") {
-          endpointUrl = isNonInteractive()
-            ? (process.env.NEMOCLAW_ENDPOINT_URL || "").trim()
-            : await prompt(
-                "  OpenAI-compatible base URL (e.g., https://openrouter.ai/api/v1): ",
-              );
-          if (!endpointUrl) {
-            console.error(
-              "  Endpoint URL is required for Other OpenAI-compatible endpoint.",
-            );
-            process.exit(1);
-          }
-        } else if (selected.key === "anthropicCompatible") {
-          endpointUrl = isNonInteractive()
-            ? (process.env.NEMOCLAW_ENDPOINT_URL || "").trim()
-            : await prompt(
-                "  Anthropic-compatible base URL (e.g., https://proxy.example.com): ",
-              );
-          if (!endpointUrl) {
-            console.error(
-              "  Endpoint URL is required for Other Anthropic-compatible endpoint.",
-            );
-            process.exit(1);
-          }
+      const defaultIdx = options.findIndex((o) => o.key === "build") + 1;
+      const choice = await prompt(`  Choose [${defaultIdx}]: `);
+      const idx = parseInt(choice || String(defaultIdx), 10) - 1;
+      selected = options[idx] || options[defaultIdx - 1];
+    }
+
+    if (REMOTE_PROVIDER_CONFIG[selected.key]) {
+      const remoteConfig = REMOTE_PROVIDER_CONFIG[selected.key];
+      provider = remoteConfig.providerName;
+      credentialEnv = remoteConfig.credentialEnv;
+      endpointUrl = remoteConfig.endpointUrl;
+      preferredInferenceApi = null;
+
+      if (selected.key === "custom") {
+        endpointUrl = isNonInteractive()
+          ? (process.env.NEMOCLAW_ENDPOINT_URL || "").trim()
+          : await prompt("  OpenAI-compatible base URL (e.g., https://openrouter.ai/api/v1): ");
+        if (!endpointUrl) {
+          console.error("  Endpoint URL is required for Other OpenAI-compatible endpoint.");
+          process.exit(1);
         }
+      } else if (selected.key === "anthropicCompatible") {
+        endpointUrl = isNonInteractive()
+          ? (process.env.NEMOCLAW_ENDPOINT_URL || "").trim()
+          : await prompt("  Anthropic-compatible base URL (e.g., https://proxy.example.com): ");
+        if (!endpointUrl) {
+          console.error("  Endpoint URL is required for Other Anthropic-compatible endpoint.");
+          process.exit(1);
+        }
+      }
 
-        if (selected.key === "build") {
-          if (isNonInteractive()) {
-            if (!process.env.NVIDIA_API_KEY) {
-              console.error(
-                "  NVIDIA_API_KEY is required for NVIDIA Endpoints in non-interactive mode.",
-              );
-              process.exit(1);
-            }
-          } else {
-            await ensureApiKey();
+      if (selected.key === "build") {
+        if (isNonInteractive()) {
+          if (!process.env.NVIDIA_API_KEY) {
+            console.error("  NVIDIA_API_KEY is required for NVIDIA Endpoints in non-interactive mode.");
+            process.exit(1);
           }
-          model =
-            requestedModel ||
-            (isNonInteractive()
-              ? DEFAULT_CLOUD_MODEL
-              : await promptCloudModel()) ||
-            DEFAULT_CLOUD_MODEL;
         } else {
+          await ensureApiKey();
+        }
+        model = requestedModel || (isNonInteractive() ? DEFAULT_CLOUD_MODEL : await promptCloudModel()) || DEFAULT_CLOUD_MODEL;
+      } else {
+        if (isNonInteractive()) {
+          if (!process.env[credentialEnv]) {
+            console.error(`  ${credentialEnv} is required for ${remoteConfig.label} in non-interactive mode.`);
+            process.exit(1);
+          }
+        } else {
+          await ensureNamedCredential(credentialEnv, remoteConfig.label + " API key", remoteConfig.helpUrl);
+        }
+        const defaultModel = requestedModel || remoteConfig.defaultModel;
+        let modelValidator = null;
+        if (selected.key === "openai" || selected.key === "gemini") {
+          modelValidator = (candidate) =>
+            validateOpenAiLikeModel(remoteConfig.label, endpointUrl, candidate, getCredential(credentialEnv));
+        } else if (selected.key === "anthropic") {
+          modelValidator = (candidate) =>
+            validateAnthropicModel(endpointUrl || ANTHROPIC_ENDPOINT_URL, candidate, getCredential(credentialEnv));
+        }
+        while (true) {
           if (isNonInteractive()) {
-            if (!process.env[credentialEnv]) {
-              console.error(
-                `  ${credentialEnv} is required for ${remoteConfig.label} in non-interactive mode.`,
-              );
-              process.exit(1);
-            }
+            model = defaultModel;
+          } else if (remoteConfig.modelMode === "curated") {
+            model = await promptRemoteModel(remoteConfig.label, selected.key, defaultModel, modelValidator);
           } else {
-            await ensureNamedCredential(
-              credentialEnv,
-              remoteConfig.label + " API key",
-              remoteConfig.helpUrl,
-            );
+            model = await promptInputModel(remoteConfig.label, defaultModel, modelValidator);
           }
-          const defaultModel = requestedModel || remoteConfig.defaultModel;
-          let modelValidator = null;
-          if (selected.key === "openai" || selected.key === "gemini") {
-            modelValidator = (candidate) =>
-              validateOpenAiLikeModel(
-                remoteConfig.label,
-                endpointUrl,
-                candidate,
-                getCredential(credentialEnv),
-              );
-          } else if (selected.key === "anthropic") {
-            modelValidator = (candidate) =>
-              validateAnthropicModel(
-                endpointUrl || ANTHROPIC_ENDPOINT_URL,
-                candidate,
-                getCredential(credentialEnv),
-              );
-          }
-          while (true) {
-            if (isNonInteractive()) {
-              model = defaultModel;
-            } else if (remoteConfig.modelMode === "curated") {
-              model = await promptRemoteModel(
-                remoteConfig.label,
-                selected.key,
-                defaultModel,
-                modelValidator,
-              );
-            } else {
-              model = await promptInputModel(
-                remoteConfig.label,
-                defaultModel,
-                modelValidator,
-              );
-            }
 
-            if (selected.key === "custom") {
-              const validation = await validateCustomOpenAiLikeSelection(
-                remoteConfig.label,
-                endpointUrl,
-                model,
-                credentialEnv,
-              );
-              if (validation.ok) {
-                preferredInferenceApi = validation.api;
-                break;
-              }
-              if (validation.retry === "selection") {
-                continue selectionLoop;
-              }
-            } else if (selected.key === "anthropicCompatible") {
-              const validation = await validateCustomAnthropicSelection(
-                remoteConfig.label,
-                endpointUrl || ANTHROPIC_ENDPOINT_URL,
-                model,
-                credentialEnv,
-              );
-              if (validation.ok) {
-                preferredInferenceApi = validation.api;
-                break;
-              }
-              if (validation.retry === "selection") {
-                continue selectionLoop;
-              }
-            } else {
-              const retryMessage = "Please choose a provider/model again.";
-              if (selected.key === "anthropic") {
-                preferredInferenceApi =
-                  await validateAnthropicSelectionWithRetryMessage(
-                    remoteConfig.label,
-                    endpointUrl || ANTHROPIC_ENDPOINT_URL,
-                    model,
-                    credentialEnv,
-                    retryMessage,
-                  );
-              } else {
-                preferredInferenceApi = await validateOpenAiLikeSelection(
-                  remoteConfig.label,
-                  endpointUrl,
-                  model,
-                  credentialEnv,
-                  retryMessage,
-                );
-              }
-              if (preferredInferenceApi) {
-                break;
-              }
+          if (selected.key === "custom") {
+            const validation = await validateCustomOpenAiLikeSelection(
+              remoteConfig.label,
+              endpointUrl,
+              model,
+              credentialEnv
+            );
+            if (validation.ok) {
+              preferredInferenceApi = validation.api;
+              break;
+            }
+            if (validation.retry === "selection") {
               continue selectionLoop;
             }
+          } else if (selected.key === "anthropicCompatible") {
+            const validation = await validateCustomAnthropicSelection(
+              remoteConfig.label,
+              endpointUrl || ANTHROPIC_ENDPOINT_URL,
+              model,
+              credentialEnv
+            );
+            if (validation.ok) {
+              preferredInferenceApi = validation.api;
+              break;
+            }
+            if (validation.retry === "selection") {
+              continue selectionLoop;
+            }
+          } else {
+            const retryMessage = "Please choose a provider/model again.";
+            if (selected.key === "anthropic") {
+              preferredInferenceApi = await validateAnthropicSelectionWithRetryMessage(
+                remoteConfig.label,
+                endpointUrl || ANTHROPIC_ENDPOINT_URL,
+                model,
+                credentialEnv,
+                retryMessage
+              );
+            } else {
+              preferredInferenceApi = await validateOpenAiLikeSelection(
+                remoteConfig.label,
+                endpointUrl,
+                model,
+                credentialEnv,
+                retryMessage
+              );
+            }
+            if (preferredInferenceApi) {
+              break;
+            }
+            continue selectionLoop;
           }
         }
+      }
 
-        if (selected.key === "build") {
+      if (selected.key === "build") {
+        preferredInferenceApi = await validateOpenAiLikeSelection(
+          remoteConfig.label,
+          endpointUrl,
+          model,
+          credentialEnv
+        );
+        if (!preferredInferenceApi) {
+          continue selectionLoop;
+        }
+      }
+
+      console.log(`  Using ${remoteConfig.label} with model: ${model}`);
+      break;
+    } else if (selected.key === "nim-local") {
+      // List models that fit GPU VRAM
+      const models = nim.listModels().filter((m) => m.minGpuMemoryMB <= gpu.totalMemoryMB);
+      if (models.length === 0) {
+        console.log("  No NIM models fit your GPU VRAM. Falling back to cloud API.");
+      } else {
+        let sel;
+        if (isNonInteractive()) {
+          if (requestedModel) {
+            sel = models.find((m) => m.name === requestedModel);
+            if (!sel) {
+              console.error(`  Unsupported NEMOCLAW_MODEL for NIM: ${requestedModel}`);
+              process.exit(1);
+            }
+          } else {
+            sel = models[0];
+          }
+          note(`  [non-interactive] NIM model: ${sel.name}`);
+        } else {
+          console.log("");
+          console.log("  Models that fit your GPU:");
+          models.forEach((m, i) => {
+            console.log(`    ${i + 1}) ${m.name} (min ${m.minGpuMemoryMB} MB)`);
+          });
+          console.log("");
+
+          const modelChoice = await prompt(`  Choose model [1]: `);
+          const midx = parseInt(modelChoice || "1", 10) - 1;
+          sel = models[midx] || models[0];
+        }
+        model = sel.name;
+
+        console.log(`  Pulling NIM image for ${model}...`);
+        nim.pullNimImage(model);
+
+        console.log("  Starting NIM container...");
+        nimContainer = nim.startNimContainerByName(nim.containerName(GATEWAY_NAME), model);
+
+        console.log("  Waiting for NIM to become healthy...");
+        if (!nim.waitForNimHealth()) {
+          console.error("  NIM failed to start. Falling back to cloud API.");
+          model = null;
+          nimContainer = null;
+        } else {
+          provider = "vllm-local";
+          credentialEnv = "OPENAI_API_KEY";
+          endpointUrl = getLocalProviderBaseUrl(provider);
           preferredInferenceApi = await validateOpenAiLikeSelection(
-            remoteConfig.label,
+            "Local NVIDIA NIM",
             endpointUrl,
             model,
-            credentialEnv,
+            credentialEnv
           );
           if (!preferredInferenceApi) {
             continue selectionLoop;
           }
         }
-
-        console.log(`  Using ${remoteConfig.label} with model: ${model}`);
-        break;
-      } else if (selected.key === "nim-local") {
-        // List models that fit GPU VRAM
-        const models = nim
-          .listModels()
-          .filter((m) => m.minGpuMemoryMB <= gpu.totalMemoryMB);
-        if (models.length === 0) {
-          console.log(
-            "  No NIM models fit your GPU VRAM. Falling back to cloud API.",
-          );
-        } else {
-          let sel;
-          if (isNonInteractive()) {
-            if (requestedModel) {
-              sel = models.find((m) => m.name === requestedModel);
-              if (!sel) {
-                console.error(
-                  `  Unsupported NEMOCLAW_MODEL for NIM: ${requestedModel}`,
-                );
-                process.exit(1);
-              }
-            } else {
-              sel = models[0];
-            }
-            note(`  [non-interactive] NIM model: ${sel.name}`);
-          } else {
-            console.log("");
-            console.log("  Models that fit your GPU:");
-            models.forEach((m, i) => {
-              console.log(
-                `    ${i + 1}) ${m.name} (min ${m.minGpuMemoryMB} MB)`,
-              );
-            });
-            console.log("");
-
-            const modelChoice = await prompt(`  Choose model [1]: `);
-            const midx = parseInt(modelChoice || "1", 10) - 1;
-            sel = models[midx] || models[0];
-          }
-          model = sel.name;
-
-          console.log(`  Pulling NIM image for ${model}...`);
-          nim.pullNimImage(model);
-
-          console.log("  Starting NIM container...");
-          nimContainer = nim.startNimContainerByName(
-            nim.containerName(GATEWAY_NAME),
-            model,
-          );
-
-          console.log("  Waiting for NIM to become healthy...");
-          if (!nim.waitForNimHealth()) {
-            console.error("  NIM failed to start. Falling back to cloud API.");
-            model = null;
-            nimContainer = null;
-          } else {
-            provider = "vllm-local";
-            credentialEnv = "OPENAI_API_KEY";
-            endpointUrl = getLocalProviderBaseUrl(provider);
-            preferredInferenceApi = await validateOpenAiLikeSelection(
-              "Local NVIDIA NIM",
-              endpointUrl,
-              model,
-              credentialEnv,
-            );
-            if (!preferredInferenceApi) {
-              continue selectionLoop;
-            }
-          }
-        }
-        break;
-      } else if (selected.key === "ollama") {
-        if (!ollamaRunning) {
-          console.log("  Starting Ollama...");
-          run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", {
-            ignoreError: true,
-          });
-          sleep(2);
-        }
-        console.log("  ✓ Using Ollama on localhost:11434");
-        provider = "ollama-local";
-        credentialEnv = "OPENAI_API_KEY";
-        endpointUrl = getLocalProviderBaseUrl(provider);
-        while (true) {
-          const installedModels = getOllamaModelOptions(runCapture);
-          if (isNonInteractive()) {
-            model = requestedModel || getDefaultOllamaModel(runCapture, gpu);
-          } else {
-            model = await promptOllamaModel(gpu);
-          }
-          const probe = prepareOllamaModel(model, installedModels);
-          if (!probe.ok) {
-            console.error(`  ${probe.message}`);
-            if (isNonInteractive()) {
-              process.exit(1);
-            }
-            console.log("  Choose a different Ollama model or select Other.");
-            console.log("");
-            continue;
-          }
-          preferredInferenceApi = await validateOpenAiLikeSelection(
-            "Local Ollama",
-            getLocalProviderValidationBaseUrl(provider),
-            model,
-            null,
-            "Choose a different Ollama model or select Other.",
-          );
-          if (!preferredInferenceApi) {
-            continue;
-          }
-          break;
-        }
-        break;
-      } else if (selected.key === "install-ollama") {
-        console.log("  Installing Ollama via Homebrew...");
-        run("brew install ollama", { ignoreError: true });
+      }
+      break;
+    } else if (selected.key === "ollama") {
+      if (!ollamaRunning) {
         console.log("  Starting Ollama...");
-        run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", {
-          ignoreError: true,
-        });
+        run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
         sleep(2);
-        console.log("  ✓ Using Ollama on localhost:11434");
-        provider = "ollama-local";
-        credentialEnv = "OPENAI_API_KEY";
-        endpointUrl = getLocalProviderBaseUrl(provider);
-        while (true) {
-          const installedModels = getOllamaModelOptions(runCapture);
-          if (isNonInteractive()) {
-            model = requestedModel || getDefaultOllamaModel(runCapture, gpu);
-          } else {
-            model = await promptOllamaModel(gpu);
-          }
-          const probe = prepareOllamaModel(model, installedModels);
-          if (!probe.ok) {
-            console.error(`  ${probe.message}`);
-            if (isNonInteractive()) {
-              process.exit(1);
-            }
-            console.log("  Choose a different Ollama model or select Other.");
-            console.log("");
-            continue;
-          }
-          preferredInferenceApi = await validateOpenAiLikeSelection(
-            "Local Ollama",
-            getLocalProviderValidationBaseUrl(provider),
-            model,
-            null,
-            "Choose a different Ollama model or select Other.",
-          );
-          if (!preferredInferenceApi) {
-            continue;
-          }
-          break;
+      }
+      console.log("  ✓ Using Ollama on localhost:11434");
+      provider = "ollama-local";
+      credentialEnv = "OPENAI_API_KEY";
+      endpointUrl = getLocalProviderBaseUrl(provider);
+      while (true) {
+        const installedModels = getOllamaModelOptions(runCapture);
+        if (isNonInteractive()) {
+          model = requestedModel || getDefaultOllamaModel(runCapture, gpu);
+        } else {
+          model = await promptOllamaModel(gpu);
         }
-        break;
-      } else if (selected.key === "vllm") {
-        console.log("  ✓ Using existing vLLM on localhost:8000");
-        provider = "vllm-local";
-        credentialEnv = "OPENAI_API_KEY";
-        endpointUrl = getLocalProviderBaseUrl(provider);
-        // Query vLLM for the actual model ID
-        const vllmModelsRaw = runCapture(
-          "curl -sf http://localhost:8000/v1/models 2>/dev/null",
-          { ignoreError: true },
-        );
-        try {
-          const vllmModels = JSON.parse(vllmModelsRaw);
-          if (vllmModels.data && vllmModels.data.length > 0) {
-            model = vllmModels.data[0].id;
-            if (!isSafeModelId(model)) {
-              console.error(
-                `  Detected model ID contains invalid characters: ${model}`,
-              );
-              process.exit(1);
-            }
-            console.log(`  Detected model: ${model}`);
-          } else {
-            console.error(
-              "  Could not detect model from vLLM. Please specify manually.",
-            );
+        const probe = prepareOllamaModel(model, installedModels);
+        if (!probe.ok) {
+          console.error(`  ${probe.message}`);
+          if (isNonInteractive()) {
             process.exit(1);
           }
-        } catch {
-          console.error(
-            "  Could not query vLLM models endpoint. Is vLLM running on localhost:8000?",
-          );
-          process.exit(1);
+          console.log("  Choose a different Ollama model or select Other.");
+          console.log("");
+          continue;
         }
         preferredInferenceApi = await validateOpenAiLikeSelection(
-          "Local vLLM",
+          "Local Ollama",
           getLocalProviderValidationBaseUrl(provider),
           model,
-          credentialEnv,
+          null,
+          "Choose a different Ollama model or select Other."
         );
         if (!preferredInferenceApi) {
-          continue selectionLoop;
+          continue;
         }
         break;
       }
+      break;
+    } else if (selected.key === "install-ollama") {
+      console.log("  Installing Ollama via Homebrew...");
+      run("brew install ollama", { ignoreError: true });
+      console.log("  Starting Ollama...");
+      run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
+        sleep(2);
+      console.log("  ✓ Using Ollama on localhost:11434");
+      provider = "ollama-local";
+      credentialEnv = "OPENAI_API_KEY";
+      endpointUrl = getLocalProviderBaseUrl(provider);
+      while (true) {
+        const installedModels = getOllamaModelOptions(runCapture);
+        if (isNonInteractive()) {
+          model = requestedModel || getDefaultOllamaModel(runCapture, gpu);
+        } else {
+          model = await promptOllamaModel(gpu);
+        }
+        const probe = prepareOllamaModel(model, installedModels);
+        if (!probe.ok) {
+          console.error(`  ${probe.message}`);
+          if (isNonInteractive()) {
+            process.exit(1);
+          }
+          console.log("  Choose a different Ollama model or select Other.");
+          console.log("");
+          continue;
+        }
+        preferredInferenceApi = await validateOpenAiLikeSelection(
+          "Local Ollama",
+          getLocalProviderValidationBaseUrl(provider),
+          model,
+          null,
+          "Choose a different Ollama model or select Other."
+        );
+        if (!preferredInferenceApi) {
+          continue;
+        }
+        break;
+      }
+      break;
+    } else if (selected.key === "vllm") {
+      console.log("  ✓ Using existing vLLM on localhost:8000");
+      provider = "vllm-local";
+      credentialEnv = "OPENAI_API_KEY";
+      endpointUrl = getLocalProviderBaseUrl(provider);
+      // Query vLLM for the actual model ID
+      const vllmModelsRaw = runCapture("curl -sf http://localhost:8000/v1/models 2>/dev/null", { ignoreError: true });
+      try {
+        const vllmModels = JSON.parse(vllmModelsRaw);
+        if (vllmModels.data && vllmModels.data.length > 0) {
+          model = vllmModels.data[0].id;
+          if (!isSafeModelId(model)) {
+            console.error(`  Detected model ID contains invalid characters: ${model}`);
+            process.exit(1);
+          }
+          console.log(`  Detected model: ${model}`);
+        } else {
+          console.error("  Could not detect model from vLLM. Please specify manually.");
+          process.exit(1);
+        }
+      } catch {
+        console.error("  Could not query vLLM models endpoint. Is vLLM running on localhost:8000?");
+        process.exit(1);
+      }
+      preferredInferenceApi = await validateOpenAiLikeSelection(
+        "Local vLLM",
+        getLocalProviderValidationBaseUrl(provider),
+        model,
+        credentialEnv
+      );
+      if (!preferredInferenceApi) {
+        continue selectionLoop;
+      }
+      break;
     }
   }
+  }
 
-  return {
-    model,
-    provider,
-    endpointUrl,
-    credentialEnv,
-    preferredInferenceApi,
-    nimContainer,
-  };
+  return { model, provider, endpointUrl, credentialEnv, preferredInferenceApi, nimContainer };
 }
 
 // ── Step 5: Inference provider ───────────────────────────────────
 
-async function setupInference(
-  sandboxName,
-  model,
-  provider,
-  endpointUrl = null,
-  credentialEnv = null,
-) {
+async function setupInference(sandboxName, model, provider, endpointUrl = null, credentialEnv = null) {
   step(4, 7, "Setting up inference provider");
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
 
-  if (
-    provider === "nvidia-prod" ||
-    provider === "nvidia-nim" ||
-    provider === "openai-api" ||
-    provider === "anthropic-prod" ||
-    provider === "compatible-anthropic-endpoint" ||
-    provider === "gemini-api" ||
-    provider === "compatible-endpoint"
-  ) {
-    const config =
-      provider === "nvidia-nim"
-        ? REMOTE_PROVIDER_CONFIG.build
-        : Object.values(REMOTE_PROVIDER_CONFIG).find(
-            (entry) => entry.providerName === provider,
-          );
-    const resolvedCredentialEnv =
-      credentialEnv || (config && config.credentialEnv);
+  if (provider === "nvidia-prod" || provider === "nvidia-nim" || provider === "openai-api" || provider === "anthropic-prod" || provider === "compatible-anthropic-endpoint" || provider === "gemini-api" || provider === "compatible-endpoint") {
+    const config = provider === "nvidia-nim"
+      ? REMOTE_PROVIDER_CONFIG.build
+      : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
+    const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
     const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
-    const env = resolvedCredentialEnv
-      ? { [resolvedCredentialEnv]: process.env[resolvedCredentialEnv] }
-      : {};
-    upsertProvider(
-      provider,
-      config.providerType,
-      resolvedCredentialEnv,
-      resolvedEndpointUrl,
-      env,
-    );
+    const env = resolvedCredentialEnv ? { [resolvedCredentialEnv]: process.env[resolvedCredentialEnv] } : {};
+    upsertProvider(provider, config.providerType, resolvedCredentialEnv, resolvedEndpointUrl, env);
     const args = ["inference", "set"];
     if (config.skipVerify) {
       args.push("--no-verify");
@@ -2256,37 +1900,19 @@ async function setupInference(
     upsertProvider("vllm-local", "openai", "OPENAI_API_KEY", baseUrl, {
       OPENAI_API_KEY: "dummy",
     });
-    runOpenshell([
-      "inference",
-      "set",
-      "--no-verify",
-      "--provider",
-      "vllm-local",
-      "--model",
-      model,
-    ]);
+    runOpenshell(["inference", "set", "--no-verify", "--provider", "vllm-local", "--model", model]);
   } else if (provider === "ollama-local") {
     const validation = validateLocalProvider(provider, runCapture);
     if (!validation.ok) {
       console.error(`  ${validation.message}`);
-      console.error(
-        "  On macOS, local inference also depends on OpenShell host routing support.",
-      );
+      console.error("  On macOS, local inference also depends on OpenShell host routing support.");
       process.exit(1);
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
     upsertProvider("ollama-local", "openai", "OPENAI_API_KEY", baseUrl, {
       OPENAI_API_KEY: "ollama",
     });
-    runOpenshell([
-      "inference",
-      "set",
-      "--no-verify",
-      "--provider",
-      "ollama-local",
-      "--model",
-      model,
-    ]);
+    runOpenshell(["inference", "set", "--no-verify", "--provider", "ollama-local", "--model", model]);
     console.log(`  Priming Ollama model: ${model}`);
     run(getOllamaWarmupCommand(model), { ignoreError: true });
     const probe = validateOllamaModel(model, runCapture);
@@ -2317,7 +1943,7 @@ async function setupOpenclaw(sandboxName, model, provider) {
     try {
       run(
         `${openshellShellCommand(["sandbox", "connect", sandboxName])} < ${shellQuote(scriptFile)}`,
-        { stdio: ["ignore", "ignore", "inherit"] },
+        { stdio: ["ignore", "ignore", "inherit"] }
       );
     } finally {
       fs.unlinkSync(scriptFile);
@@ -2337,9 +1963,7 @@ async function setupPolicies(sandboxName) {
   // Auto-detect based on env tokens
   if (getCredential("TELEGRAM_BOT_TOKEN")) {
     suggestions.push("telegram");
-    console.log(
-      "  Auto-detected: TELEGRAM_BOT_TOKEN → suggesting telegram preset",
-    );
+    console.log("  Auto-detected: TELEGRAM_BOT_TOKEN → suggesting telegram preset");
   }
   if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) {
     suggestions.push("slack");
@@ -2347,18 +1971,14 @@ async function setupPolicies(sandboxName) {
   }
   if (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN) {
     suggestions.push("discord");
-    console.log(
-      "  Auto-detected: DISCORD_BOT_TOKEN → suggesting discord preset",
-    );
+    console.log("  Auto-detected: DISCORD_BOT_TOKEN → suggesting discord preset");
   }
 
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
 
   if (isNonInteractive()) {
-    const policyMode = (process.env.NEMOCLAW_POLICY_MODE || "suggested")
-      .trim()
-      .toLowerCase();
+    const policyMode = (process.env.NEMOCLAW_POLICY_MODE || "suggested").trim().toLowerCase();
     let selectedPresets = suggestions;
 
     if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
@@ -2367,23 +1987,13 @@ async function setupPolicies(sandboxName) {
     }
 
     if (policyMode === "custom" || policyMode === "list") {
-      selectedPresets = parsePolicyPresetEnv(
-        process.env.NEMOCLAW_POLICY_PRESETS,
-      );
+      selectedPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS);
       if (selectedPresets.length === 0) {
-        console.error(
-          "  NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom.",
-        );
+        console.error("  NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom.");
         process.exit(1);
       }
-    } else if (
-      policyMode === "suggested" ||
-      policyMode === "default" ||
-      policyMode === "auto"
-    ) {
-      const envPresets = parsePolicyPresetEnv(
-        process.env.NEMOCLAW_POLICY_PRESETS,
-      );
+    } else if (policyMode === "suggested" || policyMode === "default" || policyMode === "auto") {
+      const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS);
       if (envPresets.length > 0) {
         selectedPresets = envPresets;
       }
@@ -2394,23 +2004,17 @@ async function setupPolicies(sandboxName) {
     }
 
     const knownPresets = new Set(allPresets.map((p) => p.name));
-    const invalidPresets = selectedPresets.filter(
-      (name) => !knownPresets.has(name),
-    );
+    const invalidPresets = selectedPresets.filter((name) => !knownPresets.has(name));
     if (invalidPresets.length > 0) {
       console.error(`  Unknown policy preset(s): ${invalidPresets.join(", ")}`);
       process.exit(1);
     }
 
     if (!waitForSandboxReady(sandboxName)) {
-      console.error(
-        `  Sandbox '${sandboxName}' was not ready for policy application.`,
-      );
+      console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
       process.exit(1);
     }
-    note(
-      `  [non-interactive] Applying policy presets: ${selectedPresets.join(", ")}`,
-    );
+    note(`  [non-interactive] Applying policy presets: ${selectedPresets.join(", ")}`);
     for (const name of selectedPresets) {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
@@ -2419,9 +2023,7 @@ async function setupPolicies(sandboxName) {
         } catch (err) {
           const message = err && err.message ? err.message : String(err);
           if (message.includes("Unimplemented")) {
-            console.error(
-              "  OpenShell policy updates are not supported by this gateway build.",
-            );
+            console.error("  OpenShell policy updates are not supported by this gateway build.");
             console.error("  This is a known issue tracked in NemoClaw #536.");
             throw err;
           }
@@ -2442,9 +2044,7 @@ async function setupPolicies(sandboxName) {
     });
     console.log("");
 
-    const answer = await prompt(
-      `  Apply suggested presets (${suggestions.join(", ")})? [Y/n/list]: `,
-    );
+    const answer = await prompt(`  Apply suggested presets (${suggestions.join(", ")})? [Y/n/list]: `);
 
     if (answer.toLowerCase() === "n") {
       console.log("  Skipping policy presets.");
@@ -2454,19 +2054,14 @@ async function setupPolicies(sandboxName) {
     if (answer.toLowerCase() === "list") {
       // Let user pick
       const picks = await prompt("  Enter preset names (comma-separated): ");
-      const selected = picks
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
+      const selected = picks.split(",").map((s) => s.trim()).filter(Boolean);
       for (const name of selected) {
         try {
           policies.applyPreset(sandboxName, name);
         } catch (err) {
           const message = err && err.message ? err.message : String(err);
           if (message.includes("Unimplemented")) {
-            console.error(
-              "  OpenShell policy updates are not supported by this gateway build.",
-            );
+            console.error("  OpenShell policy updates are not supported by this gateway build.");
             console.error("  This is a known issue tracked in NemoClaw #536.");
           }
           throw err;
@@ -2480,9 +2075,7 @@ async function setupPolicies(sandboxName) {
         } catch (err) {
           const message = err && err.message ? err.message : String(err);
           if (message.includes("Unimplemented")) {
-            console.error(
-              "  OpenShell policy updates are not supported by this gateway build.",
-            );
+            console.error("  OpenShell policy updates are not supported by this gateway build.");
             console.error("  This is a known issue tracked in NemoClaw #536.");
           }
           throw err;
@@ -2497,21 +2090,16 @@ async function setupPolicies(sandboxName) {
 // ── Dashboard ────────────────────────────────────────────────────
 
 function printDashboard(sandboxName, model, provider, nimContainer = null) {
-  const nimStat = nimContainer
-    ? nim.nimStatusByName(nimContainer)
-    : nim.nimStatus(sandboxName);
+  const nimStat = nimContainer ? nim.nimStatusByName(nimContainer) : nim.nimStatus(sandboxName);
   const nimLabel = nimStat.running ? "running" : "not running";
 
   let providerLabel = provider;
-  if (provider === "nvidia-prod" || provider === "nvidia-nim")
-    providerLabel = "NVIDIA Endpoints";
+  if (provider === "nvidia-prod" || provider === "nvidia-nim") providerLabel = "NVIDIA Endpoints";
   else if (provider === "openai-api") providerLabel = "OpenAI";
   else if (provider === "anthropic-prod") providerLabel = "Anthropic";
-  else if (provider === "compatible-anthropic-endpoint")
-    providerLabel = "Other Anthropic-compatible endpoint";
+  else if (provider === "compatible-anthropic-endpoint") providerLabel = "Other Anthropic-compatible endpoint";
   else if (provider === "gemini-api") providerLabel = "Google Gemini";
-  else if (provider === "compatible-endpoint")
-    providerLabel = "Other OpenAI-compatible endpoint";
+  else if (provider === "compatible-endpoint") providerLabel = "Other OpenAI-compatible endpoint";
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
 
@@ -2533,8 +2121,7 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
 // ── Main ─────────────────────────────────────────────────────────
 
 async function onboard(opts = {}) {
-  NON_INTERACTIVE =
-    opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+  NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   delete process.env.OPENSHELL_GATEWAY;
 
   console.log("");
@@ -2543,29 +2130,11 @@ async function onboard(opts = {}) {
   console.log("  ===================");
 
   const gpu = await preflight();
-  const {
-    model,
-    provider,
-    endpointUrl,
-    credentialEnv,
-    preferredInferenceApi,
-    nimContainer,
-  } = await setupNim(gpu);
+  const { model, provider, endpointUrl, credentialEnv, preferredInferenceApi, nimContainer } = await setupNim(gpu);
   process.env.NEMOCLAW_OPENSHELL_BIN = getOpenshellBinary();
   await startGateway(gpu);
-  await setupInference(
-    GATEWAY_NAME,
-    model,
-    provider,
-    endpointUrl,
-    credentialEnv,
-  );
-  const sandboxName = await createSandbox(
-    gpu,
-    model,
-    provider,
-    preferredInferenceApi,
-  );
+  await setupInference(GATEWAY_NAME, model, provider, endpointUrl, credentialEnv);
+  const sandboxName = await createSandbox(gpu, model, provider, preferredInferenceApi);
   if (nimContainer) {
     registry.updateSandbox(sandboxName, { nimContainer });
   }
