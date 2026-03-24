@@ -1050,6 +1050,31 @@ async function setupPolicies(sandboxName) {
 
 // ── Dashboard ────────────────────────────────────────────────────
 
+function getDashboardUrl(sandboxName) {
+  // Retrieve the auth token from inside the sandbox so we can print a
+  // ready-to-use dashboard URL.  `openclaw dashboard --no-open` prints
+  // "Dashboard URL: http://127.0.0.1:18789/#token=<hex>" to stdout.
+  //
+  // We connect via openshell's ssh-proxy (the same mechanism used by
+  // `openshell sandbox connect`) so no separate SSH config setup is needed.
+  try {
+    const openshellBin = runCapture("command -v openshell", { ignoreError: true }).trim();
+    if (!openshellBin) return "http://127.0.0.1:18789/";
+    const proxyCmd = `${openshellBin} ssh-proxy --gateway-name nemoclaw --name ${shellQuote(sandboxName)}`;
+    const out = runCapture(
+      `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR` +
+      ` -o "ProxyCommand=${proxyCmd}"` +
+      ` sandbox@${shellQuote(sandboxName)} 'openclaw dashboard --no-open 2>/dev/null'`,
+      { ignoreError: true }
+    );
+    const match = String(out).match(/Dashboard URL:\s*(http\S+)/);
+    if (match) return match[1];
+  } catch (_) {
+    // fall through — token retrieval is best-effort
+  }
+  return "http://127.0.0.1:18789/";
+}
+
 function printDashboard(sandboxName, model, provider) {
   const nimStat = nim.nimStatus(sandboxName);
   const nimLabel = nimStat.running ? "running" : "not running";
@@ -1059,12 +1084,14 @@ function printDashboard(sandboxName, model, provider) {
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
 
+  const dashboardUrl = getDashboardUrl(sandboxName);
+
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
-  // console.log(`  Dashboard    http://localhost:18789/`);
   console.log(`  Sandbox      ${sandboxName} (Landlock + seccomp + netns)`);
   console.log(`  Model        ${model} (${providerLabel})`);
   console.log(`  NIM          ${nimLabel}`);
+  console.log(`  Dashboard    ${dashboardUrl}`);
   console.log(`  ${"─".repeat(50)}`);
   console.log(`  Next:`);
   console.log(`  Run:         nemoclaw ${sandboxName} connect`);
