@@ -127,6 +127,10 @@ function pullNimImage(model) {
 
 function startNimContainer(sandboxName, model, port = 8000) {
   const name = containerName(sandboxName);
+  return startNimContainerByName(name, model, port);
+}
+
+function startNimContainerByName(name, model, port = 8000) {
   const image = getImageForModel(model);
   if (!image) {
     console.error(`  Unknown model: ${model}`);
@@ -169,6 +173,10 @@ function waitForNimHealth(port = 8000, timeout = 300) {
 
 function stopNimContainer(sandboxName) {
   const name = containerName(sandboxName);
+  stopNimContainerByName(name);
+}
+
+function stopNimContainerByName(name) {
   const qn = shellQuote(name);
   console.log(`  Stopping NIM container: ${name}`);
   run(`docker stop ${qn} 2>/dev/null || true`, { ignoreError: true });
@@ -177,6 +185,10 @@ function stopNimContainer(sandboxName) {
 
 function nimStatus(sandboxName) {
   const name = containerName(sandboxName);
+  return nimStatusByName(name);
+}
+
+function nimStatusByName(name) {
   try {
     const state = runCapture(
       `docker inspect --format '{{.State.Status}}' ${shellQuote(name)} 2>/dev/null`,
@@ -204,7 +216,10 @@ module.exports = {
   detectGpu,
   pullNimImage,
   startNimContainer,
+  startNimContainerByName,
   waitForNimHealth,
   stopNimContainer,
+  stopNimContainerByName,
   nimStatus,
+  nimStatusByName,
 };

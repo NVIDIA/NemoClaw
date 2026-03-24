@@ -1,23 +1,3 @@
----
-title:
-  page: "NemoClaw Inference Profiles"
-  nav: "Inference Profiles"
-description: "Configuration reference for NemoClaw routed inference providers."
-keywords: ["nemoclaw inference profiles", "nemoclaw provider routing"]
-topics: ["generative_ai", "ai_agents"]
-tags: ["openclaw", "openshell", "inference_routing", "llms"]
-content:
-  type: reference
-  difficulty: intermediate
-  audience: ["developer", "engineer"]
-status: published
----
-
-<!--
-  SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-  SPDX-License-Identifier: Apache-2.0
--->
-
 # Inference Profiles
 
 NemoClaw configures inference through the OpenShell gateway.
@@ -81,4 +61,4 @@ Ollama gets additional onboarding help:
 
 ## Runtime Switching
 
-For runtime switching guidance, refer to [Switch Inference Models](../inference/switch-inference-providers.md).
+For runtime switching guidance, refer to Switch Inference Models (see the `nemoclaw-configure-inference` skill).

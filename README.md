@@ -86,7 +86,7 @@ When the install completes, a summary confirms the running environment:
 ```text
 ──────────────────────────────────────────────────
 Sandbox      my-assistant (Landlock + seccomp + netns)
-Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoint API)
+Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
 ──────────────────────────────────────────────────
 Run:         nemoclaw my-assistant connect
 Status:      nemoclaw my-assistant status
@@ -162,14 +162,14 @@ curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uni
 
 ## How It Works
 
-NemoClaw installs the NVIDIA OpenShell runtime and Nemotron models, then uses a versioned blueprint to create a sandboxed environment where every network request, file access, and inference call is governed by declarative policy. The `nemoclaw` CLI orchestrates the full stack: OpenShell gateway, sandbox, inference provider, and network policy.
+NemoClaw installs the NVIDIA OpenShell runtime, then creates a sandboxed OpenClaw environment where every network request, file access, and inference call is governed by declarative policy. The `nemoclaw` CLI orchestrates the full stack: OpenShell gateway, sandbox, inference provider, and network policy.
 
 | Component        | Role                                                                                      |
 |------------------|-------------------------------------------------------------------------------------------|
 | **Plugin**       | TypeScript CLI commands for launch, connect, status, and logs.                            |
 | **Blueprint**    | Versioned Python artifact that orchestrates sandbox creation, policy, and inference setup. |
 | **Sandbox**      | Isolated OpenShell container running OpenClaw with policy-enforced egress and filesystem.  |
-| **Inference**    | NVIDIA Endpoint model calls, routed through the OpenShell gateway, transparent to the agent.  |
+| **Inference**    | Provider-routed model calls, routed through the OpenShell gateway, transparent to the agent. |
 
 The blueprint lifecycle follows four stages: resolve the artifact, verify its digest, plan the resources, and apply through the OpenShell CLI.
 
@@ -179,15 +179,28 @@ When something goes wrong, errors may originate from either NemoClaw or the Open
 
 ## Inference
 
-Inference requests from the agent never leave the sandbox directly. OpenShell intercepts every call and routes it to the NVIDIA Endpoint provider.
+Inference requests from the agent never leave the sandbox directly. OpenShell intercepts every call and routes it to the provider you selected during onboarding.
 
-| Provider     | Model                               | Use Case                                       |
-|--------------|--------------------------------------|-------------------------------------------------|
-| NVIDIA Endpoint | `nvidia/nemotron-3-super-120b-a12b` | Production. Requires an NVIDIA API key.         |
+Supported non-experimental onboarding paths:
 
-Get an API key from [build.nvidia.com](https://build.nvidia.com). The `nemoclaw onboard` command prompts for this key during setup.
+| Provider | Notes |
+|---|---|
+| NVIDIA Endpoints | Curated hosted models on `integrate.api.nvidia.com`. |
+| OpenAI | Curated GPT models plus `Other...` for manual model entry. |
+| Other OpenAI-compatible endpoint | For proxies and compatible gateways. |
+| Anthropic | Curated Claude models plus `Other...` for manual model entry. |
+| Other Anthropic-compatible endpoint | For Claude proxies and compatible gateways. |
+| Google Gemini | Google's OpenAI-compatible endpoint. |
 
-Local inference options such as Ollama and vLLM are still experimental. On macOS, they also depend on OpenShell host-routing support in addition to the local service itself being reachable on the host.
+During onboarding, NemoClaw validates the selected provider and model before it creates the sandbox:
+
+- OpenAI-compatible providers: tries `/responses` first, then `/chat/completions`
+- Anthropic-compatible providers: tries `/v1/messages`
+- If validation fails, the wizard prompts you to fix the selection before continuing
+
+Credentials stay on the host in `~/.nemoclaw/credentials.json`. The sandbox only sees the routed `inference.local` endpoint, not your raw provider key.
+
+Local Ollama is supported in the standard onboarding flow. Local vLLM remains experimental, and local host-routed inference on macOS still depends on OpenShell host-routing support in addition to the local service itself being reachable on the host.
 
 ---
 
@@ -252,7 +265,7 @@ Refer to the documentation for more information on NemoClaw.
 - [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html): Learn what NemoClaw does and how it fits together.
 - [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html): Learn about the plugin, blueprint, and sandbox lifecycle.
 - [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html): Learn about the plugin structure, blueprint lifecycle, and sandbox environment.
-- [Inference Profiles](https://docs.nvidia.com/nemoclaw/latest/reference/inference-profiles.html): Learn about the NVIDIA Endpoint inference configuration.
+- [Inference Profiles](https://docs.nvidia.com/nemoclaw/latest/reference/inference-profiles.html): Learn how NemoClaw configures routed inference providers.
 - [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html): Learn about egress control and policy customization.
 - [CLI Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html): Learn about the full command reference.
 - [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html): Troubleshoot common issues and resolution steps.

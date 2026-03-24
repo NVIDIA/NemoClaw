@@ -26,7 +26,6 @@ set -uo pipefail
 
 PASS=0
 FAIL=0
-SKIP=0
 TOTAL=0
 
 pass() {
@@ -38,11 +37,6 @@ fail() {
   ((FAIL++))
   ((TOTAL++))
   printf '\033[31m  FAIL: %s\033[0m\n' "$1"
-}
-skip() {
-  ((SKIP++))
-  ((TOTAL++))
-  printf '\033[33m  SKIP: %s\033[0m\n' "$1"
 }
 section() {
   echo ""
@@ -128,22 +122,30 @@ else
   fail "First onboard exited $exit1 (expected 1)"
 fi
 
-echo "$output1" | grep -q "Sandbox '${SANDBOX_A}' created" \
-  && pass "Sandbox '$SANDBOX_A' created (step 3 completed)" \
-  || fail "Sandbox creation not confirmed in output"
+if grep -q "Sandbox '${SANDBOX_A}' created" <<<"$output1"; then
+  pass "Sandbox '$SANDBOX_A' created (step 3 completed)"
+else
+  fail "Sandbox creation not confirmed in output"
+fi
 
 # Verify stale state was left behind
-openshell gateway info -g nemoclaw 2>/dev/null | grep -q "nemoclaw" \
-  && pass "Gateway is still running (stale state)" \
-  || fail "Gateway is not running after first onboard"
+if openshell gateway info -g nemoclaw 2>/dev/null | grep -q "nemoclaw"; then
+  pass "Gateway is still running (stale state)"
+else
+  fail "Gateway is not running after first onboard"
+fi
 
-openshell sandbox get "$SANDBOX_A" >/dev/null 2>&1 \
-  && pass "Sandbox '$SANDBOX_A' exists in openshell" \
-  || fail "Sandbox '$SANDBOX_A' not found in openshell"
+if openshell sandbox get "$SANDBOX_A" >/dev/null 2>&1; then
+  pass "Sandbox '$SANDBOX_A' exists in openshell"
+else
+  fail "Sandbox '$SANDBOX_A' not found in openshell"
+fi
 
-[ -f "$REGISTRY" ] && grep -q "$SANDBOX_A" "$REGISTRY" \
-  && pass "Registry contains '$SANDBOX_A'" \
-  || fail "Registry does not contain '$SANDBOX_A'"
+if [ -f "$REGISTRY" ] && grep -q "$SANDBOX_A" "$REGISTRY"; then
+  pass "Registry contains '$SANDBOX_A'"
+else
+  fail "Registry does not contain '$SANDBOX_A'"
+fi
 
 info "Stale state confirmed — NOT cleaning up before next onboard"
 
@@ -170,25 +172,35 @@ else
   fail "Second onboard exited $exit2 (expected 1)"
 fi
 
-echo "$output2" | grep -q "Cleaning up previous NemoClaw session" \
-  && pass "Stale session cleanup fired on second onboard" \
-  || fail "Stale session cleanup did NOT fire (regression: #397)"
+if grep -q "Cleaning up previous NemoClaw session" <<<"$output2"; then
+  pass "Stale session cleanup fired on second onboard"
+else
+  fail "Stale session cleanup did NOT fire (regression: #397)"
+fi
 
-echo "$output2" | grep -q "Port 8080 is not available" \
-  && fail "Port 8080 conflict detected (regression: #21)" \
-  || pass "No port 8080 conflict"
+if grep -q "Port 8080 is not available" <<<"$output2"; then
+  fail "Port 8080 conflict detected (regression: #21)"
+else
+  pass "No port 8080 conflict"
+fi
 
-echo "$output2" | grep -q "Port 18789 is not available" \
-  && fail "Port 18789 conflict detected" \
-  || pass "No port 18789 conflict"
+if grep -q "Port 18789 is not available" <<<"$output2"; then
+  fail "Port 18789 conflict detected"
+else
+  pass "No port 18789 conflict"
+fi
 
-echo "$output2" | grep -q "Sandbox '${SANDBOX_A}' created" \
-  && pass "Sandbox '$SANDBOX_A' recreated" \
-  || fail "Sandbox '$SANDBOX_A' was not recreated"
+if grep -q "Sandbox '${SANDBOX_A}' created" <<<"$output2"; then
+  pass "Sandbox '$SANDBOX_A' recreated"
+else
+  fail "Sandbox '$SANDBOX_A' was not recreated"
+fi
 
-openshell gateway info -g nemoclaw 2>/dev/null | grep -q "nemoclaw" \
-  && pass "Gateway running after second onboard" \
-  || fail "Gateway not running after second onboard"
+if openshell gateway info -g nemoclaw 2>/dev/null | grep -q "nemoclaw"; then
+  pass "Gateway running after second onboard"
+else
+  fail "Gateway not running after second onboard"
+fi
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 4: Third onboard — DIFFERENT name (e2e-double-b)
@@ -211,21 +223,29 @@ else
   fail "Third onboard exited $exit3 (expected 1)"
 fi
 
-echo "$output3" | grep -q "Cleaning up previous NemoClaw session" \
-  && pass "Stale session cleanup fired on third onboard" \
-  || fail "Stale session cleanup did NOT fire on third onboard"
+if grep -q "Cleaning up previous NemoClaw session" <<<"$output3"; then
+  pass "Stale session cleanup fired on third onboard"
+else
+  fail "Stale session cleanup did NOT fire on third onboard"
+fi
 
-echo "$output3" | grep -q "Port 8080 is not available" \
-  && fail "Port 8080 conflict on third onboard (regression)" \
-  || pass "No port 8080 conflict on third onboard"
+if grep -q "Port 8080 is not available" <<<"$output3"; then
+  fail "Port 8080 conflict on third onboard (regression)"
+else
+  pass "No port 8080 conflict on third onboard"
+fi
 
-echo "$output3" | grep -q "Port 18789 is not available" \
-  && fail "Port 18789 conflict on third onboard" \
-  || pass "No port 18789 conflict on third onboard"
+if grep -q "Port 18789 is not available" <<<"$output3"; then
+  fail "Port 18789 conflict on third onboard"
+else
+  pass "No port 18789 conflict on third onboard"
+fi
 
-echo "$output3" | grep -q "Sandbox '${SANDBOX_B}' created" \
-  && pass "Sandbox '$SANDBOX_B' created" \
-  || fail "Sandbox '$SANDBOX_B' was not created"
+if grep -q "Sandbox '${SANDBOX_B}' created" <<<"$output3"; then
+  pass "Sandbox '$SANDBOX_B' created"
+else
+  fail "Sandbox '$SANDBOX_B' was not created"
+fi
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 5: Final cleanup
@@ -239,17 +259,23 @@ openshell sandbox delete "$SANDBOX_B" 2>/dev/null || true
 openshell forward stop 18789 2>/dev/null || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
-openshell sandbox get "$SANDBOX_A" >/dev/null 2>&1 \
-  && fail "Sandbox '$SANDBOX_A' still exists after cleanup" \
-  || pass "Sandbox '$SANDBOX_A' cleaned up"
+if openshell sandbox get "$SANDBOX_A" >/dev/null 2>&1; then
+  fail "Sandbox '$SANDBOX_A' still exists after cleanup"
+else
+  pass "Sandbox '$SANDBOX_A' cleaned up"
+fi
 
-openshell sandbox get "$SANDBOX_B" >/dev/null 2>&1 \
-  && fail "Sandbox '$SANDBOX_B' still exists after cleanup" \
-  || pass "Sandbox '$SANDBOX_B' cleaned up"
+if openshell sandbox get "$SANDBOX_B" >/dev/null 2>&1; then
+  fail "Sandbox '$SANDBOX_B' still exists after cleanup"
+else
+  pass "Sandbox '$SANDBOX_B' cleaned up"
+fi
 
-[ -f "$REGISTRY" ] && grep -q "$SANDBOX_A\|$SANDBOX_B" "$REGISTRY" \
-  && fail "Registry still contains test sandbox entries" \
-  || pass "Registry cleaned up"
+if [ -f "$REGISTRY" ] && grep -q "$SANDBOX_A\|$SANDBOX_B" "$REGISTRY"; then
+  fail "Registry still contains test sandbox entries"
+else
+  pass "Registry cleaned up"
+fi
 
 pass "Final cleanup complete"
 
@@ -261,7 +287,6 @@ echo "========================================"
 echo "  Double Onboard E2E Results:"
 echo "    Passed:  $PASS"
 echo "    Failed:  $FAIL"
-echo "    Skipped: $SKIP"
 echo "    Total:   $TOTAL"
 echo "========================================"
 

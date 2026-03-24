@@ -1,34 +1,21 @@
 ---
-title:
-  page: "Switch NemoClaw Inference Models at Runtime"
-  nav: "Switch Inference Models"
-description: "Change the active inference model without restarting the sandbox."
-keywords: ["switch nemoclaw inference model", "change inference runtime"]
-topics: ["generative_ai", "ai_agents"]
-tags: ["openclaw", "openshell", "inference_routing"]
-content:
-  type: how_to
-  difficulty: technical_beginner
-  audience: ["developer", "engineer"]
-status: published
+name: nemoclaw-configure-inference
+description: Changes the active inference model without restarting the sandbox. Use when change inference runtime, inference routing, openclaw, openshell, switch nemoclaw inference model, switch nemoclaw inference models.
 ---
 
-<!--
-  SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-  SPDX-License-Identifier: Apache-2.0
--->
+# Nemoclaw Configure Inference
 
-# Switch Inference Models at Runtime
-
-Change the active inference model while the sandbox is running.
-No restart is required.
+Change the active inference model without restarting the sandbox.
 
 ## Prerequisites
 
 - A running NemoClaw sandbox.
 - The OpenShell CLI on your `PATH`.
 
-## Switch to a Different Model
+Change the active inference model while the sandbox is running.
+No restart is required.
+
+## Step 1: Switch to a Different Model
 
 Switching happens through the OpenShell inference route.
 Use the provider and model that match the upstream you want to use.
@@ -71,7 +58,7 @@ $ openshell inference set --provider compatible-anthropic-endpoint --model <mode
 
 If the provider itself needs to change, rerun `nemoclaw onboard`.
 
-## Verify the Active Model
+## Step 2: Verify the Active Model
 
 Run the status command to confirm the change:
 
@@ -87,12 +74,12 @@ $ nemoclaw <name> status --json
 
 The output includes the active provider, model, and endpoint.
 
-## Notes
+## Step 3: Notes
 
 - The host keeps provider credentials.
 - The sandbox continues to use `inference.local`.
 - Runtime switching changes the OpenShell route. It does not rewrite your stored credentials.
 
-## Related Topics
+## Related Skills
 
-- [Inference Profiles](../reference/inference-profiles.md) for full profile configuration details.
+- `nemoclaw-reference` — Inference Profiles for full profile configuration details
