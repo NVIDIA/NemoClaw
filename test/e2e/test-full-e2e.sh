@@ -86,7 +86,7 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-nightly}"
 section "Phase 0: Pre-cleanup"
 info "Destroying any leftover sandbox/gateway from previous runs..."
 if command -v nemoclaw >/dev/null 2>&1; then
-  nemoclaw "$SANDBOX_NAME" destroy 2>/dev/null || true
+  nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
 fi
 if command -v openshell >/dev/null 2>&1; then
   openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
@@ -338,7 +338,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 6: Cleanup"
 
-nemoclaw "$SANDBOX_NAME" destroy 2>&1 | tail -3 || true
+nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
 list_after=$(nemoclaw list 2>&1)

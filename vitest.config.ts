@@ -10,13 +10,21 @@ export default defineConfig({
         test: {
           name: "cli",
           include: ["test/**/*.test.js"],
-          exclude: ["**/node_modules/**", "**/.claude/**"],
+          exclude: ["**/node_modules/**", "**/.claude/**", "test/e2e/**"],
         },
       },
       {
         test: {
           name: "plugin",
           include: ["nemoclaw/src/**/*.test.ts"],
+        },
+      },
+      {
+        test: {
+          name: "e2e-brev",
+          include: ["test/e2e/brev-e2e.test.js"],
+          // Only run when explicitly targeted: npx vitest run --project e2e-brev
+          enabled: !!process.env.BREV_API_TOKEN,
         },
       },
     ],
