@@ -157,20 +157,11 @@ network_policies:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/npm }
 
-  # ── Messaging — pre-allowed for agent notifications ────────────
-  # Telegram and Discord are open by default so the agent can send
-  # notifications and respond to chats without triggering approval.
-  telegram:
-    name: telegram
-    endpoints:
-      - host: api.telegram.org
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/bot*/**" }
-          - allow: { method: POST, path: "/bot*/**" }
+  # ── Messaging — opt-in only ──────────────────────────────────────
+  # Telegram is NOT included in the base policy. To enable Telegram
+  # Bot API access, apply the telegram preset:
+  #   nemoclaw <sandbox> policy-add  →  select "telegram"
+  # See: nemoclaw-blueprint/policies/presets/telegram.yaml
 
   discord:
     name: discord

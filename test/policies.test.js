@@ -87,6 +87,24 @@ describe("policies", () => {
     });
   });
 
+  describe("base policy security", () => {
+    it("base policy must not include telegram (exfiltration risk)", () => {
+      const fs = require("fs");
+      const basePolicyPath = path.join(
+        import.meta.dirname, "..", "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"
+      );
+      const content = fs.readFileSync(basePolicyPath, "utf-8");
+      expect(content).not.toMatch(/^\s+telegram:\s*$/m);
+      expect(content).not.toMatch(/host:\s*api\.telegram\.org/);
+    });
+
+    it("telegram preset exists as opt-in alternative", () => {
+      const content = policies.loadPreset("telegram");
+      expect(content).toBeTruthy();
+      expect(content).toContain("api.telegram.org");
+    });
+  });
+
   describe("buildPolicyGetCommand", () => {
     it("shell-quotes sandbox name", () => {
       const cmd = policies.buildPolicyGetCommand("my-assistant");
