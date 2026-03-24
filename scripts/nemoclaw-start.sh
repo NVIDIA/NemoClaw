@@ -152,6 +152,20 @@ export HTTPS_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
 # Bypass proxy for loopback, sandbox-local, and the OpenShell virtual network
 # so internal gateway calls (openclaw dashboard, inference.local) stay fast.
 export NO_PROXY="localhost,127.0.0.1,::1,inference.local,10.200.0.1"
+# OpenShell injects its own NO_PROXY=127.0.0.1,localhost,::1 when a user
+# connects to the sandbox via `openshell sandbox connect`, overwriting the
+# value set above.  Write a profile.d snippet so the full value is restored
+# on every login shell — both initial and subsequent `connect` sessions.
+# /etc/profile.d/ is writable by root during startup (this script runs as the
+# entrypoint before Landlock lockdown applies to that path).
+if [ -d /etc/profile.d ]; then
+  cat >/etc/profile.d/nemoclaw-proxy.sh <<PROXYPROFILE
+# Set by nemoclaw-start.sh — restores full NO_PROXY after OpenShell injection.
+export HTTP_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
+export HTTPS_PROXY="http://${PROXY_HOST}:${PROXY_PORT}"
+export NO_PROXY="localhost,127.0.0.1,::1,inference.local,10.200.0.1"
+PROXYPROFILE
+fi
 
 write_auth_profile
 

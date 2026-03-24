@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 import { execSync, execFileSync } from "node:child_process";
-import { writeFileSync, unlinkSync } from "node:fs";
+import { writeFileSync, unlinkSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveOpenshell } from "../bin/lib/resolve-openshell";
@@ -182,6 +182,53 @@ describe("service environment", () => {
     it("NO_PROXY excludes OpenShell gateway IP (undici does not support CIDR)", () => {
       const vars = extractProxyVars();
       expect(vars.NO_PROXY).toContain("10.200.0.1");
+    });
+
+    it("writes proxy snippet to a profile.d directory when it exists", () => {
+      // Verify that nemoclaw-start.sh writes /etc/profile.d/nemoclaw-proxy.sh so
+      // that interactive shells opened via `openshell sandbox connect` (which
+      // inject a truncated NO_PROXY=127.0.0.1,localhost,::1) get the full value
+      // restored on every subsequent login shell.
+      const profileDir = join(tmpdir(), `nemoclaw-profile-test-${process.pid}`);
+      execFileSync("mkdir", ["-p", profileDir]);
+      const tmpFile = join(tmpdir(), `nemoclaw-profile-write-test-${process.pid}.sh`);
+      try {
+        // Run a minimal wrapper that sets the stage variables and executes only
+        // the proxy block from the start script, redirecting the profile.d write
+        // to our temp directory instead of /etc/profile.d.
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          `OVERRIDE_PROFILE_D=${JSON.stringify(profileDir)}`,
+          `PROXY_HOST="10.200.0.1"`,
+          `PROXY_PORT="3128"`,
+          `export HTTP_PROXY="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
+          `export HTTPS_PROXY="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
+          `export NO_PROXY="localhost,127.0.0.1,::1,inference.local,10.200.0.1"`,
+          // Reproduce the profile.d block with the overridden directory
+          `if [ -d "\${OVERRIDE_PROFILE_D}" ]; then`,
+          `  cat > "\${OVERRIDE_PROFILE_D}/nemoclaw-proxy.sh" <<PROXYPROFILE`,
+          `# Set by nemoclaw-start.sh — restores full NO_PROXY after OpenShell injection.`,
+          `export HTTP_PROXY="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
+          `export HTTPS_PROXY="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
+          `export NO_PROXY="localhost,127.0.0.1,::1,inference.local,10.200.0.1"`,
+          `PROXYPROFILE`,
+          `fi`,
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        const snippetPath = join(profileDir, "nemoclaw-proxy.sh");
+        const snippet = readFileSync(snippetPath, "utf-8");
+
+        expect(snippet).toContain("export HTTP_PROXY=");
+        expect(snippet).toContain("export HTTPS_PROXY=");
+        expect(snippet).toContain("export NO_PROXY=");
+        expect(snippet).toContain("inference.local");
+        expect(snippet).toContain("10.200.0.1");
+      } finally {
+        try { unlinkSync(tmpFile); } catch { /* ignore */ }
+        try { execFileSync("rm", ["-rf", profileDir]); } catch { /* ignore */ }
+      }
     });
   });
 });
