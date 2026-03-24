@@ -35,12 +35,14 @@ function detectGpu() {
       const perGpuMB = lines.map((l) => parseInt(l.trim(), 10)).filter((n) => !isNaN(n));
       if (perGpuMB.length > 0) {
         const totalMemoryMB = perGpuMB.reduce((a, b) => a + b, 0);
+        // Only mark nimCapable if at least one NIM model fits in GPU VRAM
+        const canRunNim = nimImages.models.some((m) => m.minGpuMemoryMB <= totalMemoryMB);
         return {
           type: "nvidia",
           count: perGpuMB.length,
           totalMemoryMB,
           perGpuMB: perGpuMB[0],
-          nimCapable: true,
+          nimCapable: canRunNim,
         };
       }
     }
