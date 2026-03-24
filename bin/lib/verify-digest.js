@@ -77,8 +77,8 @@ function verifyBlueprintDigest(opts = {}) {
     return { valid: true, reason: "verification skipped (--skip-verification)", expectedDigest: null, actualDigest: "" };
   }
 
-  const expectedDigest = readExpectedDigest();
-  const actualDigest = computeBlueprintDigest();
+  const expectedDigest = module.exports.readExpectedDigest();
+  const actualDigest = module.exports.computeBlueprintDigest();
 
   // Fail closed: missing or empty digest is a verification failure
   if (!expectedDigest || expectedDigest.trim() === "") {

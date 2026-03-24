@@ -50,10 +50,18 @@ describe("blueprint digest verification", () => {
 
   it("empty string digest must not pass verification", () => {
     // Regression: if (digest && digest !== actual) was the original bug —
-    // empty string is falsy in JS, causing silent bypass
-    const { verifyBlueprintDigest } = require(verifyDigestPath);
-    const result = verifyBlueprintDigest();
-    // With digest: "" in blueprint.yaml, this MUST fail
-    expect(result.valid).toBe(false);
+    // empty string is falsy in JS, causing silent bypass.
+    // Mock readExpectedDigest to always return "" so this test survives
+    // once blueprint.yaml ships a real digest.
+    const verifyMod = require(verifyDigestPath);
+    const originalRead = verifyMod.readExpectedDigest;
+    verifyMod.readExpectedDigest = () => "";
+    try {
+      const result = verifyMod.verifyBlueprintDigest();
+      expect(result.valid).toBe(false);
+      expect(result.reason).toMatch(/missing or empty/);
+    } finally {
+      verifyMod.readExpectedDigest = originalRead;
+    }
   });
 });
