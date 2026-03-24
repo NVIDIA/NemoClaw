@@ -66,8 +66,7 @@ If validation fails, the wizard does not continue to sandbox creation.
 
 ## Local Providers
 
-Local providers are available behind the `NEMOCLAW_EXPERIMENTAL=1` gate.
-These use the same routed `inference.local` pattern, but the upstream runtime is local to the host.
+Local providers use the same routed `inference.local` pattern, but the upstream runtime runs on the host rather than in the cloud.
 
 - Local Ollama
 - Local NVIDIA NIM

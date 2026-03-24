@@ -1115,8 +1115,11 @@ async function ensureNamedCredential(envName, label, helpUrl = null) {
 
 function waitForSandboxReady(sandboxName, attempts = 10, delaySeconds = 2) {
   for (let i = 0; i < attempts; i += 1) {
-    const exists = runCaptureOpenshell(["sandbox", "get", sandboxName], { ignoreError: true });
-    if (exists) return true;
+    const podPhase = runCaptureOpenshell(
+      ["doctor", "exec", "--", "kubectl", "-n", "openshell", "get", "pod", sandboxName, "-o", "jsonpath={.status.phase}"],
+      { ignoreError: true }
+    );
+    if (podPhase === "Running") return true;
     sleep(delaySeconds);
   }
   return false;
@@ -1386,11 +1389,15 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null)
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const chatUiUrl = process.env.CHAT_UI_URL || "http://127.0.0.1:18789";
   patchStagedDockerfile(stagedDockerfile, model, chatUiUrl, String(Date.now()), provider, preferredInferenceApi);
+  // Only pass non-sensitive env vars to the sandbox. NVIDIA_API_KEY is NOT
+  // needed inside the sandbox — inference is proxied through the OpenShell
+  // gateway which injects the stored credential server-side. The gateway
+  // also strips any Authorization headers sent by the sandbox client.
+  // See: crates/openshell-sandbox/src/proxy.rs (header stripping),
+  //      crates/openshell-router/src/backend.rs (server-side auth injection).
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
   const sandboxEnv = { ...process.env };
-  if (process.env.NVIDIA_API_KEY) {
-    sandboxEnv.NVIDIA_API_KEY = process.env.NVIDIA_API_KEY;
-  }
+  delete sandboxEnv.NVIDIA_API_KEY;
   const discordToken = getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN;
   if (discordToken) {
     sandboxEnv.DISCORD_BOT_TOKEN = discordToken;
@@ -2059,6 +2066,11 @@ async function setupPolicies(sandboxName) {
       return;
     }
 
+    if (!waitForSandboxReady(sandboxName)) {
+      console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
+      process.exit(1);
+    }
+
     if (answer.toLowerCase() === "list") {
       // Let user pick
       const picks = await prompt("  Enter preset names (comma-separated): ");
@@ -2142,6 +2154,11 @@ async function onboard(opts = {}) {
   process.env.NEMOCLAW_OPENSHELL_BIN = getOpenshellBinary();
   await startGateway(gpu);
   await setupInference(GATEWAY_NAME, model, provider, endpointUrl, credentialEnv);
+  // The key is now stored in openshell's provider config. Clear it from our
+  // process environment so new child processes don't inherit it. Note: this
+  // does NOT clear /proc/pid/environ (kernel snapshot is immutable after exec),
+  // but it prevents run()'s { ...process.env } from propagating the key.
+  delete process.env.NVIDIA_API_KEY;
   const sandboxName = await createSandbox(gpu, model, provider, preferredInferenceApi);
   if (nimContainer) {
     registry.updateSandbox(sandboxName, { nimContainer });
