@@ -55,7 +55,7 @@ Usage: ./scripts/smoke-macos-install.sh [options]
 Options:
   --sandbox-name <name>       Sandbox name to feed into install.sh
   --log-dir <dir>             Directory for install/uninstall logs
-  --runtime <name>            Select runtime: colima or docker-desktop
+  --runtime <name>            Select runtime: colima, podman, or docker-desktop
   --allow-existing-state      Allow running even if NemoClaw/OpenShell state already exists
   --keep-logs                 Preserve log files after success
   --remove-openshell          Allow uninstall.sh to remove openshell

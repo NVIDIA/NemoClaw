@@ -117,14 +117,11 @@ find_podman_socket() {
   local socket_path
 
   if [ "$(uname -s)" = "Darwin" ]; then
-    for socket_path in \
-      "$home_dir/.local/share/containers/podman/machine/podman.sock"
-    do
-      if socket_exists "$socket_path"; then
-        printf '%s\n' "$socket_path"
-        return 0
-      fi
-    done
+    socket_path="$home_dir/.local/share/containers/podman/machine/podman.sock"
+    if socket_exists "$socket_path"; then
+      printf '%s\n' "$socket_path"
+      return 0
+    fi
   else
     local uid
     uid="$(id -u 2>/dev/null || echo 1000)"
