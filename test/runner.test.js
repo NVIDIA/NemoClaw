@@ -206,9 +206,11 @@ describe("runner helpers", () => {
       const fn = src.match(/function sandboxStatus\([\s\S]*?\n\}/);
       expect(fn).toBeTruthy();
       const body = fn[0];
-      // Must not use run() with template-literal sandbox name interpolation
-      expect(body).not.toMatch(/run\s*\(\s*`[^`]*\$\{/);
-      // Should use spawnSync with array args
+      // Must not use bash -c, shell: true, or any run() variant
+      expect(body).not.toMatch(/spawnSync\s*\(\s*"bash"\s*,\s*\[\s*"-c"/);
+      expect(body).not.toMatch(/shell\s*:\s*true/);
+      expect(body).not.toMatch(/\brun(?:Capture|Interactive)?\s*\(/);
+      // Should use spawnSync with array args targeting openshell directly
       expect(body).toMatch(/spawnSync\s*\(\s*"openshell"/);
     });
 
