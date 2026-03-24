@@ -70,7 +70,7 @@ When the install completes, a summary confirms the running environment:
 ```text
 ──────────────────────────────────────────────────
 Sandbox      my-assistant (Landlock + seccomp + netns)
-Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoint API)
+Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
 ──────────────────────────────────────────────────
 Run:         nemoclaw my-assistant connect
 Status:      nemoclaw my-assistant status
