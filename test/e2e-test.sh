@@ -56,7 +56,10 @@ info "4. Verify blueprint runner plan command"
 cd /opt/nemoclaw-blueprint
 # Runner will fail at openshell prereq check (expected in test container)
 # We just verify it gets past validation and profile resolution
-python3 orchestrator/runner.py plan --profile vllm --dry-run 2>&1 | tee /tmp/plan-output.txt || true
+NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint node --input-type=module -e "
+  const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
+  await main(['plan', '--profile', 'vllm', '--dry-run']).catch(() => {});
+" 2>&1 | tee /tmp/plan-output.txt || true
 grep -q "RUN_ID:" /tmp/plan-output.txt && pass "Blueprint plan generates run ID" || fail "No run ID in plan output"
 grep -q "Validating blueprint" /tmp/plan-output.txt && pass "Blueprint runner validates before execution" || fail "No validation step"
 
@@ -72,49 +75,50 @@ info "5. Verify host OpenClaw detection (migration source)"
 # -------------------------------------------------------
 info "6. Verify snapshot creation (migration pre-step)"
 # -------------------------------------------------------
-python3 -c "
-import sys
-sys.path.insert(0, '/opt/nemoclaw-blueprint/migrations')
-from snapshot import create_snapshot, list_snapshots
+node --input-type=module -e "
+  import fs from 'node:fs';
+  import path from 'node:path';
+  const { createSnapshot, listSnapshots } = await import('/opt/nemoclaw/dist/blueprint/snapshot.js');
 
-snap = create_snapshot()
-assert snap is not None, 'Snapshot returned None'
-assert snap.exists(), f'Snapshot dir does not exist: {snap}'
-hook_file = snap / 'openclaw' / 'hooks' / 'demo-hook' / 'HOOK.md'
-assert hook_file.exists(), f'Hook file missing from snapshot: {hook_file}'
+  const snap = createSnapshot();
+  if (!snap) throw new Error('Snapshot returned null');
+  if (!fs.existsSync(snap)) throw new Error('Snapshot dir does not exist: ' + snap);
+  const hookFile = path.join(snap, 'openclaw', 'hooks', 'demo-hook', 'HOOK.md');
+  if (!fs.existsSync(hookFile)) throw new Error('Hook file missing from snapshot: ' + hookFile);
 
-snaps = list_snapshots()
-assert len(snaps) == 1, f'Expected 1 snapshot, got {len(snaps)}'
-print(f'Snapshot created at: {snap}')
-print(f'Files captured: {snaps[0][\"file_count\"]}')
+  const snaps = listSnapshots();
+  if (snaps.length !== 1) throw new Error('Expected 1 snapshot, got ' + snaps.length);
+  console.log('Snapshot created at: ' + snap);
+  console.log('Files captured: ' + snaps[0].file_count);
 " && pass "Migration snapshot created successfully" || fail "Snapshot creation failed"
 
 # -------------------------------------------------------
 info "7. Verify snapshot restore (eject path)"
 # -------------------------------------------------------
-python3 -c "
-import sys, json, shutil
-sys.path.insert(0, '/opt/nemoclaw-blueprint/migrations')
-from snapshot import list_snapshots, rollback_from_snapshot
-from pathlib import Path
+node --input-type=module -e "
+  import fs from 'node:fs';
+  import path from 'node:path';
+  import os from 'node:os';
+  const { listSnapshots, rollbackFromSnapshot } = await import('/opt/nemoclaw/dist/blueprint/snapshot.js');
 
-snaps = list_snapshots()
-snap_path = Path(snaps[0]['path'])
+  const snaps = listSnapshots();
+  const snapPath = snaps[0].path;
 
-# Simulate corruption: modify the host config
-config = Path.home() / '.openclaw' / 'openclaw.json'
-original = json.loads(config.read_text())
-config.write_text(json.dumps({'corrupted': True}))
+  // Simulate corruption: modify the host config
+  const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
+  const original = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  fs.writeFileSync(configPath, JSON.stringify({ corrupted: true }));
 
-# Rollback
-success = rollback_from_snapshot(snap_path)
-assert success, 'Rollback returned False'
+  // Rollback
+  const success = rollbackFromSnapshot(snapPath);
+  if (!success) throw new Error('Rollback returned false');
 
-# Verify restoration
-restored = json.loads(config.read_text())
-assert restored.get('meta', {}).get('lastTouchedVersion') == '2026.3.11', f'Restored config wrong: {restored}'
-assert 'corrupted' not in restored, 'Config still corrupted after rollback'
-print(f'Restored config: {restored}')
+  // Verify restoration
+  const restored = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  const version = (restored.meta || {}).lastTouchedVersion;
+  if (version !== '2026.3.11') throw new Error('Restored config wrong: ' + JSON.stringify(restored));
+  if ('corrupted' in restored) throw new Error('Config still corrupted after rollback');
+  console.log('Restored config: ' + JSON.stringify(restored));
 " && pass "Snapshot rollback restores original config" || fail "Rollback failed"
 
 # -------------------------------------------------------
@@ -222,24 +226,25 @@ info "9. Verify plugin TypeScript compilation"
 # -------------------------------------------------------
 info "10. Verify NemoClaw state management"
 # -------------------------------------------------------
-node -e "
-const { loadState, saveState, clearState } = require('/opt/nemoclaw/dist/blueprint/state.js');
+node --input-type=module -e "
+import { strict as assert } from 'node:assert';
+const { loadState, saveState, clearState } = await import('/opt/nemoclaw/dist/blueprint/state.js');
 
 // Initial state should be empty
 let state = loadState();
-console.assert(state.lastAction === null, 'Initial state should be null');
+assert.equal(state.lastAction, null, 'Initial state should be null');
 
 // Save and reload
 saveState({ ...state, lastAction: 'migrate', lastRunId: 'test-123', sandboxName: 'openclaw' });
 state = loadState();
-console.assert(state.lastAction === 'migrate', 'Should be migrate');
-console.assert(state.lastRunId === 'test-123', 'Should be test-123');
-console.assert(state.updatedAt !== null, 'Should have timestamp');
+assert.equal(state.lastAction, 'migrate', 'Should be migrate');
+assert.equal(state.lastRunId, 'test-123', 'Should be test-123');
+assert.notEqual(state.updatedAt, null, 'Should have timestamp');
 
 // Clear
 clearState();
 state = loadState();
-console.assert(state.lastAction === null, 'Should be cleared');
+assert.equal(state.lastAction, null, 'Should be cleared');
 
 console.log('State management: create, save, load, clear all working');
 " && pass "NemoClaw state management works" || fail "State management broken"

@@ -15,7 +15,7 @@
 #
 # Priority groups (prek runs same-priority hooks in parallel):
 #   0  — General file fixers (whitespace, EOF, line endings)
-#   5  — Shell / Python / TS formatters (shfmt, ruff format, prettier)
+#   5  — Shell / TS formatters (shfmt, prettier)
 #   6  — Fixes that should follow formatters (ruff check --fix, eslint --fix)
 #  10  — Linters and read-only checks
 #  20  — Project-level checks (vitest)
@@ -67,17 +67,6 @@ repos:
           - -ci
           - -bn
         priority: 5
-
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.7
-    hooks:
-      - id: ruff-format
-        files: ^(nemoclaw-blueprint/.*\.py|scripts/.*\.py)$
-        priority: 5
-      - id: ruff
-        args: [--fix]
-        files: ^(nemoclaw-blueprint/.*\.py|scripts/.*\.py)$
-        priority: 6
 
   - repo: local
     hooks:
@@ -149,7 +138,7 @@ repos:
         name: SPDX license headers
         entry: bash scripts/check-spdx-headers.sh
         language: system
-        files: ^(nemoclaw/src/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
+        files: ^(nemoclaw/src/.*\.ts|.*\.sh)$
         pass_filenames: true
         priority: 10
 
@@ -192,15 +181,6 @@ repos:
       - id: tsc-check
         name: TypeScript type check (tsc --noEmit)
         entry: bash -c 'cd nemoclaw && npx tsc --noEmit --incremental'
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-push]
-        priority: 10
-
-      - id: pyright-check
-        name: Pyright (nemoclaw-blueprint)
-        entry: bash -c 'cd nemoclaw-blueprint && uv run --with pyright pyright'
         language: system
         pass_filenames: false
         always_run: true
