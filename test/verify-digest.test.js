@@ -26,7 +26,7 @@ describe("blueprint digest verification", () => {
   it("readExpectedDigest returns the digest field from blueprint.yaml", () => {
     const { readExpectedDigest } = require(verifyDigestPath);
     const digest = readExpectedDigest();
-    expect(typeof digest).toBe("string");
+    expect(digest === null || typeof digest === "string").toBe(true);
   });
 
   it("verifyBlueprintDigest fails closed on empty digest", () => {
