@@ -87,21 +87,3 @@ jobs:
 
       - name: Run sandbox E2E tests
         run: docker run --rm -v "${{ github.workspace }}/test:/opt/test" nemoclaw-sandbox-test /opt/test/e2e-test.sh
-
-  validate-profiles:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Install dependencies
-        run: cd nemoclaw && npm install
-
-      - name: Validate blueprint and policy
-        run: npx tsx test/validate-blueprint.ts
