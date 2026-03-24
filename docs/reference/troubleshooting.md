@@ -24,12 +24,6 @@ status: published
 
 This page covers common issues you may encounter when installing, onboarding, or running NemoClaw, along with their resolution steps.
 
-:::{admonition} Get Help
-:class: tip
-
-If your issue is not listed here, join the [NemoClaw Discord channel](https://discord.gg/XFpfPv9Uvx) to ask questions and get help from the community. You can also [file an issue on GitHub](https://github.com/NVIDIA/NemoClaw/issues/new).
-:::
-
 ## Installation
 
 ### `nemoclaw` not found after install
@@ -141,7 +135,42 @@ If neither is found, verify that Colima is running:
 $ colima status
 ```
 
+### `NVIDIA_API_KEY` prompt during onboard
+
+While `nemoclaw onboard` prompts for an `NVIDIA_API_KEY`, it is not a hard prerequisite to finish the onboarding process.
+You can proceed without a key; the CLI will prompt you again only when an operation specifically requires it (e.g., when routing inference to an NVIDIA-hosted model).
+
+If you have a key and want to set it manually, export it as an environment variable:
+
+```console
+$ export NVIDIA_API_KEY=nvapi-...
+```
+
+### How to update or reset the `NVIDIA_API_KEY`
+
+NemoClaw stores your API key in `~/.nemoclaw/credentials.json`.
+If you need to update it or if you entered an incorrect key during onboarding:
+
+1. **Environment Variable:** Export `NVIDIA_API_KEY` in your shell. This takes precedence over the stored credential.
+2. **Manual Edit:** Edit `~/.nemoclaw/credentials.json` directly and update the `apiKey` field.
+3. **Reset:** Delete the `~/.nemoclaw/credentials.json` file. The CLI will prompt you for a new key the next time one is required.
+
 ## Runtime
+
+### `nemoclaw start` fails
+
+The `nemoclaw start` command launches auxiliary services like the Telegram bridge.
+If it fails to start:
+
+- **Missing Token:** Ensure the `TELEGRAM_BOT_TOKEN` environment variable is set in your current shell.
+- **Network Access:** Verify that the host can reach `api.telegram.org`.
+
+### TUI (`openshell term`) is empty
+
+If the OpenShell terminal does not show any activity or blocked requests:
+
+- **Wrong Host:** Ensure you are running the command on the same host where the sandbox is running.
+- **Remote Access:** If using a remote VM (e.g., through Brev), run `openshell term` inside an SSH session on that VM, or ensure port `18789` is correctly forwarded to your local machine.
 
 ### Sandbox shows as stopped
 
@@ -151,7 +180,7 @@ Run `nemoclaw onboard` to recreate the sandbox from the same blueprint and polic
 ### Status shows "not running" inside the sandbox
 
 This is expected behavior.
-When checking status inside an active sandbox, host-side sandbox state and inference configuration are not inspectable.
+When running `openclaw nemoclaw status` inside an active sandbox, host-side sandbox state and inference configuration are not inspectable.
 The status command detects the sandbox context and reports "active (inside sandbox)" instead.
 
 Run `openshell sandbox list` on the host to check the underlying sandbox state.
@@ -162,11 +191,10 @@ Verify that the inference provider endpoint is reachable from the host.
 Check the active provider and endpoint:
 
 ```console
-$ nemoclaw <name> status
+$ openclaw nemoclaw status
 ```
 
-If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
-Then verify the credential and base URL for the provider you selected during onboarding.
+If the endpoint is correct but requests still fail, check for network policy rules that may block the connection, and verify that your NVIDIA API key is valid.
 
 ### Agent cannot reach an external host
 
@@ -180,12 +208,30 @@ $ openshell term
 To permanently allow an endpoint, add it to the network policy.
 Refer to [Customize the Network Policy](../network-policy/customize-network-policy.md) for details.
 
+### Policy changes not taking effect
+
+Manual edits to the `openclaw-sandbox.yaml` policy file on the host are not automatically applied to a running sandbox.
+You must re-run `nemoclaw onboard` to recreate the sandbox with the updated policy.
+
+To update a running sandbox without a full restart, use the OpenShell CLI:
+
+```console
+$ openshell policy set <policy-file>
+```
+
 ### Blueprint run failed
 
 View the error output for the failed blueprint run:
 
 ```console
-$ nemoclaw <name> logs
+$ openclaw nemoclaw logs --run-id <id>
 ```
 
+If the run ID is unknown, omit `--run-id` to view logs from the most recent run.
 Use `--follow` to stream logs in real time while debugging.
+
+:::{admonition} Get Help
+:class: tip
+
+If your issue is not listed here, join the [NemoClaw Discord channel](https://discord.gg/XFpfPv9Uvx) to ask questions and get help from the community. You can also [file an issue on GitHub](https://github.com/NVIDIA/NemoClaw/issues/new).
+:::
