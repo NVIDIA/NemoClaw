@@ -63,23 +63,41 @@ describe("credential exposure in process arguments", () => {
     expect(violations).toEqual([]);
   });
 
+  it("setupInference uses runOpenshell (no bash -c) for credential commands", () => {
+    const src = fs.readFileSync(ONBOARD_JS, "utf-8");
+    const fn = src.match(/async function setupInference\([\s\S]*?\n\}/);
+    expect(fn).toBeTruthy();
+    const body = fn[0];
+    // Must not use run() with template-literal interpolation for openshell calls
+    expect(body).not.toMatch(/\brun\s*\(\s*\n?\s*`[^`]*openshell/);
+    // Should use runOpenshell with array args
+    expect(body).toMatch(/runOpenshell\s*\(/);
+  });
+
   it("onboard.js --credential flags pass env var names only", () => {
     const src = fs.readFileSync(ONBOARD_JS, "utf-8");
 
     // Find all --credential arguments and verify they contain only a key name
-    // (no "=" sign in the credential value)
+    // (no "=" sign in the credential value).
+    // Matches both shell-string patterns and array-element patterns:
+    //   --credential "NVIDIA_API_KEY"     (shell string)
+    //   "--credential", "NVIDIA_API_KEY"  (array element)
+    //   --credential ${shellQuote("...")} (shellQuote wrapper)
     const credentialArgs = src.match(/--credential\s+"([^"]+)"/g) || [];
     const credentialShellQuote =
       src.match(/--credential\s+\$\{shellQuote\("([^"]+)"\)\}/g) || [];
+    const credentialArrayArgs =
+      src.match(/"--credential",\s*"([^"]+)"/g) || [];
 
-    const allArgs = [...credentialArgs, ...credentialShellQuote];
+    const allArgs = [...credentialArgs, ...credentialShellQuote, ...credentialArrayArgs];
     expect(allArgs.length).toBeGreaterThan(0);
 
     for (const arg of allArgs) {
       // Extract the credential value from the match
       const valueMatch =
         arg.match(/--credential\s+"([^"]+)"/) ||
-        arg.match(/--credential\s+\$\{shellQuote\("([^"]+)"\)\}/);
+        arg.match(/--credential\s+\$\{shellQuote\("([^"]+)"\)\}/) ||
+        arg.match(/"--credential",\s*"([^"]+)"/);
       if (valueMatch) {
         expect(valueMatch[1]).not.toContain("=");
       }

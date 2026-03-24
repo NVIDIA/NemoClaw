@@ -38,6 +38,26 @@ const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const DIM = USE_COLOR ? "\x1b[2m" : "";
 const RESET = USE_COLOR ? "\x1b[0m" : "";
 
+/**
+ * Run an openshell command without shell interpretation.
+ * Uses spawnSync with an argument array instead of bash -c, preventing
+ * credential values or other arguments from appearing in shell command strings.
+ */
+function runOpenshell(args, opts = {}) {
+  const result = spawnSync("openshell", args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    cwd: ROOT,
+    env: { ...process.env, ...opts.env },
+  });
+  if (result.status !== 0 && !opts.ignoreError) {
+    const stderr = result.stderr ? result.stderr.toString().trim() : "";
+    console.error(`  openshell command failed (exit ${result.status}): openshell ${args[0]} ${args[1] || ""}`);
+    if (stderr) console.error(`  ${stderr}`);
+    process.exit(result.status || 1);
+  }
+  return result;
+}
+
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
 let NON_INTERACTIVE = false;
@@ -845,15 +865,15 @@ async function setupInference(sandboxName, model, provider) {
   step(5, 7, "Setting up inference provider");
 
   if (provider === "nvidia-nim") {
-    // Create nvidia-nim provider
-    run(
-      `openshell provider create --name nvidia-nim --type openai ` +
-      `--credential ${shellQuote("NVIDIA_API_KEY")} ` +
-      `--config "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1" 2>&1 || true`,
+    // Create nvidia-nim provider — pass credential via env, not CLI args
+    runOpenshell(
+      ["provider", "create", "--name", "nvidia-nim", "--type", "openai",
+       "--credential", "NVIDIA_API_KEY",
+       "--config", `OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1`],
       { ignoreError: true }
     );
-    run(
-      `openshell inference set --no-verify --provider nvidia-nim --model ${shellQuote(model)} 2>/dev/null || true`,
+    runOpenshell(
+      ["inference", "set", "--no-verify", "--provider", "nvidia-nim", "--model", model],
       { ignoreError: true }
     );
   } else if (provider === "vllm-local") {
@@ -863,18 +883,23 @@ async function setupInference(sandboxName, model, provider) {
       process.exit(1);
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
-    run(
-      `OPENAI_API_KEY=dummy ` +
-      `openshell provider create --name vllm-local --type openai ` +
-      `--credential "OPENAI_API_KEY" ` +
-      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
-      `OPENAI_API_KEY=dummy ` +
-      `openshell provider update vllm-local --credential "OPENAI_API_KEY" ` +
-      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
-      { ignoreError: true }
+    // Pass credential value via env instead of shell command string
+    const vllmEnv = { OPENAI_API_KEY: "dummy" };
+    runOpenshell(
+      ["provider", "create", "--name", "vllm-local", "--type", "openai",
+       "--credential", "OPENAI_API_KEY",
+       "--config", `OPENAI_BASE_URL=${baseUrl}`],
+      { ignoreError: true, env: vllmEnv }
     );
-    run(
-      `openshell inference set --no-verify --provider vllm-local --model ${shellQuote(model)} 2>/dev/null || true`,
+    // Fall back to update if create fails (already exists)
+    runOpenshell(
+      ["provider", "update", "vllm-local",
+       "--credential", "OPENAI_API_KEY",
+       "--config", `OPENAI_BASE_URL=${baseUrl}`],
+      { ignoreError: true, env: vllmEnv }
+    );
+    runOpenshell(
+      ["inference", "set", "--no-verify", "--provider", "vllm-local", "--model", model],
       { ignoreError: true }
     );
   } else if (provider === "ollama-local") {
@@ -885,18 +910,22 @@ async function setupInference(sandboxName, model, provider) {
       process.exit(1);
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
-    run(
-      `OPENAI_API_KEY=ollama ` +
-      `openshell provider create --name ollama-local --type openai ` +
-      `--credential "OPENAI_API_KEY" ` +
-      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || ` +
-      `OPENAI_API_KEY=ollama ` +
-      `openshell provider update ollama-local --credential "OPENAI_API_KEY" ` +
-      `--config "OPENAI_BASE_URL=${baseUrl}" 2>&1 || true`,
-      { ignoreError: true }
+    // Pass credential value via env instead of shell command string
+    const ollamaEnv = { OPENAI_API_KEY: "ollama" };
+    runOpenshell(
+      ["provider", "create", "--name", "ollama-local", "--type", "openai",
+       "--credential", "OPENAI_API_KEY",
+       "--config", `OPENAI_BASE_URL=${baseUrl}`],
+      { ignoreError: true, env: ollamaEnv }
     );
-    run(
-      `openshell inference set --no-verify --provider ollama-local --model ${shellQuote(model)} 2>/dev/null || true`,
+    runOpenshell(
+      ["provider", "update", "ollama-local",
+       "--credential", "OPENAI_API_KEY",
+       "--config", `OPENAI_BASE_URL=${baseUrl}`],
+      { ignoreError: true, env: ollamaEnv }
+    );
+    runOpenshell(
+      ["inference", "set", "--no-verify", "--provider", "ollama-local", "--model", model],
       { ignoreError: true }
     );
     console.log(`  Priming Ollama model: ${model}`);
