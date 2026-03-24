@@ -3,6 +3,7 @@
  * Handles search functionality on the dedicated search page with filtering and grouping
  */
 
+/* exported SearchPageManager */
 class SearchPageManager {
     constructor() {
         this.searchInput = null;
@@ -132,12 +133,12 @@ class SearchPageManager {
 
         // Use audience (new) or personas (legacy) with null safety
         const audience = this.filterOptions.audience || this.filterOptions.personas || [];
-        const audienceOptions = audience.map(aud =>
+        const _audienceOptions = audience.map(aud =>
             `<option value="${this.escapeHtml(aud)}">${this.escapeHtml(this.formatPersonaName(aud))}</option>`
         ).join('');
 
         const difficulties = this.filterOptions.difficulties || [];
-        const difficultyOptions = difficulties.map(difficulty =>
+        const _difficultyOptions = difficulties.map(difficulty =>
             `<option value="${this.escapeHtml(difficulty)}">${this.escapeHtml(this.formatDifficultyName(difficulty))}</option>`
         ).join('');
 

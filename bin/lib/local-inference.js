@@ -155,7 +155,7 @@ function validateOllamaModel(model, runCapture) {
         message: `Selected Ollama model '${model}' failed the local probe: ${parsed.error.trim()}`,
       };
     }
-  } catch {}
+  } catch { /* ignored */ }
 
   return { ok: true };
 }

@@ -65,7 +65,7 @@ async function checkPortAvailable(port, opts) {
   return new Promise((resolve) => {
     const srv = net.createServer();
     srv.once("error", (err) => {
-      if (err.code === "EADDRINUSE") {
+      if (/** @type {NodeJS.ErrnoException} */ (err).code === "EADDRINUSE") {
         resolve({
           ok: false,
           process: "unknown",

@@ -13,7 +13,7 @@ describe("checkPortAvailable", () => {
     const freePort = await new Promise((resolve) => {
       const srv = net.createServer();
       srv.listen(0, "127.0.0.1", () => {
-        const port = srv.address().port;
+        const port = /** @type {import("net").AddressInfo} */ (srv.address()).port;
         srv.close(() => resolve(port));
       });
     });
@@ -26,7 +26,7 @@ describe("checkPortAvailable", () => {
     // lsof returns empty, but net probe detects the port is taken.
     const srv = net.createServer();
     const port = await new Promise((resolve) => {
-      srv.listen(0, "127.0.0.1", () => resolve(srv.address().port));
+      srv.listen(0, "127.0.0.1", () => resolve(/** @type {import("net").AddressInfo} */ (srv.address()).port));
     });
     try {
       const result = await checkPortAvailable(port, { lsofOutput: "" });
@@ -67,7 +67,7 @@ describe("checkPortAvailable", () => {
     const freePort = await new Promise((resolve) => {
       const srv = net.createServer();
       srv.listen(0, "127.0.0.1", () => {
-        const port = srv.address().port;
+        const port = /** @type {import("net").AddressInfo} */ (srv.address()).port;
         srv.close(() => resolve(port));
       });
     });
@@ -78,7 +78,7 @@ describe("checkPortAvailable", () => {
   it("net probe detects occupied port", async () => {
     const srv = net.createServer();
     const port = await new Promise((resolve) => {
-      srv.listen(0, "127.0.0.1", () => resolve(srv.address().port));
+      srv.listen(0, "127.0.0.1", () => resolve(/** @type {import("net").AddressInfo} */ (srv.address()).port));
     });
     try {
       const result = await checkPortAvailable(port, { skipLsof: true });
@@ -94,7 +94,7 @@ describe("checkPortAvailable", () => {
     const freePort = await new Promise((resolve) => {
       const srv = net.createServer();
       srv.listen(0, "127.0.0.1", () => {
-        const port = srv.address().port;
+        const port = /** @type {import("net").AddressInfo} */ (srv.address()).port;
         srv.close(() => resolve(port));
       });
     });
@@ -112,7 +112,7 @@ describe("checkPortAvailable", () => {
     const freePort = await new Promise((resolve) => {
       const srv = net.createServer();
       srv.listen(0, "127.0.0.1", () => {
-        const port = srv.address().port;
+        const port = /** @type {import("net").AddressInfo} */ (srv.address()).port;
         srv.close(() => resolve(port));
       });
     });

@@ -117,7 +117,7 @@ function applyPreset(sandboxName, presetName) {
       buildPolicyGetCommand(sandboxName),
       { ignoreError: true }
     );
-  } catch {}
+  } catch { /* ignored */ }
 
   let currentPolicy = parseCurrentPolicy(rawPolicy);
 
@@ -179,8 +179,8 @@ function applyPreset(sandboxName, presetName) {
 
     console.log(`  Applied preset: ${presetName}`);
   } finally {
-    try { fs.unlinkSync(tmpFile); } catch {}
-    try { fs.rmdirSync(tmpDir); } catch {}
+    try { fs.unlinkSync(tmpFile); } catch { /* ignored */ }
+    try { fs.rmdirSync(tmpDir); } catch { /* ignored */ }
   }
 
   // Update registry

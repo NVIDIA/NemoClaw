@@ -34,6 +34,7 @@ describe("runner helpers", () => {
   it("uses inherited stdio for interactive commands only", () => {
     const calls = [];
     const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
     childProcess.spawnSync = (...args) => {
       calls.push(args);
       return { status: 0 };
@@ -58,6 +59,7 @@ describe("runner helpers", () => {
     const calls = [];
     const originalSpawnSync = childProcess.spawnSync;
     const originalPath = process.env.PATH;
+    // @ts-expect-error — intentional partial mock for testing
     childProcess.spawnSync = (...args) => {
       calls.push(args);
       return { status: 0 };

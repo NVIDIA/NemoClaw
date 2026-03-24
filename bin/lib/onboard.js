@@ -69,6 +69,7 @@ async function promptOrDefault(question, envVar, defaultValue) {
  * Strips ANSI codes and exact-matches the sandbox name in the first column.
  */
 function isSandboxReady(output, sandboxName) {
+  // eslint-disable-next-line no-control-regex
   const clean = output.replace(/\x1b\[[0-9;]*m/g, "");
   return clean.split("\n").some((l) => {
     const cols = l.trim().split(/\s+/);
@@ -101,15 +102,15 @@ function streamSandboxCreate(command) {
 
   function shouldShowLine(line) {
     return (
-      /^  Building image /.test(line) ||
-      /^  Context: /.test(line) ||
-      /^  Gateway: /.test(line) ||
+      /^ {2}Building image /.test(line) ||
+      /^ {2}Context: /.test(line) ||
+      /^ {2}Gateway: /.test(line) ||
       /^Successfully built /.test(line) ||
       /^Successfully tagged /.test(line) ||
-      /^  Built image /.test(line) ||
-      /^  Pushing image /.test(line) ||
+      /^ {2}Built image /.test(line) ||
+      /^ {2}Pushing image /.test(line) ||
       /^\s*\[progress\]/.test(line) ||
-      /^  Image .*available in the gateway/.test(line) ||
+      /^ {2}Image .*available in the gateway/.test(line) ||
       /^Created sandbox: /.test(line) ||
       /^✓ /.test(line)
     );
@@ -141,8 +142,10 @@ function streamSandboxCreate(command) {
       if (settled) return;
       settled = true;
       if (pending) flushLine(pending);
-      const detail = error && error.code
-        ? `spawn failed: ${error.message} (${error.code})`
+      // @ts-expect-error — Node ErrnoException has .code but TS types Error
+      const code = error && error.code;
+      const detail = code
+        ? `spawn failed: ${error.message} (${code})`
         : `spawn failed: ${error.message}`;
       lines.push(detail);
       resolve({ status: 1, output: lines.join("\n"), sawProgress: false });
@@ -439,7 +442,7 @@ async function preflight() {
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
-async function startGateway(gpu) {
+async function startGateway(_gpu) {
   step(2, 7, "Starting OpenShell gateway");
 
   // Destroy old gateway
@@ -534,7 +537,7 @@ async function createSandbox(gpu) {
   }
 
   // Stage build context
-  const { mkdtempSync } = require("fs");
+  const { mkdtempSync: _mkdtempSync } = require("fs");
   const os = require("os");
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
   fs.copyFileSync(path.join(ROOT, "Dockerfile"), path.join(buildCtx, "Dockerfile"));

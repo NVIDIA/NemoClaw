@@ -18,7 +18,6 @@
 
 const https = require("https");
 const { execFileSync, spawn } = require("child_process");
-const crypto = require("crypto");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 const { shellQuote, validateName } = require("../bin/lib/runner");
 
@@ -120,7 +119,7 @@ function runAgentInSandbox(message, sessionId) {
     proc.stderr.on("data", (d) => (stderr += d.toString()));
 
     proc.on("close", (code) => {
-      try { require("fs").unlinkSync(confPath); require("fs").rmdirSync(confDir); } catch {}
+      try { require("fs").unlinkSync(confPath); require("fs").rmdirSync(confDir); } catch { /* ignored */ }
 
       // Extract the actual agent response — skip setup lines
       const lines = stdout.split("\n");
