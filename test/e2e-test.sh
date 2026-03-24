@@ -22,24 +22,30 @@ info() { echo -e "${YELLOW}TEST${NC}: $1"; }
 # -------------------------------------------------------
 info "1. Verify OpenClaw CLI is installed"
 # -------------------------------------------------------
-openclaw --version && pass "OpenClaw CLI installed" || fail "OpenClaw CLI not found"
+if openclaw --version; then
+  pass "OpenClaw CLI installed"
+else
+  fail "OpenClaw CLI not found"
+fi
 
 # -------------------------------------------------------
 info "2. Verify plugin can be installed"
 # -------------------------------------------------------
-openclaw plugins install /opt/nemoclaw 2>&1 && pass "Plugin installed" || {
+if openclaw plugins install /opt/nemoclaw 2>&1; then
+  pass "Plugin installed"
+else
   # If plugins install isn't available, verify the built artifacts exist
   if [ -f /opt/nemoclaw/dist/index.js ]; then
     pass "Plugin built successfully (dist/index.js exists)"
   else
     fail "Plugin build artifacts missing"
   fi
-}
+fi
 
 # -------------------------------------------------------
 info "3. Verify blueprint YAML is valid"
 # -------------------------------------------------------
-python3 -c "
+if python3 -c "
 import yaml, sys
 bp = yaml.safe_load(open('/opt/nemoclaw-blueprint/blueprint.yaml'))
 assert bp['version'] == '0.1.0', f'Bad version: {bp[\"version\"]}'
@@ -49,7 +55,11 @@ assert 'ncp' in profiles, 'Missing ncp profile'
 assert 'vllm' in profiles, 'Missing vllm profile'
 assert 'nim-local' in profiles, 'Missing nim-local profile'
 print(f'Profiles: {list(profiles.keys())}')
-" && pass "Blueprint YAML valid with all 4 profiles" || fail "Blueprint YAML invalid"
+"; then
+  pass "Blueprint YAML valid with all 4 profiles"
+else
+  fail "Blueprint YAML invalid"
+fi
 
 # -------------------------------------------------------
 info "4. Verify blueprint runner plan command"
@@ -61,22 +71,50 @@ NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint node --input-type=module -e "
   const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
   await main(['plan', '--profile', 'vllm', '--dry-run']).catch(() => {});
 " 2>&1 | tee /tmp/plan-output.txt || true
-grep -q "RUN_ID:" /tmp/plan-output.txt && pass "Blueprint plan generates run ID" || fail "No run ID in plan output"
-grep -q "Validating blueprint" /tmp/plan-output.txt && pass "Blueprint runner validates before execution" || fail "No validation step"
+if grep -q "RUN_ID:" /tmp/plan-output.txt; then
+  pass "Blueprint plan generates run ID"
+else
+  fail "No run ID in plan output"
+fi
+if grep -q "Validating blueprint" /tmp/plan-output.txt; then
+  pass "Blueprint runner validates before execution"
+else
+  fail "No validation step"
+fi
 
 # -------------------------------------------------------
 info "5. Verify host OpenClaw detection (migration source)"
 # -------------------------------------------------------
-[ -f /sandbox/.openclaw/openclaw.json ] && pass "Host OpenClaw config detected" || fail "No host config"
-[ -d /sandbox/.openclaw/workspace ] && pass "Host workspace directory exists" || fail "No workspace dir"
-[ -d /sandbox/.openclaw/skills ] && pass "Host skills directory exists" || fail "No skills dir"
-[ -d /sandbox/.openclaw/hooks ] && pass "Host hooks directory exists" || fail "No hooks dir"
-[ -f /sandbox/.openclaw/hooks/demo-hook/HOOK.md ] && pass "Host hook fixture exists" || fail "No hook fixture"
+if [ -f /sandbox/.openclaw/openclaw.json ]; then
+  pass "Host OpenClaw config detected"
+else
+  fail "No host config"
+fi
+if [ -d /sandbox/.openclaw/workspace ]; then
+  pass "Host workspace directory exists"
+else
+  fail "No workspace dir"
+fi
+if [ -d /sandbox/.openclaw/skills ]; then
+  pass "Host skills directory exists"
+else
+  fail "No skills dir"
+fi
+if [ -d /sandbox/.openclaw/hooks ]; then
+  pass "Host hooks directory exists"
+else
+  fail "No hooks dir"
+fi
+if [ -f /sandbox/.openclaw/hooks/demo-hook/HOOK.md ]; then
+  pass "Host hook fixture exists"
+else
+  fail "No hook fixture"
+fi
 
 # -------------------------------------------------------
 info "6. Verify snapshot creation (migration pre-step)"
 # -------------------------------------------------------
-node --input-type=module -e "
+if node --input-type=module -e "
   import fs from 'node:fs';
   import path from 'node:path';
   const { createSnapshot, listSnapshots } = await import('/opt/nemoclaw/dist/blueprint/snapshot.js');
@@ -91,12 +129,16 @@ node --input-type=module -e "
   if (snaps.length !== 1) throw new Error('Expected 1 snapshot, got ' + snaps.length);
   console.log('Snapshot created at: ' + snap);
   console.log('Files captured: ' + snaps[0].file_count);
-" && pass "Migration snapshot created successfully" || fail "Snapshot creation failed"
+"; then
+  pass "Migration snapshot created successfully"
+else
+  fail "Snapshot creation failed"
+fi
 
 # -------------------------------------------------------
 info "7. Verify snapshot restore (eject path)"
 # -------------------------------------------------------
-node --input-type=module -e "
+if node --input-type=module -e "
   import fs from 'node:fs';
   import path from 'node:path';
   import os from 'node:os';
@@ -120,7 +162,11 @@ node --input-type=module -e "
   if (version !== '2026.3.11') throw new Error('Restored config wrong: ' + JSON.stringify(restored));
   if ('corrupted' in restored) throw new Error('Config still corrupted after rollback');
   console.log('Restored config: ' + JSON.stringify(restored));
-" && pass "Snapshot rollback restores original config" || fail "Rollback failed"
+"; then
+  pass "Snapshot rollback restores original config"
+else
+  fail "Rollback failed"
+fi
 
 # -------------------------------------------------------
 info "8. Verify migration inventory for external OpenClaw roots"
@@ -219,15 +265,31 @@ pass "Migration inventory handles overrides, external roots, and symlink-safe ar
 # -------------------------------------------------------
 info "9. Verify plugin TypeScript compilation"
 # -------------------------------------------------------
-[ -f /opt/nemoclaw/dist/index.js ] && pass "index.js compiled" || fail "index.js missing"
-[ -f /opt/nemoclaw/dist/commands/slash.js ] && pass "slash.js compiled" || fail "slash.js missing"
-[ -f /opt/nemoclaw/dist/commands/migration-state.js ] && pass "migration-state.js compiled" || fail "migration-state.js missing"
-[ -f /opt/nemoclaw/dist/blueprint/state.js ] && pass "state.js compiled" || fail "state.js missing"
+if [ -f /opt/nemoclaw/dist/index.js ]; then
+  pass "index.js compiled"
+else
+  fail "index.js missing"
+fi
+if [ -f /opt/nemoclaw/dist/commands/slash.js ]; then
+  pass "slash.js compiled"
+else
+  fail "slash.js missing"
+fi
+if [ -f /opt/nemoclaw/dist/commands/migration-state.js ]; then
+  pass "migration-state.js compiled"
+else
+  fail "migration-state.js missing"
+fi
+if [ -f /opt/nemoclaw/dist/blueprint/state.js ]; then
+  pass "state.js compiled"
+else
+  fail "state.js missing"
+fi
 
 # -------------------------------------------------------
 info "10. Verify NemoClaw state management"
 # -------------------------------------------------------
-node --input-type=module -e "
+if node --input-type=module -e "
 import { strict as assert } from 'node:assert';
 const { loadState, saveState, clearState } = await import('/opt/nemoclaw/dist/blueprint/state.js');
 
@@ -248,7 +310,11 @@ state = loadState();
 assert.equal(state.lastAction, null, 'Should be cleared');
 
 console.log('State management: create, save, load, clear all working');
-" && pass "NemoClaw state management works" || fail "State management broken"
+"; then
+  pass "NemoClaw state management works"
+else
+  fail "State management broken"
+fi
 
 echo ""
 echo -e "${GREEN}========================================${NC}"

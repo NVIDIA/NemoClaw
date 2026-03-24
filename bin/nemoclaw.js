@@ -183,6 +183,7 @@ async function deploy(instanceName) {
   fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
   try {
     run(`scp -q -o StrictHostKeyChecking=no -o LogLevel=ERROR ${shellQuote(envTmp)} ${qname}:/home/ubuntu/nemoclaw/.env`);
+    run(`ssh -q -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'chmod 600 /home/ubuntu/nemoclaw/.env'`);
   } finally {
     try { fs.unlinkSync(envTmp); } catch {}
     try { fs.rmdirSync(envDir); } catch {}
@@ -318,7 +319,7 @@ function sandboxStatus(sandboxName) {
   run(`openshell sandbox get ${shellQuote(sandboxName)} 2>/dev/null || true`, { ignoreError: true });
 
   // NIM health
-  const nimStat = nim.nimStatus(sandboxName);
+  const nimStat = sb && sb.nimContainer ? nim.nimStatusByName(sb.nimContainer) : nim.nimStatus(sandboxName);
   console.log(`    NIM:      ${nimStat.running ? `running (${nimStat.container})` : "not running"}`);
   if (nimStat.running) {
     console.log(`    Healthy:  ${nimStat.healthy ? "yes" : "no"}`);
@@ -380,7 +381,9 @@ async function sandboxDestroy(sandboxName, args = []) {
   }
 
   console.log(`  Stopping NIM for '${sandboxName}'...`);
-  nim.stopNimContainer(sandboxName);
+  const sb = registry.getSandbox(sandboxName);
+  if (sb && sb.nimContainer) nim.stopNimContainerByName(sb.nimContainer);
+  else nim.stopNimContainer(sandboxName);
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   run(`openshell sandbox delete ${shellQuote(sandboxName)} 2>/dev/null || true`, { ignoreError: true });

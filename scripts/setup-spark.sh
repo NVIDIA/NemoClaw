@@ -138,3 +138,5 @@ fi
 echo ""
 info "DGX Spark Docker configuration complete."
 info ""
+info "Next step: run 'nemoclaw onboard' to set up your sandbox."
+info "  nemoclaw onboard"

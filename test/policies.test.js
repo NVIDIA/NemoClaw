@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { describe, it, expect } from "vitest";
 import path from "node:path";
 import policies from "../bin/lib/policies";
@@ -84,6 +85,16 @@ describe("policies", () => {
       const waitIdx = cmd.indexOf("--wait");
       const nameIdx = cmd.indexOf("'test-box'");
       expect(waitIdx < nameIdx).toBeTruthy();
+    });
+
+    it("uses the resolved openshell binary when provided by the installer path", () => {
+      process.env.NEMOCLAW_OPENSHELL_BIN = "/tmp/fake path/openshell";
+      try {
+        const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
+        assert.equal(cmd, "'/tmp/fake path/openshell' policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'");
+      } finally {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      }
     });
   });
 

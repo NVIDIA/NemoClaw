@@ -1,9 +1,9 @@
 ---
 title:
-  page: "NemoClaw Inference Profiles — NVIDIA Endpoint"
+  page: "NemoClaw Inference Profiles"
   nav: "Inference Profiles"
-description: "Configuration reference for NVIDIA Endpoint inference profiles."
-keywords: ["nemoclaw inference profiles", "nemoclaw nvidia endpoint provider"]
+description: "Configuration reference for NemoClaw routed inference providers."
+keywords: ["nemoclaw inference profiles", "nemoclaw provider routing"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "inference_routing", "llms"]
 content:
@@ -20,54 +20,66 @@ status: published
 
 # Inference Profiles
 
-NemoClaw ships with an inference profile defined in `blueprint.yaml`.
-The profile configures an OpenShell inference provider and model route.
-The agent inside the sandbox uses whichever model is active.
-Inference requests are routed transparently through the OpenShell gateway.
+NemoClaw configures inference through the OpenShell gateway.
+The agent inside the sandbox talks to `inference.local`, and OpenShell routes that traffic to the provider you selected during onboarding.
 
-## Profile Summary
+## Routed Provider Model
 
-| Profile | Provider | Model | Endpoint | Use Case |
-|---|---|---|---|---|
-| `default` | NVIDIA Endpoint | `nvidia/nemotron-3-super-120b-a12b` | `integrate.api.nvidia.com` | Production. Requires an NVIDIA API key. |
+NemoClaw keeps provider credentials on the host.
+The sandbox does not receive your raw OpenAI, Anthropic, Gemini, or NVIDIA API key.
 
-## Available Models
+At onboard time, NemoClaw configures:
 
-The `nvidia-nim` provider registers the following models from [build.nvidia.com](https://build.nvidia.com):
+- an OpenShell provider
+- an OpenShell inference route
+- the baked OpenClaw model reference inside the sandbox
 
-| Model ID | Label | Context Window | Max Output |
-|---|---|---|---|
-| `nvidia/nemotron-3-super-120b-a12b` | Nemotron 3 Super 120B | 131,072 | 8,192 |
-| `nvidia/llama-3.1-nemotron-ultra-253b-v1` | Nemotron Ultra 253B | 131,072 | 4,096 |
-| `nvidia/llama-3.3-nemotron-super-49b-v1.5` | Nemotron Super 49B v1.5 | 131,072 | 4,096 |
-| `nvidia/nemotron-3-nano-30b-a3b` | Nemotron 3 Nano 30B | 131,072 | 4,096 |
+That means the sandbox knows which model family to use, while OpenShell owns the actual provider credential and upstream endpoint.
 
-The default profile uses Nemotron 3 Super 120B.
-You can switch to any model in the catalog at runtime.
+## Supported Providers
 
-## `default` -- NVIDIA Endpoint
+The following non-experimental provider paths are available through `nemoclaw onboard`.
 
-The default profile routes inference to NVIDIA's hosted API through [build.nvidia.com](https://build.nvidia.com).
+| Provider | Endpoint Type | Notes |
+|---|---|---|
+| NVIDIA Endpoints | OpenAI-compatible | Hosted models on `integrate.api.nvidia.com` |
+| OpenAI | Native OpenAI-compatible | Uses OpenAI model IDs |
+| Other OpenAI-compatible endpoint | Custom OpenAI-compatible | For compatible proxies and gateways |
+| Anthropic | Native Anthropic | Uses `anthropic-messages` |
+| Other Anthropic-compatible endpoint | Custom Anthropic-compatible | For Claude proxies and compatible gateways |
+| Google Gemini | OpenAI-compatible | Uses Google's OpenAI-compatible endpoint |
 
-- **Provider type:** `nvidia`
-- **Endpoint:** `https://integrate.api.nvidia.com/v1`
-- **Model:** `nvidia/nemotron-3-super-120b-a12b`
-- **Credential:** `NVIDIA_API_KEY` environment variable
+## Validation During Onboarding
 
-Get an API key from [build.nvidia.com](https://build.nvidia.com).
-The `nemoclaw onboard` command prompts for this key and stores it in `~/.nemoclaw/credentials.json`.
+NemoClaw validates the selected provider and model before it creates the sandbox.
 
-```console
-$ openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b
-```
+- OpenAI-compatible providers:
+  NemoClaw tries `/responses` first, then `/chat/completions`.
+- Anthropic-compatible providers:
+  NemoClaw tries `/v1/messages`.
+- NVIDIA Endpoints manual model entry:
+  NemoClaw also validates the model name against `https://integrate.api.nvidia.com/v1/models`.
+- Compatible endpoint flows:
+  NemoClaw validates by sending a real inference request, because many proxies do not expose a reliable `/models` endpoint.
 
-## Switching Models at Runtime
+If validation fails, the wizard does not continue to sandbox creation.
 
-After the sandbox is running, switch models with the OpenShell CLI:
+## Local Providers
 
-```console
-$ openshell inference set --provider nvidia-nim --model <model-name>
-```
+Local providers are available behind the `NEMOCLAW_EXPERIMENTAL=1` gate.
+These use the same routed `inference.local` pattern, but the upstream runtime is local to the host.
 
-The change takes effect immediately.
-No sandbox restart is needed.
+- Local Ollama
+- Local NVIDIA NIM
+- Local vLLM
+
+Ollama gets additional onboarding help:
+
+- if no models are installed, NemoClaw offers starter models
+- it pulls the selected model
+- it warms the model
+- it validates the model before continuing
+
+## Runtime Switching
+
+For runtime switching guidance, refer to [Switch Inference Models](../inference/switch-inference-providers.md).

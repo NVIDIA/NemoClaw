@@ -31,8 +31,98 @@ function getCredential(key) {
   return creds[key] || null;
 }
 
-function prompt(question) {
-  return new Promise((resolve) => {
+function promptSecret(question) {
+  return new Promise((resolve, reject) => {
+    const input = process.stdin;
+    const output = process.stderr;
+    let answer = "";
+    let rawModeEnabled = false;
+    let finished = false;
+
+    function cleanup() {
+      input.removeListener("data", onData);
+      if (rawModeEnabled && typeof input.setRawMode === "function") {
+        input.setRawMode(false);
+      }
+      if (typeof input.pause === "function") {
+        input.pause();
+      }
+    }
+
+    function finish(fn, value) {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      output.write("\n");
+      fn(value);
+    }
+
+    function onData(chunk) {
+      const text = chunk.toString("utf8");
+      for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+
+        if (ch === "\u0003") {
+          finish(reject, Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
+          return;
+        }
+
+        if (ch === "\r" || ch === "\n") {
+          finish(resolve, answer.trim());
+          return;
+        }
+
+        if (ch === "\u0008" || ch === "\u007f") {
+          answer = answer.slice(0, -1);
+          continue;
+        }
+
+        if (ch === "\u001b") {
+          // Ignore terminal escape/control sequences such as Delete, arrows,
+          // Home/End, etc. while leaving the buffered secret untouched.
+          const rest = text.slice(i);
+          const match = rest.match(/^\u001b(?:\[[0-9;?]*[~A-Za-z]|\][^\u0007]*\u0007|.)/);
+          if (match) {
+            i += match[0].length - 1;
+          }
+          continue;
+        }
+
+        if (ch >= " ") {
+          answer += ch;
+        }
+      }
+    }
+
+    output.write(question);
+    input.setEncoding("utf8");
+    if (typeof input.resume === "function") {
+      input.resume();
+    }
+    if (typeof input.setRawMode === "function") {
+      input.setRawMode(true);
+      rawModeEnabled = true;
+    }
+    input.on("data", onData);
+  });
+}
+
+function prompt(question, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const silent = opts.secret === true && process.stdin.isTTY && process.stderr.isTTY;
+    if (silent) {
+      promptSecret(question)
+        .then(resolve)
+        .catch((err) => {
+          if (err && err.code === "SIGINT") {
+            reject(err);
+            process.kill(process.pid, "SIGINT");
+            return;
+          }
+          reject(err);
+        });
+      return;
+    }
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
     rl.question(question, (answer) => {
       rl.close();
@@ -67,7 +157,7 @@ async function ensureApiKey() {
   console.log("  └─────────────────────────────────────────────────────────────────┘");
   console.log("");
 
-  key = await prompt("  NVIDIA API Key: ");
+  key = await prompt("  NVIDIA API Key: ", { secret: true });
 
   if (!key || !key.startsWith("nvapi-")) {
     console.error("  Invalid key. Must start with nvapi-");
@@ -114,7 +204,7 @@ async function ensureGithubToken() {
   console.log("  └──────────────────────────────────────────────────┘");
   console.log("");
 
-  token = await prompt("  GitHub Token: ");
+  token = await prompt("  GitHub Token: ", { secret: true });
 
   if (!token) {
     console.error("  Token required for deploy (repo is private).");
