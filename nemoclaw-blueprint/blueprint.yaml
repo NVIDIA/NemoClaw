@@ -4,7 +4,7 @@
 version: "0.1.0"
 min_openshell_version: "0.1.0"
 min_openclaw_version: "2026.3.0"
-digest: ""  # Computed at release time
+digest: ""  # MUST be populated before release — run: node -e 'console.log(require("./bin/lib/verify-digest").computeBlueprintDigest())'
 
 profiles:
   - default
