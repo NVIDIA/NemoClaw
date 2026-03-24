@@ -1,63 +1,202 @@
-# Contributing
+# Contributing to NVIDIA NemoClaw
 
-## Signing Your Work
+Thank you for your interest in contributing to NVIDIA NemoClaw. This guide covers how to set up your development environment, run tests, and submit changes.
 
-* We require that all contributors "sign-off" on their commits. This certifies
-  that the contribution is your original work, or you have rights to submit it
-  under the same license, or a compatible license.
+## Before You Open an Issue
 
-  * Any contribution which contains commits that are not Signed-Off will not be
-    accepted.
+Open an issue when you encounter one of the following situations.
 
-* To sign off on a commit you simply use the `--signoff` (or `-s`) option when
-  committing your changes:
+- A real bug that you confirmed and could not fix.
+- A feature proposal with a design — not a "please build this" request.
+- Security vulnerabilities must follow [SECURITY.md](SECURITY.md) — **not** GitHub issues.
 
-  ```bash
-  git commit -s -m "Add cool feature."
-  ```
+## Prerequisites
 
-  This will append the following to your commit message:
+Install the following before you begin.
 
-  ```text
-  Signed-off-by: Your Name <your@email.com>
-  ```
+- Node.js 20+ and npm 10+
+- Python 3.11+ (for blueprint and documentation builds)
+- Docker (running)
+- [uv](https://docs.astral.sh/uv/) (for Python dependency management)
+- [hadolint](https://github.com/hadolint/hadolint) (Dockerfile linter — `brew install hadolint` on macOS)
 
-* Full text of the DCO:
+## Getting Started
 
-  ```text
-    Developer Certificate of Origin
-    Version 1.1
+Install the root dependencies and build the TypeScript plugin:
 
-    Copyright (C) 2004, 2006 The Linux Foundation and its contributors.
-    1 Letterman Drive
-    Suite D4700
-    San Francisco, CA, 94129
+```bash
+# Install root dependencies (OpenClaw + CLI entry point)
+npm install
 
-    Everyone is permitted to copy and distribute verbatim copies of this
-    license document, but changing it is not allowed.
-  ```
+# Install and build the TypeScript plugin
+cd nemoclaw && npm install && npm run build && cd ..
 
-  ```text
-    Developer's Certificate of Origin 1.1
+# Install Python deps for the blueprint
+cd nemoclaw-blueprint && uv sync && cd ..
+```
 
-    By making a contribution to this project, I certify that:
+## Building
 
-    (a) The contribution was created in whole or in part by me and I have the
-    right to submit it under the open source license indicated in the file; or
+The TypeScript plugin lives in `nemoclaw/` and compiles with `tsc`:
 
-    (b) The contribution is based upon previous work that, to the best of my
-    knowledge, is covered under an appropriate open source license and I have
-    the right under that license to submit that work with modifications,
-    whether created in whole or in part by me, under the same open source
-    license (unless I am permitted to submit under a different license), as
-    indicated in the file; or
+```bash
+cd nemoclaw
+npm run build        # one-time compile
+npm run dev          # watch mode
+```
 
-    (c) The contribution was provided directly to me by some other person who
-    certified (a), (b) or (c) and I have not modified it.
+## Main Tasks
 
-    (d) I understand and agree that this project and the contribution are
-    public and that a record of the contribution (including all personal
-    information I submit with it, including my sign-off) is maintained
-    indefinitely and may be redistributed consistent with this project or the
-    open source license(s) involved.
-  ```
+These are the primary `make` and `npm` targets for day-to-day development:
+
+| Task | Purpose |
+|------|---------|
+| `make check` | Run all linters (TypeScript + Python) |
+| `make lint` | Same as `make check` |
+| `make format` | Auto-format TypeScript and Python source |
+| `npm test` | Run root-level tests (`test/*.test.js`) |
+| `cd nemoclaw && npm test` | Run plugin unit tests (Vitest) |
+| `make docs` | Build documentation (Sphinx/MyST) |
+| `make docs-live` | Serve docs locally with auto-rebuild |
+| `npx prek run --all-files` | Run all hooks from `.pre-commit-config.yaml` — see below |
+
+### Git hooks (prek)
+
+All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-binary pre-commit hook runner installed as a devDependency (`@j178/prek`). The `npm install` step runs `prek install` automatically via the `prepare` script, which wires up the following hooks from [`.pre-commit-config.yaml`](.pre-commit-config.yaml):
+
+| Hook | What runs |
+|------|-----------|
+| **pre-commit** | File fixers, formatters, linters, Vitest (plugin) |
+| **commit-msg** | commitlint (Conventional Commits) |
+| **pre-push** | TypeScript type check (`tsc --noEmit`), Pyright (Python) |
+
+For a full manual check: `npx prek run --all-files`. For scoped runs: `npx prek run --from-ref <base> --to-ref HEAD`.
+
+If you still have `core.hooksPath` set from an old Husky setup, Git will ignore `.git/hooks`. Run `git config --unset core.hooksPath` in this repo, then `npm install` so `prek install` (via `prepare`) can register the hooks.
+
+`make check` remains the primary documented linter entry point.
+
+## Project Structure
+
+The repository is organized as follows.
+
+| Path | Purpose |
+|------|---------|
+| `nemoclaw/` | TypeScript plugin (Commander CLI, OpenClaw extension) |
+| `nemoclaw-blueprint/` | Python blueprint for sandbox orchestration |
+| `bin/` | CLI entry point (`nemoclaw.js`) |
+| `scripts/` | Install helpers and automation scripts |
+| `test/` | Root-level integration tests |
+| `docs/` | User-facing documentation (Sphinx/MyST) |
+
+## Documentation
+
+If your change affects user-facing behavior (new commands, changed defaults, new features, bug fixes that contradict existing docs), update the relevant pages under `docs/` in the same PR.
+
+If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `/update-docs` skill that drafts doc updates. Use them before writing from scratch and follow the style guide in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
+
+To build and preview docs locally:
+
+```bash
+make docs       # build the docs
+make docs-live  # serve locally with auto-rebuild
+```
+
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the full style guide and writing conventions.
+
+### Doc-to-Skills Pipeline
+
+Always edit pages in `docs/`. Never edit files under `.agents/skills/docs/` — that entire directory is autogenerated by the script below and your changes will be overwritten on the next run.
+
+The `docs/` directory is the source of truth for user-facing documentation. The script `scripts/docs-to-skills.py` converts those pages into agent skills stored in `.agents/skills/docs/`. These generated skills let AI agents answer user questions and walk through procedures without reading raw doc pages.
+
+After changing any page in `docs/`, regenerate the skills. Run the canonical command from the repo root:
+
+```bash
+python scripts/docs-to-skills.py docs/ .agents/skills/docs/ --prefix nemoclaw
+```
+
+Always use this exact output path and prefix so skill names and locations stay consistent across the project.
+
+Useful flags:
+
+| Flag | Purpose |
+|------|---------|
+| `--dry-run` | Preview what would be generated without writing files. |
+| `--strategy <name>` | Grouping strategy: `smart` (default), `grouped`, or `individual`. |
+| `--name-map CAT=NAME` | Override a generated skill name (e.g. `--name-map about=overview`). |
+| `--exclude <file>` | Skip specific files (e.g. `--exclude "release-notes.md"`). |
+
+The generated `.agents/skills/docs/` directory is committed to the repo but is entirely autogenerated. Do not hand-edit any file under it — edit the source page in `docs/` and re-run the script instead. The one exception is the `## Gotchas` section at the bottom of each generated `SKILL.md`, which is reserved for project-specific notes you add manually and is preserved across regenerations.
+
+#### Generated skill structure
+
+Each skill directory contains:
+
+```text
+.agents/skills/docs/<skill-name>/
+├── SKILL.md              # Frontmatter + procedures + related skills
+└── references/           # Detailed concept and reference content (loaded on demand)
+    ├── <concept-page>.md
+    └── <reference-page>.md
+```
+
+The `references/` directory holds full-length content that agents load only when needed (progressive disclosure). The `SKILL.md` itself stays concise — under 500 lines — so agents can read it quickly.
+
+## Pull Requests
+
+We welcome contributions. Every PR requires maintainer review. To keep the review queue healthy, limit the number of open PRs you have at any time to fewer than 10.
+
+> [!WARNING]
+> Accounts that repeatedly exceed this limit or submit automated bulk PRs may have their PRs closed or their access restricted.
+
+### No External Project Links
+
+Do not add links to third-party code repositories, community collections, or unofficial resources in documentation, README files, or code. This includes "awesome lists," community template repositories, wrapper projects, and similar community-maintained resources — regardless of popularity or utility.
+
+Links to official documentation for tools we depend on (e.g., Node.js, Python, uv) and industry standards (e.g., Conventional Commits) are acceptable.
+
+**Why:** External repositories are outside our control. They can change ownership, inject malicious content, or misrepresent an endorsement by NVIDIA. Keeping references within our own repo avoids these risks entirely.
+
+If you believe an external resource belongs in our docs, open an issue to discuss it with maintainers first.
+
+### Submitting a Pull Request
+
+Follow these steps to submit a pull request.
+
+1. Create a feature branch from `main`.
+2. Make your changes with tests.
+3. Run `make check` and `npm test` to verify.
+4. Open a PR.
+
+### Commit Messages
+
+This project uses [Conventional Commits](https://www.conventionalcommits.org/). All commit messages must follow the format:
+
+```text
+<type>(<scope>): <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+**Types:**
+
+- `feat` - New feature
+- `fix` - Bug fix
+- `docs` - Documentation only
+- `chore` - Maintenance tasks (dependencies, build config)
+- `refactor` - Code change that neither fixes a bug nor adds a feature
+- `test` - Adding or updating tests
+- `ci` - CI/CD changes
+- `perf` - Performance improvements
+
+**Examples:**
+
+```text
+feat(cli): add --profile flag to nemoclaw onboard
+fix(blueprint): handle missing API key gracefully
+docs: update quickstart for new install wizard
+chore(deps): bump commander to 13.2
+```

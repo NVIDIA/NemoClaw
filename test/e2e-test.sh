@@ -13,7 +13,10 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 pass() { echo -e "${GREEN}PASS${NC}: $1"; }
-fail() { echo -e "${RED}FAIL${NC}: $1"; exit 1; }
+fail() {
+  echo -e "${RED}FAIL${NC}: $1"
+  exit 1
+}
 info() { echo -e "${YELLOW}TEST${NC}: $1"; }
 
 # -------------------------------------------------------
@@ -25,12 +28,12 @@ openclaw --version && pass "OpenClaw CLI installed" || fail "OpenClaw CLI not fo
 info "2. Verify plugin can be installed"
 # -------------------------------------------------------
 openclaw plugins install /opt/nemoclaw 2>&1 && pass "Plugin installed" || {
-    # If plugins install isn't available, verify the built artifacts exist
-    if [ -f /opt/nemoclaw/dist/index.js ]; then
-        pass "Plugin built successfully (dist/index.js exists)"
-    else
-        fail "Plugin build artifacts missing"
-    fi
+  # If plugins install isn't available, verify the built artifacts exist
+  if [ -f /opt/nemoclaw/dist/index.js ]; then
+    pass "Plugin built successfully (dist/index.js exists)"
+  else
+    fail "Plugin build artifacts missing"
+  fi
 }
 
 # -------------------------------------------------------
@@ -212,16 +215,8 @@ pass "Migration inventory handles overrides, external roots, and symlink-safe ar
 info "9. Verify plugin TypeScript compilation"
 # -------------------------------------------------------
 [ -f /opt/nemoclaw/dist/index.js ] && pass "index.js compiled" || fail "index.js missing"
-[ -f /opt/nemoclaw/dist/commands/migrate.js ] && pass "migrate.js compiled" || fail "migrate.js missing"
-[ -f /opt/nemoclaw/dist/commands/migration-state.js ] && pass "migration-state.js compiled" || fail "migration-state.js missing"
-[ -f /opt/nemoclaw/dist/commands/launch.js ] && pass "launch.js compiled" || fail "launch.js missing"
-[ -f /opt/nemoclaw/dist/commands/connect.js ] && pass "connect.js compiled" || fail "connect.js missing"
-[ -f /opt/nemoclaw/dist/commands/eject.js ] && pass "eject.js compiled" || fail "eject.js missing"
-[ -f /opt/nemoclaw/dist/commands/status.js ] && pass "status.js compiled" || fail "status.js missing"
 [ -f /opt/nemoclaw/dist/commands/slash.js ] && pass "slash.js compiled" || fail "slash.js missing"
-[ -f /opt/nemoclaw/dist/blueprint/resolve.js ] && pass "resolve.js compiled" || fail "resolve.js missing"
-[ -f /opt/nemoclaw/dist/blueprint/verify.js ] && pass "verify.js compiled" || fail "verify.js missing"
-[ -f /opt/nemoclaw/dist/blueprint/exec.js ] && pass "exec.js compiled" || fail "exec.js missing"
+[ -f /opt/nemoclaw/dist/commands/migration-state.js ] && pass "migration-state.js compiled" || fail "migration-state.js missing"
 [ -f /opt/nemoclaw/dist/blueprint/state.js ] && pass "state.js compiled" || fail "state.js missing"
 
 # -------------------------------------------------------

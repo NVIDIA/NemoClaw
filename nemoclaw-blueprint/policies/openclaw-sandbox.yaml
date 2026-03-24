@@ -1,16 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Strict baseline policy for the OpenClaw sandbox.
+# Default policy for the OpenClaw sandbox.
 # Principle: deny by default, allow only what's needed for core functionality.
 # Dynamic updates (network_policies, inference) can be applied post-creation
 # via `openshell policy set`. Static fields are effectively creation-locked.
 #
 # Policy tiers (future):
-#   strict  — this file. Minimum for onboard + basic agent operation.
+#   default — this file. Minimum for onboard + basic agent operation.
 #   relaxed — adds third-party model providers, broader web access.
 #
-# To add endpoints: update this file and re-run `openclaw nemoclaw migrate`
+# To add endpoints: update this file and re-run `nemoclaw onboard`
 # or apply dynamically via `openshell policy set`.
 
 version: 1
@@ -25,10 +25,16 @@ filesystem_policy:
     - /app
     - /etc
     - /var/log
+    - /sandbox/.openclaw            # Immutable gateway config — prevents agent
+                                    # from tampering with auth tokens or CORS.
+                                    # Writable state (agents, plugins) lives in
+                                    # /sandbox/.openclaw-data via symlinks.
+                                    # Ref: https://github.com/NVIDIA/NemoClaw/issues/514
   read_write:
     - /sandbox
     - /tmp
     - /dev/null
+    - /sandbox/.openclaw-data       # Writable agent/plugin state (symlinked from .openclaw)
 
 landlock:
   compatibility: best_effort
@@ -152,7 +158,7 @@ network_policies:
       - { path: /usr/local/bin/npm }
 
   # ── Messaging — pre-allowed for agent notifications ────────────
-  # Telegram Bot API is open by default so the agent can send
+  # Telegram and Discord are open by default so the agent can send
   # notifications and respond to chats without triggering approval.
   telegram:
     name: telegram
@@ -165,3 +171,30 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/bot*/**" }
           - allow: { method: POST, path: "/bot*/**" }
+
+  discord:
+    name: discord
+    endpoints:
+      - host: discord.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: gateway.discord.gg
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: cdn.discordapp.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
