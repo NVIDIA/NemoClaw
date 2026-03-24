@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git=1:2.39.5-0+deb12u3 \
         ca-certificates=20230311+deb12u1 \
         iproute2=6.1.0-3 \
-        gosu \
+        gosu=1.14-1+b10 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create sandbox user (matches OpenShell convention) and gateway user.
@@ -171,12 +171,6 @@ RUN chown root:root /sandbox/.openclaw \
 RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
     && chmod 444 /sandbox/.openclaw/.config-hash \
     && chown root:root /sandbox/.openclaw/.config-hash
-
-# Allow the gateway user to read the openclaw config and data dirs
-RUN setfacl -m u:gateway:rx /sandbox/.openclaw 2>/dev/null \
-    || chmod o+rx /sandbox/.openclaw
-RUN setfacl -m u:gateway:r /sandbox/.openclaw/openclaw.json 2>/dev/null \
-    || true
 
 # Entrypoint runs as root to start the gateway as the gateway user,
 # then drops to sandbox for agent commands. See nemoclaw-start.sh.

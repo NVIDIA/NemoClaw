@@ -22,14 +22,11 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # Filter out self-invocation: openshell sandbox create passes "nemoclaw-start"
 # as the command, but since this script is now the ENTRYPOINT, receiving our
 # own name as $1 would cause infinite recursion via the NEMOCLAW_CMD exec path.
-ARGS=()
-for arg in "$@"; do
-  case "$arg" in
-    nemoclaw-start|/usr/local/bin/nemoclaw-start) ;;  # skip self-reference
-    *) ARGS+=("$arg") ;;
-  esac
-done
-NEMOCLAW_CMD=("${ARGS[@]}")
+# Only strip from $1 — later args with this name are legitimate user arguments.
+case "${1:-}" in
+  nemoclaw-start|/usr/local/bin/nemoclaw-start) shift ;;
+esac
+NEMOCLAW_CMD=("$@")
 CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:18789}"
 PUBLIC_PORT=18789
 OPENCLAW="$(command -v openclaw)"  # Resolve once, use absolute path everywhere
@@ -41,8 +38,8 @@ OPENCLAW="$(command -v openclaw)"  # Resolve once, use absolute path everywhere
 verify_config_integrity() {
   local hash_file="/sandbox/.openclaw/.config-hash"
   if [ ! -f "$hash_file" ]; then
-    echo "[SECURITY] Config hash file missing — cannot verify openclaw.json integrity"
-    return 0  # Don't block on older images that predate this check
+    echo "[SECURITY] Config hash file missing — refusing to start without integrity verification"
+    return 1
   fi
   if ! (cd /sandbox/.openclaw && sha256sum -c "$hash_file" --status 2>/dev/null); then
     echo "[SECURITY] openclaw.json integrity check FAILED — config may have been tampered with"

@@ -12,7 +12,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-IMAGE="nemoclaw-isolation-test"
+IMAGE="${NEMOCLAW_TEST_IMAGE:-nemoclaw-isolation-test}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -28,11 +28,18 @@ FAILED=0
 
 # ── Build the image ──────────────────────────────────────────────
 
-info "Building sandbox image..."
-docker build -t "$IMAGE" "$REPO_DIR" > /dev/null 2>&1 || {
-  fail "Docker build failed"
-  exit 1
-}
+# Skip build if image already exists (e.g., loaded from CI artifact)
+if docker image inspect "$IMAGE" > /dev/null 2>&1; then
+  info "Using pre-built image: $IMAGE"
+else
+  info "Building sandbox image..."
+  BUILD_LOG="$(mktemp)"
+  if ! docker build -t "$IMAGE" "$REPO_DIR" > "$BUILD_LOG" 2>&1; then
+    tail -40 "$BUILD_LOG"
+    fail "Docker build failed (last 40 lines above)"
+    exit 1
+  fi
+fi
 
 # Helper: run a command inside the container as the sandbox user
 run_as_sandbox() {
@@ -109,34 +116,41 @@ else
   fail "gosu not found: $OUT"
 fi
 
-# ── Test 7: nemoclaw-start.sh has PATH hardening ────────────────
+# ── Test 7: Entrypoint PATH is locked to system dirs ─────────────
 
-info "7. Entrypoint locks PATH"
-OUT=$(run_as_root "grep 'export PATH=' /usr/local/bin/nemoclaw-start")
-if echo "$OUT" | grep -q 'export PATH='; then
-  pass "PATH is explicitly set in entrypoint"
+info "7. Entrypoint locks PATH to system directories"
+# Run the entrypoint preamble (up to the PATH export) and verify the result
+OUT=$(run_as_root "bash -c 'source <(head -21 /usr/local/bin/nemoclaw-start) 2>/dev/null; echo \$PATH'")
+if echo "$OUT" | grep -q "^/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin$"; then
+  pass "PATH is locked to system directories"
 else
-  fail "PATH not locked: $OUT"
+  fail "PATH not locked as expected: $OUT"
 fi
 
-# ── Test 8: nemoclaw-start.sh resolves openclaw absolute path ───
+# ── Test 8: openclaw resolves to expected absolute path ──────────
 
-info "8. Entrypoint resolves openclaw to absolute path"
-OUT=$(run_as_root "grep 'command -v openclaw' /usr/local/bin/nemoclaw-start")
-if [ -n "$OUT" ]; then
-  pass "openclaw resolved via command -v"
+info "8. Gateway runs the expected openclaw binary"
+OUT=$(run_as_root "gosu gateway which openclaw")
+if [ "$OUT" = "/usr/local/bin/openclaw" ]; then
+  pass "openclaw resolves to /usr/local/bin/openclaw"
 else
-  fail "no absolute path resolution for openclaw"
+  fail "openclaw resolves to unexpected path: $OUT"
 fi
 
-# ── Test 9: Symlink verification code exists ─────────────────────
+# ── Test 9: Symlinks point to expected targets ───────────────────
 
-info "9. Entrypoint verifies symlink targets"
-OUT=$(run_as_root "grep 'readlink' /usr/local/bin/nemoclaw-start")
-if [ -n "$OUT" ]; then
-  pass "symlink verification present in entrypoint"
+info "9. All .openclaw symlinks point to .openclaw-data"
+FAILED_LINKS=""
+for link in agents extensions workspace skills hooks identity devices canvas cron; do
+  OUT=$(run_as_root "readlink -f /sandbox/.openclaw/$link")
+  if [ "$OUT" != "/sandbox/.openclaw-data/$link" ]; then
+    FAILED_LINKS="$FAILED_LINKS $link->$OUT"
+  fi
+done
+if [ -z "$FAILED_LINKS" ]; then
+  pass "all symlinks point to .openclaw-data"
 else
-  fail "no symlink verification in entrypoint"
+  fail "symlink targets wrong:$FAILED_LINKS"
 fi
 
 # ── Test 10: Sandbox user cannot kill gateway-user processes ─────
@@ -164,7 +178,9 @@ echo -e "${GREEN}========================================${NC}"
 echo -e "  Results: ${GREEN}$PASSED passed${NC}, ${RED}$FAILED failed${NC}"
 echo -e "${GREEN}========================================${NC}"
 
-# Cleanup
-docker rmi "$IMAGE" > /dev/null 2>&1 || true
+# Cleanup — only remove images we built ourselves
+if [ -z "${NEMOCLAW_TEST_IMAGE:-}" ]; then
+  docker rmi "$IMAGE" > /dev/null 2>&1 || true
+fi
 
 [ "$FAILED" -eq 0 ] || exit 1
