@@ -327,8 +327,13 @@ function sandboxStatus(sandboxName) {
 }
 
 function sandboxLogs(sandboxName, follow) {
-  const followFlag = follow ? " --tail" : "";
-  run(`openshell logs ${shellQuote(sandboxName)}${followFlag}`);
+  // Use spawnSync with array args to avoid shell interpretation
+  const args = ["logs", sandboxName];
+  if (follow) args.push("--tail");
+  spawnSync("openshell", args, {
+    stdio: "inherit",
+    cwd: ROOT,
+  });
 }
 
 async function sandboxPolicyAdd(sandboxName) {
