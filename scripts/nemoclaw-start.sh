@@ -191,12 +191,15 @@ touch /tmp/auto-pair.log
 chown sandbox:sandbox /tmp/auto-pair.log
 chmod 600 /tmp/auto-pair.log
 
-# Verify symlinks in .openclaw point to expected targets (prevent symlink injection)
-for link in agents extensions workspace skills hooks identity devices canvas cron; do
-  target="$(readlink -f "/sandbox/.openclaw/$link" 2>/dev/null || true)"
-  expected="/sandbox/.openclaw-data/$link"
+# Verify ALL symlinks in .openclaw point to expected .openclaw-data targets.
+# Dynamic scan so future OpenClaw symlinks are covered automatically.
+for entry in /sandbox/.openclaw/*; do
+  [ -L "$entry" ] || continue
+  name="$(basename "$entry")"
+  target="$(readlink -f "$entry" 2>/dev/null || true)"
+  expected="/sandbox/.openclaw-data/$name"
   if [ "$target" != "$expected" ]; then
-    echo "[SECURITY] Symlink /sandbox/.openclaw/$link points to unexpected target: $target (expected $expected)"
+    echo "[SECURITY] Symlink $entry points to unexpected target: $target (expected $expected)"
     exit 1
   fi
 done

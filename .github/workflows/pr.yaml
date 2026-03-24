@@ -91,16 +91,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Build sandbox test image (e2e fixtures)
-        run: docker build -f test/Dockerfile.sandbox -t nemoclaw-sandbox-test .
+      - name: Build production image
+        run: docker build -t nemoclaw-production .
 
-      - name: Build production image (gateway isolation)
-        run: docker build -t nemoclaw-isolation-test .
+      - name: Build sandbox test image (fixtures layered on production)
+        run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production -t nemoclaw-sandbox-test .
 
       - name: Save images to tarballs
         run: |
           docker save nemoclaw-sandbox-test | gzip > /tmp/sandbox-test-image.tar.gz
-          docker save nemoclaw-isolation-test | gzip > /tmp/isolation-image.tar.gz
+          docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz
 
       - name: Upload sandbox test image
         uses: actions/upload-artifact@v4
@@ -154,7 +154,7 @@ jobs:
         run: gunzip -c /tmp/isolation-image.tar.gz | docker load
 
       - name: Run gateway isolation E2E tests
-        run: NEMOCLAW_TEST_IMAGE=nemoclaw-isolation-test bash test/e2e-gateway-isolation.sh
+        run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh
 
   validate-profiles:
     runs-on: ubuntu-latest
