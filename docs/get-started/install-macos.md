@@ -18,7 +18,7 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# macOS Installation Guide
+# macOS Installation Guide — NemoClaw
 
 This guide provides detailed instructions for setting up NemoClaw on macOS, especially for fresh machines.
 
@@ -34,12 +34,12 @@ Before installing NemoClaw, ensure your Mac meets the hardware and software requ
 
 ### Software
 
-1.  **Xcode Command Line Tools:** Required for basic development utilities and system headers.
-2.  **Container Runtime:** Required to run the NemoClaw sandbox. Supported options include:
+1. **Xcode Command Line Tools:** Required for basic development utilities and system headers.
+2. **Container Runtime:** Required to run the NemoClaw sandbox. Supported options include:
     - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Recommended for most users)
     - [OrbStack](https://orbstack.dev/) (Fast and lightweight alternative)
     - [Colima](https://github.com/abiosoft/colima) (Open-source CLI-first option)
-3.  **Node.js:** Version 20 or later.
+3. **Node.js:** Version 20 or later.
 
 ## Recommended Install Order
 
@@ -51,8 +51,8 @@ Even if you don't plan on using Xcode, the command line tools are necessary for 
 
 Run the following command in your terminal:
 
-```bash
-xcode-select --install
+```console
+$ xcode-select --install
 ```
 
 A software update popup will appear. Click **Install** and wait for the process to complete.
@@ -63,17 +63,17 @@ Choose one of the supported runtimes. Docker Desktop is the most common choice.
 
 - **Docker Desktop:** Download from the [official site](https://www.docker.com/products/docker-desktop/), install, and **ensure the application is running**.
 - **Colima:** Install via Homebrew and start it:
-  ```bash
-  brew install colima docker
-  colima start
-  ```
+  ```console
+$ brew install colima docker
+$ colima start
+```
 
 ### 3. Verify Node.js
 
 Check your Node.js version:
 
-```bash
-node --version
+```console
+$ node --version
 ```
 
 If it is below version 20, install a newer version from [nodejs.org](https://nodejs.org/) or use a version manager like `nvm` or `fnm`.
@@ -82,8 +82,8 @@ If it is below version 20, install a newer version from [nodejs.org](https://nod
 
 Once the prerequisites are met, run the NemoClaw installer:
 
-```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```console
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 ## Troubleshooting Common macOS Issues
@@ -92,8 +92,8 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 If you see errors related to `xcrun` or missing headers, try resetting the active developer directory:
 
-```bash
-sudo xcode-select --reset
+```console
+$ sudo xcode-select --reset
 ```
 
 ### Container runtime not detected
@@ -106,3 +106,11 @@ NemoClaw requires a running Docker-compatible socket.
 ### Permission Errors during `npm install`
 
 If the installer fails with `EACCES` errors, do not use `sudo`. Instead, configure npm to use a directory you own. Refer to the [Troubleshooting guide](../reference/troubleshooting.md#npm-install-fails-with-permission-errors) for the fix.
+
+## Next Steps
+
+- [Quickstart](quickstart.md): Launch a sandbox and run your first agent.
+- [Switch inference providers](../inference/switch-inference-providers.md) to use a different model or endpoint.
+- [Approve or deny network requests](../network-policy/approve-network-requests.md) when the agent tries to reach external hosts.
+- [Customize the network policy](../network-policy/customize-network-policy.md) to pre-approve trusted domains.
+- [Monitor sandbox activity](../monitoring/monitor-sandbox-activity.md) through the OpenShell TUI.
