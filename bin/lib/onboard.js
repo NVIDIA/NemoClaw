@@ -546,7 +546,10 @@ async function createSandbox(gpu) {
   for (const dir of [".venv", "__pycache__", ".pytest_cache"]) {
     run(`rm -rf "${buildCtx}/nemoclaw-blueprint/${dir}"`, { ignoreError: true });
   }
-  run(`find "${buildCtx}/nemoclaw-blueprint" -maxdepth 1 -name ".env" -o -name ".env.*" | xargs rm -f 2>/dev/null`, { ignoreError: true });
+  run(
+    `find "${buildCtx}/nemoclaw-blueprint" -maxdepth 1 \\( -name ".env" -o -name ".env.*" \\) -print0 | xargs -0 rm -rf -- 2>/dev/null`,
+    { ignoreError: true }
+  );
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
