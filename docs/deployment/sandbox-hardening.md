@@ -30,7 +30,6 @@ what is strictly required:
 ```bash
 docker run --rm \
   --cap-drop=ALL \
-  --cap-add=NET_BIND_SERVICE \
   --ulimit nproc=512:512 \
   nemoclaw-sandbox
 ```
