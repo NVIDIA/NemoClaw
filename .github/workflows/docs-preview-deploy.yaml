@@ -24,6 +24,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # Checkout first so subsequent artifact downloads are not clobbered.
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
       - name: Download PR metadata
         uses: actions/download-artifact@v8
         with:
@@ -60,10 +64,6 @@ jobs:
           path: docs-preview-html/
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Checkout repository
-        if: steps.meta.outputs.action != 'closed' && steps.meta.outputs.same-repo == 'true' || steps.meta.outputs.action == 'closed'
-        uses: actions/checkout@v6
 
       - name: Deploy preview
         if: steps.meta.outputs.action != 'closed' && steps.meta.outputs.same-repo == 'true'
