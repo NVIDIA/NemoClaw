@@ -21,7 +21,9 @@ status: published
 # Customize the Sandbox Network Policy
 
 Add, remove, or modify the endpoints that the sandbox is allowed to reach.
-NemoClaw supports both static policy changes that persist across restarts and dynamic updates to a running sandbox.
+
+The sandbox policy is defined in a declarative YAML file in the NemoClaw repository and enforced at runtime by [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
+NemoClaw supports both static policy changes that persist across restarts and dynamic updates applied to a running sandbox through the OpenShell CLI.
 
 ## Prerequisites
 
@@ -62,7 +64,7 @@ The wizard picks up the modified policy file and applies it to the sandbox.
 Check that the sandbox is running with the updated policy:
 
 ```console
-$ openclaw nemoclaw status
+$ nemoclaw <name> status
 ```
 
 ## Dynamic Changes
@@ -90,7 +92,36 @@ Dynamic changes apply only to the current session.
 When the sandbox stops, the running policy resets to the baseline defined in the policy file.
 To make changes permanent, update the static policy file and re-run setup.
 
+## Policy Presets
+
+NemoClaw ships preset policy files for common integrations in `nemoclaw-blueprint/policies/presets/`.
+Apply a preset as-is or use it as a starting template for a custom policy.
+
+Available presets:
+
+| Preset | Endpoints |
+|--------|-----------|
+| `discord` | Discord webhook API |
+| `docker` | Docker Hub, NVIDIA container registry |
+| `huggingface` | Hugging Face model registry |
+| `jira` | Atlassian Jira API |
+| `npm` | npm and Yarn registries |
+| `outlook` | Microsoft 365 and Outlook |
+| `pypi` | Python Package Index |
+| `slack` | Slack API and webhooks |
+| `telegram` | Telegram Bot API |
+
+To apply a preset to a running sandbox, pass it as a policy file:
+
+```console
+$ openshell policy set nemoclaw-blueprint/policies/presets/pypi.yaml
+```
+
+To include a preset in the baseline, merge its entries into `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.
+
 ## Related Topics
 
 - [Approve or Deny Agent Network Requests](approve-network-requests.md) for real-time operator approval.
 - [Network Policies](../reference/network-policies.md) for the full baseline policy reference.
+- OpenShell [Policy Schema](https://docs.nvidia.com/openshell/latest/reference/policy-schema.html) for the full YAML policy schema reference.
+- OpenShell [Sandbox Policies](https://docs.nvidia.com/openshell/latest/sandboxes/policies.html) for applying, iterating, and debugging policies at the OpenShell layer.

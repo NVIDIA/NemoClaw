@@ -2,7 +2,7 @@
 title:
   page: "NemoClaw Architecture — Plugin, Blueprint, and Sandbox Structure"
   nav: "Architecture"
-description: "Plugin structure, blueprint lifecycle, sandbox environment, and inference routing."
+description: "Learn how NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox."
 keywords: ["nemoclaw architecture", "nemoclaw plugin blueprint structure"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "blueprints", "inference_routing"]
@@ -24,8 +24,8 @@ NemoClaw has two main components: a TypeScript plugin that integrates with the O
 
 ## NemoClaw Plugin
 
-The plugin is a thin TypeScript package that registers commands under `openclaw nemoclaw`.
-It runs in-process with the OpenClaw gateway and handles user-facing CLI interactions.
+The plugin is a thin TypeScript package that registers an inference provider and the `/nemoclaw` slash command.
+It runs in-process with the OpenClaw gateway inside the sandbox.
 
 ```text
 nemoclaw/
@@ -60,7 +60,7 @@ nemoclaw-blueprint/
 ├── orchestrator/
 │   └── runner.py                   CLI runner — plan / apply / status
 ├── policies/
-│   └── openclaw-sandbox.yaml       Strict baseline network + filesystem policy
+│   └── openclaw-sandbox.yaml       Default network + filesystem policy
 ```
 
 ### Blueprint Lifecycle
@@ -96,7 +96,7 @@ Inference requests from the agent never leave the sandbox directly.
 OpenShell intercepts them and routes to the configured provider:
 
 ```text
-Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA cloud (build.nvidia.com)
+Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA Endpoint (build.nvidia.com)
 ```
 
 Refer to [Inference Profiles](../reference/inference-profiles.md) for provider configuration details.

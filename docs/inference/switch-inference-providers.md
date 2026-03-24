@@ -30,42 +30,68 @@ No restart is required.
 
 ## Switch to a Different Model
 
-Set the provider to `nvidia-nim` and specify a model from [build.nvidia.com](https://build.nvidia.com):
+Switching happens through the OpenShell inference route.
+Use the provider and model that match the upstream you want to use.
+
+### NVIDIA Endpoints
 
 ```console
-$ openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b
+$ openshell inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
 ```
 
-This requires the `NVIDIA_API_KEY` environment variable.
-The `nemoclaw onboard` command stores this key in `~/.nemoclaw/credentials.json` on first run.
+### OpenAI
+
+```console
+$ openshell inference set --provider openai-api --model gpt-5.4
+```
+
+### Anthropic
+
+```console
+$ openshell inference set --provider anthropic-prod --model claude-sonnet-4-6
+```
+
+### Google Gemini
+
+```console
+$ openshell inference set --provider gemini-api --model gemini-2.5-flash
+```
+
+### Compatible Endpoints
+
+If you onboarded a custom compatible endpoint, switch models with the provider created for that endpoint:
+
+```console
+$ openshell inference set --provider compatible-endpoint --model <model-name>
+```
+
+```console
+$ openshell inference set --provider compatible-anthropic-endpoint --model <model-name>
+```
+
+If the provider itself needs to change, rerun `nemoclaw onboard`.
 
 ## Verify the Active Model
 
 Run the status command to confirm the change:
 
 ```console
-$ openclaw nemoclaw status
+$ nemoclaw <name> status
 ```
 
 Add the `--json` flag for machine-readable output:
 
 ```console
-$ openclaw nemoclaw status --json
+$ nemoclaw <name> status --json
 ```
 
 The output includes the active provider, model, and endpoint.
 
-## Available Models
+## Notes
 
-The following table lists the models registered with the `nvidia-nim` provider.
-You can switch to any of these models at runtime.
-
-| Model ID | Label | Context Window | Max Output |
-|---|---|---|---|
-| `nvidia/nemotron-3-super-120b-a12b` | Nemotron 3 Super 120B | 131,072 | 8,192 |
-| `nvidia/llama-3.1-nemotron-ultra-253b-v1` | Nemotron Ultra 253B | 131,072 | 4,096 |
-| `nvidia/llama-3.3-nemotron-super-49b-v1.5` | Nemotron Super 49B v1.5 | 131,072 | 4,096 |
-| `nvidia/nemotron-3-nano-30b-a3b` | Nemotron 3 Nano 30B | 131,072 | 4,096 |
+- The host keeps provider credentials.
+- The sandbox continues to use `inference.local`.
+- Runtime switching changes the OpenShell route. It does not rewrite your stored credentials.
 
 ## Related Topics
 

@@ -8,7 +8,7 @@
 #   LEFT:  OpenClaw agent (chat)
 #   RIGHT: OpenShell TUI (monitor + approve network egress)
 #
-# The agent runs inside a sandboxed environment with a strict network
+# The agent runs inside a sandboxed environment with a controlled network
 # policy. When it tries to access a service not in the allow list,
 # the TUI prompts the operator to approve or deny the request.
 #
@@ -43,7 +43,10 @@
 
 set -euo pipefail
 
-[ -n "${NVIDIA_API_KEY:-}" ] || { echo "NVIDIA_API_KEY required"; exit 1; }
+[ -n "${NVIDIA_API_KEY:-}" ] || {
+  echo "NVIDIA_API_KEY required"
+  exit 1
+}
 
 echo ""
 echo "  ┌─────────────────────────────────────────────────────┐"
@@ -61,7 +64,7 @@ echo "  │    \"Install requests and get the top HN story\"       │"
 echo "  └─────────────────────────────────────────────────────┘"
 echo ""
 
-if ! command -v tmux > /dev/null 2>&1; then
+if ! command -v tmux >/dev/null 2>&1; then
   echo "tmux not found. Run these in two separate terminals:"
   echo ""
   echo "  Terminal 1 (TUI):"
@@ -69,7 +72,7 @@ if ! command -v tmux > /dev/null 2>&1; then
   echo ""
   echo "  Terminal 2 (Agent):"
   echo "    openshell sandbox connect nemoclaw"
-  echo "    export NVIDIA_API_KEY=$NVIDIA_API_KEY"
+  echo '    export NVIDIA_API_KEY=<your-key>'
   echo "    nemoclaw-start"
   echo "    openclaw agent --agent main --local --session-id live"
   exit 0

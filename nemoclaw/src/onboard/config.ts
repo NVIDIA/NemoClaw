@@ -2,11 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const CONFIG_DIR = join(process.env.HOME ?? "/tmp", ".nemoclaw");
+let configDir = join(process.env.HOME ?? tmpdir(), ".nemoclaw");
 
-export type EndpointType = "build" | "ncp" | "nim-local" | "vllm" | "ollama" | "custom";
+export type EndpointType =
+  | "build"
+  | "openai"
+  | "anthropic"
+  | "gemini"
+  | "ncp"
+  | "nim-local"
+  | "vllm"
+  | "ollama"
+  | "custom";
 
 export interface NemoClawOnboardConfig {
   endpointType: EndpointType;
@@ -15,21 +25,67 @@ export interface NemoClawOnboardConfig {
   model: string;
   profile: string;
   credentialEnv: string;
+  provider?: string;
+  providerLabel?: string;
   onboardedAt: string;
+}
+
+export function describeOnboardEndpoint(config: NemoClawOnboardConfig): string {
+  if (config.endpointUrl === "https://inference.local/v1") {
+    return "Managed Inference Route (inference.local)";
+  }
+
+  return `${config.endpointType} (${config.endpointUrl})`;
+}
+
+export function describeOnboardProvider(config: NemoClawOnboardConfig): string {
+  if (config.providerLabel) {
+    return config.providerLabel;
+  }
+
+  switch (config.endpointType) {
+    case "build":
+      return "NVIDIA Endpoints";
+    case "openai":
+      return "OpenAI";
+    case "anthropic":
+      return "Anthropic";
+    case "gemini":
+      return "Google Gemini";
+    case "ollama":
+      return "Local Ollama";
+    case "vllm":
+      return "Local vLLM";
+    case "nim-local":
+      return "Local NVIDIA NIM";
+    case "ncp":
+      return "NVIDIA Cloud Partner";
+    case "custom":
+      return "Other OpenAI-compatible endpoint";
+    default:
+      return "Unknown";
+  }
 }
 
 let configDirCreated = false;
 
 function ensureConfigDir(): void {
   if (configDirCreated) return;
-  if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true });
+  if (!existsSync(configDir)) {
+    try {
+      mkdirSync(configDir, { recursive: true });
+    } catch {
+      configDir = join(tmpdir(), ".nemoclaw");
+      if (!existsSync(configDir)) {
+        mkdirSync(configDir, { recursive: true });
+      }
+    }
   }
   configDirCreated = true;
 }
 
 function configPath(): string {
-  return join(CONFIG_DIR, "config.json");
+  return join(configDir, "config.json");
 }
 
 export function loadOnboardConfig(): NemoClawOnboardConfig | null {

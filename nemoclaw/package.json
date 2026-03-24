@@ -17,8 +17,6 @@
     "lint:fix": "eslint 'src/**/*.ts' --fix",
     "format": "prettier --write 'src/**/*.ts'",
     "format:check": "prettier --check 'src/**/*.ts'",
-    "test": "vitest run",
-    "test:watch": "vitest",
     "check": "npm run lint && npm run format:check && tsc --noEmit",
     "clean": "rm -rf dist/"
   },
@@ -39,7 +37,7 @@
     "vitest": "^4.1.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "files": [
     "dist/",

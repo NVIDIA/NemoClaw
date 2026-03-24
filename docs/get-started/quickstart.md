@@ -20,6 +20,9 @@ status: published
 
 # Quickstart
 
+```{include} ../_includes/alpha-statement.md
+```
+
 Follow these steps to get started with NemoClaw and your first sandboxed OpenClaw agent.
 
 :::{note}
@@ -31,10 +34,14 @@ NemoClaw currently requires a fresh installation of OpenClaw.
 :end-before: <!-- end-quickstart-guide -->
 ```
 
-### Next Steps
+## Next Steps
 
 - [Switch inference providers](../inference/switch-inference-providers.md) to use a different model or endpoint.
 - [Approve or deny network requests](../network-policy/approve-network-requests.md) when the agent tries to reach external hosts.
 - [Customize the network policy](../network-policy/customize-network-policy.md) to pre-approve trusted domains.
 - [Deploy to a remote GPU instance](../deployment/deploy-to-remote-gpu.md) for always-on operation.
 - [Monitor sandbox activity](../monitoring/monitor-sandbox-activity.md) through the OpenShell TUI.
+
+## Troubleshooting
+
+If you run into issues during installation or onboarding, refer to the [Troubleshooting guide](../reference/troubleshooting.md) for common error messages and resolution steps.

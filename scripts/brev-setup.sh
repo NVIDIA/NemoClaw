@@ -23,7 +23,10 @@ NC='\033[0m'
 
 info() { echo -e "${GREEN}[brev]${NC} $1"; }
 warn() { echo -e "${YELLOW}[brev]${NC} $1"; }
-fail() { echo -e "${RED}[brev]${NC} $1"; exit 1; }
+fail() {
+  echo -e "${RED}[brev]${NC} $1"
+  exit 1
+}
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -34,20 +37,20 @@ export NEEDRESTART_MODE=a
 export DEBIAN_FRONTEND=noninteractive
 
 # --- 0. Node.js (needed for services) ---
-if ! command -v node > /dev/null 2>&1; then
+if ! command -v node >/dev/null 2>&1; then
   info "Installing Node.js..."
-  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - > /dev/null 2>&1
-  sudo apt-get install -y -qq nodejs > /dev/null 2>&1
+  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - >/dev/null 2>&1
+  sudo apt-get install -y -qq nodejs >/dev/null 2>&1
   info "Node.js $(node --version) installed"
 else
   info "Node.js already installed: $(node --version)"
 fi
 
 # --- 1. Docker ---
-if ! command -v docker > /dev/null 2>&1; then
+if ! command -v docker >/dev/null 2>&1; then
   info "Installing Docker..."
-  sudo apt-get update -qq > /dev/null 2>&1
-  sudo apt-get install -y -qq docker.io > /dev/null 2>&1
+  sudo apt-get update -qq >/dev/null 2>&1
+  sudo apt-get install -y -qq docker.io >/dev/null 2>&1
   sudo usermod -aG docker "$(whoami)"
   info "Docker installed"
 else
@@ -55,17 +58,17 @@ else
 fi
 
 # --- 2. NVIDIA Container Toolkit (if GPU present) ---
-if command -v nvidia-smi > /dev/null 2>&1; then
-  if ! dpkg -s nvidia-container-toolkit > /dev/null 2>&1; then
+if command -v nvidia-smi >/dev/null 2>&1; then
+  if ! dpkg -s nvidia-container-toolkit >/dev/null 2>&1; then
     info "Installing NVIDIA Container Toolkit..."
     curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
       | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
     curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
       | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-      | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
-    sudo apt-get update -qq > /dev/null 2>&1
-    sudo apt-get install -y -qq nvidia-container-toolkit > /dev/null 2>&1
-    sudo nvidia-ctk runtime configure --runtime=docker > /dev/null 2>&1
+      | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
+    sudo apt-get update -qq >/dev/null 2>&1
+    sudo apt-get install -y -qq nvidia-container-toolkit >/dev/null 2>&1
+    sudo nvidia-ctk runtime configure --runtime=docker >/dev/null 2>&1
     sudo systemctl restart docker
     info "NVIDIA Container Toolkit installed"
   else
@@ -74,16 +77,16 @@ if command -v nvidia-smi > /dev/null 2>&1; then
 fi
 
 # --- 3. openshell CLI (binary release, not pip) ---
-if ! command -v openshell > /dev/null 2>&1; then
+if ! command -v openshell >/dev/null 2>&1; then
   info "Installing openshell CLI from GitHub release..."
-  if ! command -v gh > /dev/null 2>&1; then
-    sudo apt-get update -qq > /dev/null 2>&1
-    sudo apt-get install -y -qq gh > /dev/null 2>&1
+  if ! command -v gh >/dev/null 2>&1; then
+    sudo apt-get update -qq >/dev/null 2>&1
+    sudo apt-get install -y -qq gh >/dev/null 2>&1
   fi
   ARCH="$(uname -m)"
   case "$ARCH" in
-    x86_64|amd64) ASSET="openshell-x86_64-unknown-linux-musl.tar.gz" ;;
-    aarch64|arm64) ASSET="openshell-aarch64-unknown-linux-musl.tar.gz" ;;
+    x86_64 | amd64) ASSET="openshell-x86_64-unknown-linux-musl.tar.gz" ;;
+    aarch64 | arm64) ASSET="openshell-aarch64-unknown-linux-musl.tar.gz" ;;
     *) fail "Unsupported architecture: $ARCH" ;;
   esac
   tmpdir="$(mktemp -d)"
@@ -98,17 +101,18 @@ else
 fi
 
 # --- 3b. cloudflared (for public tunnel) ---
-if ! command -v cloudflared > /dev/null 2>&1; then
+if ! command -v cloudflared >/dev/null 2>&1; then
   info "Installing cloudflared..."
   CF_ARCH="$(uname -m)"
   case "$CF_ARCH" in
-    x86_64|amd64) CF_ARCH="amd64" ;;
-    aarch64|arm64) CF_ARCH="arm64" ;;
+    x86_64 | amd64) CF_ARCH="amd64" ;;
+    aarch64 | arm64) CF_ARCH="arm64" ;;
     *) fail "Unsupported architecture for cloudflared: $CF_ARCH" ;;
   esac
-  curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}" -o /tmp/cloudflared
-  sudo install -m 755 /tmp/cloudflared /usr/local/bin/cloudflared
-  rm -f /tmp/cloudflared
+  tmpdir=$(mktemp -d)
+  curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}" -o "$tmpdir/cloudflared"
+  sudo install -m 755 "$tmpdir/cloudflared" /usr/local/bin/cloudflared
+  rm -rf "$tmpdir"
   info "cloudflared $(cloudflared --version 2>&1 | head -1) installed"
 else
   info "cloudflared already installed"
@@ -116,11 +120,11 @@ fi
 
 # --- 4. vLLM (local inference, if GPU present) ---
 VLLM_MODEL="nvidia/nemotron-3-nano-30b-a3b"
-if command -v nvidia-smi > /dev/null 2>&1; then
+if command -v nvidia-smi >/dev/null 2>&1; then
   if ! python3 -c "import vllm" 2>/dev/null; then
     info "Installing vLLM..."
-    if ! command -v pip3 > /dev/null 2>&1; then
-      sudo apt-get install -y -qq python3-pip > /dev/null 2>&1
+    if ! command -v pip3 >/dev/null 2>&1; then
+      sudo apt-get install -y -qq python3-pip >/dev/null 2>&1
     fi
     pip3 install --break-system-packages vllm 2>/dev/null || pip3 install vllm
     info "vLLM installed"
@@ -129,7 +133,7 @@ if command -v nvidia-smi > /dev/null 2>&1; then
   fi
 
   # Start vLLM if not already running
-  if curl -s http://localhost:8000/v1/models > /dev/null 2>&1; then
+  if curl -s http://localhost:8000/v1/models >/dev/null 2>&1; then
     info "vLLM already running on :8000"
   elif python3 -c "import vllm" 2>/dev/null; then
     info "Starting vLLM with $VLLM_MODEL..."
@@ -137,11 +141,11 @@ if command -v nvidia-smi > /dev/null 2>&1; then
       --model "$VLLM_MODEL" \
       --port 8000 \
       --host 0.0.0.0 \
-      > /tmp/vllm-server.log 2>&1 &
+      >/tmp/vllm-server.log 2>&1 &
     VLLM_PID=$!
     info "Waiting for vLLM to load model (this can take a few minutes)..."
-    for i in $(seq 1 120); do
-      if curl -s http://localhost:8000/v1/models > /dev/null 2>&1; then
+    for _ in $(seq 1 120); do
+      if curl -s http://localhost:8000/v1/models >/dev/null 2>&1; then
         info "vLLM ready (PID $VLLM_PID)"
         break
       fi
