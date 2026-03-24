@@ -6,6 +6,9 @@ license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = ["pyyaml>=6.0"]
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
 [tool.uv]
 managed = true
 
@@ -35,6 +38,13 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
+"**/test_*.py" = ["S101"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+include = ["orchestrator", "migrations"]
+exclude = ["**/test_*.py"]
 
 [tool.ruff.format]
 quote-style = "double"

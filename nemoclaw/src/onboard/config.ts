@@ -15,7 +15,40 @@ export interface NemoClawOnboardConfig {
   model: string;
   profile: string;
   credentialEnv: string;
+  provider?: string;
+  providerLabel?: string;
   onboardedAt: string;
+}
+
+export function describeOnboardEndpoint(config: NemoClawOnboardConfig): string {
+  if (config.endpointUrl === "https://inference.local/v1") {
+    return "Managed Inference Route (inference.local)";
+  }
+
+  return `${config.endpointType} (${config.endpointUrl})`;
+}
+
+export function describeOnboardProvider(config: NemoClawOnboardConfig): string {
+  if (config.providerLabel) {
+    return config.providerLabel;
+  }
+
+  switch (config.endpointType) {
+    case "build":
+      return "NVIDIA Endpoint API";
+    case "ollama":
+      return "Local Ollama";
+    case "vllm":
+      return "Local vLLM";
+    case "nim-local":
+      return "Local NIM";
+    case "ncp":
+      return "NVIDIA Cloud Partner";
+    case "custom":
+      return "Managed Inference Route";
+    default:
+      return "Unknown";
+  }
 }
 
 let configDirCreated = false;

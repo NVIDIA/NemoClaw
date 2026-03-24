@@ -1,9 +1,9 @@
 ---
 title:
-  page: "NemoClaw Inference Profiles — NVIDIA Cloud"
+  page: "NemoClaw Inference Profiles — NVIDIA Endpoint"
   nav: "Inference Profiles"
-description: "Configuration reference for NVIDIA cloud inference profiles."
-keywords: ["nemoclaw inference profiles", "nemoclaw nvidia cloud provider"]
+description: "Configuration reference for NVIDIA Endpoint inference profiles."
+keywords: ["nemoclaw inference profiles", "nemoclaw nvidia endpoint provider"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "inference_routing", "llms"]
 content:
@@ -29,7 +29,7 @@ Inference requests are routed transparently through the OpenShell gateway.
 
 | Profile | Provider | Model | Endpoint | Use Case |
 |---|---|---|---|---|
-| `default` | NVIDIA cloud | `nvidia/nemotron-3-super-120b-a12b` | `integrate.api.nvidia.com` | Production. Requires an NVIDIA API key. |
+| `default` | NVIDIA Endpoint | `nvidia/nemotron-3-super-120b-a12b` | `integrate.api.nvidia.com` | Production. Requires an NVIDIA API key. |
 
 ## Available Models
 
@@ -45,7 +45,7 @@ The `nvidia-nim` provider registers the following models from [build.nvidia.com]
 The default profile uses Nemotron 3 Super 120B.
 You can switch to any model in the catalog at runtime.
 
-## `default` -- NVIDIA Cloud
+## `default` -- NVIDIA Endpoint
 
 The default profile routes inference to NVIDIA's hosted API through [build.nvidia.com](https://build.nvidia.com).
 

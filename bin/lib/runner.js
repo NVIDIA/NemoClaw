@@ -3,32 +3,38 @@
 
 const { execSync, spawnSync } = require("child_process");
 const path = require("path");
-const fs = require("fs");
+const { detectDockerHost } = require("./platform");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const SCRIPTS = path.join(ROOT, "scripts");
 
-// Auto-detect Colima Docker socket (legacy ~/.colima or XDG ~/.config/colima)
-if (!process.env.DOCKER_HOST) {
-  const home = process.env.HOME || "/tmp";
-  const candidates = [
-    path.join(home, ".colima/default/docker.sock"),
-    path.join(home, ".config/colima/default/docker.sock"),
-  ];
-  for (const sock of candidates) {
-    if (fs.existsSync(sock)) {
-      process.env.DOCKER_HOST = `unix://${sock}`;
-      break;
-    }
-  }
+const dockerHost = detectDockerHost();
+if (dockerHost) {
+  process.env.DOCKER_HOST = dockerHost.dockerHost;
 }
 
 function run(cmd, opts = {}) {
+  const stdio = opts.stdio ?? ["ignore", "inherit", "inherit"];
   const result = spawnSync("bash", ["-c", cmd], {
-    stdio: "inherit",
+    ...opts,
+    stdio,
     cwd: ROOT,
     env: { ...process.env, ...opts.env },
+  });
+  if (result.status !== 0 && !opts.ignoreError) {
+    console.error(`  Command failed (exit ${result.status}): ${cmd.slice(0, 80)}`);
+    process.exit(result.status || 1);
+  }
+  return result;
+}
+
+function runInteractive(cmd, opts = {}) {
+  const stdio = opts.stdio ?? "inherit";
+  const result = spawnSync("bash", ["-c", cmd], {
     ...opts,
+    stdio,
+    cwd: ROOT,
+    env: { ...process.env, ...opts.env },
   });
   if (result.status !== 0 && !opts.ignoreError) {
     console.error(`  Command failed (exit ${result.status}): ${cmd.slice(0, 80)}`);
@@ -40,11 +46,11 @@ function run(cmd, opts = {}) {
 function runCapture(cmd, opts = {}) {
   try {
     return execSync(cmd, {
+      ...opts,
       encoding: "utf-8",
       cwd: ROOT,
       env: { ...process.env, ...opts.env },
       stdio: ["pipe", "pipe", "pipe"],
-      ...opts,
     }).trim();
   } catch (err) {
     if (opts.ignoreError) return "";
@@ -52,4 +58,31 @@ function runCapture(cmd, opts = {}) {
   }
 }
 
-module.exports = { ROOT, SCRIPTS, run, runCapture };
+/**
+ * Shell-quote a value for safe interpolation into bash -c strings.
+ * Wraps in single quotes and escapes embedded single quotes.
+ */
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Validate a name (sandbox, instance, container) against RFC 1123 label rules.
+ * Rejects shell metacharacters, path traversal, and empty/overlength names.
+ */
+function validateName(name, label = "name") {
+  if (!name || typeof name !== "string") {
+    throw new Error(`${label} is required`);
+  }
+  if (name.length > 63) {
+    throw new Error(`${label} too long (max 63 chars): '${name.slice(0, 20)}...'`);
+  }
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
+    throw new Error(
+      `Invalid ${label}: '${name}'. Must be lowercase alphanumeric with optional internal hyphens.`
+    );
+  }
+  return name;
+}
+
+module.exports = { ROOT, SCRIPTS, run, runCapture, runInteractive, shellQuote, validateName };

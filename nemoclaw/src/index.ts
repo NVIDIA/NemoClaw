@@ -11,10 +11,12 @@
  * time.
  */
 
-import type { Command } from "commander";
-import { registerCliCommands } from "./cli.js";
 import { handleSlashCommand } from "./commands/slash.js";
-import { loadOnboardConfig } from "./onboard/config.js";
+import {
+  describeOnboardEndpoint,
+  describeOnboardProvider,
+  loadOnboardConfig,
+} from "./onboard/config.js";
 
 // ---------------------------------------------------------------------------
 // OpenClaw Plugin SDK compatible types (mirrors openclaw/plugin-sdk)
@@ -61,17 +63,6 @@ export interface PluginCommandDefinition {
   requireAuth?: boolean;
   handler: (ctx: PluginCommandContext) => PluginCommandResult | Promise<PluginCommandResult>;
 }
-
-/** Context passed to the CLI registrar callback. */
-export interface PluginCliContext {
-  program: Command;
-  config: OpenClawConfig;
-  workspaceDir?: string;
-  logger: PluginLogger;
-}
-
-/** CLI registrar callback type. */
-export type PluginCliRegistrar = (ctx: PluginCliContext) => void | Promise<void>;
 
 /** Auth method for a provider plugin. */
 export interface ProviderAuthMethod {
@@ -125,7 +116,6 @@ export interface OpenClawPluginApi {
   pluginConfig?: Record<string, unknown>;
   logger: PluginLogger;
   registerCommand: (command: PluginCommandDefinition) => void;
-  registerCli: (registrar: PluginCliRegistrar, opts?: { commands?: string[] }) => void;
   registerProvider: (provider: ProviderPlugin) => void;
   registerService: (service: PluginService) => void;
   resolvePath: (input: string) => string;
@@ -141,6 +131,74 @@ export interface NemoClawConfig {
   blueprintRegistry: string;
   sandboxName: string;
   inferenceProvider: string;
+}
+
+function activeModelEntries(
+  onboardCfg: ReturnType<typeof loadOnboardConfig>,
+): ModelProviderEntry[] {
+  if (!onboardCfg?.model) {
+    return [
+      {
+        id: "nvidia/nemotron-3-super-120b-a12b",
+        label: "Nemotron 3 Super 120B (March 2026)",
+        contextWindow: 131072,
+        maxOutput: 8192,
+      },
+      {
+        id: "nvidia/llama-3.1-nemotron-ultra-253b-v1",
+        label: "Nemotron Ultra 253B",
+        contextWindow: 131072,
+        maxOutput: 4096,
+      },
+      {
+        id: "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+        label: "Nemotron Super 49B v1.5",
+        contextWindow: 131072,
+        maxOutput: 4096,
+      },
+      {
+        id: "nvidia/nemotron-3-nano-30b-a3b",
+        label: "Nemotron 3 Nano 30B",
+        contextWindow: 131072,
+        maxOutput: 4096,
+      },
+    ];
+  }
+
+  return [
+    {
+      id: `inference/${onboardCfg.model}`,
+      label: onboardCfg.model,
+      contextWindow: 131072,
+      maxOutput: 8192,
+    },
+  ];
+}
+
+function registeredProviderForConfig(
+  onboardCfg: ReturnType<typeof loadOnboardConfig>,
+  providerCredentialEnv: string,
+): ProviderPlugin {
+  const authLabel =
+    providerCredentialEnv === "NVIDIA_API_KEY"
+      ? `NVIDIA API Key (${providerCredentialEnv})`
+      : `OpenAI API Key (${providerCredentialEnv})`;
+
+  return {
+    id: "inference",
+    label: "Managed Inference Route",
+    aliases: ["inference-local", "nemoclaw"],
+    envVars: [providerCredentialEnv],
+    models: { chat: activeModelEntries(onboardCfg) },
+    auth: [
+      {
+        type: "bearer",
+        envVar: providerCredentialEnv,
+        headerName: "Authorization",
+        label: authLabel,
+      },
+    ],
+  };
 }
 
 const DEFAULT_PLUGIN_CONFIG: NemoClawConfig = {
@@ -185,66 +243,13 @@ export default function register(api: OpenClawPluginApi): void {
     handler: (ctx) => handleSlashCommand(ctx, api),
   });
 
-  // 2. Register `openclaw nemoclaw` CLI subcommands (commander.js)
-  api.registerCli(
-    (cliCtx) => {
-      registerCliCommands(cliCtx, api);
-    },
-    { commands: ["nemoclaw"] },
-  );
-
-  // 3. Register nvidia-nim provider — use onboard config if available
+  // 2. Register nvidia-nim provider — use onboard config if available
   const onboardCfg = loadOnboardConfig();
   const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
-  const providerLabel = onboardCfg
-    ? `NVIDIA NIM (${onboardCfg.endpointType}${onboardCfg.ncpPartner ? ` - ${onboardCfg.ncpPartner}` : ""})`
-    : "NVIDIA NIM (build.nvidia.com)";
+  api.registerProvider(registeredProviderForConfig(onboardCfg, providerCredentialEnv));
 
-  api.registerProvider({
-    id: "nvidia-nim",
-    label: providerLabel,
-    docsPath: "https://build.nvidia.com/docs",
-    aliases: ["nvidia", "nim"],
-    envVars: [providerCredentialEnv],
-    models: {
-      chat: [
-        {
-          id: "nvidia/nemotron-3-super-120b-a12b",
-          label: "Nemotron 3 Super 120B (March 2026)",
-          contextWindow: 131072,
-          maxOutput: 8192,
-        },
-        {
-          id: "nvidia/llama-3.1-nemotron-ultra-253b-v1",
-          label: "Nemotron Ultra 253B",
-          contextWindow: 131072,
-          maxOutput: 4096,
-        },
-        {
-          id: "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-          label: "Nemotron Super 49B v1.5",
-          contextWindow: 131072,
-          maxOutput: 4096,
-        },
-        {
-          id: "nvidia/nemotron-3-nano-30b-a3b",
-          label: "Nemotron 3 Nano 30B",
-          contextWindow: 131072,
-          maxOutput: 4096,
-        },
-      ],
-    },
-    auth: [
-      {
-        type: "bearer",
-        envVar: providerCredentialEnv,
-        headerName: "Authorization",
-        label: `NVIDIA API Key (${providerCredentialEnv})`,
-      },
-    ],
-  });
-
-  const bannerEndpoint = onboardCfg?.endpointType ?? "build.nvidia.com";
+  const bannerEndpoint = onboardCfg ? describeOnboardEndpoint(onboardCfg) : "build.nvidia.com";
+  const bannerProvider = onboardCfg ? describeOnboardProvider(onboardCfg) : "NVIDIA Endpoint API";
   const bannerModel = onboardCfg?.model ?? "nvidia/nemotron-3-super-120b-a12b";
 
   api.logger.info("");
@@ -252,8 +257,9 @@ export default function register(api: OpenClawPluginApi): void {
   api.logger.info("  │  NemoClaw registered                                │");
   api.logger.info("  │                                                     │");
   api.logger.info(`  │  Endpoint:  ${bannerEndpoint.padEnd(40)}│`);
+  api.logger.info(`  │  Provider:  ${bannerProvider.padEnd(40)}│`);
   api.logger.info(`  │  Model:     ${bannerModel.padEnd(40)}│`);
-  api.logger.info("  │  Commands:  openclaw nemoclaw <command>             │");
+  api.logger.info("  │  Slash:     /nemoclaw                               │");
   api.logger.info("  └─────────────────────────────────────────────────────┘");
   api.logger.info("");
 }

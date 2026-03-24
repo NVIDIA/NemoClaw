@@ -44,13 +44,13 @@ The `nemoclaw onboard` command stores this key in `~/.nemoclaw/credentials.json`
 Run the status command to confirm the change:
 
 ```console
-$ openclaw nemoclaw status
+$ nemoclaw <name> status
 ```
 
 Add the `--json` flag for machine-readable output:
 
 ```console
-$ openclaw nemoclaw status --json
+$ nemoclaw <name> status --json
 ```
 
 The output includes the active provider, model, and endpoint.
