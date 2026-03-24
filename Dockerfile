@@ -12,7 +12,6 @@ FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# gosu is for privilege separation (gateway vs sandbox user)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3=3.11.2-1+b1 \
         python3-pip=23.0.1+dfsg-1 \
@@ -21,8 +20,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git=1:2.39.5-0+deb12u3 \
         ca-certificates=20230311+deb12u1 \
         iproute2=6.1.0-3 \
-        gosu=1.14-1+b10 \
     && rm -rf /var/lib/apt/lists/*
+
+# gosu for privilege separation (gateway vs sandbox user).
+# Install from GitHub release with checksum verification instead of
+# Debian bookworm's ancient 1.14 (2020). Pinned to 1.19 (2025-09).
+RUN curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/gosu-amd64" \
+    && echo "52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0  /usr/local/bin/gosu" | sha256sum -c - \
+    && chmod +x /usr/local/bin/gosu \
+    && gosu --version
 
 # Create sandbox user (matches OpenShell convention) and gateway user.
 # The gateway runs as 'gateway' so the 'sandbox' user (agent) cannot
