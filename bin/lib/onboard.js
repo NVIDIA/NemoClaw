@@ -486,7 +486,7 @@ async function setupNim(sandboxName, gpu) {
     provider = "dynamo";
     model = (process.env.NEMOCLAW_DYNAMO_MODEL || "").trim() || "dynamo";
     registry.updateSandbox(sandboxName, { model, provider, nimContainer });
-    return { model, provider, dynamoEndpoint };
+    return { model, provider };
   }
 
   // Build options list — only show local options with NEMOCLAW_EXPERIMENTAL=1
@@ -658,16 +658,12 @@ async function setupNim(sandboxName, gpu) {
 
 // ── Step 5: Inference provider ───────────────────────────────────
 
-async function setupInference(sandboxName, model, provider, opts = {}) {
+async function setupInference(sandboxName, model, provider) {
   step(5, 7, "Setting up inference provider");
 
   if (provider === "dynamo") {
     // Dynamo: external vLLM endpoint (e.g., K8s service)
-    const dynamoEndpoint = opts.dynamoEndpoint;
-    if (!dynamoEndpoint) {
-      console.error("  Dynamo provider requires dynamoEndpoint in options.");
-      process.exit(1);
-    }
+    const dynamoEndpoint = process.env.NEMOCLAW_DYNAMO_ENDPOINT;
     // Use shellQuote for shell-safe escaping of the endpoint URL
     run(
       `openshell provider create --name dynamo --type openai ` +
@@ -915,8 +911,8 @@ async function onboard(opts = {}) {
   const gpu = await preflight();
   await startGateway(gpu);
   const sandboxName = await createSandbox(gpu);
-  const { model, provider, dynamoEndpoint } = await setupNim(sandboxName, gpu);
-  await setupInference(sandboxName, model, provider, { dynamoEndpoint });
+  const { model, provider } = await setupNim(sandboxName, gpu);
+  await setupInference(sandboxName, model, provider);
   await setupOpenclaw(sandboxName, model, provider);
   await setupPolicies(sandboxName);
   printDashboard(sandboxName, model, provider);
