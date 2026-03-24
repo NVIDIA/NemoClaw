@@ -95,13 +95,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          python-version: "3.11"
+          node-version: "22"
 
-      - name: Install PyYAML
-        run: pip install pyyaml
+      - name: Install dependencies
+        run: cd nemoclaw && npm install
 
       - name: Validate blueprint and policy
-        run: python3 test/validate-blueprint.py
+        run: npx tsx test/validate-blueprint.ts
