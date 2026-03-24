@@ -131,17 +131,6 @@ class SearchPageManager {
             `<option value="${this.escapeHtml(type)}">${this.escapeHtml(this.formatTypeName(type))}</option>`
         ).join('');
 
-        // Use audience (new) or personas (legacy) with null safety
-        const audience = this.filterOptions.audience || this.filterOptions.personas || [];
-        const _audienceOptions = audience.map(aud =>
-            `<option value="${this.escapeHtml(aud)}">${this.escapeHtml(this.formatPersonaName(aud))}</option>`
-        ).join('');
-
-        const difficulties = this.filterOptions.difficulties || [];
-        const _difficultyOptions = difficulties.map(difficulty =>
-            `<option value="${this.escapeHtml(difficulty)}">${this.escapeHtml(this.formatDifficultyName(difficulty))}</option>`
-        ).join('');
-
         // Dynamic facets - render additional filter dropdowns for each facet
         const facetFilters = this.renderDynamicFacetFilters();
 
