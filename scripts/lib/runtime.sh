@@ -20,8 +20,7 @@ find_colima_docker_socket() {
 
   for socket_path in \
     "$home_dir/.colima/default/docker.sock" \
-    "$home_dir/.config/colima/default/docker.sock"
-  do
+    "$home_dir/.config/colima/default/docker.sock"; do
     if socket_exists "$socket_path"; then
       printf '%s\n' "$socket_path"
       return 0
@@ -69,7 +68,7 @@ docker_host_runtime() {
   local docker_host="${1:-${DOCKER_HOST:-}}"
 
   case "$docker_host" in
-    unix://*"/.colima/default/docker.sock"|unix://*"/.config/colima/default/docker.sock")
+    unix://*"/.colima/default/docker.sock" | unix://*"/.config/colima/default/docker.sock")
       printf 'colima\n'
       ;;
     unix://*"/.docker/run/docker.sock")
@@ -89,7 +88,7 @@ infer_container_runtime_from_info() {
   local normalized
   normalized="$(printf '%s' "$info" | tr '[:upper:]' '[:lower:]')"
 
-  if [[ -z "${normalized// }" ]]; then
+  if [[ -z "${normalized// /}" ]]; then
     printf 'unknown\n'
   elif [[ "$normalized" == *podman* ]]; then
     printf 'podman\n'
@@ -128,13 +127,13 @@ first_non_loopback_nameserver() {
 }
 
 get_colima_vm_nameserver() {
-  if ! command -v colima > /dev/null 2>&1; then
+  if ! command -v colima >/dev/null 2>&1; then
     return 1
   fi
 
   local profile="${COLIMA_PROFILE:-default}"
   local resolv_conf
-  resolv_conf="$(colima ssh --profile "$profile" -- cat /etc/resolv.conf < /dev/null 2>/dev/null || true)"
+  resolv_conf="$(colima ssh --profile "$profile" -- cat /etc/resolv.conf </dev/null 2>/dev/null || true)"
   first_non_loopback_nameserver "$resolv_conf"
 }
 
@@ -217,10 +216,10 @@ check_local_provider_health() {
 
   case "$provider" in
     vllm-local)
-      curl -sf http://localhost:8000/v1/models > /dev/null 2>&1
+      curl -sf http://localhost:8000/v1/models >/dev/null 2>&1
       ;;
     ollama-local)
-      curl -sf http://localhost:11434/api/tags > /dev/null 2>&1
+      curl -sf http://localhost:11434/api/tags >/dev/null 2>&1
       ;;
     *)
       return 1

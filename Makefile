@@ -1,10 +1,12 @@
 .PHONY: check lint format lint-ts lint-py format-ts format-py docs docs-strict docs-live docs-clean
 
-check: lint-ts lint-py
+check:
+	npx prek run --all-files
 	@echo "All checks passed."
 
-lint: lint-ts lint-py
+lint: check
 
+# Targeted subproject checks (not part of `make check` — use for focused runs).
 lint-ts:
 	cd nemoclaw && npm run check
 

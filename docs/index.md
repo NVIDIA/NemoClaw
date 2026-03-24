@@ -25,8 +25,11 @@ status: published
 :end-before: <!-- end-badges -->
 ```
 
-NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants safely.
-It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of NVIDIA Agent Toolkit, a secure environment for running autonomous agents, and open source models like [NVIDIA Nemotron](https://build.nvidia.com).
+```{include} _includes/alpha-statement.md
+```
+
+NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
+It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of NVIDIA Agent Toolkit, an environment designed for executing claws with additional security, and open source models like [NVIDIA Nemotron](https://build.nvidia.com).
 
 ## Get Started
 
@@ -127,7 +130,7 @@ CLI commands for launching, connecting, monitoring, and managing sandboxes.
 :link: reference/inference-profiles
 :link-type: doc
 
-NVIDIA cloud inference configuration and available models.
+NVIDIA endpoint inference configuration and available models.
 
 +++
 {bdg-secondary}`Reference`
@@ -161,6 +164,16 @@ Egress control, operator approval flow, and policy configuration.
 
 +++
 {bdg-secondary}`Reference`
+:::
+
+:::{grid-item-card} Workspace Files
+:link: workspace/workspace-files
+:link-type: doc
+
+Understand agent identity, memory, and configuration files that persist in the sandbox.
+
++++
+{bdg-secondary}`Concept`
 :::
 
 :::{grid-item-card} How-To Guides
@@ -225,6 +238,14 @@ Set Up the Telegram Bridge <deployment/set-up-telegram-bridge>
 :hidden:
 
 Monitor Sandbox Activity <monitoring/monitor-sandbox-activity>
+```
+
+```{toctree}
+:caption: Workspace
+:hidden:
+
+Workspace Files <workspace/workspace-files>
+Back Up and Restore <workspace/backup-restore>
 ```
 
 ```{toctree}

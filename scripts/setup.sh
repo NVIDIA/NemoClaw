@@ -36,7 +36,10 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 info() { echo -e "${GREEN}>>>${NC} $1"; }
 warn() { echo -e "${YELLOW}>>>${NC} $1"; }
-fail() { echo -e "${RED}>>>${NC} $1"; exit 1; }
+fail() {
+  echo -e "${RED}>>>${NC} $1"
+  exit 1
+}
 
 upsert_provider() {
   local name="$1"
@@ -49,7 +52,7 @@ upsert_provider() {
     --config "$config" 2>&1 | grep -q "AlreadyExists"; then
     openshell provider update "$name" \
       --credential "$credential" \
-      --config "$config" > /dev/null
+      --config "$config" >/dev/null
     info "Updated $name provider"
   else
     info "Created $name provider"
@@ -78,8 +81,8 @@ if docker_host="$(detect_docker_host)"; then
 fi
 
 # Check prerequisites
-command -v openshell > /dev/null || fail "openshell CLI not found. Install the binary from https://github.com/NVIDIA/OpenShell/releases"
-command -v docker > /dev/null || fail "docker not found"
+command -v openshell >/dev/null || fail "openshell CLI not found. Install the binary from https://github.com/NVIDIA/OpenShell/releases"
+command -v docker >/dev/null || fail "docker not found"
 [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY not set. Get one from build.nvidia.com"
 
 CONTAINER_RUNTIME="$(infer_container_runtime_from_info "$(docker info 2>/dev/null || true)")"
@@ -92,11 +95,22 @@ fi
 SANDBOX_NAME="${1:-nemoclaw}"
 info "Using sandbox name: ${SANDBOX_NAME}"
 
+OPEN_SHELL_VERSION_RAW="$(openshell -V 2>/dev/null || true)"
+OPEN_SHELL_VERSION_LOWER="${OPEN_SHELL_VERSION_RAW,,}"
+if [[ "$OPEN_SHELL_VERSION_LOWER" =~ openshell[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+  export IMAGE_TAG="${BASH_REMATCH[1]}"
+  export OPENSHELL_CLUSTER_IMAGE="ghcr.io/nvidia/openshell/cluster:${BASH_REMATCH[1]}"
+  info "Using pinned OpenShell gateway image: ${OPENSHELL_CLUSTER_IMAGE}"
+elif [[ -n "$OPEN_SHELL_VERSION_RAW" ]]; then
+  warn "Could not parse openshell version from 'openshell -V': ${OPEN_SHELL_VERSION_RAW}"
+  warn "Skipping OpenShell gateway image pinning."
+fi
+
 # 1. Gateway — always start fresh to avoid stale state
 info "Starting OpenShell gateway..."
-openshell gateway destroy -g nemoclaw > /dev/null 2>&1 || true
+openshell gateway destroy -g nemoclaw >/dev/null 2>&1 || true
 GATEWAY_ARGS=(--name nemoclaw)
-command -v nvidia-smi > /dev/null 2>&1 && GATEWAY_ARGS+=(--gpu)
+command -v nvidia-smi >/dev/null 2>&1 && GATEWAY_ARGS+=(--gpu)
 openshell gateway start "${GATEWAY_ARGS[@]}" 2>&1 | grep -E "Gateway|✓|Error|error" || true
 
 # Verify gateway is actually healthy (may need a moment after start)
@@ -137,15 +151,15 @@ fi
 
 # 4a. Ollama (macOS local inference)
 if [ "$(uname -s)" = "Darwin" ]; then
-  if ! command -v ollama > /dev/null 2>&1; then
+  if ! command -v ollama >/dev/null 2>&1; then
     info "Installing Ollama..."
     brew install ollama 2>/dev/null || warn "Ollama install failed (brew required). Install manually: https://ollama.com"
   fi
-  if command -v ollama > /dev/null 2>&1; then
+  if command -v ollama >/dev/null 2>&1; then
     # Start Ollama service if not running
     if ! check_local_provider_health "ollama-local"; then
       info "Starting Ollama service..."
-      OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &
+      OLLAMA_HOST=0.0.0.0:11434 ollama serve >/dev/null 2>&1 &
       sleep 2
     fi
     OLLAMA_LOCAL_BASE_URL="$(get_local_provider_base_url "ollama-local")"
@@ -159,11 +173,11 @@ fi
 
 # 4b. Inference route — default to nvidia-nim
 info "Setting inference route to nvidia-nim / Nemotron 3 Super..."
-openshell inference set --no-verify --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b > /dev/null 2>&1
+openshell inference set --no-verify --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b >/dev/null 2>&1
 
 # 5. Build and create sandbox
 info "Deleting old ${SANDBOX_NAME} sandbox (if any)..."
-openshell sandbox delete "$SANDBOX_NAME" > /dev/null 2>&1 || true
+openshell sandbox delete "$SANDBOX_NAME" >/dev/null 2>&1 || true
 
 info "Building and creating NemoClaw sandbox (this takes a few minutes on first run)..."
 
@@ -173,13 +187,7 @@ cp "$REPO_DIR/Dockerfile" "$BUILD_CTX/"
 cp -r "$REPO_DIR/nemoclaw" "$BUILD_CTX/nemoclaw"
 cp -r "$REPO_DIR/nemoclaw-blueprint" "$BUILD_CTX/nemoclaw-blueprint"
 cp -r "$REPO_DIR/scripts" "$BUILD_CTX/scripts"
-rm -rf "$BUILD_CTX/nemoclaw/node_modules" "$BUILD_CTX/nemoclaw/src"
-
-# Verify nemoclaw/dist/ exists (TypeScript must be pre-built)
-if [ ! -d "$BUILD_CTX/nemoclaw/dist" ] || [ -z "$(ls -A "$BUILD_CTX/nemoclaw/dist" 2>/dev/null)" ]; then
-  rm -rf "$BUILD_CTX"
-  fail "nemoclaw/dist/ is missing or empty. Run 'cd nemoclaw && npm install && npm run build' first."
-fi
+rm -rf "$BUILD_CTX/nemoclaw/node_modules"
 
 # Capture full output to a temp file so we can filter for display but still
 # detect failures. The raw log is kept on failure for debugging.
@@ -187,7 +195,7 @@ CREATE_LOG=$(mktemp /tmp/nemoclaw-create-XXXXXX.log)
 set +e
 openshell sandbox create --from "$BUILD_CTX/Dockerfile" --name "$SANDBOX_NAME" \
   --provider nvidia-nim \
-  -- env NVIDIA_API_KEY="$NVIDIA_API_KEY" > "$CREATE_LOG" 2>&1
+  -- env NVIDIA_API_KEY="$NVIDIA_API_KEY" >"$CREATE_LOG" 2>&1
 CREATE_RC=$?
 set -e
 rm -rf "$BUILD_CTX"

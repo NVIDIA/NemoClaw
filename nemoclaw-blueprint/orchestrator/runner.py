@@ -15,15 +15,18 @@ Protocol:
 """
 
 import argparse
+import ipaddress
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -34,6 +37,68 @@ def log(msg: str) -> None:
 
 def progress(pct: int, label: str) -> None:
     print(f"PROGRESS:{pct}:{label}", flush=True)
+
+
+_PRIVATE_NETWORKS = (
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fd00::/8"),
+)
+
+_ALLOWED_SCHEMES = ("https", "http")
+
+
+def is_private_ip(addr_str: str) -> bool:
+    """Return True if *addr_str* belongs to a private/internal network."""
+    try:
+        addr = ipaddress.ip_address(addr_str)
+    except ValueError:
+        return False
+    return any(addr in net for net in _PRIVATE_NETWORKS)
+
+
+def validate_endpoint_url(url: str) -> str:
+    """Validate an endpoint URL to prevent SSRF attacks.
+
+    Only ``http`` and ``https`` schemes are allowed.  The hostname is resolved
+    via :func:`socket.getaddrinfo` and every returned address is checked
+    against private/internal IP ranges to block DNS-rebinding attacks.
+
+    Returns the *url* unchanged when valid; raises :class:`ValueError`
+    otherwise.
+    """
+    parsed = urlparse(url)
+
+    # --- scheme check ---
+    if parsed.scheme not in _ALLOWED_SCHEMES:
+        raise ValueError(
+            f"Unsupported URL scheme '{parsed.scheme}://'. "
+            f"Only {', '.join(s + '://' for s in _ALLOWED_SCHEMES)} are allowed."
+        )
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError(f"No hostname found in URL: {url}")
+
+    # --- DNS resolution & private-IP check ---
+    try:
+        addr_infos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise ValueError(f"Cannot resolve hostname '{hostname}': {exc}") from exc
+
+    for _family, _type, _proto, _canonname, sockaddr in addr_infos:
+        ip_str = str(sockaddr[0])
+        if is_private_ip(ip_str):
+            raise ValueError(
+                f"Endpoint URL resolves to private/internal address {ip_str}. "
+                "Connections to internal networks are not allowed."
+            )
+
+    return url
 
 
 def emit_run_id() -> str:
@@ -107,6 +172,7 @@ def action_plan(
 
     # Override endpoint if provided (e.g., NCP dynamic endpoint)
     if endpoint_url:
+        validate_endpoint_url(endpoint_url)
         inference_cfg = {**inference_cfg, "endpoint": endpoint_url}
 
     plan: dict[str, Any] = {
@@ -156,6 +222,7 @@ def action_apply(
 
     # Override endpoint if provided (e.g., NCP dynamic endpoint)
     if endpoint_url:
+        validate_endpoint_url(endpoint_url)
         inference_cfg = {**inference_cfg, "endpoint": endpoint_url}
 
     sandbox_cfg: dict[str, Any] = blueprint.get("components", {}).get("sandbox", {})
@@ -209,8 +276,10 @@ def action_apply(
         "--type",
         provider_type,
     ]
+    target_cred_env = "OPENAI_API_KEY"
     if credential:
-        provider_args.extend(["--credential", f"OPENAI_API_KEY={credential}"])
+        os.environ[target_cred_env] = credential
+        provider_args.extend(["--credential", target_cred_env])
     if endpoint:
         provider_args.extend(["--config", f"OPENAI_BASE_URL={endpoint}"])
 

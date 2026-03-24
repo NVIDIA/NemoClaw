@@ -36,10 +36,21 @@ body:
       required: true
 
   - type: textarea
+    id: debug-output
+    attributes:
+      label: Debug Output
+      description: |
+        Run `nemoclaw debug --output /tmp/nemoclaw-debug.tar.gz` and attach the
+        tarball, or paste the output of `nemoclaw debug --quick` below.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
     id: logs
     attributes:
       label: Logs
-      description: Relevant log output, error messages, or stack traces.
+      description: Any additional log output, error messages, or stack traces not covered by the debug output above.
       render: shell
     validations:
       required: false

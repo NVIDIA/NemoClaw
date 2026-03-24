@@ -7,8 +7,9 @@
     "nemoclaw": "./bin/nemoclaw.js"
   },
   "scripts": {
-    "test": "node --test test/*.test.js",
-    "prepublishOnly": "cd nemoclaw && npm install --ignore-scripts && npm run build"
+    "test": "vitest run",
+    "prepare": "if [ -d .git ]; then if command -v prek >/dev/null 2>&1; then prek install; elif [ -d node_modules/@j178/prek ]; then echo \"ERROR: prek package found but binary not in PATH\" && exit 1; else echo \"Skipping git hook setup (prek not installed)\"; fi; fi",
+    "prepublishOnly": "cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
   "dependencies": {
     "openclaw": "2026.3.11"
@@ -24,10 +25,17 @@
     ".dockerignore"
   ],
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/NVIDIA/NemoClaw.git"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^20.5.0",
+    "@commitlint/config-conventional": "^20.5.0",
+    "@j178/prek": "^0.3.6",
+    "@vitest/coverage-v8": "^4.1.0",
+    "vitest": "^4.1.0"
   }
 }

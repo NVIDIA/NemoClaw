@@ -20,79 +20,9 @@ status: published
 
 # Commands
 
-NemoClaw provides two command interfaces.
-The plugin commands run under the `openclaw nemoclaw` namespace inside the OpenClaw CLI.
-The standalone `nemoclaw` binary handles host-side setup, deployment, and service management.
-Both interfaces are installed when you run `npm install -g nemoclaw`.
+The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes. It is installed when you run `npm install -g nemoclaw`.
 
-## Plugin Commands
-
-### `openclaw nemoclaw launch`
-
-Bootstrap OpenClaw inside an OpenShell sandbox.
-If NemoClaw detects an existing host installation, `launch` stops unless you pass `--force`.
-
-```console
-$ openclaw nemoclaw launch [--force] [--profile <profile>]
-```
-
-`--force`
-: Skip the ergonomics warning and force plugin-driven bootstrap. Without this flag,
-  NemoClaw recommends using `openshell sandbox create` directly for new installs.
-
-`--profile <profile>`
-: Blueprint profile to use. Default: `default`.
-
-### `nemoclaw <name> connect`
-
-Open an interactive shell inside the OpenClaw sandbox.
-Use this after launch to connect and chat with the agent through the TUI or CLI.
-
-```console
-$ nemoclaw my-assistant connect
-```
-
-If the TUI view is not a good fit for very long responses, use the CLI form instead:
-
-```console
-$ openclaw agent --agent main --local -m "<prompt>" --session-id <id>
-```
-
-This is the recommended workaround when you need the full response printed directly in the terminal.
-
-### `openclaw nemoclaw status`
-
-Display sandbox health, blueprint run state, and inference configuration.
-
-```console
-$ openclaw nemoclaw status [--json]
-```
-
-`--json`
-: Output as JSON for programmatic consumption.
-
-When running inside an active OpenShell sandbox, the status command detects the sandbox context and reports "active (inside sandbox)" instead of false negatives.
-Host-side sandbox state and inference configuration are not inspectable from inside the sandbox.
-Run `openshell sandbox list` on the host to check the underlying sandbox state.
-
-### `openclaw nemoclaw logs`
-
-Stream blueprint execution and sandbox logs.
-
-```console
-$ openclaw nemoclaw logs [-f] [-n <count>] [--run-id <id>]
-```
-
-`-f, --follow`
-: Follow log output, similar to `tail -f`.
-
-`-n, --lines <count>`
-: Number of lines to show. Default: `50`.
-
-`--run-id <id>`
-: Show logs for a specific blueprint run instead of the latest.
-
-### `/nemoclaw` Slash Command
+## `/nemoclaw` Slash Command
 
 The `/nemoclaw` slash command is available inside the OpenClaw chat interface for quick actions:
 
@@ -114,7 +44,9 @@ Use this command for new installs and for recreating a sandbox after changes to 
 $ nemoclaw onboard
 ```
 
-The first run prompts for your NVIDIA API key and saves it to `~/.nemoclaw/credentials.json`.
+The wizard prompts for a provider first, then collects the provider credential if needed.
+Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
+Credentials are stored in `~/.nemoclaw/credentials.json`.
 
 The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
@@ -173,6 +105,12 @@ $ nemoclaw my-assistant logs [--follow]
 
 Stop the NIM container and delete the sandbox.
 This removes the sandbox from the registry.
+
+:::{warning}
+Destroying a sandbox permanently deletes all files inside it, including
+[workspace files](../workspace/workspace-files.md) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes).
+Back up your workspace first by following the instructions at [Back Up and Restore](../workspace/backup-restore.md).
+:::
 
 ```console
 $ nemoclaw my-assistant destroy

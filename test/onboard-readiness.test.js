@@ -1,47 +1,47 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
-
-const { buildPolicySetCommand, buildPolicyGetCommand } = require("../bin/lib/policies");
-const { hasStaleGateway, isSandboxReady } = require("../bin/lib/onboard");
+import { describe, it, expect } from "vitest";
+import { applyPreset, buildPolicySetCommand, buildPolicyGetCommand } from "../bin/lib/policies";
+import { hasStaleGateway, isSandboxReady } from "../bin/lib/onboard";
 
 describe("sandbox readiness parsing", () => {
   it("detects Ready sandbox", () => {
-    assert.ok(isSandboxReady("my-assistant   Ready   2m ago", "my-assistant"));
+    expect(isSandboxReady("my-assistant   Ready   2m ago", "my-assistant")).toBeTruthy();
   });
 
   it("rejects NotReady sandbox", () => {
-    assert.ok(!isSandboxReady("my-assistant   NotReady   init failed", "my-assistant"));
+    expect(!isSandboxReady("my-assistant   NotReady   init failed", "my-assistant")).toBeTruthy();
   });
 
   it("rejects empty output", () => {
-    assert.ok(!isSandboxReady("No sandboxes found.", "my-assistant"));
-    assert.ok(!isSandboxReady("", "my-assistant"));
+    expect(!isSandboxReady("No sandboxes found.", "my-assistant")).toBeTruthy();
+    expect(!isSandboxReady("", "my-assistant")).toBeTruthy();
   });
 
   it("strips ANSI escape codes before matching", () => {
-    assert.ok(isSandboxReady(
+    expect(isSandboxReady(
       "\x1b[1mmy-assistant\x1b[0m   \x1b[32mReady\x1b[0m   2m ago",
       "my-assistant"
-    ));
+    )).toBeTruthy();
   });
 
   it("rejects ANSI-wrapped NotReady", () => {
-    assert.ok(!isSandboxReady(
+    expect(!isSandboxReady(
       "\x1b[1mmy-assistant\x1b[0m   \x1b[31mNotReady\x1b[0m   crash",
       "my-assistant"
-    ));
+    )).toBeTruthy();
   });
 
   it("exact-matches sandbox name in first column", () => {
     // "my" should NOT match "my-assistant"
-    assert.ok(!isSandboxReady("my-assistant   Ready   2m ago", "my"));
+    expect(!isSandboxReady("my-assistant   Ready   2m ago", "my")).toBeTruthy();
   });
 
   it("does not match sandbox name in non-first column", () => {
-    assert.ok(!isSandboxReady("other-box   Ready   owned-by-my-assistant", "my-assistant"));
+    expect(
+      !isSandboxReady("other-box   Ready   owned-by-my-assistant", "my-assistant")
+    ).toBeTruthy();
   });
 
   it("handles multiple sandboxes in output", () => {
@@ -51,23 +51,27 @@ describe("sandbox readiness parsing", () => {
       "my-assistant   Ready      2m ago",
       "staging        Ready      10m ago",
     ].join("\n");
-    assert.ok(isSandboxReady(output, "my-assistant"));
-    assert.ok(!isSandboxReady(output, "dev-box")); // NotReady
-    assert.ok(isSandboxReady(output, "staging"));
-    assert.ok(!isSandboxReady(output, "prod")); // not present
+    expect(isSandboxReady(output, "my-assistant")).toBeTruthy();
+    expect(!isSandboxReady(output, "dev-box")).toBeTruthy(); // NotReady
+    expect(isSandboxReady(output, "staging")).toBeTruthy();
+    expect(!isSandboxReady(output, "prod")).toBeTruthy(); // not present
   });
 
   it("handles Ready sandbox with extra status columns", () => {
-    assert.ok(isSandboxReady("my-assistant   Ready   Running   2m ago   1/1", "my-assistant"));
+    expect(
+      isSandboxReady("my-assistant   Ready   Running   2m ago   1/1", "my-assistant")
+    ).toBeTruthy();
   });
 
   it("rejects when output only contains name in a URL or path", () => {
-    assert.ok(!isSandboxReady("Connecting to my-assistant.openshell.internal Ready", "my-assistant"));
+    expect(
+      !isSandboxReady("Connecting to my-assistant.openshell.internal Ready", "my-assistant")
+    ).toBeTruthy();
     // "my-assistant.openshell.internal" is cols[0], not "my-assistant"
   });
 
   it("handles tab-separated output", () => {
-    assert.ok(isSandboxReady("my-assistant\tReady\t2m ago", "my-assistant"));
+    expect(isSandboxReady("my-assistant\tReady\t2m ago", "my-assistant")).toBeTruthy();
   });
 });
 
@@ -76,52 +80,42 @@ describe("sandbox readiness parsing", () => {
 describe("WSL sandbox name handling", () => {
   it("buildPolicySetCommand preserves hyphenated sandbox name", () => {
     const cmd = buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-    assert.ok(cmd.includes('"my-assistant"'), `Expected quoted name in: ${cmd}`);
-    assert.ok(!cmd.includes(' my-assistant '), "Name must be quoted, not bare");
+    expect(cmd.includes("'my-assistant'")).toBeTruthy();
+    expect(!cmd.includes(' my-assistant ')).toBeTruthy();
   });
 
   it("buildPolicyGetCommand preserves hyphenated sandbox name", () => {
     const cmd = buildPolicyGetCommand("my-assistant");
-    assert.ok(cmd.includes('"my-assistant"'), `Expected quoted name in: ${cmd}`);
+    expect(cmd.includes("'my-assistant'")).toBeTruthy();
   });
 
   it("buildPolicySetCommand preserves multi-hyphen names", () => {
     const cmd = buildPolicySetCommand("/tmp/p.yaml", "my-dev-assistant-v2");
-    assert.ok(cmd.includes('"my-dev-assistant-v2"'));
+    expect(cmd.includes("'my-dev-assistant-v2'")).toBeTruthy();
   });
 
   it("buildPolicySetCommand preserves single-char name", () => {
     // If WSL truncates "my-assistant" to "m", the single-char name should
     // still be quoted and passed through unchanged
     const cmd = buildPolicySetCommand("/tmp/p.yaml", "m");
-    assert.ok(cmd.includes('"m"'));
+    expect(cmd.includes("'m'")).toBeTruthy();
   });
 
   it("applyPreset rejects truncated/invalid sandbox name", () => {
-    const policies = require("../bin/lib/policies");
     // Empty name
-    assert.throws(
-      () => policies.applyPreset("", "npm"),
-      /Invalid or truncated sandbox name/
-    );
+    expect(() => applyPreset("", "npm")).toThrow(/Invalid or truncated sandbox name/);
     // Name with uppercase (not valid per RFC 1123)
-    assert.throws(
-      () => policies.applyPreset("My-Assistant", "npm"),
-      /Invalid or truncated sandbox name/
-    );
+    expect(() => applyPreset("My-Assistant", "npm")).toThrow(/Invalid or truncated sandbox name/);
     // Name starting with hyphen
-    assert.throws(
-      () => policies.applyPreset("-broken", "npm"),
-      /Invalid or truncated sandbox name/
-    );
+    expect(() => applyPreset("-broken", "npm")).toThrow(/Invalid or truncated sandbox name/);
   });
 
   it("readiness check uses exact match preventing truncated name false-positive", () => {
     // If "my-assistant" was truncated to "m", the readiness check should
     // NOT match a sandbox named "my-assistant" when searching for "m"
-    assert.ok(!isSandboxReady("my-assistant   Ready   2m ago", "m"));
-    assert.ok(!isSandboxReady("my-assistant   Ready   2m ago", "my"));
-    assert.ok(!isSandboxReady("my-assistant   Ready   2m ago", "my-"));
+    expect(!isSandboxReady("my-assistant   Ready   2m ago", "m")).toBeTruthy();
+    expect(!isSandboxReady("my-assistant   Ready   2m ago", "my")).toBeTruthy();
+    expect(!isSandboxReady("my-assistant   Ready   2m ago", "my-")).toBeTruthy();
   });
 });
 
@@ -137,7 +131,7 @@ describe("stale gateway detection", () => {
       "  Gateway: nemoclaw",
       "  Gateway endpoint: https://127.0.0.1:8080",
     ].join("\n");
-    assert.ok(hasStaleGateway(output));
+    expect(hasStaleGateway(output)).toBeTruthy();
   });
 
   it("detects gateway from ANSI-colored output", () => {
@@ -145,21 +139,21 @@ describe("stale gateway detection", () => {
       "\x1b[1m\x1b[36mGateway Info\x1b[39m\x1b[0m\n\n" +
       "  \x1b[2mGateway:\x1b[0m nemoclaw\n" +
       "  \x1b[2mGateway endpoint:\x1b[0m https://127.0.0.1:8080";
-    assert.ok(hasStaleGateway(output));
+    expect(hasStaleGateway(output)).toBeTruthy();
   });
 
   it("returns false for empty string (no gateway running)", () => {
-    assert.ok(!hasStaleGateway(""));
+    expect(!hasStaleGateway("")).toBeTruthy();
   });
 
   it("returns false for null/undefined", () => {
-    assert.ok(!hasStaleGateway(null));
-    assert.ok(!hasStaleGateway(undefined));
+    expect(!hasStaleGateway(null)).toBeTruthy();
+    expect(!hasStaleGateway(undefined)).toBeTruthy();
   });
 
   it("returns false for error output without gateway name", () => {
-    assert.ok(!hasStaleGateway("Error: no gateway found"));
-    assert.ok(!hasStaleGateway("connection refused"));
+    expect(!hasStaleGateway("Error: no gateway found")).toBeTruthy();
+    expect(!hasStaleGateway("connection refused")).toBeTruthy();
   });
 
   it("returns false for a different gateway name", () => {
@@ -170,6 +164,6 @@ describe("stale gateway detection", () => {
       "  Gateway: my-other-gateway",
       "  Gateway endpoint: https://127.0.0.1:8080",
     ].join("\n");
-    assert.ok(!hasStaleGateway(output));
+    expect(!hasStaleGateway(output)).toBeTruthy();
   });
 });
