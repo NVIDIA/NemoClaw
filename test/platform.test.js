@@ -36,14 +36,13 @@ describe("platform helpers", () => {
   describe("getPodmanSocketCandidates", () => {
     it("returns macOS Podman socket paths", () => {
       const home = "/tmp/test-home";
-      assert.deepEqual(getPodmanSocketCandidates({ platform: "darwin", home }), [
+      expect(getPodmanSocketCandidates({ platform: "darwin", home })).toEqual([
         path.join(home, ".local/share/containers/podman/machine/podman.sock"),
-        "/var/run/docker.sock",
       ]);
     });
 
     it("returns Linux Podman socket paths with uid", () => {
-      assert.deepEqual(getPodmanSocketCandidates({ platform: "linux", home: "/tmp/test-home", uid: 1001 }), [
+      expect(getPodmanSocketCandidates({ platform: "linux", home: "/tmp/test-home", uid: 1001 })).toEqual([
         "/run/user/1001/podman/podman.sock",
         "/run/podman/podman.sock",
       ]);
@@ -57,7 +56,6 @@ describe("platform helpers", () => {
         path.join(home, ".colima/default/docker.sock"),
         path.join(home, ".config/colima/default/docker.sock"),
         path.join(home, ".local/share/containers/podman/machine/podman.sock"),
-        "/var/run/docker.sock",
         path.join(home, ".docker/run/docker.sock"),
       ]);
     });

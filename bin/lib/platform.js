@@ -55,7 +55,6 @@ function getPodmanSocketCandidates(opts = {}) {
   if (platform === "darwin") {
     return [
       path.join(home, ".local/share/containers/podman/machine/podman.sock"),
-      "/var/run/docker.sock",
     ];
   }
 

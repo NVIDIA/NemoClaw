@@ -118,8 +118,7 @@ find_podman_socket() {
 
   if [ "$(uname -s)" = "Darwin" ]; then
     for socket_path in \
-      "$home_dir/.local/share/containers/podman/machine/podman.sock" \
-      "/var/run/docker.sock"
+      "$home_dir/.local/share/containers/podman/machine/podman.sock"
     do
       if socket_exists "$socket_path"; then
         printf '%s\n' "$socket_path"
