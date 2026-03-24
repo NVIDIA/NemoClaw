@@ -1,3 +1,23 @@
+---
+title:
+  page: "Sandbox Image Hardening"
+  nav: "Sandbox Hardening"
+description: "Security hardening measures applied to the NemoClaw sandbox container image."
+keywords: ["nemoclaw sandbox hardening", "container security", "docker capabilities", "process limits"]
+topics: ["generative_ai", "ai_agents"]
+tags: ["nemoclaw", "sandboxing", "security"]
+content:
+  type: reference
+  difficulty: technical_beginner
+  audience: ["developer", "engineer"]
+status: published
+---
+
+<!--
+  SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-License-Identifier: Apache-2.0
+-->
+
 # Sandbox Image Hardening
 
 The NemoClaw sandbox image applies several security measures to reduce attack
@@ -27,11 +47,11 @@ Adjust the value via the `--ulimit nproc=512:512` flag if launching with
 When running the sandbox container, drop all Linux capabilities and re-add only
 what is strictly required:
 
-```bash
-docker run --rm \
-  --cap-drop=ALL \
-  --ulimit nproc=512:512 \
-  nemoclaw-sandbox
+```console
+$ docker run --rm \
+    --cap-drop=ALL \
+    --ulimit nproc=512:512 \
+    nemoclaw-sandbox
 ```
 
 ### Docker Compose Example

@@ -22,8 +22,8 @@ RUN npm install && npm run build
 FROM ${BASE_IMAGE}
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
-RUN apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
-        netcat-openbsd netcat-traditional ncat 2>/dev/null || true \
+RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
+        netcat-openbsd netcat-traditional ncat 2>/dev/null || true) \
     && apt-get autoremove --purge -y \
     && rm -rf /var/lib/apt/lists/*
 
