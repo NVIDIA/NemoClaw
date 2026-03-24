@@ -12,7 +12,11 @@
 
 import type { PluginCommandContext, PluginCommandResult, OpenClawPluginApi } from "../index.js";
 import { loadState } from "../blueprint/state.js";
-import { loadOnboardConfig } from "../onboard/config.js";
+import {
+  describeOnboardEndpoint,
+  describeOnboardProvider,
+  loadOnboardConfig,
+} from "../onboard/config.js";
 
 export function handleSlashCommand(
   ctx: PluginCommandContext,
@@ -87,7 +91,8 @@ function slashOnboard(): PluginCommandResult {
       text: [
         "**NemoClaw Onboard Status**",
         "",
-        `Endpoint: ${config.endpointType} (${config.endpointUrl})`,
+        `Endpoint: ${describeOnboardEndpoint(config)}`,
+        `Provider: ${describeOnboardProvider(config)}`,
         config.ncpPartner ? `NCP Partner: ${config.ncpPartner}` : null,
         `Model: ${config.model}`,
         `Credential: $${config.credentialEnv}`,

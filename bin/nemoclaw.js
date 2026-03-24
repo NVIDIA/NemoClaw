@@ -7,7 +7,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
-const { ROOT, SCRIPTS, run, runCapture } = require("./lib/runner");
+const { ROOT, SCRIPTS, run, runCapture, runInteractive } = require("./lib/runner");
 const {
   ensureApiKey,
   ensureGithubToken,
@@ -22,15 +22,57 @@ const policies = require("./lib/policies");
 
 const GLOBAL_COMMANDS = new Set([
   "onboard", "list", "deploy", "setup", "setup-spark",
-  "start", "stop", "status",
+  "start", "stop", "status", "uninstall",
   "help", "--help", "-h",
 ]);
 
+const REMOTE_UNINSTALL_URL = "https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh";
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function resolveUninstallScript() {
+  const candidates = [
+    path.join(ROOT, "uninstall.sh"),
+    path.join(__dirname, "..", "uninstall.sh"),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function exitWithSpawnResult(result) {
+  if (result.status !== null) {
+    process.exit(result.status);
+  }
+
+  if (result.signal) {
+    const signalNumber = os.constants.signals[result.signal];
+    process.exit(signalNumber ? 128 + signalNumber : 1);
+  }
+
+  process.exit(1);
+}
+
 // ── Commands ─────────────────────────────────────────────────────
 
-async function onboard() {
+async function onboard(args) {
   const { onboard: runOnboard } = require("./lib/onboard");
-  await runOnboard();
+  const allowedArgs = new Set(["--non-interactive"]);
+  const unknownArgs = args.filter((arg) => !allowedArgs.has(arg));
+  if (unknownArgs.length > 0) {
+    console.error(`  Unknown onboard option(s): ${unknownArgs.join(", ")}`);
+    console.error("  Usage: nemoclaw onboard [--non-interactive]");
+    process.exit(1);
+  }
+  const nonInteractive = args.includes("--non-interactive");
+  await runOnboard({ nonInteractive });
 }
 
 async function setup() {
@@ -39,7 +81,9 @@ async function setup() {
   console.log("     Running legacy setup.sh for backwards compatibility...");
   console.log("");
   await ensureApiKey();
-  run(`bash "${SCRIPTS}/setup.sh"`);
+  const { defaultSandbox } = registry.listSandboxes();
+  const safeName = defaultSandbox && /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(defaultSandbox) ? defaultSandbox : "";
+  run(`bash "${SCRIPTS}/setup.sh" ${safeName}`);
 }
 
 async function setupSpark() {
@@ -119,7 +163,7 @@ async function deploy(instanceName) {
   fs.unlinkSync(envTmp);
 
   console.log("  Running setup...");
-  run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh'`);
+  runInteractive(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh'`);
 
   if (tgToken) {
     console.log("  Starting services...");
@@ -129,16 +173,44 @@ async function deploy(instanceName) {
   console.log("");
   console.log("  Connecting to sandbox...");
   console.log("");
-  run(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw'`);
+  runInteractive(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${name} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell sandbox connect nemoclaw'`);
 }
 
 async function start() {
   await ensureApiKey();
-  run(`bash "${SCRIPTS}/start-services.sh"`);
+  const { defaultSandbox } = registry.listSandboxes();
+  const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
+  const sandboxEnv = safeName ? `SANDBOX_NAME="${safeName}"` : "";
+  run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh"`);
 }
 
 function stop() {
   run(`bash "${SCRIPTS}/start-services.sh" --stop`);
+}
+
+function uninstall(args) {
+  const localScript = resolveUninstallScript();
+  if (localScript) {
+    console.log(`  Running local uninstall script: ${localScript}`);
+    const result = spawnSync("bash", [localScript, ...args], {
+      stdio: "inherit",
+      cwd: ROOT,
+      env: process.env,
+    });
+    exitWithSpawnResult(result);
+  }
+
+  console.log(`  Local uninstall script not found; falling back to ${REMOTE_UNINSTALL_URL}`);
+  const forwardedArgs = args.map(shellQuote).join(" ");
+  const command = forwardedArgs.length > 0
+    ? `curl -fsSL ${shellQuote(REMOTE_UNINSTALL_URL)} | bash -s -- ${forwardedArgs}`
+    : `curl -fsSL ${shellQuote(REMOTE_UNINSTALL_URL)} | bash`;
+  const result = spawnSync("bash", ["-c", command], {
+    stdio: "inherit",
+    cwd: ROOT,
+    env: process.env,
+  });
+  exitWithSpawnResult(result);
 }
 
 function showStatus() {
@@ -189,7 +261,7 @@ function listSandboxes() {
 function sandboxConnect(sandboxName) {
   // Ensure port forward is alive before connecting
   run(`openshell forward start --background 18789 "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
-  run(`openshell sandbox connect "${sandboxName}"`);
+  runInteractive(`openshell sandbox connect "${sandboxName}"`);
 }
 
 function sandboxStatus(sandboxName) {
@@ -216,8 +288,8 @@ function sandboxStatus(sandboxName) {
 }
 
 function sandboxLogs(sandboxName, follow) {
-  const followFlag = follow ? " --follow" : "";
-  run(`openshell sandbox logs "${sandboxName}"${followFlag}`);
+  const followFlag = follow ? " --tail" : "";
+  run(`openshell logs "${sandboxName}"${followFlag}`);
 }
 
 async function sandboxPolicyAdd(sandboxName) {
@@ -295,6 +367,12 @@ function help() {
     nemoclaw start                   Start services (Telegram, tunnel)
     nemoclaw stop                    Stop all services
     nemoclaw status                  Show sandbox list and service status
+    nemoclaw uninstall [flags]       Run uninstall.sh (local first, curl fallback)
+
+  Uninstall flags:
+    --yes                            Skip the confirmation prompt
+    --keep-openshell                 Leave the openshell binary installed
+    --delete-models                  Remove NemoClaw-pulled Ollama models
 
   Credentials are prompted on first use, then saved securely
   in ~/.nemoclaw/credentials.json (mode 600).
@@ -315,13 +393,14 @@ const [cmd, ...args] = process.argv.slice(2);
   // Global commands
   if (GLOBAL_COMMANDS.has(cmd)) {
     switch (cmd) {
-      case "onboard":     await onboard(); break;
+      case "onboard":     await onboard(args); break;
       case "setup":       await setup(); break;
       case "setup-spark": await setupSpark(); break;
       case "deploy":      await deploy(args[0]); break;
       case "start":       await start(); break;
       case "stop":        stop(); break;
       case "status":      showStatus(); break;
+      case "uninstall":   uninstall(args); break;
       case "list":        listSandboxes(); break;
       default:            help(); break;
     }
