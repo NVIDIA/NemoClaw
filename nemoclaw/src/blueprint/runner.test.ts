@@ -529,7 +529,7 @@ describe("runner", () => {
     it("parses plan with --profile and --dry-run", async () => {
       await main(["plan", "--profile", "default", "--dry-run"]);
       const out = stdoutText();
-      expect(out).toContain("PROGRESS:10:Validating blueprint");
+      expect(out).toContain('"dry_run": true');
     });
 
     it("parses rollback with --run-id", async () => {
@@ -575,7 +575,8 @@ describe("runner", () => {
         "https://ep.test",
       ]);
       const out = stdoutText();
-      expect(out).toContain("PROGRESS:100:Plan complete");
+      expect(out).toContain('"dry_run": true');
+      expect(out).toContain('"endpoint": "https://ep.test"');
       expect(mockedValidateEndpoint).toHaveBeenCalledWith("https://ep.test");
     });
   });

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // ── In-memory filesystem ────────────────────────────────────────
 
@@ -107,6 +107,10 @@ describe("snapshot", () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   describe("createSnapshot", () => {
     it("returns null when ~/.openclaw does not exist", () => {
       expect(createSnapshot()).toBeNull();
@@ -207,12 +211,15 @@ describe("snapshot", () => {
       expect(rollbackFromSnapshot("/snap/20260323")).toBe(false);
     });
 
-    it("restores snapshot to ~/.openclaw", () => {
+    it("restores snapshot to ~/.openclaw with content", () => {
       addDir("/snap/20260323/openclaw");
       addFile("/snap/20260323/openclaw/openclaw.json", '{"restored":true}');
 
       expect(rollbackFromSnapshot("/snap/20260323")).toBe(true);
-      expect(store.has(OPENCLAW_DIR)).toBe(true);
+
+      const restored = store.get(`${OPENCLAW_DIR}/openclaw.json`);
+      if (!restored) throw new Error("openclaw.json not restored");
+      expect(restored.content).toBe('{"restored":true}');
     });
 
     it("archives existing ~/.openclaw before restoring", () => {
