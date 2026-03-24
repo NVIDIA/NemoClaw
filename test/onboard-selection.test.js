@@ -84,4 +84,79 @@ const { setupNim } = require(${onboardPath});
     ).toBeTruthy();
     expect(payload.lines.some((line) => line.includes("Cloud models:"))).toBeTruthy();
   });
+
+  it("shows '(no models pulled)' and keeps cloud '(recommended)' when Ollama is running but has no models", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-nomodels-"));
+    const scriptPath = path.join(tmpDir, "no-models-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+
+let promptCalls = 0;
+const messages = [];
+const updates = [];
+
+credentials.prompt = async (message) => {
+  promptCalls += 1;
+  messages.push(message);
+  return "";
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [] });
+  if (command.includes("ollama list")) return "";
+  if (command.includes("localhost:8000/v1/models")) return "";
+  return "";
+};
+registry.updateSandbox = (_name, update) => updates.push(update);
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim("no-models-test", null);
+    originalLog(JSON.stringify({ result, promptCalls, messages, updates, lines }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).not.toBe("");
+    const payload = JSON.parse(result.stdout.trim());
+    expect(payload.result.provider).toBe("nvidia-nim");
+    expect(
+      payload.lines.some((line) => line.includes("(recommended)"))
+    ).toBeTruthy();
+    expect(
+      payload.lines.some((line) => line.includes("no models pulled"))
+    ).toBeTruthy();
+    expect(
+      payload.lines.every((line) => !line.includes("(suggested)"))
+    ).toBeTruthy();
+  });
 });

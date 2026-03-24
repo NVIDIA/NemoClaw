@@ -11,10 +11,12 @@ const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
 const {
+  DEFAULT_OLLAMA_MODEL,
   getDefaultOllamaModel,
   getLocalProviderBaseUrl,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
+  hasOllamaModels,
   validateOllamaModel,
   validateLocalProvider,
 } = require("./local-inference");
@@ -211,20 +213,38 @@ async function promptCloudModel() {
 }
 
 async function promptOllamaModel() {
-  const options = getOllamaModelOptions(runCapture);
-  const defaultModel = getDefaultOllamaModel(runCapture);
-  const defaultIndex = Math.max(0, options.indexOf(defaultModel));
+  const installed = getOllamaModelOptions(runCapture);
+
+  if (installed.length === 0) {
+    console.log("");
+    console.log("  No local Ollama models found. A model must be pulled first.");
+    console.log("");
+    console.log("  Ollama models:");
+    console.log(`    1) ${DEFAULT_OLLAMA_MODEL}`);
+    console.log("");
+    const choice = await prompt("  Pull and use this model? [Y/n]: ");
+    if (choice && choice.toLowerCase() === "n") {
+      console.error("  Cannot continue without a model. Run 'ollama pull <model>' and try again.");
+      process.exit(1);
+    }
+    console.log(`  Pulling ${DEFAULT_OLLAMA_MODEL} (this may take a while)...`);
+    run(`ollama pull ${shellQuote(DEFAULT_OLLAMA_MODEL)}`);
+    return DEFAULT_OLLAMA_MODEL;
+  }
+
+  const defaultModel = installed.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : installed[0];
+  const defaultIndex = Math.max(0, installed.indexOf(defaultModel));
 
   console.log("");
   console.log("  Ollama models:");
-  options.forEach((option, index) => {
+  installed.forEach((option, index) => {
     console.log(`    ${index + 1}) ${option}`);
   });
   console.log("");
 
   const choice = await prompt(`  Choose model [${defaultIndex + 1}]: `);
   const index = parseInt(choice || String(defaultIndex + 1), 10) - 1;
-  return options[index] || options[defaultIndex] || defaultModel;
+  return installed[index] || installed[defaultIndex] || defaultModel;
 }
 
 function isDockerRunning() {
@@ -650,7 +670,9 @@ async function setupNim(sandboxName, gpu) {
 
   // Detect local inference options
   const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
-  const ollamaRunning = !!runCapture("curl -sf http://localhost:11434/api/tags 2>/dev/null", { ignoreError: true });
+  const ollamaTagsResponse = runCapture("curl -sf http://localhost:11434/api/tags 2>/dev/null", { ignoreError: true });
+  const ollamaRunning = !!ollamaTagsResponse;
+  const ollamaHasModels = ollamaRunning && hasOllamaModels(ollamaTagsResponse);
   const vllmRunning = !!runCapture("curl -sf http://localhost:8000/v1/models 2>/dev/null", { ignoreError: true });
   const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
   const requestedModel = isNonInteractive() ? getNonInteractiveModel(requestedProvider || "cloud") : null;
@@ -663,14 +685,15 @@ async function setupNim(sandboxName, gpu) {
     key: "cloud",
     label:
       "NVIDIA Endpoint API (build.nvidia.com)" +
-      (!ollamaRunning && !(EXPERIMENTAL && vllmRunning) ? " (recommended)" : ""),
+      (!ollamaHasModels && !(EXPERIMENTAL && vllmRunning) ? " (recommended)" : ""),
   });
   if (hasOllama || ollamaRunning) {
     options.push({
       key: "ollama",
       label:
         `Local Ollama (localhost:11434)${ollamaRunning ? " — running" : ""}` +
-        (ollamaRunning ? " (suggested)" : ""),
+        (ollamaRunning && !ollamaHasModels ? " (no models pulled)" : "") +
+        (ollamaHasModels ? " (suggested)" : ""),
     });
   }
   if (EXPERIMENTAL && vllmRunning) {

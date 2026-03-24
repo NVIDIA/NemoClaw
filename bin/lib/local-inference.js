@@ -104,15 +104,12 @@ function parseOllamaList(output) {
 
 function getOllamaModelOptions(runCapture) {
   const output = runCapture("ollama list 2>/dev/null", { ignoreError: true });
-  const parsed = parseOllamaList(output);
-  if (parsed.length > 0) {
-    return parsed;
-  }
-  return [DEFAULT_OLLAMA_MODEL];
+  return parseOllamaList(output);
 }
 
 function getDefaultOllamaModel(runCapture) {
   const models = getOllamaModelOptions(runCapture);
+  if (models.length === 0) return DEFAULT_OLLAMA_MODEL;
   return models.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : models[0];
 }
 
@@ -134,6 +131,15 @@ function getOllamaProbeCommand(model, timeoutSeconds = 120, keepAlive = "15m") {
     keep_alive: keepAlive,
   });
   return `curl -sS --max-time ${timeoutSeconds} http://localhost:11434/api/generate -H 'Content-Type: application/json' -d ${shellQuote(payload)} 2>/dev/null`;
+}
+
+function hasOllamaModels(tagsOutput) {
+  try {
+    const data = JSON.parse(tagsOutput);
+    return Array.isArray(data.models) && data.models.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function validateOllamaModel(model, runCapture) {
@@ -171,6 +177,7 @@ module.exports = {
   getOllamaModelOptions,
   getOllamaProbeCommand,
   getOllamaWarmupCommand,
+  hasOllamaModels,
   parseOllamaList,
   validateOllamaModel,
   validateLocalProvider,

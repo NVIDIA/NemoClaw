@@ -13,6 +13,7 @@ import {
   getOllamaModelOptions,
   getOllamaProbeCommand,
   getOllamaWarmupCommand,
+  hasOllamaModels,
   parseOllamaList,
   validateOllamaModel,
   validateLocalProvider,
@@ -86,8 +87,8 @@ describe("local inference helpers", () => {
     ).toEqual(["nemotron-3-nano:30b", "qwen3:32b"]);
   });
 
-  it("falls back to the default ollama model when list output is empty", () => {
-    expect(getOllamaModelOptions(() => "")).toEqual([DEFAULT_OLLAMA_MODEL]);
+  it("returns an empty array when no ollama models are installed", () => {
+    expect(getOllamaModelOptions(() => "")).toEqual([]);
   });
 
   it("prefers the default ollama model when present", () => {
@@ -136,5 +137,23 @@ describe("local inference helpers", () => {
       () => JSON.stringify({ model: "nemotron-3-nano:30b", response: "hello", done: true }),
     );
     expect(result).toEqual({ ok: true });
+  });
+
+  it("detects models present in /api/tags response", () => {
+    expect(hasOllamaModels(JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] }))).toBe(true);
+  });
+
+  it("returns false when /api/tags response has an empty models array", () => {
+    expect(hasOllamaModels(JSON.stringify({ models: [] }))).toBe(false);
+  });
+
+  it("returns false when /api/tags response is not valid JSON", () => {
+    expect(hasOllamaModels("not json")).toBe(false);
+  });
+
+  it("returns false when /api/tags response is empty", () => {
+    expect(hasOllamaModels("")).toBe(false);
+    expect(hasOllamaModels(null)).toBe(false);
+    expect(hasOllamaModels(undefined)).toBe(false);
   });
 });
