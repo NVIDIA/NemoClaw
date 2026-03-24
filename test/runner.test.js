@@ -210,17 +210,26 @@ describe("runner helpers", () => {
       expect(body).not.toMatch(/spawnSync\s*\(\s*"bash"\s*,\s*\[\s*"-c"/);
       expect(body).not.toMatch(/shell\s*:\s*true/);
       expect(body).not.toMatch(/\brun(?:Capture|Interactive)?\s*\(/);
-      // Should use spawnSync with array args targeting openshell directly
-      expect(body).toMatch(/spawnSync\s*\(\s*"openshell"/);
+      // Should use spawnSync with array args passing sandboxName as a discrete element
+      expect(body).toMatch(/spawnSync\s*\(\s*"openshell"\s*,\s*\[/);
+      expect(body).toMatch(/sandboxName/);
     });
 
     it("sandboxStatus rejects shell metacharacters in sandbox name (e2e)", () => {
+      // Seed a registry entry so the CLI reaches sandboxStatus()
+      // (without a matching sandbox, the CLI exits at the lookup before our code path)
+      const registryPath = path.join(import.meta.dirname, "..", "bin", "lib", "registry");
+      const { registerSandbox, removeSandbox } = require(registryPath);
+      const fakeName = "canary-test-sb";
+      registerSandbox(fakeName, { model: "test", provider: "test" });
+
       const canaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-status-canary-"));
       const canary = path.join(canaryDir, "executed");
       try {
+        // Even with a valid sandbox, metacharacters in argv must not execute
         const result = spawnSync("node", [
           path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
-          `test; touch ${canary}`,
+          `${fakeName}; touch ${canary}`,
           "status",
         ], {
           encoding: "utf-8",
@@ -231,6 +240,7 @@ describe("runner helpers", () => {
         expect(fs.existsSync(canary)).toBe(false);
       } finally {
         fs.rmSync(canaryDir, { recursive: true, force: true });
+        removeSandbox(fakeName);
       }
     });
 
