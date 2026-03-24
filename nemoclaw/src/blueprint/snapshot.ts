@@ -115,13 +115,23 @@ export function rollbackFromSnapshot(snapshotDir: string): boolean {
     return false;
   }
 
-  if (existsSync(OPENCLAW_DIR)) {
-    const archivePath = join(HOME, `.openclaw.nemoclaw-archived.${compactTimestamp()}`);
-    renameSync(OPENCLAW_DIR, archivePath);
-  }
+  const archivePath = existsSync(OPENCLAW_DIR)
+    ? join(HOME, `.openclaw.nemoclaw-archived.${compactTimestamp()}`)
+    : null;
 
-  cpSync(source, OPENCLAW_DIR, { recursive: true });
-  return true;
+  try {
+    if (archivePath !== null) {
+      renameSync(OPENCLAW_DIR, archivePath);
+    }
+    cpSync(source, OPENCLAW_DIR, { recursive: true });
+    return true;
+  } catch {
+    // Restore archived config if copy failed so the host isn't left without .openclaw
+    if (archivePath !== null && existsSync(archivePath) && !existsSync(OPENCLAW_DIR)) {
+      renameSync(archivePath, OPENCLAW_DIR);
+    }
+    return false;
+  }
 }
 
 // Named BlueprintSnapshotManifest to avoid collision with migration-state.ts SnapshotManifest
@@ -146,13 +156,19 @@ export function listSnapshots(): BlueprintSnapshotManifest[] {
     if (!entry.isDirectory()) continue;
     const snapDir = join(SNAPSHOTS_DIR, entry.name);
     try {
-      const manifest = JSON.parse(readFileSync(join(snapDir, "snapshot.json"), "utf-8")) as Omit<
-        BlueprintSnapshotManifest,
-        "path"
-      >;
-      snapshots.push({ ...manifest, path: snapDir });
+      const raw: unknown = JSON.parse(readFileSync(join(snapDir, "snapshot.json"), "utf-8"));
+      if (typeof raw !== "object" || raw === null) continue;
+      const obj = raw as Record<string, unknown>;
+      if (typeof obj.timestamp !== "string") continue;
+      snapshots.push({
+        timestamp: obj.timestamp,
+        source: typeof obj.source === "string" ? obj.source : "",
+        file_count: typeof obj.file_count === "number" ? obj.file_count : 0,
+        contents: Array.isArray(obj.contents) ? (obj.contents as string[]) : [],
+        path: snapDir,
+      });
     } catch {
-      // Skip snapshots with missing or corrupt manifests
+      // Skip snapshots with missing or unreadable manifests
     }
   }
 

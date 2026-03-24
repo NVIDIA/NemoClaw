@@ -383,22 +383,27 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   let dryRun = false;
   let endpointUrl: string | undefined;
 
+  function requireValue(flag: string, i: number): string {
+    if (i >= argv.length) throw new Error(`${flag} requires a value`);
+    return argv[i];
+  }
+
   for (let i = 1; i < argv.length; i++) {
     switch (argv[i]) {
       case "--profile":
-        profile = argv[++i];
+        profile = requireValue("--profile", ++i);
         break;
       case "--plan":
-        planPath = argv[++i];
+        planPath = requireValue("--plan", ++i);
         break;
       case "--run-id":
-        runId = argv[++i];
+        runId = requireValue("--run-id", ++i);
         break;
       case "--dry-run":
         dryRun = true;
         break;
       case "--endpoint-url":
-        endpointUrl = argv[++i];
+        endpointUrl = requireValue("--endpoint-url", ++i);
         break;
     }
   }

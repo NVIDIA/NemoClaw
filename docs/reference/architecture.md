@@ -59,7 +59,11 @@ nemoclaw-blueprint/
 ├── blueprint.yaml                  Manifest — version, profiles, compatibility
 ├── policies/
 │   └── openclaw-sandbox.yaml       Default network + filesystem policy
+```
 
+The blueprint runtime (TypeScript) lives in the plugin source tree:
+
+```text
 nemoclaw/src/blueprint/
 ├── runner.ts                       CLI runner — plan / apply / status / rollback
 ├── ssrf.ts                         SSRF endpoint validation (IP + DNS checks)

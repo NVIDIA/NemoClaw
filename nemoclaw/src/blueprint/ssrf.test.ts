@@ -31,6 +31,10 @@ describe("isPrivateIp", () => {
     "::1",
     "fd00::1",
     "fdff::1",
+    "::ffff:127.0.0.1", // IPv4-mapped IPv6 — localhost
+    "::ffff:10.0.0.1", // IPv4-mapped IPv6 — private 10/8
+    "::ffff:192.168.1.1", // IPv4-mapped IPv6 — private 192.168/16
+    "::ffff:172.16.0.1", // IPv4-mapped IPv6 — private 172.16/12
   ])("detects private IP: %s", (ip) => {
     expect(isPrivateIp(ip)).toBe(true);
   });
@@ -41,6 +45,7 @@ describe("isPrivateIp", () => {
     "203.0.113.1",
     "2607:f8b0:4004:800::200e",
     "2607:f8b0:4004:0800:0000:0000:0000:200e", // fully-expanded IPv6 (no ::)
+    "::ffff:8.8.8.8", // IPv4-mapped IPv6 — public
   ])("allows public IP: %s", (ip) => {
     expect(isPrivateIp(ip)).toBe(false);
   });

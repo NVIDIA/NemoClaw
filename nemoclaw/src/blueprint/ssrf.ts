@@ -27,6 +27,17 @@ function parseIPv4(addr: string): Uint8Array {
 }
 
 function parseIPv6(addr: string): Uint8Array {
+  // Handle IPv4-mapped notation (e.g., ::ffff:127.0.0.1)
+  const lastColon = addr.lastIndexOf(":");
+  const tail = addr.slice(lastColon + 1);
+  if (tail.includes(".")) {
+    // Mixed notation: replace the IPv4 tail with two hex groups
+    const ipv4Parts = tail.split(".").map(Number);
+    const hi = ((ipv4Parts[0] << 8) | ipv4Parts[1]).toString(16);
+    const lo = ((ipv4Parts[2] << 8) | ipv4Parts[3]).toString(16);
+    return parseIPv6(addr.slice(0, lastColon + 1) + hi + ":" + lo);
+  }
+
   // Expand :: notation to full 8 groups
   let groups: string[];
   if (addr.includes("::")) {
@@ -74,18 +85,33 @@ function ipInCidr(ipBytes: Uint8Array, range: CidrRange): boolean {
   return true;
 }
 
-export function isPrivateIp(addr: string): boolean {
-  let ipBytes: Uint8Array;
+function isIPv4Mapped(bytes: Uint8Array): boolean {
+  // ::ffff:x.x.x.x — first 10 bytes zero, bytes 10-11 are 0xff
+  return (
+    bytes.length === 16 &&
+    bytes[10] === 0xff &&
+    bytes[11] === 0xff &&
+    bytes.slice(0, 10).every((b) => b === 0)
+  );
+}
 
+export function isPrivateIp(addr: string): boolean {
   if (isIPv4(addr)) {
-    ipBytes = parseIPv4(addr);
-  } else if (isIPv6(addr)) {
-    ipBytes = parseIPv6(addr);
-  } else {
-    return false;
+    const ipBytes = parseIPv4(addr);
+    return PRIVATE_NETWORKS.some((range) => ipInCidr(ipBytes, range));
   }
 
-  return PRIVATE_NETWORKS.some((range) => ipInCidr(ipBytes, range));
+  if (isIPv6(addr)) {
+    const ipBytes = parseIPv6(addr);
+    // IPv4-mapped IPv6 (::ffff:x.x.x.x) — extract the embedded IPv4 and check against IPv4 ranges
+    if (isIPv4Mapped(ipBytes)) {
+      const ipv4Bytes = ipBytes.slice(12);
+      return PRIVATE_NETWORKS.some((range) => ipInCidr(ipv4Bytes, range));
+    }
+    return PRIVATE_NETWORKS.some((range) => ipInCidr(ipBytes, range));
+  }
+
+  return false;
 }
 
 export async function validateEndpointUrl(url: string): Promise<string> {
