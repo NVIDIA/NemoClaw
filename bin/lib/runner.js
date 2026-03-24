@@ -24,7 +24,7 @@ function redactSecrets(str) {
     "SLACK_BOT_TOKEN",
     "DISCORD_BOT_TOKEN",
   ];
-  let result = str;
+  let result = String(str ?? "");
   for (const key of keyedSecrets) {
     // Match KEY="quoted" or KEY='quoted' or KEY=unquoted
     const pattern = new RegExp(`${key}=(?:"[^"]*"|'[^']*'|[^\\s"']*)`, "g");

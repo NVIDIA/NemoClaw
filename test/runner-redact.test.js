@@ -84,6 +84,11 @@ describe("redactSecrets", () => {
     expect(redactSecrets("")).toBe("");
   });
 
+  it("handles null and undefined without throwing", () => {
+    expect(redactSecrets(null)).toBe("");
+    expect(redactSecrets(undefined)).toBe("");
+  });
+
   it("produces identical results on consecutive calls", () => {
     const input = "NVIDIA_API_KEY=nvapi-test123";
     const r1 = redactSecrets(input);
