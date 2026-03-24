@@ -2,8 +2,12 @@
 # Our info/warn/ok/error helpers and banner intentionally embed ANSI color
 # variables in printf format strings. This is safe because the variables
 # contain only escape sequences, never user input.
-#
-# SC1091: Not following sourced file.
-# We dynamically source nvm.sh and runtime.sh at paths that shellcheck
-# cannot resolve statically.
-disable=SC2059,SC1091
+disable=SC2059
+
+# Allow shellcheck to follow source directives (e.g. `. "$DIR/lib/runtime.sh"`).
+# This replaces the SC1091 suppression with proper source resolution.
+external-sources=true
+
+# Resolve source-path hints relative to the script's own directory,
+# matching the runtime behavior of `SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"`.
+source-path=SCRIPTDIR

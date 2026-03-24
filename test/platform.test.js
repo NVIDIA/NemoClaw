@@ -8,8 +8,8 @@ import {
   detectDockerHost,
   findColimaDockerSocket,
   getDockerSocketCandidates,
+  getPodmanSocketCandidates,
   inferContainerRuntime,
-  isUnsupportedMacosRuntime,
   isWsl,
   shouldPatchCoredns,
 } from "../bin/lib/platform";
@@ -33,18 +33,42 @@ describe("platform helpers", () => {
     });
   });
 
+  describe("getPodmanSocketCandidates", () => {
+    it("returns macOS Podman socket paths", () => {
+      const home = "/tmp/test-home";
+      assert.deepEqual(getPodmanSocketCandidates({ platform: "darwin", home }), [
+        path.join(home, ".local/share/containers/podman/machine/podman.sock"),
+        "/var/run/docker.sock",
+      ]);
+    });
+
+    it("returns Linux Podman socket paths with uid", () => {
+      assert.deepEqual(getPodmanSocketCandidates({ platform: "linux", home: "/tmp/test-home", uid: 1001 }), [
+        "/run/user/1001/podman/podman.sock",
+        "/run/podman/podman.sock",
+      ]);
+    });
+  });
+
   describe("getDockerSocketCandidates", () => {
-    it("returns macOS candidates in priority order", () => {
+    it("returns macOS candidates in priority order (Colima > Podman > Docker Desktop)", () => {
       const home = "/tmp/test-home";
       expect(getDockerSocketCandidates({ platform: "darwin", home })).toEqual([
         path.join(home, ".colima/default/docker.sock"),
         path.join(home, ".config/colima/default/docker.sock"),
+        path.join(home, ".local/share/containers/podman/machine/podman.sock"),
+        "/var/run/docker.sock",
         path.join(home, ".docker/run/docker.sock"),
       ]);
     });
 
-    it("does not auto-detect sockets on Linux", () => {
-      expect(getDockerSocketCandidates({ platform: "linux", home: "/tmp/test-home" })).toEqual([]);
+    it("returns Linux candidates (Podman > native Docker)", () => {
+      expect(getDockerSocketCandidates({ platform: "linux", home: "/tmp/test-home", uid: 1000 })).toEqual([
+        "/run/user/1000/podman/podman.sock",
+        "/run/podman/podman.sock",
+        "/run/docker.sock",
+        "/var/run/docker.sock",
+      ]);
     });
   });
 
@@ -123,21 +147,40 @@ describe("platform helpers", () => {
     });
   });
 
-  describe("isUnsupportedMacosRuntime", () => {
-    it("flags podman on macOS", () => {
-      expect(isUnsupportedMacosRuntime("podman", { platform: "darwin" })).toBe(true);
-    });
-
-    it("does not flag podman on Linux", () => {
-      expect(isUnsupportedMacosRuntime("podman", { platform: "linux" })).toBe(false);
+  describe("shouldPatchCoredns", () => {
+    it("patches CoreDNS for Colima and Podman", () => {
+      expect(shouldPatchCoredns("colima")).toBe(true);
+      expect(shouldPatchCoredns("podman")).toBe(true);
+      expect(shouldPatchCoredns("docker-desktop")).toBe(false);
+      expect(shouldPatchCoredns("docker")).toBe(false);
     });
   });
 
-  describe("shouldPatchCoredns", () => {
-    it("patches CoreDNS for Colima only", () => {
-      expect(shouldPatchCoredns("colima")).toBe(true);
-      expect(shouldPatchCoredns("docker-desktop")).toBe(false);
-      expect(shouldPatchCoredns("docker")).toBe(false);
+  describe("detectDockerHost with Podman", () => {
+    it("detects Podman socket on macOS when Colima is absent", () => {
+      const home = "/tmp/test-home";
+      const podmanSocket = path.join(home, ".local/share/containers/podman/machine/podman.sock");
+      const existsSync = (candidate) => candidate === podmanSocket;
+
+      expect(detectDockerHost({ env: {}, platform: "darwin", home, existsSync })).toEqual({
+        dockerHost: `unix://${podmanSocket}`,
+        source: "socket",
+        socketPath: podmanSocket,
+      });
+    });
+
+    it("prefers Colima over Podman on macOS", () => {
+      const home = "/tmp/test-home";
+      const colimaSocket = path.join(home, ".colima/default/docker.sock");
+      const podmanSocket = path.join(home, ".local/share/containers/podman/machine/podman.sock");
+      const sockets = new Set([colimaSocket, podmanSocket]);
+      const existsSync = (candidate) => sockets.has(candidate);
+
+      expect(detectDockerHost({ env: {}, platform: "darwin", home, existsSync })).toEqual({
+        dockerHost: `unix://${colimaSocket}`,
+        source: "socket",
+        socketPath: colimaSocket,
+      });
     });
   });
 });

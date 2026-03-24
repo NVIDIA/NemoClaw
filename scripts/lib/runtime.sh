@@ -9,6 +9,7 @@ socket_exists() {
     case ":$NEMOCLAW_TEST_SOCKET_PATHS:" in
       *":$socket_path:"*) return 0 ;;
     esac
+    return 1
   fi
 
   [ -S "$socket_path" ]
@@ -56,6 +57,11 @@ detect_docker_host() {
     return 0
   fi
 
+  if socket_path="$(find_podman_socket "$home_dir")"; then
+    printf 'unix://%s\n' "$socket_path"
+    return 0
+  fi
+
   if socket_path="$(find_docker_desktop_socket "$home_dir")"; then
     printf 'unix://%s\n' "$socket_path"
     return 0
@@ -70,6 +76,9 @@ docker_host_runtime() {
   case "$docker_host" in
     unix://*"/.colima/default/docker.sock" | unix://*"/.config/colima/default/docker.sock")
       printf 'colima\n'
+      ;;
+    unix://*"/podman/machine/podman.sock"|unix://*"/podman/podman.sock")
+      printf 'podman\n'
       ;;
     unix://*"/.docker/run/docker.sock")
       printf 'docker-desktop\n'
@@ -103,11 +112,35 @@ infer_container_runtime_from_info() {
   fi
 }
 
-is_unsupported_macos_runtime() {
-  local platform="${1:-$(uname -s)}"
-  local runtime="${2:-unknown}"
+find_podman_socket() {
+  local home_dir="${1:-${HOME:-/tmp}}"
+  local socket_path
 
-  [ "$platform" = "Darwin" ] && [ "$runtime" = "podman" ]
+  if [ "$(uname -s)" = "Darwin" ]; then
+    for socket_path in \
+      "$home_dir/.local/share/containers/podman/machine/podman.sock" \
+      "/var/run/docker.sock"
+    do
+      if socket_exists "$socket_path"; then
+        printf '%s\n' "$socket_path"
+        return 0
+      fi
+    done
+  else
+    local uid
+    uid="$(id -u 2>/dev/null || echo 1000)"
+    for socket_path in \
+      "/run/user/$uid/podman/podman.sock" \
+      "/run/podman/podman.sock"
+    do
+      if socket_exists "$socket_path"; then
+        printf '%s\n' "$socket_path"
+        return 0
+      fi
+    done
+  fi
+
+  return 1
 }
 
 is_loopback_ip() {

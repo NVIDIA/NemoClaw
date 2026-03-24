@@ -86,9 +86,6 @@ command -v docker >/dev/null || fail "docker not found"
 [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY not set. Get one from build.nvidia.com"
 
 CONTAINER_RUNTIME="$(infer_container_runtime_from_info "$(docker info 2>/dev/null || true)")"
-if is_unsupported_macos_runtime "$(uname -s)" "$CONTAINER_RUNTIME"; then
-  fail "Podman on macOS is not supported yet. NemoClaw currently depends on OpenShell support for Podman on macOS. Use Colima or Docker Desktop instead."
-fi
 if [ "$CONTAINER_RUNTIME" != "unknown" ]; then
   info "Container runtime: $CONTAINER_RUNTIME"
 fi
@@ -123,9 +120,9 @@ for i in 1 2 3 4 5; do
 done
 info "Gateway is healthy"
 
-# 2. CoreDNS fix (Colima only)
-if [ "$CONTAINER_RUNTIME" = "colima" ]; then
-  info "Patching CoreDNS for Colima..."
+# 2. CoreDNS fix (Colima and Podman — nested K3s DNS is broken with these runtimes)
+if [ "$CONTAINER_RUNTIME" = "colima" ] || [ "$CONTAINER_RUNTIME" = "podman" ]; then
+  info "Patching CoreDNS for $CONTAINER_RUNTIME..."
   bash "$SCRIPT_DIR/fix-coredns.sh" nemoclaw 2>&1 || warn "CoreDNS patch failed (may not be needed)"
 fi
 

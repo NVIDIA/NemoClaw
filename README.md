@@ -60,9 +60,8 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 
 | Platform | Supported runtimes | Notes |
 |----------|--------------------|-------|
-| Linux | Docker | Primary supported path today |
-| macOS (Apple Silicon) | Colima, Docker Desktop | Recommended runtimes for supported macOS setups |
-| macOS | Podman | Not supported yet. NemoClaw currently depends on OpenShell support for Podman on macOS. |
+| Linux | Docker, Podman | Primary supported path today |
+| macOS (Apple Silicon) | Colima, Docker Desktop, Podman | Supported container runtimes on macOS |
 | Windows WSL | Docker Desktop (WSL backend) | Supported target path |
 
 > **💡 Tip**
