@@ -140,17 +140,13 @@ fi
 # -------------------------------------------------------
 info "4b. Verify blueprint runner apply smoke test"
 # -------------------------------------------------------
-# Apply reaches sandbox creation before failing (no openshell in test container).
-# Verifies profile resolution, SSRF validation, and credential handling execute.
+# Apply runs the full codepath (profile resolution, sandbox creation,
+# provider setup, state save) even without openshell — subprocess calls
+# use reject:false so they complete silently. We verify the entire
+# apply pipeline executes and persists run state to disk.
 NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint node --input-type=module -e "
   const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
-  try {
-    await main(['apply', '--profile', 'ncp']);
-    throw new Error('apply should have failed without openshell');
-  } catch (err) {
-    if (err.message === 'apply should have failed without openshell') throw err;
-    console.log('EXPECTED_ERROR: ' + err.message);
-  }
+  await main(['apply', '--profile', 'ncp']);
 " 2>&1 | tee /tmp/apply-output.txt
 if grep -q "RUN_ID:" /tmp/apply-output.txt; then
   pass "Apply generates run ID"
@@ -158,14 +154,26 @@ else
   fail "No run ID in apply output"
 fi
 if grep -q "PROGRESS:20:Creating OpenClaw sandbox" /tmp/apply-output.txt; then
-  pass "Apply reaches sandbox creation step"
+  pass "Apply executes sandbox creation step"
 else
   fail "Apply did not reach sandbox creation step"
 fi
-if grep -q "EXPECTED_ERROR:" /tmp/apply-output.txt; then
-  pass "Apply fails with expected error (not silently)"
+if grep -q "PROGRESS:50:Configuring inference provider" /tmp/apply-output.txt; then
+  pass "Apply executes provider configuration"
 else
-  fail "Apply did not produce expected error"
+  fail "Apply did not reach provider configuration step"
+fi
+if grep -q "PROGRESS:100:Apply complete" /tmp/apply-output.txt; then
+  pass "Apply completes full pipeline"
+else
+  fail "Apply did not complete"
+fi
+# Verify run state was persisted to disk
+RUN_ID=$(grep -o 'nc-[0-9]*-[0-9]*-[a-f0-9]*' /tmp/apply-output.txt | head -1)
+if [ -f "$HOME/.nemoclaw/state/runs/$RUN_ID/plan.json" ]; then
+  pass "Apply persisted run state to disk"
+else
+  fail "Apply did not persist run state (plan.json missing for $RUN_ID)"
 fi
 
 # -------------------------------------------------------
