@@ -3,9 +3,9 @@ title:
   page: "Set Up the NemoClaw Discord Bridge for Remote Agent Chat"
   nav: "Set Up Discord Bridge"
 description: "Forward messages between Discord channels and the sandboxed OpenClaw agent."
-keywords: ["nemoclaw discord bridge", "discord bot openclaw agent"]
+keywords: ["NemoClaw discord bridge", "discord bot OpenClaw agent"]
 topics: ["generative_ai", "ai_agents"]
-tags: ["openclaw", "openshell", "discord", "deployment", "nemoclaw"]
+tags: ["OpenClaw", "OpenShell", "discord", "deployment", "NemoClaw"]
 content:
   type: how_to
   difficulty: intermediate
