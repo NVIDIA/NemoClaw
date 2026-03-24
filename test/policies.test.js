@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { describe, it, expect } from "vitest";
 import path from "node:path";
 import policies from "../bin/lib/policies";
@@ -85,6 +86,16 @@ describe("policies", () => {
       const nameIdx = cmd.indexOf("'test-box'");
       expect(waitIdx < nameIdx).toBeTruthy();
     });
+
+    it("uses the resolved openshell binary when provided by the installer path", () => {
+      process.env.NEMOCLAW_OPENSHELL_BIN = "/tmp/fake path/openshell";
+      try {
+        const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
+        assert.equal(cmd, "'/tmp/fake path/openshell' policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'");
+      } finally {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      }
+    });
   });
 
   describe("buildPolicyGetCommand", () => {
@@ -117,6 +128,34 @@ describe("policies", () => {
       for (const p of policies.listPresets()) {
         const content = policies.loadPreset(p.name);
         expect(content.includes("network_policies:")).toBeTruthy();
+      }
+    });
+
+    it("package-manager presets use access: full (not tls: terminate)", () => {
+      // Package managers (pip, npm, yarn) use CONNECT tunneling which breaks
+      // under tls: terminate. Ensure these presets use access: full like the
+      // github policy in openclaw-sandbox.yaml.
+      const packagePresets = ["pypi", "npm"];
+      for (const name of packagePresets) {
+        const content = policies.loadPreset(name);
+        expect(content).toBeTruthy();
+        expect(content.includes("tls: terminate")).toBe(false);
+        expect(content.includes("access: full")).toBe(true);
+      }
+    });
+
+    it("package-manager presets include binaries section", () => {
+      // Without binaries, the proxy can't match pip/npm traffic to the policy
+      // and returns 403.
+      const packagePresets = [
+        { name: "pypi", expectedBinary: "python" },
+        { name: "npm", expectedBinary: "npm" },
+      ];
+      for (const { name, expectedBinary } of packagePresets) {
+        const content = policies.loadPreset(name);
+        expect(content).toBeTruthy();
+        expect(content.includes("binaries:")).toBe(true);
+        expect(content.includes(expectedBinary)).toBe(true);
       }
     });
   });

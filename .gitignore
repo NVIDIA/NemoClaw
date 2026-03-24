@@ -1,5 +1,6 @@
 # Build artifacts and caches
 *.pyc
+*.tsbuildinfo
 .pytest_cache/
 __pycache__/
 coverage/

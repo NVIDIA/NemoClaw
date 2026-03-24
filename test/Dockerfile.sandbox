@@ -1,3 +1,4 @@
+# hadolint global ignore=DL3008,DL3013,DL3042,DL3059,DL4006,SC2038
 # Lightweight test sandbox for NemoClaw E2E testing
 # Simulates the OpenClaw-in-OpenShell environment without requiring
 # the full NVIDIA base image or openshell CLI

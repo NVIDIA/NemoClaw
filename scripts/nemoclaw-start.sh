@@ -40,7 +40,8 @@ PYAUTH
 print_dashboard_urls() {
   local token chat_ui_base local_url remote_url
 
-  token="$(python3 - <<'PYTOKEN'
+  token="$(
+    python3 - <<'PYTOKEN'
 import json
 import os
 path = os.path.expanduser('~/.openclaw/openclaw.json')
@@ -51,7 +52,7 @@ except Exception:
 else:
     print(cfg.get('gateway', {}).get('auth', {}).get('token', ''))
 PYTOKEN
-)"
+  )"
 
   chat_ui_base="${CHAT_UI_URL%/}"
   local_url="http://127.0.0.1:${PUBLIC_PORT}/"
@@ -66,7 +67,7 @@ PYTOKEN
 }
 
 start_auto_pair() {
-  nohup python3 - <<'PYAUTOPAIR' >> /tmp/gateway.log 2>&1 &
+  nohup python3 - <<'PYAUTOPAIR' >>/tmp/gateway.log 2>&1 &
 import json
 import subprocess
 import time
@@ -127,6 +128,8 @@ PYAUTOPAIR
 }
 
 echo 'Setting up NemoClaw...'
+[ -f .env ] && chmod 600 .env
+
 # openclaw doctor --fix and openclaw plugins install already ran at build time
 # (Dockerfile Step 28). At runtime they fail with EPERM against the locked
 # /sandbox/.openclaw directory and accomplish nothing.
@@ -136,7 +139,7 @@ if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exec "${NEMOCLAW_CMD[@]}"
 fi
 
-nohup openclaw gateway run > /tmp/gateway.log 2>&1 &
+nohup openclaw gateway run >/tmp/gateway.log 2>&1 &
 echo "[gateway] openclaw gateway launched (pid $!)"
 start_auto_pair
 print_dashboard_urls

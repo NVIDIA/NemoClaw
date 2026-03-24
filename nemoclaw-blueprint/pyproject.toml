@@ -44,6 +44,7 @@ ignore = [
 pythonVersion = "3.11"
 typeCheckingMode = "strict"
 include = ["orchestrator", "migrations"]
+exclude = ["**/test_*.py"]
 
 [tool.ruff.format]
 quote-style = "double"

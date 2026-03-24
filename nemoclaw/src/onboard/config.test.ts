@@ -84,12 +84,15 @@ describe("onboard/config", () => {
     });
 
     const endpointCases: [EndpointType, string][] = [
-      ["build", "NVIDIA Endpoint API"],
+      ["build", "NVIDIA Endpoints"],
+      ["openai", "OpenAI"],
+      ["anthropic", "Anthropic"],
+      ["gemini", "Google Gemini"],
       ["ollama", "Local Ollama"],
       ["vllm", "Local vLLM"],
-      ["nim-local", "Local NIM"],
+      ["nim-local", "Local NVIDIA NIM"],
       ["ncp", "NVIDIA Cloud Partner"],
-      ["custom", "Managed Inference Route"],
+      ["custom", "Other OpenAI-compatible endpoint"],
     ];
 
     for (const [endpointType, expected] of endpointCases) {
@@ -98,6 +101,16 @@ describe("onboard/config", () => {
         expect(describeOnboardProvider(config)).toBe(expected);
       });
     }
+
+    it("returns Unknown for unsupported endpoint types", () => {
+      const config = makeConfig({
+        endpointType: "build",
+        providerLabel: undefined,
+      });
+      expect(describeOnboardProvider({ ...config, endpointType: "bogus" as EndpointType })).toBe(
+        "Unknown",
+      );
+    });
   });
 
   // -------------------------------------------------------------------------

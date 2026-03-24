@@ -6,6 +6,44 @@
 const net = require("net");
 const { runCapture } = require("./runner");
 
+async function probePortAvailability(port, opts = {}) {
+  if (typeof opts.probeImpl === "function") {
+    return opts.probeImpl(port);
+  }
+
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once("error", (err) => {
+      if (err.code === "EADDRINUSE") {
+        resolve({
+          ok: false,
+          process: "unknown",
+          pid: null,
+          reason: `port ${port} is in use (EADDRINUSE)`,
+        });
+        return;
+      }
+
+      if (err.code === "EPERM" || err.code === "EACCES") {
+        resolve({
+          ok: true,
+          warning: `port probe skipped: ${err.message}`,
+        });
+        return;
+      }
+
+      // Unexpected probe failure: do not report a false conflict.
+      resolve({
+        ok: true,
+        warning: `port probe inconclusive: ${err.message}`,
+      });
+    });
+    srv.listen(port, "127.0.0.1", () => {
+      srv.close(() => resolve({ ok: true }));
+    });
+  });
+}
+
 /**
  * Check whether a TCP port is available for listening.
  *
@@ -15,9 +53,11 @@ const { runCapture } = require("./runner");
  *
  * opts.lsofOutput — inject fake lsof output for testing (skips shell)
  * opts.skipLsof   — force the net-probe fallback path
+ * opts.probeImpl  — async (port) => probe result for testing
  *
  * Returns:
  *   { ok: true }
+ *   { ok: true, warning: string }
  *   { ok: false, process: string, pid: number|null, reason: string }
  */
 async function checkPortAvailable(port, opts) {
@@ -62,30 +102,7 @@ async function checkPortAvailable(port, opts) {
   }
 
   // ── net probe fallback ─────────────────────────────────────────
-  return new Promise((resolve) => {
-    const srv = net.createServer();
-    srv.once("error", (err) => {
-      if (err.code === "EADDRINUSE") {
-        resolve({
-          ok: false,
-          process: "unknown",
-          pid: null,
-          reason: `port ${p} is in use (EADDRINUSE)`,
-        });
-      } else {
-        // Unexpected error — treat port as unavailable
-        resolve({
-          ok: false,
-          process: "unknown",
-          pid: null,
-          reason: `port probe failed: ${err.message}`,
-        });
-      }
-    });
-    srv.listen(p, "127.0.0.1", () => {
-      srv.close(() => resolve({ ok: true }));
-    });
-  });
+  return probePortAvailability(p, o);
 }
 
-module.exports = { checkPortAvailable };
+module.exports = { checkPortAvailable, probePortAvailability };

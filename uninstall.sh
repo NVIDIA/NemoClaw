@@ -21,9 +21,9 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 if [[ -z "${NO_COLOR:-}" && -t 1 ]]; then
   if [[ "${COLORTERM:-}" == "truecolor" || "${COLORTERM:-}" == "24bit" ]]; then
-    C_GREEN=$'\033[38;2;118;185;0m'   # #76B900 — exact NVIDIA green
+    C_GREEN=$'\033[38;2;118;185;0m' # #76B900 — exact NVIDIA green
   else
-    C_GREEN=$'\033[38;5;148m'          # closest 256-color on dark backgrounds
+    C_GREEN=$'\033[38;5;148m' # closest 256-color on dark backgrounds
   fi
   C_BOLD=$'\033[1m'
   C_DIM=$'\033[2m'
@@ -36,12 +36,16 @@ fi
 
 info() { printf "${C_GREEN}[uninstall]${C_RESET} %s\n" "$*"; }
 warn() { printf "${C_YELLOW}[uninstall]${C_RESET} %s\n" "$*"; }
-fail() { printf "${C_RED}[uninstall]${C_RESET} %s\n" "$*" >&2; exit 1; }
-ok()   { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
+fail() {
+  printf "${C_RED}[uninstall]${C_RESET} %s\n" "$*" >&2
+  exit 1
+}
+ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
 
 # spin "label" cmd [args...]  — spinner wrapper, same as installer.
 spin() {
-  local msg="$1"; shift
+  local msg="$1"
+  shift
 
   if [[ ! -t 1 ]]; then
     info "$msg"
@@ -49,7 +53,8 @@ spin() {
     return
   fi
 
-  local log; log=$(mktemp)
+  local log
+  log=$(mktemp)
   "$@" >"$log" 2>&1 &
   local pid=$! i=0
   local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
@@ -59,7 +64,8 @@ spin() {
     sleep 0.08
   done
 
-  wait "$pid"; local status=$?
+  wait "$pid"
+  local status=$?
   if [[ $status -eq 0 ]]; then
     printf "\r  ${C_GREEN}✓${C_RESET}  %s\n" "$msg"
   else
@@ -147,7 +153,7 @@ while [ $# -gt 0 ]; do
       DELETE_MODELS=true
       shift
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -184,15 +190,18 @@ confirm() {
     read -r reply || true
   fi
   case "$reply" in
-    y|Y|yes|YES) ;;
-    *) info "Aborted."; exit 0 ;;
+    y | Y | yes | YES) ;;
+    *)
+      info "Aborted."
+      exit 0
+      ;;
   esac
 }
 
 run_optional() {
   local description="$1"
   shift
-  if "$@" > /dev/null 2>&1; then
+  if "$@" >/dev/null 2>&1; then
     info "$description"
   else
     warn "$description skipped"
@@ -243,7 +252,7 @@ stop_helper_services() {
 }
 
 stop_openshell_forward_processes() {
-  if ! command -v pgrep > /dev/null 2>&1; then
+  if ! command -v pgrep >/dev/null 2>&1; then
     warn "pgrep not found; skipping local OpenShell forward process cleanup."
     return 0
   fi
@@ -261,7 +270,7 @@ stop_openshell_forward_processes() {
   fi
 
   for pid in "${pids[@]}"; do
-    if kill "$pid" > /dev/null 2>&1 || kill -9 "$pid" > /dev/null 2>&1; then
+    if kill "$pid" >/dev/null 2>&1 || kill -9 "$pid" >/dev/null 2>&1; then
       info "Stopped OpenShell forward process $pid"
     else
       warn "Failed to stop OpenShell forward process $pid"
@@ -270,7 +279,7 @@ stop_openshell_forward_processes() {
 }
 
 remove_openshell_resources() {
-  if ! command -v openshell > /dev/null 2>&1; then
+  if ! command -v openshell >/dev/null 2>&1; then
     warn "openshell not found; skipping gateway/provider/sandbox cleanup."
     return 0
   fi
@@ -285,9 +294,9 @@ remove_openshell_resources() {
 }
 
 remove_nemoclaw_cli() {
-  if command -v npm > /dev/null 2>&1; then
-    npm unlink -g nemoclaw > /dev/null 2>&1 || true
-    if npm uninstall -g --loglevel=error nemoclaw > /dev/null 2>&1; then
+  if command -v npm >/dev/null 2>&1; then
+    npm unlink -g nemoclaw >/dev/null 2>&1 || true
+    if npm uninstall -g --loglevel=error nemoclaw >/dev/null 2>&1; then
       info "Removed global nemoclaw npm package"
     else
       warn "Global nemoclaw npm package not found or already removed"
@@ -314,12 +323,12 @@ remove_nemoclaw_state() {
 }
 
 remove_related_docker_containers() {
-  if ! command -v docker > /dev/null 2>&1; then
+  if ! command -v docker >/dev/null 2>&1; then
     warn "docker not found; skipping Docker container cleanup."
     return 0
   fi
 
-  if ! docker info > /dev/null 2>&1; then
+  if ! docker info >/dev/null 2>&1; then
     warn "docker is not running; skipping Docker container cleanup."
     return 0
   fi
@@ -351,7 +360,7 @@ remove_related_docker_containers() {
   local removed_any=false
   local container_id
   for container_id in "${container_ids[@]}"; do
-    if docker rm -f "$container_id" > /dev/null 2>&1; then
+    if docker rm -f "$container_id" >/dev/null 2>&1; then
       info "Removed Docker container $container_id"
       removed_any=true
     else
@@ -365,12 +374,12 @@ remove_related_docker_containers() {
 }
 
 remove_related_docker_images() {
-  if ! command -v docker > /dev/null 2>&1; then
+  if ! command -v docker >/dev/null 2>&1; then
     warn "docker not found; skipping Docker image cleanup."
     return 0
   fi
 
-  if ! docker info > /dev/null 2>&1; then
+  if ! docker info >/dev/null 2>&1; then
     warn "docker is not running; skipping Docker image cleanup."
     return 0
   fi
@@ -402,7 +411,7 @@ remove_related_docker_images() {
   local removed_any=false
   local image_id
   for image_id in "${image_ids[@]}"; do
-    if docker rmi -f "$image_id" > /dev/null 2>&1; then
+    if docker rmi -f "$image_id" >/dev/null 2>&1; then
       info "Removed Docker image $image_id"
       removed_any=true
     else
@@ -422,12 +431,12 @@ gateway_volume_candidates() {
 }
 
 remove_related_docker_volumes() {
-  if ! command -v docker > /dev/null 2>&1; then
+  if ! command -v docker >/dev/null 2>&1; then
     warn "docker not found; skipping Docker volume cleanup."
     return 0
   fi
 
-  if ! docker info > /dev/null 2>&1; then
+  if ! docker info >/dev/null 2>&1; then
     warn "docker is not running; skipping Docker volume cleanup."
     return 0
   fi
@@ -446,8 +455,8 @@ remove_related_docker_volumes() {
 
   local removed_any=false
   for volume_name in "${volume_names[@]}"; do
-    if docker volume inspect "$volume_name" > /dev/null 2>&1; then
-      if docker volume rm -f "$volume_name" > /dev/null 2>&1; then
+    if docker volume inspect "$volume_name" >/dev/null 2>&1; then
+      if docker volume rm -f "$volume_name" >/dev/null 2>&1; then
         info "Removed Docker volume $volume_name"
         removed_any=true
       else
@@ -467,14 +476,14 @@ remove_optional_ollama_models() {
     return 0
   fi
 
-  if ! command -v ollama > /dev/null 2>&1; then
+  if ! command -v ollama >/dev/null 2>&1; then
     warn "ollama not found; skipping model cleanup."
     return 0
   fi
 
   local model
   for model in "${OLLAMA_MODELS[@]}"; do
-    if ollama rm "$model" > /dev/null 2>&1; then
+    if ollama rm "$model" >/dev/null 2>&1; then
       info "Removed Ollama model '$model'"
     else
       warn "Ollama model '$model' not found or already removed"
@@ -495,7 +504,7 @@ remove_openshell_binary() {
 
   local removed=false
   local current_path=""
-  if command -v openshell > /dev/null 2>&1; then
+  if command -v openshell >/dev/null 2>&1; then
     current_path="$(command -v openshell)"
   fi
 

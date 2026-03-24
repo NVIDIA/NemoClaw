@@ -1,8 +1,10 @@
 # NemoClaw — prek hook configuration
 # prek: https://github.com/j178/prek — single binary, no Python required for the runner
 # Installed as an npm devDependency (@j178/prek) — available after `npm install`.
-# All git hooks (pre-commit, commit-msg, pre-push) are managed by prek via this file.
-# The "prepare" script in package.json runs `prek install` to wire them up.
+# All git hooks (pre-commit, commit-msg, pre-push) are managed by prek via this file only.
+# The "prepare" script in package.json runs `prek install` (writes `.git/hooks/*`).
+# If you previously used Husky, run: git config --unset core.hooksPath
+# then `npm install` again so Git uses the hooks prek installs.
 #
 # Usage:
 #   npx prek install
@@ -13,12 +15,20 @@
 #
 # Priority groups (prek runs same-priority hooks in parallel):
 #   0  — General file fixers (whitespace, EOF, line endings)
+#   4  — SPDX header insertion (--fix)
 #   5  — Shell / Python / TS formatters (shfmt, ruff format, prettier)
 #   6  — Fixes that should follow formatters (ruff check --fix, eslint --fix)
 #  10  — Linters and read-only checks
 #  20  — Project-level checks (vitest)
 
 exclude: ^(nemoclaw/dist/|nemoclaw/node_modules/|docs/_build/|\.venv/|uv\.lock$)
+
+# Which git hook shims `prek install` writes (separate from each hook's `stages:`).
+# https://prek.j178.dev/configuration/#default_install_hook_types
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+  - pre-push
 
 repos:
   # ── Priority 0: general file fixers ───────────────────────────────────────
@@ -45,6 +55,18 @@ repos:
         always_run: true
         pass_filenames: false
         priority: 0
+
+  # ── Priority 4: SPDX headers (insert if missing; runs before language formatters) ──
+  - repo: local
+    hooks:
+      - id: spdx-headers
+        name: SPDX license headers (insert if missing)
+        entry: bash scripts/check-spdx-headers.sh --fix
+        language: system
+        files: ^(nemoclaw/src/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
+        exclude: ^nemoclaw-blueprint/.*__init__\.py$
+        pass_filenames: true
+        priority: 4
 
   # ── Priority 5: formatters ────────────────────────────────────────────────
   - repo: https://github.com/scop/pre-commit-shfmt
@@ -119,25 +141,16 @@ repos:
     rev: v0.11.0.1
     hooks:
       - id: shellcheck
-        args:
-          - --severity=warning
-          - --exclude=SC1091
-        priority: 10
-
-  - repo: https://github.com/hadolint/hadolint
-    rev: v2.14.0
-    hooks:
-      - id: hadolint
         priority: 10
 
   - repo: local
     hooks:
-      - id: spdx-headers
-        name: SPDX license headers
-        entry: bash scripts/check-spdx-headers.sh
+      - id: hadolint
+        name: hadolint
+        entry: hadolint
         language: system
-        files: ^(nemoclaw/src/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
-        pass_filenames: true
+        files: (Dockerfile[^/]*|.*\.dockerfile)$
+        types: [file]
         priority: 10
 
   - repo: https://github.com/gitleaks/gitleaks
@@ -147,45 +160,52 @@ repos:
         name: gitleaks (secret scan)
         priority: 10
 
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.22.0
+    hooks:
+      - id: markdownlint-cli2
+        priority: 10
+
   # ── Priority 20: project-level checks (pre-commit) ─────────────────────────
   - repo: local
     hooks:
       - id: vitest-plugin
         name: Vitest (plugin project)
-        entry: npx vitest run --project plugin
+        entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root" && exec ./node_modules/.bin/vitest run --project plugin'
         language: system
         pass_filenames: false
         files: ^nemoclaw/
         priority: 20
 
   # ── commit-msg hooks ────────────────────────────────────────────────────────
-  - repo: local
+  - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
+    rev: v9.24.0
     hooks:
       - id: commitlint
-        name: commitlint
-        entry: npx commitlint --edit
-        language: system
         stages: [commit-msg]
-        always_run: true
+        additional_dependencies: ["@commitlint/config-conventional@20"]
+        priority: 10
 
   # ── pre-push hooks ─────────────────────────────────────────────────────────
   - repo: local
     hooks:
       - id: tsc-check
         name: TypeScript type check (tsc --noEmit)
-        entry: bash -c 'cd nemoclaw && npx tsc --noEmit'
+        entry: bash -c 'cd nemoclaw && npx tsc --noEmit --incremental'
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-push]
+        priority: 10
 
       - id: pyright-check
         name: Pyright (nemoclaw-blueprint)
-        entry: bash -c 'cd nemoclaw-blueprint && uv run --with pyright pyright .'
+        entry: bash -c 'cd nemoclaw-blueprint && uv run --with pyright pyright'
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-push]
+        priority: 10
 
 default_language_version:
   python: python3

@@ -69,7 +69,7 @@ Respect CLI boundaries
 Supply chain safety
 : Blueprint artifacts are immutable, versioned, and digest-verified before execution.
 
-> Full details in `references/how-it-works.md`.
+*Full details in `references/how-it-works.md`.*
 
 > **Alpha software:** NemoClaw is in alpha, available as an early preview since March 16, 2026.
 > APIs, configuration schemas, and runtime behavior are subject to breaking changes between releases.

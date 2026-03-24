@@ -157,9 +157,9 @@ network_policies:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/npm }
 
-  # ── Messaging — pre-allowed for agent notifications ────────────
-  # Telegram and Discord are open by default so the agent can send
-  # notifications and respond to chats without triggering approval.
+  # ── Messaging — pre-allowed for OpenClaw agent notifications ────
+  # Restricted to node processes to prevent arbitrary data exfiltration
+  # via curl, wget, python, etc. (See: #272)
   telegram:
     name: telegram
     endpoints:
@@ -171,6 +171,8 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/bot*/**" }
           - allow: { method: POST, path: "/bot*/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
 
   discord:
     name: discord
@@ -198,3 +200,5 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/node }

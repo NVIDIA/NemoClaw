@@ -14,6 +14,7 @@ import {
   getOllamaProbeCommand,
   getOllamaWarmupCommand,
   parseOllamaList,
+  parseOllamaTags,
   validateOllamaModel,
   validateLocalProvider,
 } from "../bin/lib/local-inference";
@@ -86,8 +87,34 @@ describe("local inference helpers", () => {
     ).toEqual(["nemotron-3-nano:30b", "qwen3:32b"]);
   });
 
-  it("falls back to the default ollama model when list output is empty", () => {
-    expect(getOllamaModelOptions(() => "")).toEqual([DEFAULT_OLLAMA_MODEL]);
+  it("parses installed models from Ollama /api/tags output", () => {
+    expect(
+      parseOllamaTags(
+        JSON.stringify({
+          models: [
+            { name: "nemotron-3-nano:30b" },
+            { name: "qwen2.5:7b" },
+          ],
+        })
+      )
+    ).toEqual(["nemotron-3-nano:30b", "qwen2.5:7b"]);
+  });
+
+  it("prefers Ollama /api/tags over parsing the CLI list output", () => {
+    let call = 0;
+    expect(
+      getOllamaModelOptions(() => {
+        call += 1;
+        if (call === 1) {
+          return JSON.stringify({ models: [{ name: "qwen2.5:7b" }] });
+        }
+        return "";
+      })
+    ).toEqual(["qwen2.5:7b"]);
+  });
+
+  it("returns no installed ollama models when list output is empty", () => {
+    expect(getOllamaModelOptions(() => "")).toEqual([]);
   });
 
   it("prefers the default ollama model when present", () => {

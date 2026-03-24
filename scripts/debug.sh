@@ -26,9 +26,12 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-info()    { echo -e "${GREEN}[debug]${NC} $1"; }
-warn()    { echo -e "${YELLOW}[debug]${NC} $1"; }
-fail()    { echo -e "${RED}[debug]${NC} $1"; exit 1; }
+info() { echo -e "${GREEN}[debug]${NC} $1"; }
+warn() { echo -e "${YELLOW}[debug]${NC} $1"; }
+fail() {
+  echo -e "${RED}[debug]${NC} $1"
+  exit 1
+}
 section() { echo -e "\n${CYAN}═══ $1 ═══${NC}\n"; }
 
 # ── Parse flags ──────────────────────────────────────────────────
@@ -47,11 +50,11 @@ while [ $# -gt 0 ]; do
       QUICK=true
       shift
       ;;
-    --output|-o)
+    --output | -o)
       OUTPUT="${2:?--output requires a path}"
       shift 2
       ;;
-    --help|-h)
+    --help | -h)
       cat <<'USAGE'
 Usage: scripts/debug.sh [OPTIONS]
 
@@ -130,12 +133,12 @@ collect() {
   local rc=0
   local tmpout="${outfile}.raw"
   if [ -n "$TIMEOUT_BIN" ]; then
-    "$TIMEOUT_BIN" 30 "$@" > "$tmpout" 2>&1 || rc=$?
+    "$TIMEOUT_BIN" 30 "$@" >"$tmpout" 2>&1 || rc=$?
   else
-    "$@" > "$tmpout" 2>&1 || rc=$?
+    "$@" >"$tmpout" 2>&1 || rc=$?
   fi
 
-  redact < "$tmpout" > "$outfile"
+  redact <"$tmpout" >"$outfile"
   rm -f "$tmpout"
 
   cat "$outfile"
@@ -244,14 +247,14 @@ fi
 
 if command -v openshell &>/dev/null \
   && openshell sandbox list 2>/dev/null \
-    | awk 'NF { if (tolower($1) == "name") next; print $1 }' \
+  | awk 'NF { if (tolower($1) == "name") next; print $1 }' \
     | grep -Fxq -- "$SANDBOX_NAME"; then
   section "Sandbox Internals"
 
   # Build a temporary SSH config so we can run commands inside the sandbox.
   # This follows the pattern from OpenShell's own demo.sh.
   SANDBOX_SSH_CONFIG=$(mktemp "${TMPDIR_BASE}/nemoclaw-ssh-XXXXXX")
-  if openshell sandbox ssh-config "$SANDBOX_NAME" > "$SANDBOX_SSH_CONFIG" 2>/dev/null; then
+  if openshell sandbox ssh-config "$SANDBOX_NAME" >"$SANDBOX_SSH_CONFIG" 2>/dev/null; then
     SANDBOX_SSH_HOST="openshell-${SANDBOX_NAME}"
     SANDBOX_SSH_OPTS=(-F "$SANDBOX_SSH_CONFIG" -o StrictHostKeyChecking=no -o ConnectTimeout=10)
 
@@ -322,4 +325,3 @@ fi
 echo ""
 info "Done. If filing a bug, run with --output and attach the tarball to your issue:"
 info "  nemoclaw debug --output /tmp/nemoclaw-debug.tar.gz"
-
