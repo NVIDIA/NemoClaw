@@ -84,30 +84,42 @@ jobs:
       - name: Check coverage ratchet
         run: bash scripts/check-coverage-ratchet.sh
 
-  build-sandbox-image:
+  build-sandbox-images:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Build sandbox image
-        run: docker build -t nemoclaw-sandbox-test .
+      - name: Build sandbox test image (e2e fixtures)
+        run: docker build -f test/Dockerfile.sandbox -t nemoclaw-sandbox-test .
 
-      - name: Save image to tarball
-        run: docker save nemoclaw-sandbox-test | gzip > /tmp/sandbox-image.tar.gz
+      - name: Build production image (gateway isolation)
+        run: docker build -t nemoclaw-isolation-test .
 
-      - name: Upload image artifact
+      - name: Save images to tarballs
+        run: |
+          docker save nemoclaw-sandbox-test | gzip > /tmp/sandbox-test-image.tar.gz
+          docker save nemoclaw-isolation-test | gzip > /tmp/isolation-image.tar.gz
+
+      - name: Upload sandbox test image
         uses: actions/upload-artifact@v4
         with:
-          name: sandbox-image
-          path: /tmp/sandbox-image.tar.gz
+          name: sandbox-test-image
+          path: /tmp/sandbox-test-image.tar.gz
+          retention-days: 1
+
+      - name: Upload isolation image
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolation-image
+          path: /tmp/isolation-image.tar.gz
           retention-days: 1
 
   test-e2e-sandbox:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: build-sandbox-image
+    needs: build-sandbox-images
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -115,11 +127,11 @@ jobs:
       - name: Download image artifact
         uses: actions/download-artifact@v4
         with:
-          name: sandbox-image
+          name: sandbox-test-image
           path: /tmp
 
       - name: Load image
-        run: gunzip -c /tmp/sandbox-image.tar.gz | docker load
+        run: gunzip -c /tmp/sandbox-test-image.tar.gz | docker load
 
       - name: Run sandbox E2E tests
         run: docker run --rm -v "${{ github.workspace }}/test:/opt/test" nemoclaw-sandbox-test /opt/test/e2e-test.sh
@@ -127,7 +139,7 @@ jobs:
   test-e2e-gateway-isolation:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: build-sandbox-image
+    needs: build-sandbox-images
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -135,14 +147,14 @@ jobs:
       - name: Download image artifact
         uses: actions/download-artifact@v4
         with:
-          name: sandbox-image
+          name: isolation-image
           path: /tmp
 
       - name: Load image
-        run: gunzip -c /tmp/sandbox-image.tar.gz | docker load
+        run: gunzip -c /tmp/isolation-image.tar.gz | docker load
 
       - name: Run gateway isolation E2E tests
-        run: NEMOCLAW_TEST_IMAGE=nemoclaw-sandbox-test bash test/e2e-gateway-isolation.sh
+        run: NEMOCLAW_TEST_IMAGE=nemoclaw-isolation-test bash test/e2e-gateway-isolation.sh
 
   validate-profiles:
     runs-on: ubuntu-latest

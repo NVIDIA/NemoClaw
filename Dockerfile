@@ -169,6 +169,7 @@ RUN openclaw doctor --fix > /dev/null 2>&1 || true \
 # to this directory. This prevents the agent from replacing symlinks
 # (e.g., pointing /sandbox/.openclaw/hooks to an attacker-controlled path).
 # The writable state lives in .openclaw-data, reached via the symlinks.
+# hadolint ignore=DL3002
 USER root
 RUN chown root:root /sandbox/.openclaw \
     && find /sandbox/.openclaw -mindepth 1 -maxdepth 1 -exec chown -h root:root {} + \
