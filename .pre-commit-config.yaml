@@ -1,0 +1,193 @@
+# NemoClaw — prek hook configuration
+# prek: https://github.com/j178/prek — single binary, no Python required for the runner
+# Installed as an npm devDependency (@j178/prek) — available after `npm install`.
+# All git hooks (pre-commit, commit-msg, pre-push) are managed by prek via this file.
+# The "prepare" script in package.json runs `prek install` to wire them up.
+#
+# Usage:
+#   npx prek install
+#   npx prek run --all-files
+#
+# CI / diff-only runs:
+#   npx prek run --from-ref <base> --to-ref HEAD
+#
+# Priority groups (prek runs same-priority hooks in parallel):
+#   0  — General file fixers (whitespace, EOF, line endings)
+#   5  — Shell / Python / TS formatters (shfmt, ruff format, prettier)
+#   6  — Fixes that should follow formatters (ruff check --fix, eslint --fix)
+#  10  — Linters and read-only checks
+#  20  — Project-level checks (vitest)
+
+exclude: ^(nemoclaw/dist/|nemoclaw/node_modules/|docs/_build/|\.venv/|uv\.lock$)
+
+repos:
+  # ── Priority 0: general file fixers ───────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        priority: 0
+      - id: end-of-file-fixer
+        priority: 0
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+        priority: 0
+
+  # ── Priority 0: reject force-added ignored files ───────────────────────────
+  # Catches `git add -f` of files that .gitignore would normally block.
+  # Single source of truth stays in .gitignore — no duplicate list here.
+  - repo: local
+    hooks:
+      - id: no-force-added-ignored
+        name: Reject force-added ignored files
+        entry: bash -c 'IGNORED=$(git ls-files --ignored --exclude-standard --cached -- "$@") && if [ -n "$IGNORED" ]; then echo "Force-added files that .gitignore would block:" && echo "$IGNORED" && exit 1; fi' --
+        language: system
+        always_run: true
+        pass_filenames: false
+        priority: 0
+
+  # ── Priority 5: formatters ────────────────────────────────────────────────
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.12.0-2
+    hooks:
+      - id: shfmt
+        args:
+          - -w
+          - -i
+          - "2"
+          - -ci
+          - -bn
+        priority: 5
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.7
+    hooks:
+      - id: ruff-format
+        files: ^(nemoclaw-blueprint/.*\.py|scripts/.*\.py)$
+        priority: 5
+      - id: ruff
+        args: [--fix]
+        files: ^(nemoclaw-blueprint/.*\.py|scripts/.*\.py)$
+        priority: 6
+
+  - repo: local
+    hooks:
+      - id: nemoclaw-prettier
+        name: Prettier (nemoclaw TypeScript)
+        entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root/nemoclaw" && files=() && for f in "$@"; do files+=("${f#nemoclaw/}"); done && npx prettier --write "${files[@]}"' --
+        language: system
+        files: ^nemoclaw/.*\.ts$
+        pass_filenames: true
+        priority: 5
+
+  # ── Priority 6: auto-fix after formatting ─────────────────────────────────
+  - repo: local
+    hooks:
+      - id: nemoclaw-eslint
+        name: ESLint (nemoclaw TypeScript)
+        entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root/nemoclaw" && files=() && for f in "$@"; do files+=("${f#nemoclaw/}"); done && npx eslint --fix "${files[@]}"' --
+        language: system
+        files: ^nemoclaw/.*\.ts$
+        pass_filenames: true
+        priority: 6
+
+  # ── Priority 10: linters and validation ─────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+        priority: 10
+      - id: check-added-large-files
+        args: ["--maxkb=2000"]
+        priority: 10
+      - id: check-case-conflict
+        priority: 10
+      - id: check-yaml
+        priority: 10
+      - id: check-toml
+        priority: 10
+      - id: check-json
+        priority: 10
+      - id: detect-private-key
+        priority: 10
+      - id: check-executables-have-shebangs
+        priority: 10
+      - id: check-shebang-scripts-are-executable
+        priority: 10
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args:
+          - --severity=warning
+          - --exclude=SC1091
+        priority: 10
+
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.14.0
+    hooks:
+      - id: hadolint
+        priority: 10
+
+  - repo: local
+    hooks:
+      - id: spdx-headers
+        name: SPDX license headers
+        entry: bash scripts/check-spdx-headers.sh
+        language: system
+        files: ^(nemoclaw/src/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
+        pass_filenames: true
+        priority: 10
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+        name: gitleaks (secret scan)
+        priority: 10
+
+  # ── Priority 20: project-level checks (pre-commit) ─────────────────────────
+  - repo: local
+    hooks:
+      - id: vitest-plugin
+        name: Vitest (plugin project)
+        entry: npx vitest run --project plugin
+        language: system
+        pass_filenames: false
+        files: ^nemoclaw/
+        priority: 20
+
+  # ── commit-msg hooks ────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: commitlint
+        name: commitlint
+        entry: npx commitlint --edit
+        language: system
+        stages: [commit-msg]
+        always_run: true
+
+  # ── pre-push hooks ─────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: tsc-check
+        name: TypeScript type check (tsc --noEmit)
+        entry: bash -c 'cd nemoclaw && npx tsc --noEmit'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      - id: pyright-check
+        name: Pyright (nemoclaw-blueprint)
+        entry: bash -c 'cd nemoclaw-blueprint && uv run --with pyright pyright .'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+default_language_version:
+  python: python3
+
+fail_fast: false

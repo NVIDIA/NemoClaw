@@ -8,8 +8,30 @@
 const fs = require("fs");
 const path = require("path");
 
-const METRICS_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
-const METRICS_FILE = path.join(METRICS_DIR, "metrics.jsonl");
+// Refuse to write metrics if HOME is unset — never fall back to /tmp on shared
+// machines where the file would be world-readable.
+const HOME = process.env.HOME;
+const METRICS_DIR = HOME ? path.join(HOME, ".nemoclaw") : null;
+const METRICS_FILE = METRICS_DIR ? path.join(METRICS_DIR, "metrics.jsonl") : null;
+
+// Reserved keys that callers must not override via the data spread.
+const RESERVED_KEYS = new Set(["ts", "type"]);
+
+/**
+ * Return true if `filePath` exists and is a regular file (not a symlink).
+ * Prevents symlink-following attacks where an attacker points the metrics
+ * file at an arbitrary target to get JSONL content written there.
+ */
+function isSafeFile(filePath) {
+  try {
+    const stat = fs.lstatSync(filePath);
+    return stat.isFile();
+  } catch (err) {
+    // ENOENT is fine — file will be created fresh.
+    if (err.code === "ENOENT") return true;
+    return false;
+  }
+}
 
 /**
  * Record a timestamped event.
@@ -19,11 +41,20 @@ const METRICS_FILE = path.join(METRICS_DIR, "metrics.jsonl");
  */
 function recordEvent(type, data = {}) {
   try {
+    if (!METRICS_FILE) return;
+    if (!isSafeFile(METRICS_FILE)) return;
+
+    // Strip reserved keys so callers cannot overwrite ts/type.
+    const cleaned = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (!RESERVED_KEYS.has(k)) cleaned[k] = v;
+    }
+
     fs.mkdirSync(METRICS_DIR, { recursive: true, mode: 0o700 });
     const event = {
+      ...cleaned,
       ts: new Date().toISOString(),
       type,
-      ...data,
     };
     fs.appendFileSync(METRICS_FILE, JSON.stringify(event) + "\n", { mode: 0o600 });
   } catch {
@@ -41,7 +72,7 @@ function recordEvent(type, data = {}) {
  * @returns {object[]}
  */
 function loadEvents(opts = {}) {
-  if (!fs.existsSync(METRICS_FILE)) return [];
+  if (!METRICS_FILE || !fs.existsSync(METRICS_FILE)) return [];
 
   const lines = fs.readFileSync(METRICS_FILE, "utf-8").trim().split("\n").filter(Boolean);
   let events = [];
@@ -111,7 +142,7 @@ function getStats(sandboxName) {
  */
 function resetMetrics() {
   try {
-    if (fs.existsSync(METRICS_FILE)) {
+    if (METRICS_FILE && fs.existsSync(METRICS_FILE)) {
       fs.unlinkSync(METRICS_FILE);
     }
   } catch {
@@ -120,7 +151,7 @@ function resetMetrics() {
 }
 
 /**
- * Return the path to the metrics file (useful for tests).
+ * Return the path to the metrics file (null when HOME is unset).
  */
 function metricsPath() {
   return METRICS_FILE;

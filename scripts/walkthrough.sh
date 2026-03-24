@@ -8,7 +8,7 @@
 #   LEFT:  OpenClaw agent (chat)
 #   RIGHT: OpenShell TUI (monitor + approve network egress)
 #
-# The agent runs inside a sandboxed environment with a strict network
+# The agent runs inside a sandboxed environment with a controlled network
 # policy. When it tries to access a service not in the allow list,
 # the TUI prompts the operator to approve or deny the request.
 #

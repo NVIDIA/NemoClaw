@@ -6,7 +6,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { ROOT, run, runCapture } = require("./runner");
+const { ROOT, run, runCapture, shellQuote } = require("./runner");
 const registry = require("./registry");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
@@ -29,7 +29,11 @@ function listPresets() {
 }
 
 function loadPreset(name) {
-  const file = path.join(PRESETS_DIR, `${name}.yaml`);
+  const file = path.resolve(PRESETS_DIR, `${name}.yaml`);
+  if (!file.startsWith(PRESETS_DIR + path.sep) && file !== PRESETS_DIR) {
+    console.error(`  Invalid preset name: ${name}`);
+    return null;
+  }
   if (!fs.existsSync(file)) {
     console.error(`  Preset not found: ${name}`);
     return null;
@@ -69,7 +73,31 @@ function parseCurrentPolicy(raw) {
   return raw.slice(sep + 3).trim();
 }
 
+/**
+ * Build the openshell policy set command with properly quoted arguments.
+ */
+function buildPolicySetCommand(policyFile, sandboxName) {
+  return `openshell policy set --policy ${shellQuote(policyFile)} --wait ${shellQuote(sandboxName)}`;
+}
+
+/**
+ * Build the openshell policy get command with properly quoted arguments.
+ */
+function buildPolicyGetCommand(sandboxName) {
+  return `openshell policy get --full ${shellQuote(sandboxName)} 2>/dev/null`;
+}
+
 function applyPreset(sandboxName, presetName) {
+  // Guard against truncated sandbox names — WSL can truncate hyphenated
+  // names during argument parsing, e.g. "my-assistant" → "m"
+  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
+  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
+    throw new Error(
+      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
+      `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`
+    );
+  }
+
   const presetContent = loadPreset(presetName);
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);
@@ -86,12 +114,12 @@ function applyPreset(sandboxName, presetName) {
   let rawPolicy = "";
   try {
     rawPolicy = runCapture(
-      `openshell policy get --full ${sandboxName} 2>/dev/null`,
+      buildPolicyGetCommand(sandboxName),
       { ignoreError: true }
     );
   } catch {}
 
-  const currentPolicy = parseCurrentPolicy(rawPolicy);
+  let currentPolicy = parseCurrentPolicy(rawPolicy);
 
   // Merge: inject preset entries under the existing network_policies key
   let merged;
@@ -142,14 +170,17 @@ function applyPreset(sandboxName, presetName) {
   }
 
   // Write temp file and apply
-  const tmpFile = path.join(os.tmpdir(), `nemoclaw-policy-${Date.now()}.yaml`);
-  fs.writeFileSync(tmpFile, merged, "utf-8");
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
+  const tmpFile = path.join(tmpDir, "policy.yaml");
+  fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
 
   try {
-    run(`openshell policy set --policy "${tmpFile}" --wait ${sandboxName}`);
+    run(buildPolicySetCommand(tmpFile, sandboxName));
+
     console.log(`  Applied preset: ${presetName}`);
   } finally {
-    fs.unlinkSync(tmpFile);
+    try { fs.unlinkSync(tmpFile); } catch {}
+    try { fs.rmdirSync(tmpDir); } catch {}
   }
 
   // Update registry
@@ -175,6 +206,10 @@ module.exports = {
   listPresets,
   loadPreset,
   getPresetEndpoints,
+  extractPresetEntries,
+  parseCurrentPolicy,
+  buildPolicySetCommand,
+  buildPolicyGetCommand,
   applyPreset,
   getAppliedPresets,
 };

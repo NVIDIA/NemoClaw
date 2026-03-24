@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Nightly full E2E: install → onboard → live inference against NVIDIA Endpoint API.
+# Runs directly on the runner (not inside Docker) because OpenShell bootstraps
+# a K3s cluster inside a privileged Docker container — nesting would break networking.
+#
+# Requires NVIDIA_API_KEY repository secret.
+# Only runs on schedule and manual dispatch — never on PRs (secret protection).
+
+name: nightly-e2e
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-e2e
+  cancel-in-progress: true
+
+jobs:
+  full-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run full E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-nightly"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-full-e2e.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log
+          path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore

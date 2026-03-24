@@ -106,9 +106,10 @@ if ! command -v cloudflared > /dev/null 2>&1; then
     aarch64|arm64) CF_ARCH="arm64" ;;
     *) fail "Unsupported architecture for cloudflared: $CF_ARCH" ;;
   esac
-  curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}" -o /tmp/cloudflared
-  sudo install -m 755 /tmp/cloudflared /usr/local/bin/cloudflared
-  rm -f /tmp/cloudflared
+  tmpdir=$(mktemp -d)
+  curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}" -o "$tmpdir/cloudflared"
+  sudo install -m 755 "$tmpdir/cloudflared" /usr/local/bin/cloudflared
+  rm -rf "$tmpdir"
   info "cloudflared $(cloudflared --version 2>&1 | head -1) installed"
 else
   info "cloudflared already installed"
@@ -140,7 +141,7 @@ if command -v nvidia-smi > /dev/null 2>&1; then
       > /tmp/vllm-server.log 2>&1 &
     VLLM_PID=$!
     info "Waiting for vLLM to load model (this can take a few minutes)..."
-    for i in $(seq 1 120); do
+    for _ in $(seq 1 120); do
       if curl -s http://localhost:8000/v1/models > /dev/null 2>&1; then
         info "vLLM ready (PID $VLLM_PID)"
         break

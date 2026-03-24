@@ -15,46 +15,6 @@ NEMOCLAW_CMD=("$@")
 CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:18789}"
 PUBLIC_PORT=18789
 
-fix_openclaw_config() {
-  python3 - <<'PYCFG'
-import json
-import os
-from urllib.parse import urlparse
-
-home = os.environ.get('HOME', '/sandbox')
-config_path = os.path.join(home, '.openclaw', 'openclaw.json')
-os.makedirs(os.path.dirname(config_path), exist_ok=True)
-
-cfg = {}
-if os.path.exists(config_path):
-    with open(config_path) as f:
-        cfg = json.load(f)
-
-cfg.setdefault('agents', {}).setdefault('defaults', {}).setdefault('model', {})['primary'] = 'nvidia/nemotron-3-super-120b-a12b'
-
-chat_ui_url = os.environ.get('CHAT_UI_URL', 'http://127.0.0.1:18789')
-parsed = urlparse(chat_ui_url)
-chat_origin = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'
-local_origin = f'http://127.0.0.1:{os.environ.get("PUBLIC_PORT", "18789")}'
-origins = [local_origin]
-if chat_origin not in origins:
-    origins.append(chat_origin)
-
-gateway = cfg.setdefault('gateway', {})
-gateway['mode'] = 'local'
-gateway['controlUi'] = {
-    'allowInsecureAuth': True,
-    'dangerouslyDisableDeviceAuth': True,
-    'allowedOrigins': origins,
-}
-gateway['trustedProxies'] = ['127.0.0.1', '::1']
-
-with open(config_path, 'w') as f:
-    json.dump(cfg, f, indent=2)
-os.chmod(config_path, 0o600)
-PYCFG
-}
-
 write_auth_profile() {
   if [ -z "${NVIDIA_API_KEY:-}" ]; then
     return
@@ -167,12 +127,10 @@ PYAUTOPAIR
 }
 
 echo 'Setting up NemoClaw...'
-openclaw doctor --fix > /dev/null 2>&1 || true
-openclaw models set nvidia/nemotron-3-super-120b-a12b > /dev/null 2>&1 || true
+# openclaw doctor --fix and openclaw plugins install already ran at build time
+# (Dockerfile Step 28). At runtime they fail with EPERM against the locked
+# /sandbox/.openclaw directory and accomplish nothing.
 write_auth_profile
-export CHAT_UI_URL PUBLIC_PORT
-fix_openclaw_config
-openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exec "${NEMOCLAW_CMD[@]}"

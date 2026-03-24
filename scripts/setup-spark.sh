@@ -7,18 +7,17 @@
 # Spark ships Ubuntu 24.04 (cgroup v2) + Docker 28.x but no k3s.
 # OpenShell's gateway starts k3s inside a Docker container, which
 # needs cgroup host namespace access. This script configures Docker
-# for that, then hands off to the normal setup.sh.
+# for that.
 #
 # Usage:
 #   sudo nemoclaw setup-spark
 #   # or directly:
 #   sudo bash scripts/setup-spark.sh
 #
-# What it does (beyond setup.sh):
+# What it does:
 #   1. Adds current user to docker group (avoids sudo for everything else)
 #   2. Configures Docker daemon for cgroupns=host (k3s-in-Docker on cgroup v2)
 #   3. Restarts Docker
-#   4. Runs the normal setup.sh
 
 set -euo pipefail
 
@@ -133,57 +132,10 @@ if [ "$NEEDS_RESTART" = true ]; then
   info "Docker restarted with cgroupns=host"
 fi
 
-# ── 4. Install and start vLLM (local inference on Spark GPU) ──────
+# ── 4. Run normal setup ──────────────────────────────────────────
 
-if ! python3 -c "import vllm" 2>/dev/null; then
-  info "Installing vLLM..."
-  pip3 install --break-system-packages vllm 2>&1 | tail -1
-  info "vLLM installed"
-else
-  info "vLLM already installed"
-fi
-
-# Start vLLM if not already running
-VLLM_MODEL="nvidia/nemotron-3-nano-30b-a3b"
-if curl -s http://localhost:8000/v1/models > /dev/null 2>&1; then
-  info "vLLM already running on :8000"
-else
-  if python3 -c "import vllm" 2>/dev/null && command -v nvidia-smi > /dev/null 2>&1; then
-    info "Starting vLLM with $VLLM_MODEL..."
-    nohup python3 -m vllm.entrypoints.openai.api_server \
-      --model "$VLLM_MODEL" \
-      --port 8000 \
-      --host 0.0.0.0 \
-      > /tmp/vllm-server.log 2>&1 &
-    VLLM_PID=$!
-    # Wait for vLLM to be ready (model loading can take a while)
-    info "Waiting for vLLM to load model (this can take a few minutes)..."
-    for i in $(seq 1 120); do
-      if curl -s http://localhost:8000/v1/models > /dev/null 2>&1; then
-        info "vLLM ready (PID $VLLM_PID)"
-        break
-      fi
-      if ! kill -0 "$VLLM_PID" 2>/dev/null; then
-        warn "vLLM exited. Check /tmp/vllm-server.log"
-        break
-      fi
-      sleep 2
-    done
-  fi
-fi
-
-# ── 5. Run normal setup ──────────────────────────────────────────
-
-info "Running NemoClaw setup..."
 echo ""
-
-# Drop back to the real user for setup.sh (uses docker group, not root)
-if [ -n "$REAL_USER" ]; then
-  # Pass through env vars that setup.sh needs
-  sudo -u "$REAL_USER" -E \
-    NVIDIA_API_KEY="${NVIDIA_API_KEY:-}" \
-    DOCKER_HOST="${DOCKER_HOST:-}" \
-    bash "$SCRIPT_DIR/setup.sh"
-else
-  bash "$SCRIPT_DIR/setup.sh"
-fi
+info "DGX Spark Docker configuration complete."
+info ""
+info "Next step: run 'nemoclaw onboard' to set up your sandbox."
+info "  nemoclaw onboard"

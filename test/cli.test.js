@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
-const { execSync } = require("child_process");
-const path = require("path");
+import { describe, it, expect } from "vitest";
+import { execSync } from "node:child_process";
+import path from "node:path";
 
-const CLI = path.join(__dirname, "..", "bin", "nemoclaw.js");
+const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 
 function run(args) {
   try {
@@ -24,36 +23,71 @@ function run(args) {
 describe("CLI dispatch", () => {
   it("help exits 0 and shows sections", () => {
     const r = run("help");
-    assert.equal(r.code, 0);
-    assert.ok(r.out.includes("Getting Started"), "missing Getting Started section");
-    assert.ok(r.out.includes("Sandbox Management"), "missing Sandbox Management section");
-    assert.ok(r.out.includes("Policy Presets"), "missing Policy Presets section");
+    expect(r.code).toBe(0);
+    expect(r.out.includes("Getting Started")).toBeTruthy();
+    expect(r.out.includes("Sandbox Management")).toBeTruthy();
+    expect(r.out.includes("Policy Presets")).toBeTruthy();
   });
 
   it("--help exits 0", () => {
-    assert.equal(run("--help").code, 0);
+    expect(run("--help").code).toBe(0);
   });
 
   it("-h exits 0", () => {
-    assert.equal(run("-h").code, 0);
+    expect(run("-h").code).toBe(0);
   });
 
   it("no args exits 0 (shows help)", () => {
     const r = run("");
-    assert.equal(r.code, 0);
-    assert.ok(r.out.includes("nemoclaw"));
+    expect(r.code).toBe(0);
+    expect(r.out.includes("nemoclaw")).toBeTruthy();
   });
 
   it("unknown command exits 1", () => {
     const r = run("boguscmd");
-    assert.equal(r.code, 1);
-    assert.ok(r.out.includes("Unknown command"));
+    expect(r.code).toBe(1);
+    expect(r.out.includes("Unknown command")).toBeTruthy();
   });
 
   it("list exits 0", () => {
     const r = run("list");
-    assert.equal(r.code, 0);
+    expect(r.code).toBe(0);
     // With empty HOME, should say no sandboxes
-    assert.ok(r.out.includes("No sandboxes"));
+    expect(r.out.includes("No sandboxes")).toBeTruthy();
+  });
+
+  it("unknown onboard option exits 1", () => {
+    const r = run("onboard --non-interactiv");
+    expect(r.code).toBe(1);
+    expect(r.out.includes("Unknown onboard option")).toBeTruthy();
+  });
+
+  it("debug --help exits 0 and shows usage", () => {
+    const r = run("debug --help");
+    expect(r.code).toBe(0);
+    expect(r.out.includes("Collect NemoClaw diagnostic information")).toBeTruthy();
+    expect(r.out.includes("--quick")).toBeTruthy();
+    expect(r.out.includes("--output")).toBeTruthy();
+  });
+
+  it("debug --quick exits 0 and produces diagnostic output", () => {
+    const r = run("debug --quick");
+    expect(r.code).toBe(0);
+    expect(r.out.includes("Collecting diagnostics")).toBeTruthy();
+    expect(r.out.includes("System")).toBeTruthy();
+    expect(r.out.includes("Done")).toBeTruthy();
+  });
+
+  it("debug exits 1 on unknown option", () => {
+    const r = run("debug --quik");
+    expect(r.code).toBe(1);
+    expect(r.out.includes("Unknown option")).toBeTruthy();
+  });
+
+  it("help mentions debug command", () => {
+    const r = run("help");
+    expect(r.code).toBe(0);
+    expect(r.out.includes("Troubleshooting")).toBeTruthy();
+    expect(r.out.includes("nemoclaw debug")).toBeTruthy();
   });
 });
