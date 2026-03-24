@@ -68,10 +68,25 @@ describe("credential exposure in process arguments", () => {
     const fn = src.match(/async function setupInference\([\s\S]*?\n\}/);
     expect(fn).toBeTruthy();
     const body = fn[0];
-    // Must not use run() with template-literal interpolation for openshell calls
-    expect(body).not.toMatch(/\brun\s*\(\s*\n?\s*`[^`]*openshell/);
+    // Must not use run() in any form (template literal or quoted string) for openshell
+    expect(body).not.toMatch(/\brun\s*\(\s*[`"'][^`"']*openshell/);
+    expect(body).not.toMatch(/\brun(?:Capture|Interactive)?\s*\([^)]*openshell/);
     // Should use runOpenshell with array args
     expect(body).toMatch(/runOpenshell\s*\(/);
+  });
+
+  it("createSandbox does not interpolate credentials into command strings", () => {
+    const src = fs.readFileSync(ONBOARD_JS, "utf-8");
+    const fn = src.match(/async function createSandbox\([\s\S]*?\n\}/);
+    expect(fn).toBeTruthy();
+    const body = fn[0];
+    // Must not interpolate credential values (process.env.NVIDIA_API_KEY, etc.)
+    // into shell command strings
+    expect(body).not.toMatch(/\$\{shellQuote\(process\.env\.NVIDIA_API_KEY\)\}/);
+    expect(body).not.toMatch(/\$\{shellQuote\(discordToken\)\}/);
+    expect(body).not.toMatch(/\$\{shellQuote\(slackToken\)\}/);
+    // streamSandboxCreate should receive an array, not a command string
+    expect(body).not.toMatch(/streamSandboxCreate\s*\(\s*\n?\s*`/);
   });
 
   it("onboard.js --credential flags pass env var names only", () => {

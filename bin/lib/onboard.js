@@ -106,10 +106,10 @@ function hasStaleGateway(gwInfoOutput) {
   return typeof gwInfoOutput === "string" && gwInfoOutput.length > 0 && gwInfoOutput.includes("nemoclaw");
 }
 
-function streamSandboxCreate(command) {
-  const child = spawn("bash", ["-lc", command], {
+function streamSandboxCreate(args, opts = {}) {
+  const child = spawn("openshell", args, {
     cwd: ROOT,
-    env: process.env,
+    env: { ...process.env, ...opts.env },
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -574,26 +574,40 @@ async function createSandbox(gpu) {
   // --gpu is intentionally omitted. See comment in startGateway().
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
-  const chatUiUrl = process.env.CHAT_UI_URL || 'http://127.0.0.1:18789';
-  const envArgs = [`CHAT_UI_URL=${shellQuote(chatUiUrl)}`];
+
+  // Pass credentials via subprocess environment, not CLI arguments.
+  // CLI arguments are visible in `ps aux` and /proc/PID/cmdline.
+  const sandboxEnv = {};
+  sandboxEnv.CHAT_UI_URL = process.env.CHAT_UI_URL || 'http://127.0.0.1:18789';
   if (process.env.NVIDIA_API_KEY) {
-    envArgs.push(`NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY)}`);
+    sandboxEnv.NVIDIA_API_KEY = process.env.NVIDIA_API_KEY;
   }
   const discordToken = getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN;
   if (discordToken) {
-    envArgs.push(`DISCORD_BOT_TOKEN=${shellQuote(discordToken)}`);
+    sandboxEnv.DISCORD_BOT_TOKEN = discordToken;
   }
   const slackToken = getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN;
   if (slackToken) {
-    envArgs.push(`SLACK_BOT_TOKEN=${shellQuote(slackToken)}`);
+    sandboxEnv.SLACK_BOT_TOKEN = slackToken;
   }
 
-  // Run without piping through awk — the pipe masked non-zero exit codes
-  // from openshell because bash returns the status of the last pipeline
-  // command (awk, always 0) unless pipefail is set. Removing the pipe
-  // lets the real exit code flow through to run().
+  // Build env forwarding args for the sandbox entrypoint.
+  // Only pass env var NAMES (not values) so they are read from the environment.
+  const envNames = Object.keys(sandboxEnv);
+  const envForwardArgs = [];
+  for (const name of envNames) {
+    envForwardArgs.push(`${name}=\${${name}}`);
+  }
+
   const createResult = await streamSandboxCreate(
-    `openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1`
+    [
+      "sandbox", "create",
+      "--from", `${buildCtx}/Dockerfile`,
+      "--name", sandboxName,
+      "--policy", basePolicyPath,
+      "--", "env", ...envForwardArgs, "nemoclaw-start",
+    ],
+    { env: sandboxEnv }
   );
 
   // Clean up build context regardless of outcome
