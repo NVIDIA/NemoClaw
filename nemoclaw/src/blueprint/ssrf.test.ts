@@ -35,12 +35,15 @@ describe("isPrivateIp", () => {
     expect(isPrivateIp(ip)).toBe(true);
   });
 
-  it.each(["8.8.8.8", "1.1.1.1", "203.0.113.1", "2607:f8b0:4004:800::200e"])(
-    "allows public IP: %s",
-    (ip) => {
-      expect(isPrivateIp(ip)).toBe(false);
-    },
-  );
+  it.each([
+    "8.8.8.8",
+    "1.1.1.1",
+    "203.0.113.1",
+    "2607:f8b0:4004:800::200e",
+    "2607:f8b0:4004:0800:0000:0000:0000:200e", // fully-expanded IPv6 (no ::)
+  ])("allows public IP: %s", (ip) => {
+    expect(isPrivateIp(ip)).toBe(false);
+  });
 
   it("returns false for invalid IP", () => {
     expect(isPrivateIp("not-an-ip")).toBe(false);
