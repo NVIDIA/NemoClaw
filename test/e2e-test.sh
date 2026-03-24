@@ -62,15 +62,65 @@ else
 fi
 
 # -------------------------------------------------------
+info "3b. Verify blueprint profile validation from compiled TypeScript"
+# -------------------------------------------------------
+# Independent backstop for validate-blueprint.test.ts — exercises the same
+# checks from the compiled TS inside the Docker container so a vitest
+# loading bug cannot hide a broken blueprint.
+if node --input-type=module -e "
+  import { createRequire } from 'node:module';
+  import { readFileSync } from 'node:fs';
+  const require = createRequire('/opt/nemoclaw/');
+  const YAML = require('yaml');
+
+  const bp = YAML.parse(readFileSync('/opt/nemoclaw-blueprint/blueprint.yaml', 'utf-8'));
+  const declared = bp.profiles;
+  const defined = bp.components?.inference?.profiles ?? {};
+
+  if (!Array.isArray(declared) || declared.length === 0) {
+    throw new Error('Top-level profiles list is empty or missing');
+  }
+  if (Object.keys(defined).length === 0) {
+    throw new Error('components.inference.profiles is empty or missing');
+  }
+
+  for (const name of declared) {
+    if (!(name in defined)) throw new Error('Declared profile missing definition: ' + name);
+    const cfg = defined[name];
+    if (!cfg.provider_type) throw new Error(name + ': missing provider_type');
+    if (!cfg.endpoint && !cfg.dynamic_endpoint) throw new Error(name + ': missing endpoint');
+  }
+  for (const name of Object.keys(defined)) {
+    if (!declared.includes(name)) throw new Error('Defined profile not declared: ' + name);
+  }
+
+  const policy = YAML.parse(readFileSync('/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml', 'utf-8'));
+  if (!policy.version) throw new Error('Base policy missing version');
+  if (!policy.network_policies) throw new Error('Base policy missing network_policies');
+
+  console.log('Validated ' + declared.length + ' profiles: ' + declared.join(', '));
+"; then
+  pass "Blueprint validation from compiled TS inside Docker"
+else
+  fail "Blueprint validation from compiled TS failed"
+fi
+
+# -------------------------------------------------------
 info "4. Verify blueprint runner plan command"
 # -------------------------------------------------------
 cd /opt/nemoclaw-blueprint
-# Runner will fail at openshell prereq check (expected in test container)
-# We just verify it gets past validation and profile resolution
+# Runner will fail at openshell prereq check (expected in test container).
+# Use 'ncp' profile (empty endpoint skips SSRF DNS lookup in sandbox).
+# Catch only the expected error — anything else propagates as a real failure.
 NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint node --input-type=module -e "
   const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
-  await main(['plan', '--profile', 'vllm', '--dry-run']).catch(() => {});
-" 2>&1 | tee /tmp/plan-output.txt || true
+  try {
+    await main(['plan', '--profile', 'ncp', '--dry-run']);
+  } catch (err) {
+    if (!err.message.includes('openshell CLI not found')) throw err;
+    console.log('EXPECTED_ERROR: ' + err.message);
+  }
+" 2>&1 | tee /tmp/plan-output.txt
 if grep -q "RUN_ID:" /tmp/plan-output.txt; then
   pass "Blueprint plan generates run ID"
 else
@@ -80,6 +130,42 @@ if grep -q "Validating blueprint" /tmp/plan-output.txt; then
   pass "Blueprint runner validates before execution"
 else
   fail "No validation step"
+fi
+if grep -q "EXPECTED_ERROR: openshell CLI not found" /tmp/plan-output.txt; then
+  pass "Plan fails with expected openshell error (not silently)"
+else
+  fail "Plan did not produce expected openshell error"
+fi
+
+# -------------------------------------------------------
+info "4b. Verify blueprint runner apply smoke test"
+# -------------------------------------------------------
+# Apply reaches sandbox creation before failing (no openshell in test container).
+# Verifies profile resolution, SSRF validation, and credential handling execute.
+NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint node --input-type=module -e "
+  const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
+  try {
+    await main(['apply', '--profile', 'ncp']);
+    throw new Error('apply should have failed without openshell');
+  } catch (err) {
+    if (err.message === 'apply should have failed without openshell') throw err;
+    console.log('EXPECTED_ERROR: ' + err.message);
+  }
+" 2>&1 | tee /tmp/apply-output.txt
+if grep -q "RUN_ID:" /tmp/apply-output.txt; then
+  pass "Apply generates run ID"
+else
+  fail "No run ID in apply output"
+fi
+if grep -q "PROGRESS:20:Creating OpenClaw sandbox" /tmp/apply-output.txt; then
+  pass "Apply reaches sandbox creation step"
+else
+  fail "Apply did not reach sandbox creation step"
+fi
+if grep -q "EXPECTED_ERROR:" /tmp/apply-output.txt; then
+  pass "Apply fails with expected error (not silently)"
+else
+  fail "Apply did not produce expected error"
 fi
 
 # -------------------------------------------------------
