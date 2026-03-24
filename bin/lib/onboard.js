@@ -879,16 +879,26 @@ async function setupInference(sandboxName, model, provider) {
   step(5, 7, "Setting up inference provider");
 
   if (provider === "nvidia-nim") {
-    // Create nvidia-nim provider — pass credential via env, not CLI args
-    runOpenshell(
+    // Create nvidia-nim provider — pass credential via env, not CLI args.
+    // Try create first; fall back to update only if create fails (already exists).
+    const createResult = runOpenshell(
       ["provider", "create", "--name", "nvidia-nim", "--type", "openai",
        "--credential", "NVIDIA_API_KEY",
        "--config", `OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1`],
       { ignoreError: true }
     );
+    if (createResult.status !== 0) {
+      runOpenshell(
+        ["provider", "update", "nvidia-nim",
+         "--credential", "NVIDIA_API_KEY",
+         "--config", `OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1`],
+        { ignoreError: false }
+      );
+    }
+    // inference set must succeed — do not ignore errors
     runOpenshell(
       ["inference", "set", "--no-verify", "--provider", "nvidia-nim", "--model", model],
-      { ignoreError: true }
+      { ignoreError: false }
     );
   } else if (provider === "vllm-local") {
     const validation = validateLocalProvider(provider, runCapture);
@@ -899,22 +909,24 @@ async function setupInference(sandboxName, model, provider) {
     const baseUrl = getLocalProviderBaseUrl(provider);
     // Pass credential value via env instead of shell command string
     const vllmEnv = { OPENAI_API_KEY: "dummy" };
-    runOpenshell(
+    const createResult = runOpenshell(
       ["provider", "create", "--name", "vllm-local", "--type", "openai",
        "--credential", "OPENAI_API_KEY",
        "--config", `OPENAI_BASE_URL=${baseUrl}`],
       { ignoreError: true, env: vllmEnv }
     );
-    // Fall back to update if create fails (already exists)
-    runOpenshell(
-      ["provider", "update", "vllm-local",
-       "--credential", "OPENAI_API_KEY",
-       "--config", `OPENAI_BASE_URL=${baseUrl}`],
-      { ignoreError: true, env: vllmEnv }
-    );
+    // Fall back to update only if create fails (provider already exists)
+    if (createResult.status !== 0) {
+      runOpenshell(
+        ["provider", "update", "vllm-local",
+         "--credential", "OPENAI_API_KEY",
+         "--config", `OPENAI_BASE_URL=${baseUrl}`],
+        { ignoreError: false, env: vllmEnv }
+      );
+    }
     runOpenshell(
       ["inference", "set", "--no-verify", "--provider", "vllm-local", "--model", model],
-      { ignoreError: true }
+      { ignoreError: false }
     );
   } else if (provider === "ollama-local") {
     const validation = validateLocalProvider(provider, runCapture);
@@ -926,21 +938,23 @@ async function setupInference(sandboxName, model, provider) {
     const baseUrl = getLocalProviderBaseUrl(provider);
     // Pass credential value via env instead of shell command string
     const ollamaEnv = { OPENAI_API_KEY: "ollama" };
-    runOpenshell(
+    const createResult = runOpenshell(
       ["provider", "create", "--name", "ollama-local", "--type", "openai",
        "--credential", "OPENAI_API_KEY",
        "--config", `OPENAI_BASE_URL=${baseUrl}`],
       { ignoreError: true, env: ollamaEnv }
     );
-    runOpenshell(
-      ["provider", "update", "ollama-local",
-       "--credential", "OPENAI_API_KEY",
-       "--config", `OPENAI_BASE_URL=${baseUrl}`],
-      { ignoreError: true, env: ollamaEnv }
-    );
+    if (createResult.status !== 0) {
+      runOpenshell(
+        ["provider", "update", "ollama-local",
+         "--credential", "OPENAI_API_KEY",
+         "--config", `OPENAI_BASE_URL=${baseUrl}`],
+        { ignoreError: false, env: ollamaEnv }
+      );
+    }
     runOpenshell(
       ["inference", "set", "--no-verify", "--provider", "ollama-local", "--model", model],
-      { ignoreError: true }
+      { ignoreError: false }
     );
     console.log(`  Priming Ollama model: ${model}`);
     run(getOllamaWarmupCommand(model), { ignoreError: true });
