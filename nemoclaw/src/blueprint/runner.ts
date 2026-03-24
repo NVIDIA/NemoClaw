@@ -134,6 +134,11 @@ async function resolveRunConfig(
     inferenceCfg = { ...inferenceCfg, endpoint: endpointUrl };
   }
 
+  // Validate the final endpoint (whether from CLI override or blueprint profile)
+  if (inferenceCfg.endpoint) {
+    await validateEndpointUrl(inferenceCfg.endpoint);
+  }
+
   const sandboxCfg = blueprint.components?.sandbox ?? {};
   return { inferenceProfiles, inferenceCfg, sandboxCfg };
 }
@@ -209,6 +214,12 @@ export async function actionApply(
   blueprint: Blueprint,
   options?: { planPath?: string; endpointUrl?: string },
 ): Promise<void> {
+  if (options?.planPath) {
+    throw new Error(
+      "--plan is not yet implemented. Run apply without --plan to use the live blueprint.",
+    );
+  }
+
   const rid = emitRunId();
 
   const { inferenceCfg, sandboxCfg } = await resolveRunConfig(
@@ -299,7 +310,13 @@ export async function actionApply(
         run_id: rid,
         profile,
         sandbox_name: sandboxName,
-        inference: inferenceCfg,
+        inference: {
+          provider_type: inferenceCfg.provider_type,
+          provider_name: inferenceCfg.provider_name,
+          endpoint: inferenceCfg.endpoint,
+          model: inferenceCfg.model,
+          // Omit credential_env and credential_default — secrets must not be persisted
+        },
         timestamp: new Date().toISOString(),
       },
       null,
