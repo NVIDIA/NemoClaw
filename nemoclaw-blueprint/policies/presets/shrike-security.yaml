@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Data flow: When activated with a SHRIKE_API_KEY, scanned content is
+# transmitted to api.shrikesecurity.com over TLS for threat analysis.
+# No data leaves the device without an API key configured.
+# See https://shrikesecurity.com/privacy for data handling policy.
+
+preset:
+  name: shrike-security
+  description: "Shrike Security — cognitive AI agent threat scanning (prompt injection, data exfiltration, OWASP LLM Top 10)"
+
+network_policies:
+  shrike_security:
+    name: shrike_security
+    endpoints:
+      - host: api.shrikesecurity.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: POST, path: "/agent/scan" }
+          - allow: { method: POST, path: "/agent/api/scan/specialized" }
+          - allow: { method: GET, path: "/agent/api/threatsense/**" }
+          - allow: { method: POST, path: "/agent/api/threatsense/**" }
+          - allow: { method: GET, path: "/agent/api/v1/approvals/**" }
+          - allow: { method: POST, path: "/agent/api/v1/approvals/**" }
+          - allow: { method: POST, path: "/agent/api/session/reset" }
+          - allow: { method: GET, path: "/health" }
+    binaries:
+      - { path: /usr/local/bin/node* }
+      - { path: /usr/local/bin/npx* }
+      - { path: /usr/bin/node* }
+      - { path: /usr/local/bin/shrike-sh }
