@@ -12,8 +12,11 @@ import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import YAML from "yaml";
 
-const BLUEPRINT_PATH = "nemoclaw-blueprint/blueprint.yaml";
-const BASE_POLICY_PATH = "nemoclaw-blueprint/policies/openclaw-sandbox.yaml";
+const BLUEPRINT_PATH = new URL("../nemoclaw-blueprint/blueprint.yaml", import.meta.url);
+const BASE_POLICY_PATH = new URL(
+  "../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+  import.meta.url,
+);
 const REQUIRED_PROFILE_FIELDS = ["provider_type", "endpoint"] as const;
 
 const bp = YAML.parse(readFileSync(BLUEPRINT_PATH, "utf-8")) as Record<string, unknown>;
@@ -49,7 +52,7 @@ describe("blueprint.yaml", () => {
         it(`has non-empty '${field}'`, () => {
           const cfg = defined?.[name];
           if (!cfg) return; // covered by "has a definition"
-          if (field === "endpoint" && cfg.dynamic_endpoint) {
+          if (field === "endpoint" && cfg.dynamic_endpoint === true) {
             expect(field in cfg).toBe(true);
           } else {
             expect(cfg[field]).toBeTruthy();
