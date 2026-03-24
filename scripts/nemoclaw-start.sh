@@ -15,6 +15,10 @@
 
 set -euo pipefail
 
+# Harden: limit process count to prevent fork bombs (ref: #809)
+ulimit -Hu 512 2>/dev/null || true
+ulimit -Su 512 2>/dev/null || true
+
 # SECURITY: Lock down PATH so the agent cannot inject malicious binaries
 # into commands executed by the entrypoint or auto-pair watcher.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
