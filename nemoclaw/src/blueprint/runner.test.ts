@@ -220,6 +220,33 @@ describe("runner", () => {
       expect(mockedValidateEndpoint).toHaveBeenCalledWith("https://override.example.com/v1");
     });
 
+    it("SSRF-validates the blueprint-defined endpoint even without --endpoint-url override", async () => {
+      captureStdout();
+      mockExeca.mockResolvedValue({ exitCode: 0 });
+      mockedValidateEndpoint.mockRejectedValueOnce(new Error("SSRF blocked: private IP"));
+
+      const bp = minimalBlueprint({
+        components: {
+          inference: {
+            profiles: {
+              malicious: {
+                provider_type: "openai",
+                endpoint: "http://169.254.169.254/latest/meta-data",
+                model: "gpt-4",
+                credential_env: "KEY",
+              },
+            },
+          },
+          sandbox: { name: "sb" },
+        },
+      });
+
+      await expect(actionPlan("malicious", bp)).rejects.toThrow("SSRF blocked: private IP");
+      expect(mockedValidateEndpoint).toHaveBeenCalledWith(
+        "http://169.254.169.254/latest/meta-data",
+      );
+    });
+
     it("emits progress and RUN_ID lines", async () => {
       captureStdout();
       mockExeca.mockResolvedValue({ exitCode: 0 });
@@ -299,6 +326,43 @@ describe("runner", () => {
       expect(plan.profile).toBe("default");
       expect(plan.sandbox_name).toBe("test-sandbox");
       expect(plan.timestamp).toBeDefined();
+    });
+
+    it("excludes secret fields from persisted plan.json", async () => {
+      const bp = {
+        components: {
+          inference: {
+            profiles: {
+              secrets: {
+                provider_type: "openai",
+                endpoint: "https://api.example.com",
+                model: "gpt-4",
+                credential_env: "SECRET_KEY",
+                credential_default: "default-secret-value",
+              },
+            },
+          },
+          sandbox: { name: "sb" },
+        },
+      };
+      process.env.SECRET_KEY = "real-secret";
+      try {
+        await actionApply("secrets", bp);
+      } finally {
+        delete process.env.SECRET_KEY;
+      }
+
+      const planKey = [...store.keys()].find((k) => k.endsWith("/plan.json"));
+      if (!planKey) throw new Error("plan.json not written to state dir");
+      const entry = store.get(planKey);
+      if (!entry?.content) throw new Error("plan.json has no content");
+      const persisted = JSON.parse(entry.content);
+
+      expect(persisted.inference).not.toHaveProperty("credential_env");
+      expect(persisted.inference).not.toHaveProperty("credential_default");
+      // Ensure non-secret fields are still present
+      expect(persisted.inference.provider_type).toBe("openai");
+      expect(persisted.inference.endpoint).toBe("https://api.example.com");
     });
 
     it("emits all progress milestones", async () => {
