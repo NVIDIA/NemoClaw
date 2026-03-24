@@ -19,8 +19,14 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-pass() { echo -e "${GREEN}PASS${NC}: $1"; PASSED=$((PASSED + 1)); }
-fail() { echo -e "${RED}FAIL${NC}: $1"; FAILED=$((FAILED + 1)); }
+pass() {
+  echo -e "${GREEN}PASS${NC}: $1"
+  PASSED=$((PASSED + 1))
+}
+fail() {
+  echo -e "${RED}FAIL${NC}: $1"
+  FAILED=$((FAILED + 1))
+}
 info() { echo -e "${YELLOW}TEST${NC}: $1"; }
 
 PASSED=0
@@ -29,12 +35,12 @@ FAILED=0
 # ── Build the image ──────────────────────────────────────────────
 
 # Skip build if image already exists (e.g., loaded from CI artifact)
-if docker image inspect "$IMAGE" > /dev/null 2>&1; then
+if docker image inspect "$IMAGE" >/dev/null 2>&1; then
   info "Using pre-built image: $IMAGE"
 else
   info "Building sandbox image..."
   BUILD_LOG="$(mktemp)"
-  if ! docker build -t "$IMAGE" "$REPO_DIR" > "$BUILD_LOG" 2>&1; then
+  if ! docker build -t "$IMAGE" "$REPO_DIR" >"$BUILD_LOG" 2>&1; then
     tail -40 "$BUILD_LOG"
     fail "Docker build failed (last 40 lines above)"
     exit 1
@@ -180,7 +186,7 @@ echo -e "${GREEN}========================================${NC}"
 
 # Cleanup — only remove images we built ourselves
 if [ -z "${NEMOCLAW_TEST_IMAGE:-}" ]; then
-  docker rmi "$IMAGE" > /dev/null 2>&1 || true
+  docker rmi "$IMAGE" >/dev/null 2>&1 || true
 fi
 
 [ "$FAILED" -eq 0 ] || exit 1

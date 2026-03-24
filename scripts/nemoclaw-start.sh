@@ -24,12 +24,12 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # own name as $1 would cause infinite recursion via the NEMOCLAW_CMD exec path.
 # Only strip from $1 — later args with this name are legitimate user arguments.
 case "${1:-}" in
-  nemoclaw-start|/usr/local/bin/nemoclaw-start) shift ;;
+nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
 esac
 NEMOCLAW_CMD=("$@")
 CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:18789}"
 PUBLIC_PORT=18789
-OPENCLAW="$(command -v openclaw)"  # Resolve once, use absolute path everywhere
+OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 
 # ── Config integrity check ──────────────────────────────────────
 # The config hash was pinned at build time. If it doesn't match,
@@ -74,7 +74,8 @@ PYAUTH
 print_dashboard_urls() {
   local token chat_ui_base local_url remote_url
 
-  token="$(python3 - <<'PYTOKEN'
+  token="$(
+    python3 - <<'PYTOKEN'
 import json
 import os
 path = '/sandbox/.openclaw/openclaw.json'
@@ -85,7 +86,7 @@ except Exception:
 else:
     print(cfg.get('gateway', {}).get('auth', {}).get('token', ''))
 PYTOKEN
-)"
+  )"
 
   chat_ui_base="${CHAT_UI_URL%/}"
   local_url="http://127.0.0.1:${PUBLIC_PORT}/"
@@ -102,7 +103,7 @@ PYTOKEN
 start_auto_pair() {
   # Run auto-pair as sandbox user (it talks to the gateway via CLI)
   # SECURITY: Pass resolved openclaw path to prevent PATH hijacking
-  OPENCLAW_BIN="$OPENCLAW" nohup gosu sandbox python3 - <<'PYAUTOPAIR' >> /tmp/auto-pair.log 2>&1 &
+  OPENCLAW_BIN="$OPENCLAW" nohup gosu sandbox python3 - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
 import json
 import os
 import subprocess
@@ -204,7 +205,7 @@ done
 # SECURITY: The sandbox user cannot kill this process because it runs
 # under a different UID. The fake-HOME attack no longer works because
 # the agent cannot restart the gateway with a tampered config.
-nohup gosu gateway "$OPENCLAW" gateway run > /tmp/gateway.log 2>&1 &
+nohup gosu gateway "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
 GATEWAY_PID=$!
 echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)"
 
