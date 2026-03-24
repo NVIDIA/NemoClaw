@@ -127,15 +127,9 @@ describe("policies", () => {
       const packagePresets = ["pypi", "npm"];
       for (const name of packagePresets) {
         const content = policies.loadPreset(name);
-        assert.ok(content, `preset not found: ${name}`);
-        assert.ok(
-          !content.includes("tls: terminate"),
-          `${name} preset must not use tls: terminate (breaks CONNECT tunneling)`
-        );
-        assert.ok(
-          content.includes("access: full"),
-          `${name} preset must use access: full for package manager compatibility`
-        );
+        expect(content).toBeTruthy();
+        expect(content.includes("tls: terminate")).toBe(false);
+        expect(content.includes("access: full")).toBe(true);
       }
     });
 
@@ -148,15 +142,9 @@ describe("policies", () => {
       ];
       for (const { name, expectedBinary } of packagePresets) {
         const content = policies.loadPreset(name);
-        assert.ok(content, `preset not found: ${name}`);
-        assert.ok(
-          content.includes("binaries:"),
-          `${name} preset must include a binaries section`
-        );
-        assert.ok(
-          content.includes(expectedBinary),
-          `${name} preset binaries must include ${expectedBinary}`
-        );
+        expect(content).toBeTruthy();
+        expect(content.includes("binaries:")).toBe(true);
+        expect(content.includes(expectedBinary)).toBe(true);
       }
     });
   });
