@@ -330,10 +330,11 @@ function sandboxLogs(sandboxName, follow) {
   // Use spawnSync with array args to avoid shell interpretation
   const args = ["logs", sandboxName];
   if (follow) args.push("--tail");
-  spawnSync("openshell", args, {
+  const result = spawnSync("openshell", args, {
     stdio: "inherit",
     cwd: ROOT,
   });
+  exitWithSpawnResult(result);
 }
 
 async function sandboxPolicyAdd(sandboxName) {
