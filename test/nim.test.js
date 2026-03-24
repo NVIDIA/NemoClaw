@@ -22,7 +22,7 @@ describe("nim", () => {
 
   describe("getImageForModel", () => {
     it("returns correct image for known model", () => {
-      expect(nim.getImageForModel("nvidia/nemotron-3-nano-30b-a3b")).toBe("nvcr.io/nim/nvidia/nemotron-3-nano-30b-a3b:latest");
+      expect(nim.getImageForModel("nvidia/nemotron-3-nano-30b-a3b")).toBe("nvcr.io/nim/nvidia/nemotron-3-nano:latest");
     });
 
     it("returns null for unknown model", () => {
