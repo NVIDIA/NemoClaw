@@ -314,8 +314,11 @@ function sandboxStatus(sandboxName) {
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
   }
 
-  // openshell info
-  run(`openshell sandbox get ${shellQuote(sandboxName)} 2>/dev/null || true`, { ignoreError: true });
+  // openshell info — use spawnSync with array args to avoid shell interpretation
+  spawnSync("openshell", ["sandbox", "get", sandboxName], {
+    stdio: ["ignore", "inherit", "inherit"],
+    cwd: ROOT,
+  });
 
   // NIM health
   const nimStat = nim.nimStatus(sandboxName);

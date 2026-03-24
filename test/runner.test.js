@@ -201,6 +201,37 @@ describe("runner helpers", () => {
       }
     });
 
+    it("sandboxStatus does not pass sandbox name through bash -c", () => {
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"), "utf-8");
+      const fn = src.match(/function sandboxStatus\([\s\S]*?\n\}/);
+      expect(fn).toBeTruthy();
+      const body = fn[0];
+      // Must not use run() with template-literal sandbox name interpolation
+      expect(body).not.toMatch(/run\s*\(\s*`[^`]*\$\{/);
+      // Should use spawnSync with array args
+      expect(body).toMatch(/spawnSync\s*\(\s*"openshell"/);
+    });
+
+    it("sandboxStatus rejects shell metacharacters in sandbox name (e2e)", () => {
+      const canaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-status-canary-"));
+      const canary = path.join(canaryDir, "executed");
+      try {
+        const result = spawnSync("node", [
+          path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
+          `test; touch ${canary}`,
+          "status",
+        ], {
+          encoding: "utf-8",
+          timeout: 10000,
+          cwd: path.join(import.meta.dirname, ".."),
+        });
+        expect(result.status).not.toBe(0);
+        expect(fs.existsSync(canary)).toBe(false);
+      } finally {
+        fs.rmSync(canaryDir, { recursive: true, force: true });
+      }
+    });
+
     it("telegram bridge validates SANDBOX_NAME on startup", () => {
 
       const src = fs.readFileSync(path.join(import.meta.dirname, "..", "scripts", "telegram-bridge.js"), "utf-8");
