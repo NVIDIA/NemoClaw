@@ -72,6 +72,21 @@ describe("metrics", () => {
     expect(filtered[0].preset).toBe("slack");
   });
 
+  it("loadEvents filters by since timestamp", () => {
+    metrics.recordEvent("sandbox_connect", { sandbox: "old" });
+    metrics.recordEvent("sandbox_connect", { sandbox: "new" });
+
+    // A future timestamp should exclude all events.
+    const future = new Date(Date.now() + 60_000).toISOString();
+    const filtered = metrics.loadEvents({ since: future });
+    expect(filtered).toHaveLength(0);
+
+    // A past timestamp should include all events.
+    const past = new Date(0).toISOString();
+    const all = metrics.loadEvents({ since: past });
+    expect(all).toHaveLength(2);
+  });
+
   it("getStats computes aggregates", () => {
     metrics.recordEvent("sandbox_connect", { sandbox: "s1" });
     metrics.recordEvent("sandbox_connect", { sandbox: "s1" });
