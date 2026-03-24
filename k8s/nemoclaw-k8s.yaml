@@ -82,7 +82,7 @@ spec:
           value: unix:///var/run/docker.sock
         # Dynamo endpoint (raw host:port for socat) - UPDATE THIS FOR YOUR CLUSTER
         - name: DYNAMO_HOST
-          value: "vllm-frontend.dynamo.svc.cluster.local:8000"
+          value: "vllm-agg-frontend.dynamo.svc.cluster.local:8000"
         # NemoClaw config (uses host.openshell.internal via socat)
         - name: NEMOCLAW_NON_INTERACTIVE
           value: "1"
