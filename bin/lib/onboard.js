@@ -1115,8 +1115,11 @@ async function ensureNamedCredential(envName, label, helpUrl = null) {
 
 function waitForSandboxReady(sandboxName, attempts = 10, delaySeconds = 2) {
   for (let i = 0; i < attempts; i += 1) {
-    const exists = runCaptureOpenshell(["sandbox", "get", sandboxName], { ignoreError: true });
-    if (exists) return true;
+    const podPhase = runCaptureOpenshell(
+      ["doctor", "exec", "--", "kubectl", "-n", "openshell", "get", "pod", sandboxName, "-o", "jsonpath={.status.phase}"],
+      { ignoreError: true }
+    );
+    if (podPhase === "Running") return true;
     sleep(delaySeconds);
   }
   return false;
@@ -2061,6 +2064,11 @@ async function setupPolicies(sandboxName) {
     if (answer.toLowerCase() === "n") {
       console.log("  Skipping policy presets.");
       return;
+    }
+
+    if (!waitForSandboxReady(sandboxName)) {
+      console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
+      process.exit(1);
     }
 
     if (answer.toLowerCase() === "list") {
