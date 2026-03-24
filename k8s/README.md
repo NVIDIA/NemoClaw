@@ -64,13 +64,51 @@ You're now inside a secure sandbox with an AI agent ready to help!
 
 ---
 
-## What Can You Do?
+## Using NemoClaw
 
-### Test Inference Connectivity
+### Access the Workspace Shell
+
+```bash
+# Get a shell in the workspace container
+kubectl exec -it nemoclaw -n nemoclaw -c workspace -- bash
+```
+
+### Check Sandbox Status
+
+```bash
+# List all sandboxes
+kubectl exec nemoclaw -n nemoclaw -c workspace -- nemoclaw list
+
+# Check specific sandbox status
+kubectl exec nemoclaw -n nemoclaw -c workspace -- nemoclaw my-assistant status
+
+# View sandbox logs
+kubectl exec nemoclaw -n nemoclaw -c workspace -- nemoclaw my-assistant logs --follow
+```
+
+### Connect to Your Sandbox
+
+```bash
+# Connect to the sandbox shell
+kubectl exec -it nemoclaw -n nemoclaw -c workspace -- nemoclaw my-assistant connect
+```
+
+Once connected, you're inside an isolated sandbox with AI agent capabilities:
+
+```
+sandbox@my-assistant:~$
+```
+
+### Test Inference
 
 ```bash
 # Inside the sandbox - verify the inference endpoint is reachable
 sandbox@my-assistant:~$ curl -s http://inference.local:8000/v1/models | jq .
+
+# Test chat completions
+sandbox@my-assistant:~$ curl -s http://inference.local:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"meta-llama/Llama-3.1-8B-Instruct","messages":[{"role":"user","content":"Hello!"}],"max_tokens":50}'
 ```
 
 ### Chat with the AI Agent (Coming Soon)
@@ -82,7 +120,7 @@ sandbox@my-assistant:~$ openclaw tui
 
 > **Note**: The `openclaw` commands currently don't work due to an HTTPS proxy routing issue in OpenShell. See [Known Limitations](#known-limitations).
 
-### Run Single Commands (Coming Soon)
+### Run Agent Tasks (Coming Soon)
 
 ```bash
 sandbox@my-assistant:~$ openclaw agent -m "List all Python files and summarize what each one does"
