@@ -3,7 +3,7 @@
 //
 // NIM container management — pull, start, stop, health-check NIM images.
 
-const { run, runCapture } = require("./runner");
+const { run, runCapture, shellQuote } = require("./runner");
 const nimImages = require("./nim-images.json");
 
 function containerName(sandboxName) {
@@ -121,12 +121,16 @@ function pullNimImage(model) {
     process.exit(1);
   }
   console.log(`  Pulling NIM image: ${image}`);
-  run(`docker pull ${image}`);
+  run(`docker pull ${shellQuote(image)}`);
   return image;
 }
 
 function startNimContainer(sandboxName, model, port = 8000) {
   const name = containerName(sandboxName);
+  return startNimContainerByName(name, model, port);
+}
+
+function startNimContainerByName(name, model, port = 8000) {
   const image = getImageForModel(model);
   if (!image) {
     console.error(`  Unknown model: ${model}`);
@@ -134,11 +138,12 @@ function startNimContainer(sandboxName, model, port = 8000) {
   }
 
   // Stop any existing container with same name
-  run(`docker rm -f ${name} 2>/dev/null || true`, { ignoreError: true });
+  const qn = shellQuote(name);
+  run(`docker rm -f ${qn} 2>/dev/null || true`, { ignoreError: true });
 
   console.log(`  Starting NIM container: ${name}`);
   run(
-    `docker run -d --gpus all -p ${port}:8000 --name ${name} --shm-size 16g ${image}`
+    `docker run -d --gpus all -p ${Number(port)}:8000 --name ${qn} --shm-size 16g ${shellQuote(image)}`
   );
   return name;
 }
@@ -146,11 +151,12 @@ function startNimContainer(sandboxName, model, port = 8000) {
 function waitForNimHealth(port = 8000, timeout = 300) {
   const start = Date.now();
   const interval = 5000;
-  console.log(`  Waiting for NIM health on port ${port} (timeout: ${timeout}s)...`);
+  const safePort = Number(port);
+  console.log(`  Waiting for NIM health on port ${safePort} (timeout: ${timeout}s)...`);
 
   while ((Date.now() - start) / 1000 < timeout) {
     try {
-      const result = runCapture(`curl -sf http://localhost:${port}/v1/models`, {
+      const result = runCapture(`curl -sf http://localhost:${safePort}/v1/models`, {
         ignoreError: true,
       });
       if (result) {
@@ -167,16 +173,25 @@ function waitForNimHealth(port = 8000, timeout = 300) {
 
 function stopNimContainer(sandboxName) {
   const name = containerName(sandboxName);
+  stopNimContainerByName(name);
+}
+
+function stopNimContainerByName(name) {
+  const qn = shellQuote(name);
   console.log(`  Stopping NIM container: ${name}`);
-  run(`docker stop ${name} 2>/dev/null || true`, { ignoreError: true });
-  run(`docker rm ${name} 2>/dev/null || true`, { ignoreError: true });
+  run(`docker stop ${qn} 2>/dev/null || true`, { ignoreError: true });
+  run(`docker rm ${qn} 2>/dev/null || true`, { ignoreError: true });
 }
 
 function nimStatus(sandboxName) {
   const name = containerName(sandboxName);
+  return nimStatusByName(name);
+}
+
+function nimStatusByName(name) {
   try {
     const state = runCapture(
-      `docker inspect --format '{{.State.Status}}' ${name} 2>/dev/null`,
+      `docker inspect --format '{{.State.Status}}' ${shellQuote(name)} 2>/dev/null`,
       { ignoreError: true }
     );
     if (!state) return { running: false, container: name };
@@ -201,7 +216,10 @@ module.exports = {
   detectGpu,
   pullNimImage,
   startNimContainer,
+  startNimContainerByName,
   waitForNimHealth,
   stopNimContainer,
+  stopNimContainerByName,
   nimStatus,
+  nimStatusByName,
 };
