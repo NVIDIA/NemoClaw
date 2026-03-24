@@ -15,6 +15,7 @@
 #
 # Priority groups (prek runs same-priority hooks in parallel):
 #   0  — General file fixers (whitespace, EOF, line endings)
+#   4  — SPDX header insertion (--fix)
 #   5  — Shell / Python / TS formatters (shfmt, ruff format, prettier)
 #   6  — Fixes that should follow formatters (ruff check --fix, eslint --fix)
 #  10  — Linters and read-only checks
@@ -54,6 +55,18 @@ repos:
         always_run: true
         pass_filenames: false
         priority: 0
+
+  # ── Priority 4: SPDX headers (insert if missing; runs before language formatters) ──
+  - repo: local
+    hooks:
+      - id: spdx-headers
+        name: SPDX license headers (insert if missing)
+        entry: bash scripts/check-spdx-headers.sh --fix
+        language: system
+        files: ^(nemoclaw/src/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
+        exclude: ^nemoclaw-blueprint/.*__init__\.py$
+        pass_filenames: true
+        priority: 4
 
   # ── Priority 5: formatters ────────────────────────────────────────────────
   - repo: https://github.com/scop/pre-commit-shfmt
@@ -128,9 +141,6 @@ repos:
     rev: v0.11.0.1
     hooks:
       - id: shellcheck
-        args:
-          - --severity=warning
-          - --exclude=SC1091
         priority: 10
 
   - repo: local
@@ -143,21 +153,17 @@ repos:
         types: [file]
         priority: 10
 
-  - repo: local
-    hooks:
-      - id: spdx-headers
-        name: SPDX license headers
-        entry: bash scripts/check-spdx-headers.sh
-        language: system
-        files: ^(nemoclaw/src/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
-        pass_filenames: true
-        priority: 10
-
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.1
     hooks:
       - id: gitleaks
         name: gitleaks (secret scan)
+        priority: 10
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.22.0
+    hooks:
+      - id: markdownlint-cli2
         priority: 10
 
   # ── Priority 20: project-level checks (pre-commit) ─────────────────────────

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  chmodSync,
   copyFileSync,
   cpSync,
   existsSync,
@@ -559,7 +560,9 @@ function prepareSandboxState(snapshotDir: string, manifest: SnapshotManifest): s
     }
   }
 
-  writeFileSync(path.join(preparedStateDir, "openclaw.json"), JSON.stringify(config, null, 2));
+  const configPath = path.join(preparedStateDir, "openclaw.json");
+  writeFileSync(configPath, JSON.stringify(config, null, 2));
+  chmodSync(configPath, 0o600);
   return preparedStateDir;
 }
 
@@ -589,7 +592,9 @@ export function createSnapshotBundle(
     if (hostState.configPath && hostState.hasExternalConfig) {
       const configSnapshotDir = path.join(parentDir, "config");
       mkdirSync(configSnapshotDir, { recursive: true });
-      copyFileSync(hostState.configPath, path.join(configSnapshotDir, "openclaw.json"));
+      const configSnapshotPath = path.join(configSnapshotDir, "openclaw.json");
+      copyFileSync(hostState.configPath, configSnapshotPath);
+      chmodSync(configSnapshotPath, 0o600);
     }
 
     const externalRoots: MigrationExternalRoot[] = [];
@@ -749,6 +754,7 @@ export function restoreSnapshotToHost(snapshotDir: string, logger: PluginLogger)
       const configSnapshotPath = path.join(snapshotDir, "config", "openclaw.json");
       mkdirSync(path.dirname(manifest.configPath), { recursive: true });
       copyFileSync(configSnapshotPath, manifest.configPath);
+      chmodSync(manifest.configPath, 0o600);
       logger.info(`Restored external config to ${manifest.configPath}`);
     }
 

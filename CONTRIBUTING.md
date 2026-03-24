@@ -133,7 +133,7 @@ The generated `.agents/skills/docs/` directory is committed to the repo but is e
 
 Each skill directory contains:
 
-```
+```text
 .agents/skills/docs/<skill-name>/
 ├── SKILL.md              # Frontmatter + procedures + related skills
 └── references/           # Detailed concept and reference content (loaded on demand)
@@ -173,7 +173,7 @@ Follow these steps to submit a pull request.
 
 This project uses [Conventional Commits](https://www.conventionalcommits.org/). All commit messages must follow the format:
 
-```
+```text
 <type>(<scope>): <description>
 
 [optional body]
@@ -194,7 +194,7 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/). 
 
 **Examples:**
 
-```
+```text
 feat(cli): add --profile flag to nemoclaw onboard
 fix(blueprint): handle missing API key gracefully
 docs: update quickstart for new install wizard

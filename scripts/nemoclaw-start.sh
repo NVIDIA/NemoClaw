@@ -167,6 +167,7 @@ PYAUTOPAIR
 # ── Main ─────────────────────────────────────────────────────────
 
 echo 'Setting up NemoClaw...'
+[ -f .env ] && chmod 600 .env
 
 # Verify config integrity before starting anything
 verify_config_integrity
