@@ -77,7 +77,7 @@ docker_host_runtime() {
     unix://*"/.colima/default/docker.sock" | unix://*"/.config/colima/default/docker.sock")
       printf 'colima\n'
       ;;
-    unix://*"/podman/machine/podman.sock"|unix://*"/podman/podman.sock")
+    unix://*"/podman/machine/podman.sock" | unix://*"/podman/podman.sock")
       printf 'podman\n'
       ;;
     unix://*"/.docker/run/docker.sock")
@@ -127,8 +127,7 @@ find_podman_socket() {
     uid="$(id -u 2>/dev/null || echo 1000)"
     for socket_path in \
       "/run/user/$uid/podman/podman.sock" \
-      "/run/podman/podman.sock"
-    do
+      "/run/podman/podman.sock"; do
       if socket_exists "$socket_path"; then
         printf '%s\n' "$socket_path"
         return 0
