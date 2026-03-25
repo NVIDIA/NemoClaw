@@ -29,7 +29,7 @@ describe("binaries restriction: baseline policy", () => {
       }
       if (!inNetworkPolicies) continue;
       // Top-level entry under network_policies (2-space indent, not a comment)
-      if (/^  (?!#)\S.*:\s*$/.test(line)) {
+      if (/^ {2}(?!#)\S.*:\s*$/.test(line)) {
         if (currentBlock) blocks.push(currentBlock);
         currentBlock = { name: line.trim().replace(/:$/, ""), startLine: i + 1, lines: [line] };
         continue;
