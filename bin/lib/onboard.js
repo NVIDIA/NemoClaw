@@ -1496,8 +1496,8 @@ async function preflight() {
   for (const { port, label } of requiredPorts) {
     const portCheck = await checkPortAvailable(port);
     if (!portCheck.ok) {
-      if (port === 8080 && gatewayReuseState === "healthy") {
-        console.log(`  ✓ Port ${port} already owned by healthy NemoClaw gateway (${label})`);
+      if ((port === 8080 || port === 18789) && gatewayReuseState === "healthy") {
+        console.log(`  ✓ Port ${port} already owned by healthy NemoClaw runtime (${label})`);
         continue;
       }
       console.error("");
