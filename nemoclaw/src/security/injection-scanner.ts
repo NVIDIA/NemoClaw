@@ -17,22 +17,52 @@
 
 export type Severity = "high" | "medium" | "low";
 
+/** Severity rank for numeric comparisons. */
+export const SEVERITY_RANK: Record<Severity, number> = { low: 0, medium: 1, high: 2 };
+
+/** All known pattern names emitted by the scanner. */
+export const PATTERN_NAMES = [
+  "role_override_you_are",
+  "role_override_ignore",
+  "role_override_system_tag",
+  "role_override_system_colon",
+  "instruction_important",
+  "instruction_critical",
+  "instruction_override",
+  "instruction_inst_tag",
+  "instruction_sys_tag",
+  "tool_manipulation_call",
+  "tool_manipulation_function",
+  "tool_manipulation_execute",
+  "exfil_base64_encode",
+  "exfil_send_to",
+  "exfil_post_secret",
+  "scanner_error",
+  "input_too_large",
+] as const;
+
+/** Union of all pattern names that can appear in a Finding. */
+export type PatternName = (typeof PATTERN_NAMES)[number];
+
 /** A single injection finding detected by the scanner. */
 export interface Finding {
   /** Which field triggered the finding (e.g. "stdout", "body_b64decoded"). */
-  field: string;
+  readonly field: string;
   /** Which pattern matched (e.g. "role_override_you_are"). */
-  pattern: string;
-  severity: Severity;
+  readonly pattern: PatternName;
+  readonly severity: Severity;
   /** Truncated match context (max 200 chars). */
-  snippet: string;
+  readonly snippet: string;
 }
 
 interface PatternDef {
-  name: string;
+  name: PatternName;
   pattern: RegExp;
   severity: Severity;
 }
+
+/** Maximum field size in characters (1 MB). Fields exceeding this are skipped. */
+const MAX_FIELD_SIZE = 1_000_000;
 
 const defaultPatterns: PatternDef[] = [
   // Role/system prompt overrides
@@ -84,14 +114,39 @@ export function scanFields(fields: Record<string, string>): Finding[] {
       continue;
     }
 
-    const normalizedValue = normalizeText(value);
-    scanText(fieldName, normalizedValue, findings);
+    // Input size guard — skip scanning fields that exceed the limit.
+    if (value.length > MAX_FIELD_SIZE) {
+      findings.push({
+        field: fieldName,
+        pattern: "input_too_large",
+        severity: "medium",
+        snippet: truncate(
+          `field length ${String(value.length)} exceeds max ${String(MAX_FIELD_SIZE)}`,
+          200,
+        ),
+      });
+      continue;
+    }
 
-    // Attempt base64 decode and re-scan (use normalized input so
-    // zero-width/control chars don't prevent valid base64 from decoding)
-    const decoded = tryBase64Decode(normalizedValue);
-    if (decoded !== "") {
-      scanText(fieldName + "_b64decoded", normalizeText(decoded), findings);
+    try {
+      const normalizedValue = normalizeText(value);
+      scanText(fieldName, normalizedValue, findings);
+
+      // Attempt base64 decode and re-scan (use normalized input so
+      // zero-width/control chars don't prevent valid base64 from decoding)
+      const decoded = tryBase64Decode(normalizedValue);
+      if (decoded !== "") {
+        scanText(fieldName + "_b64decoded", normalizeText(decoded), findings);
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[injection-scanner] error scanning field "${fieldName}": ${message}`);
+      findings.push({
+        field: fieldName,
+        pattern: "scanner_error",
+        severity: "high",
+        snippet: truncate(message, 200),
+      });
     }
   }
 
@@ -100,6 +155,8 @@ export function scanFields(fields: Record<string, string>): Finding[] {
 
 function scanText(field: string, text: string, out: Finding[]): void {
   for (const p of defaultPatterns) {
+    // Intentionally reports only the first match per pattern for performance.
+    p.pattern.lastIndex = 0;
     const match = p.pattern.exec(text);
     if (match !== null) {
       out.push({
@@ -117,9 +174,9 @@ export function hasHighSeverity(findings: Finding[]): boolean {
   return findings.some((f) => f.severity === "high");
 }
 
-/** Returns the highest severity among findings, or "" if empty. */
-export function maxSeverity(findings: Finding[]): Severity | "" {
-  let highest: Severity | "" = "";
+/** Returns the highest severity among findings, or null if empty. */
+export function maxSeverity(findings: Finding[]): Severity | null {
+  let highest: Severity | null = null;
   for (const f of findings) {
     if (f.severity === "high") {
       return "high";
@@ -127,7 +184,7 @@ export function maxSeverity(findings: Finding[]): Severity | "" {
     if (f.severity === "medium") {
       highest = "medium";
     }
-    if (highest === "" && f.severity === "low") {
+    if (highest === null && f.severity === "low") {
       highest = "low";
     }
   }
@@ -174,7 +231,7 @@ function normalizeText(s: string): string {
 
 /**
  * Try to base64-decode a string. Returns the decoded text if:
- *  - trimmed length is between 20 and 100,000
+ *  - trimmed length (after whitespace stripping) is between 20 and 100,000
  *  - decoding succeeds (standard or unpadded)
  *  - result is printable text (no bytes < 0x20 except newline/CR/tab)
  *
@@ -182,19 +239,22 @@ function normalizeText(s: string): string {
  */
 function tryBase64Decode(s: string): string {
   const trimmed = s.trim();
-  if (trimmed.length < 20 || trimmed.length > 100_000) {
+  // Strip all whitespace (\n, \r, spaces, tabs) before length check and validation
+  const stripped = trimmed.replace(/[\s]/g, "");
+
+  if (stripped.length < 20 || stripped.length > 100_000) {
     return "";
   }
 
   // Validate base64 alphabet before decoding — Buffer.from is too lenient
   // and silently ignores non-base64 characters.
-  if (!/^[A-Za-z0-9+/\n\r]*={0,2}$/.test(trimmed)) {
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(stripped)) {
     return "";
   }
 
   let decoded: Buffer;
   try {
-    decoded = Buffer.from(trimmed, "base64");
+    decoded = Buffer.from(stripped, "base64");
   } catch {
     return "";
   }
