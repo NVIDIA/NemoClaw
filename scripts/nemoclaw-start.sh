@@ -19,6 +19,25 @@ set -euo pipefail
 # into commands executed by the entrypoint or auto-pair watcher.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# ── Drop unnecessary Linux capabilities ──────────────────────────
+# CIS Docker Benchmark 5.3: containers should not run with default caps.
+# OpenShell manages the container runtime so we cannot pass --cap-drop=ALL
+# to docker run. Instead, drop dangerous capabilities from the bounding set
+# at startup using capsh. The bounding set limits what caps any child process
+# (gateway, sandbox, agent) can ever acquire.
+#
+# Kept: cap_chown, cap_setuid, cap_setgid, cap_fowner, cap_kill
+#   — required by the entrypoint for gosu privilege separation and chown.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/797
+if [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ] && command -v capsh >/dev/null 2>&1; then
+  export NEMOCLAW_CAPS_DROPPED=1
+  exec capsh \
+    --drop=cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setpcap,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service \
+    -- -c 'exec /usr/local/bin/nemoclaw-start "$@"' -- "$@"
+elif [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ]; then
+  echo "[SECURITY WARNING] capsh not available — running with default capabilities" >&2
+fi
+
 # Filter out self-invocation: openshell sandbox create passes "nemoclaw-start"
 # as the command, but since this script is now the ENTRYPOINT, receiving our
 # own name as $1 would cause infinite recursion via the NEMOCLAW_CMD exec path.

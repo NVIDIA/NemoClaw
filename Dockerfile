@@ -1,4 +1,15 @@
 # NemoClaw sandbox image — OpenClaw + NemoClaw plugin inside OpenShell
+#
+# Layers PR-specific code (plugin, blueprint, config, startup script) on top
+# of the pre-built base image from GHCR. The base image contains all the
+# expensive, rarely-changing layers (apt, gosu, users, openclaw CLI).
+#
+# For local builds without GHCR access, build the base first:
+#   docker build -f Dockerfile.base -t ghcr.io/nvidia/nemoclaw/sandbox-base:latest .
+
+# Global ARG — must be declared before the first FROM to be visible
+# to all FROM directives. Can be overridden via --build-arg.
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 
 # Stage 1: Build TypeScript plugin from source
 FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d AS builder
@@ -7,86 +18,18 @@ COPY nemoclaw/src/ /opt/nemoclaw/src/
 WORKDIR /opt/nemoclaw
 RUN npm install && npm run build
 
-# Stage 2: Runtime image
-FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d
-
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3=3.11.2-1+b1 \
-        python3-pip=23.0.1+dfsg-1 \
-        python3-venv=3.11.2-1+b1 \
-        curl=7.88.1-10+deb12u14 \
-        git=1:2.39.5-0+deb12u3 \
-        ca-certificates=20230311+deb12u1 \
-        iproute2=6.1.0-3 \
-        iptables=1.8.9-2 \
-    && rm -rf /var/lib/apt/lists/*
-
-# gosu for privilege separation (gateway vs sandbox user).
-# Install from GitHub release with checksum verification instead of
-# Debian bookworm's ancient 1.14 (2020). Pinned to 1.19 (2025-09).
-# hadolint ignore=DL4006
-RUN arch="$(dpkg --print-architecture)" \
-    && case "$arch" in \
-        amd64) gosu_asset="gosu-amd64"; gosu_sha256="52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0" ;; \
-        arm64) gosu_asset="gosu-arm64"; gosu_sha256="3a8ef022d82c0bc4a98bcb144e77da714c25fcfa64dccc57f6aba7ae47ff1a44" ;; \
-        *) echo "Unsupported architecture for gosu: $arch" >&2; exit 1 ;; \
-    esac \
-    && curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
-    && echo "${gosu_sha256}  /usr/local/bin/gosu" | sha256sum -c - \
-    && chmod +x /usr/local/bin/gosu \
-    && gosu --version
-
-# Create sandbox user (matches OpenShell convention) and gateway user.
-# The gateway runs as 'gateway' so the 'sandbox' user (agent) cannot
-# kill it or restart it with a tampered HOME/config.
-RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
-    && groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
-    && mkdir -p /sandbox/.nemoclaw \
-    && chown -R sandbox:sandbox /sandbox
-
-# Split .openclaw into immutable config dir + writable state dir.
-# The policy makes /sandbox/.openclaw read-only via Landlock, so the agent
-# cannot modify openclaw.json, auth tokens, or CORS settings.  Writable
-# state (agents, plugins, etc.) lives in .openclaw-data, reached via symlinks.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/514
-RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
-        /sandbox/.openclaw-data/extensions \
-        /sandbox/.openclaw-data/workspace \
-        /sandbox/.openclaw-data/skills \
-        /sandbox/.openclaw-data/hooks \
-        /sandbox/.openclaw-data/identity \
-        /sandbox/.openclaw-data/devices \
-        /sandbox/.openclaw-data/canvas \
-        /sandbox/.openclaw-data/cron \
-    && mkdir -p /sandbox/.openclaw \
-    && ln -s /sandbox/.openclaw-data/agents /sandbox/.openclaw/agents \
-    && ln -s /sandbox/.openclaw-data/extensions /sandbox/.openclaw/extensions \
-    && ln -s /sandbox/.openclaw-data/workspace /sandbox/.openclaw/workspace \
-    && ln -s /sandbox/.openclaw-data/skills /sandbox/.openclaw/skills \
-    && ln -s /sandbox/.openclaw-data/hooks /sandbox/.openclaw/hooks \
-    && ln -s /sandbox/.openclaw-data/identity /sandbox/.openclaw/identity \
-    && ln -s /sandbox/.openclaw-data/devices /sandbox/.openclaw/devices \
-    && ln -s /sandbox/.openclaw-data/canvas /sandbox/.openclaw/canvas \
-    && ln -s /sandbox/.openclaw-data/cron /sandbox/.openclaw/cron \
-    && touch /sandbox/.openclaw-data/update-check.json \
-    && ln -s /sandbox/.openclaw-data/update-check.json /sandbox/.openclaw/update-check.json \
-    && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
-
-# Install OpenClaw CLI + PyYAML for inline Python scripts in e2e tests
-RUN npm install -g openclaw@2026.3.11 \
-    && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
+# Stage 2: Runtime image — pull cached base from GHCR
+FROM ${BASE_IMAGE}
 
 # Copy built plugin and blueprint into the sandbox
 COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
 COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
-COPY nemoclaw/package.json /opt/nemoclaw/
+COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 
 # Install runtime dependencies only (no devDependencies, no build step)
 WORKDIR /opt/nemoclaw
-RUN npm install --omit=dev
+RUN npm ci --omit=dev
 
 # Set up blueprint for local resolution
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \

@@ -38,6 +38,7 @@ const { resolveOpenshell } = require("./lib/resolve-openshell");
 const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
+const { parseGatewayInference } = require("./lib/inference-config");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -415,11 +416,14 @@ async function sandboxConnect(sandboxName) {
 
 async function sandboxStatus(sandboxName) {
   const sb = registry.getSandbox(sandboxName);
+  const live = parseGatewayInference(
+    runCapture("openshell inference get 2>/dev/null", { ignoreError: true })
+  );
   if (sb) {
     console.log("");
     console.log(`  Sandbox: ${sb.name}`);
-    console.log(`    Model:    ${sb.model || "unknown"}`);
-    console.log(`    Provider: ${sb.provider || "unknown"}`);
+    console.log(`    Model:    ${(live && live.model) || sb.model || "unknown"}`);
+    console.log(`    Provider: ${(live && live.provider) || sb.provider || "unknown"}`);
     console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
   }
