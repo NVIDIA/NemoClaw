@@ -232,6 +232,7 @@ set +e
 # the OpenShell gateway which injects the stored credential server-side.
 openshell sandbox create --from "$BUILD_CTX/Dockerfile" --name "$SANDBOX_NAME" \
   --provider nvidia-nim \
+  --no-tty -- true \
   >"$CREATE_LOG" 2>&1
 CREATE_RC=$?
 set -e
