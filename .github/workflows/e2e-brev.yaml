@@ -22,6 +22,7 @@ on:
         options:
           - full
           - credential-sanitization
+          - telegram-injection
           - all
       keep_alive:
         description: "Keep Brev instance alive after tests (for SSH debugging)"

@@ -175,4 +175,14 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
     },
     600_000,
   );
+
+  it.runIf(TEST_SUITE === "telegram-injection" || TEST_SUITE === "all")(
+    "telegram bridge injection suite passes on remote VM",
+    () => {
+      const output = runRemoteTest("test/e2e/test-telegram-injection.sh");
+      expect(output).toContain("PASS");
+      expect(output).not.toMatch(/FAIL:/);
+    },
+    600_000,
+  );
 });
