@@ -22,7 +22,7 @@ function run(cmd, opts = {}) {
     env: { ...process.env, ...opts.env },
   });
   if (result.status !== 0 && !opts.ignoreError) {
-    console.error(`  Command failed (exit ${result.status}): ${redact(cmd.slice(0, 80))}`);
+    console.error(`  Command failed (exit ${result.status}): ${redact(cmd).slice(0, 80)}`);
     process.exit(result.status || 1);
   }
   return result;
@@ -37,7 +37,7 @@ function runInteractive(cmd, opts = {}) {
     env: { ...process.env, ...opts.env },
   });
   if (result.status !== 0 && !opts.ignoreError) {
-    console.error(`  Command failed (exit ${result.status}): ${redact(cmd.slice(0, 80))}`);
+    console.error(`  Command failed (exit ${result.status}): ${redact(cmd).slice(0, 80)}`);
     process.exit(result.status || 1);
   }
   return result;
@@ -83,8 +83,12 @@ function redact(str) {
 function redactError(err) {
   if (!err || typeof err !== "object") return err;
   if (typeof err.message === "string") err.message = redact(err.message);
+  if (typeof err.cmd === "string") err.cmd = redact(err.cmd);
   if (typeof err.stdout === "string") err.stdout = redact(err.stdout);
   if (typeof err.stderr === "string") err.stderr = redact(err.stderr);
+  if (Array.isArray(err.output)) {
+    err.output = err.output.map((value) => (typeof value === "string" ? redact(value) : value));
+  }
   return err;
 }
 
