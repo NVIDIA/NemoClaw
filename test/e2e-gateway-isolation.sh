@@ -159,9 +159,19 @@ else
   fail "symlink targets wrong:$FAILED_LINKS"
 fi
 
-# ── Test 10: Sandbox user cannot kill gateway-user processes ─────
+# ── Test 10: iptables is installed (required for network policy enforcement) ──
 
-info "10. Sandbox user cannot kill gateway-user processes"
+info "10. iptables is installed"
+OUT=$(run_as_root "iptables --version 2>&1")
+if echo "$OUT" | grep -q "iptables v"; then
+  pass "iptables installed: $OUT"
+else
+  fail "iptables not found — sandbox network policies will not be enforced: $OUT"
+fi
+
+# ── Test 11: Sandbox user cannot kill gateway-user processes ─────
+
+info "11. Sandbox user cannot kill gateway-user processes"
 # Start a dummy process as gateway, try to kill it as sandbox
 OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
   gosu gateway sleep 60 &
