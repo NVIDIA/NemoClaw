@@ -137,7 +137,7 @@ jobs:
   notify-on-failure:
     runs-on: ubuntu-latest
     needs: [cloud-e2e, cloud-experimental-e2e, gpu-e2e]
-    if: failure()
+    if: ${{ always() && (needs.cloud-e2e.result == 'failure' || needs.cloud-experimental-e2e.result == 'failure' || needs.gpu-e2e.result == 'failure') }}
     permissions:
       issues: write
     steps:
@@ -162,14 +162,14 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: match.number,
-                body: `Failed again on ${new Date().toISOString().split('T')[0]}.\n\n**Run:** ${runUrl}\n**Artifacts:** Install log uploaded as \`install-log\` artifact.`,
+                body: `Failed again on ${new Date().toISOString().split('T')[0]}.\n\n**Run:** ${runUrl}\n**Artifacts:** Check the run artifacts for install/test logs (artifact names vary by job).`,
               });
             } else {
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 title: `${title} — ${new Date().toISOString().split('T')[0]}`,
-                body: `The nightly E2E pipeline failed.\n\n**Run:** ${runUrl}\n**Artifacts:** Install log uploaded as \`install-log\` artifact on the failed run.`,
+                body: `The nightly E2E pipeline failed.\n\n**Run:** ${runUrl}\n**Artifacts:** Check the run artifacts for install/test logs (artifact names vary by job).`,
                 labels: ['bug', 'CI/CD'],
               });
             }
