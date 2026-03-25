@@ -193,6 +193,20 @@ openshell inference set --no-verify --provider nvidia-nim --model nvidia/nemotro
 info "Deleting old ${SANDBOX_NAME} sandbox (if any)..."
 openshell sandbox delete "$SANDBOX_NAME" >/dev/null 2>&1 || true
 
+# Pre-build the base image if it's not available (GHCR image may not exist on
+# forks or before the first base-image workflow run). This ensures the
+# Dockerfile's `FROM ${BASE_IMAGE}` can resolve locally.
+BASE_IMAGE="${BASE_IMAGE:-ghcr.io/nvidia/nemoclaw/sandbox-base:latest}"
+if ! docker image inspect "$BASE_IMAGE" >/dev/null 2>&1 && ! docker pull "$BASE_IMAGE" 2>/dev/null; then
+  if [ -f "$REPO_DIR/Dockerfile.base" ]; then
+    info "Base image not in registry — building Dockerfile.base locally..."
+    docker build -f "$REPO_DIR/Dockerfile.base" -t "$BASE_IMAGE" "$REPO_DIR" 2>&1 | tail -5
+    info "Local base image built"
+  else
+    warn "Dockerfile.base not found — sandbox build may fall back to full rebuild"
+  fi
+fi
+
 info "Building and creating NemoClaw sandbox (this takes a few minutes on first run)..."
 
 # Stage a clean build context (openshell doesn't honor .dockerignore)
