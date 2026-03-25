@@ -69,6 +69,15 @@ describe("isSessionLockFailure", () => {
     expect(isSessionLockFailure(result)).toBe(false);
   });
 
+  it("does not flag a successful reply that quotes the error text", () => {
+    const result = {
+      response: 'The error "session file locked" means another process is using the file.',
+      exitCode: 0,
+      stderr: "",
+    };
+    expect(isSessionLockFailure(result)).toBe(false);
+  });
+
   it("does not flag a generic non-lock failure (e.g. OOM, timeout)", () => {
     const result = {
       response: "Agent exited with code 137. Killed",
@@ -98,22 +107,15 @@ describe("telegram-bridge session reset wiring", () => {
     expect(BRIDGE_SRC).toContain("isSessionLockFailure(result)");
   });
 
-  it("deletes activeSessions on lock failure", () => {
-    // The lock-failure branch must clear the session so the next message
-    // starts fresh instead of resuming corrupted context.
+  it("rotates session on lock failure instead of just deleting", () => {
     const lockBlock = BRIDGE_SRC.slice(
       BRIDGE_SRC.indexOf("if (isSessionLockFailure(result))"),
     );
-    expect(lockBlock).toContain("activeSessions.delete(chatId)");
+    expect(lockBlock).toContain("rotateSession(chatId)");
   });
 
-  it("does not delete activeSessions for normal responses", () => {
-    // Outside the lock-failure branch, the session should be preserved.
-    // Find the line after the lock-failure block that logs the normal response.
-    const normalPath = BRIDGE_SRC.match(
-      /console\.log\(`\[\$\{chatId\}\] agent:.*result\.response/,
-    );
-    expect(normalPath).not.toBeNull();
+  it("uses getSessionId when calling runAgentInSandbox", () => {
+    expect(BRIDGE_SRC).toContain("runAgentInSandbox(msg.text, getSessionId(chatId))");
   });
 
   it("notifies the user when a session is auto-reset", () => {

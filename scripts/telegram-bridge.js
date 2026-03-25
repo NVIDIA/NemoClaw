@@ -39,7 +39,19 @@ if (!TOKEN) { console.error("TELEGRAM_BOT_TOKEN required"); process.exit(1); }
 if (!API_KEY) { console.error("NVIDIA_API_KEY required"); process.exit(1); }
 
 let offset = 0;
-const activeSessions = new Map(); // chatId → message history
+const activeSessions = new Map(); // chatId → session suffix
+let sessionCounter = 0;
+
+function getSessionId(chatId) {
+  if (!activeSessions.has(chatId)) {
+    activeSessions.set(chatId, `${chatId}-${++sessionCounter}`);
+  }
+  return activeSessions.get(chatId);
+}
+
+function rotateSession(chatId) {
+  activeSessions.set(chatId, `${chatId}-${++sessionCounter}`);
+}
 
 // ── Telegram API helpers ──────────────────────────────────────────
 
@@ -164,9 +176,13 @@ function runAgentInSandbox(message, sessionId) {
  * combined with lock-related output.
  */
 function isSessionLockFailure(result) {
-  const output = `${result.stderr || ""} ${result.response || ""}`;
-  if (output.includes("session file locked")) return true;
-  if (result.exitCode === 255 && /lock|session.*corrupt/i.test(output)) return true;
+  const stderr = result.stderr || "";
+  // Always check stderr regardless of exit code.
+  if (stderr.includes("session file locked")) return true;
+  // Only check response text when the process actually failed — a successful
+  // reply that quotes the error string (e.g. explaining the error) is not a lock failure.
+  if (result.exitCode !== 0 && (result.response || "").includes("session file locked")) return true;
+  if (result.exitCode === 255 && /lock|session.*corrupt/i.test(`${stderr} ${result.response || ""}`)) return true;
   return false;
 }
 
@@ -209,7 +225,7 @@ async function poll() {
 
         // Handle /reset
         if (msg.text === "/reset") {
-          activeSessions.delete(chatId);
+          rotateSession(chatId);
           await sendMessage(chatId, "Session reset.", msg.message_id);
           continue;
         }
@@ -221,14 +237,14 @@ async function poll() {
         const typingInterval = setInterval(() => sendTyping(chatId), 4000);
 
         try {
-          const result = await runAgentInSandbox(msg.text, chatId);
+          const result = await runAgentInSandbox(msg.text, getSessionId(chatId));
           clearInterval(typingInterval);
 
           // Detect session lock failures and auto-reset to prevent corrupted
           // context from persisting into subsequent messages (#833).
           if (isSessionLockFailure(result)) {
-            activeSessions.delete(chatId);
-            console.error(`[${chatId}] session lock failure — session reset`);
+            rotateSession(chatId);
+            console.error(`[${chatId}] session lock failure — session rotated`);
             await sendMessage(chatId, "⚠️ Session error detected — your session has been automatically reset. Please resend your message.", msg.message_id);
             continue;
           }
