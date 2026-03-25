@@ -11,7 +11,7 @@ Before starting, make sure you have:
 - **Docker** (pre-installed on DGX Spark)
 - **Node.js 22** (installed automatically by the NemoClaw installer)
 - **OpenShell CLI** (must be installed separately before running NemoClaw — see the Quick Start below)
-- **API key** for your chosen inference provider. The onboarding wizard prompts for provider and key during setup. For example, you need to provide an NVIDIA API key from [build.nvidia.com](https://build.nvidia.com) for NVIDIA Endpoints, or an OpenAI, Anthropic, or Gemini key for those corresponding providers.
+- **API key** (cloud inference only) — the onboarding wizard prompts for a provider and key during setup. For example, an NVIDIA API key from [build.nvidia.com](https://build.nvidia.com) for NVIDIA Endpoints, or an OpenAI, Anthropic, or Gemini key for those providers. **If you plan to use local inference with Ollama instead, no API key is needed** — see [Local Inference with Ollama](#local-inference-with-ollama) to set up Ollama before installing NemoClaw.
 
 ## Quick Start
 
@@ -45,7 +45,7 @@ openclaw agent --agent main --local -m "hello" --session-id test
 
 ## Uninstall
 
-Perform this before re-installing:
+To remove NemoClaw and start fresh (e.g., to switch inference providers):
 
 ```bash
 # Remove OpenShell sandboxes, gateway, NemoClaw providers, related Docker containers, images, volumes and configs
@@ -116,13 +116,15 @@ Verify Ollama is listening on all interfaces:
 sudo ss -tlnp | grep 11434
 ```
 
-### 5. Reinstall NemoClaw with Local Inference
+### 5. Install (or Reinstall) NemoClaw with Local Inference
+
+If you have **not installed NemoClaw yet**, continue with the [Quick Start](#quick-start) steps above. When the onboarding wizard prompts for **Inference options**, select **Local Ollama** and choose the model you pulled.
+
+If NemoClaw is **already installed** with a cloud provider and you want to switch to local inference, uninstall and reinstall:
 
 ```bash
-# If NemoClaw is already installed, uninstall first so a fresh install runs onboard with local inference options
 nemoclaw uninstall
 
-# Install OpenShell and NemoClaw
 curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
