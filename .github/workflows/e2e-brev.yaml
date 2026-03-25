@@ -24,6 +24,11 @@ on:
           - credential-sanitization
           - telegram-injection
           - all
+      use_launchable:
+        description: "Use NemoClaw launchable (true) or bare brev-setup.sh (false)"
+        required: false
+        type: boolean
+        default: true
       keep_alive:
         description: "Keep Brev instance alive after tests (for SSH debugging)"
         required: false
@@ -42,6 +47,10 @@ on:
         required: false
         type: string
         default: "full"
+      use_launchable:
+        required: false
+        type: boolean
+        default: true
       keep_alive:
         required: false
         type: boolean
@@ -111,6 +120,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           INSTANCE_NAME: e2e-pr-${{ inputs.pr_number || github.run_id }}
           TEST_SUITE: ${{ inputs.test_suite }}
+          USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
           KEEP_ALIVE: ${{ inputs.keep_alive }}
         run: npx vitest run --project e2e-brev --reporter=verbose
 

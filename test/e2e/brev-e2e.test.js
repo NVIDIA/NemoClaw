@@ -26,10 +26,20 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
-const BREV_CPU = process.env.BREV_CPU || "8x32";
+const BREV_CPU = process.env.BREV_CPU || "4x16";
 const INSTANCE_NAME = process.env.INSTANCE_NAME;
 const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
+
+// NemoClaw launchable — uses the OpenShell-Community launch script which
+// goes through `nemoclaw onboard` (potentially pre-built images / faster path)
+// instead of our manual brev-setup.sh bootstrap.
+const LAUNCHABLE_SETUP_SCRIPT =
+  "https://raw.githubusercontent.com/NVIDIA/OpenShell-Community/refs/heads/feat/brev-nemoclaw-plugin/brev/launch-nemoclaw.sh";
+const NEMOCLAW_REPO_URL = "https://github.com/NVIDIA/NemoClaw.git";
+
+// Use launchable by default; set USE_LAUNCHABLE=0 or USE_LAUNCHABLE=false to fall back to brev-setup.sh
+const USE_LAUNCHABLE = !["0", "false"].includes(process.env.USE_LAUNCHABLE?.toLowerCase());
 
 let remoteDir;
 let instanceCreated = false;
@@ -119,6 +129,8 @@ const hasRequiredVars = REQUIRED_VARS.every((key) => process.env[key]);
 
 describe.runIf(hasRequiredVars)("Brev E2E", () => {
   beforeAll(() => {
+    const bootstrapStart = Date.now();
+    const elapsed = () => `${Math.round((Date.now() - bootstrapStart) / 1000)}s`;
 
     // Authenticate with Brev
     mkdirSync(path.join(homedir(), ".brev"), { recursive: true });
@@ -128,26 +140,136 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
     );
     brev("login", "--token", process.env.BREV_API_TOKEN);
 
-    // Create instance
-    brev("create", INSTANCE_NAME, "--cpu", BREV_CPU, "--detached");
-    instanceCreated = true;
+    if (USE_LAUNCHABLE) {
+      // --- Launchable path: brev start with the NemoClaw launch script ---
+      // This uses the OpenShell-Community launch-nemoclaw.sh which goes through
+      // nemoclaw's own install/onboard flow — potentially faster than our manual
+      // brev-setup.sh (different sandbox build strategy, pre-built images, etc.)
+      console.log(`[${elapsed()}] Creating instance via launchable (brev start + setup-script)...`);
+      console.log(`[${elapsed()}]   setup-script: ${LAUNCHABLE_SETUP_SCRIPT}`);
+      console.log(`[${elapsed()}]   repo: ${NEMOCLAW_REPO_URL}`);
+      console.log(`[${elapsed()}]   cpu: ${BREV_CPU}`);
 
-    // Wait for SSH
-    try { brev("refresh"); } catch { /* ignore */ }
-    waitForSsh();
+      // brev start with a git URL may take longer than the default 60s brev() timeout
+      // (it registers the instance + kicks off provisioning before returning)
+      execFileSync("brev", [
+        "start", NEMOCLAW_REPO_URL,
+        "--name", INSTANCE_NAME,
+        "--cpu", BREV_CPU,
+        "--setup-script", LAUNCHABLE_SETUP_SCRIPT,
+        "--detached",
+      ], { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] });
+      instanceCreated = true;
+      console.log(`[${elapsed()}] brev start returned (instance provisioning in background)`);
 
-    // Sync code
-    const remoteHome = ssh("echo $HOME");
-    remoteDir = `${remoteHome}/nemoclaw`;
-    ssh(`mkdir -p ${remoteDir}`);
-    execSync(
-      `rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .venv "${REPO_DIR}/" "${INSTANCE_NAME}:${remoteDir}/"`,
-      { encoding: "utf-8", timeout: 120_000 },
-    );
+      // Wait for SSH
+      try { brev("refresh"); } catch { /* ignore */ }
+      waitForSsh();
+      console.log(`[${elapsed()}] SSH is up`);
 
-    // Bootstrap VM — stream output to CI log so we can see progress
-    sshWithSecrets(`cd ${remoteDir} && SKIP_VLLM=1 bash scripts/brev-setup.sh`, { timeout: 2_400_000, stream: true });
-  }, 2_700_000); // 45 min — sandbox Docker image build is slow on fresh CPU boxes
+      // The launchable clones NemoClaw to ~/NemoClaw. We need to find where it landed
+      // and then rsync our branch code over it.
+      const remoteHome = ssh("echo $HOME");
+      // The launch script clones to $HOME/NemoClaw (PLUGIN_DIR default)
+      remoteDir = `${remoteHome}/NemoClaw`;
+
+      // Wait for the launch script to finish — it runs as the VM's startup script
+      // and may still be in progress when SSH becomes available. Poll for completion.
+      console.log(`[${elapsed()}] Waiting for launchable setup to complete...`);
+      const setupMaxWait = 2_400_000; // 40 min max
+      const setupStart = Date.now();
+      const setupPollInterval = 15_000; // check every 15s
+      while (Date.now() - setupStart < setupMaxWait) {
+        try {
+          // The launch script writes to /tmp/launch-plugin.log and the last step
+          // prints "=== Ready ===" when complete
+          const log = ssh("cat /tmp/launch-plugin.log 2>/dev/null || echo 'NO_LOG'", { timeout: 15_000 });
+          if (log.includes("=== Ready ===")) {
+            console.log(`[${elapsed()}] Launchable setup complete (detected '=== Ready ===' in log)`);
+            break;
+          }
+          // Also check if nemoclaw onboard has run (install marker)
+          const markerCheck = ssh("test -f ~/.cache/nemoclaw-plugin/install-ran && echo DONE || echo PENDING", { timeout: 10_000 });
+          if (markerCheck.includes("DONE")) {
+            console.log(`[${elapsed()}] Launchable setup complete (install-ran marker found)`);
+            break;
+          }
+          // Print last few lines of log for progress visibility
+          const tail = ssh("tail -3 /tmp/launch-plugin.log 2>/dev/null || echo '(no log yet)'", { timeout: 10_000 });
+          console.log(`[${elapsed()}] Setup still running... ${tail.replace(/\n/g, ' | ')}`);
+        } catch {
+          console.log(`[${elapsed()}] Setup poll: SSH command failed, retrying...`);
+        }
+        execSync(`sleep ${setupPollInterval / 1000}`);
+      }
+
+      // The launch script installs Docker, OpenShell CLI, clones NemoClaw main,
+      // and sets up code-server — but it does NOT run `nemoclaw onboard` (that's
+      // deferred to an interactive code-server terminal). So at this point we have:
+      //   ✅ Docker, OpenShell CLI, Node.js, NemoClaw repo (main)
+      //   ❌ No sandbox yet
+      //
+      // Now: rsync our PR branch code over the main clone, then run onboard ourselves.
+
+      console.log(`[${elapsed()}] Syncing PR branch code over launchable's clone...`);
+      execSync(
+        `rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .venv "${REPO_DIR}/" "${INSTANCE_NAME}:${remoteDir}/"`,
+        { encoding: "utf-8", timeout: 120_000 },
+      );
+      console.log(`[${elapsed()}] Code synced`);
+
+      // Install deps for our branch
+      console.log(`[${elapsed()}] Running npm ci to sync dependencies...`);
+      sshWithSecrets(`cd ${remoteDir} && npm ci --ignore-scripts 2>&1 | tail -5`, { timeout: 300_000, stream: true });
+      console.log(`[${elapsed()}] Dependencies synced`);
+
+      // Run nemoclaw onboard (non-interactive) — this is the path real users take.
+      // It installs the nemoclaw CLI, builds the sandbox via `nemoclaw onboard`,
+      // which may use a different (faster) strategy than our manual setup.sh.
+      console.log(`[${elapsed()}] Running nemoclaw install + onboard (the user-facing path)...`);
+      sshWithSecrets(
+        `cd ${remoteDir} && npm link && nemoclaw onboard --non-interactive 2>&1`,
+        { timeout: 2_400_000, stream: true },
+      );
+      console.log(`[${elapsed()}] nemoclaw onboard complete`);
+
+      // Verify sandbox is ready
+      try {
+        const sandboxStatus = ssh("openshell sandbox list 2>&1 | head -5", { timeout: 15_000 });
+        console.log(`[${elapsed()}] Sandbox status: ${sandboxStatus}`);
+      } catch (e) {
+        console.log(`[${elapsed()}] Warning: could not check sandbox status: ${e.message}`);
+      }
+
+    } else {
+      // --- Legacy path: bare brev create + brev-setup.sh ---
+      console.log(`[${elapsed()}] Creating bare instance via brev create...`);
+      brev("create", INSTANCE_NAME, "--cpu", BREV_CPU, "--detached");
+      instanceCreated = true;
+
+      // Wait for SSH
+      try { brev("refresh"); } catch { /* ignore */ }
+      waitForSsh();
+      console.log(`[${elapsed()}] SSH is up`);
+
+      // Sync code
+      const remoteHome = ssh("echo $HOME");
+      remoteDir = `${remoteHome}/nemoclaw`;
+      ssh(`mkdir -p ${remoteDir}`);
+      execSync(
+        `rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .venv "${REPO_DIR}/" "${INSTANCE_NAME}:${remoteDir}/"`,
+        { encoding: "utf-8", timeout: 120_000 },
+      );
+      console.log(`[${elapsed()}] Code synced`);
+
+      // Bootstrap VM — stream output to CI log so we can see progress
+      console.log(`[${elapsed()}] Running brev-setup.sh (manual bootstrap)...`);
+      sshWithSecrets(`cd ${remoteDir} && SKIP_VLLM=1 bash scripts/brev-setup.sh`, { timeout: 2_400_000, stream: true });
+      console.log(`[${elapsed()}] Bootstrap complete`);
+    }
+
+    console.log(`[${elapsed()}] beforeAll complete — total bootstrap time: ${elapsed()}`);
+  }, 2_700_000); // 45 min — covers both paths
 
   afterAll(() => {
     if (!instanceCreated) return;
