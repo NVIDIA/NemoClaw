@@ -81,12 +81,12 @@ RUN npm install -g openclaw@2026.3.11 \
 # Copy built plugin and blueprint into the sandbox
 COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
 COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
-COPY nemoclaw/package.json /opt/nemoclaw/
+COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 
 # Install runtime dependencies only (no devDependencies, no build step)
 WORKDIR /opt/nemoclaw
-RUN npm install --omit=dev
+RUN npm ci --omit=dev
 
 # Set up blueprint for local resolution
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
