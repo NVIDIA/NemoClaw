@@ -183,6 +183,14 @@ echo 'Setting up NemoClaw...'
 if [ "$(id -u)" -ne 0 ]; then
   echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled"
   export HOME=/sandbox
+
+  # SECURITY: Limit max user processes to prevent fork bombs from the sandbox.
+  # The file-descriptor limit is already capped (1024) but the process limit
+  # defaults to "unlimited", which lets a prompt-injected agent exhaust the
+  # host PID space. 512 is generous for normal agent workloads (shell, node,
+  # python) while blocking exponential process spawning. (Fixes #809)
+  ulimit -u 512 2>/dev/null || echo "[SECURITY WARNING] Could not set process limit (ulimit -u)"
+
   if ! verify_config_integrity; then
     echo "[SECURITY WARNING] Config integrity check failed — proceeding anyway (non-root mode)"
   fi
@@ -219,9 +227,10 @@ verify_config_integrity
 # Write auth profile as sandbox user (needs writable .openclaw-data)
 gosu sandbox bash -c "$(declare -f write_auth_profile); write_auth_profile"
 
-# If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
+# If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user.
+# SECURITY: Enforce process limit to prevent fork bombs (fixes #809).
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
-  exec gosu sandbox "${NEMOCLAW_CMD[@]}"
+  exec gosu sandbox bash -c 'ulimit -u 512 2>/dev/null; exec "$@"' _ "${NEMOCLAW_CMD[@]}"
 fi
 
 # SECURITY: Protect gateway log from sandbox user tampering

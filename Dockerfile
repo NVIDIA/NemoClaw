@@ -37,7 +37,8 @@ RUN curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/d
 RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
     && groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
     && mkdir -p /sandbox/.nemoclaw \
-    && chown -R sandbox:sandbox /sandbox
+    && chown -R sandbox:sandbox /sandbox \
+    && echo "sandbox  hard  nproc  512" >> /etc/security/limits.d/sandbox-nproc.conf
 
 # Split .openclaw into immutable config dir + writable state dir.
 # The policy makes /sandbox/.openclaw read-only via Landlock, so the agent
