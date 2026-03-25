@@ -477,8 +477,12 @@ export function detectHostOpenClaw(env: NodeJS.ProcessEnv = process.env): HostOp
 }
 
 function computeFileDigest(filePath: string): string | null {
-  if (!existsSync(filePath)) return null;
-  return createHash("sha256").update(readFileSync(filePath)).digest("hex");
+  try {
+    if (!existsSync(filePath)) return null;
+    return createHash("sha256").update(readFileSync(filePath)).digest("hex");
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -496,7 +500,8 @@ function copyDirectory(
   cpSync(sourcePath, destinationPath, {
     recursive: true,
     filter: options?.stripCredentials
-      ? (source: string) => !CREDENTIAL_SENSITIVE_BASENAMES.has(path.basename(source))
+      ? (source: string) =>
+          !CREDENTIAL_SENSITIVE_BASENAMES.has(path.basename(source).toLowerCase())
       : undefined,
   });
 }
@@ -632,8 +637,6 @@ export function createSnapshotBundle(
       });
     }
 
-    const blueprintDigest = options.blueprintPath ? computeFileDigest(options.blueprintPath) : null;
-
     const manifest: SnapshotManifest = {
       version: SNAPSHOT_VERSION,
       createdAt: new Date().toISOString(),
@@ -643,8 +646,18 @@ export function createSnapshotBundle(
       hasExternalConfig: hostState.hasExternalConfig,
       externalRoots,
       warnings: hostState.warnings,
-      blueprintDigest,
     };
+
+    if (options.blueprintPath) {
+      const digest = computeFileDigest(options.blueprintPath);
+      if (!digest) {
+        throw new Error(
+          `Cannot compute blueprint digest for ${options.blueprintPath}. ` +
+            "The file may be missing or unreadable.",
+        );
+      }
+      manifest.blueprintDigest = digest;
+    }
 
     writeSnapshotManifest(parentDir, manifest);
 
@@ -771,10 +784,14 @@ export function restoreSnapshotToHost(
     }
   }
 
-  // SECURITY: Validate blueprint digest when present in manifest
-  if (manifest.blueprintDigest != null) {
+  // SECURITY: Validate blueprint digest.
+  // v3+ snapshots MUST have a valid blueprintDigest — fail closed if missing/invalid.
+  // Legacy snapshots (version < 3) predate this field and skip verification.
+  if (manifest.version >= 3) {
     if (!manifest.blueprintDigest || typeof manifest.blueprintDigest !== "string") {
-      logger.error("Snapshot manifest has invalid blueprintDigest. Refusing to restore.");
+      logger.error(
+        "v3 snapshot manifest has missing or invalid blueprintDigest. Refusing to restore.",
+      );
       return false;
     }
     const currentDigest = options?.blueprintPath ? computeFileDigest(options.blueprintPath) : null;

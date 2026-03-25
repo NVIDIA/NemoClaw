@@ -652,7 +652,7 @@ describe("commands/migration-state", () => {
       expect((bundle.manifest.blueprintDigest ?? "").length).toBeGreaterThan(0);
     });
 
-    it("blueprintDigest is null when no blueprintPath given", () => {
+    it("blueprintDigest is undefined when no blueprintPath given", () => {
       const logger = makeLogger();
       addDir("/home/user/.openclaw");
       addFile("/home/user/.openclaw/openclaw.json", JSON.stringify({ version: 1 }));
@@ -678,7 +678,7 @@ describe("commands/migration-state", () => {
         expect.unreachable("bundle should not be null");
         return;
       }
-      expect(bundle.manifest.blueprintDigest).toBeNull();
+      expect(bundle.manifest.blueprintDigest).toBeUndefined();
     });
   });
 
