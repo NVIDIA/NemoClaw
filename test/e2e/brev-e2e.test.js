@@ -289,7 +289,11 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
     }
   });
 
-  it.runIf(TEST_SUITE === "full" || TEST_SUITE === "all")(
+  // NOTE: The full E2E test runs install.sh --non-interactive which destroys and
+  // rebuilds the sandbox from scratch. It cannot run alongside the security tests
+  // (credential-sanitization, telegram-injection) which depend on the sandbox
+  // that beforeAll already created. Run it only when TEST_SUITE=full.
+  it.runIf(TEST_SUITE === "full")(
     "full E2E suite passes on remote VM",
     () => {
       const output = runRemoteTest("test/e2e/test-full-e2e.sh");
