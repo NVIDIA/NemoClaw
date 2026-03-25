@@ -1,4 +1,4 @@
-.PHONY: check lint format lint-ts lint-py format-ts format-py docs docs-strict docs-live docs-clean
+.PHONY: check lint format lint-ts format-ts docs docs-strict docs-live docs-clean
 
 check:
 	npx prek run --all-files
@@ -10,16 +10,10 @@ lint: check
 lint-ts:
 	cd nemoclaw && npm run check
 
-lint-py:
-	cd nemoclaw-blueprint && $(MAKE) check
-
-format: format-ts format-py
+format: format-ts
 
 format-ts:
 	cd nemoclaw && npm run lint:fix && npm run format
-
-format-py:
-	cd nemoclaw-blueprint && $(MAKE) format
 
 # --- Documentation ---
 

@@ -133,10 +133,12 @@ fi
 info "Setting up inference providers..."
 
 # nvidia-nim (build.nvidia.com)
+# Use env-name-only form so openshell reads the value from the environment
+# internally — the literal key value never appears in the process argument list.
 upsert_provider \
   "nvidia-nim" \
   "openai" \
-  "NVIDIA_API_KEY=$NVIDIA_API_KEY" \
+  "NVIDIA_API_KEY" \
   "OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1"
 
 # vllm-local (if vLLM is installed or running)
@@ -193,9 +195,11 @@ rm -rf "$BUILD_CTX/nemoclaw/node_modules"
 # detect failures. The raw log is kept on failure for debugging.
 CREATE_LOG=$(mktemp /tmp/nemoclaw-create-XXXXXX.log)
 set +e
+# NVIDIA_API_KEY is NOT passed into the sandbox. Inference is proxied through
+# the OpenShell gateway which injects the stored credential server-side.
 openshell sandbox create --from "$BUILD_CTX/Dockerfile" --name "$SANDBOX_NAME" \
   --provider nvidia-nim \
-  -- env NVIDIA_API_KEY="$NVIDIA_API_KEY" >"$CREATE_LOG" 2>&1
+  >"$CREATE_LOG" 2>&1
 CREATE_RC=$?
 set -e
 rm -rf "$BUILD_CTX"

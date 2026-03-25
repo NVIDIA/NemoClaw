@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Migrate and run OpenClaw inside OpenShell with optional NIM-backed inference",
   "license": "Apache-2.0",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "openclaw": {
@@ -22,6 +23,7 @@
   },
   "dependencies": {
     "commander": "^13.1.0",
+    "execa": "^9.6.1",
     "json5": "^2.2.3",
     "tar": "^7.0.0",
     "yaml": "^2.4.0"

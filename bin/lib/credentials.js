@@ -14,7 +14,7 @@ function loadCredentials() {
     if (fs.existsSync(CREDS_FILE)) {
       return JSON.parse(fs.readFileSync(CREDS_FILE, "utf-8"));
     }
-  } catch {}
+  } catch { /* ignored */ }
   return {};
 }
 
@@ -81,6 +81,7 @@ function promptSecret(question) {
           // Ignore terminal escape/control sequences such as Delete, arrows,
           // Home/End, etc. while leaving the buffered secret untouched.
           const rest = text.slice(i);
+          // eslint-disable-next-line no-control-regex
           const match = rest.match(/^\u001b(?:\[[0-9;?]*[~A-Za-z]|\][^\u0007]*\u0007|.)/);
           if (match) {
             i += match[0].length - 1;
@@ -193,7 +194,7 @@ async function ensureGithubToken() {
       process.env.GITHUB_TOKEN = token;
       return;
     }
-  } catch {}
+  } catch { /* ignored */ }
 
   console.log("");
   console.log("  ┌──────────────────────────────────────────────────┐");

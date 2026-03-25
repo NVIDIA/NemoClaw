@@ -64,14 +64,10 @@ NemoClaw validates the selected provider and model before it creates the sandbox
 
 If validation fails, the wizard does not continue to sandbox creation.
 
-## Local Providers
+## Local Ollama
 
-Local providers are available behind the `NEMOCLAW_EXPERIMENTAL=1` gate.
-These use the same routed `inference.local` pattern, but the upstream runtime is local to the host.
-
-- Local Ollama
-- Local NVIDIA NIM
-- Local vLLM
+Local Ollama is available in the standard onboarding flow when Ollama is installed or running on the host.
+It uses the same routed `inference.local` pattern, but the upstream runtime runs locally instead of in the cloud.
 
 Ollama gets additional onboarding help:
 
@@ -79,6 +75,13 @@ Ollama gets additional onboarding help:
 - it pulls the selected model
 - it warms the model
 - it validates the model before continuing
+
+## Experimental Local Providers
+
+The following local providers require `NEMOCLAW_EXPERIMENTAL=1`:
+
+- Local NVIDIA NIM (requires a NIM-capable GPU)
+- Local vLLM (must already be running on `localhost:8000`)
 
 ## Runtime Switching
 
