@@ -74,7 +74,7 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
     && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
 
 # Install OpenClaw CLI + PyYAML for inline Python scripts in e2e tests
-RUN npm install -g openclaw@2026.3.11 \
+RUN npm install -g openclaw@2026.3.13 \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
 
 # Copy built plugin and blueprint into the sandbox
