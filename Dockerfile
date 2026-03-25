@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git=1:2.39.5-0+deb12u3 \
         ca-certificates=20230311+deb12u1 \
         iproute2=6.1.0-3 \
+        iptables=1.8.9-2 \
     && rm -rf /var/lib/apt/lists/*
 
 # gosu for privilege separation (gateway vs sandbox user).
