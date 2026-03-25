@@ -146,3 +146,51 @@ jobs:
 
       - name: Run gateway isolation E2E tests
         run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh
+
+  check-spdx-headers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get changed source files
+        id: changed
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          # File types that must carry SPDX headers.
+          files=$(git diff --name-only --diff-filter=ACMRT "$base" -- \
+            '*.ts' '*.tsx' '*.js' '*.mjs' '*.cjs' '*.py' '*.sh' '*.yaml' '*.yml' \
+            || true)
+          # Exclude paths that are generated, vendored, or don't support comments.
+          filtered=""
+          for f in $files; do
+            case "$f" in
+              node_modules/*|dist/*|build/*|docs/*|nemoclaw/node_modules/*|.venv/*|_deps/*) continue ;;
+            esac
+            filtered="$filtered $f"
+          done
+          filtered="${filtered# }"
+          if [ -z "$filtered" ]; then
+            echo "No source files changed."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "$filtered"
+            echo "files<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$filtered" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check SPDX license headers
+        if: steps.changed.outputs.skip != 'true'
+        run: |
+          echo ""
+          echo "Expected header (comment style varies by language):"
+          echo "  SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved."
+          echo "  SPDX-License-Identifier: Apache-2.0"
+          echo ""
+          # shellcheck disable=SC2086
+          bash scripts/check-spdx-headers.sh ${{ steps.changed.outputs.files }}
