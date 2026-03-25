@@ -192,7 +192,7 @@ async function deploy(instanceName) {
   console.log("  Running setup...");
   runInteractive(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh'`);
 
-  if (tgToken) {
+  if (tgToken || discordToken) {
     console.log("  Starting services...");
     run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/start-services.sh'`);
   }

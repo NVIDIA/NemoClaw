@@ -2,11 +2,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Start NemoClaw auxiliary services: Telegram bridge
-# and cloudflared tunnel for public access.
+# Start NemoClaw auxiliary services: Telegram bridge,
+# Discord bridge, and cloudflared tunnel for public access.
 #
 # Usage:
-#   TELEGRAM_BOT_TOKEN=... ./scripts/start-services.sh         # start all
+#   TELEGRAM_BOT_TOKEN=... ./scripts/start-services.sh         # start Telegram
+#   DISCORD_BOT_TOKEN=... ./scripts/start-services.sh          # start Discord
+#   TELEGRAM_BOT_TOKEN=... DISCORD_BOT_TOKEN=... ./scripts/start-services.sh
 #   ./scripts/start-services.sh --status                       # check status
 #   ./scripts/start-services.sh --stop                         # stop all
 #   ./scripts/start-services.sh --sandbox mybox                # start for specific sandbox
@@ -97,7 +99,7 @@ stop_service() {
 show_status() {
   mkdir -p "$PIDDIR"
   echo ""
-  for svc in telegram-bridge cloudflared; do
+  for svc in telegram-bridge discord-bridge cloudflared; do
     if is_running "$svc"; then
       echo -e "  ${GREEN}●${NC} $svc  (PID $(cat "$PIDDIR/$svc.pid"))"
     else
@@ -118,6 +120,7 @@ show_status() {
 do_stop() {
   mkdir -p "$PIDDIR"
   stop_service cloudflared
+  stop_service discord-bridge
   stop_service telegram-bridge
   info "All services stopped."
 }
@@ -129,13 +132,20 @@ do_start() {
     warn "TELEGRAM_BOT_TOKEN not set — Telegram bridge will not start."
     warn "Create a bot via @BotFather on Telegram and set the token."
   fi
+  if [ -z "${DISCORD_BOT_TOKEN:-}" ]; then
+    warn "DISCORD_BOT_TOKEN not set — Discord bridge will not start."
+    warn "Create a bot in the Discord developer portal and set the token."
+  fi
+  if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] && [ -z "${DISCORD_BOT_TOKEN:-}" ]; then
+    warn "No bot token configured — only cloudflared will start."
+  fi
 
   command -v node >/dev/null || fail "node not found. Install Node.js first."
 
   # Verify sandbox is running
   if command -v openshell >/dev/null 2>&1; then
     if ! openshell sandbox list 2>&1 | grep -q "Ready"; then
-      warn "No sandbox in Ready state. Telegram bridge may not work until sandbox is running."
+      warn "No sandbox in Ready state. Bot bridges may not work until sandbox is running."
     fi
   fi
 
@@ -145,6 +155,12 @@ do_start() {
   if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
     SANDBOX_NAME="$SANDBOX_NAME" start_service telegram-bridge \
       node "$REPO_DIR/scripts/telegram-bridge.js"
+  fi
+
+  # Discord bridge (only if token provided)
+  if [ -n "${DISCORD_BOT_TOKEN:-}" ]; then
+    SANDBOX_NAME="$SANDBOX_NAME" start_service discord-bridge \
+      node "$REPO_DIR/scripts/discord-bridge.js"
   fi
 
   # 3. cloudflared tunnel
@@ -187,6 +203,12 @@ do_start() {
     echo "  │  Telegram:    bridge running                        │"
   else
     echo "  │  Telegram:    not started (no token)                │"
+  fi
+
+  if is_running discord-bridge; then
+    echo "  │  Discord:     bridge running                        │"
+  else
+    echo "  │  Discord:     not started (no token)                │"
   fi
 
   echo "  │                                                     │"
