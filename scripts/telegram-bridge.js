@@ -140,18 +140,34 @@ function runAgentInSandbox(message, sessionId) {
       const response = responseLines.join("\n").trim();
 
       if (response) {
-        resolve(response);
+        resolve({ response, exitCode: code, stderr });
       } else if (code !== 0) {
-        resolve(`Agent exited with code ${code}. ${stderr.trim().slice(0, 500)}`);
+        resolve({ response: `Agent exited with code ${code}. ${stderr.trim().slice(0, 500)}`, exitCode: code, stderr });
       } else {
-        resolve("(no response)");
+        resolve({ response: "(no response)", exitCode: code, stderr });
       }
     });
 
     proc.on("error", (err) => {
-      resolve(`Error: ${err.message}`);
+      resolve({ response: `Error: ${err.message}`, exitCode: 1, stderr: err.message });
     });
   });
+}
+
+// ── Session lock detection ────────────────────────────────────────
+
+/**
+ * Returns true when an agent result indicates a session-file lock collision.
+ * Only matches the specific lock/corruption class of errors — not general failures.
+ * Exit code 255 alone is not sufficient (SSH uses it for connection errors too),
+ * so we require either an explicit lock message in stderr/response, or code 255
+ * combined with lock-related output.
+ */
+function isSessionLockFailure(result) {
+  const output = `${result.stderr || ""} ${result.response || ""}`;
+  if (output.includes("session file locked")) return true;
+  if (result.exitCode === 255 && /lock|session.*corrupt/i.test(output)) return true;
+  return false;
 }
 
 // ── Poll loop ─────────────────────────────────────────────────────
@@ -205,10 +221,20 @@ async function poll() {
         const typingInterval = setInterval(() => sendTyping(chatId), 4000);
 
         try {
-          const response = await runAgentInSandbox(msg.text, chatId);
+          const result = await runAgentInSandbox(msg.text, chatId);
           clearInterval(typingInterval);
-          console.log(`[${chatId}] agent: ${response.slice(0, 100)}...`);
-          await sendMessage(chatId, response, msg.message_id);
+
+          // Detect session lock failures and auto-reset to prevent corrupted
+          // context from persisting into subsequent messages (#833).
+          if (isSessionLockFailure(result)) {
+            activeSessions.delete(chatId);
+            console.error(`[${chatId}] session lock failure — session reset`);
+            await sendMessage(chatId, "⚠️ Session error detected — your session has been automatically reset. Please resend your message.", msg.message_id);
+            continue;
+          }
+
+          console.log(`[${chatId}] agent: ${result.response.slice(0, 100)}...`);
+          await sendMessage(chatId, result.response, msg.message_id);
         } catch (err) {
           clearInterval(typingInterval);
           await sendMessage(chatId, `Error: ${err.message}`, msg.message_id);
@@ -249,4 +275,6 @@ async function main() {
   poll();
 }
 
-main();
+if (require.main === module) {
+  main();
+}
