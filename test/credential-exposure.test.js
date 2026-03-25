@@ -77,7 +77,7 @@ describe("credential exposure in process arguments", () => {
     const src = fs.readFileSync(ONBOARD_JS, "utf-8");
 
     expect(src).toMatch(/const sandboxEnv = \{ \.\.\.process\.env \};/);
-    expect(src).toMatch(/streamSandboxCreate\(createCommand, sandboxEnv\)/);
+    expect(src).toMatch(/streamSandboxCreate\(createCommand, sandboxEnv(?:, \{)?/);
     expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("NVIDIA_API_KEY"/);
     expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("DISCORD_BOT_TOKEN"/);
     expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("SLACK_BOT_TOKEN"/);

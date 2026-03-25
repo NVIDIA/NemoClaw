@@ -424,7 +424,14 @@ console.log(JSON.stringify({ liveExists, sandbox: registry.getSandbox("my-assist
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    const payloadLine = result.stdout
+      .trim()
+      .split("\n")
+      .slice()
+      .reverse()
+      .find((line) => line.startsWith("{") && line.endsWith("}"));
+    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(payloadLine);
     assert.equal(payload.liveExists, false);
     assert.equal(payload.sandbox, null);
   });
@@ -503,7 +510,14 @@ const { createSandbox } = require(${onboardPath});
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    const payloadLine = result.stdout
+      .trim()
+      .split("\n")
+      .slice()
+      .reverse()
+      .find((line) => line.startsWith("{") && line.endsWith("}"));
+    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(payloadLine);
     assert.equal(payload.sandboxName, "my-assistant");
     const createCommand = payload.commands.find((entry) => entry.command.includes("'sandbox' 'create'"));
     assert.ok(createCommand, "expected sandbox create command");
@@ -513,6 +527,124 @@ const { createSandbox } = require(${onboardPath});
     assert.doesNotMatch(createCommand.command, /NVIDIA_API_KEY=/);
     assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
     assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
+  });
+
+  it("continues once the sandbox is Ready even if the create stream never closes", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-ready-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "create-sandbox-ready-check.js");
+    const payloadPath = path.join(tmpDir, "payload.json");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+
+const commands = [];
+let sandboxListCalls = 0;
+const keepAlive = setInterval(() => {}, 1000);
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
+  if (command.includes("'sandbox' 'list'")) {
+    sandboxListCalls += 1;
+    return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
+  }
+  return "";
+};
+registry.registerSandbox = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killCalls = [];
+  child.unrefCalls = 0;
+  child.stdout.destroyCalls = 0;
+  child.stderr.destroyCalls = 0;
+  child.stdout.destroy = () => {
+    child.stdout.destroyCalls += 1;
+  };
+  child.stderr.destroy = () => {
+    child.stderr.destroyCalls += 1;
+  };
+  child.unref = () => {
+    child.unrefCalls += 1;
+  };
+  child.kill = (signal) => {
+    child.killCalls.push(signal);
+    process.nextTick(() => child.emit("close", signal === "SIGTERM" ? 0 : 1));
+    return true;
+  };
+  commands.push({ command: args[1][1], env: args[2]?.env || null, child });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  const sandboxName = await createSandbox(null, "gpt-5.4");
+  const createCommand = commands.find((entry) => entry.command.includes("'sandbox' 'create'"));
+  fs.writeFileSync(${JSON.stringify(payloadPath)}, JSON.stringify({
+    sandboxName,
+    sandboxListCalls,
+    killCalls: createCommand.child.killCalls,
+    unrefCalls: createCommand.child.unrefCalls,
+    stdoutDestroyCalls: createCommand.child.stdout.destroyCalls,
+    stderrDestroyCalls: createCommand.child.stderr.destroyCalls,
+  }));
+  clearInterval(keepAlive);
+})().catch((error) => {
+  clearInterval(keepAlive);
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+      timeout: 15000,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
+    assert.equal(payload.sandboxName, "my-assistant");
+    assert.ok(payload.sandboxListCalls >= 2);
+    assert.deepEqual(payload.killCalls, ["SIGTERM"]);
+    assert.equal(payload.unrefCalls, 1);
+    assert.equal(payload.stdoutDestroyCalls, 1);
+    assert.equal(payload.stderrDestroyCalls, 1);
   });
 
   it("accepts gateway inference when system inference is separately not configured", () => {

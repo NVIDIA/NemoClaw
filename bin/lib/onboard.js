@@ -185,7 +185,7 @@ function hasStaleGateway(gwInfoOutput) {
   return typeof gwInfoOutput === "string" && gwInfoOutput.length > 0 && gwInfoOutput.includes(GATEWAY_NAME);
 }
 
-function streamSandboxCreate(command, env = process.env) {
+function streamSandboxCreate(command, env = process.env, options = {}) {
   const child = spawn("bash", ["-lc", command], {
     cwd: ROOT,
     env,
@@ -197,6 +197,26 @@ function streamSandboxCreate(command, env = process.env) {
   let lastPrintedLine = "";
   let sawProgress = false;
   let settled = false;
+  let polling = false;
+  const pollIntervalMs = options.pollIntervalMs || 2000;
+
+  function finish(result) {
+    if (settled) return;
+    settled = true;
+    if (pending) flushLine(pending);
+    if (readyTimer) clearInterval(readyTimer);
+    resolvePromise(result);
+  }
+
+  function detachChild() {
+    child.stdout?.removeAllListeners?.("data");
+    child.stderr?.removeAllListeners?.("data");
+    child.stdout?.destroy?.();
+    child.stderr?.destroy?.();
+    child.removeAllListeners?.("error");
+    child.removeAllListeners?.("close");
+    child.unref?.();
+  }
 
   function shouldShowLine(line) {
     return (
@@ -235,25 +255,53 @@ function streamSandboxCreate(command, env = process.env) {
   child.stdout.on("data", onChunk);
   child.stderr.on("data", onChunk);
 
+  let resolvePromise;
+  const readyTimer = options.readyCheck
+    ? setInterval(() => {
+        if (settled || polling) return;
+        polling = true;
+        try {
+          let ready = false;
+          try {
+            ready = !!options.readyCheck();
+          } catch {
+            return;
+          }
+          if (!ready) return;
+          const detail = "Sandbox reported Ready before create stream exited; continuing.";
+          lines.push(detail);
+          if (detail !== lastPrintedLine) {
+            console.log(`  ${detail}`);
+            lastPrintedLine = detail;
+          }
+          try {
+            child.kill("SIGTERM");
+          } catch {
+            // Best effort only — the child may have already exited.
+          }
+          detachChild();
+          finish({ status: 0, output: lines.join("\n"), sawProgress: true, forcedReady: true });
+        } finally {
+          polling = false;
+        }
+      }, pollIntervalMs)
+    : null;
+  readyTimer?.unref?.();
+
   return new Promise((resolve) => {
+    resolvePromise = resolve;
     child.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      if (pending) flushLine(pending);
       // @ts-expect-error — Node ErrnoException has .code but TS types Error
       const code = error && error.code;
       const detail = code
         ? `spawn failed: ${error.message} (${code})`
         : `spawn failed: ${error.message}`;
       lines.push(detail);
-      resolve({ status: 1, output: lines.join("\n"), sawProgress: false });
+      finish({ status: 1, output: lines.join("\n"), sawProgress: false });
     });
 
     child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      if (pending) flushLine(pending);
-      resolve({ status: code ?? 1, output: lines.join("\n"), sawProgress });
+      finish({ status: code ?? 1, output: lines.join("\n"), sawProgress });
     });
   });
 }
@@ -1395,7 +1443,12 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null)
     ...envArgs,
     "nemoclaw-start",
   ])} 2>&1`;
-  const createResult = await streamSandboxCreate(createCommand, sandboxEnv);
+  const createResult = await streamSandboxCreate(createCommand, sandboxEnv, {
+    readyCheck: () => {
+      const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+      return isSandboxReady(list, sandboxName);
+    },
+  });
 
   // Clean up build context regardless of outcome
   run(`rm -rf "${buildCtx}"`, { ignoreError: true });
