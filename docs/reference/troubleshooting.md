@@ -148,6 +148,33 @@ $ colima status
 The sandbox may have been stopped or deleted.
 Run `nemoclaw onboard` to recreate the sandbox from the same blueprint and policy definitions.
 
+### Reconnect after a host reboot
+
+After the host reboots, start your container runtime first:
+
+- Linux: start Docker if it is not already running
+- macOS: start Docker Desktop or Colima before reconnecting
+
+Then check the underlying sandbox state on the host:
+
+```console
+$ openshell sandbox list
+```
+
+If your sandbox is listed and shows `Ready`, reconnect normally:
+
+```console
+$ nemoclaw <name> connect
+```
+
+If you use auxiliary services such as the Telegram bridge or tunnel, start them again after the host comes back:
+
+```console
+$ nemoclaw start
+```
+
+If the sandbox is missing, or it does not recover to `Ready` after the container runtime starts, run `nemoclaw onboard` to recreate it.
+
 ### Status shows "not running" inside the sandbox
 
 This is expected behavior.
