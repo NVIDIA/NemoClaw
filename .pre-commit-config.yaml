@@ -211,7 +211,8 @@ repos:
         entry: npx tsc -p tsconfig.cli.json
         language: system
         pass_filenames: false
-        files: ^(bin|scripts)/.*\.ts$
+        files: ^(bin|scripts)/
+        types_or: [ts, tsx]
         stages: [pre-push]
         priority: 10
 
