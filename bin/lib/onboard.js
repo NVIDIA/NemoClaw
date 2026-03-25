@@ -1474,12 +1474,14 @@ async function preflight() {
     console.log("  Add that export to your shell profile, or open a new terminal before running openshell directly.");
   }
 
-  // Clean up stale NemoClaw session before checking ports.
-  // A previous onboard run may have left the gateway container and port
-  // forward running.  If a NemoClaw-owned gateway is still present, tear
-  // it down so the port check below doesn't fail on our own leftovers.
+  // Clean up stale or unnamed NemoClaw gateway state before checking ports.
+  // A healthy named gateway can be reused later in onboarding, so avoid
+  // tearing it down here.
+  const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
-  if (hasStaleGateway(gwInfo)) {
+  const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+  const gatewayReuseState = getGatewayReuseState(gatewayStatus, gwInfo, activeGatewayInfo);
+  if (gatewayReuseState === "stale" || gatewayReuseState === "active-unnamed") {
     console.log("  Cleaning up previous NemoClaw session...");
     runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
     runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
@@ -2550,12 +2552,12 @@ async function onboard(opts = {}) {
   const gatewayInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
   const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
   const gatewayReuseState = getGatewayReuseState(gatewayStatus, gatewayInfo, activeGatewayInfo);
-  const resumeGateway =
-    resume &&
-    session?.steps?.gateway?.status === "complete" &&
-    gatewayReuseState === "healthy";
+  const canReuseHealthyGateway = gatewayReuseState === "healthy";
+  const resumeGateway = resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
   if (resumeGateway) {
     resumeStepMessage("gateway", "running");
+  } else if (!resume && canReuseHealthyGateway) {
+    note("  Reusing healthy NemoClaw gateway.");
   } else {
     if (resume && session?.steps?.gateway?.status === "complete") {
       if (gatewayReuseState === "active-unnamed") {
