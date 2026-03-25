@@ -34,6 +34,7 @@ const {
   parseLiveSandboxNames,
   shouldAttemptGatewayRecovery,
 } = require("./lib/runtime-recovery");
+const { resolveOpenshell } = require("./lib/resolve-openshell");
 const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
@@ -309,12 +310,12 @@ function reconcileRegistryWithGateway() {
     return current;
   }
 
-  const statusOutput = runCapture("openshell status 2>&1", { ignoreError: true });
+  const statusOutput = runCaptureOpenshell(["status"], { ignoreError: true });
   if (!statusOutput.includes("Connected")) {
     return current;
   }
 
-  const listOutput = runCapture("openshell sandbox list 2>&1", { ignoreError: true });
+  const listOutput = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
   if (!listOutput || /^Error:/m.test(listOutput)) {
     return current;
   }
@@ -336,10 +337,40 @@ function reconcileRegistryWithGateway() {
   return updated;
 }
 
+let openshellBin = null;
+
+function getOpenshellBinary() {
+  if (openshellBin) return openshellBin;
+  const resolved = process.env.NEMOCLAW_OPENSHELL_BIN || resolveOpenshell();
+  if (!resolved) {
+    console.error("  openshell CLI not found.");
+    console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+    process.exit(1);
+  }
+  openshellBin = resolved;
+  return openshellBin;
+}
+
+function openshellShellCommand(args) {
+  return [shellQuote(getOpenshellBinary()), ...args.map((arg) => shellQuote(arg))].join(" ");
+}
+
+function runOpenshell(args, opts = {}) {
+  return run(openshellShellCommand(args), opts);
+}
+
+function runCaptureOpenshell(args, opts = {}) {
+  return runCapture(`${openshellShellCommand(args)} 2>&1`, opts);
+}
+
+function runInteractiveOpenshell(args, opts = {}) {
+  return runInteractive(openshellShellCommand(args), opts);
+}
+
 // ── Sandbox-scoped actions ───────────────────────────────────────
 
 async function restoreRuntimeIfNeeded(sandboxName, sandboxState) {
-  const gatewayStatusOutput = runCapture("openshell status 2>&1", { ignoreError: true });
+  const gatewayStatusOutput = runCaptureOpenshell(["status"], { ignoreError: true });
   const gatewayState = classifyGatewayStatus(gatewayStatusOutput);
   if (!shouldAttemptGatewayRecovery({ sandboxState: sandboxState.state, gatewayState: gatewayState.state })) {
     return { recovered: false, sandboxLookup: "" };
@@ -352,13 +383,12 @@ async function restoreRuntimeIfNeeded(sandboxName, sandboxState) {
     return { recovered: false, sandboxLookup: "" };
   }
 
-  const sandboxLookup = runCapture(`openshell sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true });
+  const sandboxLookup = runCaptureOpenshell(["sandbox", "get", sandboxName], { ignoreError: true });
   return { recovered: true, sandboxLookup };
 }
 
 async function sandboxConnect(sandboxName) {
-  const qn = shellQuote(sandboxName);
-  let sandboxLookup = runCapture(`openshell sandbox get ${qn} 2>&1`, { ignoreError: true });
+  let sandboxLookup = runCaptureOpenshell(["sandbox", "get", sandboxName], { ignoreError: true });
   let sandboxState = classifySandboxLookup(sandboxLookup);
   if (sandboxState.state === "unavailable") {
     const restored = await restoreRuntimeIfNeeded(sandboxName, sandboxState);
@@ -379,8 +409,8 @@ async function sandboxConnect(sandboxName) {
     process.exit(1);
   }
   // Ensure port forward is alive before connecting
-  run(`openshell forward start --background 18789 ${qn} 2>/dev/null || true`, { ignoreError: true });
-  runInteractive(`openshell sandbox connect ${qn}`);
+  runOpenshell(["forward", "start", "--background", "18789", sandboxName], { ignoreError: true });
+  runInteractiveOpenshell(["sandbox", "connect", sandboxName]);
 }
 
 async function sandboxStatus(sandboxName) {
@@ -394,7 +424,7 @@ async function sandboxStatus(sandboxName) {
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
   }
 
-  let sandboxLookup = runCapture(`openshell sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true });
+  let sandboxLookup = runCaptureOpenshell(["sandbox", "get", sandboxName], { ignoreError: true });
   let sandboxState = classifySandboxLookup(sandboxLookup);
   if (sandboxState.state === "unavailable") {
     const restored = await restoreRuntimeIfNeeded(sandboxName, sandboxState);
@@ -430,8 +460,11 @@ async function sandboxStatus(sandboxName) {
 }
 
 function sandboxLogs(sandboxName, follow) {
-  const followFlag = follow ? " --tail" : "";
-  run(`openshell logs ${shellQuote(sandboxName)}${followFlag}`);
+  const args = ["logs", sandboxName];
+  if (follow) {
+    args.push("--tail");
+  }
+  runOpenshell(args);
 }
 
 async function sandboxPolicyAdd(sandboxName) {
@@ -488,7 +521,7 @@ async function sandboxDestroy(sandboxName, args = []) {
   else nim.stopNimContainer(sandboxName);
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
-  run(`openshell sandbox delete ${shellQuote(sandboxName)} 2>/dev/null || true`, { ignoreError: true });
+  runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
 
   registry.removeSandbox(sandboxName);
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);

@@ -413,6 +413,15 @@ function formatEnvAssignment(name, value) {
   return `${name}=${value}`;
 }
 
+function hydrateCredentialEnv(envName) {
+  if (!envName) return null;
+  const value = getCredential(envName);
+  if (value) {
+    process.env[envName] = value;
+  }
+  return value || null;
+}
+
 function getCurlTimingArgs() {
   return ["--connect-timeout 5", "--max-time 20"];
 }
@@ -2202,7 +2211,10 @@ async function setupInference(sandboxName, model, provider, endpointUrl = null, 
       : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
     const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
     const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
-    const env = resolvedCredentialEnv ? { [resolvedCredentialEnv]: process.env[resolvedCredentialEnv] } : {};
+    const credentialValue = hydrateCredentialEnv(resolvedCredentialEnv);
+    const env = resolvedCredentialEnv && credentialValue
+      ? { [resolvedCredentialEnv]: credentialValue }
+      : {};
     upsertProvider(provider, config.providerType, resolvedCredentialEnv, resolvedEndpointUrl, env);
     const args = ["inference", "set"];
     if (config.skipVerify) {
@@ -2573,6 +2585,7 @@ async function onboard(opts = {}) {
     typeof model === "string";
   if (resumeProviderSelection) {
     resumeStepMessage("provider selection", `${provider} / ${model}`);
+    hydrateCredentialEnv(credentialEnv);
   } else {
     startRecordedStep("provider_selection", { sandboxName });
     const selection = await setupNim(gpu);
@@ -2667,6 +2680,7 @@ module.exports = {
   runCaptureOpenshell,
   setupInference,
   setupNim,
+  hydrateCredentialEnv,
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
   patchStagedDockerfile,
