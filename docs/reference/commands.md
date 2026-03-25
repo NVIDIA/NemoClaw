@@ -2,7 +2,7 @@
 title:
   page: "NemoClaw CLI Commands Reference"
   nav: "Commands"
-description: "Full CLI reference for plugin and standalone NemoClaw commands."
+description: "Full CLI reference for slash commands and standalone NemoClaw commands."
 keywords: ["nemoclaw cli commands", "nemoclaw command reference"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "nemoclaw", "cli"]
@@ -28,11 +28,31 @@ The `/nemoclaw` slash command is available inside the OpenClaw chat interface fo
 
 | Subcommand | Description |
 |---|---|
+| `/nemoclaw` | Show slash-command help and host CLI pointers |
 | `/nemoclaw status` | Show sandbox and inference state |
+| `/nemoclaw onboard` | Show onboarding status and reconfiguration guidance |
+| `/nemoclaw eject` | Show rollback instructions for returning to the host installation |
 
 ## Standalone Host Commands
 
 The `nemoclaw` binary handles host-side operations that run outside the OpenClaw plugin context.
+
+### `nemoclaw help`, `nemoclaw --help`, `nemoclaw -h`
+
+Show the top-level usage summary and command groups.
+Running `nemoclaw` with no arguments shows the same help output.
+
+```console
+$ nemoclaw help
+```
+
+### `nemoclaw --version`, `nemoclaw -v`
+
+Print the installed NemoClaw CLI version.
+
+```console
+$ nemoclaw --version
+```
 
 ### `nemoclaw onboard`
 
@@ -54,6 +74,16 @@ Uppercase letters are automatically lowercased.
 
 Before creating the gateway, the wizard runs preflight checks.
 On systems with cgroup v2 (Ubuntu 24.04, DGX Spark, WSL2), it verifies that Docker is configured with `"default-cgroupns-mode": "host"` and provides fix instructions if the setting is missing.
+
+### `nemoclaw setup` (deprecated)
+
+Run the legacy setup workflow for backwards compatibility.
+NemoClaw prints a deprecation warning, then runs the older `setup.sh` path.
+Prefer `nemoclaw onboard` for new installs and reconfiguration.
+
+```console
+$ nemoclaw setup
+```
 
 ### `nemoclaw list`
 
@@ -198,15 +228,15 @@ $ nemoclaw debug [--quick] [--sandbox NAME] [--output PATH]
 
 ### `nemoclaw uninstall`
 
-Remove NemoClaw, destroying all sandboxes and the gateway.
-Runs the bundled `uninstall.sh` if available, otherwise downloads it from GitHub.
+Run `uninstall.sh` to remove NemoClaw sandboxes, gateway resources, related images and containers, and local state.
+The CLI uses the local `uninstall.sh` first and falls back to the hosted script if the local file is unavailable.
+
+| Flag | Effect |
+|---|---|
+| `--yes` | Skip the confirmation prompt |
+| `--keep-openshell` | Leave the `openshell` binary installed |
+| `--delete-models` | Also remove NemoClaw-pulled Ollama models |
 
 ```console
 $ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
 ```
-
-| Flag | Description |
-|------|-------------|
-| `--yes` | Skip the confirmation prompt |
-| `--keep-openshell` | Leave the openshell binary installed |
-| `--delete-models` | Remove NemoClaw-pulled Ollama models |
