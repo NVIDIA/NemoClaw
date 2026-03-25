@@ -7,6 +7,7 @@ const path = require("path");
 const SESSION_VERSION = 1;
 const SESSION_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
 const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
+const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
 const VALID_STEP_STATES = new Set(["pending", "in_progress", "complete", "failed", "skipped"]);
 
 function ensureSessionDir() {
@@ -15,6 +16,10 @@ function ensureSessionDir() {
 
 function sessionPath() {
   return SESSION_FILE;
+}
+
+function lockPath() {
+  return LOCK_FILE;
 }
 
 function defaultSteps() {
@@ -161,6 +166,89 @@ function clearSession() {
   }
 }
 
+function parseLockFile(contents) {
+  try {
+    const parsed = JSON.parse(contents);
+    if (typeof parsed?.pid !== "number") return null;
+    return {
+      pid: parsed.pid,
+      startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : null,
+      command: typeof parsed.command === "string" ? parsed.command : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+function acquireOnboardLock(command = null) {
+  ensureSessionDir();
+  const payload = JSON.stringify(
+    {
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      command: typeof command === "string" ? command : null,
+    },
+    null,
+    2
+  );
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = fs.openSync(LOCK_FILE, "wx", 0o600);
+      fs.writeFileSync(fd, payload);
+      fs.closeSync(fd);
+      return { acquired: true, lockFile: LOCK_FILE, stale: false };
+    } catch (error) {
+      if (error?.code !== "EEXIST") {
+        throw error;
+      }
+
+      const existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
+      if (existing && isProcessAlive(existing.pid)) {
+        return {
+          acquired: false,
+          lockFile: LOCK_FILE,
+          stale: false,
+          holderPid: existing.pid,
+          holderStartedAt: existing.startedAt,
+          holderCommand: existing.command,
+        };
+      }
+
+      try {
+        fs.unlinkSync(LOCK_FILE);
+      } catch (unlinkError) {
+        if (unlinkError?.code !== "ENOENT") {
+          throw unlinkError;
+        }
+      }
+    }
+  }
+
+  return { acquired: false, lockFile: LOCK_FILE, stale: true };
+}
+
+function releaseOnboardLock() {
+  try {
+    if (!fs.existsSync(LOCK_FILE)) return;
+    const existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
+    if (existing && existing.pid !== process.pid) return;
+    fs.unlinkSync(LOCK_FILE);
+  } catch {
+    return;
+  }
+}
+
 function updateSession(mutator) {
   const current = loadSession() || createSession();
   const next = typeof mutator === "function" ? mutator(current) || current : current;
@@ -274,9 +362,11 @@ function summarizeForDebug(session = loadSession()) {
 }
 
 module.exports = {
+  LOCK_FILE,
   SESSION_DIR,
   SESSION_FILE,
   SESSION_VERSION,
+  acquireOnboardLock,
   clearSession,
   completeSession,
   createSession,
@@ -284,7 +374,9 @@ module.exports = {
   markStepComplete,
   markStepFailed,
   markStepStarted,
+  lockPath,
   saveSession,
+  releaseOnboardLock,
   sessionPath,
   redactSensitiveText,
   summarizeForDebug,

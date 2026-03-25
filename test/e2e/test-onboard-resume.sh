@@ -254,7 +254,7 @@ else
   pass "Resume did not rerun gateway startup"
 fi
 
-if echo "$resume_output" | grep -q "\[3/7\] Creating sandbox"; then
+if echo "$resume_output" | grep -q "\[5/7\] Creating sandbox"; then
   fail "Resume reran sandbox creation unexpectedly"
 else
   pass "Resume did not rerun sandbox creation"

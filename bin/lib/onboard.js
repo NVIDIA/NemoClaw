@@ -1544,7 +1544,7 @@ async function preflight() {
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
 async function startGateway(_gpu) {
-  step(3, 7, "Starting OpenShell gateway");
+  step(2, 7, "Starting OpenShell gateway");
 
   // Destroy old gateway
   runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
@@ -1808,7 +1808,7 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
 // ── Step 4: NIM ──────────────────────────────────────────────────
 
 async function setupNim(gpu) {
-  step(2, 7, "Configuring inference (NIM)");
+  step(3, 7, "Configuring inference (NIM)");
 
   let model = null;
   let provider = REMOTE_PROVIDER_CONFIG.build.providerName;
@@ -2483,177 +2483,205 @@ async function onboard(opts = {}) {
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   delete process.env.OPENSHELL_GATEWAY;
   const resume = opts.resume === true;
-  let session;
-  if (resume) {
-    session = onboardSession.loadSession();
-    if (!session || session.resumable === false) {
-      console.error("  No resumable onboarding session was found.");
-      console.error("  Run: nemoclaw onboard");
-      process.exit(1);
+  const lockResult = onboardSession.acquireOnboardLock(
+    `nemoclaw onboard${resume ? " --resume" : ""}${isNonInteractive() ? " --non-interactive" : ""}`
+  );
+  if (!lockResult.acquired) {
+    console.error("  Another NemoClaw onboarding run is already in progress.");
+    if (lockResult.holderPid) {
+      console.error(`  Lock holder PID: ${lockResult.holderPid}`);
     }
-    const resumeConflicts = getResumeConfigConflicts(session, { nonInteractive: isNonInteractive() });
-    if (resumeConflicts.length > 0) {
-      for (const conflict of resumeConflicts) {
-        if (conflict.field === "sandbox") {
-          console.error(
-            `  Resumable state belongs to sandbox '${conflict.recorded}', not '${conflict.requested}'.`
-          );
+    if (lockResult.holderStartedAt) {
+      console.error(`  Started: ${lockResult.holderStartedAt}`);
+    }
+    console.error("  Wait for it to finish, or remove the stale lock if the previous run crashed:");
+    console.error(`    rm -f "${lockResult.lockFile}"`);
+    process.exit(1);
+  }
+
+  let lockReleased = false;
+  const releaseOnboardLock = () => {
+    if (lockReleased) return;
+    lockReleased = true;
+    onboardSession.releaseOnboardLock();
+  };
+  process.once("exit", releaseOnboardLock);
+
+  try {
+    let session;
+    if (resume) {
+      session = onboardSession.loadSession();
+      if (!session || session.resumable === false) {
+        console.error("  No resumable onboarding session was found.");
+        console.error("  Run: nemoclaw onboard");
+        process.exit(1);
+      }
+      const resumeConflicts = getResumeConfigConflicts(session, { nonInteractive: isNonInteractive() });
+      if (resumeConflicts.length > 0) {
+        for (const conflict of resumeConflicts) {
+          if (conflict.field === "sandbox") {
+            console.error(
+              `  Resumable state belongs to sandbox '${conflict.recorded}', not '${conflict.requested}'.`
+            );
+          } else {
+            console.error(
+              `  Resumable state recorded ${conflict.field} '${conflict.recorded}', not '${conflict.requested}'.`
+            );
+          }
+        }
+        console.error("  Run: nemoclaw onboard              # start a fresh onboarding session");
+        console.error("  Or rerun with the original settings to continue that session.");
+        process.exit(1);
+      }
+      onboardSession.updateSession((current) => {
+        current.mode = isNonInteractive() ? "non-interactive" : "interactive";
+        current.failure = null;
+        current.status = "in_progress";
+        return current;
+      });
+      session = onboardSession.loadSession();
+    } else {
+      session = onboardSession.saveSession(
+        onboardSession.createSession({
+          mode: isNonInteractive() ? "non-interactive" : "interactive",
+          metadata: { gatewayName: "nemoclaw" },
+        })
+      );
+    }
+
+    let completed = false;
+    process.once("exit", (code) => {
+      if (!completed && code !== 0) {
+        const current = onboardSession.loadSession();
+        const failedStep = current?.lastStepStarted;
+        if (failedStep) {
+          onboardSession.markStepFailed(failedStep, "Onboarding exited before the step completed.");
+        }
+      }
+    });
+
+    console.log("");
+    console.log("  NemoClaw Onboarding");
+    if (isNonInteractive()) note("  (non-interactive mode)");
+    if (resume) note("  (resume mode)");
+    console.log("  ===================");
+
+    let gpu;
+    const resumePreflight = resume && session?.steps?.preflight?.status === "complete";
+    if (resumePreflight) {
+      resumeStepMessage("preflight", "cached");
+      gpu = nim.detectGpu();
+    } else {
+      startRecordedStep("preflight");
+      gpu = await preflight();
+      onboardSession.markStepComplete("preflight");
+    }
+
+    const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
+    const gatewayInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
+    const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+    const gatewayReuseState = getGatewayReuseState(gatewayStatus, gatewayInfo, activeGatewayInfo);
+    const canReuseHealthyGateway = gatewayReuseState === "healthy";
+    const resumeGateway = resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
+    if (resumeGateway) {
+      resumeStepMessage("gateway", "running");
+    } else if (!resume && canReuseHealthyGateway) {
+      note("  Reusing healthy NemoClaw gateway.");
+    } else {
+      if (resume && session?.steps?.gateway?.status === "complete") {
+        if (gatewayReuseState === "active-unnamed") {
+          note("  [resume] Gateway is active but named metadata is missing; recreating it safely.");
+        } else if (gatewayReuseState === "stale") {
+          note("  [resume] Recorded gateway is unhealthy; recreating it.");
         } else {
-          console.error(
-            `  Resumable state recorded ${conflict.field} '${conflict.recorded}', not '${conflict.requested}'.`
-          );
+          note("  [resume] Recorded gateway state is unavailable; recreating it.");
         }
       }
-      console.error("  Run: nemoclaw onboard              # start a fresh onboarding session");
-      console.error("  Or rerun with the original settings to continue that session.");
-      process.exit(1);
+      startRecordedStep("gateway");
+      await startGateway(gpu);
+      onboardSession.markStepComplete("gateway");
     }
-    onboardSession.updateSession((current) => {
-      current.mode = isNonInteractive() ? "non-interactive" : "interactive";
-      current.failure = null;
-      current.status = "in_progress";
-      return current;
-    });
-    session = onboardSession.loadSession();
-  } else {
-    session = onboardSession.saveSession(
-      onboardSession.createSession({
-        mode: isNonInteractive() ? "non-interactive" : "interactive",
-        metadata: { gatewayName: "nemoclaw" },
-      })
-    );
-  }
 
-  let completed = false;
-  process.once("exit", (code) => {
-    if (!completed && code !== 0) {
-      const current = onboardSession.loadSession();
-      const failedStep = current?.lastStepStarted;
-      if (failedStep) {
-        onboardSession.markStepFailed(failedStep, "Onboarding exited before the step completed.");
-      }
+    let sandboxName = session?.sandboxName || null;
+    let model = session?.model || null;
+    let provider = session?.provider || null;
+    let endpointUrl = session?.endpointUrl || null;
+    let credentialEnv = session?.credentialEnv || null;
+    let preferredInferenceApi = session?.preferredInferenceApi || null;
+    let nimContainer = session?.nimContainer || null;
+    const resumeProviderSelection =
+      resume &&
+      session?.steps?.provider_selection?.status === "complete" &&
+      typeof provider === "string" &&
+      typeof model === "string";
+    if (resumeProviderSelection) {
+      resumeStepMessage("provider selection", `${provider} / ${model}`);
+      hydrateCredentialEnv(credentialEnv);
+    } else {
+      startRecordedStep("provider_selection", { sandboxName });
+      const selection = await setupNim(gpu);
+      model = selection.model;
+      provider = selection.provider;
+      endpointUrl = selection.endpointUrl;
+      credentialEnv = selection.credentialEnv;
+      preferredInferenceApi = selection.preferredInferenceApi;
+      nimContainer = selection.nimContainer;
+      onboardSession.markStepComplete("provider_selection", {
+        sandboxName,
+        provider,
+        model,
+        endpointUrl,
+        credentialEnv,
+        preferredInferenceApi,
+        nimContainer,
+      });
     }
-  });
 
-  console.log("");
-  console.log("  NemoClaw Onboarding");
-  if (isNonInteractive()) note("  (non-interactive mode)");
-  if (resume) note("  (resume mode)");
-  console.log("  ===================");
-
-  let gpu;
-  const resumePreflight = resume && session?.steps?.preflight?.status === "complete";
-  if (resumePreflight) {
-    resumeStepMessage("preflight", "cached");
-    gpu = nim.detectGpu();
-  } else {
-    startRecordedStep("preflight");
-    gpu = await preflight();
-    onboardSession.markStepComplete("preflight");
-  }
-
-  const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
-  const gatewayInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
-  const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-  const gatewayReuseState = getGatewayReuseState(gatewayStatus, gatewayInfo, activeGatewayInfo);
-  const canReuseHealthyGateway = gatewayReuseState === "healthy";
-  const resumeGateway = resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
-  if (resumeGateway) {
-    resumeStepMessage("gateway", "running");
-  } else if (!resume && canReuseHealthyGateway) {
-    note("  Reusing healthy NemoClaw gateway.");
-  } else {
-    if (resume && session?.steps?.gateway?.status === "complete") {
-      if (gatewayReuseState === "active-unnamed") {
-        note("  [resume] Gateway is active but named metadata is missing; recreating it safely.");
-      } else if (gatewayReuseState === "stale") {
-        note("  [resume] Recorded gateway is unhealthy; recreating it.");
-      } else {
-        note("  [resume] Recorded gateway state is unavailable; recreating it.");
-      }
+    process.env.NEMOCLAW_OPENSHELL_BIN = getOpenshellBinary();
+    startRecordedStep("inference", { sandboxName, provider, model });
+    await setupInference(GATEWAY_NAME, model, provider, endpointUrl, credentialEnv);
+    delete process.env.NVIDIA_API_KEY;
+    if (nimContainer) {
+      registry.updateSandbox(sandboxName, { nimContainer });
     }
-    startRecordedStep("gateway");
-    await startGateway(gpu);
-    onboardSession.markStepComplete("gateway");
-  }
+    onboardSession.markStepComplete("inference", { sandboxName, provider, model, nimContainer });
 
-  let sandboxName = session?.sandboxName || null;
-  let model = session?.model || null;
-  let provider = session?.provider || null;
-  let endpointUrl = session?.endpointUrl || null;
-  let credentialEnv = session?.credentialEnv || null;
-  let preferredInferenceApi = session?.preferredInferenceApi || null;
-  let nimContainer = session?.nimContainer || null;
-  const resumeProviderSelection =
-    resume &&
-    session?.steps?.provider_selection?.status === "complete" &&
-    typeof provider === "string" &&
-    typeof model === "string";
-  if (resumeProviderSelection) {
-    resumeStepMessage("provider selection", `${provider} / ${model}`);
-    hydrateCredentialEnv(credentialEnv);
-  } else {
-    startRecordedStep("provider_selection", { sandboxName });
-    const selection = await setupNim(gpu);
-    model = selection.model;
-    provider = selection.provider;
-    endpointUrl = selection.endpointUrl;
-    credentialEnv = selection.credentialEnv;
-    preferredInferenceApi = selection.preferredInferenceApi;
-    nimContainer = selection.nimContainer;
-    onboardSession.markStepComplete("provider_selection", {
-      sandboxName,
-      provider,
-      model,
-      endpointUrl,
-      credentialEnv,
-      preferredInferenceApi,
-      nimContainer,
-    });
-  }
-
-  process.env.NEMOCLAW_OPENSHELL_BIN = getOpenshellBinary();
-  startRecordedStep("inference", { sandboxName, provider, model });
-  await setupInference(GATEWAY_NAME, model, provider, endpointUrl, credentialEnv);
-  delete process.env.NVIDIA_API_KEY;
-  if (nimContainer) {
-    registry.updateSandbox(sandboxName, { nimContainer });
-  }
-  onboardSession.markStepComplete("inference", { sandboxName, provider, model, nimContainer });
-
-  const sandboxReuseState = getSandboxReuseState(sandboxName);
-  const resumeSandbox = resume && session?.steps?.sandbox?.status === "complete" && sandboxReuseState === "ready";
-  if (resumeSandbox) {
-    resumeStepMessage("sandbox", sandboxName);
-  } else {
-    if (resume && session?.steps?.sandbox?.status === "complete") {
-      if (sandboxReuseState === "not_ready") {
-        note(`  [resume] Recorded sandbox '${sandboxName}' exists but is not ready; recreating it.`);
-        repairRecordedSandbox(sandboxName);
-      } else {
-        note("  [resume] Recorded sandbox state is unavailable; recreating it.");
-        if (sandboxName) {
-          registry.removeSandbox(sandboxName);
+    const sandboxReuseState = getSandboxReuseState(sandboxName);
+    const resumeSandbox = resume && session?.steps?.sandbox?.status === "complete" && sandboxReuseState === "ready";
+    if (resumeSandbox) {
+      resumeStepMessage("sandbox", sandboxName);
+    } else {
+      if (resume && session?.steps?.sandbox?.status === "complete") {
+        if (sandboxReuseState === "not_ready") {
+          note(`  [resume] Recorded sandbox '${sandboxName}' exists but is not ready; recreating it.`);
+          repairRecordedSandbox(sandboxName);
+        } else {
+          note("  [resume] Recorded sandbox state is unavailable; recreating it.");
+          if (sandboxName) {
+            registry.removeSandbox(sandboxName);
+          }
         }
       }
+      sandboxName = sandboxName || (await promptValidatedSandboxName());
+      startRecordedStep("sandbox", { sandboxName, provider, model });
+      sandboxName = await createSandbox(gpu, model, provider, preferredInferenceApi, sandboxName);
+      onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
     }
-    sandboxName = sandboxName || (await promptValidatedSandboxName());
-    startRecordedStep("sandbox", { sandboxName, provider, model });
-    sandboxName = await createSandbox(gpu, model, provider, preferredInferenceApi, sandboxName);
-    onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
+
+    startRecordedStep("openclaw", { sandboxName, provider, model });
+    await setupOpenclaw(sandboxName, model, provider);
+    onboardSession.markStepComplete("openclaw", { sandboxName, provider, model });
+
+    startRecordedStep("policies", { sandboxName, provider, model });
+    await setupPolicies(sandboxName);
+    onboardSession.markStepComplete("policies", { sandboxName, provider, model });
+
+    onboardSession.completeSession({ sandboxName, provider, model });
+    completed = true;
+    printDashboard(sandboxName, model, provider, nimContainer);
+  } finally {
+    releaseOnboardLock();
   }
-
-  startRecordedStep("openclaw", { sandboxName, provider, model });
-  await setupOpenclaw(sandboxName, model, provider);
-  onboardSession.markStepComplete("openclaw", { sandboxName, provider, model });
-
-  startRecordedStep("policies", { sandboxName, provider, model });
-  await setupPolicies(sandboxName);
-  onboardSession.markStepComplete("policies", { sandboxName, provider, model });
-
-  onboardSession.completeSession({ sandboxName, provider, model });
-  completed = true;
-  printDashboard(sandboxName, model, provider, nimContainer);
 }
 
 module.exports = {

@@ -15,6 +15,7 @@ const session = require("../bin/lib/onboard-session");
 
 beforeEach(() => {
   session.clearSession();
+  session.releaseOnboardLock();
 });
 
 describe("onboard session", () => {
@@ -87,6 +88,34 @@ describe("onboard session", () => {
     fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
     fs.writeFileSync(session.SESSION_FILE, "not-json");
     expect(session.loadSession()).toBeNull();
+  });
+
+  it("acquires and releases the onboard lock", () => {
+    const acquired = session.acquireOnboardLock("nemoclaw onboard");
+    expect(acquired.acquired).toBe(true);
+    expect(fs.existsSync(session.LOCK_FILE)).toBe(true);
+
+    const secondAttempt = session.acquireOnboardLock("nemoclaw onboard --resume");
+    expect(secondAttempt.acquired).toBe(false);
+    expect(secondAttempt.holderPid).toBe(process.pid);
+
+    session.releaseOnboardLock();
+    expect(fs.existsSync(session.LOCK_FILE)).toBe(false);
+  });
+
+  it("replaces a stale onboard lock", () => {
+    fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.LOCK_FILE,
+      JSON.stringify({ pid: 999999, startedAt: "2026-03-25T00:00:00.000Z", command: "nemoclaw onboard" }),
+      { mode: 0o600 }
+    );
+
+    const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
+    expect(acquired.acquired).toBe(true);
+
+    const written = JSON.parse(fs.readFileSync(session.LOCK_FILE, "utf8"));
+    expect(written.pid).toBe(process.pid);
   });
 
   it("redacts sensitive values from persisted failure messages", () => {
