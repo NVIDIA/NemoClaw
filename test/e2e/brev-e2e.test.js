@@ -110,6 +110,7 @@ function waitForSsh(maxAttempts = 60, intervalMs = 5_000) {
 
 function runRemoteTest(scriptPath) {
   const cmd = [
+    `source ~/.nvm/nvm.sh 2>/dev/null || true`,
     `cd ${remoteDir}`,
     `export npm_config_prefix=$HOME/.local`,
     `export PATH=$HOME/.local/bin:$PATH`,
@@ -220,15 +221,17 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
 
       // Install deps for our branch
       console.log(`[${elapsed()}] Running npm ci to sync dependencies...`);
-      sshWithSecrets(`cd ${remoteDir} && npm ci --ignore-scripts 2>&1 | tail -5`, { timeout: 300_000, stream: true });
+      sshWithSecrets(`source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${remoteDir} && npm ci --ignore-scripts 2>&1 | tail -5`, { timeout: 300_000, stream: true });
       console.log(`[${elapsed()}] Dependencies synced`);
 
       // Run nemoclaw onboard (non-interactive) — this is the path real users take.
       // It installs the nemoclaw CLI, builds the sandbox via `nemoclaw onboard`,
       // which may use a different (faster) strategy than our manual setup.sh.
+      // Source nvm first — the launchable installs Node.js via nvm which sets up
+      // PATH in .bashrc/.nvm/nvm.sh, but non-interactive SSH doesn't source these.
       console.log(`[${elapsed()}] Running nemoclaw install + onboard (the user-facing path)...`);
       sshWithSecrets(
-        `cd ${remoteDir} && npm link && nemoclaw onboard --non-interactive 2>&1`,
+        `source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${remoteDir} && npm link && nemoclaw onboard --non-interactive 2>&1`,
         { timeout: 2_400_000, stream: true },
       );
       console.log(`[${elapsed()}] nemoclaw onboard complete`);
