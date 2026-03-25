@@ -25,10 +25,17 @@ function saveCredential(key, value) {
   fs.writeFileSync(CREDS_FILE, JSON.stringify(creds, null, 2), { mode: 0o600 });
 }
 
+function normalizeSecret(value) {
+  if (value == null) return null;
+  return String(value).replace(/\r/g, "").trim();
+}
+
 function getCredential(key) {
-  if (process.env[key]) return process.env[key];
+  if (process.env[key]) return normalizeSecret(process.env[key]);
   const creds = loadCredentials();
-  return creds[key] || null;
+  const raw = creds[key];
+  if (raw == null) return null;
+  return normalizeSecret(raw);
 }
 
 function promptSecret(question) {

@@ -357,6 +357,17 @@ function getCurlTimingArgs() {
   return ["--connect-timeout 5", "--max-time 20"];
 }
 
+/** Args for `spawnSync("curl", ...)` — avoids shell parsing of secrets; `--http1.1` dodges flaky HTTP/2 paths. */
+function getCurlSpawnArgs() {
+  return ["--connect-timeout", "5", "--max-time", "20", "--http1.1"];
+}
+
+function probeDisplayCode(result) {
+  const httpCode = Number(String(result.stdout || "").trim());
+  if (result.status !== 0) return result.status;
+  return Number.isFinite(httpCode) ? httpCode : 0;
+}
+
 function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
   const args =
     action === "create"
@@ -518,7 +529,11 @@ function patchStagedDockerfile(dockerfilePath, model, chatUiUrl, buildId = Strin
   fs.writeFileSync(dockerfilePath, dockerfile);
 }
 
-function summarizeProbeError(body, status) {
+function summarizeProbeError(body, status, stderr = "") {
+  const errTail = stderr ? ` — ${stderr.replace(/\s+/g, " ").trim().slice(0, 280)}` : "";
+  if (Number.isFinite(status) && status > 0 && status < 100) {
+    return `curl failed (exit ${status})${errTail}`;
+  }
   if (!body) return `HTTP ${status} with no response body`;
   try {
     const parsed = JSON.parse(body);
@@ -562,34 +577,37 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
   for (const probe of probes) {
     const bodyFile = path.join(os.tmpdir(), `nemoclaw-probe-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
     try {
-      const cmd = [
-        "curl -sS",
-        ...getCurlTimingArgs(),
-        `-o ${shellQuote(bodyFile)}`,
-        "-w '%{http_code}'",
-        "-H 'Content-Type: application/json'",
-        ...(apiKey ? ['-H "Authorization: Bearer $NEMOCLAW_PROBE_API_KEY"'] : []),
-        `-d ${shellQuote(probe.body)}`,
-        shellQuote(probe.url),
-      ].join(" ");
-      const result = spawnSync("bash", ["-c", cmd], {
+      const args = [
+        "-sS",
+        ...getCurlSpawnArgs(),
+        "-o",
+        bodyFile,
+        "-w",
+        "%{http_code}",
+        "-H",
+        "Content-Type: application/json",
+        ...(apiKey ? ["-H", `Authorization: Bearer ${apiKey}`] : []),
+        "-d",
+        probe.body,
+        probe.url,
+      ];
+      const result = spawnSync("curl", args, {
         cwd: ROOT,
         encoding: "utf8",
-        env: {
-          ...process.env,
-          NEMOCLAW_PROBE_API_KEY: apiKey,
-        },
+        env: { ...process.env },
       });
       const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
-      const status = Number(String(result.stdout || "").trim());
-      if (result.status === 0 && status >= 200 && status < 300) {
+      const httpStatus = Number(String(result.stdout || "").trim());
+      if (result.status === 0 && httpStatus >= 200 && httpStatus < 300) {
         return { ok: true, api: probe.api, label: probe.name };
       }
+      const display = probeDisplayCode(result);
+      const stderr = String(result.stderr || "");
       failures.push({
         name: probe.name,
-        httpStatus: Number.isFinite(status) ? status : 0,
+        httpStatus: Number.isFinite(httpStatus) ? httpStatus : 0,
         curlStatus: result.status || 0,
-        message: summarizeProbeError(body, status || result.status || 0),
+        message: summarizeProbeError(body, display, stderr),
       });
     } finally {
       fs.rmSync(bodyFile, { force: true });
@@ -606,41 +624,47 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
 function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
   const bodyFile = path.join(os.tmpdir(), `nemoclaw-anthropic-probe-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
   try {
-    const cmd = [
-      "curl -sS",
-      ...getCurlTimingArgs(),
-      `-o ${shellQuote(bodyFile)}`,
-      "-w '%{http_code}'",
-      '-H "x-api-key: $NEMOCLAW_PROBE_API_KEY"',
-      "-H 'anthropic-version: 2023-06-01'",
-      "-H 'content-type: application/json'",
-      `-d ${shellQuote(JSON.stringify({
-        model,
-        max_tokens: 16,
-        messages: [{ role: "user", content: "Reply with exactly: OK" }],
-      }))}`,
-      shellQuote(`${String(endpointUrl).replace(/\/+$/, "")}/v1/messages`),
-    ].join(" ");
-    const result = spawnSync("bash", ["-c", cmd], {
+    const payload = JSON.stringify({
+      model,
+      max_tokens: 16,
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+    });
+    const args = [
+      "-sS",
+      ...getCurlSpawnArgs(),
+      "-o",
+      bodyFile,
+      "-w",
+      "%{http_code}",
+      "-H",
+      `x-api-key: ${apiKey}`,
+      "-H",
+      "anthropic-version: 2023-06-01",
+      "-H",
+      "content-type: application/json",
+      "-d",
+      payload,
+      `${String(endpointUrl).replace(/\/+$/, "")}/v1/messages`,
+    ];
+    const result = spawnSync("curl", args, {
       cwd: ROOT,
       encoding: "utf8",
-      env: {
-        ...process.env,
-        NEMOCLAW_PROBE_API_KEY: apiKey,
-      },
+      env: { ...process.env },
     });
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
-    const status = Number(String(result.stdout || "").trim());
-    if (result.status === 0 && status >= 200 && status < 300) {
+    const httpStatus = Number(String(result.stdout || "").trim());
+    if (result.status === 0 && httpStatus >= 200 && httpStatus < 300) {
       return { ok: true, api: "anthropic-messages", label: "Anthropic Messages API" };
     }
+    const display = probeDisplayCode(result);
+    const stderr = String(result.stderr || "");
     return {
       ok: false,
-      message: summarizeProbeError(body, status || result.status || 0),
+      message: summarizeProbeError(body, display, stderr),
       failures: [
         {
           name: "Anthropic Messages API",
-          httpStatus: Number.isFinite(status) ? status : 0,
+          httpStatus: Number.isFinite(httpStatus) ? httpStatus : 0,
           curlStatus: result.status || 0,
         },
       ],
@@ -752,27 +776,30 @@ async function validateCustomAnthropicSelection(label, endpointUrl, model, crede
 function fetchNvidiaEndpointModels(apiKey) {
   const bodyFile = path.join(os.tmpdir(), `nemoclaw-nvidia-models-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
   try {
-    const cmd = [
-      "curl -sS",
-      ...getCurlTimingArgs(),
-      `-o ${shellQuote(bodyFile)}`,
-      "-w '%{http_code}'",
-      "-H 'Content-Type: application/json'",
-      '-H "Authorization: Bearer $NEMOCLAW_PROBE_API_KEY"',
-      shellQuote(`${BUILD_ENDPOINT_URL}/models`),
-    ].join(" ");
-    const result = spawnSync("bash", ["-c", cmd], {
+    const args = [
+      "-sS",
+      ...getCurlSpawnArgs(),
+      "-o",
+      bodyFile,
+      "-w",
+      "%{http_code}",
+      "-H",
+      "Content-Type: application/json",
+      "-H",
+      `Authorization: Bearer ${apiKey}`,
+      `${BUILD_ENDPOINT_URL}/models`,
+    ];
+    const result = spawnSync("curl", args, {
       cwd: ROOT,
       encoding: "utf8",
-      env: {
-        ...process.env,
-        NEMOCLAW_PROBE_API_KEY: apiKey,
-      },
+      env: { ...process.env },
     });
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     const status = Number(String(result.stdout || "").trim());
     if (result.status !== 0 || !(status >= 200 && status < 300)) {
-      return { ok: false, message: summarizeProbeError(body, status || result.status || 0) };
+      const display = probeDisplayCode(result);
+      const stderr = String(result.stderr || "");
+      return { ok: false, message: summarizeProbeError(body, display, stderr) };
     }
     const parsed = JSON.parse(body);
     const ids = Array.isArray(parsed?.data)
@@ -806,26 +833,27 @@ function validateNvidiaEndpointModel(model, apiKey) {
 function fetchOpenAiLikeModels(endpointUrl, apiKey) {
   const bodyFile = path.join(os.tmpdir(), `nemoclaw-openai-models-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
   try {
-    const cmd = [
-      "curl -sS",
-      ...getCurlTimingArgs(),
-      `-o ${shellQuote(bodyFile)}`,
-      "-w '%{http_code}'",
-      ...(apiKey ? ['-H "Authorization: Bearer $NEMOCLAW_PROBE_API_KEY"'] : []),
-      shellQuote(`${String(endpointUrl).replace(/\/+$/, "")}/models`),
-    ].join(" ");
-    const result = spawnSync("bash", ["-c", cmd], {
+    const args = [
+      "-sS",
+      ...getCurlSpawnArgs(),
+      "-o",
+      bodyFile,
+      "-w",
+      "%{http_code}",
+      ...(apiKey ? ["-H", `Authorization: Bearer ${apiKey}`] : []),
+      `${String(endpointUrl).replace(/\/+$/, "")}/models`,
+    ];
+    const result = spawnSync("curl", args, {
       cwd: ROOT,
       encoding: "utf8",
-      env: {
-        ...process.env,
-        NEMOCLAW_PROBE_API_KEY: apiKey,
-      },
+      env: { ...process.env },
     });
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     const status = Number(String(result.stdout || "").trim());
     if (result.status !== 0 || !(status >= 200 && status < 300)) {
-      return { ok: false, status, message: summarizeProbeError(body, status || result.status || 0) };
+      const display = probeDisplayCode(result);
+      const stderr = String(result.stderr || "");
+      return { ok: false, status, message: summarizeProbeError(body, display, stderr) };
     }
     const parsed = JSON.parse(body);
     const ids = Array.isArray(parsed?.data)
@@ -842,27 +870,30 @@ function fetchOpenAiLikeModels(endpointUrl, apiKey) {
 function fetchAnthropicModels(endpointUrl, apiKey) {
   const bodyFile = path.join(os.tmpdir(), `nemoclaw-anthropic-models-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
   try {
-    const cmd = [
-      "curl -sS",
-      ...getCurlTimingArgs(),
-      `-o ${shellQuote(bodyFile)}`,
-      "-w '%{http_code}'",
-      '-H "x-api-key: $NEMOCLAW_PROBE_API_KEY"',
-      "-H 'anthropic-version: 2023-06-01'",
-      shellQuote(`${String(endpointUrl).replace(/\/+$/, "")}/v1/models`),
-    ].join(" ");
-    const result = spawnSync("bash", ["-c", cmd], {
+    const args = [
+      "-sS",
+      ...getCurlSpawnArgs(),
+      "-o",
+      bodyFile,
+      "-w",
+      "%{http_code}",
+      "-H",
+      `x-api-key: ${apiKey}`,
+      "-H",
+      "anthropic-version: 2023-06-01",
+      `${String(endpointUrl).replace(/\/+$/, "")}/v1/models`,
+    ];
+    const result = spawnSync("curl", args, {
       cwd: ROOT,
       encoding: "utf8",
-      env: {
-        ...process.env,
-        NEMOCLAW_PROBE_API_KEY: apiKey,
-      },
+      env: { ...process.env },
     });
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     const status = Number(String(result.stdout || "").trim());
     if (result.status !== 0 || !(status >= 200 && status < 300)) {
-      return { ok: false, status, message: summarizeProbeError(body, status || result.status || 0) };
+      const display = probeDisplayCode(result);
+      const stderr = String(result.stderr || "");
+      return { ok: false, status, message: summarizeProbeError(body, display, stderr) };
     }
     const parsed = JSON.parse(body);
     const ids = Array.isArray(parsed?.data)
