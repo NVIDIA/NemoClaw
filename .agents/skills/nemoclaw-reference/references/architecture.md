@@ -37,10 +37,18 @@ The blueprint drives all interactions with the OpenShell CLI.
 ```text
 nemoclaw-blueprint/
 ├── blueprint.yaml                  Manifest — version, profiles, compatibility
-├── orchestrator/
-│   └── runner.py                   CLI runner — plan / apply / status
 ├── policies/
 │   └── openclaw-sandbox.yaml       Default network + filesystem policy
+```
+
+The blueprint runtime (TypeScript) lives in the plugin source tree:
+
+```text
+nemoclaw/src/blueprint/
+├── runner.ts                       CLI runner — plan / apply / status / rollback
+├── ssrf.ts                         SSRF endpoint validation (IP + DNS checks)
+├── snapshot.ts                     Migration snapshot / restore lifecycle
+├── state.ts                        Persistent run state management
 ```
 
 ### Blueprint Lifecycle

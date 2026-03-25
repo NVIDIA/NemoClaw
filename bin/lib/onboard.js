@@ -167,6 +167,7 @@ async function promptOrDefault(question, envVar, defaultValue) {
  * Strips ANSI codes and exact-matches the sandbox name in the first column.
  */
 function isSandboxReady(output, sandboxName) {
+  // eslint-disable-next-line no-control-regex
   const clean = output.replace(/\x1b\[[0-9;]*m/g, "");
   return clean.split("\n").some((l) => {
     const cols = l.trim().split(/\s+/);
@@ -184,7 +185,7 @@ function hasStaleGateway(gwInfoOutput) {
   return typeof gwInfoOutput === "string" && gwInfoOutput.length > 0 && gwInfoOutput.includes(GATEWAY_NAME);
 }
 
-function streamSandboxCreate(command, env = process.env) {
+function streamSandboxCreate(command, env = process.env, options = {}) {
   const child = spawn("bash", ["-lc", command], {
     cwd: ROOT,
     env,
@@ -196,18 +197,38 @@ function streamSandboxCreate(command, env = process.env) {
   let lastPrintedLine = "";
   let sawProgress = false;
   let settled = false;
+  let polling = false;
+  const pollIntervalMs = options.pollIntervalMs || 2000;
+
+  function finish(result) {
+    if (settled) return;
+    settled = true;
+    if (pending) flushLine(pending);
+    if (readyTimer) clearInterval(readyTimer);
+    resolvePromise(result);
+  }
+
+  function detachChild() {
+    child.stdout?.removeAllListeners?.("data");
+    child.stderr?.removeAllListeners?.("data");
+    child.stdout?.destroy?.();
+    child.stderr?.destroy?.();
+    child.removeAllListeners?.("error");
+    child.removeAllListeners?.("close");
+    child.unref?.();
+  }
 
   function shouldShowLine(line) {
     return (
-      /^  Building image /.test(line) ||
-      /^  Context: /.test(line) ||
-      /^  Gateway: /.test(line) ||
+      /^ {2}Building image /.test(line) ||
+      /^ {2}Context: /.test(line) ||
+      /^ {2}Gateway: /.test(line) ||
       /^Successfully built /.test(line) ||
       /^Successfully tagged /.test(line) ||
-      /^  Built image /.test(line) ||
-      /^  Pushing image /.test(line) ||
+      /^ {2}Built image /.test(line) ||
+      /^ {2}Pushing image /.test(line) ||
       /^\s*\[progress\]/.test(line) ||
-      /^  Image .*available in the gateway/.test(line) ||
+      /^ {2}Image .*available in the gateway/.test(line) ||
       /^Created sandbox: /.test(line) ||
       /^✓ /.test(line)
     );
@@ -234,23 +255,53 @@ function streamSandboxCreate(command, env = process.env) {
   child.stdout.on("data", onChunk);
   child.stderr.on("data", onChunk);
 
+  let resolvePromise;
+  const readyTimer = options.readyCheck
+    ? setInterval(() => {
+        if (settled || polling) return;
+        polling = true;
+        try {
+          let ready = false;
+          try {
+            ready = !!options.readyCheck();
+          } catch {
+            return;
+          }
+          if (!ready) return;
+          const detail = "Sandbox reported Ready before create stream exited; continuing.";
+          lines.push(detail);
+          if (detail !== lastPrintedLine) {
+            console.log(`  ${detail}`);
+            lastPrintedLine = detail;
+          }
+          try {
+            child.kill("SIGTERM");
+          } catch {
+            // Best effort only — the child may have already exited.
+          }
+          detachChild();
+          finish({ status: 0, output: lines.join("\n"), sawProgress: true, forcedReady: true });
+        } finally {
+          polling = false;
+        }
+      }, pollIntervalMs)
+    : null;
+  readyTimer?.unref?.();
+
   return new Promise((resolve) => {
+    resolvePromise = resolve;
     child.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      if (pending) flushLine(pending);
-      const detail = error && error.code
-        ? `spawn failed: ${error.message} (${error.code})`
+      // @ts-expect-error — Node ErrnoException has .code but TS types Error
+      const code = error && error.code;
+      const detail = code
+        ? `spawn failed: ${error.message} (${code})`
         : `spawn failed: ${error.message}`;
       lines.push(detail);
-      resolve({ status: 1, output: lines.join("\n"), sawProgress: false });
+      finish({ status: 1, output: lines.join("\n"), sawProgress: false });
     });
 
     child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      if (pending) flushLine(pending);
-      resolve({ status: code ?? 1, output: lines.join("\n"), sawProgress });
+      finish({ status: code ?? 1, output: lines.join("\n"), sawProgress });
     });
   });
 }
@@ -332,7 +383,7 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
   }
 }
 
-function verifyInferenceRoute(provider, model) {
+function verifyInferenceRoute(_provider, _model) {
   const output = runCaptureOpenshell(["inference", "get"], { ignoreError: true });
   if (!output || /Gateway inference:\s*[\r\n]+\s*Not configured/i.test(output)) {
     console.error("  OpenShell inference route was not configured.");
@@ -352,10 +403,6 @@ function pruneStaleSandboxEntry(sandboxName) {
     registry.removeSandbox(sandboxName);
   }
   return liveExists;
-}
-
-function pythonLiteralJson(value) {
-  return JSON.stringify(JSON.stringify(value));
 }
 
 function buildSandboxConfigSyncScript(selectionConfig) {
@@ -384,8 +431,8 @@ function encodeDockerJsonArg(value) {
 }
 
 function getSandboxInferenceConfig(model, provider = null, preferredInferenceApi = null) {
-  let providerKey = "inference";
-  let primaryModelRef = model;
+  let providerKey;
+  let primaryModelRef;
   let inferenceBaseUrl = "https://inference.local/v1";
   let inferenceApi = preferredInferenceApi || "openai-completions";
   let inferenceCompat = null;
@@ -482,7 +529,7 @@ function summarizeProbeError(body, status) {
       parsed?.detail ||
       parsed?.details;
     if (message) return `HTTP ${status}: ${String(message)}`;
-  } catch {}
+  } catch { /* non-JSON body — fall through to raw text */ }
   const compact = String(body).replace(/\s+/g, " ").trim();
   return `HTTP ${status}: ${compact.slice(0, 200)}`;
 }
@@ -628,23 +675,6 @@ async function validateOpenAiLikeSelection(
       process.exit(1);
     }
     console.log(`  ${retryMessage}`);
-    console.log("");
-    return null;
-  }
-  console.log(`  ${probe.label} available — OpenClaw will use ${probe.api}.`);
-  return probe.api;
-}
-
-async function validateAnthropicSelection(label, endpointUrl, model, credentialEnv) {
-  const apiKey = getCredential(credentialEnv);
-  const probe = probeAnthropicEndpoint(endpointUrl, model, apiKey);
-  if (!probe.ok) {
-    console.error(`  ${label} endpoint validation failed.`);
-    console.error(`  ${probe.message}`);
-    if (isNonInteractive()) {
-      process.exit(1);
-    }
-    console.log("  Please choose a provider/model again.");
     console.log("");
     return null;
   }
@@ -1069,11 +1099,6 @@ function installOpenshell() {
   if (fs.existsSync(openshellPath) && futureShellPathHint) {
     process.env.PATH = `${localBin}${path.delimiter}${process.env.PATH}`;
   }
-  return {
-    installed: isOpenshellInstalled(),
-    localBin,
-    futureShellPathHint,
-  };
   OPENSHELL_BIN = resolveOpenshell();
   return {
     installed: OPENSHELL_BIN !== null,
@@ -1271,7 +1296,7 @@ async function preflight() {
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
-async function startGateway(gpu) {
+async function startGateway(_gpu) {
   step(3, 7, "Starting OpenShell gateway");
 
   // Destroy old gateway
@@ -1366,8 +1391,6 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null)
   }
 
   // Stage build context
-  const { mkdtempSync } = require("fs");
-  const os = require("os");
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
   const stagedDockerfile = path.join(buildCtx, "Dockerfile");
   fs.copyFileSync(path.join(ROOT, "Dockerfile"), stagedDockerfile);
@@ -1420,7 +1443,12 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null)
     ...envArgs,
     "nemoclaw-start",
   ])} 2>&1`;
-  const createResult = await streamSandboxCreate(createCommand, sandboxEnv);
+  const createResult = await streamSandboxCreate(createCommand, sandboxEnv, {
+    readyCheck: () => {
+      const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+      return isSandboxReady(list, sandboxName);
+    },
+  });
 
   // Clean up build context regardless of outcome
   run(`rm -rf "${buildCtx}"`, { ignoreError: true });

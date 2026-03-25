@@ -58,8 +58,8 @@ info "Destroying any leftover test sandboxes/gateway from previous runs..."
 # entries from a previous run would cause Phase 2 to exit with
 # "Sandbox already exists" before the test even starts.
 if command -v nemoclaw >/dev/null 2>&1; then
-  nemoclaw "$SANDBOX_A" destroy 2>/dev/null || true
-  nemoclaw "$SANDBOX_B" destroy 2>/dev/null || true
+  nemoclaw "$SANDBOX_A" destroy --yes 2>/dev/null || true
+  nemoclaw "$SANDBOX_B" destroy --yes 2>/dev/null || true
 fi
 openshell sandbox delete "$SANDBOX_A" 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_B" 2>/dev/null || true
@@ -252,8 +252,8 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 5: Final cleanup"
 
-nemoclaw "$SANDBOX_A" destroy 2>/dev/null || true
-nemoclaw "$SANDBOX_B" destroy 2>/dev/null || true
+nemoclaw "$SANDBOX_A" destroy --yes 2>/dev/null || true
+nemoclaw "$SANDBOX_B" destroy --yes 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_A" 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_B" 2>/dev/null || true
 openshell forward stop 18789 2>/dev/null || true

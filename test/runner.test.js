@@ -36,6 +36,7 @@ describe("runner helpers", () => {
   it("uses inherited stdio for interactive commands only", () => {
     const calls = [];
     const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
     childProcess.spawnSync = (...args) => {
       calls.push(args);
       return { status: 0 };
@@ -79,6 +80,7 @@ describe("runner env merging", () => {
     const calls = [];
     const originalSpawnSync = childProcess.spawnSync;
     const originalPath = process.env.PATH;
+    // @ts-expect-error — intentional partial mock for testing
     childProcess.spawnSync = (...args) => {
       calls.push(args);
       return { status: 0 };
@@ -228,7 +230,7 @@ describe("regression guards", () => {
   describe("credential exposure guards (#429)", () => {
     it("onboard createSandbox does not pass NVIDIA_API_KEY to sandbox env", () => {
       const fs = require("fs");
-      const src = fs.readFileSync(path.join(__dirname, "..", "bin", "lib", "onboard.js"), "utf-8");
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"), "utf-8");
       // Find the envArgs block in createSandbox — it should not contain NVIDIA_API_KEY
       const envArgsMatch = src.match(/const envArgs = \[[\s\S]*?\];/);
       expect(envArgsMatch).toBeTruthy();
@@ -237,13 +239,13 @@ describe("regression guards", () => {
 
     it("onboard clears NVIDIA_API_KEY from process.env after setupInference", () => {
       const fs = require("fs");
-      const src = fs.readFileSync(path.join(__dirname, "..", "bin", "lib", "onboard.js"), "utf-8");
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"), "utf-8");
       expect(src.includes("delete process.env.NVIDIA_API_KEY")).toBeTruthy();
     });
 
     it("setup.sh uses env-name-only form for nvidia-nim credential", () => {
       const fs = require("fs");
-      const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "setup.sh"), "utf-8");
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "scripts", "setup.sh"), "utf-8");
       // Should use "NVIDIA_API_KEY" (name only), not "NVIDIA_API_KEY=$NVIDIA_API_KEY" (value)
       const lines = src.split("\n");
       for (const line of lines) {
@@ -259,7 +261,7 @@ describe("regression guards", () => {
 
     it("setup.sh does not pass NVIDIA_API_KEY in sandbox create env args", () => {
       const fs = require("fs");
-      const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "setup.sh"), "utf-8");
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "scripts", "setup.sh"), "utf-8");
       // Find sandbox create command — should not have env NVIDIA_API_KEY
       const createLines = src.split("\n").filter((l) => l.includes("sandbox create"));
       for (const line of createLines) {
@@ -269,7 +271,7 @@ describe("regression guards", () => {
 
     it("setupSpark does not pass NVIDIA_API_KEY to sudo", () => {
       const fs = require("fs");
-      const src = fs.readFileSync(path.join(__dirname, "..", "bin", "nemoclaw.js"), "utf-8");
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"), "utf-8");
       // Find the run() call inside setupSpark — it should not contain the key
       const sparkLines = src.split("\n").filter(
         (l) => l.includes("setup-spark") && l.includes("run(")
@@ -281,7 +283,7 @@ describe("regression guards", () => {
 
     it("walkthrough.sh does not embed NVIDIA_API_KEY in tmux or sandbox commands", () => {
       const fs = require("fs");
-      const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "walkthrough.sh"), "utf-8");
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "scripts", "walkthrough.sh"), "utf-8");
       // Check only executable lines (tmux spawn, openshell connect) — not comments/docs
       const cmdLines = src.split("\n").filter(
         (l) => !l.trim().startsWith("#") && !l.trim().startsWith("echo") &&

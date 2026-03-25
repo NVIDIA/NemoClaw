@@ -8,6 +8,9 @@
   },
   "scripts": {
     "test": "vitest run",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc -p jsconfig.json",
     "prepare": "if [ -d .git ]; then if command -v prek >/dev/null 2>&1; then prek install; elif [ -d node_modules/@j178/prek ]; then echo \"ERROR: prek package found but binary not in PATH\" && exit 1; else echo \"Skipping git hook setup (prek not installed)\"; fi; fi",
     "prepublishOnly": "cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
@@ -34,8 +37,12 @@
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
+    "@eslint/js": "^10.0.1",
     "@j178/prek": "^0.3.6",
+    "@types/node": "^25.5.0",
     "@vitest/coverage-v8": "^4.1.0",
+    "eslint": "^10.1.0",
+    "typescript": "^6.0.2",
     "vitest": "^4.1.0"
   }
 }

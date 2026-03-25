@@ -15,6 +15,7 @@ Thumbs.db
 
 # Project-specific
 draft_newsletter_*
+specs/
 vdr-notes/
 
 # Security: secrets, credentials, and keys
