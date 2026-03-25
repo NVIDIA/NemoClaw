@@ -93,7 +93,7 @@ fi
 if [ "$CONTAINER_RUNTIME" != "unknown" ]; then
   info "Container runtime: $CONTAINER_RUNTIME"
 fi
-SANDBOX_NAME="${1:-nemoclaw}"
+SANDBOX_NAME="${1:-${NEMOCLAW_SANDBOX_NAME:-nemoclaw}}"
 info "Using sandbox name: ${SANDBOX_NAME}"
 
 OPEN_SHELL_VERSION_RAW="$(openshell -V 2>/dev/null || true)"
