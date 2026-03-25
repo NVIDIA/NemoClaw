@@ -138,8 +138,8 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
     );
 
     // Bootstrap VM
-    sshWithSecrets(`cd ${remoteDir} && SKIP_VLLM=1 bash scripts/brev-setup.sh`, { timeout: 1_500_000 });
-  }, 1_800_000); // 30 min — instance creation + bootstrap can be slow on CPU boxes
+    sshWithSecrets(`cd ${remoteDir} && SKIP_VLLM=1 bash scripts/brev-setup.sh`, { timeout: 2_400_000 });
+  }, 2_700_000); // 45 min — sandbox Docker image build is slow on fresh CPU boxes
 
   afterAll(() => {
     if (!instanceCreated) return;
