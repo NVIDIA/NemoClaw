@@ -40,8 +40,8 @@ version_gte() {
   # Returns 0 (true) if $1 >= $2 — portable, no sort -V (BSD compat)
   local IFS=.
   local -a a b
-  read -r -a a <<< "$1"
-  read -r -a b <<< "$2"
+  read -r -a a <<<"$1"
+  read -r -a b <<<"$2"
   for i in 0 1 2; do
     local ai=${a[$i]:-0} bi=${b[$i]:-0}
     if ((ai > bi)); then return 0; fi
@@ -98,7 +98,8 @@ elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
   mkdir -p "$target_dir"
   install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
   warn "Installed openshell to $target_dir/openshell (user-local path)"
-  warn "Ensure $target_dir is on PATH for future shells."
+  warn "For future shells, run: export PATH=\"$target_dir:\$PATH\""
+  warn "Add that export to your shell profile, or open a new shell before using openshell directly."
 else
   sudo install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
 fi

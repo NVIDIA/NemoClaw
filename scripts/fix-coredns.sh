@@ -57,11 +57,11 @@ fi
 
 echo "Patching CoreDNS to forward to $UPSTREAM_DNS..."
 
-docker exec "$CLUSTER" kubectl patch configmap coredns -n kube-system --type merge -p "{\"data\":{\"Corefile\":\".:53 {\\n    errors\\n    health\\n    ready\\n    kubernetes cluster.local in-addr.arpa ip6.arpa {\\n      pods insecure\\n      fallthrough in-addr.arpa ip6.arpa\\n    }\\n    hosts /etc/coredns/NodeHosts {\\n      ttl 60\\n      reload 15s\\n      fallthrough\\n    }\\n    prometheus :9153\\n    cache 30\\n    loop\\n    reload\\n    loadbalance\\n    forward . $UPSTREAM_DNS\\n}\\n\"}}" > /dev/null
+docker exec "$CLUSTER" kubectl patch configmap coredns -n kube-system --type merge -p "{\"data\":{\"Corefile\":\".:53 {\\n    errors\\n    health\\n    ready\\n    kubernetes cluster.local in-addr.arpa ip6.arpa {\\n      pods insecure\\n      fallthrough in-addr.arpa ip6.arpa\\n    }\\n    hosts /etc/coredns/NodeHosts {\\n      ttl 60\\n      reload 15s\\n      fallthrough\\n    }\\n    prometheus :9153\\n    cache 30\\n    loop\\n    reload\\n    loadbalance\\n    forward . $UPSTREAM_DNS\\n}\\n\"}}" >/dev/null
 
-docker exec "$CLUSTER" kubectl rollout restart deploy/coredns -n kube-system > /dev/null
+docker exec "$CLUSTER" kubectl rollout restart deploy/coredns -n kube-system >/dev/null
 
 echo "CoreDNS patched. Waiting for rollout..."
-docker exec "$CLUSTER" kubectl rollout status deploy/coredns -n kube-system --timeout=30s > /dev/null
+docker exec "$CLUSTER" kubectl rollout status deploy/coredns -n kube-system --timeout=30s >/dev/null
 
 echo "Done. DNS should resolve in ~10 seconds."
