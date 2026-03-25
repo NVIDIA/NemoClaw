@@ -13,6 +13,7 @@ import {
   MANAGED_PROVIDER_ID,
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
+  parseGatewayInference,
 } from "../bin/lib/inference-config";
 
 describe("inference selection config", () => {
@@ -144,5 +145,62 @@ describe("inference selection config", () => {
 
   it("builds a default OpenClaw primary model for non-ollama providers", () => {
     expect(getOpenClawPrimaryModel("nvidia-prod")).toBe(`${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`);
+  });
+});
+
+describe("parseGatewayInference", () => {
+  it("parses provider and model from openshell inference get output", () => {
+    const output = [
+      "Gateway inference:",
+      "",
+      "  Provider: nvidia-nim",
+      "  Model: nvidia/nemotron-3-super-120b-a12b",
+      "  Version: 2",
+    ].join("\n");
+    expect(parseGatewayInference(output)).toEqual({
+      provider: "nvidia-nim",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+    });
+  });
+
+  it("returns null for empty output", () => {
+    expect(parseGatewayInference("")).toBeNull();
+    expect(parseGatewayInference(null)).toBeNull();
+    expect(parseGatewayInference(undefined)).toBeNull();
+  });
+
+  it("returns null when inference is not configured", () => {
+    const output = "Gateway inference:\n\n  Not configured";
+    expect(parseGatewayInference(output)).toBeNull();
+  });
+
+  it("parses output with different provider/model combinations", () => {
+    const output = [
+      "Gateway inference:",
+      "",
+      "  Provider: ollama-local",
+      "  Model: qwen/qwen3.5-397b-a17b",
+      "  Version: 1",
+    ].join("\n");
+    expect(parseGatewayInference(output)).toEqual({
+      provider: "ollama-local",
+      model: "qwen/qwen3.5-397b-a17b",
+    });
+  });
+
+  it("handles output with only provider (no model line)", () => {
+    const output = "Gateway inference:\n\n  Provider: nvidia-nim";
+    expect(parseGatewayInference(output)).toEqual({
+      provider: "nvidia-nim",
+      model: null,
+    });
+  });
+
+  it("handles output with only model (no provider line)", () => {
+    const output = "Gateway inference:\n\n  Model: some/model";
+    expect(parseGatewayInference(output)).toEqual({
+      provider: null,
+      model: "some/model",
+    });
   });
 });
