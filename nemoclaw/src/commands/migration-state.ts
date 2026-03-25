@@ -574,7 +574,7 @@ function prepareSandboxState(snapshotDir: string, manifest: SnapshotManifest): s
   const preparedStateDir = path.join(snapshotDir, "sandbox-bundle", "openclaw");
   rmSync(preparedStateDir, { recursive: true, force: true });
   mkdirSync(path.dirname(preparedStateDir), { recursive: true });
-  copyDirectory(path.join(snapshotDir, "openclaw"), preparedStateDir);
+  copyDirectory(path.join(snapshotDir, "openclaw"), preparedStateDir, { stripCredentials: true });
 
   const configSourcePath = resolveConfigSourcePath(manifest, snapshotDir);
   const config = existsSync(configSourcePath) ? (loadConfigDocument(configSourcePath) ?? {}) : {};
@@ -791,10 +791,7 @@ export function restoreSnapshotToHost(
   // verification.
   if ("blueprintDigest" in manifest) {
     if (!manifest.blueprintDigest || typeof manifest.blueprintDigest !== "string") {
-      logger.error(
-        "Snapshot manifest has empty or invalid blueprintDigest. Refusing to restore.",
-      );
-      );
+      logger.error("Snapshot manifest has empty or invalid blueprintDigest. Refusing to restore.");
       return false;
     }
     const currentDigest = options?.blueprintPath ? computeFileDigest(options.blueprintPath) : null;
