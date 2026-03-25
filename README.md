@@ -105,6 +105,7 @@ When the install completes, a summary confirms the running environment:
 
 ```text
 ──────────────────────────────────────────────────
+Dashboard    http://127.0.0.1:18789/
 Sandbox      my-assistant (Landlock + seccomp + netns)
 Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
 ──────────────────────────────────────────────────
@@ -115,6 +116,10 @@ Logs:        nemoclaw my-assistant logs --follow
 
 [INFO]  === Installation complete ===
 ```
+
+On WSL2, NemoClaw can also print a `VS Code/WSL` dashboard URL that uses the current WSL host IP and a one-time OpenClaw gateway token.
+Use that URL exactly as printed when VS Code or the Windows browser cannot load the dashboard through `127.0.0.1`.
+On affected Windows setups, the direct WSL host IP URL is the correct path and replacing it with `localhost` can fail.
 
 ### Chat with the Agent
 
@@ -199,9 +204,12 @@ When something goes wrong, errors may originate from either NemoClaw or the Open
 
 ## Inference
 
-Inference requests from the agent never leave the sandbox directly. OpenShell intercepts every call and routes it to the provider you selected during onboarding.
+Inference requests from the agent never leave the sandbox directly. OpenShell intercepts every call and routes it to the active provider through the managed `inference.local` endpoint.
 
-Supported non-experimental onboarding paths:
+| Provider     | Model                               | Use Case                                       |
+|--------------|--------------------------------------|-------------------------------------------------|
+| NVIDIA cloud | `nvidia/nemotron-3-super-120b-a12b` | Production. Requires an NVIDIA API key.         |
+| Local Ollama | User-selected local model            | Experimental. Good for host-local inference.    |
 
 | Provider | Notes |
 |---|---|
@@ -212,29 +220,40 @@ Supported non-experimental onboarding paths:
 | Other Anthropic-compatible endpoint | For Claude proxies and compatible gateways. |
 | Google Gemini | Google's OpenAI-compatible endpoint. |
 
-During onboarding, NemoClaw validates the selected provider and model before it creates the sandbox:
+Local inference options such as Ollama and vLLM are still experimental. On WSL2 with Docker Desktop, NemoClaw can discover Ollama on the Windows host, list models during onboarding, and route sandbox traffic through Docker Desktop hostnames such as `host.docker.internal`.
 
-- OpenAI-compatible providers: tries `/responses` first, then `/chat/completions`
-- Anthropic-compatible providers: tries `/v1/messages`
-- If validation fails, the wizard prompts you to fix the selection before continuing
+When you select an Ollama model, NemoClaw records the context window it discovers from the host Ollama service. It prefers the running-model context from `ollama ps`, then falls back to the configured `num_ctx` value reported by `ollama show`. This helps OpenClaw avoid advertising a larger prompt budget than the active Ollama model is actually serving.
 
-Credentials stay on the host in `~/.nemoclaw/credentials.json`. The sandbox only sees the routed `inference.local` endpoint, not your raw provider key.
+On macOS, local inference still depends on OpenShell host-routing support in addition to the local service itself being reachable on the host.
 
-Local Ollama is supported in the standard onboarding flow. Local vLLM remains experimental, and local host-routed inference on macOS still depends on OpenShell host-routing support in addition to the local service itself being reachable on the host.
+### Verify Local Ollama Inference
 
-## Host-Side State and Config
+When you use Local Ollama, verify the managed route from inside the sandbox instead of calling the host Ollama port directly.
 
-NemoClaw keeps its operator-facing state on the host rather than inside the sandbox.
-These are the main files new users usually need to locate:
+First connect to the sandbox:
 
-| Path | Purpose |
-|---|---|
-| `~/.nemoclaw/credentials.json` | Provider credentials saved during onboarding |
-| `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata, including the default sandbox selection |
-| `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw snapshots or restores during migration flows |
+```console
+$ nemoclaw my-assistant connect
+```
 
-Common environment variables for optional services and local access include `TELEGRAM_BOT_TOKEN`, `ALLOWED_CHAT_IDS`, and `CHAT_UI_URL`.
-For normal sandbox setup and reconfiguration, prefer `nemoclaw onboard` over editing these files by hand.
+Then send a direct test request through the managed route:
+
+```console
+$ curl -sk https://inference.local/v1/chat/completions \
+	-H "Content-Type: application/json" \
+	-H "Authorization: Bearer unused" \
+	-d '{"model":"qwen3.5:35b-a3b","messages":[{"role":"user","content":"Reply with exactly: OLLAMA_OK"}],"max_tokens":16}'
+```
+
+If the route is healthy, the response contains the model output from the selected Ollama model.
+
+Use a fresh session ID when you switch providers or retest a local model with the OpenClaw CLI:
+
+```console
+$ openclaw agent --agent main --local -m "Reply with exactly: OLLAMA_OK" --session-id ollama-smoke
+```
+
+Do not use direct requests to `http://host.docker.internal:11434` from inside the sandbox as the primary validation step. The sandbox policy can block direct host egress even when the managed inference route is working correctly.
 
 ---
 

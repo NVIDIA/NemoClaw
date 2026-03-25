@@ -25,6 +25,8 @@ export interface NemoClawOnboardConfig {
   model: string;
   profile: string;
   credentialEnv: string;
+  contextWindow?: number;
+  maxTokens?: number;
   provider?: string;
   providerLabel?: string;
   onboardedAt: string;

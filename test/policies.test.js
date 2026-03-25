@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import assert from "node:assert/strict";
-import { describe, it, expect } from "vitest";
-import policies from "../bin/lib/policies";
+const { describe, it } = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("path");
+
+const policies = require("../bin/lib/policies");
 
 describe("policies", () => {
   describe("listPresets", () => {
@@ -172,6 +175,17 @@ describe("policies", () => {
   });
 
   describe("preset YAML schema", () => {
+    it("telegram policies keep the Node binary allowlist", () => {
+      const preset = policies.loadPreset("telegram");
+      assert.match(preset, /binaries:\s*\n\s*- \{ path: \/usr\/local\/bin\/node \}/);
+
+      const sandboxPolicy = fs.readFileSync(
+        path.join(__dirname, "..", "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+        "utf8",
+      );
+      assert.match(sandboxPolicy, /telegram:[\s\S]*?binaries:\s*\n\s*- \{ path: \/usr\/local\/bin\/node \}/);
+    });
+
     it("no preset has rules at NetworkPolicyRuleDef level", () => {
       // rules must be inside endpoints, not as sibling of endpoints/binaries
       for (const p of policies.listPresets()) {

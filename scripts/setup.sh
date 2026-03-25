@@ -162,26 +162,29 @@ if check_local_provider_health "vllm-local" || python3 -c "import vllm" 2>/dev/n
     "OPENAI_BASE_URL=$VLLM_LOCAL_BASE_URL"
 fi
 
-# 4a. Ollama (macOS local inference)
+# 4a. Ollama local inference
 if [ "$(uname -s)" = "Darwin" ]; then
   if ! command -v ollama >/dev/null 2>&1; then
     info "Installing Ollama..."
     brew install ollama 2>/dev/null || warn "Ollama install failed (brew required). Install manually: https://ollama.com"
   fi
-  if command -v ollama >/dev/null 2>&1; then
-    # Start Ollama service if not running
-    if ! check_local_provider_health "ollama-local"; then
-      info "Starting Ollama service..."
-      OLLAMA_HOST=0.0.0.0:11434 ollama serve >/dev/null 2>&1 &
-      sleep 2
-    fi
-    OLLAMA_LOCAL_BASE_URL="$(get_local_provider_base_url "ollama-local")"
-    upsert_provider \
-      "ollama-local" \
-      "openai" \
-      "OPENAI_API_KEY=ollama" \
-      "OPENAI_BASE_URL=$OLLAMA_LOCAL_BASE_URL"
-  fi
+fi
+
+if command -v ollama > /dev/null 2>&1 && ! check_local_provider_health "ollama-local"; then
+  info "Starting Ollama service..."
+  OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &
+  sleep 2
+fi
+
+if check_local_provider_health "ollama-local"; then
+  OLLAMA_LOCAL_BASE_URL="$(get_local_provider_base_url "ollama-local")"
+  upsert_provider \
+    "ollama-local" \
+    "openai" \
+    "OPENAI_API_KEY=ollama" \
+    "OPENAI_BASE_URL=$OLLAMA_LOCAL_BASE_URL"
+elif [ -n "${NEMOCLAW_OLLAMA_BASE_URL:-}" ] || is_wsl; then
+  warn "No reachable Ollama endpoint was discovered. Set NEMOCLAW_OLLAMA_BASE_URL if Ollama is running on a different host."
 fi
 
 # 4b. Inference route — default to nvidia-nim

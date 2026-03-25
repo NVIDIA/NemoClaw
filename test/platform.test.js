@@ -31,6 +31,18 @@ describe("platform helpers", () => {
         release: "24.6.0",
       })).toBe(false);
     });
+
+    it("detects WSL from /proc version text", () => {
+      assert.equal(
+        isWsl({
+          platform: "linux",
+          env: {},
+          release: "6.6.87.2-generic",
+          procVersion: "Linux version 6.6.87.2-microsoft-standard-WSL2",
+        }),
+        true,
+      );
+    });
   });
 
   describe("getDockerSocketCandidates", () => {

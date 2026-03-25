@@ -21,6 +21,14 @@ const { execFileSync, spawn } = require("child_process");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 const { shellQuote, validateName } = require("../bin/lib/runner");
 
+const TELEGRAM_TOOL_FALSE_NEGATIVE_PATTERN = /trouble sending messages via the openclaw telegram tool/i;
+const STDERR_NOISE_PATTERNS = [
+  /^\(node:\d+\) \[UNDICI-EHPA\] Warning: EnvHttpProxyAgent is experimental.*$/i,
+  /^\(Use `node --trace-warnings .*$/i,
+  /^\[plugins\] plugins\.allow is empty; discovered non-bundled plugins may auto-load:.*$/i,
+  /^nemoclaw \(\/sandbox\/\.openclaw\/extensions\/nemoclaw\/dist\/index\.js\)\. Set plugins\.allow to explicit trusted ids\..*$/i,
+];
+
 const OPENSHELL = resolveOpenshell();
 if (!OPENSHELL) {
   console.error("openshell not found on PATH or in common locations");
@@ -92,34 +100,104 @@ async function sendTyping(chatId) {
 
 // ── Run agent inside sandbox ──────────────────────────────────────
 
-function runAgentInSandbox(message, sessionId) {
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function buildAgentCommand(message, sessionId) {
+  return (
+    `export NVIDIA_API_KEY=${shellQuote(API_KEY)} TELEGRAM_BOT_TOKEN=${shellQuote(TOKEN)} && ` +
+    "nemoclaw-start openclaw agent " +
+    "--agent main " +
+    "--local " +
+    "--channel telegram " +
+    `-m ${shellQuote(message)} ` +
+    `--session-id 'tg-${sessionId}'`
+  );
+}
+
+function buildTelegramToolCheckCommand(sessionId) {
+  const telegramTarget = String(sessionId);
+  return (
+    `export TELEGRAM_BOT_TOKEN=${shellQuote(TOKEN)} && ` +
+    "openclaw message send " +
+    "--channel telegram " +
+    `--target ${shellQuote(telegramTarget)} ` +
+    "--message 'nemoclaw telegram availability check' " +
+    "--dry-run --json"
+  );
+}
+
+function runCommandInSandbox(command, sessionId, timeoutMs = 120000) {
   return new Promise((resolve) => {
-    const sshConfig = execFileSync(OPENSHELL, ["sandbox", "ssh-config", SANDBOX], { encoding: "utf-8" });
+    const sshConfig = execSync(`"${OPENSHELL}" sandbox ssh-config "${SANDBOX}"`, { encoding: "utf-8" });
+    const confPath = `/tmp/nemoclaw-tg-ssh-${sessionId}.conf`;
+    require("fs").writeFileSync(confPath, sshConfig);
 
-    // Write temp ssh config with unpredictable name
-    const confDir = require("fs").mkdtempSync("/tmp/nemoclaw-tg-ssh-");
-    const confPath = `${confDir}/config`;
-    require("fs").writeFileSync(confPath, sshConfig, { mode: 0o600 });
-
-    // Pass message and API key via stdin to avoid shell interpolation.
-    // The remote command reads them from environment/stdin rather than
-    // embedding user content in a shell string.
-    const safeSessionId = String(sessionId).replace(/[^a-zA-Z0-9-]/g, "");
-    const cmd = `export NVIDIA_API_KEY=${shellQuote(API_KEY)} && nemoclaw-start openclaw agent --agent main --local -m ${shellQuote(message)} --session-id ${shellQuote("tg-" + safeSessionId)}`;
-
-    const proc = spawn("ssh", ["-T", "-F", confPath, `openshell-${SANDBOX}`, cmd], {
-      timeout: 120000,
+    const proc = spawn("ssh", ["-T", "-F", confPath, `openshell-${SANDBOX}`, command], {
+      timeout: timeoutMs,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
     let stdout = "";
     let stderr = "";
 
-    proc.stdout.on("data", (d) => (stdout += d.toString()));
-    proc.stderr.on("data", (d) => (stderr += d.toString()));
+    proc.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+    proc.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
 
     proc.on("close", (code) => {
-      try { require("fs").unlinkSync(confPath); require("fs").rmdirSync(confDir); } catch { /* ignored */ }
+      try { require("fs").unlinkSync(confPath); } catch {}
+      resolve({ code, stdout, stderr });
+    });
+
+    proc.on("error", (err) => {
+      try { require("fs").unlinkSync(confPath); } catch {}
+      resolve({ code: 1, stdout, stderr: err.message });
+    });
+  });
+}
+
+async function verifyTelegramToolAvailable(sessionId) {
+  const result = await runCommandInSandbox(buildTelegramToolCheckCommand(sessionId), `check-${sessionId}`, 30000);
+  return result.code === 0 && result.stdout.includes('"channel": "telegram"');
+}
+
+function normalizeAgentResponse(response, telegramToolAvailable) {
+  if (!telegramToolAvailable) return response;
+  if (!TELEGRAM_TOOL_FALSE_NEGATIVE_PATTERN.test(response)) return response;
+  return "Telegram delivery is available from inside the sandbox. The earlier claim that the OpenClaw Telegram tool could not send was inaccurate.";
+}
+
+function summarizeStderr(stderr) {
+  const lines = String(stderr || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !STDERR_NOISE_PATTERNS.some((pattern) => pattern.test(line)));
+  return lines.join(" ").slice(0, 500);
+}
+
+function formatAgentFailure(code, stderr) {
+  const summary = summarizeStderr(stderr);
+  if (code === 255) {
+    const prefix = `Agent session failed while reaching sandbox '${SANDBOX}'.`;
+    const detail = summary ? ` ${summary}` : "";
+    return `${prefix}${detail} Check 'openshell status' and run 'nemoclaw ${SANDBOX} telegram-probe' if this keeps happening.`;
+  }
+  if (summary) {
+    return `Agent exited with code ${code}. ${summary}`;
+  }
+  return `Agent exited with code ${code}.`;
+}
+
+function runAgentInSandbox(message, sessionId) {
+  return new Promise((resolve) => {
+    const cmd = buildAgentCommand(message, sessionId);
+    runCommandInSandbox(cmd, sessionId).then(({ code, stdout, stderr }) => {
 
       // Extract the actual agent response — skip setup lines
       const lines = stdout.split("\n");
@@ -142,14 +220,10 @@ function runAgentInSandbox(message, sessionId) {
       if (response) {
         resolve(response);
       } else if (code !== 0) {
-        resolve(`Agent exited with code ${code}. ${stderr.trim().slice(0, 500)}`);
+        resolve(formatAgentFailure(code, stderr));
       } else {
         resolve("(no response)");
       }
-    });
-
-    proc.on("error", (err) => {
-      resolve(`Error: ${err.message}`);
     });
   });
 }
@@ -205,10 +279,14 @@ async function poll() {
         const typingInterval = setInterval(() => sendTyping(chatId), 4000);
 
         try {
-          const response = await runAgentInSandbox(msg.text, chatId);
+          const [response, telegramToolAvailable] = await Promise.all([
+            runAgentInSandbox(msg.text, chatId),
+            verifyTelegramToolAvailable(chatId),
+          ]);
           clearInterval(typingInterval);
-          console.log(`[${chatId}] agent: ${response.slice(0, 100)}...`);
-          await sendMessage(chatId, response, msg.message_id);
+          const finalResponse = normalizeAgentResponse(response, telegramToolAvailable);
+          console.log(`[${chatId}] agent: ${finalResponse.slice(0, 100)}...`);
+          await sendMessage(chatId, finalResponse, msg.message_id);
         } catch (err) {
           clearInterval(typingInterval);
           await sendMessage(chatId, `Error: ${err.message}`, msg.message_id);
@@ -249,4 +327,16 @@ async function main() {
   poll();
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  buildAgentCommand,
+  buildTelegramToolCheckCommand,
+  formatAgentFailure,
+  normalizeAgentResponse,
+  runAgentInSandbox,
+  summarizeStderr,
+  verifyTelegramToolAvailable,
+};

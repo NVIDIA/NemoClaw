@@ -84,11 +84,23 @@ $ nemoclaw my-assistant connect
 $ openclaw agent --agent main --local -m "Test inference" --session-id debug
 ```
 
+For Local Ollama, verify the managed route directly from inside the sandbox with a minimal request:
+
+```console
+$ curl -sk https://inference.local/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer unused" \
+  -d '{"model":"<ollama-model>","messages":[{"role":"user","content":"Reply with exactly: OLLAMA_OK"}],"max_tokens":16}'
+```
+
+This checks the same managed inference path that OpenClaw uses. It is more reliable than a direct request to the host Ollama port from inside the sandbox.
+
 If the request fails, check the following:
 
 1. Run `nemoclaw <name> status` to confirm the active provider and endpoint.
 2. Run `nemoclaw <name> logs -f` to view error messages from the blueprint runner.
-3. Verify that the inference endpoint is reachable from the host.
+3. If you use Local Ollama, check the Ollama host logs for prompt truncation, load failures, or timeouts.
+4. If a Local Ollama request times out in the TUI or CLI, retry with a fresh session ID so you do not reuse an oversized conversation history.
 
 ## Related Topics
 

@@ -205,28 +205,81 @@ PYAUTOPAIR
   echo "[gateway] auto-pair watcher launched (pid $!)"
 }
 
-# ── Proxy environment ────────────────────────────────────────────
-# OpenShell injects HTTP_PROXY/HTTPS_PROXY/NO_PROXY into the sandbox, but its
-# NO_PROXY is limited to 127.0.0.1,localhost,::1 — missing the gateway IP.
-# The gateway IP itself must bypass the proxy to avoid proxy loops.
-#
-# Do NOT add inference.local here. OpenShell intentionally routes that hostname
-# through the proxy path; bypassing the proxy forces a direct DNS lookup inside
-# the sandbox, which breaks inference.local resolution.
-#
-# NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT can be overridden at sandbox
-# creation time if the gateway IP or port changes in a future OpenShell release.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/626
-PROXY_HOST="${NEMOCLAW_PROXY_HOST:-10.200.0.1}"
-PROXY_PORT="${NEMOCLAW_PROXY_PORT:-3128}"
-_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
-_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"
-export HTTP_PROXY="$_PROXY_URL"
-export HTTPS_PROXY="$_PROXY_URL"
-export NO_PROXY="$_NO_PROXY_VAL"
-export http_proxy="$_PROXY_URL"
-export https_proxy="$_PROXY_URL"
-export no_proxy="$_NO_PROXY_VAL"
+ensure_agent_dirs() {
+  python3 - <<'PYAGENTDIRS'
+import json
+import os
+
+config_path = os.path.join(os.environ.get('HOME', '/sandbox'), '.openclaw', 'openclaw.json')
+if not os.path.exists(config_path):
+    exit(0)
+
+with open(config_path) as f:
+    cfg = json.load(f)
+
+agents = cfg.get('agents', {})
+agent_list = agents.get('list', [])
+for agent in agent_list:
+    if not isinstance(agent, dict):
+        continue
+    for key in ('workspace', 'agentDir'):
+        dir_path = agent.get(key, '')
+        if isinstance(dir_path, str) and dir_path.strip():
+            os.makedirs(dir_path.strip(), exist_ok=True)
+PYAGENTDIRS
+}
+
+ensure_agent_webchat_sessions() {
+  python3 - <<'PYSESSIONS'
+import json
+import os
+import uuid
+
+home = os.environ.get('HOME', '/sandbox')
+config_path = os.path.join(home, '.openclaw', 'openclaw.json')
+if not os.path.exists(config_path):
+    exit(0)
+
+with open(config_path) as f:
+    cfg = json.load(f)
+
+agents = cfg.get('agents', {})
+agent_list = agents.get('list', [])
+for agent in agent_list:
+    if not isinstance(agent, dict) or not agent.get('id'):
+        continue
+    agent_id = agent['id']
+    sessions_dir = os.path.join(home, '.openclaw', 'agents', agent_id, 'sessions')
+    os.makedirs(sessions_dir, exist_ok=True)
+    store_path = os.path.join(sessions_dir, 'sessions.json')
+    store = {}
+    if os.path.exists(store_path):
+        with open(store_path) as f:
+            store = json.load(f)
+    session_key = f'agent:{agent_id}:main'
+    entry = store.get(session_key, {})
+    if entry.get('lastChannel') == 'webchat':
+        continue
+    entry.setdefault('sessionId', f'init-{agent_id}')
+    entry['chatType'] = 'direct'
+    entry['deliveryContext'] = {'channel': 'webchat'}
+    entry['lastChannel'] = 'webchat'
+    entry['origin'] = {'provider': 'webchat', 'surface': 'webchat', 'chatType': 'direct'}
+    store[session_key] = entry
+    with open(store_path, 'w') as f:
+        json.dump(store, f)
+    os.chmod(store_path, 0o600)
+PYSESSIONS
+}
+
+echo 'Setting up NemoClaw...'
+openclaw doctor --fix > /dev/null 2>&1 || true
+write_auth_profile
+export CHAT_UI_URL PUBLIC_PORT
+fix_openclaw_config
+ensure_agent_dirs
+ensure_agent_webchat_sessions
+openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true
 
 # OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
 # time a user connects via `openshell sandbox connect`.  The connect path spawns

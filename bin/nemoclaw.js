@@ -32,7 +32,14 @@ const {
 const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
-const { parseGatewayInference } = require("./lib/inference-config");
+const { getInferenceRuntimeStatus } = require("./lib/inference-status");
+const { runTelegramProbe } = require("./lib/telegram-diagnostics");
+const {
+  getDashboardForwardStartCommand,
+  getDashboardAccessInfo,
+  getDashboardGuidanceLines,
+  syncSandboxControlUiConfig,
+} = require("./lib/onboard");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -43,7 +50,27 @@ const GLOBAL_COMMANDS = new Set([
 ]);
 
 const REMOTE_UNINSTALL_URL = "https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh";
-let OPENSHELL_BIN = null;
+const GATEWAY_NAME = "nemoclaw";
+
+function stripAnsi(value) {
+  return String(value || "").replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function getGatewayClusterContainerName(gatewayName = GATEWAY_NAME) {
+  return `openshell-cluster-${gatewayName}`;
+}
+
+function isGatewayConnected(statusOutput) {
+  return /Status:\s+Connected/i.test(stripAnsi(statusOutput));
+}
+
+function hasGatewayConnectFailure(statusOutput) {
+  return /(client error \(Connect\)|transport error|tcp connect error|Connection refused|Connection reset by peer)/i.test(stripAnsi(statusOutput));
+}
+
+function hasSandboxAttachHandshakeFailure(logOutput) {
+  return /handshake verification failed/i.test(stripAnsi(logOutput));
+}
 
 function getOpenshellBinary() {
   if (!OPENSHELL_BIN) {
@@ -302,6 +329,12 @@ async function ensureLiveSandboxOrExit(sandboxName) {
   process.exit(1);
 }
 
+function getServiceSandboxEnv(listSandboxes = () => registry.listSandboxes()) {
+  const { defaultSandbox } = listSandboxes();
+  const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
+  return safeName ? `SANDBOX_NAME="${safeName}" ` : "";
+}
+
 function resolveUninstallScript() {
   const candidates = [
     path.join(ROOT, "uninstall.sh"),
@@ -328,6 +361,94 @@ function exitWithSpawnResult(result) {
   }
 
   process.exit(1);
+}
+
+function waitForGatewayConnection(attempts = 15, delaySeconds = 2) {
+  for (let i = 0; i < attempts; i += 1) {
+    const status = runCapture("openshell status 2>&1", { ignoreError: true });
+    if (isGatewayConnected(status)) {
+      return true;
+    }
+    spawnSync("sleep", [String(delaySeconds)]);
+  }
+  return false;
+}
+
+function resumeStoppedGateway() {
+  const containerName = getGatewayClusterContainerName();
+  const containers = runCapture("docker ps -a --format '{{.Names}}\t{{.Status}}'", { ignoreError: true });
+  const containerLine = containers
+    .split("\n")
+    .find((line) => line.startsWith(`${containerName}\t`));
+
+  if (!containerLine) {
+    return false;
+  }
+
+  if (containerLine.includes("\tUp ")) {
+    return waitForGatewayConnection();
+  }
+
+  if (!/(\tExited|\tCreated|\tDead)/.test(containerLine)) {
+    return false;
+  }
+
+  const startResult = spawnSync("docker", ["start", containerName], {
+    cwd: ROOT,
+    env: process.env,
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  if (startResult.status !== 0) {
+    return false;
+  }
+
+  return waitForGatewayConnection();
+}
+
+function ensureSandboxGatewayReachable() {
+  const status = runCapture("openshell status 2>&1", { ignoreError: true });
+  if (isGatewayConnected(status)) {
+    return;
+  }
+
+  if (hasGatewayConnectFailure(status) && resumeStoppedGateway()) {
+    console.log(`  ✓ Resumed OpenShell gateway '${GATEWAY_NAME}'`);
+    return;
+  }
+
+  console.error("");
+  console.error(`  OpenShell gateway '${GATEWAY_NAME}' is not reachable.`);
+  console.error("  NemoClaw cannot connect to a sandbox until the local gateway is healthy.");
+  console.error("");
+  console.error(`  Check:       openshell status`);
+  console.error(`  Recover:     docker start ${getGatewayClusterContainerName()}`);
+  console.error(`  Fallback:    openshell gateway start --name ${GATEWAY_NAME}`);
+  console.error("");
+  if (status) {
+    console.error("  OpenShell reported:");
+    console.error(status.split("\n").map((line) => `    ${line}`).join("\n"));
+  }
+  process.exit(1);
+}
+
+function explainSandboxConnectFailure(sandboxName, result) {
+  const recentLogs = runCapture(`openshell logs "${sandboxName}" 2>&1 | tail -n 80`, { ignoreError: true });
+
+  if (hasSandboxAttachHandshakeFailure(recentLogs)) {
+    console.error("");
+    console.error(`  OpenShell reached sandbox '${sandboxName}', but the shell attach handshake was rejected.`);
+    console.error("  This usually happens when an older sandbox is reused after the gateway session changed.");
+    console.error("");
+    console.error(`  Workaround:  openshell sandbox connect --editor vscode "${sandboxName}"`);
+    console.error("  Recovery:    nemoclaw onboard");
+    console.error(`               Then choose 'y' if prompted to recreate sandbox '${sandboxName}'.`);
+    exitWithSpawnResult(result);
+  }
+
+  console.error(`  Command failed (exit ${result.status}): openshell sandbox connect "${sandboxName}"`);
+  exitWithSpawnResult(result);
 }
 
 // ── Commands ─────────────────────────────────────────────────────
@@ -468,14 +589,13 @@ async function deploy(instanceName) {
 
 async function start() {
   await ensureApiKey();
-  const { defaultSandbox } = registry.listSandboxes();
-  const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
-  const sandboxEnv = safeName ? `SANDBOX_NAME=${shellQuote(safeName)}` : "";
-  run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh"`);
+  const sandboxEnv = getServiceSandboxEnv();
+  run(`${sandboxEnv}bash "${SCRIPTS}/start-services.sh"`);
 }
 
 function stop() {
-  run(`bash "${SCRIPTS}/start-services.sh" --stop`);
+  const sandboxEnv = getServiceSandboxEnv();
+  run(`${sandboxEnv}bash "${SCRIPTS}/start-services.sh" --stop`);
 }
 
 function debug(args) {
@@ -530,7 +650,8 @@ function showStatus() {
   }
 
   // Show service status
-  run(`bash "${SCRIPTS}/start-services.sh" --status`);
+  const sandboxEnv = getServiceSandboxEnv(() => ({ sandboxes, defaultSandbox }));
+  run(`${sandboxEnv}bash "${SCRIPTS}/start-services.sh" --status`);
 }
 
 function listSandboxes() {
@@ -560,14 +681,16 @@ function listSandboxes() {
 
 // ── Sandbox-scoped actions ───────────────────────────────────────
 
-async function sandboxConnect(sandboxName) {
-  await ensureLiveSandboxOrExit(sandboxName);
-  const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
-    stdio: "inherit",
-    cwd: ROOT,
-    env: process.env,
-  });
-  exitWithSpawnResult(result);
+function sandboxConnect(sandboxName) {
+  ensureSandboxGatewayReachable();
+  syncSandboxControlUiConfig(sandboxName);
+  // Ensure port forward is alive before connecting
+  run(`openshell forward stop 18789 "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+  run(`${getDashboardForwardStartCommand(sandboxName)} 2>/dev/null || true`, { ignoreError: true });
+  const result = runInteractive(`openshell sandbox connect "${sandboxName}"`, { ignoreError: true });
+  if (result.status !== 0) {
+    explainSandboxConnectFailure(sandboxName, result);
+  }
 }
 
 // eslint-disable-next-line complexity
@@ -631,11 +754,9 @@ async function sandboxStatus(sandboxName) {
     printGatewayLifecycleHint(lookup.output, sandboxName, console.log);
   }
 
-  // NIM health
-  const nimStat = sb && sb.nimContainer ? nim.nimStatusByName(sb.nimContainer) : nim.nimStatus(sandboxName);
-  console.log(`    NIM:      ${nimStat.running ? `running (${nimStat.container})` : "not running"}`);
-  if (nimStat.running) {
-    console.log(`    Healthy:  ${nimStat.healthy ? "yes" : "no"}`);
+  const runtimeLines = getInferenceRuntimeStatus(sb || { name: sandboxName }, (name) => nim.nimStatus(name));
+  for (const line of runtimeLines) {
+    console.log(`    ${line.label.padEnd(9)}${line.value}`);
   }
   console.log("");
 }
@@ -644,6 +765,15 @@ function sandboxLogs(sandboxName, follow) {
   const args = ["logs", sandboxName];
   if (follow) args.push("--follow");
   runOpenshell(args);
+}
+
+function sandboxTelegramProbe(sandboxName) {
+  ensureSandboxGatewayReachable();
+  console.log("");
+  console.log(`  Probing Telegram network path inside sandbox '${sandboxName}'...`);
+  console.log("  This checks proxy and DNS diagnostics plus a bridge-equivalent Node Bot API probe when TELEGRAM_BOT_TOKEN is available.");
+  console.log("");
+  exitWithSpawnResult(runTelegramProbe(sandboxName));
 }
 
 async function sandboxPolicyAdd(sandboxName) {
@@ -681,19 +811,22 @@ function sandboxPolicyList(sandboxName) {
   console.log("");
 }
 
-async function sandboxDestroy(sandboxName, args = []) {
-  const skipConfirm = args.includes("--yes") || args.includes("--force");
-  if (!skipConfirm) {
-    const { prompt: askPrompt } = require("./lib/credentials");
-    const answer = await askPrompt(
-      `  ${YW}Destroy sandbox '${sandboxName}'?${R} This cannot be undone. [y/N]: `,
-    );
-    if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
-      console.log("  Cancelled.");
-      return;
-    }
+function sandboxDashboard(sandboxName) {
+  const dashboardAccess = getDashboardAccessInfo(sandboxName);
+  const dashboardGuidance = getDashboardGuidanceLines(dashboardAccess);
+  console.log("");
+  console.log(`  ${"─".repeat(50)}`);
+  for (const access of dashboardAccess) {
+    console.log(`  ${access.label.padEnd(12)}${access.url}`);
   }
+  for (const guidance of dashboardGuidance) {
+    console.log(`  ${guidance}`);
+  }
+  console.log(`  ${"─".repeat(50)}`);
+  console.log("");
+}
 
+function sandboxDestroy(sandboxName) {
   console.log(`  Stopping NIM for '${sandboxName}'...`);
   const sb = registry.getSandbox(sandboxName);
   if (sb && sb.nimContainer) nim.stopNimContainerByName(sb.nimContainer);
@@ -718,12 +851,14 @@ function help() {
     ${B}nemoclaw onboard${R}                 Configure inference endpoint and credentials
     nemoclaw setup-spark             Set up on DGX Spark ${D}(fixes cgroup v2 + Docker)${R}
 
-  ${G}Sandbox Management:${R}
-    ${B}nemoclaw list${R}                    List all sandboxes
-    nemoclaw <name> connect          Shell into a running sandbox
-    nemoclaw <name> status           Sandbox health + NIM status
-    nemoclaw <name> logs ${D}[--follow]${R}  Stream sandbox logs
-    nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
+  Sandbox Management:
+    nemoclaw list                    List all sandboxes
+    nemoclaw <name> connect          Connect to a sandbox
+    nemoclaw <name> dashboard        Show dashboard access URL(s)
+    nemoclaw <name> status           Show sandbox status and health
+    nemoclaw <name> logs [--follow]  View sandbox logs
+    nemoclaw <name> telegram-probe   Probe api.telegram.org from inside a sandbox
+    nemoclaw <name> destroy          Stop NIM + delete sandbox
 
   ${G}Policy Presets:${R}
     nemoclaw <name> policy-add       Add a network or filesystem policy preset
@@ -757,10 +892,8 @@ function help() {
 
 // ── Dispatch ─────────────────────────────────────────────────────
 
-const [cmd, ...args] = process.argv.slice(2);
-
-// eslint-disable-next-line complexity
-(async () => {
+async function main() {
+  const [cmd, ...args] = process.argv.slice(2);
   // No command → help
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
     help();
@@ -799,15 +932,17 @@ const [cmd, ...args] = process.argv.slice(2);
     const actionArgs = args.slice(1);
 
     switch (action) {
-      case "connect":     await sandboxConnect(cmd); break;
-      case "status":      await sandboxStatus(cmd); break;
+      case "connect":     sandboxConnect(cmd); break;
+      case "dashboard":   sandboxDashboard(cmd); break;
+      case "status":      sandboxStatus(cmd); break;
       case "logs":        sandboxLogs(cmd, actionArgs.includes("--follow")); break;
+      case "telegram-probe": sandboxTelegramProbe(cmd); break;
       case "policy-add":  await sandboxPolicyAdd(cmd); break;
       case "policy-list": sandboxPolicyList(cmd); break;
       case "destroy":     await sandboxDestroy(cmd, actionArgs); break;
       default:
         console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, destroy`);
+        console.error(`  Valid actions: connect, dashboard, status, logs, telegram-probe, policy-add, policy-list, destroy`);
         process.exit(1);
     }
     return;
@@ -827,4 +962,17 @@ const [cmd, ...args] = process.argv.slice(2);
 
   console.error(`  Run 'nemoclaw help' for usage.`);
   process.exit(1);
-})();
+}
+
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  getServiceSandboxEnv,
+  getGatewayClusterContainerName,
+  hasGatewayConnectFailure,
+  hasSandboxAttachHandshakeFailure,
+  isGatewayConnected,
+  main,
+};

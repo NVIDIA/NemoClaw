@@ -120,9 +120,54 @@ describe("shell runtime helpers", () => {
   });
 
   it("returns the ollama-local base URL", () => {
-    const result = runShell(`source "${RUNTIME_SH}"; get_local_provider_base_url ollama-local`);
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("http://host.openshell.internal:11434/v1");
+    const result = runShell(
+      `source "${RUNTIME_SH}";
+       is_wsl() { return 1; }
+       curl() {
+         [[ "$*" == *"http://localhost:11434/api/tags"* ]]
+       }
+       get_local_provider_base_url ollama-local`,
+    );
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout.trim(), "http://host.openshell.internal:11434/v1");
+  });
+
+  it("returns the WSL-hosted Ollama URL when localhost is unavailable", () => {
+    const result = runShell(
+      `source "${RUNTIME_SH}";
+       is_wsl() { return 0; }
+       curl() {
+         if [[ "$*" == *"http://localhost:11434/api/tags"* ]]; then
+           return 1
+         fi
+         if [[ "$*" == *"http://172.18.112.1:11434/api/tags"* ]]; then
+           return 0
+         fi
+         return 1
+       }
+       get_local_provider_base_url ollama-local`,
+      {
+        WSL_DISTRO_NAME: "Ubuntu",
+      },
+    );
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout.trim(), "http://host.docker.internal:11434/v1");
+  });
+
+  it("prints WSL Ollama service URL candidates", () => {
+    const result = runShell(
+      `source "${RUNTIME_SH}";
+       is_wsl() { return 0; }
+       ollama_service_url_candidates $'nameserver 172.18.112.1' $'default via 172.18.112.2 dev eth0'`,
+    );
+
+    assert.equal(result.status, 0);
+    assert.deepEqual(result.stdout.trim().split(/\n/), [
+      "http://localhost:11434",
+      "http://172.18.112.1:11434",
+      "http://172.18.112.2:11434",
+    ]);
   });
 
   it("rejects unknown local providers", () => {

@@ -133,9 +133,37 @@ export interface NemoClawConfig {
   inferenceProvider: string;
 }
 
-function activeModelEntries(
-  onboardCfg: ReturnType<typeof loadOnboardConfig>,
-): ModelProviderEntry[] {
+const DEFAULT_MANAGED_CONTEXT_WINDOW = 131072;
+const DEFAULT_MANAGED_MAX_OUTPUT = 8192;
+const DEFAULT_LOCAL_MAX_OUTPUT = 4096;
+const DEFAULT_OLLAMA_CONTEXT_WINDOW = 4096;
+
+function activeOnboardedModelLimits(onboardCfg: ReturnType<typeof loadOnboardConfig>): {
+  contextWindow: number;
+  maxOutput: number;
+} {
+  if (onboardCfg?.provider === "ollama-local") {
+    const contextWindow =
+      typeof onboardCfg.contextWindow === "number" && onboardCfg.contextWindow > 0
+        ? onboardCfg.contextWindow
+        : DEFAULT_OLLAMA_CONTEXT_WINDOW;
+    const maxOutput =
+      typeof onboardCfg.maxTokens === "number" && onboardCfg.maxTokens > 0
+        ? onboardCfg.maxTokens
+        : Math.min(contextWindow, DEFAULT_LOCAL_MAX_OUTPUT);
+    return {
+      contextWindow,
+      maxOutput,
+    };
+  }
+
+  return {
+    contextWindow: DEFAULT_MANAGED_CONTEXT_WINDOW,
+    maxOutput: DEFAULT_MANAGED_MAX_OUTPUT,
+  };
+}
+
+function activeModelEntries(onboardCfg: ReturnType<typeof loadOnboardConfig>): ModelProviderEntry[] {
   if (!onboardCfg?.model) {
     return [
       {
@@ -165,12 +193,14 @@ function activeModelEntries(
     ];
   }
 
+  const modelLimits = activeOnboardedModelLimits(onboardCfg);
+
   return [
     {
       id: `inference/${onboardCfg.model}`,
       label: onboardCfg.model,
-      contextWindow: 131072,
-      maxOutput: 8192,
+      contextWindow: modelLimits.contextWindow,
+      maxOutput: modelLimits.maxOutput,
     },
   ];
 }

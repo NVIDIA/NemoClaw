@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
-import { execSync, execFileSync } from "node:child_process";
-import { writeFileSync, unlinkSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { resolveOpenshell } from "../bin/lib/resolve-openshell";
+const { describe, it } = require("node:test");
+const assert = require("node:assert/strict");
+const { execSync } = require("child_process");
+const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
+const { getServiceSandboxEnv } = require("../bin/nemoclaw.js");
 
 describe("service environment", () => {
   describe("resolveOpenshell logic", () => {
@@ -65,6 +64,22 @@ describe("service environment", () => {
   });
 
   describe("SANDBOX_NAME defaulting", () => {
+    it("nemoclaw service commands reuse the default sandbox name", () => {
+      const envPrefix = getServiceSandboxEnv(() => ({
+        sandboxes: [{ name: "the-crucible" }],
+        defaultSandbox: "the-crucible",
+      }));
+      assert.equal(envPrefix, 'SANDBOX_NAME="the-crucible" ');
+    });
+
+    it("nemoclaw service commands skip invalid sandbox names", () => {
+      const envPrefix = getServiceSandboxEnv(() => ({
+        sandboxes: [{ name: "bad name" }],
+        defaultSandbox: "bad name",
+      }));
+      assert.equal(envPrefix, "");
+    });
+
     it("start-services.sh preserves existing SANDBOX_NAME", () => {
       const result = execSync(
         'bash -c \'SANDBOX_NAME="${NEMOCLAW_SANDBOX:-${SANDBOX_NAME:-default}}"; export SANDBOX_NAME; bash -c "echo \\$SANDBOX_NAME"\'',

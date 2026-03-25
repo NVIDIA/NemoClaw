@@ -115,6 +115,16 @@ is_loopback_ip() {
   [[ "$ip" == 127.* ]]
 }
 
+is_wsl() {
+  local release="${1:-$(uname -r 2>/dev/null || true)}"
+
+  if [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ]; then
+    return 0
+  fi
+
+  printf '%s' "$release" | grep -qi "microsoft"
+}
+
 first_non_loopback_nameserver() {
   local resolv_conf="${1:-}"
 
@@ -206,7 +216,97 @@ get_local_provider_base_url() {
 
   case "$provider" in
     vllm-local) printf 'http://host.openshell.internal:8000/v1\n' ;;
-    ollama-local) printf 'http://host.openshell.internal:11434/v1\n' ;;
+    ollama-local)
+      local endpoint
+      endpoint="$(resolve_ollama_route_url || true)"
+      if [ -n "$endpoint" ]; then
+        printf '%s/v1\n' "$endpoint"
+      else
+        printf 'http://host.openshell.internal:11434/v1\n'
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+normalize_ollama_service_url() {
+  local raw_url="${1:-}"
+  raw_url="${raw_url%/}"
+  raw_url="${raw_url%/v1}"
+  [ -n "$raw_url" ] || return 1
+  printf '%s\n' "$raw_url"
+}
+
+first_ipv4_default_gateway() {
+  local route_output="${1:-}"
+
+  printf '%s\n' "$route_output" | awk '/^default / { for (i = 1; i <= NF; i += 1) if ($i == "via") { print $(i + 1); exit } }'
+}
+
+ollama_override_service_url() {
+  local override="${NEMOCLAW_OLLAMA_BASE_URL:-}"
+
+  if [ -z "$override" ]; then
+    return 1
+  fi
+
+  normalize_ollama_service_url "$override"
+}
+
+ollama_service_url_candidates() {
+  local resolv_conf="${1:-$(cat /etc/resolv.conf 2>/dev/null || true)}"
+  local route_output="${2:-$(ip route show default 2>/dev/null || true)}"
+  local nameserver=""
+  local gateway=""
+
+  if ollama_override_service_url > /dev/null 2>&1; then
+    ollama_override_service_url
+  fi
+
+  printf 'http://localhost:11434\n'
+
+  if ! is_wsl; then
+    return 0
+  fi
+
+  nameserver="$(first_non_loopback_nameserver "$resolv_conf" || true)"
+  if [ -n "$nameserver" ]; then
+    printf 'http://%s:11434\n' "$nameserver"
+  fi
+
+  gateway="$(first_ipv4_default_gateway "$route_output" || true)"
+  if [ -n "$gateway" ] && ! is_loopback_ip "$gateway" && [ "$gateway" != "$nameserver" ]; then
+    printf 'http://%s:11434\n' "$gateway"
+  fi
+}
+
+resolve_ollama_host_url() {
+  local service_url
+
+  while IFS= read -r service_url; do
+    [ -n "$service_url" ] || continue
+    if curl -sf "$service_url/api/tags" > /dev/null 2>&1; then
+      printf '%s\n' "$service_url"
+      return 0
+    fi
+  done < <(ollama_service_url_candidates)
+
+  return 1
+}
+
+resolve_ollama_route_url() {
+  local host_url
+
+  host_url="$(resolve_ollama_host_url || true)"
+  case "$host_url" in
+    http://localhost:11434) printf 'http://host.openshell.internal:11434\n' ;;
+    http://*|https://*)
+      if is_wsl; then
+        printf 'http://host.docker.internal:11434\n'
+      else
+        printf '%s\n' "$host_url"
+      fi
+      ;;
     *) return 1 ;;
   esac
 }
@@ -219,7 +319,7 @@ check_local_provider_health() {
       curl -sf http://localhost:8000/v1/models >/dev/null 2>&1
       ;;
     ollama-local)
-      curl -sf http://localhost:11434/api/tags >/dev/null 2>&1
+      resolve_ollama_host_url > /dev/null
       ;;
     *)
       return 1

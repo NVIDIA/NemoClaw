@@ -206,6 +206,23 @@ The status command detects the sandbox context and reports "active (inside sandb
 
 Run `openshell sandbox list` on the host to check the underlying sandbox state.
 
+### Dashboard shows `Offline`, `origin not allowed`, or `device identity required` on WSL2
+
+On WSL2, the OpenClaw dashboard works best from `http://127.0.0.1:18789/`.
+That loopback origin satisfies the default Control UI policy and the local HTTP auth fallback.
+
+If VS Code or the Windows browser can only reach the dashboard through the current WSL host IP, a plain URL such as `http://172.x.x.x:18789/` can fail in a few different ways:
+
+1. `origin not allowed` means the browser origin is not on the sandbox Control UI allowlist.
+2. `device identity required` means the browser is connecting from a non-loopback HTTP origin without the authenticated fallback URL.
+3. `Offline` often means the page loaded but the gateway WebSocket handshake was rejected for one of those reasons.
+
+NemoClaw onboarding now seeds the sandbox allowlist with both `http://127.0.0.1:18789` and the current WSL host IP, then prints a `VS Code/WSL` URL that includes the gateway target and a one-time auth token.
+Use that printed `VS Code/WSL` URL exactly as printed when the dashboard does not work through `127.0.0.1`.
+If the printed URL uses the current WSL host IP, keep that direct WSL host IP in the browser URL. Do not replace it with `localhost`.
+
+If the WSL host IP changes after a restart, re-run `nemoclaw onboard` so NemoClaw can refresh the allowlist and print an updated authenticated URL.
+
 ### Inference requests time out
 
 Verify that the inference provider endpoint is reachable from the host.
@@ -217,6 +234,79 @@ $ nemoclaw <name> status
 
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
 Then verify the credential and base URL for the provider you selected during onboarding.
+
+For Local Ollama, connect to the sandbox and test the managed route directly:
+
+```console
+$ nemoclaw <name> connect
+$ curl -sk https://inference.local/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer unused" \
+  -d '{"model":"<ollama-model>","messages":[{"role":"user","content":"Reply with exactly: OLLAMA_OK"}],"max_tokens":16}'
+```
+
+If this succeeds but `openclaw tui` or `openclaw agent` still times out, retry with a fresh session ID. A reused session can exceed the active Ollama context limit even when the provider path is healthy.
+
+### Local Ollama on WSL2 is not listed during onboarding
+
+On WSL2 with Docker Desktop, NemoClaw discovers Ollama from the Linux side and configures the sandbox to use a Docker Desktop hostname such as `host.docker.internal`.
+
+If Local Ollama does not appear in the onboarding flow, verify the following:
+
+1. Ollama is running on Windows and responds from WSL2.
+2. Docker Desktop is running with the WSL backend.
+3. The Windows firewall allows connections from Docker Desktop to the Ollama port.
+
+From WSL2, confirm that Ollama is reachable:
+
+```console
+$ curl http://<windows-host-ip>:11434/api/tags
+```
+
+If Ollama is reachable on a non-default host or port, set `NEMOCLAW_OLLAMA_BASE_URL` before running `nemoclaw onboard`.
+
+### Local Ollama times out after prompt truncation
+
+If the Ollama host log shows `truncating input prompt`, the request exceeded the active context window served by Ollama.
+This usually means OpenClaw is reusing more conversation history than the current Ollama context can hold.
+
+Check the active served context on the host:
+
+```console
+$ ollama ps
+$ ollama show <model>
+```
+
+NemoClaw records the context window it discovers from Ollama during onboarding and advertises that value inside the sandbox. If you change the Ollama context length, re-run onboarding so NemoClaw can sync the updated limit.
+
+If you need a larger context window, raise it in Ollama itself and then re-run onboarding. For example:
+
+```console
+$ OLLAMA_CONTEXT_LENGTH=8192 ollama serve
+```
+
+Or create a model variant with an explicit `num_ctx` in its Modelfile.
+
+### Local Ollama fails with "Model context window too small"
+
+OpenClaw requires at least 16,000 tokens for the main agent and TUI flow.
+
+If NemoClaw discovers that the selected Ollama model is configured below that minimum, onboarding fails early with a compatibility error instead of creating a sandbox that cannot answer in `openclaw tui`.
+
+If you see this error on an existing sandbox, increase the model context in Ollama and then re-run onboarding. For example:
+
+```console
+$ OLLAMA_CONTEXT_LENGTH=16384 ollama serve
+```
+
+Or create a model variant with `PARAMETER num_ctx 16384` and select that model during onboarding.
+
+### Direct requests to `host.docker.internal:11434` fail from inside the sandbox
+
+This can be expected.
+The sandbox policy can block direct host egress even when the managed inference route is configured correctly.
+
+Use `https://inference.local/v1` from inside the sandbox to verify NemoClaw inference routing.
 
 ### Agent cannot reach an external host
 

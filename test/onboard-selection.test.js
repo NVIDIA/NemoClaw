@@ -57,6 +57,7 @@ runner.runCapture = (command) => {
   if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
   if (command.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now\\nqwen3:32b  def  20 GB  now";
   if (command.includes("localhost:8000/v1/models")) return "";
+  if (command.includes("ip route show default")) return "default via 172.18.112.1 dev eth0";
   return "";
 };
 registry.updateSandbox = (_name, update) => updates.push(update);

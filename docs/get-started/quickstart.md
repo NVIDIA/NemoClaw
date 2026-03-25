@@ -34,7 +34,14 @@ NemoClaw currently requires a fresh installation of OpenClaw.
 :end-before: <!-- end-quickstart-guide -->
 ```
 
-## Next Steps
+:::{note}
+On WSL2, NemoClaw can print a `VS Code/WSL` dashboard URL after onboarding.
+Use that URL exactly as printed when VS Code or the Windows browser cannot reach the OpenClaw dashboard through `http://127.0.0.1:18789/`.
+If the printed URL uses the current WSL host IP, keep that direct WSL host IP in the browser URL. Do not replace it with `localhost`.
+The printed URL includes the current WSL host IP and a one-time gateway token for the Control UI.
+:::
+
+### Next Steps
 
 - [Switch inference providers](../inference/switch-inference-providers.md) to use a different model or endpoint.
 - [Approve or deny network requests](../network-policy/approve-network-requests.md) when the agent tries to reach external hosts.

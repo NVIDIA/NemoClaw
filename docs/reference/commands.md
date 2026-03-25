@@ -52,6 +52,12 @@ The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
 Uppercase letters are automatically lowercased.
 
+When onboarding completes, NemoClaw prints dashboard access details.
+On most hosts, open `http://127.0.0.1:18789/`.
+On WSL2, NemoClaw can also print a `VS Code/WSL` URL that includes the current WSL host IP and a one-time gateway token for the OpenClaw Control UI.
+Use that URL exactly as printed when VS Code or the Windows browser cannot reach the dashboard through `127.0.0.1`.
+If the WSL URL uses the current WSL host IP, keep that host IP in the browser URL. Do not replace it with `localhost`.
+
 Before creating the gateway, the wizard runs preflight checks.
 On systems with cgroup v2 (Ubuntu 24.04, DGX Spark, WSL2), it verifies that Docker is configured with `"default-cgroupns-mode": "host"` and provides fix instructions if the setting is missing.
 
@@ -83,6 +89,23 @@ Connect to a sandbox by name.
 ```console
 $ nemoclaw my-assistant connect
 ```
+
+This command opens the sandbox shell.
+It does not open the OpenClaw dashboard.
+Use `nemoclaw <name> dashboard` to print or re-print the dashboard URL at any time.
+On WSL2, prefer the printed `VS Code/WSL` URL when Windows cannot use `127.0.0.1`.
+
+### `nemoclaw <name> dashboard`
+
+Print the dashboard access URL(s) for a sandbox.
+
+```console
+$ nemoclaw my-assistant dashboard
+```
+
+Use this command to retrieve the correct URL when you need it after onboarding.
+On WSL2, the output includes a `VS Code/WSL` URL that contains the current WSL host IP and a one-time gateway token.
+Use that URL exactly as printed. Do not replace the WSL host IP with `localhost`.
 
 ### `nemoclaw <name> status`
 
