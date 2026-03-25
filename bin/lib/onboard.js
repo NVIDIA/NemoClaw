@@ -1496,6 +1496,10 @@ async function preflight() {
   for (const { port, label } of requiredPorts) {
     const portCheck = await checkPortAvailable(port);
     if (!portCheck.ok) {
+      if (port === 8080 && gatewayReuseState === "healthy") {
+        console.log(`  ✓ Port ${port} already owned by healthy NemoClaw gateway (${label})`);
+        continue;
+      }
       console.error("");
       console.error(`  !! Port ${port} is not available.`);
       console.error(`     ${label} needs this port.`);
