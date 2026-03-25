@@ -58,7 +58,7 @@ function shellEscape(value) {
 }
 
 /** Run a command on the remote VM with secrets passed via stdin (not CLI args). */
-function sshWithSecrets(cmd, { timeout = 600_000 } = {}) {
+function sshWithSecrets(cmd, { timeout = 600_000, stream = false } = {}) {
   const secretPreamble = [
     `export NVIDIA_API_KEY='${shellEscape(process.env.NVIDIA_API_KEY)}'`,
     `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
@@ -66,16 +66,21 @@ function sshWithSecrets(cmd, { timeout = 600_000 } = {}) {
     `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
   ].join("\n");
 
+  // When stream=true, pipe stdout/stderr to the CI log in real time
+  // so long-running steps (bootstrap) show progress instead of silence.
+  const stdio = stream ? ["pipe", "inherit", "inherit"] : ["pipe", "pipe", "pipe"];
+
   // Pipe secrets via stdin so they don't appear in ps/process listings
-  return execSync(
+  const result = execSync(
     `ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "${INSTANCE_NAME}" 'eval "$(cat)" && ${cmd.replace(/'/g, "'\\''")}'`,
     {
       encoding: "utf-8",
       timeout,
       input: secretPreamble,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio,
     },
-  ).trim();
+  );
+  return stream ? "" : result.trim();
 }
 
 function waitForSsh(maxAttempts = 60, intervalMs = 5_000) {
@@ -98,10 +103,13 @@ function runRemoteTest(scriptPath) {
     `cd ${remoteDir}`,
     `export npm_config_prefix=$HOME/.local`,
     `export PATH=$HOME/.local/bin:$PATH`,
-    `bash ${scriptPath}`,
+    `bash ${scriptPath} 2>&1 | tee /tmp/test-output.log`,
   ].join(" && ");
 
-  return sshWithSecrets(cmd, { timeout: 600_000 });
+  // Stream test output to CI log AND capture it for assertions
+  sshWithSecrets(cmd, { timeout: 600_000, stream: true });
+  // Retrieve the captured output for assertion checking
+  return ssh("cat /tmp/test-output.log", { timeout: 30_000 });
 }
 
 // --- suite ------------------------------------------------------------------
@@ -137,8 +145,8 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       { encoding: "utf-8", timeout: 120_000 },
     );
 
-    // Bootstrap VM
-    sshWithSecrets(`cd ${remoteDir} && SKIP_VLLM=1 bash scripts/brev-setup.sh`, { timeout: 2_400_000 });
+    // Bootstrap VM — stream output to CI log so we can see progress
+    sshWithSecrets(`cd ${remoteDir} && SKIP_VLLM=1 bash scripts/brev-setup.sh`, { timeout: 2_400_000, stream: true });
   }, 2_700_000); // 45 min — sandbox Docker image build is slow on fresh CPU boxes
 
   afterAll(() => {

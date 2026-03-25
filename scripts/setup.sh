@@ -34,10 +34,11 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=./lib/runtime.sh
 . "$SCRIPT_DIR/lib/runtime.sh"
 
-info() { echo -e "${GREEN}>>>${NC} $1"; }
-warn() { echo -e "${YELLOW}>>>${NC} $1"; }
+_ts() { date '+%H:%M:%S'; }
+info() { echo -e "${GREEN}[$(_ts)]${NC} $1"; }
+warn() { echo -e "${YELLOW}[$(_ts)]${NC} $1"; }
 fail() {
-  echo -e "${RED}>>>${NC} $1"
+  echo -e "${RED}[$(_ts)]${NC} $1"
   exit 1
 }
 
@@ -206,6 +207,26 @@ bash "$BUILD_CTX/scripts/clean-staged-tree.sh" "$BUILD_CTX/nemoclaw-blueprint" 2
 # Capture full output to a temp file so we can filter for display but still
 # detect failures. The raw log is kept on failure for debugging.
 CREATE_LOG=$(mktemp /tmp/nemoclaw-create-XXXXXX.log)
+SANDBOX_BUILD_START=$(date +%s)
+
+# Background progress reporter: tails the log for Docker build steps and
+# prints a heartbeat every 30s so CI (and humans) can see what's happening.
+(
+  while true; do
+    sleep 30
+    if [ ! -f "$CREATE_LOG" ]; then break; fi
+    ELAPSED=$(( $(date +%s) - SANDBOX_BUILD_START ))
+    LAST_STEP=$(grep -oE "^Step [0-9]+/[0-9]+" "$CREATE_LOG" 2>/dev/null | tail -1 || true)
+    LAST_LINE=$(tail -1 "$CREATE_LOG" 2>/dev/null | head -c 120 || true)
+    # Filter out lines that might contain secrets
+    if echo "$LAST_LINE" | grep -qi "API_KEY\|TOKEN\|SECRET\|CREDENTIAL"; then
+      LAST_LINE="[filtered]"
+    fi
+    echo -e "${GREEN}[$(_ts)]${NC} ⏳ Sandbox build ${ELAPSED}s elapsed${LAST_STEP:+ — $LAST_STEP}${LAST_LINE:+ — $LAST_LINE}"
+  done
+) &
+PROGRESS_PID=$!
+
 set +e
 # NVIDIA_API_KEY is NOT passed into the sandbox. Inference is proxied through
 # the OpenShell gateway which injects the stored credential server-side.
@@ -214,6 +235,14 @@ openshell sandbox create --from "$BUILD_CTX/Dockerfile" --name "$SANDBOX_NAME" \
   >"$CREATE_LOG" 2>&1
 CREATE_RC=$?
 set -e
+
+# Stop progress reporter
+kill "$PROGRESS_PID" 2>/dev/null || true
+wait "$PROGRESS_PID" 2>/dev/null || true
+
+SANDBOX_BUILD_ELAPSED=$(( $(date +%s) - SANDBOX_BUILD_START ))
+info "Sandbox build finished in ${SANDBOX_BUILD_ELAPSED}s (exit code: $CREATE_RC)"
+
 rm -rf "$BUILD_CTX"
 
 # Show progress lines (filter apt noise and env var dumps that contain NVIDIA_API_KEY)

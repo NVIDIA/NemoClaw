@@ -21,10 +21,11 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-info() { echo -e "${GREEN}[brev]${NC} $1"; }
-warn() { echo -e "${YELLOW}[brev]${NC} $1"; }
+_ts() { date '+%H:%M:%S'; }
+info() { echo -e "${GREEN}[$(_ts) brev]${NC} $1"; }
+warn() { echo -e "${YELLOW}[$(_ts) brev]${NC} $1"; }
 fail() {
-  echo -e "${RED}[brev]${NC} $1"
+  echo -e "${RED}[$(_ts) brev]${NC} $1"
   exit 1
 }
 
