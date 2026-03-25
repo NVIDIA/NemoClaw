@@ -27,7 +27,7 @@ It applies text normalization and pattern matching to identify attempts to overr
 
 The scanner runs each input through three preprocessing stages before pattern matching.
 
-1. **NFKC unicode normalization** converts visually similar characters (such as fullwidth Latin letters) to their standard ASCII equivalents.
+1. **NFKC Unicode normalization** converts visually similar characters (such as fullwidth Latin letters) to their standard ASCII equivalents.
 2. **Zero-width character stripping** removes invisible characters (U+200B, U+200C, U+200D, U+FEFF) that attackers insert to break pattern matching.
 3. **Control character stripping** removes non-printable characters below U+0020, except newlines, carriage returns, and tabs.
 
