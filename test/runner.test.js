@@ -227,6 +227,19 @@ describe("regression guards", () => {
     expect(src.includes("execSync")).toBeFalsy();
   });
 
+  it("telegram bridge response filter covers gateway startup lines", () => {
+    const src = fs.readFileSync(path.join(import.meta.dirname, "..", "scripts", "telegram-bridge.js"), "utf-8");
+    expect(src.includes('!l.startsWith("[gateway]")')).toBe(true);
+
+    const noiseThatMustBeFiltered = [
+      '[gateway] Running as non-root (uid=998) — privilege separation disabled',
+      '[gateway] openclaw gateway launched (pid 1234)',
+    ];
+    for (const line of noiseThatMustBeFiltered) {
+      expect(line.startsWith("[gateway]")).toBe(true);
+    }
+  });
+
   describe("credential exposure guards (#429)", () => {
     it("onboard createSandbox does not pass NVIDIA_API_KEY to sandbox env", () => {
       const fs = require("fs");
