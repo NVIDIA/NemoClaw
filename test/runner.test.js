@@ -278,7 +278,7 @@ describe("regression guards", () => {
     childProcess.execSync = () => {
       const err = new Error("command failed");
       err.cmd = "echo nvapi-aaaabbbbcccc1111 && echo ghp_abcdefghijklmnopqrstuvwxyz123456";
-      err.output = ["stdout: nvapi-aaaabbbbcccc1111", "stderr: secret123456"];
+      err.output = ["stdout: nvapi-aaaabbbbcccc1111", "stderr: PASSWORD=secret123456"];
       throw err;
     };
 

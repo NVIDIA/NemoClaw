@@ -82,12 +82,16 @@ function redact(str) {
 
 function redactError(err) {
   if (!err || typeof err !== "object") return err;
+  const originalMessage = typeof err.message === "string" ? err.message : null;
   if (typeof err.message === "string") err.message = redact(err.message);
   if (typeof err.cmd === "string") err.cmd = redact(err.cmd);
   if (typeof err.stdout === "string") err.stdout = redact(err.stdout);
   if (typeof err.stderr === "string") err.stderr = redact(err.stderr);
   if (Array.isArray(err.output)) {
     err.output = err.output.map((value) => (typeof value === "string" ? redact(value) : value));
+  }
+  if (originalMessage && typeof err.stack === "string") {
+    err.stack = err.stack.replaceAll(originalMessage, err.message);
   }
   return err;
 }
