@@ -230,7 +230,7 @@ gosu sandbox bash -c "$(declare -f write_auth_profile); write_auth_profile"
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user.
 # SECURITY: Enforce process limit to prevent fork bombs (fixes #809).
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
-  exec gosu sandbox bash -c 'ulimit -u 512 2>/dev/null; exec "$@"' _ "${NEMOCLAW_CMD[@]}"
+  exec gosu sandbox bash -c 'ulimit -u 512 2>/dev/null || echo "[SECURITY WARNING] Could not set process limit (ulimit -u)" >&2; exec "$@"' _ "${NEMOCLAW_CMD[@]}"
 fi
 
 # SECURITY: Protect gateway log from sandbox user tampering
