@@ -26,7 +26,8 @@ function findFreePort(startPort, maxAttempts = 100) {
     }
     const server = net.createServer();
     server.listen(startPort, () => {
-      const port = server.address().port;
+      const addr = server.address();
+      const port = (addr && typeof addr !== "string") ? addr.port : startPort;
       server.close(() => resolve(port));
     });
     server.on('error', () => resolve(findFreePort(startPort + 1, maxAttempts - 1)));
