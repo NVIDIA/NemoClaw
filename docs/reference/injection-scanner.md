@@ -1,6 +1,6 @@
 ---
 title:
-  page: "NemoClaw Injection Scanner — Detect Prompt Injection in Agent Tool Calls"
+  page: "Injection Scanner — Detect Prompt Injection in Agent Tool Calls"
   nav: "Injection Scanner"
 description: "Reference for the prompt injection scanner module that detects role overrides, instruction injection, tool manipulation, and data exfiltration patterns."
 keywords: ["nemoclaw injection scanner", "prompt injection detection", "agent security"]
@@ -108,12 +108,11 @@ if (findings.length > 0) {
 
 ### `hasHighSeverity(findings: Finding[]): boolean`
 
-Returns `true` if any finding in the array has `"high"` severity.
+True if any finding in the array has `"high"` severity.
 
 ### `maxSeverity(findings: Finding[]): Severity | ""`
 
-Returns the highest severity level present in the findings array.
-Returns an empty string if the array is empty.
+The highest severity level present in the findings array, or an empty string if the array is empty.
 
 ### `Finding`
 
