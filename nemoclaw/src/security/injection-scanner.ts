@@ -84,10 +84,12 @@ export function scanFields(fields: Record<string, string>): Finding[] {
       continue;
     }
 
-    scanText(fieldName, normalizeText(value), findings);
+    const normalizedValue = normalizeText(value);
+    scanText(fieldName, normalizedValue, findings);
 
-    // Attempt base64 decode and re-scan
-    const decoded = tryBase64Decode(value);
+    // Attempt base64 decode and re-scan (use normalized input so
+    // zero-width/control chars don't prevent valid base64 from decoding)
+    const decoded = tryBase64Decode(normalizedValue);
     if (decoded !== "") {
       scanText(fieldName + "_b64decoded", normalizeText(decoded), findings);
     }

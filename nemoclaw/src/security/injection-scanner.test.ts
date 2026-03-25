@@ -314,11 +314,9 @@ describe("scanFields", () => {
     });
 
     it("skips base64 decode when result contains non-printable bytes", () => {
-      // Create a base64 string that decodes to binary data with null bytes
-      const binaryData = Buffer.from([
-        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
-      ]);
-      const encoded = binaryData.toString("base64").repeat(3); // make it > 20 chars
+      // 24 bytes => 32-char base64 (no padding), includes non-printable 0x00-0x17
+      const binaryData = Buffer.from(Array.from({ length: 24 }, (_, i) => i));
+      const encoded = binaryData.toString("base64");
       const findings = scanFields({ input: encoded });
       const b64Findings = findings.filter((f) => f.field.endsWith("_b64decoded"));
       expect(b64Findings).toHaveLength(0);
