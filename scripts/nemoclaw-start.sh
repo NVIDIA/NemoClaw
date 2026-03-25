@@ -30,10 +30,16 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 #   — required by the entrypoint for gosu privilege separation and chown.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/797
 if [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ] && command -v capsh >/dev/null 2>&1; then
-  export NEMOCLAW_CAPS_DROPPED=1
-  exec capsh \
-    --drop=cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service \
-    -- -c 'exec /usr/local/bin/nemoclaw-start "$@"' -- "$@"
+  # capsh --drop requires CAP_SETPCAP in the bounding set. OpenShell's
+  # sandbox runtime may strip it, so check before attempting the drop.
+  if capsh --has-p=cap_setpcap 2>/dev/null; then
+    export NEMOCLAW_CAPS_DROPPED=1
+    exec capsh \
+      --drop=cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service \
+      -- -c 'exec /usr/local/bin/nemoclaw-start "$@"' -- "$@"
+  else
+    echo "[SECURITY] CAP_SETPCAP not available — runtime already restricts capabilities" >&2
+  fi
 elif [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ]; then
   echo "[SECURITY WARNING] capsh not available — running with default capabilities" >&2
 fi
