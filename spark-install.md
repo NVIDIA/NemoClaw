@@ -10,7 +10,7 @@ Before starting, make sure you have:
 
 - **Docker** (pre-installed on DGX Spark)
 - **Node.js 22** (installed automatically by the NemoClaw installer)
-- **OpenShell CLI** (must be installed separately before running NemoClaw — see the Quick Start below, or use the hosted install script which includes it)
+- **OpenShell CLI** (must be installed separately before running NemoClaw — see the Quick Start below)
 - **API key** for your chosen inference provider. The onboarding wizard prompts for provider and key during setup. For example, you need to provide an NVIDIA API key from [build.nvidia.com](https://build.nvidia.com) for NVIDIA Endpoints, or an OpenAI, Anthropic, or Gemini key for those corresponding providers.
 
 ## Quick Start
@@ -29,7 +29,7 @@ sudo ./scripts/setup-spark.sh
 # Install NemoClaw:
 ./install.sh
 
-# Alternatively, you can use the hosted install script (this also installs OpenShell if needed):
+# Alternatively, you can use the hosted install script:
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
