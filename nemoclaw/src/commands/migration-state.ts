@@ -500,8 +500,7 @@ function copyDirectory(
   cpSync(sourcePath, destinationPath, {
     recursive: true,
     filter: options?.stripCredentials
-      ? (source: string) =>
-          !CREDENTIAL_SENSITIVE_BASENAMES.has(path.basename(source).toLowerCase())
+      ? (source: string) => !CREDENTIAL_SENSITIVE_BASENAMES.has(path.basename(source).toLowerCase())
       : undefined,
   });
 }
