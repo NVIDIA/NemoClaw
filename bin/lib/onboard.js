@@ -17,20 +17,34 @@ const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
  *
  * @param {number} startPort - The port to start checking from.
  * @param {number} maxAttempts - The maximum number of ports to probe (default 100).
+ * @param {number[]} excludePorts - Ports to skip during selection (default []).
  * @returns {Promise<number>} - Resolves with the first available port.
  */
-function findFreePort(startPort, maxAttempts = 100) {
+function findFreePort(startPort, maxAttempts = 100, excludePorts = []) {
   return new Promise((resolve, reject) => {
-    if (maxAttempts <= 0) {
-      return reject(new Error(`Could not find a free port after 100 attempts starting from ${startPort - 100}`));
+    if (startPort > 65535 || maxAttempts <= 0) {
+      const lastPort = startPort - (100 - maxAttempts);
+      return reject(new Error(`Could not find a free port after 100 attempts starting from ${lastPort}`));
     }
+
+    if (excludePorts.includes(startPort)) {
+      return resolve(findFreePort(startPort + 1, maxAttempts - 1, excludePorts));
+    }
+
     const server = net.createServer();
-    server.listen(startPort, () => {
+    server.once("error", (err) => {
+      // @ts-ignore - ErrnoException has .code
+      if (err && err.code === "EADDRINUSE") {
+        return resolve(findFreePort(startPort + 1, maxAttempts - 1, excludePorts));
+      }
+      return reject(err);
+    });
+
+    server.listen(startPort, "127.0.0.1", () => {
       const addr = server.address();
       const port = (addr && typeof addr !== "string") ? addr.port : startPort;
       server.close(() => resolve(port));
     });
-    server.on('error', () => resolve(findFreePort(startPort + 1, maxAttempts - 1)));
   });
 }
 
@@ -1284,12 +1298,17 @@ async function preflight() {
     console.error("  Must be a number between 1 and 65535.");
     process.exit(1);
   }
+  if (targetGatewayPort === dashboardPort) {
+    console.error(`  Invalid NEMOCLAW_PORT: ${portEnv}`);
+    console.error(`  Port ${dashboardPort} is reserved for the NemoClaw dashboard.`);
+    process.exit(1);
+  }
   let gatewayPort = targetGatewayPort;
 
   // Check OpenShell gateway port with auto-fallback
   const gatewayCheck = await checkPortAvailable(gatewayPort);
   if (!gatewayCheck.ok) {
-    const newPort = await findFreePort(gatewayPort + 1);
+    const newPort = await findFreePort(gatewayPort + 1, 100, [dashboardPort]);
     console.log(`  [WARN] Port ${gatewayPort} in use, trying ${newPort}...`);
     gatewayPort = newPort;
   }
@@ -2304,9 +2323,19 @@ async function onboard(opts = {}) {
   if (isNonInteractive()) note("  (non-interactive mode)");
   console.log("  ===================");
 
-  const { gpu, gatewayPort } = await preflight();
+  const { gpu, gatewayPort: initialGatewayPort } = await preflight();
   const { model, provider, endpointUrl, credentialEnv, preferredInferenceApi, nimContainer } = await setupNim(gpu);
   process.env.NEMOCLAW_OPENSHELL_BIN = getOpenshellBinary();
+
+  // Re-verify port availability after long setupNim()
+  let gatewayPort = initialGatewayPort;
+  const gatewayStatus = await checkPortAvailable(gatewayPort);
+  if (!gatewayStatus.ok) {
+    const dashboardPort = 18789;
+    gatewayPort = await findFreePort(gatewayPort + 1, 100, [dashboardPort]);
+    console.log(`  [WARN] Port ${initialGatewayPort} became occupied during setup, using ${gatewayPort} instead.`);
+  }
+
   await startGateway(gpu, gatewayPort);
   await setupInference(GATEWAY_NAME, model, provider, endpointUrl, credentialEnv);
 
@@ -2341,4 +2370,5 @@ module.exports = {
   setupNim,
   writeSandboxConfigSyncFile,
   patchStagedDockerfile,
+  findFreePort,
 };
