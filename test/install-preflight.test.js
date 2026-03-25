@@ -93,7 +93,7 @@ exit 98
       env: {
         ...process.env,
         HOME: tmp,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        PATH: `${fakeBin}${path.delimiter}${TEST_SYSTEM_PATH}`,
       },
     });
 
@@ -190,7 +190,7 @@ exit 98
       env: {
         ...process.env,
         HOME: tmp,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        PATH: `${fakeBin}${path.delimiter}${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NPM_PREFIX: prefix,
         GIT_LOG_PATH: gitLog,

@@ -41,7 +41,7 @@ describe("uninstall CLI flags", () => {
         env: {
           ...process.env,
           HOME: tmp,
-          PATH: `${fakeBin}:/usr/bin:/bin`,
+          PATH: `${fakeBin}${path.delimiter}/usr/bin${path.delimiter}/bin`,
           SCRIPT_DIR: path.join(import.meta.dirname, ".."),
         },
       });
