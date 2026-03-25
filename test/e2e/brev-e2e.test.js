@@ -118,7 +118,7 @@ function runRemoteTest(scriptPath) {
   ].join(" && ");
 
   // Stream test output to CI log AND capture it for assertions
-  sshWithSecrets(cmd, { timeout: 600_000, stream: true });
+  sshWithSecrets(cmd, { timeout: 900_000, stream: true });
   // Retrieve the captured output for assertion checking
   return ssh("cat /tmp/test-output.log", { timeout: 30_000 });
 }
@@ -296,7 +296,7 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       expect(output).toContain("PASS");
       expect(output).not.toMatch(/FAIL:/);
     },
-    600_000,
+    900_000, // 15 min — install.sh --non-interactive rebuilds sandbox (~6 min) + inference tests
   );
 
   it.runIf(TEST_SUITE === "credential-sanitization" || TEST_SUITE === "all")(
