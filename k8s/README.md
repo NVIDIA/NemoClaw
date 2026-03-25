@@ -1,21 +1,6 @@
 # NemoClaw on Kubernetes
 
-Run [NemoClaw](https://github.com/NVIDIA/NemoClaw) on Kubernetes with GPU inference powered by [Dynamo](https://github.com/ai-dynamo/dynamo). A safe, scalable sandbox for teams who want a shared, secure environment to explore autonomous AI agents without local GPU requirements.
-
-> **Status: Work in Progress**
->
-> This integration is under active development. See [Known Limitations](#known-limitations) for current status.
-
----
-
-## Why Kubernetes?
-
-| Challenge | Solution |
-|-----------|-------------------|
-| "I don't have a GPU" | Connect to shared Dynamo vLLM clusters on K8s |
-| "AI agents are unpredictable" | Every agent runs in an isolated sandbox with network policies |
-| "Setup is complicated" | One command unattended install with environment variables |
-| "I want to learn safely" | Sandboxed execution prevents agents from affecting your system |
+Run [NemoClaw](https://github.com/NVIDIA/NemoClaw) on Kubernetes with GPU inference powered by [Dynamo](https://github.com/ai-dynamo/dynamo) or any OpenAI-compatible endpoint.
 
 ---
 
@@ -24,35 +9,22 @@ Run [NemoClaw](https://github.com/NVIDIA/NemoClaw) on Kubernetes with GPU infere
 ### Prerequisites
 
 - Kubernetes cluster with `kubectl` access
-- A Dynamo vLLM endpoint (or any OpenAI-compatible inference API)
+- An OpenAI-compatible inference endpoint (Dynamo vLLM, vLLM, etc.)
 - Namespace with permissions to create privileged pods
 
 ### 1. Deploy NemoClaw
 
 ```bash
-# Set your Dynamo endpoint
-export DYNAMO_ENDPOINT="http://vllm-frontend.dynamo.svc.cluster.local:8000/v1"
-export DYNAMO_MODEL="meta-llama/Llama-3.1-8B-Instruct"
-
-# Deploy (creates namespace 'nemoclaw' if needed)
 kubectl apply -f https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/k8s/nemoclaw-k8s.yaml
 ```
 
-### 2. Run the Installer
+### 2. Check Logs
 
 ```bash
-# Wait for pod to be ready
-kubectl wait --for=condition=Ready pod/nemoclaw -n nemoclaw --timeout=120s
-
-# Run unattended install
-kubectl exec -it nemoclaw -n nemoclaw -c workspace -- bash -c '
-  export NEMOCLAW_NON_INTERACTIVE=1
-  export NEMOCLAW_PROVIDER=dynamo
-  export NEMOCLAW_DYNAMO_ENDPOINT="http://vllm-frontend.dynamo.svc.cluster.local:8000/v1"
-  export NEMOCLAW_DYNAMO_MODEL="meta-llama/Llama-3.1-8B-Instruct"
-  curl -fsSL https://nvidia.com/nemoclaw.sh | bash
-'
+kubectl logs -f nemoclaw -n nemoclaw -c workspace
 ```
+
+Wait for "Onboard complete" message.
 
 ### 3. Connect to Your Sandbox
 
@@ -60,7 +32,35 @@ kubectl exec -it nemoclaw -n nemoclaw -c workspace -- bash -c '
 kubectl exec -it nemoclaw -n nemoclaw -c workspace -- nemoclaw my-assistant connect
 ```
 
-You're now inside a secure sandbox with an AI agent ready to help!
+You're now inside a secure sandbox with an AI agent ready to help.
+
+---
+
+## Configuration
+
+Edit the environment variables in `nemoclaw-k8s.yaml` before deploying:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DYNAMO_HOST` | Yes | Inference endpoint for socat proxy (e.g., `vllm-frontend.dynamo.svc:8000`) |
+| `NEMOCLAW_ENDPOINT_URL` | Yes | URL the sandbox uses (usually `http://host.openshell.internal:8000/v1`) |
+| `COMPATIBLE_API_KEY` | Yes | API key (use `dummy` for Dynamo/vLLM) |
+| `NEMOCLAW_MODEL` | Yes | Model name (e.g., `meta-llama/Llama-3.1-8B-Instruct`) |
+| `NEMOCLAW_SANDBOX_NAME` | No | Sandbox name (default: `my-assistant`) |
+
+### Example: Custom Endpoint
+
+```yaml
+env:
+  - name: DYNAMO_HOST
+    value: "my-vllm.my-namespace.svc.cluster.local:8000"
+  - name: NEMOCLAW_ENDPOINT_URL
+    value: "http://host.openshell.internal:8000/v1"
+  - name: COMPATIBLE_API_KEY
+    value: "dummy"
+  - name: NEMOCLAW_MODEL
+    value: "mistralai/Mistral-7B-Instruct-v0.3"
+```
 
 ---
 
@@ -69,61 +69,55 @@ You're now inside a secure sandbox with an AI agent ready to help!
 ### Access the Workspace Shell
 
 ```bash
-# Get a shell in the workspace container
 kubectl exec -it nemoclaw -n nemoclaw -c workspace -- bash
 ```
 
 ### Check Sandbox Status
 
 ```bash
-# List all sandboxes
 kubectl exec nemoclaw -n nemoclaw -c workspace -- nemoclaw list
-
-# Check specific sandbox status
 kubectl exec nemoclaw -n nemoclaw -c workspace -- nemoclaw my-assistant status
-
-# View sandbox logs
-kubectl exec nemoclaw -n nemoclaw -c workspace -- nemoclaw my-assistant logs --follow
 ```
 
-### Connect to Your Sandbox
+### Connect to Sandbox
 
 ```bash
-# Connect to the sandbox shell
 kubectl exec -it nemoclaw -n nemoclaw -c workspace -- nemoclaw my-assistant connect
-```
-
-Once connected, you're inside an isolated sandbox with AI agent capabilities:
-
-```
-sandbox@my-assistant:~$
 ```
 
 ### Test Inference
 
-```bash
-# Inside the sandbox - verify the inference endpoint is reachable
-sandbox@my-assistant:~$ curl -s http://inference.local:8000/v1/models | jq .
+From inside the sandbox:
 
-# Test chat completions
-sandbox@my-assistant:~$ curl -s http://inference.local:8000/v1/chat/completions \
+```bash
+curl -s https://inference.local/v1/models
+
+curl -s https://inference.local/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"meta-llama/Llama-3.1-8B-Instruct","messages":[{"role":"user","content":"Hello!"}],"max_tokens":50}'
 ```
 
-### Chat with the AI Agent (Coming Soon)
+### Verify Local Inference
+
+Confirm NemoClaw is using your Dynamo/vLLM endpoint:
 
 ```bash
-# Inside the sandbox
-sandbox@my-assistant:~$ openclaw tui
-```
+# Check model from sandbox
+kubectl exec -it nemoclaw -n nemoclaw -c workspace -- nemoclaw my-assistant connect
+sandbox@my-assistant:~$ curl -s https://inference.local/v1/models
+# Should show your model (e.g., meta-llama/Llama-3.1-8B-Instruct)
 
-> **Note**: The `openclaw` commands currently don't work due to an HTTPS proxy routing issue in OpenShell. See [Known Limitations](#known-limitations).
+# Compare with Dynamo directly (from workspace)
+kubectl exec nemoclaw -n nemoclaw -c workspace -- curl -s http://localhost:8000/v1/models
+# Should show the same model
 
-### Run Agent Tasks (Coming Soon)
+# Check provider configuration
+kubectl exec nemoclaw -n nemoclaw -c workspace -- openshell inference get
+# Shows: Provider: compatible-endpoint, Model: <your-model>
 
-```bash
-sandbox@my-assistant:~$ openclaw agent -m "List all Python files and summarize what each one does"
+# Test the agent
+sandbox@my-assistant:~$ openclaw agent --agent main -m "What is 7 times 8?"
+# Should respond with 56
 ```
 
 ---
@@ -131,132 +125,33 @@ sandbox@my-assistant:~$ openclaw agent -m "List all Python files and summarize w
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           Kubernetes Cluster                                 │
-│                                                                              │
-│  ┌─────────────────────────────────────────────────────────────────────────┐│
-│  │                        NemoClaw Pod                                     ││
-│  │                                                                         ││
-│  │  ┌─────────────────────┐    ┌─────────────────────────────────────────┐││
-│  │  │    Docker-in-Docker │    │           Workspace Container           │││
-│  │  │                     │    │                                         │││
-│  │  │  ┌───────────────┐  │    │  nemoclaw CLI    ┌───────────────────┐ │││
-│  │  │  │     k3s       │  │◄───│  openshell CLI   │  socat proxy      │ │││
-│  │  │  │   cluster     │  │    │                  │  localhost:8000   │ │││
-│  │  │  │               │  │    │                  └─────────┬─────────┘ │││
-│  │  │  │ ┌───────────┐ │  │    │                            │           │││
-│  │  │  │ │  Sandbox  │ │  │    │  inference.local ──────────┘           │││
-│  │  │  │ │   Pods    │ │  │    │  (via host.openshell.internal)         │││
-│  │  │  │ └───────────┘ │  │    │                                        │││
-│  │  │  └───────────────┘  │    └─────────────────────────────────────────┘││
-│  │  └─────────────────────┘                                               ││
-│  └────────────────────────────────────────────────────────────────────────┘│
-│                                        │                                    │
-│                                        ▼                                    │
-│  ┌─────────────────────────────────────────────────────────────────────────┐│
-│  │                         Dynamo vLLM Service                             ││
-│  │                                                                         ││
-│  │    vllm-frontend.dynamo.svc.cluster.local:8000                         ││
-│  │    └── meta-llama/Llama-3.1-8B-Instruct (or your model)                ││
-│  │    └── Scales across multiple GPUs                                      ││
-│  └─────────────────────────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                     Kubernetes Cluster                          │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                    NemoClaw Pod                           │  │
+│  │                                                           │  │
+│  │  ┌─────────────────┐    ┌─────────────────────────────┐   │  │
+│  │  │ Docker-in-Docker│    │    Workspace Container      │   │  │
+│  │  │                 │    │                             │   │  │
+│  │  │  ┌───────────┐  │    │  nemoclaw CLI               │   │  │
+│  │  │  │    k3s    │  │◄───│  openshell CLI              │   │  │
+│  │  │  │  cluster  │  │    │                             │   │  │
+│  │  │  │           │  │    │  socat proxy ───────────────│───│──┼──► Dynamo/vLLM
+│  │  │  │ ┌───────┐ │  │    │  localhost:8000             │   │  │
+│  │  │  │ │Sandbox│ │  │    │                             │   │  │
+│  │  │  │ └───────┘ │  │    │  host.openshell.internal    │   │  │
+│  │  │  └───────────┘  │    │  routes to socat            │   │  │
+│  │  └─────────────────┘    └─────────────────────────────┘   │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 **How it works:**
-1. NemoClaw runs in a privileged pod with Docker-in-Docker (DinD)
+1. NemoClaw runs in a privileged pod with Docker-in-Docker
 2. OpenShell creates a nested k3s cluster for sandbox isolation
-3. AI agents run inside sandboxes with network policies
-4. A socat proxy in the workspace container bridges K8s DNS to the nested k3s environment
-5. Inside the sandbox, `inference.local:8000` routes to the Dynamo endpoint via `host.openshell.internal`
-
-> **Note**: The HTTPS proxy (`https://inference.local`) has routing issues. HTTP (`http://inference.local:8000`) works correctly.
-
----
-
-## Configuration
-
-### Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `NEMOCLAW_NON_INTERACTIVE` | Yes | - | Set to `1` for unattended install |
-| `NEMOCLAW_PROVIDER` | Yes | - | Set to `dynamo` for K8s deployments |
-| `NEMOCLAW_DYNAMO_ENDPOINT` | Yes | - | Full URL to vLLM API (e.g., `http://....:8000/v1`) |
-| `NEMOCLAW_DYNAMO_MODEL` | No | `dynamo` | Model name to use |
-| `NEMOCLAW_SANDBOX_NAME` | No | `my-assistant` | Name for your sandbox |
-| `NEMOCLAW_POLICY_MODE` | No | - | Set to `skip` to skip policy setup |
-
-### Custom Dynamo Endpoint
-
-```bash
-# Point to your own vLLM deployment
-export NEMOCLAW_DYNAMO_ENDPOINT="http://my-vllm.my-namespace.svc.cluster.local:8000/v1"
-export NEMOCLAW_DYNAMO_MODEL="mistralai/Mistral-7B-Instruct-v0.3"
-```
-
----
-
-## For Teams: Multi-User Setup
-
-NemoClaw is perfect for workshops, training sessions, or team experimentation. Each user gets their own isolated sandbox.
-
-### Deploy One Pod Per User
-
-```bash
-# Create user-specific pods
-for user in alice bob carol; do
-  cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: nemoclaw-${user}
-  namespace: nemoclaw
-  labels:
-    app: nemoclaw
-    user: ${user}
-spec:
-  # ... (use nemoclaw-k8s.yaml as template)
-EOF
-done
-```
-
-### Shared Dynamo Backend
-
-All users share the same GPU-powered inference backend:
-- Cost-effective: One Dynamo deployment serves many users
-- Consistent: Everyone uses the same model version
-- Scalable: Dynamo auto-scales based on demand
-
----
-
-## Known Limitations
-
-This Kubernetes integration is a work in progress. Here's the current status:
-
-### What Works
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Unattended onboard | ✅ Working | Full automated setup from `kubectl apply` to running sandbox |
-| Sandbox creation | ✅ Working | OpenShell creates isolated k3s sandbox |
-| Connect to sandbox | ✅ Working | `nemoclaw my-assistant connect` works |
-| HTTP inference | ✅ Working | `curl http://inference.local:8000/v1/models` works inside sandbox |
-| Socat proxy bridge | ✅ Working | Bridges K8s DNS to nested k3s environment |
-
-### What Doesn't Work Yet
-
-| Feature | Status | Issue |
-|---------|--------|-------|
-| `openclaw tui` | ❌ Blocked | Uses HTTPS which fails through OpenShell proxy |
-| `openclaw agent` | ❌ Blocked | Same HTTPS proxy issue |
-| HTTPS inference | ❌ Blocked | `https://inference.local/v1/*` returns connection errors |
-
-### Root Cause
-
-OpenClaw is configured to use `https://inference.local/v1` (HTTPS on port 443). The OpenShell sandbox proxy should intercept these requests and forward them to the upstream Dynamo endpoint, but the proxy has routing issues with HTTPS traffic.
-
-**Workaround**: Direct HTTP calls to `http://inference.local:8000/v1` work correctly. The fix requires updates to OpenShell's inference proxy routing.
+3. A socat proxy bridges K8s DNS to the nested environment
+4. Inside the sandbox, `host.openshell.internal:8000` routes to the inference endpoint
 
 ---
 
@@ -265,88 +160,40 @@ OpenClaw is configured to use `https://inference.local/v1` (HTTPS on port 443). 
 ### Pod won't start
 
 ```bash
-# Check pod status
 kubectl describe pod nemoclaw -n nemoclaw
-
-# Common issues:
-# - Missing privileged security context (DinD requires it)
-# - Insufficient memory (needs ~8GB for DinD container)
 ```
+
+Common issues:
+- Missing privileged security context
+- Insufficient memory (needs ~8GB for DinD)
 
 ### Docker daemon not starting
 
 ```bash
-# Check DinD container logs
 kubectl logs nemoclaw -n nemoclaw -c dind
-
-# Usually resolves by waiting 30-60 seconds after pod starts
 ```
 
-### Inference returns 502 Bad Gateway or connection errors
+Usually resolves after 30-60 seconds.
 
-**For HTTP (port 8000)**: The nested k3s cluster can't resolve Kubernetes DNS names. The socat proxy handles this automatically, but verify it's running:
+### Inference not working
+
+Check socat is running:
 
 ```bash
-# Check if socat is running in workspace container
 kubectl exec nemoclaw -n nemoclaw -c workspace -- pgrep -a socat
-
-# If not running, start it manually
-kubectl exec nemoclaw -n nemoclaw -c workspace -- \
-  socat TCP-LISTEN:8000,fork,reuseaddr TCP:your-vllm.namespace.svc:8000 &
 ```
 
-**For HTTPS (port 443)**: This is a known issue with OpenShell's proxy routing. Use HTTP instead:
+Test endpoint directly:
 
 ```bash
-# Inside sandbox - use HTTP, not HTTPS
-curl http://inference.local:8000/v1/models
-```
-
-### Can't connect to sandbox
-
-```bash
-# List available sandboxes
-kubectl exec nemoclaw -n nemoclaw -c workspace -- openshell sandbox list
-
-# Check sandbox status
-kubectl exec nemoclaw -n nemoclaw -c workspace -- nemoclaw my-assistant status
+kubectl exec nemoclaw -n nemoclaw -c workspace -- curl -s http://localhost:8000/v1/models
 ```
 
 ---
 
 ## Learn More
 
-- **[NemoClaw Documentation](https://docs.nvidia.com/nemoclaw)** — Full reference for NemoClaw
-- **[OpenShell](https://github.com/NVIDIA/OpenShell)** — The sandbox runtime powering NemoClaw
-- **[Dynamo](https://github.com/ai-dynamo/dynamo)** — Distributed vLLM inference for K8s
-- **[OpenClaw](https://openclaw.ai)** — The AI agent framework
-
----
-
-## Contributing
-
-Found an issue? Have an idea? We'd love your input!
-
-- [Report a bug](https://github.com/NVIDIA/NemoClaw/issues/new)
-- [Request a feature](https://github.com/NVIDIA/NemoClaw/issues/new)
-- [Join the discussion](https://github.com/NVIDIA/NemoClaw/discussions)
-
----
-
-## Requirements
-
-- **Kubernetes**: 1.25+
-- **kubectl**: Configured with cluster access
-- **Dynamo/vLLM**: Running and accessible from cluster
-- **Resources**:
-  - DinD container: 8GB RAM, 2 CPU
-  - Workspace container: 2GB RAM, 1 CPU
-- **Permissions**: Ability to create privileged pods
-
----
-
-<p align="center">
-  <b>NemoClaw</b> — Safe AI agent experimentation on Kubernetes
-  <br>
-  <sub>Built with NemoClaw + OpenShell + Dynamo</sub>
-</p>
+- [NemoClaw Documentation](https://docs.nvidia.com/nemoclaw)
+- [OpenShell](https://github.com/NVIDIA/OpenShell)
+- [Dynamo](https://github.com/ai-dynamo/dynamo)
+- [OpenClaw](https://openclaw.ai)
