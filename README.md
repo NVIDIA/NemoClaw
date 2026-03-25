@@ -166,7 +166,7 @@ NemoClaw installs the NVIDIA OpenShell runtime, then creates a sandboxed OpenCla
 
 | Component        | Role                                                                                      |
 |------------------|-------------------------------------------------------------------------------------------|
-| **Plugin**       | TypeScript CLI commands for launch, connect, status, and logs.                            |
+| **CLI layer**    | Host-side and in-chat command surfaces for onboarding, connect, status, logs, and service control. |
 | **Blueprint**    | Versioned Python artifact that orchestrates sandbox creation, policy, and inference setup. |
 | **Sandbox**      | Isolated OpenShell container running OpenClaw with policy-enforced egress and filesystem.  |
 | **Inference**    | Provider-routed model calls, routed through the OpenShell gateway, transparent to the agent. |
