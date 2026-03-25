@@ -1247,5 +1247,37 @@ describe("commands/migration-state", () => {
         }
       }
     });
+
+    it("restore succeeds for v3 snapshot created without blueprintPath", () => {
+      const logger = makeLogger();
+      const origHome = process.env.HOME;
+      process.env.HOME = "/home/user";
+      try {
+        // v3 manifest with no blueprintDigest field — created without a blueprint
+        const manifest: SnapshotManifest = {
+          version: 3,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configPath: null,
+          hasExternalConfig: false,
+          externalRoots: [],
+          warnings: [],
+          // blueprintDigest intentionally omitted
+        };
+        addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
+        addDir("/snapshots/snap1/openclaw");
+        addFile("/snapshots/snap1/openclaw/openclaw.json", JSON.stringify({ restored: true }));
+
+        const result = restoreSnapshotToHost("/snapshots/snap1", logger);
+        expect(result).toBe(true);
+      } finally {
+        if (origHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = origHome;
+        }
+      }
+    });
   });
 });
