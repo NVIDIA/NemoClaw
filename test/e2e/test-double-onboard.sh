@@ -187,10 +187,10 @@ else
   fail "Second onboard exited $exit2 (expected 1)"
 fi
 
-if grep -q "Cleaning up previous NemoClaw session" <<<"$output2"; then
-  pass "Stale session cleanup fired on second onboard"
+if grep -q "Reusing healthy NemoClaw gateway." <<<"$output2"; then
+  pass "Second onboard reused the healthy gateway without teardown"
 else
-  fail "Stale session cleanup did NOT fire (regression: #397)"
+  fail "Second onboard did not report healthy gateway reuse"
 fi
 
 if grep -q "Port 8080 is not available" <<<"$output2"; then
@@ -251,10 +251,10 @@ else
   fail "Third onboard exited $exit3 (expected 1)"
 fi
 
-if grep -q "Cleaning up previous NemoClaw session" <<<"$output3"; then
-  pass "Stale session cleanup fired on third onboard"
+if grep -q "Reusing healthy NemoClaw gateway." <<<"$output3"; then
+  pass "Third onboard reused the healthy gateway without teardown"
 else
-  fail "Stale session cleanup did NOT fire on third onboard"
+  fail "Third onboard did not report healthy gateway reuse"
 fi
 
 if grep -q "Port 8080 is not available" <<<"$output3"; then

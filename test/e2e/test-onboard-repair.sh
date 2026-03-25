@@ -261,8 +261,8 @@ PROVIDER_CONFLICT_LOG="$(mktemp)"
 env -u NVIDIA_API_KEY \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
-  NEMOCLAW_PROVIDER=cloud \
-  NEMOCLAW_MODEL=nvidia/conflicting-model \
+  NEMOCLAW_PROVIDER=openai \
+  NEMOCLAW_MODEL=gpt-5.4 \
   NEMOCLAW_POLICY_MODE=skip \
   node "$REPO/bin/nemoclaw.js" onboard --resume --non-interactive >"$PROVIDER_CONFLICT_LOG" 2>&1
 provider_conflict_exit=$?
@@ -281,7 +281,7 @@ else
   fail "Conflicting provider message missing or incorrect"
 fi
 
-if echo "$provider_conflict_output" | grep -Eq "Resumable state recorded model '.*', not 'nvidia/conflicting-model'\."; then
+if echo "$provider_conflict_output" | grep -Eq "Resumable state recorded model '.*', not 'gpt-5.4'\."; then
   pass "Conflicting model message is explicit"
 else
   fail "Conflicting model message missing or incorrect"
