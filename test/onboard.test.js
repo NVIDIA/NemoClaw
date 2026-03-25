@@ -200,7 +200,8 @@ describe("onboard helpers", () => {
   it("treats the gateway as healthy only when nemoclaw is running and connected", () => {
     expect(
       isGatewayHealthy(
-        "Gateway status: Connected",
+        "Gateway status: Connected\nGateway: nemoclaw",
+        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080",
         "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080"
       )
     ).toBe(true);
@@ -211,6 +212,13 @@ describe("onboard helpers", () => {
         "Gateway Info\n\n  Gateway: openshell\n  Gateway endpoint: https://127.0.0.1:8080"
       )
     ).toBe(false);
+    expect(
+      isGatewayHealthy(
+        "Server Status\n\n  Gateway: openshell\n  Status: Connected",
+        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080",
+        "Gateway Info\n\n  Gateway: openshell\n  Gateway endpoint: https://127.0.0.1:8080"
+      )
+    ).toBe(false);
     expect(isGatewayHealthy("Gateway status: Disconnected", "Gateway: nemoclaw")).toBe(false);
     expect(isGatewayHealthy("Gateway status: Connected", "Gateway: something-else")).toBe(false);
   });
@@ -218,7 +226,8 @@ describe("onboard helpers", () => {
   it("classifies gateway reuse states conservatively", () => {
     expect(
       getGatewayReuseState(
-        "Gateway status: Connected",
+        "Gateway status: Connected\nGateway: nemoclaw",
+        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080",
         "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080"
       )
     ).toBe("healthy");
@@ -228,7 +237,14 @@ describe("onboard helpers", () => {
         "Error:   × No gateway metadata found for 'nemoclaw'.",
         "Gateway Info\n\n  Gateway: openshell\n  Gateway endpoint: https://127.0.0.1:8080"
       )
-    ).toBe("active-unnamed");
+    ).toBe("foreign-active");
+    expect(
+      getGatewayReuseState(
+        "Server Status\n\n  Gateway: openshell\n  Status: Connected",
+        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080",
+        "Gateway Info\n\n  Gateway: openshell\n  Gateway endpoint: https://127.0.0.1:8080"
+      )
+    ).toBe("foreign-active");
     expect(
       getGatewayReuseState(
         "Gateway status: Disconnected",
@@ -237,11 +253,18 @@ describe("onboard helpers", () => {
     ).toBe("stale");
     expect(
       getGatewayReuseState(
+        "Gateway status: Connected\nGateway: nemoclaw",
+        "",
+        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080"
+      )
+    ).toBe("active-unnamed");
+    expect(
+      getGatewayReuseState(
         "Gateway status: Connected",
         "",
         "Gateway Info\n\n  Gateway: openshell\n  Gateway endpoint: https://127.0.0.1:8080"
       )
-    ).toBe("active-unnamed");
+    ).toBe("foreign-active");
     expect(getGatewayReuseState("", "")).toBe("missing");
   });
 

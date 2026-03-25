@@ -195,30 +195,54 @@ function hasStaleGateway(gwInfoOutput) {
   );
 }
 
-function isSelectedGateway(statusOutput = "", gatewayName = GATEWAY_NAME) {
-  return typeof statusOutput === "string" && statusOutput.includes(`Gateway: ${gatewayName}`);
+function getReportedGatewayName(output = "") {
+  if (typeof output !== "string") return null;
+  // eslint-disable-next-line no-control-regex
+  const cleanOutput = output.replace(/\x1b\[[0-9;]*m/g, "");
+  const match = cleanOutput.match(/^\s*Gateway:\s+([^\s]+)/m);
+  return match ? match[1] : null;
 }
 
-function isGatewayHealthy(statusOutput = "", gwInfoOutput = "", _activeGatewayInfoOutput = "") {
-  const connected = typeof statusOutput === "string" && statusOutput.includes("Connected");
-  if (!connected) return false;
+function isGatewayConnected(statusOutput = "") {
+  return typeof statusOutput === "string" && statusOutput.includes("Connected");
+}
 
+function hasActiveGatewayInfo(activeGatewayInfoOutput = "") {
+  return (
+    typeof activeGatewayInfoOutput === "string" &&
+    activeGatewayInfoOutput.includes("Gateway endpoint:") &&
+    !activeGatewayInfoOutput.includes("No gateway metadata found")
+  );
+}
+
+function isSelectedGateway(statusOutput = "", gatewayName = GATEWAY_NAME) {
+  return getReportedGatewayName(statusOutput) === gatewayName;
+}
+
+function isGatewayHealthy(statusOutput = "", gwInfoOutput = "", activeGatewayInfoOutput = "") {
   const namedGatewayKnown = hasStaleGateway(gwInfoOutput);
-  return namedGatewayKnown || isSelectedGateway(statusOutput);
+  if (!namedGatewayKnown || !isGatewayConnected(statusOutput)) return false;
+
+  const activeGatewayName = getReportedGatewayName(statusOutput) || getReportedGatewayName(activeGatewayInfoOutput);
+  return activeGatewayName === GATEWAY_NAME;
 }
 
 function getGatewayReuseState(statusOutput = "", gwInfoOutput = "", activeGatewayInfoOutput = "") {
   if (isGatewayHealthy(statusOutput, gwInfoOutput, activeGatewayInfoOutput)) {
     return "healthy";
   }
+  const connected = isGatewayConnected(statusOutput);
+  const activeGatewayName = getReportedGatewayName(statusOutput) || getReportedGatewayName(activeGatewayInfoOutput);
+  if (connected && activeGatewayName === GATEWAY_NAME) {
+    return "active-unnamed";
+  }
+  if (connected && activeGatewayName && activeGatewayName !== GATEWAY_NAME) {
+    return "foreign-active";
+  }
   if (hasStaleGateway(gwInfoOutput)) {
     return "stale";
   }
-  if (
-    typeof activeGatewayInfoOutput === "string" &&
-    activeGatewayInfoOutput.includes("Gateway endpoint:") &&
-    !activeGatewayInfoOutput.includes("No gateway metadata found")
-  ) {
+  if (hasActiveGatewayInfo(activeGatewayInfoOutput)) {
     return "active-unnamed";
   }
   return "missing";
@@ -1476,7 +1500,8 @@ async function preflight() {
 
   // Clean up stale or unnamed NemoClaw gateway state before checking ports.
   // A healthy named gateway can be reused later in onboarding, so avoid
-  // tearing it down here.
+  // tearing it down here. If some other gateway is active, do not treat it
+  // as NemoClaw state; let the port checks surface the conflict instead.
   const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
   const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
@@ -2667,6 +2692,8 @@ async function onboard(opts = {}) {
       if (resume && session?.steps?.gateway?.status === "complete") {
         if (gatewayReuseState === "active-unnamed") {
           note("  [resume] Gateway is active but named metadata is missing; recreating it safely.");
+        } else if (gatewayReuseState === "foreign-active") {
+          note("  [resume] A different OpenShell gateway is active; NemoClaw will not reuse it.");
         } else if (gatewayReuseState === "stale") {
           note("  [resume] Recorded gateway is unhealthy; recreating it.");
         } else {
