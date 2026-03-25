@@ -26,7 +26,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
-const BREV_CPU = process.env.BREV_CPU || "4x16";
+const BREV_CPU = process.env.BREV_CPU || "8x32";
 const INSTANCE_NAME = process.env.INSTANCE_NAME;
 const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
