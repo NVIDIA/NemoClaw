@@ -30,8 +30,8 @@ export default defineConfig({
     ],
     coverage: {
       provider: "v8",
-      include: ["nemoclaw/src/**/*.ts"],
-      exclude: ["**/*.test.ts"],
+      include: ["nemoclaw/src/**/*.ts", "bin/lib/metrics.js"],
+      exclude: ["**/*.test.ts", "**/*.test.js"],
       reporter: ["text", "json-summary"],
     },
   },

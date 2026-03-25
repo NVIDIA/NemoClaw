@@ -92,6 +92,7 @@ exit 98
       encoding: "utf-8",
       env: {
         ...process.env,
+        NVM_DIR: "",
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
       },
@@ -189,6 +190,7 @@ exit 98
       encoding: "utf-8",
       env: {
         ...process.env,
+        NVM_DIR: "",
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
@@ -271,6 +273,7 @@ exit 98
       encoding: "utf-8",
       env: {
         ...process.env,
+        NVM_DIR: "",
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
@@ -352,6 +355,7 @@ echo "Darwin"
       encoding: "utf-8",
       env: {
         ...process.env,
+        NVM_DIR: "",
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_TEST_SOCKET_PATHS: `${colimaSocket}:${dockerDesktopSocket}`,
@@ -438,6 +442,21 @@ exit 98
     );
 
     writeExecutable(
+      path.join(fakeBin, "uname"),
+      `#!/usr/bin/env bash
+if [ "$1" = "-s" ]; then
+  echo "Darwin"
+  exit 0
+fi
+if [ "$1" = "-m" ]; then
+  echo "arm64"
+  exit 0
+fi
+echo "Darwin"
+`,
+    );
+
+    writeExecutable(
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
@@ -465,6 +484,7 @@ exit 0
       encoding: "utf-8",
       env: {
         ...process.env,
+        NVM_DIR: "",
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
@@ -563,6 +583,7 @@ fi`,
       encoding: "utf-8",
       env: {
         ...process.env,
+        NVM_DIR: "",
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
@@ -618,6 +639,7 @@ fi`,
       encoding: "utf-8",
       env: {
         ...process.env,
+        NVM_DIR: "",
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
@@ -732,6 +754,7 @@ exit 0
       encoding: "utf-8",
       env: {
         ...process.env,
+        NVM_DIR: "",
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
