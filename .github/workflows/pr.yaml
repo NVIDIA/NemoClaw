@@ -107,6 +107,19 @@ jobs:
           path: /tmp/isolation-image.tar.gz
           retention-days: 1
 
+  build-sandbox-images-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build production image on arm64
+        run: docker build -t nemoclaw-production-arm64 .
+
+      - name: Build sandbox test image on arm64
+        run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production-arm64 -t nemoclaw-sandbox-test-arm64 .
+
   test-e2e-sandbox:
     runs-on: ubuntu-latest
     timeout-minutes: 15
