@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: dreamline
+  description: "Dreamline spend governance — on-chain blacklist and policy enforcement for agent payments"
+
+network_policies:
+  dreamline:
+    name: dreamline
+    endpoints:
+      - host: dreamline-backend.onrender.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: POST, path: "/proxy/pay" }
+          - allow: { method: POST, path: "/proxy/approve" }
+          - allow: { method: GET, path: "/proxy/status" }
+          - allow: { method: GET, path: "/health" }
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/curl }
