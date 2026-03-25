@@ -7,7 +7,7 @@
 - **Docker** (pre-installed, v28.x)
 - **Node.js 22** (installed by the install.sh)
 - **OpenShell CLI** (installed via the Quick Start steps below)
-- **NVIDIA API Key** from [build.nvidia.com](https://build.nvidia.com) — prompted on first run
+- **API key** for your chosen inference provider. The onboarding wizard prompts for provider and key during setup. For example, you need to provide an NVIDIA API key from [build.nvidia.com](https://build.nvidia.com) for NVIDIA Endpoints, or an OpenAI, Anthropic, or Gemini key for those corresponding providers.
 
 ## Quick Start
 

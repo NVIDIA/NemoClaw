@@ -67,7 +67,7 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
     && ln -s /sandbox/.openclaw-data/update-check.json /sandbox/.openclaw/update-check.json \
     && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
 
-# Install OpenClaw CLI and PyYAML for blueprint runner (single layer)
+# Install OpenClaw CLI + PyYAML for inline Python scripts in e2e tests
 RUN npm install -g openclaw@2026.3.11 \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
 

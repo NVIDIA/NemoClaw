@@ -28,14 +28,6 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-
       - name: Install hadolint
         run: |
           HADOLINT_URL="https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64"
@@ -49,7 +41,6 @@ jobs:
         run: |
           npm install --ignore-scripts
           cd nemoclaw && npm install
-          cd ../nemoclaw-blueprint && uv sync --extra dev
 
       - name: Build TypeScript plugin
         run: cd nemoclaw && npm run build
@@ -155,21 +146,3 @@ jobs:
 
       - name: Run gateway isolation E2E tests
         run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh
-
-  validate-profiles:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install PyYAML
-        run: pip install pyyaml
-
-      - name: Validate blueprint and policy
-        run: python3 test/validate-blueprint.py
