@@ -1,8 +1,11 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # Full E2E: install → onboard → verify inference (REAL services, no mocks)
 #
 # Proves the COMPLETE user journey including real inference against
-# the NVIDIA Endpoint API. Runs install.sh --non-interactive which handles
+# NVIDIA Endpoints. Runs install.sh --non-interactive which handles
 # Node.js, openshell, NemoClaw, and onboard setup automatically.
 #
 # Prerequisites:
@@ -14,7 +17,7 @@
 #   NEMOCLAW_NON_INTERACTIVE=1   — required (enables non-interactive install + onboard)
 #   NEMOCLAW_SANDBOX_NAME        — sandbox name (default: e2e-nightly)
 #   NEMOCLAW_RECREATE_SANDBOX=1  — recreate sandbox if it exists from a previous run
-#   NVIDIA_API_KEY               — required for NVIDIA Endpoint API inference
+#   NVIDIA_API_KEY               — required for NVIDIA Endpoints inference
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-full-e2e.sh
@@ -28,11 +31,26 @@ FAIL=0
 SKIP=0
 TOTAL=0
 
-pass() { ((PASS++)); ((TOTAL++)); printf '\033[32m  PASS: %s\033[0m\n' "$1"; }
-fail() { ((FAIL++)); ((TOTAL++)); printf '\033[31m  FAIL: %s\033[0m\n' "$1"; }
-skip() { ((SKIP++)); ((TOTAL++)); printf '\033[33m  SKIP: %s\033[0m\n' "$1"; }
-section() { echo ""; printf '\033[1;36m=== %s ===\033[0m\n' "$1"; }
-info()  { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
+pass() {
+  ((PASS++))
+  ((TOTAL++))
+  printf '\033[32m  PASS: %s\033[0m\n' "$1"
+}
+fail() {
+  ((FAIL++))
+  ((TOTAL++))
+  printf '\033[31m  FAIL: %s\033[0m\n' "$1"
+}
+skip() {
+  ((SKIP++))
+  ((TOTAL++))
+  printf '\033[33m  SKIP: %s\033[0m\n' "$1"
+}
+section() {
+  echo ""
+  printf '\033[1;36m=== %s ===\033[0m\n' "$1"
+}
+info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
 # Parse chat completion response — handles both content and reasoning_content
 # (nemotron-3-super is a reasoning model that may put output in reasoning_content)
@@ -67,10 +85,10 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-nightly}"
 # ══════════════════════════════════════════════════════════════════
 section "Phase 0: Pre-cleanup"
 info "Destroying any leftover sandbox/gateway from previous runs..."
-if command -v nemoclaw > /dev/null 2>&1; then
-  nemoclaw "$SANDBOX_NAME" destroy 2>/dev/null || true
+if command -v nemoclaw >/dev/null 2>&1; then
+  nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
 fi
-if command -v openshell > /dev/null 2>&1; then
+if command -v openshell >/dev/null 2>&1; then
   openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
   openshell gateway destroy -g nemoclaw 2>/dev/null || true
 fi
@@ -81,7 +99,7 @@ pass "Pre-cleanup complete"
 # ══════════════════════════════════════════════════════════════════
 section "Phase 1: Prerequisites"
 
-if docker info > /dev/null 2>&1; then
+if docker info >/dev/null 2>&1; then
   pass "Docker is running"
 else
   fail "Docker is not running — cannot continue"
@@ -95,7 +113,7 @@ else
   exit 1
 fi
 
-if curl -sf --max-time 10 https://integrate.api.nvidia.com/v1/models > /dev/null 2>&1; then
+if curl -sf --max-time 10 https://integrate.api.nvidia.com/v1/models >/dev/null 2>&1; then
   pass "Network access to integrate.api.nvidia.com"
 else
   fail "Cannot reach integrate.api.nvidia.com"
@@ -112,7 +130,10 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 2: Install nemoclaw (non-interactive mode)"
 
-cd "$REPO" || { fail "Could not cd to repo root: $REPO"; exit 1; }
+cd "$REPO" || {
+  fail "Could not cd to repo root: $REPO"
+  exit 1
+}
 
 info "Running install.sh --non-interactive..."
 info "This installs Node.js, openshell, NemoClaw, and runs onboard."
@@ -122,7 +143,7 @@ INSTALL_LOG="/tmp/nemoclaw-e2e-install.log"
 # Write to a file instead of piping through tee. openshell's background
 # port-forward inherits pipe file descriptors, which prevents tee from exiting.
 # Use tail -f in the background for real-time output in CI logs.
-bash install.sh --non-interactive > "$INSTALL_LOG" 2>&1 &
+bash install.sh --non-interactive >"$INSTALL_LOG" 2>&1 &
 install_pid=$!
 tail -f "$INSTALL_LOG" --pid=$install_pid 2>/dev/null &
 tail_pid=$!
@@ -133,11 +154,15 @@ wait $tail_pid 2>/dev/null || true
 
 # Source shell profile to pick up nvm/PATH changes from install.sh
 if [ -f "$HOME/.bashrc" ]; then
+  # shellcheck source=/dev/null
   source "$HOME/.bashrc" 2>/dev/null || true
 fi
 # Ensure nvm is loaded in current shell
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$NVM_DIR/nvm.sh"
+fi
 # Ensure ~/.local/bin is on PATH (openshell may be installed there in non-interactive mode)
 if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
   export PATH="$HOME/.local/bin:$PATH"
@@ -151,7 +176,7 @@ else
 fi
 
 # Verify nemoclaw is on PATH
-if command -v nemoclaw > /dev/null 2>&1; then
+if command -v nemoclaw >/dev/null 2>&1; then
   pass "nemoclaw installed at $(command -v nemoclaw)"
 else
   fail "nemoclaw not found on PATH after install"
@@ -159,16 +184,18 @@ else
 fi
 
 # Verify openshell was installed
-if command -v openshell > /dev/null 2>&1; then
+if command -v openshell >/dev/null 2>&1; then
   pass "openshell installed ($(openshell --version 2>&1 || echo unknown))"
 else
   fail "openshell not found on PATH after install"
   exit 1
 fi
 
-nemoclaw --help > /dev/null 2>&1 \
-  && pass "nemoclaw --help exits 0" \
-  || fail "nemoclaw --help failed"
+if nemoclaw --help >/dev/null 2>&1; then
+  pass "nemoclaw --help exits 0"
+else
+  fail "nemoclaw --help failed"
+fi
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 3: Sandbox verification
@@ -177,16 +204,17 @@ section "Phase 3: Sandbox verification"
 
 # 3a: nemoclaw list
 if list_output=$(nemoclaw list 2>&1); then
-  echo "$list_output" | grep -Fq -- "$SANDBOX_NAME" \
-    && pass "nemoclaw list contains '${SANDBOX_NAME}'" \
-    || fail "nemoclaw list does not contain '${SANDBOX_NAME}'"
+  if grep -Fq -- "$SANDBOX_NAME" <<<"$list_output"; then
+    pass "nemoclaw list contains '${SANDBOX_NAME}'"
+  else
+    fail "nemoclaw list does not contain '${SANDBOX_NAME}'"
+  fi
 else
   fail "nemoclaw list failed: ${list_output:0:200}"
 fi
 
 # 3b: nemoclaw status
-status_output=$(nemoclaw "$SANDBOX_NAME" status 2>&1)
-if [ $? -eq 0 ]; then
+if status_output=$(nemoclaw "$SANDBOX_NAME" status 2>&1); then
   pass "nemoclaw ${SANDBOX_NAME} status exits 0"
 else
   fail "nemoclaw ${SANDBOX_NAME} status failed: ${status_output:0:200}"
@@ -195,23 +223,29 @@ fi
 # 3c: Inference must be configured by onboard (no fallback — if onboard
 # failed to configure it, that's a bug we want to catch)
 if inf_check=$(openshell inference get 2>&1); then
-  echo "$inf_check" | grep -qi "nvidia-nim" \
-    && pass "Inference configured via onboard" \
-    || fail "Inference not configured — onboard did not set up nvidia-nim provider"
+  if grep -qi "nvidia-prod" <<<"$inf_check"; then
+    pass "Inference configured via onboard"
+  else
+    fail "Inference not configured — onboard did not set up nvidia-prod provider"
+  fi
 else
   fail "openshell inference get failed: ${inf_check:0:200}"
 fi
 
 # 3d: Policy presets applied
 if policy_output=$(openshell policy get --full "$SANDBOX_NAME" 2>&1); then
-  echo "$policy_output" | grep -qi "network_policies" \
-    && pass "Policy applied to sandbox" \
-    || fail "No network policy found on sandbox"
+  if grep -qi "network_policies" <<<"$policy_output"; then
+    pass "Policy applied to sandbox"
+  else
+    fail "No network policy found on sandbox"
+  fi
 
   # Check that at least npm or pypi preset endpoints are present (onboard auto-suggests these)
-  echo "$policy_output" | grep -qi "registry.npmjs.org\|pypi.org" \
-    && pass "Policy presets (npm/pypi) detected in sandbox policy" \
-    || skip "Could not confirm npm/pypi presets in policy (may vary by environment)"
+  if grep -qi "registry.npmjs.org\|pypi.org" <<<"$policy_output"; then
+    pass "Policy presets (npm/pypi) detected in sandbox policy"
+  else
+    skip "Could not confirm npm/pypi presets in policy (may vary by environment)"
+  fi
 else
   fail "openshell policy get failed: ${policy_output:0:200}"
 fi
@@ -221,7 +255,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 4: Live inference"
 
-# ── Test 4a: Direct NVIDIA Endpoint API ──
+# ── Test 4a: Direct NVIDIA Endpoints ──
 info "[LIVE] Direct API test → integrate.api.nvidia.com..."
 api_response=$(curl -s --max-time 30 \
   -X POST https://integrate.api.nvidia.com/v1/chat/completions \
@@ -235,7 +269,7 @@ api_response=$(curl -s --max-time 30 \
 
 if [ -n "$api_response" ]; then
   api_content=$(echo "$api_response" | parse_chat_content 2>/dev/null) || true
-  if echo "$api_content" | grep -qi "PONG"; then
+  if grep -qi "PONG" <<<"$api_content"; then
     pass "[LIVE] Direct API: model responded with PONG"
   else
     fail "[LIVE] Direct API: expected PONG, got: ${api_content:0:200}"
@@ -249,11 +283,11 @@ info "[LIVE] Sandbox inference test → user → sandbox → gateway → NVIDIA 
 ssh_config="$(mktemp)"
 sandbox_response=""
 
-if openshell sandbox ssh-config "$SANDBOX_NAME" > "$ssh_config" 2>/dev/null; then
+if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
   # Use timeout if available (Linux, Homebrew), fall back to plain ssh
   TIMEOUT_CMD=""
-  command -v timeout > /dev/null 2>&1 && TIMEOUT_CMD="timeout 90"
-  command -v gtimeout > /dev/null 2>&1 && TIMEOUT_CMD="gtimeout 90"
+  command -v timeout >/dev/null 2>&1 && TIMEOUT_CMD="timeout 90"
+  command -v gtimeout >/dev/null 2>&1 && TIMEOUT_CMD="gtimeout 90"
   sandbox_response=$($TIMEOUT_CMD ssh -F "$ssh_config" \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
@@ -263,15 +297,15 @@ if openshell sandbox ssh-config "$SANDBOX_NAME" > "$ssh_config" 2>/dev/null; the
     "curl -s --max-time 60 https://inference.local/v1/chat/completions \
       -H 'Content-Type: application/json' \
       -d '{\"model\":\"nvidia/nemotron-3-super-120b-a12b\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
-  2>&1) || true
+    2>&1) || true
 fi
 rm -f "$ssh_config"
 
 if [ -n "$sandbox_response" ]; then
   sandbox_content=$(echo "$sandbox_response" | parse_chat_content 2>/dev/null) || true
-  if echo "$sandbox_content" | grep -qi "PONG"; then
+  if grep -qi "PONG" <<<"$sandbox_content"; then
     pass "[LIVE] Sandbox inference: model responded with PONG through sandbox"
-    info "Full path proven: user → sandbox → openshell gateway → NVIDIA Endpoint API → response"
+    info "Full path proven: user → sandbox → openshell gateway → NVIDIA Endpoints → response"
   else
     fail "[LIVE] Sandbox inference: expected PONG, got: ${sandbox_content:0:200}"
   fi
@@ -304,13 +338,15 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 6: Cleanup"
 
-nemoclaw "$SANDBOX_NAME" destroy 2>&1 | tail -3 || true
+nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
 list_after=$(nemoclaw list 2>&1)
-echo "$list_after" | grep -Fq -- "$SANDBOX_NAME" \
-  && fail "Sandbox ${SANDBOX_NAME} still in list after destroy" \
-  || pass "Sandbox ${SANDBOX_NAME} removed"
+if grep -Fq -- "$SANDBOX_NAME" <<<"$list_after"; then
+  fail "Sandbox ${SANDBOX_NAME} still in list after destroy"
+else
+  pass "Sandbox ${SANDBOX_NAME} removed"
+fi
 
 # ══════════════════════════════════════════════════════════════════
 # Summary

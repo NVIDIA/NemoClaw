@@ -37,7 +37,7 @@ vi.mock("node:fs", async (importOriginal) => {
     }),
     readFileSync: (p: string) => {
       const entry = store.get(p);
-      if (!entry || entry.type !== "file") throw new Error(`ENOENT: ${p}`);
+      if (entry?.type !== "file") throw new Error(`ENOENT: ${p}`);
       return entry.content ?? "";
     },
     writeFileSync: vi.fn((p: string, data: string) => {
@@ -91,6 +91,7 @@ vi.mock("node:fs", async (importOriginal) => {
     unlinkSync: vi.fn((p: string) => {
       store.delete(p);
     }),
+    chmodSync: vi.fn(),
   };
 });
 

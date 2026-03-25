@@ -17,10 +17,10 @@ const G = _useColor ? (_tc ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "";
 const B = _useColor ? "\x1b[1m" : "";
 const D = _useColor ? "\x1b[2m" : "";
 const R = _useColor ? "\x1b[0m" : "";
-const RD = _useColor ? "\x1b[1;31m" : "";
+const _RD = _useColor ? "\x1b[1;31m" : "";
 const YW = _useColor ? "\x1b[1;33m" : "";
 
-const { ROOT, SCRIPTS, run, runCapture, runInteractive, shellQuote, validateName } = require("./lib/runner");
+const { ROOT, SCRIPTS, run, runCapture: _runCapture, runInteractive, shellQuote, validateName } = require("./lib/runner");
 const {
   ensureApiKey,
   ensureGithubToken,
@@ -96,8 +96,8 @@ async function setup() {
 }
 
 async function setupSpark() {
-  await ensureApiKey();
-  run(`sudo -E NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY)} bash "${SCRIPTS}/setup-spark.sh"`);
+  // setup-spark.sh configures Docker cgroups — it does not use NVIDIA_API_KEY.
+  run(`sudo bash "${SCRIPTS}/setup-spark.sh"`);
 }
 
 async function deploy(instanceName) {
@@ -183,9 +183,10 @@ async function deploy(instanceName) {
   fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
   try {
     run(`scp -q -o StrictHostKeyChecking=no -o LogLevel=ERROR ${shellQuote(envTmp)} ${qname}:/home/ubuntu/nemoclaw/.env`);
+    run(`ssh -q -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'chmod 600 /home/ubuntu/nemoclaw/.env'`);
   } finally {
-    try { fs.unlinkSync(envTmp); } catch {}
-    try { fs.rmdirSync(envDir); } catch {}
+    try { fs.unlinkSync(envTmp); } catch { /* ignored */ }
+    try { fs.rmdirSync(envDir); } catch { /* ignored */ }
   }
 
   console.log("  Running setup...");
@@ -318,7 +319,7 @@ function sandboxStatus(sandboxName) {
   run(`openshell sandbox get ${shellQuote(sandboxName)} 2>/dev/null || true`, { ignoreError: true });
 
   // NIM health
-  const nimStat = nim.nimStatus(sandboxName);
+  const nimStat = sb && sb.nimContainer ? nim.nimStatusByName(sb.nimContainer) : nim.nimStatus(sandboxName);
   console.log(`    NIM:      ${nimStat.running ? `running (${nimStat.container})` : "not running"}`);
   if (nimStat.running) {
     console.log(`    Healthy:  ${nimStat.healthy ? "yes" : "no"}`);
@@ -380,7 +381,9 @@ async function sandboxDestroy(sandboxName, args = []) {
   }
 
   console.log(`  Stopping NIM for '${sandboxName}'...`);
-  nim.stopNimContainer(sandboxName);
+  const sb = registry.getSandbox(sandboxName);
+  if (sb && sb.nimContainer) nim.stopNimContainerByName(sb.nimContainer);
+  else nim.stopNimContainer(sandboxName);
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   run(`openshell sandbox delete ${shellQuote(sandboxName)} 2>/dev/null || true`, { ignoreError: true });

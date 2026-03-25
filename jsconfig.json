@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "checkJs": true,
+    "allowJs": true,
+    "maxNodeModuleJsDepth": 0,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "types": ["node"]
+  },
+  "include": ["bin/**/*.js", "scripts/**/*.js", "test/**/*.js"],
+  "exclude": ["node_modules", "**/node_modules", "nemoclaw", "docs"]
+}

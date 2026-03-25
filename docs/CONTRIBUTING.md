@@ -90,7 +90,8 @@ make docs-live
 - Docs use [MyST Markdown](https://myst-parser.readthedocs.io/), a Sphinx-compatible superset of CommonMark.
 - Every page starts with YAML frontmatter (title, description, topics, tags, content type).
 - Include the SPDX license header after frontmatter:
-  ```
+
+  ```html
   <!--
     SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
     SPDX-License-Identifier: Apache-2.0
@@ -153,9 +154,11 @@ These patterns are common in LLM-generated text and erode trust with technical r
 - One sentence per line in the source file (makes diffs readable).
 - Use `code` formatting for CLI commands, file paths, flags, parameter names, and values.
 - Use code blocks with the `console` language for CLI examples. Prefix commands with `$`:
+
   ```console
   $ nemoclaw onboard
   ```
+
 - Use tables for structured comparisons. Keep tables simple (no nested formatting).
 - Use MyST admonitions (`:::{tip}`, `:::{note}`, `:::{warning}`) for callouts, not bold text.
 - Avoid nested admonitions.
@@ -187,13 +190,13 @@ Use these consistently:
 3. Build locally with `make docs` and verify the output.
 4. Open a PR with `docs:` as the conventional commit type.
 
-```
+```text
 docs: update quickstart for new onboard wizard
 ```
 
 If your doc change accompanies a code change, include both in the same PR and use the code change's commit type:
 
-```
+```text
 feat(cli): add policy-add command
 ```
 

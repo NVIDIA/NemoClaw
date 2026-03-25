@@ -13,13 +13,29 @@ FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-pip python3-venv \
-        curl git ca-certificates \
-        iproute2 \
+        python3=3.11.2-1+b1 \
+        python3-pip=23.0.1+dfsg-1 \
+        python3-venv=3.11.2-1+b1 \
+        curl=7.88.1-10+deb12u14 \
+        git=1:2.39.5-0+deb12u3 \
+        ca-certificates=20230311+deb12u1 \
+        iproute2=6.1.0-3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create sandbox user (matches OpenShell convention)
-RUN groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
+# gosu for privilege separation (gateway vs sandbox user).
+# Install from GitHub release with checksum verification instead of
+# Debian bookworm's ancient 1.14 (2020). Pinned to 1.19 (2025-09).
+# hadolint ignore=DL4006
+RUN curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/gosu-amd64" \
+    && echo "52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0  /usr/local/bin/gosu" | sha256sum -c - \
+    && chmod +x /usr/local/bin/gosu \
+    && gosu --version
+
+# Create sandbox user (matches OpenShell convention) and gateway user.
+# The gateway runs as 'gateway' so the 'sandbox' user (agent) cannot
+# kill it or restart it with a tampered HOME/config.
+RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
+    && groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
     && mkdir -p /sandbox/.nemoclaw \
     && chown -R sandbox:sandbox /sandbox
 
@@ -51,11 +67,9 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
     && ln -s /sandbox/.openclaw-data/update-check.json /sandbox/.openclaw/update-check.json \
     && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
 
-# Install OpenClaw CLI
-RUN npm install -g openclaw@2026.3.11
-
-# Install PyYAML for blueprint runner
-RUN pip3 install --break-system-packages pyyaml
+# Install OpenClaw CLI + PyYAML for inline Python scripts in e2e tests
+RUN npm install -g openclaw@2026.3.11 \
+    && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
 
 # Copy built plugin and blueprint into the sandbox
 COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
@@ -78,7 +92,12 @@ RUN chmod +x /usr/local/bin/nemoclaw-start
 # Build args for config that varies per deployment.
 # nemoclaw onboard passes these at image build time.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
+ARG NEMOCLAW_PROVIDER_KEY=nvidia
+ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b
 ARG CHAT_UI_URL=http://127.0.0.1:18789
+ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
+ARG NEMOCLAW_INFERENCE_API=openai-completions
+ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
 # Unique per build to ensure each image gets a fresh auth token.
 # Pass --build-arg NEMOCLAW_BUILD_ID=$(date +%s) to bust the cache.
 ARG NEMOCLAW_BUILD_ID=default
@@ -87,7 +106,12 @@ ARG NEMOCLAW_BUILD_ID=default
 # via os.environ, never via string interpolation into Python source code.
 # Direct ARG interpolation into python3 -c is a code injection vector (C-2).
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
-    CHAT_UI_URL=${CHAT_UI_URL}
+    NEMOCLAW_PROVIDER_KEY=${NEMOCLAW_PROVIDER_KEY} \
+    NEMOCLAW_PRIMARY_MODEL_REF=${NEMOCLAW_PRIMARY_MODEL_REF} \
+    CHAT_UI_URL=${CHAT_UI_URL} \
+    NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
+    NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
+    NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64}
 
 WORKDIR /sandbox
 USER sandbox
@@ -98,30 +122,30 @@ USER sandbox
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 # Auth token is generated per build so each image has a unique token.
 RUN python3 -c "\
-import json, os, secrets; \
+import base64, json, os, secrets; \
 from urllib.parse import urlparse; \
 model = os.environ['NEMOCLAW_MODEL']; \
 chat_ui_url = os.environ['CHAT_UI_URL']; \
+provider_key = os.environ['NEMOCLAW_PROVIDER_KEY']; \
+primary_model_ref = os.environ['NEMOCLAW_PRIMARY_MODEL_REF']; \
+inference_base_url = os.environ['NEMOCLAW_INFERENCE_BASE_URL']; \
+inference_api = os.environ['NEMOCLAW_INFERENCE_API']; \
+inference_compat = json.loads(base64.b64decode(os.environ['NEMOCLAW_INFERENCE_COMPAT_B64']).decode('utf-8')); \
 parsed = urlparse(chat_ui_url); \
 chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \
 origins = ['http://127.0.0.1:18789']; \
 origins = list(dict.fromkeys(origins + [chat_origin])); \
+providers = { \
+    provider_key: { \
+        'baseUrl': inference_base_url, \
+        'apiKey': 'unused', \
+        'api': inference_api, \
+        'models': [{**({'compat': inference_compat} if inference_compat else {}), 'id': model, 'name': primary_model_ref, 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}] \
+    } \
+}; \
 config = { \
-    'agents': {'defaults': {'model': {'primary': f'inference/{model}'}}}, \
-    'models': {'mode': 'merge', 'providers': { \
-        'nvidia': { \
-            'baseUrl': 'https://inference.local/v1', \
-            'apiKey': 'openshell-managed', \
-            'api': 'openai-completions', \
-            'models': [{'id': model.split('/')[-1], 'name': model, 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}] \
-        }, \
-        'inference': { \
-            'baseUrl': 'https://inference.local/v1', \
-            'apiKey': 'unused', \
-            'api': 'openai-completions', \
-            'models': [{'id': model, 'name': model, 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}] \
-        } \
-    }}, \
+    'agents': {'defaults': {'model': {'primary': primary_model_ref}}}, \
+    'models': {'mode': 'merge', 'providers': providers}, \
     'channels': {'defaults': {'configWrites': False}}, \
     'gateway': { \
         'mode': 'local', \
@@ -147,12 +171,26 @@ RUN openclaw doctor --fix > /dev/null 2>&1 || true \
 # The Landlock policy (/sandbox/.openclaw in read_only) provides defense-in-depth
 # once OpenShell enables enforcement.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/514
+# Lock the entire .openclaw directory tree.
+# SECURITY: chmod 755 (not 1777) — the sandbox user can READ but not WRITE
+# to this directory. This prevents the agent from replacing symlinks
+# (e.g., pointing /sandbox/.openclaw/hooks to an attacker-controlled path).
+# The writable state lives in .openclaw-data, reached via the symlinks.
+# hadolint ignore=DL3002
 USER root
 RUN chown root:root /sandbox/.openclaw \
     && find /sandbox/.openclaw -mindepth 1 -maxdepth 1 -exec chown -h root:root {} + \
-    && chmod 1777 /sandbox/.openclaw \
+    && chmod 755 /sandbox/.openclaw \
     && chmod 444 /sandbox/.openclaw/openclaw.json
-USER sandbox
 
-ENTRYPOINT ["/bin/bash"]
+# Pin config hash at build time so the entrypoint can verify integrity.
+# Prevents the agent from creating a copy with a tampered config and
+# restarting the gateway pointing at it.
+RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
+    && chmod 444 /sandbox/.openclaw/.config-hash \
+    && chown root:root /sandbox/.openclaw/.config-hash
+
+# Entrypoint runs as root to start the gateway as the gateway user,
+# then drops to sandbox for agent commands. See nemoclaw-start.sh.
+ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
 CMD []
