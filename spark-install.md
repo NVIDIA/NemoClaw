@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- **Docker** (pre-installed, v28.x)
+- **Docker** (pre-installed, v28.x/29.x)
 - **Node.js 22** (installed by the install.sh)
 - **OpenShell CLI** (installed via the Quick Start steps below)
 - **API key** for your chosen inference provider. The onboarding wizard prompts for provider and key during setup. For example, you need to provide an NVIDIA API key from [build.nvidia.com](https://build.nvidia.com) for NVIDIA Endpoints, or an OpenAI, Anthropic, or Gemini key for those corresponding providers.
@@ -146,7 +146,7 @@ openclaw agent --agent main --local -m "Which model and GPU are in use?" --sessi
 
 ## What's Different on Spark
 
-DGX Spark ships **Ubuntu 24.04 + Docker 28.x** but no k8s/k3s. OpenShell embeds k3s inside a Docker container, which hits two problems on Spark:
+DGX Spark ships **Ubuntu 24.04 (Noble) + Docker 28.x/29.x** on **aarch64 (Grace CPU + GB10 GPU, 128 GB unified memory)** but no k8s/k3s. OpenShell embeds k3s inside a Docker container, which hits two problems on Spark:
 
 ### 1. Docker permissions
 
@@ -208,12 +208,31 @@ newgrp docker  # or log out and back in
 | CoreDNS CrashLoop after setup | Fixed in `fix-coredns.sh` | Uses container gateway IP, not 127.0.0.11 |
 | Image pull failure (k3s can't find built image) | OpenShell bug | `openshell gateway destroy && openshell gateway start`, re-run setup |
 | GPU passthrough | Untested on Spark | Should work with `--gpu` flag if NVIDIA Container Toolkit is configured |
+| `pip install` fails with system packages | Known | Use a venv (recommended) or `--break-system-packages` (last resort, can break system tools) |
+| Port 3000 conflict with AI Workbench | Known | AI Workbench Traefik proxy uses port 3000 (and 10000); use a different port for other services |
+| Network policy blocks NVIDIA cloud API | By design | Ensure `integrate.api.nvidia.com` is in the sandbox network policy if using cloud inference |
+
+## Web Dashboard
+
+The OpenClaw gateway includes a built-in web UI. Access it at:
+
+```text
+http://127.0.0.1:18789/#token=<your-gateway-token>
+```
+
+Find your gateway token in `~/.openclaw/openclaw.json` under `gateway.auth.token` inside the sandbox.
+
+> **Important**: Use `127.0.0.1` (not `localhost`) — the gateway's origin check requires an exact match. External dashboards like Mission Control cannot currently connect due to the gateway resetting `controlUi.allowedOrigins` on every config reload (see [openclaw#49950](https://github.com/openclaw/openclaw/issues/49950)).
+
+## NIM Compatibility on arm64
+
+Some NIM containers (e.g., Nemotron-3-Super-120B-A12B) ship native arm64 images and run on the Spark. However, many NIM images are amd64-only and will fail with `exec format error`. Check the image architecture before pulling. For models without arm64 NIM support, consider using Ollama or [llama.cpp](https://github.com/ggml-org/llama.cpp) with GGUF models as alternatives.
 
 ## Architecture Notes
 
 ```text
-DGX Spark (Ubuntu 24.04, cgroup v2)
-  └── Docker (28.x, cgroupns=host)
+DGX Spark (Ubuntu 24.04, aarch64, cgroup v2, 128 GB unified memory)
+  └── Docker (28.x/29.x, cgroupns=host)
        └── OpenShell gateway container
             └── k3s (embedded)
                  └── nemoclaw sandbox pod
