@@ -102,6 +102,16 @@ repos:
         pass_filenames: true
         priority: 6
 
+  - repo: local
+    hooks:
+      - id: eslint-js
+        name: ESLint (JavaScript)
+        entry: npx eslint --fix
+        language: system
+        files: ^(bin|test|scripts|docs/_ext)/.*\.js$
+        pass_filenames: true
+        priority: 6
+
   # ── Priority 10: linters and validation ─────────────────────────────────────
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -184,6 +194,15 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+        stages: [pre-push]
+        priority: 10
+
+      - id: tsc-check-js
+        name: TypeScript type check (JavaScript)
+        entry: npx tsc -p jsconfig.json
+        language: system
+        pass_filenames: false
+        files: ^(bin|test|scripts)/.*\.js$
         stages: [pre-push]
         priority: 10
 

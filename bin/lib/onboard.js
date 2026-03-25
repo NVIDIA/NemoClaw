@@ -167,6 +167,7 @@ async function promptOrDefault(question, envVar, defaultValue) {
  * Strips ANSI codes and exact-matches the sandbox name in the first column.
  */
 function isSandboxReady(output, sandboxName) {
+  // eslint-disable-next-line no-control-regex
   const clean = output.replace(/\x1b\[[0-9;]*m/g, "");
   return clean.split("\n").some((l) => {
     const cols = l.trim().split(/\s+/);
@@ -199,15 +200,15 @@ function streamSandboxCreate(command, env = process.env) {
 
   function shouldShowLine(line) {
     return (
-      /^  Building image /.test(line) ||
-      /^  Context: /.test(line) ||
-      /^  Gateway: /.test(line) ||
+      /^ {2}Building image /.test(line) ||
+      /^ {2}Context: /.test(line) ||
+      /^ {2}Gateway: /.test(line) ||
       /^Successfully built /.test(line) ||
       /^Successfully tagged /.test(line) ||
-      /^  Built image /.test(line) ||
-      /^  Pushing image /.test(line) ||
+      /^ {2}Built image /.test(line) ||
+      /^ {2}Pushing image /.test(line) ||
       /^\s*\[progress\]/.test(line) ||
-      /^  Image .*available in the gateway/.test(line) ||
+      /^ {2}Image .*available in the gateway/.test(line) ||
       /^Created sandbox: /.test(line) ||
       /^✓ /.test(line)
     );
@@ -239,8 +240,10 @@ function streamSandboxCreate(command, env = process.env) {
       if (settled) return;
       settled = true;
       if (pending) flushLine(pending);
-      const detail = error && error.code
-        ? `spawn failed: ${error.message} (${error.code})`
+      // @ts-expect-error — Node ErrnoException has .code but TS types Error
+      const code = error && error.code;
+      const detail = code
+        ? `spawn failed: ${error.message} (${code})`
         : `spawn failed: ${error.message}`;
       lines.push(detail);
       resolve({ status: 1, output: lines.join("\n"), sawProgress: false });
@@ -332,7 +335,7 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
   }
 }
 
-function verifyInferenceRoute(provider, model) {
+function verifyInferenceRoute(_provider, _model) {
   const output = runCaptureOpenshell(["inference", "get"], { ignoreError: true });
   if (!output || /Gateway inference:\s*[\r\n]+\s*Not configured/i.test(output)) {
     console.error("  OpenShell inference route was not configured.");
@@ -352,10 +355,6 @@ function pruneStaleSandboxEntry(sandboxName) {
     registry.removeSandbox(sandboxName);
   }
   return liveExists;
-}
-
-function pythonLiteralJson(value) {
-  return JSON.stringify(JSON.stringify(value));
 }
 
 function buildSandboxConfigSyncScript(selectionConfig) {
@@ -384,8 +383,8 @@ function encodeDockerJsonArg(value) {
 }
 
 function getSandboxInferenceConfig(model, provider = null, preferredInferenceApi = null) {
-  let providerKey = "inference";
-  let primaryModelRef = model;
+  let providerKey;
+  let primaryModelRef;
   let inferenceBaseUrl = "https://inference.local/v1";
   let inferenceApi = preferredInferenceApi || "openai-completions";
   let inferenceCompat = null;
@@ -482,7 +481,7 @@ function summarizeProbeError(body, status) {
       parsed?.detail ||
       parsed?.details;
     if (message) return `HTTP ${status}: ${String(message)}`;
-  } catch {}
+  } catch { /* non-JSON body — fall through to raw text */ }
   const compact = String(body).replace(/\s+/g, " ").trim();
   return `HTTP ${status}: ${compact.slice(0, 200)}`;
 }
@@ -628,23 +627,6 @@ async function validateOpenAiLikeSelection(
       process.exit(1);
     }
     console.log(`  ${retryMessage}`);
-    console.log("");
-    return null;
-  }
-  console.log(`  ${probe.label} available — OpenClaw will use ${probe.api}.`);
-  return probe.api;
-}
-
-async function validateAnthropicSelection(label, endpointUrl, model, credentialEnv) {
-  const apiKey = getCredential(credentialEnv);
-  const probe = probeAnthropicEndpoint(endpointUrl, model, apiKey);
-  if (!probe.ok) {
-    console.error(`  ${label} endpoint validation failed.`);
-    console.error(`  ${probe.message}`);
-    if (isNonInteractive()) {
-      process.exit(1);
-    }
-    console.log("  Please choose a provider/model again.");
     console.log("");
     return null;
   }
@@ -1069,11 +1051,6 @@ function installOpenshell() {
   if (fs.existsSync(openshellPath) && futureShellPathHint) {
     process.env.PATH = `${localBin}${path.delimiter}${process.env.PATH}`;
   }
-  return {
-    installed: isOpenshellInstalled(),
-    localBin,
-    futureShellPathHint,
-  };
   OPENSHELL_BIN = resolveOpenshell();
   return {
     installed: OPENSHELL_BIN !== null,
@@ -1271,7 +1248,7 @@ async function preflight() {
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
-async function startGateway(gpu) {
+async function startGateway(_gpu) {
   step(3, 7, "Starting OpenShell gateway");
 
   // Destroy old gateway
@@ -1366,8 +1343,6 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null)
   }
 
   // Stage build context
-  const { mkdtempSync } = require("fs");
-  const os = require("os");
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
   const stagedDockerfile = path.join(buildCtx, "Dockerfile");
   fs.copyFileSync(path.join(ROOT, "Dockerfile"), stagedDockerfile);

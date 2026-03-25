@@ -11,16 +11,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildSandboxConfigSyncScript,
   getFutureShellPathHint,
-  createSandbox,
-  getSandboxInferenceConfig,
-  getFutureShellPathHint,
-  createSandbox,
-  getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
+  getSandboxInferenceConfig,
   getStableGatewayImageRef,
   patchStagedDockerfile,
-  pruneStaleSandboxEntry,
-  runCaptureOpenshell,
   writeSandboxConfigSyncFile,
 } from "../bin/lib/onboard";
 
