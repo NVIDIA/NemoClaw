@@ -27,9 +27,14 @@ const isSessionLockFailure = new Function(
 )();
 
 describe("isSessionLockFailure", () => {
-  it("detects exit code 255 as a lock failure when stderr mentions lock", () => {
-    const result = { response: "some output", exitCode: 255, stderr: "lock timeout" };
+  it("detects exit code 255 as a lock failure when stderr mentions session lock", () => {
+    const result = { response: "some output", exitCode: 255, stderr: "session lock timeout" };
     expect(isSessionLockFailure(result)).toBe(true);
+  });
+
+  it("does not flag exit code 255 with bare 'lock' unrelated to session", () => {
+    const result = { response: "some output", exitCode: 255, stderr: "lock timeout on resource" };
+    expect(isSessionLockFailure(result)).toBe(false);
   });
 
   it("does not flag exit code 255 alone without lock indicators", () => {
