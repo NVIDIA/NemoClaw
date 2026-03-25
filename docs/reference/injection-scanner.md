@@ -110,18 +110,18 @@ if (findings.length > 0) {
 
 True if any finding in the array has `"high"` severity.
 
-### `maxSeverity(findings: Finding[]): Severity | ""`
+### `maxSeverity(findings: Finding[]): Severity | null`
 
-The highest severity level present in the findings array, or an empty string if the array is empty.
+The highest severity level present in the findings array, or `null` if the array is empty.
 
 ### `Finding`
 
 ```typescript
 interface Finding {
-  field: string;    // which field triggered the match
-  pattern: string;  // pattern name (e.g. "role_override_you_are")
-  severity: Severity;
-  snippet: string;  // truncated match context (max 200 chars)
+  readonly field: string;    // which field triggered the match
+  readonly pattern: string;  // pattern name (e.g. "role_override_you_are")
+  readonly severity: Severity;
+  readonly snippet: string;  // truncated match context (max 200 chars)
 }
 ```
 

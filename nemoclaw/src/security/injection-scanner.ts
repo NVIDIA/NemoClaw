@@ -11,6 +11,9 @@
  *  - Tool manipulation
  *  - Data exfiltration markers
  *
+ * Two additional synthetic pattern names (`scanner_error`, `input_too_large`)
+ * are used for error reporting and do not correspond to regex patterns.
+ *
  * Includes NFKC unicode normalization, zero-width character stripping,
  * and base64 decode-rescan to defeat common evasion techniques.
  */
@@ -248,13 +251,19 @@ function tryBase64Decode(s: string): string {
 
   // Validate base64 alphabet before decoding — Buffer.from is too lenient
   // and silently ignores non-base64 characters.
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(stripped)) {
+  // Accept both standard (+/) and URL-safe (-_) alphabets (RFC 4648 §5).
+  if (!/^[A-Za-z0-9+/\-_]*={0,2}$/.test(stripped)) {
     return "";
   }
 
   let decoded: Buffer;
   try {
-    decoded = Buffer.from(stripped, "base64");
+    // If the string contains URL-safe characters, try base64url first
+    if (stripped.includes("-") || stripped.includes("_")) {
+      decoded = Buffer.from(stripped, "base64url");
+    } else {
+      decoded = Buffer.from(stripped, "base64");
+    }
   } catch {
     return "";
   }
