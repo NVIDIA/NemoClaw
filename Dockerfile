@@ -149,4 +149,4 @@ RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash
 # Entrypoint runs as root to start the gateway as the gateway user,
 # then drops to sandbox for agent commands. See nemoclaw-start.sh.
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
-CMD []
+CMD ["/bin/bash"]
