@@ -103,7 +103,12 @@ PYTOKEN
 start_auto_pair() {
   # Run auto-pair as sandbox user (it talks to the gateway via CLI)
   # SECURITY: Pass resolved openclaw path to prevent PATH hijacking
-  OPENCLAW_BIN="$OPENCLAW" nohup gosu sandbox python3 - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
+  # When running as non-root, skip gosu (we're already the sandbox user)
+  local run_prefix=()
+  if [ "$(id -u)" -eq 0 ]; then
+    run_prefix=(gosu sandbox)
+  fi
+  OPENCLAW_BIN="$OPENCLAW" nohup "${run_prefix[@]}" python3 - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
 import json
 import os
 import subprocess
@@ -169,6 +174,35 @@ PYAUTOPAIR
 
 echo 'Setting up NemoClaw...'
 [ -f .env ] && chmod 600 .env
+
+# ── Non-root fallback ──────────────────────────────────────────
+# OpenShell runs containers with --security-opt=no-new-privileges, which
+# blocks gosu's setuid syscall. When we're not root, skip privilege
+# separation and run everything as the current user (sandbox).
+# Gateway process isolation is not available in this mode.
+if [ "$(id -u)" -ne 0 ]; then
+  echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled"
+  export HOME=/sandbox
+  if ! verify_config_integrity; then
+    echo "[SECURITY WARNING] Config integrity check failed — proceeding anyway (non-root mode)"
+  fi
+  write_auth_profile
+
+  if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
+    exec "${NEMOCLAW_CMD[@]}"
+  fi
+
+  # Start gateway in background, auto-pair, then wait
+  "$OPENCLAW" gateway run &
+  GATEWAY_PID=$!
+  echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)"
+  start_auto_pair
+  print_dashboard_urls
+  wait "$GATEWAY_PID"
+  exit $?
+fi
+
+# ── Root path (full privilege separation via gosu) ─────────────
 
 # Verify config integrity before starting anything
 verify_config_integrity
