@@ -118,6 +118,17 @@ function getOpenClawPrimaryModel(provider, model) {
   return resolvedModel ? `${MANAGED_PROVIDER_ID}/${resolvedModel}` : null;
 }
 
+function parseGatewayInference(output) {
+  if (!output || /Not configured/i.test(output)) return null;
+  const provider = output.match(/Provider:\s*(.+)/);
+  const model = output.match(/Model:\s*(.+)/);
+  if (!provider && !model) return null;
+  return {
+    provider: provider ? provider[1].trim() : null,
+    model: model ? model[1].trim() : null,
+  };
+}
+
 module.exports = {
   CLOUD_MODEL_OPTIONS,
   DEFAULT_CLOUD_MODEL,
@@ -128,4 +139,5 @@ module.exports = {
   MANAGED_PROVIDER_ID,
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
+  parseGatewayInference,
 };
