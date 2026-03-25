@@ -8,24 +8,26 @@
 #
 # Regression test for issues #21, #22, #140, #152, #397.
 #
-# Key insight: running onboard without NVIDIA_API_KEY in non-interactive
-# mode causes process.exit(1) at step 4, but steps 1-3 (preflight,
-# gateway, sandbox) complete first — naturally simulating an unclean exit.
+# Key insight: we need a deterministic late failure after sandbox creation
+# so each run leaves behind stale gateway/sandbox state to recover from on
+# the next onboard attempt.
 #
 # Prerequisites:
 #   - Docker running
 #   - openshell CLI installed
 #   - nemoclaw CLI installed
-#   - NVIDIA_API_KEY must NOT be set
+#   - Either:
+#     - local Ollama available on localhost:11434, or
+#     - NVIDIA_API_KEY set to a valid nvapi-* key
 #
 # Usage:
-#   unset NVIDIA_API_KEY
 #   bash test/e2e/test-double-onboard.sh
 
 set -uo pipefail
 
 PASS=0
 FAIL=0
+SKIP=0
 TOTAL=0
 
 pass() {
@@ -38,6 +40,11 @@ fail() {
   ((TOTAL++))
   printf '\033[31m  FAIL: %s\033[0m\n' "$1"
 }
+skip() {
+  ((SKIP++))
+  ((TOTAL++))
+  printf '\033[33m  SKIP: %s\033[0m\n' "$1"
+}
 section() {
   echo ""
   printf '\033[1;36m=== %s ===\033[0m\n' "$1"
@@ -47,6 +54,8 @@ info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 SANDBOX_A="e2e-double-a"
 SANDBOX_B="e2e-double-b"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
+ONBOARD_PROVIDER=""
+FAILURE_REASON=""
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 0: Pre-cleanup
@@ -93,31 +102,38 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_API_KEY:-}" ]; then
-  fail "NVIDIA_API_KEY is set — this test requires it UNSET (unset NVIDIA_API_KEY)"
-  exit 1
+if command -v ollama >/dev/null 2>&1 && curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+  ONBOARD_PROVIDER="ollama"
+  FAILURE_REASON="unsupported policy mode after sandbox creation"
+  pass "Local Ollama available for late-failure stale-state setup"
+elif [[ -n "${NVIDIA_API_KEY:-}" && "${NVIDIA_API_KEY}" == nvapi-* ]]; then
+  ONBOARD_PROVIDER="build"
+  FAILURE_REASON="unsupported policy mode after sandbox creation"
+  pass "NVIDIA_API_KEY available for late-failure stale-state setup"
 else
-  pass "NVIDIA_API_KEY is not set (required for controlled step-4 exit)"
+  skip "Skipping: requires local Ollama or NVIDIA_API_KEY to reach sandbox creation before the intentional failure"
+  exit 0
 fi
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 2: First onboard (e2e-double-a) — leaves stale state
 # ══════════════════════════════════════════════════════════════════
 section "Phase 2: First onboard ($SANDBOX_A)"
-info "Running nemoclaw onboard — expect exit 1 (no API key)..."
+info "Running nemoclaw onboard — expect exit 1 (${FAILURE_REASON})..."
 
 # Write to temp file to avoid openshell FD inheritance blocking $()
 ONBOARD_LOG="$(mktemp)"
 NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_PROVIDER="$ONBOARD_PROVIDER" \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_A" \
-  NEMOCLAW_POLICY_MODE=skip \
+  NEMOCLAW_POLICY_MODE=invalid \
   nemoclaw onboard --non-interactive >"$ONBOARD_LOG" 2>&1
 exit1=$?
 output1="$(cat "$ONBOARD_LOG")"
 rm -f "$ONBOARD_LOG"
 
 if [ $exit1 -eq 1 ]; then
-  pass "First onboard exited 1 (step 4 failed as expected)"
+  pass "First onboard exited 1 (intentional late failure)"
 else
   fail "First onboard exited $exit1 (expected 1)"
 fi
@@ -157,16 +173,16 @@ info "Running nemoclaw onboard again with the same sandbox name..."
 
 ONBOARD_LOG="$(mktemp)"
 NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_PROVIDER="$ONBOARD_PROVIDER" \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_A" \
-  NEMOCLAW_POLICY_MODE=skip \
+  NEMOCLAW_POLICY_MODE=invalid \
   nemoclaw onboard --non-interactive >"$ONBOARD_LOG" 2>&1
 exit2=$?
 output2="$(cat "$ONBOARD_LOG")"
 rm -f "$ONBOARD_LOG"
 
-# Step 4 still fails (no API key), but steps 1-3 should succeed
 if [ $exit2 -eq 1 ]; then
-  pass "Second onboard exited 1 (step 4 failed as expected)"
+  pass "Second onboard exited 1 (intentional late failure)"
 else
   fail "Second onboard exited $exit2 (expected 1)"
 fi
@@ -221,15 +237,16 @@ info "Running nemoclaw onboard with new sandbox name..."
 
 ONBOARD_LOG="$(mktemp)"
 NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_PROVIDER="$ONBOARD_PROVIDER" \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_B" \
-  NEMOCLAW_POLICY_MODE=skip \
+  NEMOCLAW_POLICY_MODE=invalid \
   nemoclaw onboard --non-interactive >"$ONBOARD_LOG" 2>&1
 exit3=$?
 output3="$(cat "$ONBOARD_LOG")"
 rm -f "$ONBOARD_LOG"
 
 if [ $exit3 -eq 1 ]; then
-  pass "Third onboard exited 1 (step 4 failed as expected)"
+  pass "Third onboard exited 1 (intentional late failure)"
 else
   fail "Third onboard exited $exit3 (expected 1)"
 fi
@@ -304,6 +321,7 @@ echo "========================================"
 echo "  Double Onboard E2E Results:"
 echo "    Passed:  $PASS"
 echo "    Failed:  $FAIL"
+echo "    Skipped: $SKIP"
 echo "    Total:   $TOTAL"
 echo "========================================"
 

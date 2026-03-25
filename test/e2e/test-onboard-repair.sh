@@ -112,18 +112,23 @@ else
   exit 1
 fi
 
+node -e '
+const { saveCredential } = require(process.argv[1]);
+saveCredential("NVIDIA_API_KEY", process.argv[2]);
+' "$REPO/bin/lib/credentials.js" "$RESTORE_API_KEY"
+pass "Stored NVIDIA_API_KEY in ~/.nemoclaw/credentials.json for resume hydration"
+
 # ══════════════════════════════════════════════════════════════════
 # Phase 2: Create interrupted resumable state
 # ══════════════════════════════════════════════════════════════════
 section "Phase 2: Create interrupted state"
-info "Running onboard without NVIDIA_API_KEY to create resumable state..."
+info "Running onboard with an invalid policy mode to create resumable state..."
 
 FIRST_LOG="$(mktemp)"
-env -u NVIDIA_API_KEY \
-  NEMOCLAW_NON_INTERACTIVE=1 \
+NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_RECREATE_SANDBOX=1 \
-  NEMOCLAW_POLICY_MODE=skip \
+  NEMOCLAW_POLICY_MODE=invalid \
   node "$REPO/bin/nemoclaw.js" onboard --non-interactive >"$FIRST_LOG" 2>&1
 first_exit=$?
 first_output="$(cat "$FIRST_LOG")"
@@ -141,6 +146,12 @@ if [ -f "$SESSION_FILE" ]; then
   pass "Onboard session file created"
 else
   fail "Onboard session file missing after interrupted run"
+fi
+
+if echo "$first_output" | grep -q "Unsupported NEMOCLAW_POLICY_MODE: invalid"; then
+  pass "First run failed at policy setup as intended"
+else
+  fail "First run did not fail at the expected policy step"
 fi
 
 if openshell sandbox get "$SANDBOX_NAME" >/dev/null 2>&1; then
@@ -165,7 +176,7 @@ else
 fi
 
 REPAIR_LOG="$(mktemp)"
-NVIDIA_API_KEY="$RESTORE_API_KEY" \
+env -u NVIDIA_API_KEY \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_POLICY_MODE=skip \
@@ -200,7 +211,7 @@ else
   fail "Repair resume did not report missing sandbox recreation"
 fi
 
-if echo "$repair_output" | grep -q "\[3/7\] Creating sandbox"; then
+if echo "$repair_output" | grep -q "\[5/7\] Creating sandbox"; then
   pass "Repair resume recreated sandbox"
 else
   fail "Repair resume did not rerun sandbox creation"
@@ -219,7 +230,7 @@ section "Phase 4: Reject conflicting sandbox"
 info "Attempting resume with a different sandbox name..."
 
 SANDBOX_CONFLICT_LOG="$(mktemp)"
-NVIDIA_API_KEY="$RESTORE_API_KEY" \
+env -u NVIDIA_API_KEY \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_SANDBOX_NAME="$OTHER_SANDBOX_NAME" \
   NEMOCLAW_POLICY_MODE=skip \
@@ -247,7 +258,7 @@ section "Phase 5: Reject conflicting provider and model"
 info "Attempting resume with conflicting provider/model inputs..."
 
 PROVIDER_CONFLICT_LOG="$(mktemp)"
-NVIDIA_API_KEY="$RESTORE_API_KEY" \
+env -u NVIDIA_API_KEY \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_PROVIDER=cloud \

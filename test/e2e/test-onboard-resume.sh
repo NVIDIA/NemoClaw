@@ -6,10 +6,10 @@
 #
 # Regression test for issue #446.
 # Validates that:
-#   1. A non-interactive onboard run without NVIDIA_API_KEY stops after sandbox creation.
+#   1. A non-interactive onboard run can fail after sandbox creation while leaving resumable state.
 #   2. The onboard session file records the interrupted state safely.
 #   3. `nemoclaw onboard --resume --non-interactive` skips cached preflight,
-#      gateway, and sandbox work, then completes once NVIDIA_API_KEY is restored.
+#      gateway, and sandbox work, then completes by hydrating the stored credential.
 #
 # Prerequisites:
 #   - Docker running
@@ -133,18 +133,23 @@ else
   exit 1
 fi
 
+node -e '
+const { saveCredential } = require(process.argv[1]);
+saveCredential("NVIDIA_API_KEY", process.argv[2]);
+' "$REPO/bin/lib/credentials.js" "$RESTORE_API_KEY"
+pass "Stored NVIDIA_API_KEY in ~/.nemoclaw/credentials.json for resume hydration"
+
 # ══════════════════════════════════════════════════════════════════
-# Phase 2: First onboard (forced failure at provider selection)
+# Phase 2: First onboard (forced failure after sandbox creation)
 # ══════════════════════════════════════════════════════════════════
 section "Phase 2: First onboard (interrupted)"
-info "Running onboard without NVIDIA_API_KEY to create resumable state..."
+info "Running onboard with an invalid policy mode to create resumable state..."
 
 FIRST_LOG="$(mktemp)"
-env -u NVIDIA_API_KEY \
-  NEMOCLAW_NON_INTERACTIVE=1 \
+NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_RECREATE_SANDBOX=1 \
-  NEMOCLAW_POLICY_MODE=skip \
+  NEMOCLAW_POLICY_MODE=invalid \
   node "$REPO/bin/nemoclaw.js" onboard --non-interactive >"$FIRST_LOG" 2>&1
 first_exit=$?
 first_output="$(cat "$FIRST_LOG")"
@@ -164,10 +169,10 @@ else
   fail "Sandbox creation not confirmed in first run output"
 fi
 
-if echo "$first_output" | grep -q "NVIDIA_API_KEY is required for cloud provider in non-interactive mode."; then
-  pass "First run failed at provider selection as intended"
+if echo "$first_output" | grep -q "Unsupported NEMOCLAW_POLICY_MODE: invalid"; then
+  pass "First run failed at policy setup as intended"
 else
-  fail "First run did not fail at the expected provider-selection step"
+  fail "First run did not fail at the expected policy step"
 fi
 
 if openshell sandbox get "$SANDBOX_NAME" >/dev/null 2>&1; then
@@ -187,11 +192,11 @@ const fs = require("fs");
 const file = process.argv[1];
 const data = JSON.parse(fs.readFileSync(file, "utf8"));
 if (data.status !== "failed") process.exit(1);
-if (data.lastCompletedStep !== "sandbox") process.exit(2);
-if (!data.failure || data.failure.step !== "provider_selection") process.exit(3);
+if (data.lastCompletedStep !== "openclaw") process.exit(2);
+if (!data.failure || data.failure.step !== "policies") process.exit(3);
 ' "$SESSION_FILE"
 case $? in
-  0) pass "Session file recorded sandbox completion and provider-selection failure" ;;
+  0) pass "Session file recorded openclaw completion and policy failure" ;;
   *) fail "Session file did not record the expected interrupted state" ;;
 esac
 
@@ -199,10 +204,10 @@ esac
 # Phase 3: Resume and complete
 # ══════════════════════════════════════════════════════════════════
 section "Phase 3: Resume"
-info "Running onboard --resume with NVIDIA_API_KEY restored..."
+info "Running onboard --resume with NVIDIA_API_KEY removed from env..."
 
 RESUME_LOG="$(mktemp)"
-NVIDIA_API_KEY="$RESTORE_API_KEY" \
+env -u NVIDIA_API_KEY \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_POLICY_MODE=skip \
@@ -255,7 +260,7 @@ else
   pass "Resume did not rerun sandbox creation"
 fi
 
-if echo "$resume_output" | grep -q "\[5/7\] Setting up inference provider"; then
+if echo "$resume_output" | grep -q "\[4/7\] Setting up inference provider"; then
   pass "Resume continued with inference setup"
 else
   fail "Resume did not continue with inference setup"
@@ -272,7 +277,7 @@ const fs = require("fs");
 const file = process.argv[1];
 const data = JSON.parse(fs.readFileSync(file, "utf8"));
 if (data.status !== "complete") process.exit(1);
-if (data.provider !== "nvidia-nim") process.exit(2);
+if (data.provider !== "nvidia-prod") process.exit(2);
 if (data.steps.preflight.status !== "complete") process.exit(3);
 if (data.steps.gateway.status !== "complete") process.exit(4);
 if (data.steps.sandbox.status !== "complete") process.exit(5);
