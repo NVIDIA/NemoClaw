@@ -1,0 +1,212 @@
+# NemoClaw — prek hook configuration
+# prek: https://github.com/j178/prek — single binary, no Python required for the runner
+# Installed as an npm devDependency (@j178/prek) — available after `npm install`.
+# All git hooks (pre-commit, commit-msg, pre-push) are managed by prek via this file only.
+# The "prepare" script in package.json runs `prek install` (writes `.git/hooks/*`).
+# If you previously used Husky, run: git config --unset core.hooksPath
+# then `npm install` again so Git uses the hooks prek installs.
+#
+# Usage:
+#   npx prek install
+#   npx prek run --all-files
+#
+# CI / diff-only runs:
+#   npx prek run --from-ref <base> --to-ref HEAD
+#
+# Priority groups (prek runs same-priority hooks in parallel):
+#   0  — General file fixers (whitespace, EOF, line endings)
+#   4  — SPDX header insertion (--fix)
+#   5  — Shell / TS formatters (shfmt, prettier)
+#   6  — Fixes that should follow formatters (ruff check --fix, eslint --fix)
+#  10  — Linters and read-only checks
+#  20  — Project-level checks (vitest)
+
+exclude: ^(nemoclaw/dist/|nemoclaw/node_modules/|docs/_build/|\.venv/|uv\.lock$)
+
+# Which git hook shims `prek install` writes (separate from each hook's `stages:`).
+# https://prek.j178.dev/configuration/#default_install_hook_types
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+  - pre-push
+
+repos:
+  # ── Priority 0: general file fixers ───────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        priority: 0
+      - id: end-of-file-fixer
+        priority: 0
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+        priority: 0
+
+  # ── Priority 0: reject force-added ignored files ───────────────────────────
+  # Catches `git add -f` of files that .gitignore would normally block.
+  # Single source of truth stays in .gitignore — no duplicate list here.
+  - repo: local
+    hooks:
+      - id: no-force-added-ignored
+        name: Reject force-added ignored files
+        entry: bash -c 'IGNORED=$(git ls-files --ignored --exclude-standard --cached -- "$@") && if [ -n "$IGNORED" ]; then echo "Force-added files that .gitignore would block:" && echo "$IGNORED" && exit 1; fi' --
+        language: system
+        always_run: true
+        pass_filenames: false
+        priority: 0
+
+  # ── Priority 4: SPDX headers (insert if missing; runs before language formatters) ──
+  - repo: local
+    hooks:
+      - id: spdx-headers
+        name: SPDX license headers (insert if missing)
+        entry: bash scripts/check-spdx-headers.sh --fix
+        language: system
+        files: ^(nemoclaw/src/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
+        exclude: ^nemoclaw-blueprint/.*__init__\.py$
+        pass_filenames: true
+        priority: 4
+
+  # ── Priority 5: formatters ────────────────────────────────────────────────
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.12.0-2
+    hooks:
+      - id: shfmt
+        args:
+          - -w
+          - -i
+          - "2"
+          - -ci
+          - -bn
+        priority: 5
+
+  - repo: local
+    hooks:
+      - id: nemoclaw-prettier
+        name: Prettier (nemoclaw TypeScript)
+        entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root/nemoclaw" && files=() && for f in "$@"; do files+=("${f#nemoclaw/}"); done && npx prettier --write "${files[@]}"' --
+        language: system
+        files: ^nemoclaw/.*\.ts$
+        pass_filenames: true
+        priority: 5
+
+  # ── Priority 6: auto-fix after formatting ─────────────────────────────────
+  - repo: local
+    hooks:
+      - id: nemoclaw-eslint
+        name: ESLint (nemoclaw TypeScript)
+        entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root/nemoclaw" && files=() && for f in "$@"; do files+=("${f#nemoclaw/}"); done && npx eslint --fix "${files[@]}"' --
+        language: system
+        files: ^nemoclaw/.*\.ts$
+        pass_filenames: true
+        priority: 6
+
+  - repo: local
+    hooks:
+      - id: eslint-js
+        name: ESLint (JavaScript)
+        entry: npx eslint --fix
+        language: system
+        files: ^(bin|test|scripts|docs/_ext)/.*\.js$
+        pass_filenames: true
+        priority: 6
+
+  # ── Priority 10: linters and validation ─────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+        priority: 10
+      - id: check-added-large-files
+        args: ["--maxkb=2000"]
+        priority: 10
+      - id: check-case-conflict
+        priority: 10
+      - id: check-yaml
+        priority: 10
+      - id: check-toml
+        priority: 10
+      - id: check-json
+        priority: 10
+      - id: detect-private-key
+        priority: 10
+      - id: check-executables-have-shebangs
+        priority: 10
+      - id: check-shebang-scripts-are-executable
+        priority: 10
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        priority: 10
+
+  - repo: local
+    hooks:
+      - id: hadolint
+        name: hadolint
+        entry: hadolint
+        language: system
+        files: (Dockerfile[^/]*|.*\.dockerfile)$
+        types: [file]
+        priority: 10
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+        name: gitleaks (secret scan)
+        priority: 10
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.22.0
+    hooks:
+      - id: markdownlint-cli2
+        priority: 10
+
+  # ── Priority 20: project-level checks (pre-commit) ─────────────────────────
+  - repo: local
+    hooks:
+      - id: vitest-plugin
+        name: Vitest (plugin project)
+        entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root" && exec ./node_modules/.bin/vitest run --project plugin'
+        language: system
+        pass_filenames: false
+        files: ^nemoclaw/
+        priority: 20
+
+  # ── commit-msg hooks ────────────────────────────────────────────────────────
+  - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
+    rev: v9.24.0
+    hooks:
+      - id: commitlint
+        stages: [commit-msg]
+        additional_dependencies: ["@commitlint/config-conventional@20"]
+        priority: 10
+
+  # ── pre-push hooks ─────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: tsc-check
+        name: TypeScript type check (tsc --noEmit)
+        entry: bash -c 'cd nemoclaw && npx tsc --noEmit --incremental'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+        priority: 10
+
+      - id: tsc-check-js
+        name: TypeScript type check (JavaScript)
+        entry: npx tsc -p jsconfig.json
+        language: system
+        pass_filenames: false
+        files: ^(bin|test|scripts)/.*\.js$
+        stages: [pre-push]
+        priority: 10
+
+default_language_version:
+  python: python3
+
+fail_fast: false

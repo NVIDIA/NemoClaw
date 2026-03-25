@@ -1,0 +1,101 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Step 1 of 2: Build docs on the PR and upload as an artifact.
+# Step 2 (deploy) runs in docs-preview-deploy.yaml via workflow_run,
+# which has write access to gh-pages regardless of PR origin.
+
+name: Docs PR Preview
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, closed]
+    paths:
+      - "docs/**"
+      - "README.md"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs-preview-pr.yaml"
+      - ".github/workflows/docs-preview-deploy.yaml"
+
+concurrency:
+  group: preview-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install doc dependencies
+        run: uv sync --group docs
+
+      - name: Build documentation
+        run: uv run --group docs sphinx-build -W -b html docs docs/_build/html
+
+      - name: Clean build artifacts
+        run: |
+          find docs/_build -name .doctrees -prune -exec rm -rf {} \;
+          find docs/_build -name .buildinfo -exec rm {} \;
+          touch docs/_build/html/.nojekyll
+
+      - name: Upload preview artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: docs-preview
+          path: docs/_build/html/
+          retention-days: 3
+
+      - name: Save PR metadata
+        run: |
+          echo "${{ github.event.pull_request.number }}" > pr-number.txt
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+            echo "true" > same-repo.txt
+          else
+            echo "false" > same-repo.txt
+          fi
+
+      - name: Upload PR metadata
+        uses: actions/upload-artifact@v7
+        with:
+          name: docs-preview-metadata
+          path: |
+            pr-number.txt
+            same-repo.txt
+          retention-days: 3
+
+  # On PR close, trigger the deploy workflow to clean up the preview.
+  close:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Save PR metadata
+        run: |
+          echo "${{ github.event.pull_request.number }}" > pr-number.txt
+          echo "closed" > pr-action.txt
+
+      - name: Upload PR metadata
+        uses: actions/upload-artifact@v7
+        with:
+          name: docs-preview-metadata
+          path: |
+            pr-number.txt
+            pr-action.txt
+          retention-days: 3

@@ -32,13 +32,7 @@ Use the NemoClaw status, logs, and TUI tools together to inspect sandbox health,
 Run the status command to view the sandbox state, blueprint run information, and active inference configuration:
 
 ```console
-$ openclaw nemoclaw status
-```
-
-For machine-readable output, add the `--json` flag:
-
-```console
-$ openclaw nemoclaw status --json
+$ nemoclaw <name> status
 ```
 
 Key fields in the output include the following:
@@ -47,30 +41,20 @@ Key fields in the output include the following:
 - Blueprint run ID, which is the identifier for the most recent blueprint execution.
 - Inference provider, which shows the active provider, model, and endpoint.
 
+Run `nemoclaw <name> status` on the host to check sandbox state. Use `openshell sandbox list` for the underlying sandbox details.
+
 ## View Blueprint and Sandbox Logs
 
 Stream the most recent log output from the blueprint runner and sandbox:
 
 ```console
-$ openclaw nemoclaw logs
+$ nemoclaw <name> logs
 ```
 
 To follow the log output in real time:
 
 ```console
-$ openclaw nemoclaw logs -f
-```
-
-To display a specific number of log lines:
-
-```console
-$ openclaw nemoclaw logs -n 100
-```
-
-To view logs for a specific blueprint run instead of the most recent one:
-
-```console
-$ openclaw nemoclaw logs --run-id <id>
+$ nemoclaw <name> logs -f
 ```
 
 ## Monitor Network Activity in the TUI
@@ -102,23 +86,13 @@ $ openclaw agent --agent main --local -m "Test inference" --session-id debug
 
 If the request fails, check the following:
 
-1. Run `openclaw nemoclaw status` to confirm the active provider and endpoint.
-2. Run `openclaw nemoclaw logs -f` to view error messages from the blueprint runner.
+1. Run `nemoclaw <name> status` to confirm the active provider and endpoint.
+2. Run `nemoclaw <name> logs -f` to view error messages from the blueprint runner.
 3. Verify that the inference endpoint is reachable from the host.
-
-## Common Issues
-
-The following table lists common problems and their resolution steps:
-
-| Symptom | Resolution |
-|---|---|
-| Sandbox shows as stopped | Run `nemoclaw onboard` to recreate the sandbox. |
-| Inference requests time out | Verify the provider endpoint is reachable. Check `openclaw nemoclaw status` for the active endpoint. |
-| Agent cannot reach an external host | Open the TUI with `openshell term` and approve the blocked request, or add the endpoint to the policy. |
-| Blueprint run failed | Run `openclaw nemoclaw logs --run-id <id>` to view the error output for the failed run. |
 
 ## Related Topics
 
+- [Troubleshooting](../reference/troubleshooting.md) for common issues and resolution steps.
 - [Commands](../reference/commands.md) for the full CLI reference.
 - [Approve or Deny Agent Network Requests](../network-policy/approve-network-requests.md) for the operator approval flow.
 - [Switch Inference Providers](../inference/switch-inference-providers.md) to change the active provider.

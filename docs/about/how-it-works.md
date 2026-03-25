@@ -2,7 +2,7 @@
 title:
   page: "How NemoClaw Works — Plugin, Blueprint, and Sandbox Lifecycle"
   nav: "How It Works"
-description: "Plugin, blueprint, sandbox creation, and inference routing concepts."
+description: "Learn how NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox."
 keywords: ["how nemoclaw works", "nemoclaw sandbox lifecycle blueprint"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "inference_routing", "blueprints", "network_policy"]
@@ -21,7 +21,7 @@ status: published
 # How NemoClaw Works
 
 NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox.
-This page explains the key concepts at a high level.
+This page explains the key concepts about NemoClaw at a high level.
 
 ## How It Fits Together
 
@@ -44,7 +44,7 @@ flowchart TB
     subgraph Sandbox["OpenShell Sandbox"]
         AGENT[OpenClaw agent]
         INF[NVIDIA inference, routed]
-        NET[strict network policy]
+        NET[default network policy]
         FS[filesystem isolation]
 
         AGENT --- INF
@@ -75,7 +75,7 @@ Thin plugin, versioned blueprint
 : The plugin stays small and stable. Orchestration logic lives in the blueprint and evolves on its own release cadence.
 
 Respect CLI boundaries
-: The `nemoclaw` CLI is the primary interface. Plugin commands are available under `openclaw nemoclaw` but do not override built-in OpenClaw commands.
+: The `nemoclaw` CLI is the primary interface for sandbox management.
 
 Supply chain safety
 : Blueprint artifacts are immutable, versioned, and digest-verified before execution.
@@ -91,7 +91,7 @@ Reproducible setup
 
 NemoClaw is split into two parts:
 
-- The *plugin* is a TypeScript package that powers the `nemoclaw` CLI and also registers commands under `openclaw nemoclaw`.
+- The *plugin* is a TypeScript package that registers an inference provider and the `/nemoclaw` slash command inside the sandbox.
   It handles user interaction and delegates orchestration work to the blueprint.
 - The *blueprint* is a versioned Python artifact that contains all the logic for creating sandboxes, applying policies, and configuring inference.
   The plugin resolves, verifies, and executes the blueprint as a subprocess.
@@ -113,11 +113,12 @@ After the sandbox starts, the agent runs inside it with all network, filesystem,
 
 Inference requests from the agent never leave the sandbox directly.
 OpenShell intercepts every inference call and routes it to the configured provider.
-NemoClaw routes inference to NVIDIA cloud, specifically Nemotron 3 Super 120B through [build.nvidia.com](https://build.nvidia.com). You can switch models at runtime without restarting the sandbox.
+During onboarding, NemoClaw validates the selected provider and model, configures the OpenShell route, and bakes the matching model reference into the sandbox image.
+The sandbox then talks to `inference.local`, while the host owns the actual provider credential and upstream endpoint.
 
 ## Network and Filesystem Policy
 
-The sandbox starts with a strict baseline policy defined in `openclaw-sandbox.yaml`.
+The sandbox starts with a default policy defined in `openclaw-sandbox.yaml`.
 This policy controls which network endpoints the agent can reach and which filesystem paths it can access.
 
 - For network, only endpoints listed in the policy are allowed.

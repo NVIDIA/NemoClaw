@@ -1,107 +1,116 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
+import { describe, expect, it } from "vitest";
 
-const { isCgroupV2, readDaemonJson, checkCgroupConfig } = require("../bin/lib/preflight");
+import { checkPortAvailable } from "../bin/lib/preflight";
 
-// Helper: create a temp daemon.json with given content and return its path.
-function writeTempDaemon(content) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preflight-"));
-  const p = path.join(dir, "daemon.json");
-  fs.writeFileSync(p, content, "utf-8");
-  return p;
-}
+describe("checkPortAvailable", () => {
+  it("falls through to the probe when lsof output is empty", async () => {
+    let probedPort = null;
+    const result = await checkPortAvailable(18789, {
+      lsofOutput: "",
+      probeImpl: async (port) => {
+        probedPort = port;
+        return { ok: true };
+      },
+    });
 
-describe("isCgroupV2", () => {
-  it("returns a boolean", () => {
-    assert.equal(typeof isCgroupV2(), "boolean");
+    expect(probedPort).toBe(18789);
+    expect(result).toEqual({ ok: true });
   });
 
-  it("returns false on non-linux platforms", () => {
-    // On Linux this still returns a boolean (true or false depending on
-    // actual cgroup version). On macOS/other it always returns false.
-    // Either way the function must not throw.
-    const result = isCgroupV2();
-    if (process.platform !== "linux") {
-      assert.equal(result, false);
-    }
-  });
-});
+  it("probe catches occupied port even when lsof returns empty", async () => {
+    const result = await checkPortAvailable(18789, {
+      lsofOutput: "",
+      probeImpl: async () => ({
+        ok: false,
+        process: "unknown",
+        pid: null,
+        reason: "port 18789 is in use (EADDRINUSE)",
+      }),
+    });
 
-describe("readDaemonJson", () => {
-  it("parses valid JSON", () => {
-    const p = writeTempDaemon('{ "default-cgroupns-mode": "host" }');
-    const result = readDaemonJson(p);
-    assert.deepEqual(result, { "default-cgroupns-mode": "host" });
+    expect(result.ok).toBe(false);
+    expect(result.process).toBe("unknown");
+    expect(result.reason).toContain("EADDRINUSE");
   });
 
-  it("returns null for invalid JSON", () => {
-    const p = writeTempDaemon("not json at all");
-    assert.equal(readDaemonJson(p), null);
+  it("parses process and PID from lsof output", async () => {
+    const lsofOutput = [
+      "COMMAND     PID   USER   FD   TYPE DEVICE SIZE/OFF NODE NAME",
+      "openclaw  12345   root    7u  IPv4  54321      0t0  TCP *:18789 (LISTEN)",
+    ].join("\n");
+    const result = await checkPortAvailable(18789, { lsofOutput });
+
+    expect(result.ok).toBe(false);
+    expect(result.process).toBe("openclaw");
+    expect(result.pid).toBe(12345);
+    expect(result.reason).toContain("openclaw");
   });
 
-  it("returns null for missing file", () => {
-    assert.equal(readDaemonJson("/tmp/nonexistent-daemon-" + Date.now() + ".json"), null);
-  });
-});
+  it("picks first listener when lsof shows multiple", async () => {
+    const lsofOutput = [
+      "COMMAND     PID   USER   FD   TYPE DEVICE SIZE/OFF NODE NAME",
+      "gateway   111   root    7u  IPv4  54321      0t0  TCP *:18789 (LISTEN)",
+      "node      222   root    8u  IPv4  54322      0t0  TCP *:18789 (LISTEN)",
+    ].join("\n");
+    const result = await checkPortAvailable(18789, { lsofOutput });
 
-describe("checkCgroupConfig", () => {
-  it("runs without arguments (uses live detection)", () => {
-    const result = checkCgroupConfig();
-    assert.equal(typeof result.ok, "boolean");
-  });
-
-  it("returns ok when cgroup v1 (skips daemon.json check)", () => {
-    const result = checkCgroupConfig({ cgroupV2: false });
-    assert.deepEqual(result, { ok: true });
+    expect(result.ok).toBe(false);
+    expect(result.process).toBe("gateway");
+    expect(result.pid).toBe(111);
   });
 
-  it("returns ok when cgroup v2 and daemon.json has cgroupns=host", () => {
-    const p = writeTempDaemon('{ "default-cgroupns-mode": "host" }');
-    const result = checkCgroupConfig({ cgroupV2: true, daemonPath: p });
-    assert.deepEqual(result, { ok: true });
+  it("returns ok for a free port probe", async () => {
+    const result = await checkPortAvailable(8080, {
+      skipLsof: true,
+      probeImpl: async () => ({ ok: true }),
+    });
+
+    expect(result).toEqual({ ok: true });
   });
 
-  it("fails when cgroup v2 and daemon.json missing", () => {
-    const p = "/tmp/nonexistent-daemon-" + Date.now() + ".json";
-    const result = checkCgroupConfig({ cgroupV2: true, daemonPath: p });
-    assert.equal(result.ok, false);
-    assert.ok(result.reason.includes("does not exist"));
+  it("returns occupied for EADDRINUSE probe results", async () => {
+    const result = await checkPortAvailable(8080, {
+      skipLsof: true,
+      probeImpl: async () => ({
+        ok: false,
+        process: "unknown",
+        pid: null,
+        reason: "port 8080 is in use (EADDRINUSE)",
+      }),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.process).toBe("unknown");
+    expect(result.reason).toContain("EADDRINUSE");
   });
 
-  it("fails when cgroup v2 and daemon.json has no cgroupns key", () => {
-    const p = writeTempDaemon('{ "storage-driver": "overlay2" }');
-    const result = checkCgroupConfig({ cgroupV2: true, daemonPath: p });
-    assert.equal(result.ok, false);
-    assert.ok(result.reason.includes("not set to"));
+  it("treats restricted probe environments as inconclusive instead of occupied", async () => {
+    const result = await checkPortAvailable(8080, {
+      skipLsof: true,
+      probeImpl: async () => ({
+        ok: true,
+        warning: "port probe skipped: listen EPERM: operation not permitted 127.0.0.1",
+      }),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.warning).toContain("EPERM");
   });
 
-  it("fails when cgroup v2 and cgroupns mode is wrong value", () => {
-    const p = writeTempDaemon('{ "default-cgroupns-mode": "private" }');
-    const result = checkCgroupConfig({ cgroupV2: true, daemonPath: p });
-    assert.equal(result.ok, false);
-    assert.ok(result.reason.includes("not set to"));
-  });
+  it("defaults to port 18789 when no port is given", async () => {
+    let probedPort = null;
+    const result = await checkPortAvailable(undefined, {
+      skipLsof: true,
+      probeImpl: async (port) => {
+        probedPort = port;
+        return { ok: true };
+      },
+    });
 
-  it("fails when cgroup v2 and daemon.json is invalid JSON", () => {
-    const p = writeTempDaemon("oops");
-    const result = checkCgroupConfig({ cgroupV2: true, daemonPath: p });
-    assert.equal(result.ok, false);
-    assert.ok(result.reason.includes("not valid JSON"));
-  });
-
-  it("passes with extra keys alongside cgroupns=host", () => {
-    const p = writeTempDaemon(JSON.stringify({
-      "storage-driver": "overlay2",
-      "default-cgroupns-mode": "host",
-      "log-driver": "json-file",
-    }));
-    const result = checkCgroupConfig({ cgroupV2: true, daemonPath: p });
-    assert.deepEqual(result, { ok: true });
+    expect(probedPort).toBe(18789);
+    expect(result.ok).toBe(true);
   });
 });

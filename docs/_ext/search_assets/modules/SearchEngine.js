@@ -23,15 +23,11 @@ class SearchEngine {
      * Initialize the search engine with documents
      */
     async initialize(documents) {
-        try {
-            await this.loadLunr();
-            this.documents = documents;
-            this.collectMetadata();
-            this.buildIndex();
-            this.isInitialized = true;
-        } catch (error) {
-            throw error;
-        }
+        await this.loadLunr();
+        this.documents = documents;
+        this.collectMetadata();
+        this.buildIndex();
+        this.isInitialized = true;
     }
 
     /**
@@ -236,7 +232,7 @@ class SearchEngine {
                         section_path: self.arrayToString(doc.section_path),
                         author: doc.author || ''
                     });
-                } catch (docError) {
+                } catch (_docError) {
                     // Skip documents that fail to index
                 }
             }, this);
@@ -288,7 +284,7 @@ class SearchEngine {
 
             return groupedResults.slice(0, maxResults);
 
-        } catch (error) {
+        } catch (_error) {
             return [];
         }
     }
