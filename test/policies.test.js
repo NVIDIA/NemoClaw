@@ -5,7 +5,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import { describe, it, expect } from "vitest";
-import path from "node:path";
 import policies from "../bin/lib/policies";
 
 describe("policies", () => {

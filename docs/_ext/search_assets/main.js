@@ -1,3 +1,4 @@
+/* global Utils, DocumentLoader, SearchEngine, SearchPageManager */
 /**
  * Enhanced Search Main Entry Point
  * Loads search engine and page manager for enhanced search page
@@ -6,6 +7,7 @@
 
 // Prevent multiple initializations
 if (typeof window.EnhancedSearch !== 'undefined') {
+    // already initialized
 } else {
 
 // Import modules (will be loaded dynamically)
@@ -52,7 +54,7 @@ class EnhancedSearch {
             }
 
             this.isLoaded = true;
-        } catch (error) {
+        } catch (_error) {
             this.fallbackToDefaultSearch();
         }
     }
@@ -88,7 +90,7 @@ class EnhancedSearch {
             try {
                 await this.loadModule(path);
                 return;
-            } catch (error) {
+            } catch (_error) {
                 // Continue to next path
             }
         }
@@ -156,7 +158,7 @@ class EnhancedSearch {
         return this.searchEngine.search(query);
     }
 
-    renderResults(results, query) {
+    renderResults(_results, _query) {
         // Use SearchPageManager for search page rendering
         return '';
     }

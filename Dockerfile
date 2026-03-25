@@ -22,8 +22,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iproute2=6.1.0-3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create sandbox user (matches OpenShell convention)
-RUN groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
+# gosu for privilege separation (gateway vs sandbox user).
+# Install from GitHub release with checksum verification instead of
+# Debian bookworm's ancient 1.14 (2020). Pinned to 1.19 (2025-09).
+# hadolint ignore=DL4006
+RUN curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/gosu-amd64" \
+    && echo "52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0  /usr/local/bin/gosu" | sha256sum -c - \
+    && chmod +x /usr/local/bin/gosu \
+    && gosu --version
+
+# Create sandbox user (matches OpenShell convention) and gateway user.
+# The gateway runs as 'gateway' so the 'sandbox' user (agent) cannot
+# kill it or restart it with a tampered HOME/config.
+RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
+    && groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
     && mkdir -p /sandbox/.nemoclaw \
     && chown -R sandbox:sandbox /sandbox
 
@@ -55,7 +67,7 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
     && ln -s /sandbox/.openclaw-data/update-check.json /sandbox/.openclaw/update-check.json \
     && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
 
-# Install OpenClaw CLI and PyYAML for blueprint runner (single layer)
+# Install OpenClaw CLI + PyYAML for inline Python scripts in e2e tests
 RUN npm install -g openclaw@2026.3.11 \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
 
@@ -159,12 +171,26 @@ RUN openclaw doctor --fix > /dev/null 2>&1 || true \
 # The Landlock policy (/sandbox/.openclaw in read_only) provides defense-in-depth
 # once OpenShell enables enforcement.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/514
+# Lock the entire .openclaw directory tree.
+# SECURITY: chmod 755 (not 1777) — the sandbox user can READ but not WRITE
+# to this directory. This prevents the agent from replacing symlinks
+# (e.g., pointing /sandbox/.openclaw/hooks to an attacker-controlled path).
+# The writable state lives in .openclaw-data, reached via the symlinks.
+# hadolint ignore=DL3002
 USER root
 RUN chown root:root /sandbox/.openclaw \
     && find /sandbox/.openclaw -mindepth 1 -maxdepth 1 -exec chown -h root:root {} + \
-    && chmod 1777 /sandbox/.openclaw \
+    && chmod 755 /sandbox/.openclaw \
     && chmod 444 /sandbox/.openclaw/openclaw.json
-USER sandbox
 
-ENTRYPOINT ["/bin/bash"]
+# Pin config hash at build time so the entrypoint can verify integrity.
+# Prevents the agent from creating a copy with a tampered config and
+# restarting the gateway pointing at it.
+RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
+    && chmod 444 /sandbox/.openclaw/.config-hash \
+    && chown root:root /sandbox/.openclaw/.config-hash
+
+# Entrypoint runs as root to start the gateway as the gateway user,
+# then drops to sandbox for agent commands. See nemoclaw-start.sh.
+ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
 CMD []
