@@ -136,41 +136,44 @@ export interface NemoClawConfig {
 function activeModelEntries(
   onboardCfg: ReturnType<typeof loadOnboardConfig>,
 ): ModelProviderEntry[] {
-  if (!onboardCfg?.model) {
+  // Use the configured model if it exists and is non-empty, otherwise use defaults
+  const configuredModel = onboardCfg?.model;
+  if (configuredModel && configuredModel.trim().length > 0) {
     return [
       {
-        id: "nvidia/nemotron-3-super-120b-a12b",
-        label: "Nemotron 3 Super 120B (March 2026)",
+        id: `inference/${configuredModel}`,
+        label: configuredModel,
         contextWindow: 131072,
         maxOutput: 8192,
-      },
-      {
-        id: "nvidia/llama-3.1-nemotron-ultra-253b-v1",
-        label: "Nemotron Ultra 253B",
-        contextWindow: 131072,
-        maxOutput: 4096,
-      },
-      {
-        id: "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-        label: "Nemotron Super 49B v1.5",
-        contextWindow: 131072,
-        maxOutput: 4096,
-      },
-      {
-        id: "nvidia/nemotron-3-nano-30b-a3b",
-        label: "Nemotron 3 Nano 30B",
-        contextWindow: 131072,
-        maxOutput: 4096,
       },
     ];
   }
 
+  // Default models when no config or model is set
   return [
     {
-      id: `inference/${onboardCfg.model}`,
-      label: onboardCfg.model,
+      id: "inference/nvidia/nemotron-3-super-120b-a12b",
+      label: "Nemotron 3 Super 120B (March 2026)",
       contextWindow: 131072,
       maxOutput: 8192,
+    },
+    {
+      id: "inference/nvidia/llama-3.1-nemotron-ultra-253b-v1",
+      label: "Nemotron Ultra 253B",
+      contextWindow: 131072,
+      maxOutput: 4096,
+    },
+    {
+      id: "inference/nvidia/llama-3.3-nemotron-super-49b-v1.5",
+      label: "Nemotron Super 49B v1.5",
+      contextWindow: 131072,
+      maxOutput: 4096,
+    },
+    {
+      id: "inference/nvidia/nemotron-3-nano-30b-a3b",
+      label: "Nemotron 3 Nano 30B",
+      contextWindow: 131072,
+      maxOutput: 4096,
     },
   ];
 }
