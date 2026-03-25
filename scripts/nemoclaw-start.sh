@@ -16,8 +16,8 @@
 set -euo pipefail
 
 # Harden: limit process count to prevent fork bombs (ref: #809)
-ulimit -Hu 512 2>/dev/null || true
-ulimit -Su 512 2>/dev/null || true
+ulimit -Hu 512 || { echo "[SECURITY] Failed to set hard nproc limit" >&2; exit 1; }
+ulimit -Su 512 || { echo "[SECURITY] Failed to set soft nproc limit" >&2; exit 1; }
 
 # SECURITY: Lock down PATH so the agent cannot inject malicious binaries
 # into commands executed by the entrypoint or auto-pair watcher.
