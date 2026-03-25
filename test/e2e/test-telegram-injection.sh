@@ -89,7 +89,7 @@ send_message_to_sandbox() {
 
   local ssh_config
   ssh_config="$(mktemp)"
-  openshell sandbox ssh-config "$SANDBOX_NAME" > "$ssh_config" 2>/dev/null
+  openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null
 
   # Use the same mechanism as the bridge: pass message as an argument
   # via SSH. The key security property is that the message must NOT be
@@ -113,7 +113,7 @@ sandbox_exec() {
   local cmd="$1"
   local ssh_config
   ssh_config="$(mktemp)"
-  openshell sandbox ssh-config "$SANDBOX_NAME" > "$ssh_config" 2>/dev/null
+  openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null
 
   local result
   result=$(timeout 60 ssh -F "$ssh_config" \
@@ -181,7 +181,7 @@ sandbox_exec "rm -f /tmp/injection-proof-t1" >/dev/null 2>&1
 # Use printf %q to safely pass the payload through SSH without local expansion
 # This simulates what shellQuote does in the bridge
 ssh_config_t1="$(mktemp)"
-openshell sandbox ssh-config "$SANDBOX_NAME" > "$ssh_config_t1" 2>/dev/null
+openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config_t1" 2>/dev/null
 
 # The critical test: pass a payload that would create a file if command
 # substitution is executed. Use stdin to pass the message (like the fixed bridge).
@@ -191,7 +191,7 @@ timeout 30 ssh -F "$ssh_config_t1" \
   -o LogLevel=ERROR \
   "openshell-${SANDBOX_NAME}" \
   'MSG=$(cat) && echo "Received: $MSG"' \
-  <<< "$PAYLOAD" >/dev/null 2>&1 || true
+  <<<"$PAYLOAD" >/dev/null 2>&1 || true
 rm -f "$ssh_config_t1"
 
 # Check if the injection file was created
@@ -207,7 +207,7 @@ info "T2: Testing backtick injection..."
 sandbox_exec "rm -f /tmp/injection-proof-t2" >/dev/null 2>&1
 
 ssh_config_t2="$(mktemp)"
-openshell sandbox ssh-config "$SANDBOX_NAME" > "$ssh_config_t2" 2>/dev/null
+openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config_t2" 2>/dev/null
 PAYLOAD_BT='`touch /tmp/injection-proof-t2`'
 
 timeout 30 ssh -F "$ssh_config_t2" \
@@ -216,7 +216,7 @@ timeout 30 ssh -F "$ssh_config_t2" \
   -o LogLevel=ERROR \
   "openshell-${SANDBOX_NAME}" \
   'MSG=$(cat) && echo "Received: $MSG"' \
-  <<< "$PAYLOAD_BT" >/dev/null 2>&1 || true
+  <<<"$PAYLOAD_BT" >/dev/null 2>&1 || true
 rm -f "$ssh_config_t2"
 
 injection_check_t2=$(sandbox_exec "test -f /tmp/injection-proof-t2 && echo EXPLOITED || echo SAFE")
@@ -236,7 +236,7 @@ info "T3: Testing single-quote breakout..."
 sandbox_exec "rm -f /tmp/injection-proof-t3" >/dev/null 2>&1
 
 ssh_config_t3="$(mktemp)"
-openshell sandbox ssh-config "$SANDBOX_NAME" > "$ssh_config_t3" 2>/dev/null
+openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config_t3" 2>/dev/null
 PAYLOAD_QUOTE="'; touch /tmp/injection-proof-t3; echo '"
 
 timeout 30 ssh -F "$ssh_config_t3" \
@@ -245,7 +245,7 @@ timeout 30 ssh -F "$ssh_config_t3" \
   -o LogLevel=ERROR \
   "openshell-${SANDBOX_NAME}" \
   'MSG=$(cat) && echo "Received: $MSG"' \
-  <<< "$PAYLOAD_QUOTE" >/dev/null 2>&1 || true
+  <<<"$PAYLOAD_QUOTE" >/dev/null 2>&1 || true
 rm -f "$ssh_config_t3"
 
 injection_check_t3=$(sandbox_exec "test -f /tmp/injection-proof-t3 && echo EXPLOITED || echo SAFE")
@@ -264,7 +264,7 @@ section "Phase 3: Parameter Expansion"
 info "T4: Testing \${NVIDIA_API_KEY} expansion..."
 
 ssh_config_t4="$(mktemp)"
-openshell sandbox ssh-config "$SANDBOX_NAME" > "$ssh_config_t4" 2>/dev/null
+openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config_t4" 2>/dev/null
 PAYLOAD_ENV='${NVIDIA_API_KEY}'
 
 t4_result=$(timeout 30 ssh -F "$ssh_config_t4" \
@@ -273,7 +273,7 @@ t4_result=$(timeout 30 ssh -F "$ssh_config_t4" \
   -o LogLevel=ERROR \
   "openshell-${SANDBOX_NAME}" \
   'MSG=$(cat) && echo "$MSG"' \
-  <<< "$PAYLOAD_ENV" 2>&1) || true
+  <<<"$PAYLOAD_ENV" 2>&1) || true
 rm -f "$ssh_config_t4"
 
 # The result should contain the literal string ${NVIDIA_API_KEY}, not a nvapi- value
@@ -401,7 +401,7 @@ section "Phase 6: Normal Message Regression"
 info "T8: Testing normal message passthrough..."
 
 ssh_config_t8="$(mktemp)"
-openshell sandbox ssh-config "$SANDBOX_NAME" > "$ssh_config_t8" 2>/dev/null
+openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config_t8" 2>/dev/null
 NORMAL_MSG="Hello, what is two plus two?"
 
 t8_result=$(timeout 30 ssh -F "$ssh_config_t8" \
@@ -410,7 +410,7 @@ t8_result=$(timeout 30 ssh -F "$ssh_config_t8" \
   -o LogLevel=ERROR \
   "openshell-${SANDBOX_NAME}" \
   'MSG=$(cat) && echo "Received: $MSG"' \
-  <<< "$NORMAL_MSG" 2>&1) || true
+  <<<"$NORMAL_MSG" 2>&1) || true
 rm -f "$ssh_config_t8"
 
 if echo "$t8_result" | grep -qF "Hello, what is two plus two?"; then
@@ -423,7 +423,7 @@ fi
 info "T8b: Testing message with safe special characters..."
 
 ssh_config_t8b="$(mktemp)"
-openshell sandbox ssh-config "$SANDBOX_NAME" > "$ssh_config_t8b" 2>/dev/null
+openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config_t8b" 2>/dev/null
 SPECIAL_MSG="What's the meaning of life? It costs \$5 & is 100% free!"
 
 t8b_result=$(timeout 30 ssh -F "$ssh_config_t8b" \
@@ -432,7 +432,7 @@ t8b_result=$(timeout 30 ssh -F "$ssh_config_t8b" \
   -o LogLevel=ERROR \
   "openshell-${SANDBOX_NAME}" \
   'MSG=$(cat) && echo "$MSG"' \
-  <<< "$SPECIAL_MSG" 2>&1) || true
+  <<<"$SPECIAL_MSG" 2>&1) || true
 rm -f "$ssh_config_t8b"
 
 # Check the message was received (may be slightly different due to shell, but

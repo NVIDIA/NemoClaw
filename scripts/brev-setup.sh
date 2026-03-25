@@ -120,7 +120,9 @@ fi
 
 # --- 4. vLLM (local inference, if GPU present) ---
 VLLM_MODEL="nvidia/nemotron-3-nano-30b-a3b"
-if command -v nvidia-smi >/dev/null 2>&1; then
+if [ "${SKIP_VLLM:-}" = "1" ]; then
+  info "Skipping vLLM install (SKIP_VLLM=1)"
+elif command -v nvidia-smi >/dev/null 2>&1; then
   if ! python3 -c "import vllm" 2>/dev/null; then
     info "Installing vLLM..."
     if ! command -v pip3 >/dev/null 2>&1; then

@@ -74,7 +74,7 @@ sandbox_exec() {
   local cmd="$1"
   local ssh_config
   ssh_config="$(mktemp)"
-  openshell sandbox ssh-config "$SANDBOX_NAME" > "$ssh_config" 2>/dev/null
+  openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null
 
   local result
   result=$(timeout 60 ssh -F "$ssh_config" \
@@ -147,7 +147,7 @@ MOCK_STATE="$MOCK_DIR/.openclaw"
 mkdir -p "$MOCK_STATE"
 
 # Create openclaw.json with credential fields
-cat > "$MOCK_STATE/openclaw.json" << JSONEOF
+cat >"$MOCK_STATE/openclaw.json" <<JSONEOF
 {
   "agents": {
     "defaults": {
@@ -172,7 +172,7 @@ JSONEOF
 # Create auth-profiles.json with credential data
 AUTH_DIR="$MOCK_STATE/agents/main/agent"
 mkdir -p "$AUTH_DIR"
-cat > "$AUTH_DIR/auth-profiles.json" << JSONEOF
+cat >"$AUTH_DIR/auth-profiles.json" <<JSONEOF
 {
   "nvidia:manual": {
     "type": "api_key",
@@ -198,7 +198,7 @@ JSONEOF
 
 # Create workspace with a normal file
 mkdir -p "$MOCK_STATE/workspace"
-echo "# My Project" > "$MOCK_STATE/workspace/project.md"
+echo "# My Project" >"$MOCK_STATE/workspace/project.md"
 
 # Copy to simulate bundle
 BUNDLE_DIR="$MOCK_DIR/bundle/openclaw"
@@ -429,7 +429,7 @@ BUNDLE_SYM_DIR="$SYMLINK_DIR/bundle/agents"
 mkdir -p "$OUTSIDE_DIR" "$BUNDLE_SYM_DIR"
 
 # Create a real file outside the bundle
-echo '{"shouldNotBeDeleted": true}' > "$OUTSIDE_DIR/auth-profiles.json"
+echo '{"shouldNotBeDeleted": true}' >"$OUTSIDE_DIR/auth-profiles.json"
 
 # Create a symlink inside the bundle pointing to the outside file
 ln -s "$OUTSIDE_DIR/auth-profiles.json" "$BUNDLE_SYM_DIR/auth-profiles.json"

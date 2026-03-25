@@ -138,8 +138,8 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
     );
 
     // Bootstrap VM
-    sshWithSecrets(`cd ${remoteDir} && bash scripts/brev-setup.sh`, { timeout: 900_000 });
-  }, 1_200_000); // 20 min — instance creation + bootstrap can be slow
+    sshWithSecrets(`cd ${remoteDir} && SKIP_VLLM=1 bash scripts/brev-setup.sh`, { timeout: 1_500_000 });
+  }, 1_800_000); // 30 min — instance creation + bootstrap can be slow on CPU boxes
 
   afterAll(() => {
     if (!instanceCreated) return;
