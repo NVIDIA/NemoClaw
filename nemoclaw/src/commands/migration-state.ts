@@ -784,12 +784,16 @@ export function restoreSnapshotToHost(
   }
 
   // SECURITY: Validate blueprint digest.
-  // v3+ snapshots MUST have a valid blueprintDigest — fail closed if missing/invalid.
-  // Legacy snapshots (version < 3) predate this field and skip verification.
-  if (manifest.version >= 3) {
+  // When a blueprintDigest is present in the manifest, it MUST be a non-empty
+  // string and MUST match the current blueprint — fail closed on mismatch,
+  // empty string, or null. Snapshots without a blueprintDigest (including all
+  // legacy v2 manifests and v3 snapshots created without a blueprint) skip
+  // verification.
+  if ("blueprintDigest" in manifest) {
     if (!manifest.blueprintDigest || typeof manifest.blueprintDigest !== "string") {
       logger.error(
-        "v3 snapshot manifest has missing or invalid blueprintDigest. Refusing to restore.",
+        "Snapshot manifest has empty or invalid blueprintDigest. Refusing to restore.",
+      );
       );
       return false;
     }
