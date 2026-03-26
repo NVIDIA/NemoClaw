@@ -109,16 +109,27 @@ fi
 # 1. Gateway — always start fresh to avoid stale state
 info "Starting OpenShell gateway..."
 openshell gateway destroy -g nemoclaw >/dev/null 2>&1 || true
+docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | grep . && docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | xargs docker volume rm || true
 GATEWAY_ARGS=(--name nemoclaw)
 command -v nvidia-smi >/dev/null 2>&1 && GATEWAY_ARGS+=(--gpu)
-openshell gateway start "${GATEWAY_ARGS[@]}" 2>&1 | grep -E "Gateway|✓|Error|error" || true
+if ! openshell gateway start "${GATEWAY_ARGS[@]}" 2>&1 | grep -E "Gateway|✓|Error|error"; then
+  warn "Gateway start failed. Cleaning up stale state..."
+  openshell gateway destroy -g nemoclaw >/dev/null 2>&1 || true
+  docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | grep . && docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | xargs docker volume rm || true
+  fail "Stale state removed. Please rerun: nemoclaw onboard"
+fi
 
 # Verify gateway is actually healthy (may need a moment after start)
 for i in 1 2 3 4 5; do
   if openshell status 2>&1 | grep -q "Connected"; then
     break
   fi
-  [ "$i" -eq 5 ] && fail "Gateway failed to start. Check 'openshell gateway info' and Docker logs."
+  if [ "$i" -eq 5 ]; then
+    warn "Gateway health check failed. Cleaning up stale state..."
+    openshell gateway destroy -g nemoclaw >/dev/null 2>&1 || true
+    docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | grep . && docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | xargs docker volume rm || true
+    fail "Stale state removed. Please rerun: nemoclaw onboard"
+  fi
   sleep 2
 done
 info "Gateway is healthy"
@@ -190,6 +201,7 @@ cp -r "$REPO_DIR/nemoclaw" "$BUILD_CTX/nemoclaw"
 cp -r "$REPO_DIR/nemoclaw-blueprint" "$BUILD_CTX/nemoclaw-blueprint"
 cp -r "$REPO_DIR/scripts" "$BUILD_CTX/scripts"
 rm -rf "$BUILD_CTX/nemoclaw/node_modules"
+bash "$BUILD_CTX/scripts/clean-staged-tree.sh" "$BUILD_CTX/nemoclaw-blueprint" 2>/dev/null || true
 
 # Capture full output to a temp file so we can filter for display but still
 # detect failures. The raw log is kept on failure for debugging.
