@@ -236,7 +236,6 @@ $ nemoclaw <name> status
 ```
 
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
-
 Then verify the credential and base URL for the provider you selected during onboarding.
 
 ### Agent cannot reach an external host
