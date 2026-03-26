@@ -2223,7 +2223,7 @@ async function setupPolicies(sandboxName) {
 // ── Dashboard ────────────────────────────────────────────────────
 
 const CONTROL_UI_PORT = 18789;
-const CONTROL_UI_CHAT_PATH = "/chat?session=main";
+const CONTROL_UI_PATH = "/";
 
 function findOpenclawJsonPath(dir) {
   if (!fs.existsSync(dir)) return null;
@@ -2269,19 +2269,9 @@ function fetchGatewayAuthTokenFromSandbox(sandboxName) {
   }
 }
 
-function buildControlUiChatUrls(token) {
+function buildControlUiUrl(token) {
   const hash = token ? `#token=${token}` : "";
-  const pathChat = `${CONTROL_UI_CHAT_PATH}${hash}`;
-  const bases = [
-    `http://127.0.0.1:${CONTROL_UI_PORT}`,
-    `http://localhost:${CONTROL_UI_PORT}`,
-  ];
-  const chatUi = (process.env.CHAT_UI_URL || "").trim().replace(/\/$/, "");
-  const urls = bases.map((b) => `${b}${pathChat}`);
-  if (chatUi && /^https?:\/\//i.test(chatUi) && !bases.includes(chatUi)) {
-    urls.push(`${chatUi}${pathChat}`);
-  }
-  return [...new Set(urls)];
+  return `http://127.0.0.1:${CONTROL_UI_PORT}${CONTROL_UI_PATH}${hash}`;
 }
 
 function printDashboard(sandboxName, model, provider, nimContainer = null) {
@@ -2307,16 +2297,13 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
   console.log(`  Model        ${model} (${providerLabel})`);
   console.log(`  NIM          ${nimLabel}`);
   console.log(`  ${"─".repeat(50)}`);
-  console.log(`  Next:`);
   if (token) {
-    note("  URLs below embed the gateway token — treat them like a password.");
-    console.log(`  Control UI:  copy one line into your browser (port ${CONTROL_UI_PORT} must be forwarded):`);
-    for (const u of buildControlUiChatUrls(token)) {
-      console.log(`    ${u}`);
-    }
+    console.log("  OpenClaw UI (tokenized URL; treat it like a password)");
+    console.log(`  ${buildControlUiUrl(token)}`);
   } else {
     note("  Could not read gateway token from the sandbox (download failed).");
-    console.log(`  Control UI:  http://127.0.0.1:${CONTROL_UI_PORT}${CONTROL_UI_CHAT_PATH}`);
+    console.log("  OpenClaw UI");
+    console.log(`  http://127.0.0.1:${CONTROL_UI_PORT}${CONTROL_UI_PATH}`);
     console.log(`  Token:       nemoclaw ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`);
     console.log(`               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`);
   }
