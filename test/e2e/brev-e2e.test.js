@@ -269,6 +269,15 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       console.log(`[${elapsed()}] Running brev-setup.sh (manual bootstrap)...`);
       sshWithSecrets(`cd ${remoteDir} && SKIP_VLLM=1 bash scripts/brev-setup.sh`, { timeout: 2_400_000, stream: true });
       console.log(`[${elapsed()}] Bootstrap complete`);
+
+      // Install nemoclaw CLI — brev-setup.sh creates the sandbox but doesn't
+      // install the host-side CLI that the test scripts need for `nemoclaw <name> status`
+      console.log(`[${elapsed()}] Installing nemoclaw CLI...`);
+      sshWithSecrets(
+        `cd ${remoteDir}/nemoclaw && npm install && npm run build && npm link 2>&1 | tail -3`,
+        { timeout: 120_000, stream: true },
+      );
+      console.log(`[${elapsed()}] nemoclaw CLI installed`);
     }
 
     console.log(`[${elapsed()}] beforeAll complete — total bootstrap time: ${elapsed()}`);
