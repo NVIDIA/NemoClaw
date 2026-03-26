@@ -214,8 +214,102 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Reconnecting to sandbox 'beta'")).toBeTruthy();
     const log = fs.readFileSync(markerFile, "utf8");
     expect(log).toContain("sandbox get beta");
+    expect(log).toContain("forward start --background 18789 beta");
     expect(log).toContain("sandbox connect beta");
   });
+
+  it("reconnect starts the named gateway when it is missing", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-reconnect-missing-gateway-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const markerFile = path.join(home, "reconnect-args");
+    const stateFile = path.join(home, "gateway-state");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(stateFile, "missing\n");
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        `state_file=${JSON.stringify(stateFile)}`,
+        "state=$(tr -d '\\n' < \"$state_file\")",
+        "printf '%s\\n' \"$*\" >> \"$marker_file\"",
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        "  if [ \"$state\" = \"healthy\" ]; then",
+        "    echo 'Sandbox: alpha'",
+        "    exit 0",
+        "  fi",
+        "  echo 'Error: transport error: Connection refused' >&2",
+        "  exit 1",
+        "fi",
+        "if [ \"$1\" = \"status\" ]; then",
+        "  if [ \"$state\" = \"healthy\" ]; then",
+        "    echo 'Server Status'",
+        "    echo",
+        "    echo '  Gateway: nemoclaw'",
+        "    echo '  Status: Connected'",
+        "    exit 0",
+        "  fi",
+        "  echo 'Gateway Status'",
+        "  echo",
+        "  echo '  Status: No gateway configured.'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"info\" ] && [ \"$3\" = \"-g\" ] && [ \"$4\" = \"nemoclaw\" ]; then",
+        "  if [ \"$state\" = \"healthy\" ]; then",
+        "    echo 'Gateway Info'",
+        "    echo",
+        "    echo '  Gateway: nemoclaw'",
+        "    exit 0",
+        "  fi",
+        "  exit 1",
+        "fi",
+        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"select\" ] && [ \"$3\" = \"nemoclaw\" ]; then",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"start\" ] && [ \"$3\" = \"--name\" ] && [ \"$4\" = \"nemoclaw\" ]; then",
+        "  printf 'healthy\\n' > \"$state_file\"",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"forward\" ] || [ \"$1\" = \"sandbox\" ]; then",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const r = runWithEnv("reconnect alpha", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    }, 25000);
+
+    expect(r.code).toBe(0);
+    expect(r.out.includes("Reconnecting to sandbox 'alpha'")).toBeTruthy();
+    const log = fs.readFileSync(markerFile, "utf8");
+    expect(log).toContain("gateway select nemoclaw");
+    expect(log).toContain("gateway start --name nemoclaw");
+    expect(log).toContain("sandbox get alpha");
+    expect(log).toContain("forward start --background 18789 alpha");
+    expect(log).toContain("sandbox connect alpha");
+  }, 25000);
 
   it("passes --follow through to openshell logs", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-follow-"));
