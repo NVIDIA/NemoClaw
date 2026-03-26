@@ -2493,7 +2493,6 @@ async function setupPolicies(sandboxName) {
 // ── Dashboard ────────────────────────────────────────────────────
 
 const CONTROL_UI_PORT = 18789;
-const CONTROL_UI_CHAT_PATH = "/chat?session=main";
 
 function findOpenclawJsonPath(dir) {
   if (!fs.existsSync(dir)) return null;
@@ -2541,15 +2540,11 @@ function fetchGatewayAuthTokenFromSandbox(sandboxName) {
 
 function buildControlUiChatUrls(token) {
   const hash = token ? `#token=${token}` : "";
-  const pathChat = `${CONTROL_UI_CHAT_PATH}${hash}`;
-  const bases = [
-    `http://127.0.0.1:${CONTROL_UI_PORT}`,
-    `http://localhost:${CONTROL_UI_PORT}`,
-  ];
+  const baseUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`;
   const chatUi = (process.env.CHAT_UI_URL || "").trim().replace(/\/$/, "");
-  const urls = bases.map((b) => `${b}${pathChat}`);
-  if (chatUi && /^https?:\/\//i.test(chatUi) && !bases.includes(chatUi)) {
-    urls.push(`${chatUi}${pathChat}`);
+  const urls = [`${baseUrl}/${hash}`.replace("/#token=", "#token=")];
+  if (chatUi && /^https?:\/\//i.test(chatUi) && chatUi !== baseUrl) {
+    urls.push(`${chatUi}/${hash}`.replace("/#token=", "#token="));
   }
   return [...new Set(urls)];
 }
@@ -2577,22 +2572,22 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
   console.log(`  Model        ${model} (${providerLabel})`);
   console.log(`  NIM          ${nimLabel}`);
   console.log(`  ${"─".repeat(50)}`);
-  console.log(`  Next:`);
-  if (token) {
-    note("  URLs below embed the gateway token — treat them like a password.");
-    console.log(`  Control UI:  copy one line into your browser (port ${CONTROL_UI_PORT} must be forwarded):`);
-    for (const u of buildControlUiChatUrls(token)) {
-      console.log(`    ${u}`);
-    }
-  } else {
-    note("  Could not read gateway token from the sandbox (download failed).");
-    console.log(`  Control UI:  http://127.0.0.1:${CONTROL_UI_PORT}${CONTROL_UI_CHAT_PATH}`);
-    console.log(`  Token:       nemoclaw ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`);
-    console.log(`               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`);
-  }
   console.log(`  Run:         nemoclaw ${sandboxName} connect`);
   console.log(`  Status:      nemoclaw ${sandboxName} status`);
   console.log(`  Logs:        nemoclaw ${sandboxName} logs --follow`);
+  console.log("");
+  console.log("  OpenClaw UI: (Tokenized URL. Treat it like a password)");
+  console.log(`  Port ${CONTROL_UI_PORT} must be forwarded.`);
+  if (token) {
+    for (const u of buildControlUiChatUrls(token)) {
+      console.log(`  ${u}`);
+    }
+  } else {
+    note("  Could not read gateway token from the sandbox (download failed).");
+    console.log(`  http://127.0.0.1:${CONTROL_UI_PORT}`);
+    console.log(`  Token:       nemoclaw ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`);
+    console.log(`               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`);
+  }
   console.log(`  ${"─".repeat(50)}`);
   console.log("");
 }
