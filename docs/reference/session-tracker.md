@@ -1,6 +1,6 @@
 ---
 title:
-  page: "Session Tracker — Behavioral Trifecta Detection"
+  page: "Session Tracker — Detect Multi-Step Exfiltration Attacks"
   nav: "Session Tracker"
 description: "Reference for the behavioral session tracker that detects multi-step exfiltration attacks by tracking three capability classes per agent session."
 keywords: ["nemoclaw session tracker", "trifecta detection", "behavioral tracking", "exfiltration detection"]
