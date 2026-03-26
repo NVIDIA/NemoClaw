@@ -159,9 +159,12 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out.includes("Reconnecting to sandbox 'alpha'")).toBeTruthy();
     const log = fs.readFileSync(markerFile, "utf8");
-    expect(log).toContain("sandbox get alpha");
-    expect(log).toContain("forward start --background 18789 alpha");
-    expect(log).toContain("sandbox connect alpha");
+    const iGet = log.indexOf("sandbox get alpha");
+    const iForward = log.indexOf("forward start --background 18789 alpha");
+    const iConnect = log.indexOf("sandbox connect alpha");
+    expect(iGet).toBeGreaterThanOrEqual(0);
+    expect(iForward).toBeGreaterThan(iGet);
+    expect(iConnect).toBeGreaterThan(iForward);
   });
 
   it("reconnect accepts an explicit sandbox name", () => {
@@ -175,6 +178,13 @@ describe("CLI dispatch", () => {
       path.join(registryDir, "sandboxes.json"),
       JSON.stringify({
         sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
           beta: {
             name: "beta",
             model: "test-model",
@@ -183,7 +193,7 @@ describe("CLI dispatch", () => {
             policies: [],
           },
         },
-        defaultSandbox: "beta",
+        defaultSandbox: "alpha",
       }),
       { mode: 0o600 }
     );
@@ -213,9 +223,12 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out.includes("Reconnecting to sandbox 'beta'")).toBeTruthy();
     const log = fs.readFileSync(markerFile, "utf8");
-    expect(log).toContain("sandbox get beta");
-    expect(log).toContain("forward start --background 18789 beta");
-    expect(log).toContain("sandbox connect beta");
+    const iGet = log.indexOf("sandbox get beta");
+    const iForward = log.indexOf("forward start --background 18789 beta");
+    const iConnect = log.indexOf("sandbox connect beta");
+    expect(iGet).toBeGreaterThanOrEqual(0);
+    expect(iForward).toBeGreaterThan(iGet);
+    expect(iConnect).toBeGreaterThan(iForward);
   });
 
   it("reconnect starts the named gateway when it is missing", () => {
@@ -304,11 +317,16 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out.includes("Reconnecting to sandbox 'alpha'")).toBeTruthy();
     const log = fs.readFileSync(markerFile, "utf8");
-    expect(log).toContain("gateway select nemoclaw");
-    expect(log).toContain("gateway start --name nemoclaw");
-    expect(log).toContain("sandbox get alpha");
-    expect(log).toContain("forward start --background 18789 alpha");
-    expect(log).toContain("sandbox connect alpha");
+    const iSelect = log.indexOf("gateway select nemoclaw");
+    const iStart = log.indexOf("gateway start --name nemoclaw");
+    const iGet = log.lastIndexOf("sandbox get alpha");
+    const iForward = log.indexOf("forward start --background 18789 alpha");
+    const iConnect = log.indexOf("sandbox connect alpha");
+    expect(iSelect).toBeGreaterThanOrEqual(0);
+    expect(iStart).toBeGreaterThan(iSelect);
+    expect(iGet).toBeGreaterThan(iStart);
+    expect(iForward).toBeGreaterThan(iGet);
+    expect(iConnect).toBeGreaterThan(iForward);
   }, 25000);
 
   it("passes --follow through to openshell logs", () => {
