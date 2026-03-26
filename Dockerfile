@@ -176,7 +176,11 @@ RUN openclaw doctor --fix > /dev/null 2>&1 || true \
 # The writable state lives in .openclaw-data, reached via the symlinks.
 # hadolint ignore=DL3002
 USER root
-RUN chown root:root /sandbox/.openclaw \
+RUN mkdir -p /sandbox/.openclaw-data/telegram \
+    && chown -R sandbox:sandbox /sandbox/.openclaw-data/telegram \
+    && rm -rf /sandbox/.openclaw/telegram \
+    && ln -sfn /sandbox/.openclaw-data/telegram /sandbox/.openclaw/telegram \
+    && chown root:root /sandbox/.openclaw \
     && rm -rf /root/.npm /sandbox/.npm \
     && find /sandbox/.openclaw -mindepth 1 -maxdepth 1 -exec chown -h root:root {} + \
     && chmod 755 /sandbox/.openclaw \
