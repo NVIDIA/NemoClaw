@@ -185,21 +185,11 @@ function hasStaleGateway(gwInfoOutput) {
   return typeof gwInfoOutput === "string" && gwInfoOutput.length > 0 && gwInfoOutput.includes(GATEWAY_NAME);
 }
 
+const ANSI_ESCAPE = String.fromCharCode(27);
+const ANSI_REGEX = new RegExp(`${ANSI_ESCAPE}\\[[0-9;]*[A-Za-z]`, "g");
+
 function stripAnsi(value = "") {
-  let cleaned = "";
-  for (let i = 0; i < value.length; i += 1) {
-    if (value.charCodeAt(i) === 27 && value[i + 1] === "[") {
-      i += 2;
-      while (i < value.length && /[0-9;]/.test(value[i])) {
-        i += 1;
-      }
-      if (value[i] === "m") {
-        continue;
-      }
-    }
-    cleaned += value[i] || "";
-  }
-  return cleaned;
+  return value.replace(ANSI_REGEX, "");
 }
 
 function getActiveGatewayName(statusOutput = "") {
