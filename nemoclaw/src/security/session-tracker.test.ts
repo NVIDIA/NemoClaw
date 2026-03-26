@@ -185,6 +185,11 @@ describe("getExposure", () => {
     expect(exposure).toBeNull();
   });
 
+  it("returns null for empty session ID", () => {
+    const exposure = store.getExposure("");
+    expect(exposure).toBeNull();
+  });
+
   it("categorizes events into exposure fields", () => {
     store.record("s1", Capability.ReadSensitive, "cat", "/etc/passwd");
     store.record("s1", Capability.IngestedUntrusted, "fetch", "https://untrusted.com/payload");

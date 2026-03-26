@@ -205,6 +205,9 @@ export class SessionStore {
    * independently significant.
    */
   getExposure(sessionId: string): SessionExposure | null {
+    if (!sessionId) {
+      return null;
+    }
     const sess = this.sessions.get(sessionId);
     if (!sess) {
       return null;
