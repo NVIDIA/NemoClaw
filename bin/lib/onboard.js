@@ -1868,6 +1868,9 @@ async function setupNim(gpu) {
           }
           // NIM uses vLLM internally — same tool-call-parser limitation
           // applies to /v1/responses. Force chat completions.
+          if (preferredInferenceApi !== "openai-completions") {
+            console.log("  ℹ Using chat completions API (tool-call-parser requires /v1/chat/completions)");
+          }
           preferredInferenceApi = "openai-completions";
         }
       }
@@ -1988,6 +1991,9 @@ async function setupNim(gpu) {
       // Force chat completions — vLLM's /v1/responses endpoint does not
       // run the --tool-call-parser, so tool calls arrive as raw text.
       // See: https://github.com/NVIDIA/NemoClaw/issues/976
+      if (preferredInferenceApi !== "openai-completions") {
+        console.log("  ℹ Using chat completions API (tool-call-parser requires /v1/chat/completions)");
+      }
       preferredInferenceApi = "openai-completions";
       break;
     }
