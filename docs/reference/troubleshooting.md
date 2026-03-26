@@ -235,7 +235,9 @@ Check the active provider and endpoint:
 $ nemoclaw <name> status
 ```
 
-If the endpoint is correct but requests still fail, check for network policy rules that may block the connection, and verify that your NVIDIA API key is valid.
+If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
+
+Then verify the credential and base URL for the provider you selected during onboarding.
 
 ### Agent cannot reach an external host
 
@@ -248,8 +250,6 @@ $ openshell term
 
 To permanently allow an endpoint, add it to the network policy.
 Refer to [Customize the Network Policy](../network-policy/customize-network-policy.md) for details.
-
-
 
 ### Blueprint run failed
 
