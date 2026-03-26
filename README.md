@@ -65,6 +65,25 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | macOS | Podman | Not supported yet. NemoClaw currently depends on OpenShell support for Podman on macOS. |
 | Windows WSL | Docker Desktop (WSL backend) | Supported target path |
 
+#### macOS first-run checklist
+
+On a fresh macOS machine, install the prerequisites in this order:
+
+1. Install Xcode Command Line Tools:
+
+   ```bash
+   xcode-select --install
+   ```
+
+2. Install and start a supported container runtime:
+   - Docker Desktop
+   - Colima
+3. Run the NemoClaw installer.
+
+This avoids the two most common first-run failures on macOS:
+- missing developer tools needed by the installer and Node.js toolchain
+- Docker connection errors when no supported container runtime is installed or running
+
 > **💡 Tip**
 >
 > For DGX Spark, follow the [DGX Spark setup guide](https://github.com/NVIDIA/NemoClaw/blob/main/spark-install.md). It covers Spark-specific prerequisites, such as cgroup v2 and Docker configuration, before running the standard installer.

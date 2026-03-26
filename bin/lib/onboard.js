@@ -1294,13 +1294,22 @@ async function preflight() {
   return gpu;
 }
 
+// ── Gateway cleanup ──────────────────────────────────────────────
+
+function destroyGateway() {
+  runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+  // openshell gateway destroy doesn't remove Docker volumes, which leaves
+  // corrupted cluster state that breaks the next gateway start. Clean them up.
+  run(`docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs docker volume rm || true`, { ignoreError: true });
+}
+
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
 async function startGateway(_gpu) {
   step(3, 7, "Starting OpenShell gateway");
 
-  // Destroy old gateway
-  runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+  // Clean up any previous gateway and its Docker volumes
+  destroyGateway();
 
   const gwArgs = ["--name", GATEWAY_NAME];
   // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
@@ -1319,7 +1328,13 @@ async function startGateway(_gpu) {
     console.log(`  Using pinned OpenShell gateway image: ${stableGatewayImage}`);
   }
 
-  runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: false, env: gatewayEnv });
+  const startResult = runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: true, env: gatewayEnv });
+  if (startResult.status !== 0) {
+    console.error("  Gateway failed to start. Cleaning up stale state...");
+    destroyGateway();
+    console.error("  Stale state removed. Please rerun: nemoclaw onboard");
+    process.exit(1);
+  }
 
   // Verify health
   for (let i = 0; i < 5; i++) {
@@ -1329,7 +1344,9 @@ async function startGateway(_gpu) {
       break;
     }
     if (i === 4) {
-      console.error("  Gateway failed to start. Run: openshell gateway info");
+      console.error("  Gateway health check failed. Cleaning up stale state...");
+      destroyGateway();
+      console.error("  Stale state removed. Please rerun: nemoclaw onboard");
       process.exit(1);
     }
     sleep(2);
@@ -2137,6 +2154,68 @@ async function setupPolicies(sandboxName) {
 
 // ── Dashboard ────────────────────────────────────────────────────
 
+const CONTROL_UI_PORT = 18789;
+const CONTROL_UI_CHAT_PATH = "/chat?session=main";
+
+function findOpenclawJsonPath(dir) {
+  if (!fs.existsSync(dir)) return null;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      const found = findOpenclawJsonPath(p);
+      if (found) return found;
+    } else if (e.name === "openclaw.json") {
+      return p;
+    }
+  }
+  return null;
+}
+
+/**
+ * Pull gateway.auth.token from the sandbox image via openshell sandbox download
+ * so onboard can print copy-paste Control UI URLs with #token= (same idea as nemoclaw-start.sh).
+ */
+function fetchGatewayAuthTokenFromSandbox(sandboxName) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-token-"));
+  try {
+    const destDir = `${tmpDir}${path.sep}`;
+    const result = runOpenshell(
+      ["sandbox", "download", sandboxName, "/sandbox/.openclaw/openclaw.json", destDir],
+      { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] }
+    );
+    if (result.status !== 0) return null;
+    const jsonPath = findOpenclawJsonPath(tmpDir);
+    if (!jsonPath) return null;
+    const cfg = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
+    const token = cfg && cfg.gateway && cfg.gateway.auth && cfg.gateway.auth.token;
+    return typeof token === "string" && token.length > 0 ? token : null;
+  } catch {
+    return null;
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+}
+
+function buildControlUiChatUrls(token) {
+  const hash = token ? `#token=${token}` : "";
+  const pathChat = `${CONTROL_UI_CHAT_PATH}${hash}`;
+  const bases = [
+    `http://127.0.0.1:${CONTROL_UI_PORT}`,
+    `http://localhost:${CONTROL_UI_PORT}`,
+  ];
+  const chatUi = (process.env.CHAT_UI_URL || "").trim().replace(/\/$/, "");
+  const urls = bases.map((b) => `${b}${pathChat}`);
+  if (chatUi && /^https?:\/\//i.test(chatUi) && !bases.includes(chatUi)) {
+    urls.push(`${chatUi}${pathChat}`);
+  }
+  return [...new Set(urls)];
+}
+
 function printDashboard(sandboxName, model, provider, nimContainer = null) {
   const nimStat = nimContainer ? nim.nimStatusByName(nimContainer) : nim.nimStatus(sandboxName);
   const nimLabel = nimStat.running ? "running" : "not running";
@@ -2151,6 +2230,8 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
 
+  const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
+
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
   // console.log(`  Dashboard    http://localhost:18789/`);
@@ -2159,6 +2240,18 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
   console.log(`  NIM          ${nimLabel}`);
   console.log(`  ${"─".repeat(50)}`);
   console.log(`  Next:`);
+  if (token) {
+    note("  URLs below embed the gateway token — treat them like a password.");
+    console.log(`  Control UI:  copy one line into your browser (port ${CONTROL_UI_PORT} must be forwarded):`);
+    for (const u of buildControlUiChatUrls(token)) {
+      console.log(`    ${u}`);
+    }
+  } else {
+    note("  Could not read gateway token from the sandbox (download failed).");
+    console.log(`  Control UI:  http://127.0.0.1:${CONTROL_UI_PORT}${CONTROL_UI_CHAT_PATH}`);
+    console.log(`  Token:       nemoclaw ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`);
+    console.log(`               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`);
+  }
   console.log(`  Run:         nemoclaw ${sandboxName} connect`);
   console.log(`  Status:      nemoclaw ${sandboxName} status`);
   console.log(`  Logs:        nemoclaw ${sandboxName} logs --follow`);
