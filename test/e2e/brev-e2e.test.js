@@ -272,11 +272,20 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
 
       // Install nemoclaw CLI — brev-setup.sh creates the sandbox but doesn't
       // install the host-side CLI that the test scripts need for `nemoclaw <name> status`.
+      // The `bin` field is in the root package.json (not nemoclaw/), so we need to:
+      //   1. Build the TypeScript plugin (in nemoclaw/)
+      //   2. npm link from the repo root (where bin.nemoclaw is defined)
       // Use npm_config_prefix so npm link writes to ~/.local/bin (no sudo needed),
       // which is already on PATH in runRemoteTest.
       console.log(`[${elapsed()}] Installing nemoclaw CLI...`);
       ssh(
-        `export npm_config_prefix=$HOME/.local && export PATH=$HOME/.local/bin:$PATH && cd ${remoteDir}/nemoclaw && npm install && npm run build && npm link 2>&1 | tail -5 && which nemoclaw && nemoclaw --version`,
+        [
+          `export npm_config_prefix=$HOME/.local`,
+          `export PATH=$HOME/.local/bin:$PATH`,
+          `cd ${remoteDir}/nemoclaw && npm install && npm run build`,
+          `cd ${remoteDir} && npm install --ignore-scripts && npm link`,
+          `which nemoclaw && nemoclaw --version`,
+        ].join(" && "),
         { timeout: 120_000 },
       );
       console.log(`[${elapsed()}] nemoclaw CLI installed`);
