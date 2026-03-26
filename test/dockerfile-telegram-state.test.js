@@ -15,16 +15,13 @@ describe("Dockerfile telegram state layout (#975)", () => {
   });
 
   it("symlinks .openclaw/telegram into .openclaw-data before locking .openclaw", () => {
-    expect(DOCKERFILE.includes("ln -sfn /sandbox/.openclaw-data/telegram /sandbox/.openclaw/telegram")).toBeTruthy();
-  });
+    const symlink = DOCKERFILE.indexOf("ln -sfn /sandbox/.openclaw-data/telegram /sandbox/.openclaw/telegram");
+    const lockStep = DOCKERFILE.indexOf("chown root:root /sandbox/.openclaw");
+    const cleanupBeforeSymlink = DOCKERFILE.indexOf("rm -rf /sandbox/.openclaw/telegram");
 
-  it("removes any existing .openclaw/telegram path before creating the symlink", () => {
-    const rm = DOCKERFILE.indexOf("rm -rf /sandbox/.openclaw/telegram");
-    const ln = DOCKERFILE.indexOf(
-      "ln -sfn /sandbox/.openclaw-data/telegram /sandbox/.openclaw/telegram",
-    );
-    expect(rm).toBeGreaterThanOrEqual(0);
-    expect(ln).toBeGreaterThanOrEqual(0);
-    expect(rm).toBeLessThan(ln);
+    expect(symlink).toBeGreaterThan(-1);
+    expect(lockStep).toBeGreaterThan(symlink);
+    expect(cleanupBeforeSymlink).toBeGreaterThan(-1);
+    expect(cleanupBeforeSymlink).toBeLessThan(symlink);
   });
 });
