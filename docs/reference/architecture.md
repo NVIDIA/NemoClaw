@@ -2,7 +2,7 @@
 title:
   page: "NemoClaw Architecture — Plugin, Blueprint, and Sandbox Structure"
   nav: "Architecture"
-description: "Plugin structure, blueprint lifecycle, sandbox environment, and inference routing."
+description: "Learn how NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox."
 keywords: ["nemoclaw architecture", "nemoclaw plugin blueprint structure"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "blueprints", "inference_routing"]
@@ -73,10 +73,18 @@ The blueprint drives all interactions with the OpenShell CLI.
 ```text
 nemoclaw-blueprint/
 ├── blueprint.yaml                  Manifest — version, profiles, compatibility
-├── orchestrator/
-│   └── runner.py                   CLI runner — plan / apply / status
 ├── policies/
 │   └── openclaw-sandbox.yaml       Default network + filesystem policy
+```
+
+The blueprint runtime (TypeScript) lives in the plugin source tree:
+
+```text
+nemoclaw/src/blueprint/
+├── runner.ts                       CLI runner — plan / apply / status / rollback
+├── ssrf.ts                         SSRF endpoint validation (IP + DNS checks)
+├── snapshot.ts                     Migration snapshot / restore lifecycle
+├── state.ts                        Persistent run state management
 ```
 
 ### Blueprint Lifecycle

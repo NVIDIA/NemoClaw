@@ -1,0 +1,9 @@
+# SC2059: Don't use variables in the printf format string.
+# Our info/warn/ok/error helpers and banner intentionally embed ANSI color
+# variables in printf format strings. This is safe because the variables
+# contain only escape sequences, never user input.
+#
+# SC1091: Not following sourced file.
+# We dynamically source nvm.sh and runtime.sh at paths that shellcheck
+# cannot resolve statically.
+disable=SC2059,SC1091

@@ -14,9 +14,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-info()  { echo -e "${GREEN}[install]${NC} $1"; }
-warn()  { echo -e "${YELLOW}[install]${NC} $1"; }
-fail()  { echo -e "${RED}[install]${NC} $1"; exit 1; }
+info() { echo -e "${GREEN}[install]${NC} $1"; }
+warn() { echo -e "${YELLOW}[install]${NC} $1"; }
+fail() {
+  echo -e "${RED}[install]${NC} $1"
+  exit 1
+}
 
 define_runtime_helpers() {
   socket_exists() {
@@ -37,8 +40,7 @@ define_runtime_helpers() {
 
     for socket_path in \
       "$home_dir/.colima/default/docker.sock" \
-      "$home_dir/.config/colima/default/docker.sock"
-    do
+      "$home_dir/.config/colima/default/docker.sock"; do
       if socket_exists "$socket_path"; then
         printf '%s\n' "$socket_path"
         return 0
@@ -97,7 +99,10 @@ else
 fi
 
 # Ensure nvm environment is loaded in the current shell.
+# Skip if node is already on PATH — sourcing nvm.sh can reset PATH and
+# override the caller's node/npm (e.g. in test environments with stubs).
 ensure_nvm_loaded() {
+  command -v node &>/dev/null && return 0
   if [ -z "${NVM_DIR:-}" ]; then
     export NVM_DIR="$HOME/.nvm"
   fi
@@ -115,7 +120,7 @@ refresh_path() {
   npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
   if [ -n "$npm_bin" ] && [ -d "$npm_bin" ]; then
     case ":$PATH:" in
-      *":$npm_bin:"*) ;;  # already on PATH
+      *":$npm_bin:"*) ;; # already on PATH
       *) export PATH="$npm_bin:$PATH" ;;
     esac
   fi
@@ -131,14 +136,14 @@ ARCH="$(uname -m)"
 
 case "$OS" in
   Darwin) OS_LABEL="macOS" ;;
-  Linux)  OS_LABEL="Linux" ;;
-  *)      fail "Unsupported OS: $OS" ;;
+  Linux) OS_LABEL="Linux" ;;
+  *) fail "Unsupported OS: $OS" ;;
 esac
 
 case "$ARCH" in
-  x86_64|amd64) ARCH_LABEL="x86_64" ;;
-  aarch64|arm64) ARCH_LABEL="aarch64" ;;
-  *)             fail "Unsupported architecture: $ARCH" ;;
+  x86_64 | amd64) ARCH_LABEL="x86_64" ;;
+  aarch64 | arm64) ARCH_LABEL="aarch64" ;;
+  *) fail "Unsupported architecture: $ARCH" ;;
 esac
 
 info "Detected $OS_LABEL ($ARCH_LABEL)"
@@ -148,16 +153,16 @@ info "Detected $OS_LABEL ($ARCH_LABEL)"
 NODE_MGR="none"
 NEED_RESHIM=false
 
-if command -v asdf > /dev/null 2>&1 && asdf plugin list 2>/dev/null | grep -q nodejs; then
+if command -v asdf >/dev/null 2>&1 && asdf plugin list 2>/dev/null | grep -q nodejs; then
   NODE_MGR="asdf"
 elif [ -n "${NVM_DIR:-}" ] && [ -s "${NVM_DIR}/nvm.sh" ]; then
   NODE_MGR="nvm"
 elif [ -s "$HOME/.nvm/nvm.sh" ]; then
   export NVM_DIR="$HOME/.nvm"
   NODE_MGR="nvm"
-elif command -v fnm > /dev/null 2>&1; then
+elif command -v fnm >/dev/null 2>&1; then
   NODE_MGR="fnm"
-elif command -v brew > /dev/null 2>&1 && [ "$OS" = "Darwin" ]; then
+elif command -v brew >/dev/null 2>&1 && [ "$OS" = "Darwin" ]; then
   NODE_MGR="brew"
 elif [ "$OS" = "Linux" ]; then
   NODE_MGR="nodesource"
@@ -170,8 +175,8 @@ version_major() {
 }
 
 ensure_supported_runtime() {
-  command -v node > /dev/null 2>&1 || fail "${RUNTIME_REQUIREMENT_MSG} Node.js was not found on PATH."
-  command -v npm > /dev/null 2>&1 || fail "${RUNTIME_REQUIREMENT_MSG} npm was not found on PATH."
+  command -v node >/dev/null 2>&1 || fail "${RUNTIME_REQUIREMENT_MSG} Node.js was not found on PATH."
+  command -v npm >/dev/null 2>&1 || fail "${RUNTIME_REQUIREMENT_MSG} npm was not found on PATH."
 
   local node_version npm_version node_major npm_major
   node_version="$(node -v 2>/dev/null || true)"
@@ -182,7 +187,7 @@ ensure_supported_runtime() {
   [[ "$node_major" =~ ^[0-9]+$ ]] || fail "Could not determine Node.js version from '${node_version}'. ${RUNTIME_REQUIREMENT_MSG}"
   [[ "$npm_major" =~ ^[0-9]+$ ]] || fail "Could not determine npm version from '${npm_version}'. ${RUNTIME_REQUIREMENT_MSG}"
 
-  if (( node_major < MIN_NODE_MAJOR || npm_major < MIN_NPM_MAJOR )); then
+  if ((node_major < MIN_NODE_MAJOR || npm_major < MIN_NPM_MAJOR)); then
     fail "Unsupported runtime detected: Node.js ${node_version:-unknown}, npm ${npm_version:-unknown}. ${RUNTIME_REQUIREMENT_MSG} Upgrade Node.js and rerun the installer."
   fi
 
@@ -193,7 +198,7 @@ ensure_supported_runtime() {
 
 install_node() {
   local current_major=""
-  if command -v node > /dev/null 2>&1; then
+  if command -v node >/dev/null 2>&1; then
     current_major="$(node -v 2>/dev/null | sed 's/^v//' | cut -d. -f1)"
   fi
 
@@ -230,8 +235,8 @@ install_node() {
       brew link --overwrite node@22 2>/dev/null || true
       ;;
     nodesource)
-      curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - > /dev/null 2>&1
-      sudo apt-get install -y -qq nodejs > /dev/null 2>&1
+      curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - >/dev/null 2>&1
+      sudo apt-get install -y -qq nodejs >/dev/null 2>&1
       ;;
     none)
       fail "No Node.js version manager found. Install Node.js 22 manually, then re-run."
@@ -247,12 +252,12 @@ ensure_supported_runtime
 # ── Install Docker ───────────────────────────────────────────────
 
 install_docker() {
-  if command -v docker > /dev/null 2>&1 && docker info > /dev/null 2>&1; then
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     info "Docker already running"
     return 0
   fi
 
-  if command -v docker > /dev/null 2>&1; then
+  if command -v docker >/dev/null 2>&1; then
     # Docker installed but not running
     if [ "$OS" = "Darwin" ]; then
       local colima_socket=""
@@ -272,7 +277,7 @@ install_docker() {
         fail "Docker Desktop appears to be installed but is not running. Start Docker Desktop and re-run."
       fi
 
-      if command -v colima > /dev/null 2>&1; then
+      if command -v colima >/dev/null 2>&1; then
         info "Starting Colima..."
         colima start
         return 0
@@ -285,7 +290,7 @@ install_docker() {
 
   case "$OS" in
     Darwin)
-      if ! command -v brew > /dev/null 2>&1; then
+      if ! command -v brew >/dev/null 2>&1; then
         fail "Homebrew required to install Docker on macOS. Install from https://brew.sh"
       fi
       info "Installing Colima + Docker CLI via Homebrew..."
@@ -294,14 +299,14 @@ install_docker() {
       colima start
       ;;
     Linux)
-      sudo apt-get update -qq > /dev/null 2>&1
-      sudo apt-get install -y -qq docker.io > /dev/null 2>&1
+      sudo apt-get update -qq >/dev/null 2>&1
+      sudo apt-get install -y -qq docker.io >/dev/null 2>&1
       sudo usermod -aG docker "$(whoami)"
       info "Docker installed. You may need to log out and back in for group changes."
       ;;
   esac
 
-  if ! docker info > /dev/null 2>&1; then
+  if ! docker info >/dev/null 2>&1; then
     fail "Docker installed but not running. Start Docker and re-run."
   fi
 
@@ -313,7 +318,7 @@ install_docker
 # ── Install OpenShell CLI binary ─────────────────────────────────
 
 install_openshell() {
-  if command -v openshell > /dev/null 2>&1; then
+  if command -v openshell >/dev/null 2>&1; then
     info "openshell already installed: $(openshell --version 2>&1 || echo 'unknown')"
     return 0
   fi
@@ -323,20 +328,20 @@ install_openshell() {
   case "$OS" in
     Darwin)
       case "$ARCH_LABEL" in
-        x86_64)  ASSET="openshell-x86_64-apple-darwin.tar.gz" ;;
+        x86_64) ASSET="openshell-x86_64-apple-darwin.tar.gz" ;;
         aarch64) ASSET="openshell-aarch64-apple-darwin.tar.gz" ;;
       esac
       ;;
     Linux)
       case "$ARCH_LABEL" in
-        x86_64)  ASSET="openshell-x86_64-unknown-linux-musl.tar.gz" ;;
+        x86_64) ASSET="openshell-x86_64-unknown-linux-musl.tar.gz" ;;
         aarch64) ASSET="openshell-aarch64-unknown-linux-musl.tar.gz" ;;
       esac
       ;;
   esac
 
   tmpdir="$(mktemp -d)"
-  if command -v gh > /dev/null 2>&1; then
+  if command -v gh >/dev/null 2>&1; then
     GH_TOKEN="${GITHUB_TOKEN:-}" gh release download --repo NVIDIA/OpenShell \
       --pattern "$ASSET" --dir "$tmpdir"
   else
@@ -377,13 +382,12 @@ pre_extract_openclaw() {
   info "Pre-extracting openclaw@${openclaw_version} with system tar (GH-503 workaround)…"
   local tmpdir
   tmpdir="$(mktemp -d)"
-  if npm pack "openclaw@${openclaw_version}" --pack-destination "$tmpdir" > /dev/null 2>&1; then
+  if npm pack "openclaw@${openclaw_version}" --pack-destination "$tmpdir" >/dev/null 2>&1; then
     local tgz
     tgz="$(find "$tmpdir" -maxdepth 1 -name 'openclaw-*.tgz' -print -quit)"
     if [ -n "$tgz" ] && [ -f "$tgz" ]; then
       if mkdir -p "${install_dir}/node_modules/openclaw" \
-        && tar xzf "$tgz" -C "${install_dir}/node_modules/openclaw" --strip-components=1
-      then
+        && tar xzf "$tgz" -C "${install_dir}/node_modules/openclaw" --strip-components=1; then
         info "openclaw pre-extracted successfully"
       else
         warn "Failed to extract openclaw tarball"
@@ -403,21 +407,48 @@ pre_extract_openclaw() {
   rm -rf "$tmpdir"
 }
 
+# ── Resolve release tag ──────────────────────────────────────────
+# Priority: NEMOCLAW_INSTALL_TAG env var > GitHub releases API > "main" fallback.
+resolve_release_tag() {
+  if [ -n "${NEMOCLAW_INSTALL_TAG:-}" ]; then
+    printf "%s" "$NEMOCLAW_INSTALL_TAG"
+    return 0
+  fi
+
+  local response tag
+  response="$(curl -fsSL --max-time 10 \
+    https://api.github.com/repos/NVIDIA/NemoClaw/releases/latest 2>/dev/null)" || true
+  tag="$(printf '%s' "$response" \
+    | grep '"tag_name"' \
+    | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/' \
+    | head -1 || true)"
+
+  if [ -n "$tag" ] && printf '%s' "$tag" | grep -qE '^v[0-9]'; then
+    printf "%s" "$tag"
+  else
+    printf "main"
+  fi
+}
+
 # ── Install NemoClaw CLI ─────────────────────────────────────────
 
 info "Installing nemoclaw CLI..."
+# Resolve the latest release tag so we never install raw main.
+NEMOCLAW_RELEASE_REF="$(resolve_release_tag)"
+info "Resolved install ref: ${NEMOCLAW_RELEASE_REF}"
 # Clone first so we can pre-extract openclaw before npm install (GH-503).
 # npm install -g git+https://... does this internally but we can't hook
 # into its extraction pipeline, so we do it ourselves.
 NEMOCLAW_SRC="${HOME}/.nemoclaw/source"
 rm -rf "$NEMOCLAW_SRC"
 mkdir -p "$(dirname "$NEMOCLAW_SRC")"
-git clone --depth 1 https://github.com/NVIDIA/NemoClaw.git "$NEMOCLAW_SRC"
+git clone --depth 1 --branch "$NEMOCLAW_RELEASE_REF" https://github.com/NVIDIA/NemoClaw.git "$NEMOCLAW_SRC"
 pre_extract_openclaw "$NEMOCLAW_SRC" || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
-# Use sudo for npm link when the global prefix requires it (e.g., nodesource),
-# but skip sudo if already root (e.g., Docker containers).
+# Use sudo for npm link only when the global prefix directory is not writable
+# by the current user (e.g., system-managed nodesource installs to /usr).
 SUDO=""
-if [ "$NODE_MGR" = "nodesource" ] && [ "$(id -u)" -ne 0 ]; then
+NPM_GLOBAL_PREFIX="$(npm config get prefix 2>/dev/null)" || true
+if [ -n "$NPM_GLOBAL_PREFIX" ] && [ ! -w "$NPM_GLOBAL_PREFIX" ] && [ "$(id -u)" -ne 0 ]; then
   SUDO="sudo"
 fi
 (cd "$NEMOCLAW_SRC" && npm install --ignore-scripts && cd nemoclaw && npm install --ignore-scripts && npm run build && cd .. && $SUDO npm link)
@@ -431,12 +462,12 @@ refresh_path
 
 # ── Verify ───────────────────────────────────────────────────────
 
-if ! command -v nemoclaw > /dev/null 2>&1; then
+if ! command -v nemoclaw >/dev/null 2>&1; then
   # Try refreshing PATH one more time
   refresh_path
 fi
 
-if ! command -v nemoclaw > /dev/null 2>&1; then
+if ! command -v nemoclaw >/dev/null 2>&1; then
   npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
   if [ -n "$npm_bin" ] && [ -x "$npm_bin/nemoclaw" ]; then
     warn "nemoclaw installed at $npm_bin/nemoclaw but not on current PATH."

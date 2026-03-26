@@ -27,6 +27,13 @@ export default [
       "@typescript-eslint/no-floating-promises": "error",
       "@typescript-eslint/no-require-imports": "error",
       "@typescript-eslint/consistent-type-imports": "error",
+      "@typescript-eslint/consistent-type-exports": "error",
+      "@typescript-eslint/switch-exhaustiveness-check": "error",
+      "@typescript-eslint/prefer-nullish-coalescing": [
+        "error",
+        { ignorePrimitives: { string: true } },
+      ],
+      "@typescript-eslint/prefer-optional-chain": "error",
     },
   },
   {
@@ -34,6 +41,8 @@ export default [
     rules: {
       "@typescript-eslint/no-unsafe-assignment": "off",
       "@typescript-eslint/no-unsafe-member-access": "off",
+      "@typescript-eslint/no-unsafe-return": "off",
+      "@typescript-eslint/unbound-method": "off",
     },
   },
   prettier,

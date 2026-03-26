@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
-const path = require("node:path");
+import { describe, it, expect } from "vitest";
+import path from "node:path";
 
-const {
+import {
   detectDockerHost,
   findColimaDockerSocket,
   getDockerSocketCandidates,
@@ -13,37 +12,31 @@ const {
   isUnsupportedMacosRuntime,
   isWsl,
   shouldPatchCoredns,
-} = require("../bin/lib/platform");
+} from "../bin/lib/platform";
 
 describe("platform helpers", () => {
   describe("isWsl", () => {
     it("detects WSL from environment", () => {
-      assert.equal(
-        isWsl({
-          platform: "linux",
-          env: { WSL_DISTRO_NAME: "Ubuntu" },
-          release: "6.6.87.2-microsoft-standard-WSL2",
-        }),
-        true,
-      );
+      expect(isWsl({
+        platform: "linux",
+        env: { WSL_DISTRO_NAME: "Ubuntu" },
+        release: "6.6.87.2-microsoft-standard-WSL2",
+      })).toBe(true);
     });
 
     it("does not treat macOS as WSL", () => {
-      assert.equal(
-        isWsl({
-          platform: "darwin",
-          env: {},
-          release: "24.6.0",
-        }),
-        false,
-      );
+      expect(isWsl({
+        platform: "darwin",
+        env: {},
+        release: "24.6.0",
+      })).toBe(false);
     });
   });
 
   describe("getDockerSocketCandidates", () => {
     it("returns macOS candidates in priority order", () => {
       const home = "/tmp/test-home";
-      assert.deepEqual(getDockerSocketCandidates({ platform: "darwin", home }), [
+      expect(getDockerSocketCandidates({ platform: "darwin", home })).toEqual([
         path.join(home, ".colima/default/docker.sock"),
         path.join(home, ".config/colima/default/docker.sock"),
         path.join(home, ".docker/run/docker.sock"),
@@ -51,7 +44,7 @@ describe("platform helpers", () => {
     });
 
     it("does not auto-detect sockets on Linux", () => {
-      assert.deepEqual(getDockerSocketCandidates({ platform: "linux", home: "/tmp/test-home" }), []);
+      expect(getDockerSocketCandidates({ platform: "linux", home: "/tmp/test-home" })).toEqual([]);
     });
   });
 
@@ -61,28 +54,22 @@ describe("platform helpers", () => {
       const sockets = new Set([path.join(home, ".config/colima/default/docker.sock")]);
       const existsSync = (socketPath) => sockets.has(socketPath);
 
-      assert.equal(
-        findColimaDockerSocket({ home, existsSync }),
-        path.join(home, ".config/colima/default/docker.sock"),
-      );
+      expect(findColimaDockerSocket({ home, existsSync })).toBe(path.join(home, ".config/colima/default/docker.sock"));
     });
   });
 
   describe("detectDockerHost", () => {
     it("respects an existing DOCKER_HOST", () => {
-      assert.deepEqual(
-        detectDockerHost({
-          env: { DOCKER_HOST: "unix:///custom/docker.sock" },
-          platform: "darwin",
-          home: "/tmp/test-home",
-          existsSync: () => false,
-        }),
-        {
-          dockerHost: "unix:///custom/docker.sock",
-          source: "env",
-          socketPath: null,
-        },
-      );
+      expect(detectDockerHost({
+        env: { DOCKER_HOST: "unix:///custom/docker.sock" },
+        platform: "darwin",
+        home: "/tmp/test-home",
+        existsSync: () => false,
+      })).toEqual({
+        dockerHost: "unix:///custom/docker.sock",
+        source: "env",
+        socketPath: null,
+      });
     });
 
     it("prefers Colima over Docker Desktop on macOS", () => {
@@ -93,14 +80,11 @@ describe("platform helpers", () => {
       ]);
       const existsSync = (socketPath) => sockets.has(socketPath);
 
-      assert.deepEqual(
-        detectDockerHost({ env: {}, platform: "darwin", home, existsSync }),
-        {
-          dockerHost: `unix://${path.join(home, ".colima/default/docker.sock")}`,
-          source: "socket",
-          socketPath: path.join(home, ".colima/default/docker.sock"),
-        },
-      );
+      expect(detectDockerHost({ env: {}, platform: "darwin", home, existsSync })).toEqual({
+        dockerHost: `unix://${path.join(home, ".colima/default/docker.sock")}`,
+        source: "socket",
+        socketPath: path.join(home, ".colima/default/docker.sock"),
+      });
     });
 
     it("detects Docker Desktop when Colima is absent", () => {
@@ -108,58 +92,52 @@ describe("platform helpers", () => {
       const socketPath = path.join(home, ".docker/run/docker.sock");
       const existsSync = (candidate) => candidate === socketPath;
 
-      assert.deepEqual(
-        detectDockerHost({ env: {}, platform: "darwin", home, existsSync }),
-        {
-          dockerHost: `unix://${socketPath}`,
-          source: "socket",
-          socketPath,
-        },
-      );
+      expect(detectDockerHost({ env: {}, platform: "darwin", home, existsSync })).toEqual({
+        dockerHost: `unix://${socketPath}`,
+        source: "socket",
+        socketPath,
+      });
     });
 
     it("returns null when no auto-detected socket is available", () => {
-      assert.equal(
-        detectDockerHost({
-          env: {},
-          platform: "linux",
-          home: "/tmp/test-home",
-          existsSync: () => false,
-        }),
-        null,
-      );
+      expect(detectDockerHost({
+        env: {},
+        platform: "linux",
+        home: "/tmp/test-home",
+        existsSync: () => false,
+      })).toBe(null);
     });
   });
 
   describe("inferContainerRuntime", () => {
     it("detects podman", () => {
-      assert.equal(inferContainerRuntime("podman version 5.4.1"), "podman");
+      expect(inferContainerRuntime("podman version 5.4.1")).toBe("podman");
     });
 
     it("detects Docker Desktop", () => {
-      assert.equal(inferContainerRuntime("Docker Desktop 4.42.0 (190636)"), "docker-desktop");
+      expect(inferContainerRuntime("Docker Desktop 4.42.0 (190636)")).toBe("docker-desktop");
     });
 
     it("detects Colima", () => {
-      assert.equal(inferContainerRuntime("Server: Colima\n Docker Engine - Community"), "colima");
+      expect(inferContainerRuntime("Server: Colima\n Docker Engine - Community")).toBe("colima");
     });
   });
 
   describe("isUnsupportedMacosRuntime", () => {
     it("flags podman on macOS", () => {
-      assert.equal(isUnsupportedMacosRuntime("podman", { platform: "darwin" }), true);
+      expect(isUnsupportedMacosRuntime("podman", { platform: "darwin" })).toBe(true);
     });
 
     it("does not flag podman on Linux", () => {
-      assert.equal(isUnsupportedMacosRuntime("podman", { platform: "linux" }), false);
+      expect(isUnsupportedMacosRuntime("podman", { platform: "linux" })).toBe(false);
     });
   });
 
   describe("shouldPatchCoredns", () => {
     it("patches CoreDNS for Colima only", () => {
-      assert.equal(shouldPatchCoredns("colima"), true);
-      assert.equal(shouldPatchCoredns("docker-desktop"), false);
-      assert.equal(shouldPatchCoredns("docker"), false);
+      expect(shouldPatchCoredns("colima")).toBe(true);
+      expect(shouldPatchCoredns("docker-desktop")).toBe(false);
+      expect(shouldPatchCoredns("docker")).toBe(false);
     });
   });
 });

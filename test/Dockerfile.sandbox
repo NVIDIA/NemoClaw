@@ -1,66 +1,27 @@
-# Lightweight test sandbox for NemoClaw E2E testing
-# Simulates the OpenClaw-in-OpenShell environment without requiring
-# the full NVIDIA base image or openshell CLI
+# hadolint global ignore=DL3002,DL3059
+# Test sandbox for NemoClaw E2E testing.
+# Layers test fixtures on top of the production sandbox image so both
+# e2e jobs share a single Docker build for the base layers.
 
-FROM node:22-slim
+ARG BASE_IMAGE=nemoclaw-sandbox-test
+# hadolint ignore=DL3006
+FROM ${BASE_IMAGE}
 
-ENV DEBIAN_FRONTEND=noninteractive
+# The production image locks .openclaw (root:root, 755, openclaw.json 444).
+# Tests need writable fixtures and a sandbox-owned config for rollback tests,
+# so relax permissions here.
+USER root
+RUN chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data \
+    && chmod 700 /sandbox/.openclaw \
+    && chmod 600 /sandbox/.openclaw/openclaw.json
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-pip python3-venv \
-        curl git ca-certificates \
-        iproute2 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create sandbox user (matches OpenShell convention)
-RUN groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
-    && mkdir -p /sandbox/.openclaw /sandbox/.nemoclaw \
-    && chown -R sandbox:sandbox /sandbox
-
-# Install OpenClaw CLI
-RUN npm install -g openclaw@2026.3.11
-
-# Install PyYAML for blueprint runner
-RUN pip3 install --break-system-packages pyyaml
-
-# Copy our plugin and blueprint into the sandbox
-COPY nemoclaw/ /opt/nemoclaw/
-COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
-
-# Build the TS plugin inside the container
-WORKDIR /opt/nemoclaw
-RUN npm install && rm -rf dist && npx tsc
-
-# Patch OpenClaw's nvidia provider to replace Meta Llama 3.3 70B with
-# Nemotron 3 Super 120B. OpenClaw's embedded agent has a hardcoded model
-# catalog that doesn't include Nemotron 3 Super yet. This replaces the
-# one Meta/Llama model with NVIDIA's latest until OpenClaw ships an update.
-RUN find /usr/local/lib/node_modules/openclaw/dist -name "*.js" \
-      -exec grep -l "meta/llama-3.3-70b-instruct" {} \; \
-    | xargs -I{} sed -i \
-        -e 's|meta/llama-3.3-70b-instruct|nvidia/nemotron-3-super-120b-a12b|g' \
-        -e 's|Meta Llama 3.3 70B Instruct|Nemotron 3 Super 120B|g' \
-        {}
-# Nemotron 3 Super supports reasoning; flip the flag and bump maxTokens
-RUN find /usr/local/lib/node_modules/openclaw/dist -name "*.js" \
-      -exec grep -l "nemotron-3-super-120b-a12b" {} \; \
-    | xargs -I{} python3 -c "import re,sys;\
-s=open('{}').read();\
-s=re.sub(r'(id:\\s*\"nvidia/nemotron-3-super-120b-a12b.*?reasoning:\\s*)false',r'\\1true',s,flags=re.DOTALL);\
-s=re.sub(r'(id:\\s*\"nvidia/nemotron-3-super-120b-a12b.*?maxTokens:\\s*)4096',r'\\g<1>8192',s,flags=re.DOTALL);\
-open('{}','w').write(s)"
-
-# Set up blueprint for local resolution
-RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
-    && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
-
-WORKDIR /sandbox
 USER sandbox
 
 # Simulate a host OpenClaw installation for migration testing.
 # Keep the legacy ~/.openclaw fixture for the blueprint snapshot tests.
+# Directories like hooks/ are symlinks to .openclaw-data/; mkdir -p follows
+# them and creates subdirectories in the writable data dir.
 RUN mkdir -p /sandbox/.openclaw/workspace /sandbox/.openclaw/extensions /sandbox/.openclaw/skills /sandbox/.openclaw/hooks/demo-hook \
-    && chmod 700 /sandbox/.openclaw \
     && printf '%s\n' \
         '{' \
         '  "wizard": {' \

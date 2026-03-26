@@ -11,6 +11,12 @@ const registry = require("./registry");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
+function getOpenshellCommand() {
+  const binary = process.env.NEMOCLAW_OPENSHELL_BIN;
+  if (!binary) return "openshell";
+  return shellQuote(binary);
+}
+
 function listPresets() {
   if (!fs.existsSync(PRESETS_DIR)) return [];
   return fs
@@ -77,16 +83,17 @@ function parseCurrentPolicy(raw) {
  * Build the openshell policy set command with properly quoted arguments.
  */
 function buildPolicySetCommand(policyFile, sandboxName) {
-  return `openshell policy set --policy ${shellQuote(policyFile)} --wait ${shellQuote(sandboxName)}`;
+  return `${getOpenshellCommand()} policy set --policy ${shellQuote(policyFile)} --wait ${shellQuote(sandboxName)}`;
 }
 
 /**
  * Build the openshell policy get command with properly quoted arguments.
  */
 function buildPolicyGetCommand(sandboxName) {
-  return `openshell policy get --full ${shellQuote(sandboxName)} 2>/dev/null`;
+  return `${getOpenshellCommand()} policy get --full ${shellQuote(sandboxName)} 2>/dev/null`;
 }
 
+// eslint-disable-next-line complexity
 function applyPreset(sandboxName, presetName) {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
@@ -117,7 +124,7 @@ function applyPreset(sandboxName, presetName) {
       buildPolicyGetCommand(sandboxName),
       { ignoreError: true }
     );
-  } catch {}
+  } catch { /* ignored */ }
 
   let currentPolicy = parseCurrentPolicy(rawPolicy);
 
@@ -179,8 +186,8 @@ function applyPreset(sandboxName, presetName) {
 
     console.log(`  Applied preset: ${presetName}`);
   } finally {
-    try { fs.unlinkSync(tmpFile); } catch {}
-    try { fs.rmdirSync(tmpDir); } catch {}
+    try { fs.unlinkSync(tmpFile); } catch { /* ignored */ }
+    try { fs.rmdirSync(tmpDir); } catch { /* ignored */ }
   }
 
   // Update registry

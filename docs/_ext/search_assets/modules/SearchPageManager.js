@@ -3,6 +3,7 @@
  * Handles search functionality on the dedicated search page with filtering and grouping
  */
 
+/* exported SearchPageManager */
 class SearchPageManager {
     constructor() {
         this.searchInput = null;
@@ -128,17 +129,6 @@ class SearchPageManager {
         const types = this.filterOptions.documentTypes || [];
         const typeOptions = types.map(type =>
             `<option value="${this.escapeHtml(type)}">${this.escapeHtml(this.formatTypeName(type))}</option>`
-        ).join('');
-
-        // Use audience (new) or personas (legacy) with null safety
-        const audience = this.filterOptions.audience || this.filterOptions.personas || [];
-        const audienceOptions = audience.map(aud =>
-            `<option value="${this.escapeHtml(aud)}">${this.escapeHtml(this.formatPersonaName(aud))}</option>`
-        ).join('');
-
-        const difficulties = this.filterOptions.difficulties || [];
-        const difficultyOptions = difficulties.map(difficulty =>
-            `<option value="${this.escapeHtml(difficulty)}">${this.escapeHtml(this.formatDifficultyName(difficulty))}</option>`
         ).join('');
 
         // Dynamic facets - render additional filter dropdowns for each facet

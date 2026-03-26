@@ -18,6 +18,7 @@ const { DEFAULT_OLLAMA_MODEL } = require("./local-inference");
 
 function getProviderSelectionConfig(provider, model) {
   switch (provider) {
+    case "nvidia-prod":
     case "nvidia-nim":
       return {
         endpointType: "custom",
@@ -27,7 +28,62 @@ function getProviderSelectionConfig(provider, model) {
         profile: DEFAULT_ROUTE_PROFILE,
         credentialEnv: DEFAULT_ROUTE_CREDENTIAL_ENV,
         provider,
-        providerLabel: "NVIDIA Endpoint API",
+        providerLabel: "NVIDIA Endpoints",
+      };
+    case "openai-api":
+      return {
+        endpointType: "custom",
+        endpointUrl: INFERENCE_ROUTE_URL,
+        ncpPartner: null,
+        model: model || "gpt-5.4",
+        profile: DEFAULT_ROUTE_PROFILE,
+        credentialEnv: "OPENAI_API_KEY",
+        provider,
+        providerLabel: "OpenAI",
+      };
+    case "anthropic-prod":
+      return {
+        endpointType: "custom",
+        endpointUrl: INFERENCE_ROUTE_URL,
+        ncpPartner: null,
+        model: model || "claude-sonnet-4-6",
+        profile: DEFAULT_ROUTE_PROFILE,
+        credentialEnv: "ANTHROPIC_API_KEY",
+        provider,
+        providerLabel: "Anthropic",
+      };
+    case "compatible-anthropic-endpoint":
+      return {
+        endpointType: "custom",
+        endpointUrl: INFERENCE_ROUTE_URL,
+        ncpPartner: null,
+        model: model || "custom-anthropic-model",
+        profile: DEFAULT_ROUTE_PROFILE,
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        provider,
+        providerLabel: "Other Anthropic-compatible endpoint",
+      };
+    case "gemini-api":
+      return {
+        endpointType: "custom",
+        endpointUrl: INFERENCE_ROUTE_URL,
+        ncpPartner: null,
+        model: model || "gemini-2.5-flash",
+        profile: DEFAULT_ROUTE_PROFILE,
+        credentialEnv: "GEMINI_API_KEY",
+        provider,
+        providerLabel: "Google Gemini",
+      };
+    case "compatible-endpoint":
+      return {
+        endpointType: "custom",
+        endpointUrl: INFERENCE_ROUTE_URL,
+        ncpPartner: null,
+        model: model || "custom-model",
+        profile: DEFAULT_ROUTE_PROFILE,
+        credentialEnv: "COMPATIBLE_API_KEY",
+        provider,
+        providerLabel: "Other OpenAI-compatible endpoint",
       };
     case "vllm-local":
       return {
@@ -62,6 +118,17 @@ function getOpenClawPrimaryModel(provider, model) {
   return resolvedModel ? `${MANAGED_PROVIDER_ID}/${resolvedModel}` : null;
 }
 
+function parseGatewayInference(output) {
+  if (!output || /Not configured/i.test(output)) return null;
+  const provider = output.match(/Provider:\s*(.+)/);
+  const model = output.match(/Model:\s*(.+)/);
+  if (!provider && !model) return null;
+  return {
+    provider: provider ? provider[1].trim() : null,
+    model: model ? model[1].trim() : null,
+  };
+}
+
 module.exports = {
   CLOUD_MODEL_OPTIONS,
   DEFAULT_CLOUD_MODEL,
@@ -72,4 +139,5 @@ module.exports = {
   MANAGED_PROVIDER_ID,
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
+  parseGatewayInference,
 };
