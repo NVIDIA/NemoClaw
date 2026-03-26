@@ -463,8 +463,9 @@ function shellQuote(value) {
 }
 
 function getOllamaWarmupCommand(model, opts = {}) {
-  const keepAlive = typeof opts === "string" ? opts : opts.keepAlive || "15m";
-  const endpoint = typeof opts === "object" ? opts.endpoint : null;
+  const optionBag = /** @type {Record<string, any>} */ (typeof opts === "object" && opts !== null ? opts : {});
+  const keepAlive = typeof opts === "string" ? opts : optionBag.keepAlive || "15m";
+  const endpoint = optionBag.endpoint || null;
   const payload = JSON.stringify({
     model,
     prompt: "hello",
@@ -476,9 +477,10 @@ function getOllamaWarmupCommand(model, opts = {}) {
 }
 
 function getOllamaProbeCommand(model, opts = {}) {
-  const timeoutSeconds = typeof opts === "number" ? opts : opts.timeoutSeconds || 120;
-  const keepAlive = typeof opts === "object" && opts.keepAlive ? opts.keepAlive : "15m";
-  const endpoint = typeof opts === "object" ? opts.endpoint : null;
+  const optionBag = /** @type {Record<string, any>} */ (typeof opts === "object" && opts !== null ? opts : {});
+  const timeoutSeconds = typeof opts === "number" ? opts : optionBag.timeoutSeconds || 120;
+  const keepAlive = optionBag.keepAlive || "15m";
+  const endpoint = optionBag.endpoint || null;
   const payload = JSON.stringify({
     model,
     prompt: "hello",
