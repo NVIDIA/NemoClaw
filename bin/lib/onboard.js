@@ -2498,6 +2498,7 @@ async function setupPolicies(sandboxName) {
 // ── Dashboard ────────────────────────────────────────────────────
 
 const CONTROL_UI_PORT = 18789;
+const CONTROL_UI_PATH = "/";
 
 function findOpenclawJsonPath(dir) {
   if (!fs.existsSync(dir)) return null;
@@ -2543,13 +2544,13 @@ function fetchGatewayAuthTokenFromSandbox(sandboxName) {
   }
 }
 
-function buildControlUiChatUrls(token) {
+function buildControlUiUrls(token) {
   const hash = token ? `#token=${token}` : "";
   const baseUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const urls = [`${baseUrl}${CONTROL_UI_PATH}${hash}`];
   const chatUi = (process.env.CHAT_UI_URL || "").trim().replace(/\/$/, "");
-  const urls = [`${baseUrl}/${hash}`.replace("/#token=", "#token=")];
   if (chatUi && /^https?:\/\//i.test(chatUi) && chatUi !== baseUrl) {
-    urls.push(`${chatUi}/${hash}`.replace("/#token=", "#token="));
+    urls.push(`${chatUi}${CONTROL_UI_PATH}${hash}`);
   }
   return [...new Set(urls)];
 }
@@ -2581,15 +2582,19 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
   console.log(`  Status:      nemoclaw ${sandboxName} status`);
   console.log(`  Logs:        nemoclaw ${sandboxName} logs --follow`);
   console.log("");
-  console.log("  OpenClaw UI: (Tokenized URL. Treat it like a password)");
-  console.log(`  Port ${CONTROL_UI_PORT} must be forwarded.`);
   if (token) {
-    for (const u of buildControlUiChatUrls(token)) {
-      console.log(`  ${u}`);
+    console.log("  OpenClaw UI (tokenized URL; treat it like a password)");
+    console.log(`  Port ${CONTROL_UI_PORT} must be forwarded before opening this URL.`);
+    for (const url of buildControlUiUrls(token)) {
+      console.log(`  ${url}`);
     }
   } else {
     note("  Could not read gateway token from the sandbox (download failed).");
-    console.log(`  http://127.0.0.1:${CONTROL_UI_PORT}`);
+    console.log("  OpenClaw UI");
+    console.log(`  Port ${CONTROL_UI_PORT} must be forwarded before opening this URL.`);
+    for (const url of buildControlUiUrls()) {
+      console.log(`  ${url}`);
+    }
     console.log(`  Token:       nemoclaw ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`);
     console.log(`               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`);
   }
