@@ -221,7 +221,7 @@ Run `nemoclaw onboard` to recreate the sandbox from the same blueprint and polic
 ### Status shows "not running" inside the sandbox
 
 This is expected behavior.
-When running `openclaw nemoclaw status` inside an active sandbox, host-side sandbox state and inference configuration are not inspectable.
+When checking status inside an active sandbox, host-side sandbox state and inference configuration are not inspectable.
 The status command detects the sandbox context and reports "active (inside sandbox)" instead.
 
 Run `openshell sandbox list` on the host to check the underlying sandbox state.
@@ -232,7 +232,7 @@ Verify that the inference provider endpoint is reachable from the host.
 Check the active provider and endpoint:
 
 ```console
-$ openclaw nemoclaw status
+$ nemoclaw <name> status
 ```
 
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection, and verify that your NVIDIA API key is valid.
@@ -249,25 +249,14 @@ $ openshell term
 To permanently allow an endpoint, add it to the network policy.
 Refer to [Customize the Network Policy](../network-policy/customize-network-policy.md) for details.
 
-### Policy changes not taking effect
 
-Manual edits to the `openclaw-sandbox.yaml` policy file on the host are not automatically applied to a running sandbox.
-You must re-run `nemoclaw onboard` to recreate the sandbox with the updated policy.
-
-To update a running sandbox without a full restart, use the OpenShell CLI:
-
-```console
-$ openshell policy set <policy-file>
-```
 
 ### Blueprint run failed
 
 View the error output for the failed blueprint run:
 
 ```console
-$ openclaw nemoclaw logs --run-id <id>
+$ nemoclaw <name> logs
 ```
 
-If the run ID is unknown, omit `--run-id` to view logs from the most recent run.
 Use `--follow` to stream logs in real time while debugging.
-
