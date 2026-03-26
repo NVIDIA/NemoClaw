@@ -185,6 +185,38 @@ function hasStaleGateway(gwInfoOutput) {
   return typeof gwInfoOutput === "string" && gwInfoOutput.length > 0 && gwInfoOutput.includes(GATEWAY_NAME);
 }
 
+function stripAnsi(value = "") {
+  let cleaned = "";
+  for (let i = 0; i < value.length; i += 1) {
+    if (value.charCodeAt(i) === 27 && value[i + 1] === "[") {
+      i += 2;
+      while (i < value.length && /[0-9;]/.test(value[i])) {
+        i += 1;
+      }
+      if (value[i] === "m") {
+        continue;
+      }
+    }
+    cleaned += value[i] || "";
+  }
+  return cleaned;
+}
+
+function getActiveGatewayName(statusOutput = "") {
+  if (typeof statusOutput !== "string" || statusOutput.length === 0) {
+    return "";
+  }
+  const match = stripAnsi(statusOutput)
+    .match(/^\s*Gateway:\s+(.+?)\s*$/m);
+  return match ? match[1].trim() : "";
+}
+
+function isGatewayHealthy(statusOutput = "", gwInfoOutput = "") {
+  const connected = typeof statusOutput === "string" && statusOutput.includes("Connected");
+  const activeGateway = getActiveGatewayName(statusOutput);
+  return connected && activeGateway === GATEWAY_NAME && hasStaleGateway(gwInfoOutput);
+}
+
 function streamSandboxCreate(command, env = process.env, options = {}) {
   const child = spawn("bash", ["-lc", command], {
     cwd: ROOT,
@@ -1237,8 +1269,16 @@ async function preflight() {
   // A previous onboard run may have left the gateway container and port
   // forward running.  If a NemoClaw-owned gateway is still present, tear
   // it down so the port check below doesn't fail on our own leftovers.
+  const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
-  if (hasStaleGateway(gwInfo)) {
+  const healthyGateway = isGatewayHealthy(gatewayStatus, gwInfo);
+  if (healthyGateway) {
+    console.log("  Reusing existing NemoClaw gateway...");
+    runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
+    runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
+    process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+    console.log("  ✓ Existing gateway selected");
+  } else if (hasStaleGateway(gwInfo)) {
     console.log("  Cleaning up previous NemoClaw session...");
     runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
     runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
@@ -1251,6 +1291,10 @@ async function preflight() {
     { port: 18789, label: "NemoClaw dashboard" },
   ];
   for (const { port, label } of requiredPorts) {
+    if (port === 8080 && healthyGateway) {
+      console.log(`  ✓ Port ${port} already in use by active NemoClaw gateway (${label})`);
+      continue;
+    }
     const portCheck = await checkPortAvailable(port);
     if (!portCheck.ok) {
       console.error("");
@@ -1305,11 +1349,21 @@ function destroyGateway() {
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
-async function startGateway(_gpu) {
+async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   step(3, 7, "Starting OpenShell gateway");
 
-  // Clean up any previous gateway and its Docker volumes
-  destroyGateway();
+  const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
+  const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
+  if (isGatewayHealthy(gatewayStatus, gwInfo)) {
+    console.log("  ✓ Reusing existing gateway");
+    runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
+    process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+    return;
+  }
+
+  if (hasStaleGateway(gwInfo)) {
+    runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+  }
 
   const gwArgs = ["--name", GATEWAY_NAME];
   // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
@@ -1332,22 +1386,29 @@ async function startGateway(_gpu) {
   if (startResult.status !== 0) {
     console.error("  Gateway failed to start. Cleaning up stale state...");
     destroyGateway();
-    console.error("  Stale state removed. Please rerun: nemoclaw onboard");
-    process.exit(1);
+    if (exitOnFailure) {
+      console.error("  Stale state removed. Please rerun: nemoclaw onboard");
+      process.exit(1);
+    }
+    throw new Error("Gateway failed to start");
   }
 
   // Verify health
   for (let i = 0; i < 5; i++) {
     const status = runCaptureOpenshell(["status"], { ignoreError: true });
-    if (status.includes("Connected")) {
+    const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
+    if (isGatewayHealthy(status, gwInfo)) {
       console.log("  ✓ Gateway is healthy");
       break;
     }
     if (i === 4) {
       console.error("  Gateway health check failed. Cleaning up stale state...");
       destroyGateway();
-      console.error("  Stale state removed. Please rerun: nemoclaw onboard");
-      process.exit(1);
+      if (exitOnFailure) {
+        console.error("  Stale state removed. Please rerun: nemoclaw onboard");
+        process.exit(1);
+      }
+      throw new Error("Gateway failed to start");
     }
     sleep(2);
   }
@@ -1362,6 +1423,14 @@ async function startGateway(_gpu) {
   sleep(5);
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+}
+
+async function startGateway(_gpu) {
+  return startGatewayWithOptions(_gpu, { exitOnFailure: true });
+}
+
+async function startGatewayForRecovery(_gpu) {
+  return startGatewayWithOptions(_gpu, { exitOnFailure: false });
 }
 
 // ── Step 3: Sandbox ──────────────────────────────────────────────
@@ -1415,6 +1484,8 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null)
   run(`cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`);
   run(`cp -r "${path.join(ROOT, "scripts")}" "${buildCtx}/scripts"`);
   run(`rm -rf "${buildCtx}/nemoclaw/node_modules"`, { ignoreError: true });
+  run(`rm -rf "${buildCtx}/nemoclaw-blueprint/.venv" "${buildCtx}/nemoclaw-blueprint/.pytest_cache"`, { ignoreError: true });
+  run(`find "${buildCtx}/nemoclaw-blueprint" -type d -name __pycache__ -prune -exec rm -rf {} +`, { ignoreError: true });
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
@@ -1551,9 +1622,7 @@ async function setupNim(gpu) {
   const options = [];
   options.push({
     key: "build",
-    label:
-      "NVIDIA Endpoints" +
-      (!ollamaRunning && !(EXPERIMENTAL && vllmRunning) ? " (recommended)" : ""),
+    label: "NVIDIA Endpoints",
   });
   options.push({ key: "openai", label: "OpenAI" });
   options.push({ key: "custom", label: "Other OpenAI-compatible endpoint" });
@@ -2297,12 +2366,16 @@ module.exports = {
   getInstalledOpenshellVersion,
   getStableGatewayImageRef,
   hasStaleGateway,
+  isGatewayHealthy,
   isSandboxReady,
   onboard,
+  preflight,
   pruneStaleSandboxEntry,
   runCaptureOpenshell,
   setupInference,
   setupNim,
+  startGateway,
+  startGatewayForRecovery,
   writeSandboxConfigSyncFile,
   patchStagedDockerfile,
 };
