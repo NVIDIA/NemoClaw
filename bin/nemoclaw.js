@@ -201,6 +201,7 @@ function printGatewayLifecycleHint(output = "", sandboxName = "", writer = conso
   }
 }
 
+// eslint-disable-next-line complexity
 async function getReconciledSandboxGatewayState(sandboxName) {
   let lookup = getSandboxGatewayState(sandboxName);
   if (lookup.state === "present") {
@@ -360,6 +361,7 @@ async function setupSpark() {
   run(`sudo bash "${SCRIPTS}/setup-spark.sh"`);
 }
 
+// eslint-disable-next-line complexity
 async function deploy(instanceName) {
   if (!instanceName) {
     console.error("  Usage: nemoclaw deploy <instance-name>");
@@ -569,6 +571,7 @@ async function sandboxConnect(sandboxName) {
   exitWithSpawnResult(result);
 }
 
+// eslint-disable-next-line complexity
 async function sandboxStatus(sandboxName) {
   const sb = registry.getSandbox(sandboxName);
   const live = parseGatewayInference(
@@ -757,6 +760,7 @@ function help() {
 
 const [cmd, ...args] = process.argv.slice(2);
 
+// eslint-disable-next-line complexity
 (async () => {
   // No command → help
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {

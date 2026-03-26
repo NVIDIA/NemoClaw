@@ -222,6 +222,20 @@ Credentials stay on the host in `~/.nemoclaw/credentials.json`. The sandbox only
 
 Local Ollama is supported in the standard onboarding flow. Local vLLM remains experimental, and local host-routed inference on macOS still depends on OpenShell host-routing support in addition to the local service itself being reachable on the host.
 
+## Host-Side State and Config
+
+NemoClaw keeps its operator-facing state on the host rather than inside the sandbox.
+These are the main files new users usually need to locate:
+
+| Path | Purpose |
+|---|---|
+| `~/.nemoclaw/credentials.json` | Provider credentials saved during onboarding |
+| `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata, including the default sandbox selection |
+| `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw snapshots or restores during migration flows |
+
+Common environment variables for optional services and local access include `TELEGRAM_BOT_TOKEN`, `ALLOWED_CHAT_IDS`, and `CHAT_UI_URL`.
+For normal sandbox setup and reconfiguration, prefer `nemoclaw onboard` over editing these files by hand.
+
 ---
 
 ## Protection Layers
