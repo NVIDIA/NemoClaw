@@ -2223,7 +2223,7 @@ async function setupPolicies(sandboxName) {
 // ── Dashboard ────────────────────────────────────────────────────
 
 const CONTROL_UI_PORT = 18789;
-const CONTROL_UI_PATH = "/";
+const CONTROL_UI_PATH = "/chat?session=main";
 
 function findOpenclawJsonPath(dir) {
   if (!fs.existsSync(dir)) return null;
@@ -2269,9 +2269,15 @@ function fetchGatewayAuthTokenFromSandbox(sandboxName) {
   }
 }
 
-function buildControlUiUrl(token) {
+function buildControlUiUrls(token) {
   const hash = token ? `#token=${token}` : "";
-  return `http://127.0.0.1:${CONTROL_UI_PORT}${CONTROL_UI_PATH}${hash}`;
+  const baseUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const urls = [`${baseUrl}${CONTROL_UI_PATH}${hash}`];
+  const chatUi = (process.env.CHAT_UI_URL || "").trim().replace(/\/$/, "");
+  if (chatUi && /^https?:\/\//i.test(chatUi) && chatUi !== baseUrl) {
+    urls.push(`${chatUi}${CONTROL_UI_PATH}${hash}`);
+  }
+  return [...new Set(urls)];
 }
 
 function printDashboard(sandboxName, model, provider, nimContainer = null) {
@@ -2299,11 +2305,17 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
   console.log(`  ${"─".repeat(50)}`);
   if (token) {
     console.log("  OpenClaw UI (tokenized URL; treat it like a password)");
-    console.log(`  ${buildControlUiUrl(token)}`);
+    console.log(`  Port ${CONTROL_UI_PORT} must be forwarded before opening this URL.`);
+    for (const url of buildControlUiUrls(token)) {
+      console.log(`  ${url}`);
+    }
   } else {
     note("  Could not read gateway token from the sandbox (download failed).");
     console.log("  OpenClaw UI");
-    console.log(`  http://127.0.0.1:${CONTROL_UI_PORT}${CONTROL_UI_PATH}`);
+    console.log(`  Port ${CONTROL_UI_PORT} must be forwarded before opening this URL.`);
+    for (const url of buildControlUiUrls()) {
+      console.log(`  ${url}`);
+    }
     console.log(`  Token:       nemoclaw ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`);
     console.log(`               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`);
   }
