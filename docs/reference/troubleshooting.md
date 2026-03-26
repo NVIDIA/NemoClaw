@@ -163,20 +163,55 @@ If you need to update it or if you entered an incorrect key during onboarding:
 
 ## Runtime
 
-### `nemoclaw start` fails
+### Reconnect after a host reboot
 
-The `nemoclaw start` command launches auxiliary services like the Telegram bridge.
-If it fails to start:
+After a host reboot, the container runtime, OpenShell gateway, and sandbox may not be running.
+Follow these steps to reconnect.
 
-- **Missing Token:** Ensure the `TELEGRAM_BOT_TOKEN` environment variable is set in your current shell.
-- **Network Access:** Verify that the host can reach `api.telegram.org`.
+1. Start the container runtime.
 
-### TUI (`openshell term`) is empty
+   - **Linux:** start Docker if it is not already running (`sudo systemctl start docker`)
+   - **macOS:** open Docker Desktop or start Colima (`colima start`)
 
-If the OpenShell terminal does not show any activity or blocked requests:
+1. Check sandbox state.
 
-- **Wrong Host:** Ensure you are running the command on the same host where the sandbox is running.
-- **Remote Access:** If using a remote VM (e.g., through Brev), run `openshell term` inside an SSH session on that VM, or ensure port `18789` is correctly forwarded to your local machine.
+   ```console
+   $ openshell sandbox list
+   ```
+
+   If the sandbox shows `Ready`, skip to step 4.
+
+1. Restart the gateway (if needed).
+
+   If the sandbox is not listed or the command fails, restart the OpenShell gateway:
+
+   ```console
+   $ openshell gateway start --name nemoclaw
+   ```
+
+   Wait a few seconds, then re-check with `openshell sandbox list`.
+
+1. Reconnect.
+
+   ```console
+   $ nemoclaw <name> connect
+   ```
+
+1. Start auxiliary services (if needed).
+
+   If you use the Telegram bridge or cloudflared tunnel, start them again:
+
+   ```console
+   $ nemoclaw start
+   ```
+
+:::{admonition} If the sandbox does not recover
+:class: warning
+
+If the sandbox remains missing after restarting the gateway, run `nemoclaw onboard` to recreate it.
+The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox — workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
+Back up your workspace first by following the instructions at [Back Up and Restore](../workspace/backup-restore.md).
+:::
 
 ### Sandbox shows as stopped
 

@@ -185,6 +185,28 @@ function hasStaleGateway(gwInfoOutput) {
   return typeof gwInfoOutput === "string" && gwInfoOutput.length > 0 && gwInfoOutput.includes(GATEWAY_NAME);
 }
 
+const ANSI_ESCAPE = String.fromCharCode(27);
+const ANSI_REGEX = new RegExp(`${ANSI_ESCAPE}\\[[0-9;]*[A-Za-z]`, "g");
+
+function stripAnsi(value = "") {
+  return value.replace(ANSI_REGEX, "");
+}
+
+function getActiveGatewayName(statusOutput = "") {
+  if (typeof statusOutput !== "string" || statusOutput.length === 0) {
+    return "";
+  }
+  const match = stripAnsi(statusOutput)
+    .match(/^\s*Gateway:\s+(.+?)\s*$/m);
+  return match ? match[1].trim() : "";
+}
+
+function isGatewayHealthy(statusOutput = "", gwInfoOutput = "") {
+  const connected = typeof statusOutput === "string" && statusOutput.includes("Connected");
+  const activeGateway = getActiveGatewayName(statusOutput);
+  return connected && activeGateway === GATEWAY_NAME && hasStaleGateway(gwInfoOutput);
+}
+
 function streamSandboxCreate(command, env = process.env, options = {}) {
   const child = spawn("bash", ["-lc", command], {
     cwd: ROOT,
@@ -1237,8 +1259,16 @@ async function preflight() {
   // A previous onboard run may have left the gateway container and port
   // forward running.  If a NemoClaw-owned gateway is still present, tear
   // it down so the port check below doesn't fail on our own leftovers.
+  const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
-  if (hasStaleGateway(gwInfo)) {
+  const healthyGateway = isGatewayHealthy(gatewayStatus, gwInfo);
+  if (healthyGateway) {
+    console.log("  Reusing existing NemoClaw gateway...");
+    runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
+    runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
+    process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+    console.log("  ✓ Existing gateway selected");
+  } else if (hasStaleGateway(gwInfo)) {
     console.log("  Cleaning up previous NemoClaw session...");
     runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
     runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
@@ -1251,6 +1281,10 @@ async function preflight() {
     { port: 18789, label: "NemoClaw dashboard" },
   ];
   for (const { port, label } of requiredPorts) {
+    if (port === 8080 && healthyGateway) {
+      console.log(`  ✓ Port ${port} already in use by active NemoClaw gateway (${label})`);
+      continue;
+    }
     const portCheck = await checkPortAvailable(port);
     if (!portCheck.ok) {
       console.error("");
@@ -1294,13 +1328,32 @@ async function preflight() {
   return gpu;
 }
 
+// ── Gateway cleanup ──────────────────────────────────────────────
+
+function destroyGateway() {
+  runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+  // openshell gateway destroy doesn't remove Docker volumes, which leaves
+  // corrupted cluster state that breaks the next gateway start. Clean them up.
+  run(`docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs docker volume rm || true`, { ignoreError: true });
+}
+
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
-async function startGateway(_gpu) {
+async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   step(3, 7, "Starting OpenShell gateway");
 
-  // Destroy old gateway
-  runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+  const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
+  const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
+  if (isGatewayHealthy(gatewayStatus, gwInfo)) {
+    console.log("  ✓ Reusing existing gateway");
+    runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
+    process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+    return;
+  }
+
+  if (hasStaleGateway(gwInfo)) {
+    runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+  }
 
   const gwArgs = ["--name", GATEWAY_NAME];
   // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
@@ -1319,18 +1372,33 @@ async function startGateway(_gpu) {
     console.log(`  Using pinned OpenShell gateway image: ${stableGatewayImage}`);
   }
 
-  runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: false, env: gatewayEnv });
+  const startResult = runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: true, env: gatewayEnv });
+  if (startResult.status !== 0) {
+    console.error("  Gateway failed to start. Cleaning up stale state...");
+    destroyGateway();
+    if (exitOnFailure) {
+      console.error("  Stale state removed. Please rerun: nemoclaw onboard");
+      process.exit(1);
+    }
+    throw new Error("Gateway failed to start");
+  }
 
   // Verify health
   for (let i = 0; i < 5; i++) {
     const status = runCaptureOpenshell(["status"], { ignoreError: true });
-    if (status.includes("Connected")) {
+    const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
+    if (isGatewayHealthy(status, gwInfo)) {
       console.log("  ✓ Gateway is healthy");
       break;
     }
     if (i === 4) {
-      console.error("  Gateway failed to start. Run: openshell gateway info");
-      process.exit(1);
+      console.error("  Gateway health check failed. Cleaning up stale state...");
+      destroyGateway();
+      if (exitOnFailure) {
+        console.error("  Stale state removed. Please rerun: nemoclaw onboard");
+        process.exit(1);
+      }
+      throw new Error("Gateway failed to start");
     }
     sleep(2);
   }
@@ -1345,6 +1413,14 @@ async function startGateway(_gpu) {
   sleep(5);
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+}
+
+async function startGateway(_gpu) {
+  return startGatewayWithOptions(_gpu, { exitOnFailure: true });
+}
+
+async function startGatewayForRecovery(_gpu) {
+  return startGatewayWithOptions(_gpu, { exitOnFailure: false });
 }
 
 // ── Step 3: Sandbox ──────────────────────────────────────────────
@@ -1398,6 +1474,7 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null)
   run(`cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`);
   run(`cp -r "${path.join(ROOT, "scripts")}" "${buildCtx}/scripts"`);
   run(`rm -rf "${buildCtx}/nemoclaw/node_modules"`, { ignoreError: true });
+  run(`bash "${buildCtx}/scripts/clean-staged-tree.sh" "${buildCtx}/nemoclaw-blueprint"`, { ignoreError: true });
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
@@ -1534,9 +1611,7 @@ async function setupNim(gpu) {
   const options = [];
   options.push({
     key: "build",
-    label:
-      "NVIDIA Endpoints" +
-      (!ollamaRunning && !(EXPERIMENTAL && vllmRunning) ? " (recommended)" : ""),
+    label: "NVIDIA Endpoints",
   });
   options.push({ key: "openai", label: "OpenAI" });
   options.push({ key: "custom", label: "Other OpenAI-compatible endpoint" });
@@ -2137,6 +2212,64 @@ async function setupPolicies(sandboxName) {
 
 // ── Dashboard ────────────────────────────────────────────────────
 
+const CONTROL_UI_PORT = 18789;
+const CONTROL_UI_PATH = "/";
+
+function findOpenclawJsonPath(dir) {
+  if (!fs.existsSync(dir)) return null;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      const found = findOpenclawJsonPath(p);
+      if (found) return found;
+    } else if (e.name === "openclaw.json") {
+      return p;
+    }
+  }
+  return null;
+}
+
+/**
+ * Pull gateway.auth.token from the sandbox image via openshell sandbox download
+ * so onboard can print copy-paste Control UI URLs with #token= (same idea as nemoclaw-start.sh).
+ */
+function fetchGatewayAuthTokenFromSandbox(sandboxName) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-token-"));
+  try {
+    const destDir = `${tmpDir}${path.sep}`;
+    const result = runOpenshell(
+      ["sandbox", "download", sandboxName, "/sandbox/.openclaw/openclaw.json", destDir],
+      { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] }
+    );
+    if (result.status !== 0) return null;
+    const jsonPath = findOpenclawJsonPath(tmpDir);
+    if (!jsonPath) return null;
+    const cfg = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
+    const token = cfg && cfg.gateway && cfg.gateway.auth && cfg.gateway.auth.token;
+    return typeof token === "string" && token.length > 0 ? token : null;
+  } catch {
+    return null;
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+}
+
+function buildControlUiUrls(token) {
+  const hash = token ? `#token=${token}` : "";
+  const baseUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const urls = [`${baseUrl}${CONTROL_UI_PATH}${hash}`];
+  const chatUi = (process.env.CHAT_UI_URL || "").trim().replace(/\/$/, "");
+  if (chatUi && /^https?:\/\//i.test(chatUi) && chatUi !== baseUrl) {
+    urls.push(`${chatUi}${CONTROL_UI_PATH}${hash}`);
+  }
+  return [...new Set(urls)];
+}
+
 function printDashboard(sandboxName, model, provider, nimContainer = null) {
   const nimStat = nimContainer ? nim.nimStatusByName(nimContainer) : nim.nimStatus(sandboxName);
   const nimLabel = nimStat.running ? "running" : "not running";
@@ -2151,6 +2284,8 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
 
+  const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
+
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
   // console.log(`  Dashboard    http://localhost:18789/`);
@@ -2158,10 +2293,26 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
   console.log(`  Model        ${model} (${providerLabel})`);
   console.log(`  NIM          ${nimLabel}`);
   console.log(`  ${"─".repeat(50)}`);
-  console.log(`  Next:`);
   console.log(`  Run:         nemoclaw ${sandboxName} connect`);
   console.log(`  Status:      nemoclaw ${sandboxName} status`);
   console.log(`  Logs:        nemoclaw ${sandboxName} logs --follow`);
+  console.log("");
+  if (token) {
+    console.log("  OpenClaw UI (tokenized URL; treat it like a password)");
+    console.log(`  Port ${CONTROL_UI_PORT} must be forwarded before opening this URL.`);
+    for (const url of buildControlUiUrls(token)) {
+      console.log(`  ${url}`);
+    }
+  } else {
+    note("  Could not read gateway token from the sandbox (download failed).");
+    console.log("  OpenClaw UI");
+    console.log(`  Port ${CONTROL_UI_PORT} must be forwarded before opening this URL.`);
+    for (const url of buildControlUiUrls()) {
+      console.log(`  ${url}`);
+    }
+    console.log(`  Token:       nemoclaw ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`);
+    console.log(`               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`);
+  }
   console.log(`  ${"─".repeat(50)}`);
   console.log("");
 }
@@ -2204,12 +2355,16 @@ module.exports = {
   getInstalledOpenshellVersion,
   getStableGatewayImageRef,
   hasStaleGateway,
+  isGatewayHealthy,
   isSandboxReady,
   onboard,
+  preflight,
   pruneStaleSandboxEntry,
   runCaptureOpenshell,
   setupInference,
   setupNim,
+  startGateway,
+  startGatewayForRecovery,
   writeSandboxConfigSyncFile,
   patchStagedDockerfile,
 };

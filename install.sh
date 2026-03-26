@@ -21,6 +21,31 @@ resolve_installer_version() {
 
 NEMOCLAW_VERSION="$(resolve_installer_version)"
 
+# Resolve which Git ref to install from.
+# Priority: NEMOCLAW_INSTALL_TAG env var > GitHub releases API > "main" fallback.
+resolve_release_tag() {
+  # Allow explicit override (for CI, pinning, or testing).
+  if [[ -n "${NEMOCLAW_INSTALL_TAG:-}" ]]; then
+    printf "%s" "$NEMOCLAW_INSTALL_TAG"
+    return 0
+  fi
+
+  # Query the GitHub releases API for the latest published release.
+  local response tag
+  response="$(curl -fsSL --max-time 10 \
+    https://api.github.com/repos/NVIDIA/NemoClaw/releases/latest 2>/dev/null)" || true
+  tag="$(printf '%s' "$response" \
+    | grep '"tag_name"' \
+    | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/' \
+    | head -1 || true)"
+
+  if [[ -n "$tag" && "$tag" =~ ^v[0-9] ]]; then
+    printf "%s" "$tag"
+  else
+    printf "main"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Color / style — disabled when NO_COLOR is set or stdout is not a TTY.
 # Uses exact NVIDIA green #76B900 on truecolor terminals; 256-color otherwise.
@@ -132,6 +157,7 @@ usage() {
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
+  printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
   printf "    NEMOCLAW_PROVIDER             cloud | ollama | nim | vllm\n"
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
@@ -444,6 +470,7 @@ pre_extract_openclaw() {
 }
 
 install_nemoclaw() {
+  command_exists git || error "git was not found on PATH."
   if [[ -f "./package.json" ]] && grep -q '"name": "nemoclaw"' ./package.json 2>/dev/null; then
     info "NemoClaw package.json found in current directory — installing from source…"
     spin "Preparing OpenClaw package" bash -c "$(declare -f info warn pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$(pwd)" \
@@ -453,13 +480,17 @@ install_nemoclaw() {
     spin "Linking NemoClaw CLI" npm link
   else
     info "Installing NemoClaw from GitHub…"
+    # Resolve the latest release tag so we never install raw main.
+    local release_ref
+    release_ref="$(resolve_release_tag)"
+    info "Resolved install ref: ${release_ref}"
     # Clone first so we can pre-extract openclaw before npm install (GH-503).
     # npm install -g git+https://... does this internally but we can't hook
     # into its extraction pipeline, so we do it ourselves.
     local nemoclaw_src="${HOME}/.nemoclaw/source"
     rm -rf "$nemoclaw_src"
     mkdir -p "$(dirname "$nemoclaw_src")"
-    spin "Cloning NemoClaw source" git clone --depth 1 https://github.com/NVIDIA/NemoClaw.git "$nemoclaw_src"
+    spin "Cloning NemoClaw source" git clone --depth 1 --branch "$release_ref" https://github.com/NVIDIA/NemoClaw.git "$nemoclaw_src"
     spin "Preparing OpenClaw package" bash -c "$(declare -f info warn pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
       || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
     spin "Installing NemoClaw dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"
@@ -610,4 +641,6 @@ main() {
   post_install_message
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { [[ "$0" == "bash" ]] || [[ "$0" == "-bash" ]]; }; }; then
+  main "$@"
+fi
