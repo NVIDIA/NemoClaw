@@ -78,53 +78,38 @@ function checkMetrics(
   });
 }
 
-/** Build updated thresholds from improved results (floor of actual, never lowering). */
-function ratchetedThresholds(
-  results: MetricResult[],
-  current: CoverageThresholds,
-): CoverageThresholds {
+/** Build updated thresholds from results (floor of actual, never lowering). */
+function ratchetedThresholds(results: MetricResult[]): CoverageThresholds {
   return Object.fromEntries(
-    METRICS.map((m) => {
-      const result = results.find((r) => r.metric === m)!;
-      return [m, Math.max(Math.floor(result.actual), current[m])];
-    }),
+    results.map((r) => [r.metric, Math.max(Math.floor(r.actual), r.threshold)]),
   ) as CoverageThresholds;
 }
 
 // ── Formatting ─────────────────────────────────────────────────────
 
-const STATUS_LABELS: Record<CheckStatus, string> = {
-  ok: "OK",
-  fail: "FAIL",
-  improved: "IMPROVED",
-};
-
 function formatResult({ metric, actual, threshold, status }: MetricResult): string {
-  const label = STATUS_LABELS[status];
+  const preamble = `${metric} coverage is ${actual}%`;
   switch (status) {
     case "fail":
-      return `${label}: ${metric} coverage is ${actual}%, threshold is ${threshold}% (tolerance ${TOLERANCE}%)`;
+      return `FAIL: ${preamble}, threshold is ${threshold}% (tolerance ${TOLERANCE}%)`;
     case "improved":
-      return `${label}: ${metric} coverage is ${actual}%, above threshold ${threshold}%`;
+      return `IMPROVED: ${preamble}, above threshold ${threshold}%`;
     case "ok":
-      return `${label}: ${metric} coverage is ${actual}% (threshold ${threshold}%)`;
+      return `OK: ${preamble} (threshold ${threshold}%)`;
   }
 }
 
-function formatReport(results: MetricResult[], thresholds: CoverageThresholds): string {
+function formatReport(results: MetricResult[], failed: boolean): string {
   const lines: string[] = ["=== Coverage Ratchet Check ===", ""];
 
   lines.push(...results.map(formatResult), "");
 
-  const hasFail = results.some((r) => r.status === "fail");
-  const hasImproved = results.some((r) => r.status === "improved");
-
-  if (hasFail) {
+  if (failed) {
     lines.push(
       "Coverage regression detected. Add tests to bring coverage back above the threshold.",
     );
-  } else if (hasImproved) {
-    const updated = JSON.stringify(ratchetedThresholds(results, thresholds), null, 2);
+  } else if (results.some((r) => r.status === "improved")) {
+    const updated = JSON.stringify(ratchetedThresholds(results), null, 2);
     lines.push(
       "Coverage improved! Update ci/coverage-threshold.json to ratchet the floor:",
       "",
@@ -145,9 +130,11 @@ function main(): void {
   const thresholds = loadJSON<CoverageThresholds>(THRESHOLD_PATH, "Threshold file");
 
   const results = checkMetrics(summary, thresholds);
-  console.log(formatReport(results, thresholds));
+  const failed = results.some((r) => r.status === "fail");
 
-  if (results.some((r) => r.status === "fail")) {
+  console.log(formatReport(results, failed));
+
+  if (failed) {
     process.exitCode = 1;
   }
 }
