@@ -159,9 +159,19 @@ else
   fail "symlink targets wrong:$FAILED_LINKS"
 fi
 
-# ── Test 10: Sandbox user cannot kill gateway-user processes ─────
+# ── Test 10: iptables is installed (required for network policy enforcement) ──
 
-info "10. Sandbox user cannot kill gateway-user processes"
+info "10. iptables is installed"
+OUT=$(run_as_root "iptables --version 2>&1")
+if echo "$OUT" | grep -q "iptables v"; then
+  pass "iptables installed: $OUT"
+else
+  fail "iptables not found — sandbox network policies will not be enforced: $OUT"
+fi
+
+# ── Test 11: Sandbox user cannot kill gateway-user processes ─────
+
+info "11. Sandbox user cannot kill gateway-user processes"
 # Start a dummy process as gateway, try to kill it as sandbox
 OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
   gosu gateway sleep 60 &
@@ -175,6 +185,33 @@ if echo "$OUT" | grep -qi "EPERM\|not permitted\|operation not permitted"; then
   pass "sandbox cannot kill gateway-user processes"
 else
   fail "sandbox CAN kill gateway processes: $OUT"
+fi
+
+# ── Test 12: Dangerous capabilities are dropped by entrypoint ────
+
+info "12. Entrypoint drops dangerous capabilities from bounding set"
+# Run the entrypoint (which re-execs through capsh) and check CapBnd.
+# The entrypoint drops cap_net_raw (bit 13 = 0x2000) among others.
+# We read /proc/self/status CapBnd after the entrypoint has run.
+OUT=$(docker run --rm "$IMAGE" bash -c '
+  # We are inside the capsh-wrapped entrypoint. Read our bounding set.
+  CAP_BND=$(grep "^CapBnd:" /proc/self/status | awk "{print \$2}")
+  echo "CapBnd=$CAP_BND"
+  # Check cap_net_raw (bit 13) is NOT set
+  BND_DEC=$((16#$CAP_BND))
+  NET_RAW_BIT=$((1 << 13))
+  if [ $((BND_DEC & NET_RAW_BIT)) -ne 0 ]; then
+    echo "DANGEROUS: cap_net_raw present"
+  else
+    echo "SAFE: cap_net_raw dropped"
+  fi
+' 2>&1)
+if echo "$OUT" | grep -q "SAFE: cap_net_raw dropped"; then
+  pass "entrypoint drops dangerous capabilities (cap_net_raw not in bounding set)"
+elif echo "$OUT" | grep -q "DANGEROUS"; then
+  fail "cap_net_raw still present after entrypoint: $OUT"
+else
+  fail "could not verify capability state: $OUT"
 fi
 
 # ── Summary ──────────────────────────────────────────────────────
