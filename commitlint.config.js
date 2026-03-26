@@ -3,8 +3,6 @@
 
 module.exports = {
   extends: ["@commitlint/config-conventional"],
-  // Skip GitHub auto-generated commits (web-UI suggestion accepts, merge commits)
-  ignores: [(message) => /^Apply suggestion/.test(message)],
   rules: {
     "type-enum": [
       2,
