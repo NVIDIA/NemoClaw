@@ -104,6 +104,119 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("nemoclaw debug")).toBeTruthy();
   });
 
+  it("help mentions reconnect command", () => {
+    const r = run("help");
+    expect(r.code).toBe(0);
+    expect(r.out.includes("nemoclaw reconnect")).toBeTruthy();
+  });
+
+  it("reconnect uses the default sandbox when no name is provided", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-reconnect-default-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const markerFile = path.join(home, "reconnect-args");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        "printf '%s\\n' \"$*\" >> \"$marker_file\"",
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        "  echo 'Sandbox: alpha'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"forward\" ] || [ \"$1\" = \"sandbox\" ]; then",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const r = runWithEnv("reconnect", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out.includes("Reconnecting to sandbox 'alpha'")).toBeTruthy();
+    const log = fs.readFileSync(markerFile, "utf8");
+    expect(log).toContain("sandbox get alpha");
+    expect(log).toContain("forward start --background 18789 alpha");
+    expect(log).toContain("sandbox connect alpha");
+  });
+
+  it("reconnect accepts an explicit sandbox name", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-reconnect-named-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const markerFile = path.join(home, "reconnect-args");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          beta: {
+            name: "beta",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "beta",
+      }),
+      { mode: 0o600 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        "printf '%s\\n' \"$*\" >> \"$marker_file\"",
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"beta\" ]; then",
+        "  echo 'Sandbox: beta'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"forward\" ] || [ \"$1\" = \"sandbox\" ]; then",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const r = runWithEnv("reconnect beta", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out.includes("Reconnecting to sandbox 'beta'")).toBeTruthy();
+    const log = fs.readFileSync(markerFile, "utf8");
+    expect(log).toContain("sandbox get beta");
+    expect(log).toContain("sandbox connect beta");
+  });
+
   it("passes --follow through to openshell logs", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-follow-"));
     const localBin = path.join(home, "bin");
