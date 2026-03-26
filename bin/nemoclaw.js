@@ -363,6 +363,27 @@ async function setupSpark() {
 }
 
 async function setupApple() {
+  const arg = process.argv[3];
+  if (arg === "--help" || arg === "-h") {
+    console.error("  Usage: nemoclaw setup-apple");
+    console.error("");
+    console.error("  Verify macOS / Apple Silicon prerequisites before onboarding.");
+    console.error("");
+    console.error("  What it checks:");
+    console.error("    - macOS version and Apple Silicon / Rosetta detection");
+    console.error("    - Docker Desktop or Colima running with enough memory");
+    console.error("    - Ollama installed and bound to 0.0.0.0 for container access");
+    console.error("    - openshell CLI installed and on PATH");
+    console.error("    - Apple GPU and unified memory availability");
+    console.error("");
+    console.error("  Examples:");
+    console.error("    nemoclaw setup-apple            Run all macOS preflight checks");
+    console.error("    nemoclaw setup-apple --help      Show this help");
+    console.error("");
+    console.error("  After setup-apple passes, run:");
+    console.error("    nemoclaw onboard");
+    process.exit(0);
+  }
   run(`bash "${SCRIPTS}/setup-apple.sh"`);
 }
 
