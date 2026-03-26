@@ -22,11 +22,14 @@ Install the following before you begin.
 
 ## Getting Started
 
-Install the root dependencies and build the TypeScript plugin:
+Install the root dependencies, link the local CLI, and build the TypeScript plugin:
 
 ```bash
 # Install root dependencies (OpenClaw + CLI entry point)
 npm install
+
+# Link the local CLI so `nemoclaw` resolves on your PATH during development
+npm link
 
 # Install and build the TypeScript plugin
 cd nemoclaw && npm install && npm run build && cd ..
