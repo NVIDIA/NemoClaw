@@ -1111,6 +1111,14 @@ function installOpenshell() {
     if (output) {
       console.error(output);
     }
+    console.error("");
+    console.error("  OpenShell CLI binary failed to install.");
+    console.error("  You can install it manually:");
+    console.error("");
+    console.error('    curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/latest/download/openshell-$(uname -m)-unknown-linux-musl.tar.gz" -o /tmp/openshell.tar.gz');
+    console.error("    tar xzf /tmp/openshell.tar.gz -C /tmp");
+    console.error("    install -m 755 /tmp/openshell /usr/local/bin/openshell");
+    console.error("");
     return { installed: false, localBin: null, futureShellPathHint: null };
   }
   const localBin = process.env.XDG_BIN_HOME || path.join(process.env.HOME || "", ".local", "bin");
