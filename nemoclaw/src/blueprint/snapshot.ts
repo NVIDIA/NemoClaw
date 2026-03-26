@@ -9,6 +9,9 @@
  *   - Restore: push snapshot contents into sandbox filesystem
  *   - Cutover: rename host config to archived, point OpenClaw at sandbox
  *   - Rollback: restore host config from snapshot
+ *
+ * TODO(#977): Wire into the `nemoclaw migrate` command alongside migration-state.ts.
+ *   These functions are tested and ready; they need a CLI entry point.
  */
 
 import type { Dirent } from "node:fs";

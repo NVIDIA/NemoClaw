@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+/**
+ * Migration state detection and snapshot bundling for the `nemoclaw migrate` flow.
+ *
+ * TODO(#977): Wire into the `nemoclaw migrate` command alongside snapshot.ts.
+ *   This module is tested and ready; it needs a CLI entry point.
+ */
+
 import {
   chmodSync,
   copyFileSync,

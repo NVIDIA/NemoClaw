@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -447,4 +448,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     default:
       throw new Error(`Unknown action '${String(action)}'. Use: plan, apply, status, rollback`);
   }
+}
+
+// Auto-invoke when run as a CLI binary (not when imported as a module).
+import { fileURLToPath } from "node:url";
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((e: unknown) => {
+    process.stderr.write((e instanceof Error ? e.message : String(e)) + "\n");
+    process.exit(1);
+  });
 }
