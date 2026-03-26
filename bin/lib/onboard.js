@@ -1885,9 +1885,7 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   // Release any stale forward on port 18789 before claiming it for the new sandbox.
   // A previous onboard run may have left the port forwarded to a different sandbox,
   // which would silently prevent the new sandbox's dashboard from being reachable.
-  runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
-  // Forward dashboard port to the new sandbox
-  runOpenshell(["forward", "start", "--background", "18789", sandboxName], { ignoreError: true });
+  ensureDashboardForward(sandboxName, chatUiUrl);
 
   // Register only after confirmed ready — prevents phantom entries
   registry.registerSandbox({
@@ -2687,6 +2685,28 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
 const CONTROL_UI_PORT = 18789;
 const CONTROL_UI_PATH = "/";
 
+function resolveDashboardForwardTarget(chatUiUrl) {
+  const rawUrl = String(chatUiUrl || "").trim();
+  const localHosts = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
+  if (!rawUrl) return String(CONTROL_UI_PORT);
+
+  try {
+    const { hostname } = new URL(rawUrl);
+    return localHosts.has(hostname) ? String(CONTROL_UI_PORT) : `0.0.0.0:${CONTROL_UI_PORT}`;
+  } catch {
+    return /(?:^|\/\/)(?:localhost|127\.0\.0\.1|\[?::1\]?)(?::\d+)?(?:\/|$)/i.test(rawUrl)
+      ? String(CONTROL_UI_PORT)
+      : `0.0.0.0:${CONTROL_UI_PORT}`;
+  }
+}
+
+function ensureDashboardForward(sandboxName, chatUiUrl) {
+  const forwardTarget = resolveDashboardForwardTarget(chatUiUrl);
+  runOpenshell(["forward", "stop", String(CONTROL_UI_PORT)], { ignoreError: true });
+  runOpenshell(["forward", "start", "--background", forwardTarget, sandboxName], { ignoreError: true });
+}
+
 function findOpenclawJsonPath(dir) {
   if (!fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -3080,6 +3100,7 @@ module.exports = {
   getInstalledOpenshellVersion,
   getRequestedModelHint,
   getRequestedProviderHint,
+  resolveDashboardForwardTarget,
   getStableGatewayImageRef,
   getResumeConfigConflicts,
   isGatewayHealthy,
