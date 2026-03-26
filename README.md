@@ -81,6 +81,7 @@ On a fresh macOS machine, install the prerequisites in this order:
 3. Run the NemoClaw installer.
 
 This avoids the two most common first-run failures on macOS:
+
 - missing developer tools needed by the installer and Node.js toolchain
 - Docker connection errors when no supported container runtime is installed or running
 
