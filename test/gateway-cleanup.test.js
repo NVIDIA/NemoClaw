@@ -23,16 +23,17 @@ describe("gateway cleanup: Docker volumes removed on failure (#17)", () => {
 
   it("onboard.js: volume cleanup runs on gateway start failure", () => {
     const content = fs.readFileSync(path.join(ROOT, "bin/lib/onboard.js"), "utf-8");
-    // The startGateway function should call destroyGateway after a failed start
-    const startGwBlock = content.match(/async function startGateway[\s\S]*?^}/m);
+    const startGwBlock = content.match(/async function startGatewayWithOptions[\s\S]*?^}/m);
     expect(startGwBlock).toBeTruthy();
 
-    // Count calls to destroyGateway — should be at least 3:
-    // 1. pre-cleanup before start
-    // 2. after start failure
-    // 3. after health check failure
-    const calls = (startGwBlock[0].match(/destroyGateway\(\)/g) || []).length;
-    expect(calls).toBeGreaterThanOrEqual(3);
+    // Current behavior:
+    // 1. stale gateway metadata is destroyed directly before start, if present
+    // 2. destroyGateway() runs after start failure
+    // 3. destroyGateway() runs after health check failure
+    expect(startGwBlock[0].includes('if (hasStaleGateway(gwInfo))')).toBe(true);
+    expect(startGwBlock[0].includes('runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME]')).toBe(true);
+    const destroyCalls = (startGwBlock[0].match(/destroyGateway\(\)/g) || []).length;
+    expect(destroyCalls).toBeGreaterThanOrEqual(2);
   });
 
   it("uninstall.sh: includes Docker volume cleanup", () => {

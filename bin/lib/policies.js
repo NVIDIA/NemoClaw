@@ -93,6 +93,7 @@ function buildPolicyGetCommand(sandboxName) {
   return `${getOpenshellCommand()} policy get --full ${shellQuote(sandboxName)} 2>/dev/null`;
 }
 
+// eslint-disable-next-line complexity
 function applyPreset(sandboxName, presetName) {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"

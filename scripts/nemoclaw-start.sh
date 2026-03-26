@@ -18,11 +18,11 @@ set -euo pipefail
 # Harden: limit process count to prevent fork bombs (ref: #809)
 # Best-effort: some container runtimes (e.g., brev) restrict ulimit
 # modification, returning "Invalid argument". Warn but don't block startup.
-if ! ulimit -Hu 512 2>/dev/null; then
-  echo "[SECURITY] Could not set hard nproc limit (container runtime may restrict ulimit)" >&2
-fi
 if ! ulimit -Su 512 2>/dev/null; then
   echo "[SECURITY] Could not set soft nproc limit (container runtime may restrict ulimit)" >&2
+fi
+if ! ulimit -Hu 512 2>/dev/null; then
+  echo "[SECURITY] Could not set hard nproc limit (container runtime may restrict ulimit)" >&2
 fi
 
 # SECURITY: Lock down PATH so the agent cannot inject malicious binaries

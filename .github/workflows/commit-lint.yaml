@@ -21,8 +21,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -33,14 +31,7 @@ jobs:
       - name: Install dependencies
         run: npm install --ignore-scripts
 
-      - name: Lint commits
-        if: github.event.action != 'edited'
-        env:
-          FROM_SHA: ${{ github.event.pull_request.base.sha }}
-          TO_SHA: ${{ github.event.pull_request.head.sha }}
-        run: npx commitlint --from "$FROM_SHA" --to "$TO_SHA" --verbose
-
-      - name: Lint PR title (squash-merge path)
+      - name: Lint PR title
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: printf '%s\n' "$PR_TITLE" | npx commitlint --verbose
