@@ -20,12 +20,12 @@ function writeExecutable(target, contents) {
 // Helpers shared across suites
 // ---------------------------------------------------------------------------
 
-/** Fake node that reports v22.14.0. */
+/** Fake node that reports v22.16.0. */
 function writeNodeStub(fakeBin) {
   writeExecutable(
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.14.0"; exit 0; fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.16.0"; exit 0; fi
 if [ "$1" = "-e" ]; then
   if [[ "$2" == *"dependencies.openclaw"* ]]; then
     echo "2026.3.11"
@@ -100,7 +100,7 @@ exit 98
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).not.toBe(0);
     expect(output).toMatch(/Unsupported runtime detected/);
-    expect(output).toMatch(/Node\.js >=20 and npm >=10/);
+    expect(output).toMatch(/Node\.js >=22\.16\.0 and npm >=10/);
     expect(output).toMatch(/v18\.19\.1/);
     expect(output).toMatch(/9\.8\.1/);
   });
@@ -117,7 +117,7 @@ exit 98
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then
-  echo "v22.14.0"
+  echo "v22.16.0"
   exit 0
 fi
 if [ "$1" = "-e" ]; then
@@ -212,7 +212,7 @@ exit 98
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then
-  echo "v22.14.0"
+  echo "v22.16.0"
   exit 0
 fi
 if [ "$1" = "-e" ]; then
@@ -295,7 +295,7 @@ exit 98
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
-  echo "v22.14.0"
+  echo "v22.16.0"
   exit 0
 fi
 exit 99
@@ -375,7 +375,7 @@ echo "Darwin"
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
-  echo "v22.14.0"
+  echo "v22.16.0"
   exit 0
 fi
 if [ "$1" = "-e" ]; then
@@ -641,7 +641,7 @@ fi`,
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
-  echo "v22.14.0"
+  echo "v22.16.0"
   exit 0
 fi
 if [ "$1" = "-e" ]; then
@@ -1277,7 +1277,7 @@ exit 0`,
     expect(`${result.stdout}${result.stderr}`).toMatch(/npm was not found on PATH/);
   });
 
-  it("succeeds with acceptable Node.js 20 and npm 10", () => {
+  it("succeeds with acceptable Node.js 22.16 and npm 10", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-ok-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -1285,7 +1285,7 @@ exit 0`,
     writeExecutable(
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
-if [ "$1" = "--version" ]; then echo "v20.0.0"; exit 0; fi
+if [ "$1" = "--version" ]; then echo "v22.16.0"; exit 0; fi
 exit 0`,
     );
     writeExecutable(
@@ -1299,6 +1299,32 @@ exit 0`,
 
     expect(result.status).toBe(0);
     expect(`${result.stdout}${result.stderr}`).toMatch(/Runtime OK/);
+  });
+
+  it("rejects Node.js 20 which is below the 22.16 minimum", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-node20-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+
+    writeExecutable(
+      path.join(fakeBin, "node"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "v20.18.0"; exit 0; fi
+exit 0`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "10.9.2"; exit 0; fi
+exit 0`,
+    );
+
+    const result = callEnsureSupportedRuntime(fakeBin);
+
+    expect(result.status).not.toBe(0);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/Unsupported runtime detected/);
+    expect(output).toMatch(/v20\.18\.0/);
   });
 
   it("rejects node that returns a non-numeric version", () => {
@@ -1346,7 +1372,7 @@ describe("curl-pipe installer release-tag resolution", () => {
     writeExecutable(
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
-if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.14.0"; exit 0; fi
+if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.16.0"; exit 0; fi
 if [ "$1" = "-e" ]; then exit 1; fi
 exit 99`,
     );

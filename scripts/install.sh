@@ -126,10 +126,9 @@ refresh_path() {
   fi
 }
 
-MIN_NODE_MAJOR=20
+MIN_NODE_VERSION="22.16.0"
 MIN_NPM_MAJOR=10
-RECOMMENDED_NODE_MAJOR=22
-RUNTIME_REQUIREMENT_MSG="NemoClaw requires Node.js >=${MIN_NODE_MAJOR} and npm >=${MIN_NPM_MAJOR} (recommended Node.js ${RECOMMENDED_NODE_MAJOR})."
+RUNTIME_REQUIREMENT_MSG="NemoClaw requires Node.js >=${MIN_NODE_VERSION} and npm >=${MIN_NPM_MAJOR}."
 
 OS="$(uname -s)"
 ARCH="$(uname -m)"
@@ -170,6 +169,22 @@ fi
 
 info "Node.js manager: $NODE_MGR"
 
+# Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
+# Rejects prerelease suffixes (e.g. "22.16.0-rc.1") to avoid arithmetic errors.
+version_gte() {
+  [[ "$1" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || return 1
+  [[ "$2" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || return 1
+  local -a a b
+  IFS=. read -ra a <<<"$1"
+  IFS=. read -ra b <<<"$2"
+  for i in 0 1 2; do
+    local ai=${a[$i]:-0} bi=${b[$i]:-0}
+    if ((ai > bi)); then return 0; fi
+    if ((ai < bi)); then return 1; fi
+  done
+  return 0
+}
+
 version_major() {
   printf '%s\n' "${1#v}" | cut -d. -f1
 }
@@ -187,7 +202,7 @@ ensure_supported_runtime() {
   [[ "$node_major" =~ ^[0-9]+$ ]] || fail "Could not determine Node.js version from '${node_version}'. ${RUNTIME_REQUIREMENT_MSG}"
   [[ "$npm_major" =~ ^[0-9]+$ ]] || fail "Could not determine npm version from '${npm_version}'. ${RUNTIME_REQUIREMENT_MSG}"
 
-  if ((node_major < MIN_NODE_MAJOR || npm_major < MIN_NPM_MAJOR)); then
+  if ! version_gte "${node_version#v}" "$MIN_NODE_VERSION" || ((npm_major < MIN_NPM_MAJOR)); then
     fail "Unsupported runtime detected: Node.js ${node_version:-unknown}, npm ${npm_version:-unknown}. ${RUNTIME_REQUIREMENT_MSG} Upgrade Node.js and rerun the installer."
   fi
 
@@ -197,13 +212,13 @@ ensure_supported_runtime() {
 # ── Install Node.js 22 if needed ────────────────────────────────
 
 install_node() {
-  local current_major=""
+  local current_version=""
   if command -v node >/dev/null 2>&1; then
-    current_major="$(node -v 2>/dev/null | sed 's/^v//' | cut -d. -f1)"
+    current_version="$(node -v 2>/dev/null | sed 's/^v//')"
   fi
 
-  if [ "$current_major" = "22" ]; then
-    info "Node.js 22 already installed: $(node -v)"
+  if [ -n "$current_version" ] && version_gte "$current_version" "$MIN_NODE_VERSION"; then
+    info "Node.js v${current_version} meets minimum requirement (>= v${MIN_NODE_VERSION})"
     return 0
   fi
 
@@ -239,7 +254,7 @@ install_node() {
       sudo apt-get install -y -qq nodejs >/dev/null 2>&1
       ;;
     none)
-      fail "No Node.js version manager found. Install Node.js 22 manually, then re-run."
+      fail "No Node.js version manager found. Install Node.js >=${MIN_NODE_VERSION} manually, then re-run."
       ;;
   esac
 

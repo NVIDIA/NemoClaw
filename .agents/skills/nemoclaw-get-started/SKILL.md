@@ -35,7 +35,7 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | Dependency | Version                          |
 |------------|----------------------------------|
 | Linux      | Ubuntu 22.04 LTS or later |
-| Node.js    | 20 or later |
+| Node.js    | 22.16 or later |
 | npm        | 10 or later |
 | Container runtime | Supported runtime installed and running |
 | [OpenShell](https://github.com/NVIDIA/OpenShell) | Installed |
