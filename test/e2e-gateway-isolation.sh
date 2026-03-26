@@ -126,7 +126,7 @@ fi
 
 info "7. Entrypoint locks PATH to system directories"
 # Run the entrypoint preamble (up to the PATH export) and verify the result
-OUT=$(run_as_root "bash -c 'source <(head -21 /usr/local/bin/nemoclaw-start) 2>/dev/null; echo \$PATH'")
+OUT=$(run_as_root "bash -c 'source <(grep -m1 -A0 \"^export PATH=\" /usr/local/bin/nemoclaw-start) 2>/dev/null; echo \$PATH'")
 if echo "$OUT" | grep -q "^/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin$"; then
   pass "PATH is locked to system directories"
 else
@@ -190,28 +190,32 @@ fi
 # ── Test 12: Dangerous capabilities are dropped by entrypoint ────
 
 info "12. Entrypoint drops dangerous capabilities from bounding set"
-# Run the entrypoint (which re-execs through capsh) and check CapBnd.
-# The entrypoint drops cap_net_raw (bit 13 = 0x2000) among others.
-# We read /proc/self/status CapBnd after the entrypoint has run.
-OUT=$(docker run --rm "$IMAGE" bash -c '
-  # We are inside the capsh-wrapped entrypoint. Read our bounding set.
-  CAP_BND=$(grep "^CapBnd:" /proc/self/status | awk "{print \$2}")
-  echo "CapBnd=$CAP_BND"
-  # Check cap_net_raw (bit 13) is NOT set
-  BND_DEC=$((16#$CAP_BND))
-  NET_RAW_BIT=$((1 << 13))
-  if [ $((BND_DEC & NET_RAW_BIT)) -ne 0 ]; then
-    echo "DANGEROUS: cap_net_raw present"
-  else
-    echo "SAFE: cap_net_raw dropped"
-  fi
-' 2>&1)
-if echo "$OUT" | grep -q "SAFE: cap_net_raw dropped"; then
-  pass "entrypoint drops dangerous capabilities (cap_net_raw not in bounding set)"
-elif echo "$OUT" | grep -q "DANGEROUS"; then
-  fail "cap_net_raw still present after entrypoint: $OUT"
+# Run capsh directly with the same --drop flags as the entrypoint, then
+# check CapBnd. This avoids running the full entrypoint which starts
+# gateway services that fail in CI without a running OpenShell environment.
+# Extract the --drop list from the entrypoint to stay in sync.
+DROP_LIST=$(run_as_root "grep -oP '(?<=--drop=)[^ \\\\]+' /usr/local/bin/nemoclaw-start")
+if [ -z "$DROP_LIST" ]; then
+  fail "could not extract --drop list from entrypoint"
 else
-  fail "could not verify capability state: $OUT"
+  OUT=$(run_as_root "capsh --drop=${DROP_LIST} -- -c '
+    CAP_BND=\$(grep \"^CapBnd:\" /proc/self/status | awk \"{print \\\$2}\")
+    echo \"CapBnd=\$CAP_BND\"
+    BND_DEC=\$((16#\$CAP_BND))
+    NET_RAW_BIT=\$((1 << 13))
+    if [ \$((BND_DEC & NET_RAW_BIT)) -ne 0 ]; then
+      echo \"DANGEROUS: cap_net_raw present\"
+    else
+      echo \"SAFE: cap_net_raw dropped\"
+    fi
+  '")
+  if echo "$OUT" | grep -q "SAFE: cap_net_raw dropped"; then
+    pass "entrypoint drops dangerous capabilities (cap_net_raw not in bounding set)"
+  elif echo "$OUT" | grep -q "DANGEROUS"; then
+    fail "cap_net_raw still present after capsh drop: $OUT"
+  else
+    fail "could not verify capability state: $OUT"
+  fi
 fi
 
 # ── Summary ──────────────────────────────────────────────────────
