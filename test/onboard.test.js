@@ -12,6 +12,7 @@ import {
   buildSandboxConfigSyncScript,
   getFutureShellPathHint,
   getInstalledOpenshellVersion,
+  isGatewayHealthy,
   getSandboxInferenceConfig,
   getStableGatewayImageRef,
   patchStagedDockerfile,
@@ -150,6 +151,33 @@ describe("onboard helpers", () => {
     expect(getStableGatewayImageRef("openshell 0.0.12")).toBe("ghcr.io/nvidia/openshell/cluster:0.0.12");
     expect(getStableGatewayImageRef("openshell 0.0.13-dev.8+gbbcaed2ea")).toBe("ghcr.io/nvidia/openshell/cluster:0.0.13");
     expect(getStableGatewayImageRef("bogus")).toBe(null);
+  });
+
+  it("recognizes only a connected named NemoClaw gateway as healthy", () => {
+    expect(
+      isGatewayHealthy(
+        "Server Status\n\n  Gateway: nemoclaw\n  Status: Connected",
+        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080"
+      )
+    ).toBe(true);
+    expect(
+      isGatewayHealthy(
+        "Server Status\n\n  Gateway: openshell\n  Status: Connected",
+        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080"
+      )
+    ).toBe(false);
+    expect(
+      isGatewayHealthy(
+        "Server Status\n\n  Gateway: openshell\n  Status: Connected",
+        "Error: no gateway metadata found"
+      )
+    ).toBe(false);
+    expect(
+      isGatewayHealthy(
+        "Server Status\n\n  Gateway: nemoclaw\n  Status: Disconnected",
+        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080"
+      )
+    ).toBe(false);
   });
 
   it("returns a future-shell PATH hint for user-local openshell installs", () => {
@@ -434,6 +462,68 @@ console.log(JSON.stringify({ liveExists, sandbox: registry.getSandbox("my-assist
     const payload = JSON.parse(payloadLine);
     assert.equal(payload.liveExists, false);
     assert.equal(payload.sandbox, null);
+  });
+
+  it("reuses an existing healthy gateway instead of destroying it", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-gateway-reuse-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "gateway-reuse-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const commands = [];
+
+runner.run = (command, opts = {}) => {
+  commands.push(command);
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (command.includes("'status'")) {
+    return "Server Status\n\n  Gateway: nemoclaw\n  Status: Connected";
+  }
+  if (command.includes("'gateway' 'info' '-g' 'nemoclaw'")) {
+    return "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080";
+  }
+  if (command.includes("'--version'")) {
+    return "openshell 0.0.12";
+  }
+  return "";
+};
+
+const { startGateway } = require(${onboardPath});
+
+(async () => {
+  await startGateway(null);
+  console.log(JSON.stringify(commands));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const commands = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.equal(commands.length, 1);
+    assert.match(commands[0], /gateway' 'select' 'nemoclaw'/);
+    assert.doesNotMatch(commands[0], /gateway' 'destroy'/);
+    assert.doesNotMatch(commands[0], /gateway' 'start'/);
   });
 
   it("builds the sandbox without uploading an external OpenClaw config file", async () => {
