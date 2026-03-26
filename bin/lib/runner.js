@@ -67,7 +67,7 @@ const SECRET_PATTERNS = [
   /nvapi-[A-Za-z0-9_-]{10,}/g,
   /nvcf-[A-Za-z0-9_-]{10,}/g,
   /ghp_[A-Za-z0-9_-]{10,}/g,
-  /(?<=Bearer\s)[A-Za-z0-9_.+/=-]{10,}/gi,
+  /(?<=Bearer\s+)[A-Za-z0-9_.+/=-]{10,}/gi,
   /(?<=(?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]['"]?)[A-Za-z0-9_.+/=-]{10,}/gi,
 ];
 
@@ -80,6 +80,10 @@ function redact(str) {
   return out;
 }
 
+/**
+ * Redact sensitive fields on an error object before surfacing it to callers.
+ * NOTE: this mutates the original error instance in place.
+ */
 function redactError(err) {
   if (!err || typeof err !== "object") return err;
   const originalMessage = typeof err.message === "string" ? err.message : null;

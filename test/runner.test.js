@@ -214,6 +214,13 @@ describe("redact", () => {
     expect(redact("AUTHORIZATION: BEARER someBearerToken")).not.toContain("someBearerToken");
   });
 
+  it("masks bearer tokens with repeated spacing", () => {
+    const { redact } = require(runnerPath);
+    const output = redact("Authorization: Bearer   someBearerToken");
+    expect(output).toContain("some****");
+    expect(output).not.toContain("someBearerToken");
+  });
+
   it("masks quoted assignment values", () => {
     const { redact } = require(runnerPath);
     const output = redact('API_KEY="secret123abc"');
