@@ -1376,6 +1376,13 @@ function sleep(seconds) {
   require("child_process").spawnSync("sleep", [String(seconds)]);
 }
 
+function destroyGateway() {
+  runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+  // openshell gateway destroy doesn't remove Docker volumes, which leaves
+  // corrupted cluster state that breaks the next gateway start. Clean them up.
+  run(`docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs docker volume rm || true`, { ignoreError: true });
+}
+
 async function ensureNamedCredential(envName, label, helpUrl = null) {
   let key = getCredential(envName);
   if (key) {
@@ -1599,8 +1606,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   const startResult = runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: true, env: gatewayEnv });
   if (startResult.status !== 0) {
     console.error("  Gateway failed to start. Cleaning up stale state...");
-    runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
-    runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+    destroyGateway();
     if (exitOnFailure) {
       console.error("  Stale state removed. Please rerun: nemoclaw onboard");
       process.exit(1);
@@ -1618,8 +1624,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
     }
     if (i === 4) {
       console.error("  Gateway health check failed. Cleaning up stale state...");
-      runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
-      runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+      destroyGateway();
       if (exitOnFailure) {
         console.error("  Stale state removed. Please rerun: nemoclaw onboard");
         process.exit(1);

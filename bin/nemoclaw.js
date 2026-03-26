@@ -134,7 +134,7 @@ async function recoverNamedGatewayRuntime() {
   }
 
   const shouldStartGateway = [before.state, after.state].some((state) =>
-    ["named_unhealthy", "named_unreachable", "connected_other"].includes(state)
+    ["missing_named", "named_unhealthy", "named_unreachable", "connected_other"].includes(state)
   );
 
   if (shouldStartGateway) {

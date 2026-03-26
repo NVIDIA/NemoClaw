@@ -63,14 +63,19 @@ if (args[0] === "gateway" && (args[1] === "start" || args[1] === "select")) {
   process.exit(0);
 }
 
+if (args[0] === "gateway" && args[1] === "info") {
+  process.stdout.write("Gateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080\\n");
+  process.exit(0);
+}
+
 if (args[0] === "sandbox" && args[1] === "get" && args[2] === "my-assistant") {
   state.sandboxGetCalls += 1;
   fs.writeFileSync(statePath, JSON.stringify(state));
   if (state.sandboxGetCalls === 1) {
     process.stdout.write("Error:   × transport error\\n  ╰─▶ Connection reset by peer (os error 104)\\n");
-  } else {
-    process.stdout.write("Sandbox:\\n\\n  Id: abc\\n  Name: my-assistant\\n  Namespace: openshell\\n  Phase: Ready\\n");
+    process.exit(1);
   }
+  process.stdout.write("Sandbox:\\n\\n  Id: abc\\n  Name: my-assistant\\n  Namespace: openshell\\n  Phase: Ready\\n");
   process.exit(0);
 }
 
@@ -94,7 +99,7 @@ process.exit(0);
     });
 
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /OpenShell gateway appears unavailable\. Attempting to restore NemoClaw runtime/);
+    assert.match(result.stdout, /Recovered NemoClaw gateway runtime via (start|select)/);
     assert.match(result.stdout, /Phase: Ready/);
   });
 });
