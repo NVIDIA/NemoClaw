@@ -6,11 +6,30 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { execSync } = require("child_process");
+const { spawnSync } = require("child_process");
 const registry = require("./registry");
 const { ROOT } = require("./runner");
 
 const BACKUP_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw", "backups");
+
+const SANDBOX_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+function isValidSandboxName(name) {
+  return SANDBOX_NAME_PATTERN.test(name);
+}
+
+function runOpenshell(args) {
+  const result = spawnSync("openshell", args, {
+    encoding: "utf-8",
+    timeout: 30000,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+  };
+}
 
 /**
  * Ensures the backup directory exists with appropriate permissions.
@@ -31,14 +50,18 @@ function listBackups() {
   for (const file of files) {
     try {
       const content = JSON.parse(fs.readFileSync(path.join(BACKUP_DIR, file), "utf-8"));
+      if (!content.metadata || !content.metadata.name || !content.metadata.createdAt) {
+        console.warn(`  Warning: Skipping malformed backup ${file}: missing metadata`);
+        continue;
+      }
       backups.push({
         name: content.metadata.name,
         createdAt: content.metadata.createdAt,
         path: path.join(BACKUP_DIR, file),
         size: fs.statSync(path.join(BACKUP_DIR, file)).size,
       });
-    } catch {
-      // Ignore malformed backup files
+    } catch (err) {
+      console.warn(`  Warning: Could not read backup ${file}: ${err.message}`);
     }
   }
 
@@ -64,16 +87,8 @@ function exportSandbox(sandboxName, outputPath) {
   const defaultName = `${sandboxName}-${timestamp}.json`;
   const backupPath = outputPath || path.join(BACKUP_DIR, defaultName);
 
-  let _policyContent = "";
-  try {
-    _policyContent = execSync(`openshell policy get ${sandboxName} 2>/dev/null`, {
-      encoding: "utf-8",
-      timeout: 10000
-    });
-  } catch {
-    // Keep empty string on error
-  }
-  const policyContent = _policyContent;
+  const policyResult = runOpenshell(["policy", "get", sandboxName]);
+  const policyContent = policyResult.status === 0 ? policyResult.stdout : "";
 
   const backup = {
     version: "1.0",
@@ -130,17 +145,17 @@ function importSandbox(backupPath, newName) {
 
   const sandboxName = newName || backup.sandbox.name;
 
+  if (!isValidSandboxName(sandboxName)) {
+    console.error(`  Invalid sandbox name: ${sandboxName}`);
+    return false;
+  }
+
   console.log(`  Creating sandbox '${sandboxName}' from backup...`);
 
-  try {
-    execSync(`openshell sandbox exists ${sandboxName} 2>/dev/null`, {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"]
-    });
+  const existsResult = runOpenshell(["sandbox", "exists", sandboxName]);
+  if (existsResult.status === 0) {
     console.error(`  Sandbox '${sandboxName}' already exists. Use a different name or delete it first.`);
     return false;
-  } catch {
-    // Sandbox does not exist, continue
   }
 
   console.log(`  Note: This only imports the registry config.`);
@@ -158,11 +173,12 @@ function importSandbox(backupPath, newName) {
     const policyPath = path.join(os.tmpdir(), `nemoclaw-restore-${Date.now()}.yaml`);
     fs.writeFileSync(policyPath, backup.policy);
     try {
-      execSync(`openshell policy set --policy "${policyPath}" --wait ${sandboxName}`, {
-        encoding: "utf-8",
-        timeout: 30000,
-      });
-      console.log(`  Restored policy for '${sandboxName}'`);
+      const policyResult = runOpenshell(["policy", "set", "--policy", policyPath, "--wait", sandboxName]);
+      if (policyResult.status === 0) {
+        console.log(`  Restored policy for '${sandboxName}'`);
+      } else {
+        console.warn(`  Warning: Could not restore policy: ${policyResult.stderr}`);
+      }
     } catch (err) {
       console.warn(`  Warning: Could not restore policy: ${err.message}`);
     } finally {
