@@ -76,6 +76,14 @@ Ollama gets additional onboarding help:
 - it warms the model
 - it validates the model before continuing
 
+On Linux hosts that run NemoClaw with Docker, the sandbox reaches Ollama through `http://host.openshell.internal:11434`, not the host shell's `localhost` socket. If Ollama is already running, make sure it listens on `0.0.0.0:11434` instead of `127.0.0.1:11434`, for example:
+
+```bash
+OLLAMA_HOST=0.0.0.0:11434 ollama serve
+```
+
+If Ollama only binds loopback, NemoClaw can detect it on the host but the sandbox-side validation step will fail because containers cannot reach it.
+
 ## Experimental Local Providers
 
 The following local providers require `NEMOCLAW_EXPERIMENTAL=1`:
