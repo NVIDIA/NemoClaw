@@ -8,6 +8,7 @@ const path = require("path");
 const os = require("os");
 const { execSync } = require("child_process");
 const registry = require("./registry");
+const { ROOT } = require("./runner");
 
 const BACKUP_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw", "backups");
 
@@ -24,7 +25,7 @@ function ensureBackupDir() {
  */
 function listBackups() {
   ensureBackupDir();
-  const files = fs.readdirSync(BACKUP_DIR).filter((f) => f.endsWith(".json"));
+  const files = fs.readdirSync(BACKUP_DIR).filter(f => f.endsWith(".json"));
   const backups = [];
 
   for (const file of files) {
@@ -36,10 +37,12 @@ function listBackups() {
         path: path.join(BACKUP_DIR, file),
         size: fs.statSync(path.join(BACKUP_DIR, file)).size,
       });
-    } catch {}
+    } catch {
+      // Ignore malformed backup files
+    }
   }
 
-  return backups.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return backups.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
 /**
@@ -61,22 +64,23 @@ function exportSandbox(sandboxName, outputPath) {
   const defaultName = `${sandboxName}-${timestamp}.json`;
   const backupPath = outputPath || path.join(BACKUP_DIR, defaultName);
 
-  let policyContent = "";
+  let _policyContent = "";
   try {
-    policyContent = execSync(`openshell policy get ${sandboxName} 2>/dev/null`, {
+    _policyContent = execSync(`openshell policy get ${sandboxName} 2>/dev/null`, {
       encoding: "utf-8",
-      timeout: 10000,
+      timeout: 10000
     });
   } catch {
-    policyContent = "";
+    // Keep empty string on error
   }
+  const policyContent = _policyContent;
 
   const backup = {
     version: "1.0",
     metadata: {
       name: sandboxName,
       createdAt: new Date().toISOString(),
-      nemoclawVersion: require("../package.json").version,
+      nemoclawVersion: JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf-8")).version,
     },
     sandbox: {
       name: sandbox.name,
@@ -131,13 +135,13 @@ function importSandbox(backupPath, newName) {
   try {
     execSync(`openshell sandbox exists ${sandboxName} 2>/dev/null`, {
       encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"]
     });
-    console.error(
-      `  Sandbox '${sandboxName}' already exists. Use a different name or delete it first.`,
-    );
+    console.error(`  Sandbox '${sandboxName}' already exists. Use a different name or delete it first.`);
     return false;
-  } catch {}
+  } catch {
+    // Sandbox does not exist, continue
+  }
 
   console.log(`  Note: This only imports the registry config.`);
   console.log(`  You need to manually recreate the sandbox and apply policies.`);
