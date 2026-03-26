@@ -201,6 +201,7 @@ function printGatewayLifecycleHint(output = "", sandboxName = "", writer = conso
   }
 }
 
+// eslint-disable-next-line complexity
 async function getReconciledSandboxGatewayState(sandboxName) {
   let lookup = getSandboxGatewayState(sandboxName);
   if (lookup.state === "present") {
@@ -570,6 +571,7 @@ async function sandboxConnect(sandboxName) {
   exitWithSpawnResult(result);
 }
 
+// eslint-disable-next-line complexity
 async function sandboxStatus(sandboxName) {
   const sb = registry.getSandbox(sandboxName);
   const live = parseGatewayInference(

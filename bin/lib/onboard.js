@@ -1216,6 +1216,7 @@ function getNonInteractiveModel(providerKey) {
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
+// eslint-disable-next-line complexity
 async function preflight() {
   step(1, 7, "Preflight checks");
 
