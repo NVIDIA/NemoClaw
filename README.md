@@ -51,7 +51,7 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | Dependency | Version                          |
 |------------|----------------------------------|
 | Linux      | Ubuntu 22.04 LTS or later |
-| Node.js    | 20 or later |
+| Node.js    | 22.16 or later |
 | npm        | 10 or later |
 | Container runtime | Supported runtime installed and running |
 | [OpenShell](https://github.com/NVIDIA/OpenShell) | Installed |
@@ -64,6 +64,26 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | macOS (Apple Silicon) | Colima, Docker Desktop | Recommended runtimes for supported macOS setups |
 | macOS | Podman | Not supported yet. NemoClaw currently depends on OpenShell support for Podman on macOS. |
 | Windows WSL | Docker Desktop (WSL backend) | Supported target path |
+
+#### macOS first-run checklist
+
+On a fresh macOS machine, install the prerequisites in this order:
+
+1. Install Xcode Command Line Tools:
+
+   ```bash
+   xcode-select --install
+   ```
+
+2. Install and start a supported container runtime:
+   - Docker Desktop
+   - Colima
+3. Run the NemoClaw installer.
+
+This avoids the two most common first-run failures on macOS:
+
+- missing developer tools needed by the installer and Node.js toolchain
+- Docker connection errors when no supported container runtime is installed or running
 
 > **💡 Tip**
 >
@@ -201,6 +221,20 @@ During onboarding, NemoClaw validates the selected provider and model before it 
 Credentials stay on the host in `~/.nemoclaw/credentials.json`. The sandbox only sees the routed `inference.local` endpoint, not your raw provider key.
 
 Local Ollama is supported in the standard onboarding flow. Local vLLM remains experimental, and local host-routed inference on macOS still depends on OpenShell host-routing support in addition to the local service itself being reachable on the host.
+
+## Host-Side State and Config
+
+NemoClaw keeps its operator-facing state on the host rather than inside the sandbox.
+These are the main files new users usually need to locate:
+
+| Path | Purpose |
+|---|---|
+| `~/.nemoclaw/credentials.json` | Provider credentials saved during onboarding |
+| `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata, including the default sandbox selection |
+| `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw snapshots or restores during migration flows |
+
+Common environment variables for optional services and local access include `TELEGRAM_BOT_TOKEN`, `ALLOWED_CHAT_IDS`, and `CHAT_UI_URL`.
+For normal sandbox setup and reconfiguration, prefer `nemoclaw onboard` over editing these files by hand.
 
 ---
 
