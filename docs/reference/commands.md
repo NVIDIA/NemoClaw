@@ -75,16 +75,6 @@ Uppercase letters are automatically lowercased.
 Before creating the gateway, the wizard runs preflight checks.
 On systems with cgroup v2 (Ubuntu 24.04, DGX Spark, WSL2), it verifies that Docker is configured with `"default-cgroupns-mode": "host"` and provides fix instructions if the setting is missing.
 
-### `nemoclaw setup` (deprecated)
-
-Run the legacy setup workflow for backwards compatibility.
-NemoClaw prints a deprecation warning, then runs the older `setup.sh` path.
-Prefer `nemoclaw onboard` for new installs and reconfiguration.
-
-```console
-$ nemoclaw setup
-```
-
 ### `nemoclaw list`
 
 List all registered sandboxes with their model, provider, and policy presets.
@@ -215,6 +205,7 @@ $ sudo nemoclaw setup-spark
 
 Collect diagnostics for bug reports.
 Gathers system info, Docker state, gateway logs, and sandbox status into a summary or tarball.
+Use `--sandbox <name>` to target a specific sandbox, `--quick` for a smaller snapshot, or `--output <path>` to save a tarball that you can attach to an issue.
 
 ```console
 $ nemoclaw debug [--quick] [--sandbox NAME] [--output PATH]
@@ -239,4 +230,14 @@ The CLI uses the local `uninstall.sh` first and falls back to the hosted script 
 
 ```console
 $ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
+```
+
+### `nemoclaw setup` (deprecated)
+
+Run the legacy setup workflow for backwards compatibility.
+NemoClaw prints a deprecation warning, then runs the older `setup.sh` path.
+Prefer `nemoclaw onboard` for new installs and reconfiguration.
+
+```console
+$ nemoclaw setup
 ```
