@@ -1161,6 +1161,61 @@ function sandboxLogs(sandboxName, follow) {
   exitWithSpawnResult(result);
 }
 
+function sandboxGatewayToken(sandboxName) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-token-"));
+  try {
+    const qn = shellQuote(sandboxName);
+    const destDir = `${tmpDir}${path.sep}`;
+    const result = spawnSync("bash", ["-c", `openshell sandbox download ${qn} /sandbox/.openclaw/openclaw.json ${shellQuote(destDir)}`], {
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    if (result.status !== 0) {
+      console.error(`  ${_RD}Error${R}: Could not retrieve config from sandbox '${sandboxName}'.`);
+      console.error(`  Make sure the sandbox is running and accessible.`);
+      process.exit(1);
+    }
+    // Find the downloaded file (may be nested in subdirectory)
+    const candidates = [
+      path.join(tmpDir, "openclaw.json"),
+      path.join(tmpDir, "sandbox", ".openclaw", "openclaw.json"),
+    ];
+    let jsonPath = null;
+    for (const p of candidates) {
+      if (fs.existsSync(p)) { jsonPath = p; break; }
+    }
+    // Fallback: recursive search
+    if (!jsonPath) {
+      const findResult = spawnSync("find", [tmpDir, "-name", "openclaw.json", "-type", "f"], {
+        encoding: "utf-8",
+      });
+      const found = (findResult.stdout || "").trim().split("\n").filter(Boolean)[0];
+      if (found) jsonPath = found;
+    }
+    if (!jsonPath) {
+      console.error(`  ${_RD}Error${R}: openclaw.json not found in sandbox '${sandboxName}'.`);
+      process.exit(1);
+    }
+    const cfg = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
+    const token = cfg && cfg.gateway && cfg.gateway.auth && cfg.gateway.auth.token;
+    if (typeof token === "string" && token.length > 0) {
+      console.log(token);
+    } else {
+      console.error(`  ${_RD}Error${R}: Gateway auth token not found in sandbox config.`);
+      console.error(`  The sandbox may not have been fully onboarded yet.`);
+      process.exit(1);
+    }
+  } catch (e) {
+    console.error(`  ${_RD}Error${R}: ${e.message}`);
+    process.exit(1);
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+}
+
 async function sandboxPolicyAdd(sandboxName, args = []) {
   const dryRun = args.includes("--dry-run");
   const allPresets = policies.listPresets();
@@ -1290,6 +1345,7 @@ function help() {
     nemoclaw <name> connect          Shell into a running sandbox
     nemoclaw <name> status           Sandbox health + NIM status
     nemoclaw <name> logs ${D}[--follow]${R}  Stream sandbox logs
+    nemoclaw <name> gateway-token    Print the gateway auth token
     nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
 
   ${G}Policy Presets:${R}
@@ -1411,12 +1467,15 @@ const [cmd, ...args] = process.argv.slice(2);
       case "policy-list":
         sandboxPolicyList(cmd);
         break;
+      case "gateway-token":
+        sandboxGatewayToken(cmd);
+        break;
       case "destroy":
         await sandboxDestroy(cmd, actionArgs);
         break;
       default:
         console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, destroy`);
+        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, gateway-token, destroy`);
         process.exit(1);
     }
     return;
