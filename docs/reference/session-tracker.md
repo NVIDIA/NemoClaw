@@ -18,7 +18,7 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# Session Tracker
+# Session Tracker — Detect Multi-Step Exfiltration Attacks
 
 The session tracker module detects multi-step exfiltration attacks by tracking three capability classes per agent session.
 
