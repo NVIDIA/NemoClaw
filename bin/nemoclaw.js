@@ -102,7 +102,7 @@ function getNamedGatewayLifecycleState() {
   const gatewayInfo = captureOpenshell(["gateway", "info", "-g", "nemoclaw"]);
   const cleanStatus = stripAnsi(status.output);
   const activeGateway = getActiveGatewayName(status.output);
-  const connected = /Connected/i.test(cleanStatus);
+  const connected = /^\s*Status:\s*Connected\b/im.test(cleanStatus);
   const named = hasNamedGateway(gatewayInfo.output);
   const refusing = /Connection refused|client error \(Connect\)|tcp connect error/i.test(cleanStatus);
   if (connected && activeGateway === "nemoclaw" && named) {

@@ -1484,8 +1484,7 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null)
   run(`cp -r "${path.join(ROOT, "nemoclaw-blueprint")}" "${buildCtx}/nemoclaw-blueprint"`);
   run(`cp -r "${path.join(ROOT, "scripts")}" "${buildCtx}/scripts"`);
   run(`rm -rf "${buildCtx}/nemoclaw/node_modules"`, { ignoreError: true });
-  run(`rm -rf "${buildCtx}/nemoclaw-blueprint/.venv" "${buildCtx}/nemoclaw-blueprint/.pytest_cache"`, { ignoreError: true });
-  run(`find "${buildCtx}/nemoclaw-blueprint" -type d -name __pycache__ -prune -exec rm -rf {} +`, { ignoreError: true });
+  run(`bash "${buildCtx}/scripts/clean-staged-tree.sh" "${buildCtx}/nemoclaw-blueprint"`, { ignoreError: true });
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)

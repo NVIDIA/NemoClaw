@@ -41,6 +41,11 @@ section() {
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
+registry_has() {
+  local sandbox_name="$1"
+  [ -f "$REGISTRY" ] && grep -q "$sandbox_name" "$REGISTRY"
+}
+
 SANDBOX_A="e2e-double-a"
 SANDBOX_B="e2e-double-b"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
@@ -257,7 +262,7 @@ else
   fail "Sandbox '$SANDBOX_A' not found in openshell"
 fi
 
-if [ -f "$REGISTRY" ] && grep -q "$SANDBOX_A" "$REGISTRY"; then
+if registry_has "$SANDBOX_A"; then
   pass "Registry contains '$SANDBOX_A'"
 else
   fail "Registry does not contain '$SANDBOX_A'"
@@ -357,7 +362,7 @@ info "Deleting '$SANDBOX_A' directly in OpenShell to leave a stale NemoClaw regi
 
 openshell sandbox delete "$SANDBOX_A" 2>/dev/null || true
 
-if [ -f "$REGISTRY" ] && grep -q "$SANDBOX_A" "$REGISTRY"; then
+if registry_has "$SANDBOX_A"; then
   pass "Registry still contains stale '$SANDBOX_A' entry"
 else
   fail "Registry was unexpectedly cleaned before status reconciliation"
@@ -381,7 +386,7 @@ else
   fail "Stale registry reconciliation message missing"
 fi
 
-if [ -f "$REGISTRY" ] && grep -q "$SANDBOX_A" "$REGISTRY"; then
+if registry_has "$SANDBOX_A"; then
   fail "Registry still contains '$SANDBOX_A' after status reconciliation"
 else
   pass "Registry entry for '$SANDBOX_A' removed after status reconciliation"
@@ -409,13 +414,19 @@ else
 fi
 
 if grep -qE \
-  "Recovered NemoClaw gateway runtime|Removed stale local registry entry|gateway is no longer configured after restart/rebuild|gateway is still refusing connections after restart|gateway trust material rotated after restart" \
+  "Recovered NemoClaw gateway runtime|gateway is no longer configured after restart/rebuild|gateway is still refusing connections after restart|gateway trust material rotated after restart" \
   <<<"$gateway_status_output"; then
   pass "Gateway lifecycle response was explicit after gateway stop"
 else
   fail "Gateway lifecycle response was not explicit after gateway stop"
   info "Observed status output:"
   printf '%s\n' "$gateway_status_output" | sed 's/^/    /'
+fi
+
+if registry_has "$SANDBOX_B"; then
+  pass "Registry still contains '$SANDBOX_B' after gateway stop"
+else
+  fail "Registry is missing '$SANDBOX_B' after gateway stop"
 fi
 
 # ══════════════════════════════════════════════════════════════════
