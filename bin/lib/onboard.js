@@ -2293,6 +2293,10 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
   console.log(`  Model        ${model} (${providerLabel})`);
   console.log(`  NIM          ${nimLabel}`);
   console.log(`  ${"─".repeat(50)}`);
+  console.log(`  Run:         nemoclaw ${sandboxName} connect`);
+  console.log(`  Status:      nemoclaw ${sandboxName} status`);
+  console.log(`  Logs:        nemoclaw ${sandboxName} logs --follow`);
+  console.log("");
   if (token) {
     console.log("  OpenClaw UI (tokenized URL; treat it like a password)");
     console.log(`  Port ${CONTROL_UI_PORT} must be forwarded before opening this URL.`);
@@ -2309,9 +2313,6 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
     console.log(`  Token:       nemoclaw ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`);
     console.log(`               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`);
   }
-  console.log(`  Run:         nemoclaw ${sandboxName} connect`);
-  console.log(`  Status:      nemoclaw ${sandboxName} status`);
-  console.log(`  Logs:        nemoclaw ${sandboxName} logs --follow`);
   console.log(`  ${"─".repeat(50)}`);
   console.log("");
 }
