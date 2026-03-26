@@ -11,10 +11,9 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const THRESHOLD_PATH = join(REPO_ROOT, "ci", "coverage-threshold.json");
-const SUMMARY_PATH = join(REPO_ROOT, "coverage", "coverage-summary.json");
+// ── Types ──────────────────────────────────────────────────────────
 
+/** A single metric entry from istanbul's coverage-summary.json. */
 interface CoverageMetric {
   total: number;
   covered: number;
@@ -22,87 +21,135 @@ interface CoverageMetric {
   pct: number;
 }
 
+/** The `total` key of istanbul's coverage-summary.json. */
 interface CoverageSummary {
   total: Record<string, CoverageMetric>;
 }
 
-interface CoverageThresholds {
-  lines: number;
-  functions: number;
-  branches: number;
-  statements: number;
+/** Our ratchet file: ci/coverage-threshold.json. */
+type CoverageThresholds = Record<MetricName, number>;
+
+type MetricName = (typeof METRICS)[number];
+
+type CheckStatus = "ok" | "fail" | "improved";
+
+interface MetricResult {
+  metric: MetricName;
+  actual: number;
+  threshold: number;
+  status: CheckStatus;
 }
+
+// ── Constants ──────────────────────────────────────────────────────
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const THRESHOLD_PATH = join(REPO_ROOT, "ci", "coverage-threshold.json");
+const SUMMARY_PATH = join(REPO_ROOT, "coverage", "coverage-summary.json");
 
 const TOLERANCE = 1;
 const METRICS = ["lines", "functions", "branches", "statements"] as const;
 
-function readJSON<T>(path: string, label: string): T {
-  let content: string;
+// ── Pure helpers ───────────────────────────────────────────────────
+
+/** Read and JSON-parse a file, throwing a descriptive error on failure. */
+function loadJSON<T>(path: string, label: string): T {
   try {
-    content = readFileSync(path, "utf-8");
-  } catch {
-    console.error(`ERROR: ${label} not found: ${path}`);
-    if (label === "Coverage summary") {
-      console.error("Run 'npx vitest run --coverage' first.");
-    }
-    process.exit(1);
-  }
-  try {
-    return JSON.parse(content) as T;
-  } catch {
-    console.error(`ERROR: Failed to parse ${label}: ${path}`);
-    process.exit(1);
+    return JSON.parse(readFileSync(path, "utf-8")) as T;
+  } catch (cause) {
+    throw new Error(`Failed to load ${label}: ${path}`, { cause });
   }
 }
 
-const summary = readJSON<CoverageSummary>(SUMMARY_PATH, "Coverage summary");
-const thresholds = readJSON<CoverageThresholds>(THRESHOLD_PATH, "Threshold file");
+/** Compare each metric against its threshold and return structured results. */
+function checkMetrics(
+  summary: CoverageSummary,
+  thresholds: CoverageThresholds,
+): MetricResult[] {
+  return METRICS.map((metric) => {
+    const actual = summary.total[metric].pct;
+    const threshold = thresholds[metric];
+    const status: CheckStatus =
+      actual < threshold - TOLERANCE
+        ? "fail"
+        : actual > threshold + TOLERANCE
+          ? "improved"
+          : "ok";
+    return { metric, actual, threshold, status };
+  });
+}
 
-let failed = false;
-let improved = false;
+/** Build updated thresholds from improved results (floor of actual, never lowering). */
+function ratchetedThresholds(
+  results: MetricResult[],
+  current: CoverageThresholds,
+): CoverageThresholds {
+  return Object.fromEntries(
+    METRICS.map((m) => {
+      const result = results.find((r) => r.metric === m)!;
+      return [m, Math.max(Math.floor(result.actual), current[m])];
+    }),
+  ) as CoverageThresholds;
+}
 
-console.log("=== Coverage Ratchet Check ===");
-console.log();
+// ── Formatting ─────────────────────────────────────────────────────
 
-for (const metric of METRICS) {
-  const actual = summary.total[metric].pct;
-  const threshold = thresholds[metric];
+const STATUS_LABELS: Record<CheckStatus, string> = {
+  ok: "OK",
+  fail: "FAIL",
+  improved: "IMPROVED",
+};
 
-  if (actual < threshold - TOLERANCE) {
-    console.log(
-      `FAIL: ${metric} coverage is ${actual}%, threshold is ${threshold}% (tolerance ${TOLERANCE}%)`,
+function formatResult({ metric, actual, threshold, status }: MetricResult): string {
+  const label = STATUS_LABELS[status];
+  switch (status) {
+    case "fail":
+      return `${label}: ${metric} coverage is ${actual}%, threshold is ${threshold}% (tolerance ${TOLERANCE}%)`;
+    case "improved":
+      return `${label}: ${metric} coverage is ${actual}%, above threshold ${threshold}%`;
+    case "ok":
+      return `${label}: ${metric} coverage is ${actual}% (threshold ${threshold}%)`;
+  }
+}
+
+function formatReport(results: MetricResult[], thresholds: CoverageThresholds): string {
+  const lines: string[] = ["=== Coverage Ratchet Check ===", ""];
+
+  lines.push(...results.map(formatResult), "");
+
+  const hasFail = results.some((r) => r.status === "fail");
+  const hasImproved = results.some((r) => r.status === "improved");
+
+  if (hasFail) {
+    lines.push(
+      "Coverage regression detected. Add tests to bring coverage back above the threshold.",
     );
-    failed = true;
-  } else if (actual > threshold + TOLERANCE) {
-    console.log(
-      `IMPROVED: ${metric} coverage is ${actual}%, above threshold ${threshold}%`,
+  } else if (hasImproved) {
+    const updated = JSON.stringify(ratchetedThresholds(results, thresholds), null, 2);
+    lines.push(
+      "Coverage improved! Update ci/coverage-threshold.json to ratchet the floor:",
+      "",
+      updated,
+      "",
+      `Run:  echo '${updated}' > ci/coverage-threshold.json`,
     );
-    improved = true;
-  } else {
-    console.log(`OK: ${metric} coverage is ${actual}% (threshold ${threshold}%)`);
+  }
+
+  lines.push("", "Coverage ratchet passed.");
+  return lines.join("\n");
+}
+
+// ── Main ───────────────────────────────────────────────────────────
+
+function main(): void {
+  const summary = loadJSON<CoverageSummary>(SUMMARY_PATH, "Coverage summary");
+  const thresholds = loadJSON<CoverageThresholds>(THRESHOLD_PATH, "Threshold file");
+
+  const results = checkMetrics(summary, thresholds);
+  console.log(formatReport(results, thresholds));
+
+  if (results.some((r) => r.status === "fail")) {
+    process.exitCode = 1;
   }
 }
 
-console.log();
-
-if (failed) {
-  console.log(
-    "Coverage regression detected. Add tests to bring coverage back above the threshold.",
-  );
-  process.exit(1);
-}
-
-if (improved) {
-  const updated: Record<string, number> = {};
-  for (const metric of METRICS) {
-    updated[metric] = Math.max(Math.floor(summary.total[metric].pct), thresholds[metric]);
-  }
-  const json = JSON.stringify(updated, null, 2);
-  console.log("Coverage improved! Update ci/coverage-threshold.json to ratchet the floor:");
-  console.log();
-  console.log(json);
-  console.log();
-  console.log(`Run:  echo '${json}' > ci/coverage-threshold.json`);
-}
-
-console.log("Coverage ratchet passed.");
+main();
