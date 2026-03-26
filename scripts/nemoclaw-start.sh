@@ -15,6 +15,16 @@
 
 set -euo pipefail
 
+# Harden: limit process count to prevent fork bombs (ref: #809)
+# Best-effort: some container runtimes (e.g., brev) restrict ulimit
+# modification, returning "Invalid argument". Warn but don't block startup.
+if ! ulimit -Su 512 2>/dev/null; then
+  echo "[SECURITY] Could not set soft nproc limit (container runtime may restrict ulimit)" >&2
+fi
+if ! ulimit -Hu 512 2>/dev/null; then
+  echo "[SECURITY] Could not set hard nproc limit (container runtime may restrict ulimit)" >&2
+fi
+
 # SECURITY: Lock down PATH so the agent cannot inject malicious binaries
 # into commands executed by the entrypoint or auto-pair watcher.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -30,10 +40,16 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 #   — required by the entrypoint for gosu privilege separation and chown.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/797
 if [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ] && command -v capsh >/dev/null 2>&1; then
-  export NEMOCLAW_CAPS_DROPPED=1
-  exec capsh \
-    --drop=cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setpcap,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service \
-    -- -c 'exec /usr/local/bin/nemoclaw-start "$@"' -- "$@"
+  # capsh --drop requires CAP_SETPCAP in the bounding set. OpenShell's
+  # sandbox runtime may strip it, so check before attempting the drop.
+  if capsh --has-p=cap_setpcap 2>/dev/null; then
+    export NEMOCLAW_CAPS_DROPPED=1
+    exec capsh \
+      --drop=cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service \
+      -- -c 'exec /usr/local/bin/nemoclaw-start "$@"' -- "$@"
+  else
+    echo "[SECURITY] CAP_SETPCAP not available — runtime already restricts capabilities" >&2
+  fi
 elif [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ]; then
   echo "[SECURITY WARNING] capsh not available — running with default capabilities" >&2
 fi

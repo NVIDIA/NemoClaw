@@ -9,29 +9,24 @@
 set -euo pipefail
 
 ROOT_INSTALLER_URL="https://www.nvidia.com/nemoclaw.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+ROOT_INSTALLER="${SCRIPT_DIR%/scripts}/install.sh"
 
 warn_legacy_path() {
-  echo "[install] scripts/install.sh is a deprecated compatibility wrapper." >&2
-  echo "[install] Use the supported installer instead:" >&2
-  echo "[install]   curl -fsSL ${ROOT_INSTALLER_URL} | bash" >&2
+  cat <<EOF
+[install] deprecated compatibility wrapper: scripts/install.sh
+[install] supported installer: ${ROOT_INSTALLER_URL}
+EOF
 }
 
-SCRIPT_PATH="${BASH_SOURCE[0]-}"
-SCRIPT_DIR=""
-if [[ -n "$SCRIPT_PATH" ]]; then
-  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
-fi
-
-ROOT_INSTALLER=""
-if [[ -n "$SCRIPT_DIR" ]]; then
-  ROOT_INSTALLER="${SCRIPT_DIR}/../install.sh"
-fi
-
-if [[ -n "$ROOT_INSTALLER" && -f "$ROOT_INSTALLER" ]]; then
-  warn_legacy_path
-  exec bash "$ROOT_INSTALLER" "$@"
-fi
-
 warn_legacy_path
-echo "[install] This wrapper only works from a NemoClaw repository checkout." >&2
-exit 1
+
+if [[ ! -f "$ROOT_INSTALLER" ]]; then
+  cat <<EOF >&2
+[install] scripts/install.sh only works from a NemoClaw repository checkout.
+[install] supported installer: ${ROOT_INSTALLER_URL}
+EOF
+  exit 1
+fi
+
+exec bash "$ROOT_INSTALLER" "$@"

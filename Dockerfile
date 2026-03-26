@@ -21,6 +21,12 @@ RUN npm install && npm run build
 # Stage 2: Runtime image — pull cached base from GHCR
 FROM ${BASE_IMAGE}
 
+# Harden: remove unnecessary build tools and network probes from base image (#830)
+RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
+        netcat-openbsd netcat-traditional ncat 2>/dev/null || true) \
+    && apt-get autoremove --purge -y \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy built plugin and blueprint into the sandbox
 COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
 COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
@@ -143,4 +149,4 @@ RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash
 # Entrypoint runs as root to start the gateway as the gateway user,
 # then drops to sandbox for agent commands. See nemoclaw-start.sh.
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
-CMD []
+CMD ["/bin/bash"]

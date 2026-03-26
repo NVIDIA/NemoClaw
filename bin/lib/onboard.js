@@ -1568,11 +1568,22 @@ async function preflight() {
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
-async function startGateway(_gpu) {
+async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   step(2, 7, "Starting OpenShell gateway");
 
-  // Destroy old gateway
-  runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+  const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
+  const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
+  const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+  if (isGatewayHealthy(gatewayStatus, gwInfo, activeGatewayInfo)) {
+    console.log("  ✓ Reusing existing gateway");
+    runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
+    process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+    return;
+  }
+
+  if (hasStaleGateway(gwInfo)) {
+    runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+  }
 
   const gwArgs = ["--name", GATEWAY_NAME];
   // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
@@ -1585,18 +1596,35 @@ async function startGateway(_gpu) {
     console.log(`  Using pinned OpenShell gateway image: ${gatewayEnv.OPENSHELL_CLUSTER_IMAGE}`);
   }
 
-  runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: false, env: gatewayEnv });
+  const startResult = runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: true, env: gatewayEnv });
+  if (startResult.status !== 0) {
+    console.error("  Gateway failed to start. Cleaning up stale state...");
+    runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
+    runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+    if (exitOnFailure) {
+      console.error("  Stale state removed. Please rerun: nemoclaw onboard");
+      process.exit(1);
+    }
+    throw new Error("Gateway failed to start");
+  }
 
-  // Verify health
   for (let i = 0; i < 5; i++) {
     const status = runCaptureOpenshell(["status"], { ignoreError: true });
-    if (status.includes("Connected")) {
+    const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
+    const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+    if (isGatewayHealthy(status, namedInfo, currentInfo)) {
       console.log("  ✓ Gateway is healthy");
       break;
     }
     if (i === 4) {
-      console.error("  Gateway failed to start. Run: openshell gateway info");
-      process.exit(1);
+      console.error("  Gateway health check failed. Cleaning up stale state...");
+      runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
+      runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+      if (exitOnFailure) {
+        console.error("  Stale state removed. Please rerun: nemoclaw onboard");
+        process.exit(1);
+      }
+      throw new Error("Gateway failed to start");
     }
     sleep(2);
   }
@@ -1607,10 +1635,17 @@ async function startGateway(_gpu) {
     console.log("  Patching CoreDNS for Colima...");
     run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" ${GATEWAY_NAME} 2>&1 || true`, { ignoreError: true });
   }
-  // Give DNS a moment to propagate
   sleep(5);
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+}
+
+async function startGateway(_gpu) {
+  return startGatewayWithOptions(_gpu, { exitOnFailure: true });
+}
+
+async function startGatewayForRecovery(_gpu) {
+  return startGatewayWithOptions(_gpu, { exitOnFailure: false });
 }
 
 function getGatewayStartEnv() {
@@ -2814,6 +2849,7 @@ module.exports = {
   pruneStaleSandboxEntry,
   repairRecordedSandbox,
   recoverGatewayRuntime,
+  startGatewayForRecovery,
   runCaptureOpenshell,
   setupInference,
   setupNim,
