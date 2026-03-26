@@ -219,7 +219,8 @@ export class SessionStore {
     }
     const trifecta = isTrifecta(sess.capabilities);
 
-    const eventsCopy: CapabilityEvent[] = [...sess.events];
+    // Deep-copy events to prevent external mutation of internal state.
+    const eventsCopy: CapabilityEvent[] = sess.events.map((e) => ({ ...e }));
 
     const sensitiveFiles: string[] = [];
     const externalUrls: string[] = [];

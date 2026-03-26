@@ -92,13 +92,14 @@ Return summaries of all active sessions.
 #### `getExposure(sessionId: string): SessionExposure | null`
 
 Return detailed exposure data for a session.
-Returns `null` if the session does not exist.
+Returns `null` if the session does not exist or `sessionId` is empty.
 
 The exposure object categorizes events into three lists.
 
 - `sensitiveFilesAccessed` contains deduplicated file paths from `read_sensitive` events.
 - `externalUrlsContacted` contains deduplicated URLs from `ingested_untrusted` events.
-- `egressAttempts` contains every `has_egress` event formatted as `tool + " " + detail`, without deduplication.
+- `egressAttempts` contains every `has_egress` event as `tool` when `detail` is empty, or `tool + " " + detail` otherwise.
+  Egress attempts are not deduplicated.
 
 ### `Capability`
 
