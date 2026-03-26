@@ -22,7 +22,7 @@ const YW = _useColor ? "\x1b[1;33m" : "";
 
 const { ROOT, SCRIPTS, run, runCapture: _runCapture, runInteractive, shellQuote, validateName } = require("./lib/runner");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
-const { startGatewayForRecovery } = require("./lib/onboard");
+const { resolveDashboardForwardTarget, startGatewayForRecovery } = require("./lib/onboard");
 const {
   ensureApiKey,
   ensureGithubToken,
@@ -570,6 +570,11 @@ function listSandboxes() {
 
 async function sandboxConnect(sandboxName) {
   await ensureLiveSandboxOrExit(sandboxName);
+  // Ensure port forward is alive before connecting
+  const chatUiUrl = process.env.CHAT_UI_URL || "http://127.0.0.1:18789";
+  const forwardTarget = resolveDashboardForwardTarget(chatUiUrl);
+  runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
+  runOpenshell(["forward", "start", "--background", forwardTarget, sandboxName], { ignoreError: true });
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
     stdio: "inherit",
     cwd: ROOT,

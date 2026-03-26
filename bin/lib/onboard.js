@@ -2685,17 +2685,21 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
 const CONTROL_UI_PORT = 18789;
 const CONTROL_UI_PATH = "/";
 
+function isLoopbackHostname(hostname) {
+  const normalized = String(hostname || "").replace(/^\[|\]$/g, "").toLowerCase();
+  return normalized === "localhost" || normalized === "::1" || /^127(?:\.\d{1,3}){3}$/.test(normalized);
+}
+
 function resolveDashboardForwardTarget(chatUiUrl) {
   const rawUrl = String(chatUiUrl || "").trim();
-  const localHosts = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
   if (!rawUrl) return String(CONTROL_UI_PORT);
 
   try {
     const { hostname } = new URL(rawUrl);
-    return localHosts.has(hostname) ? String(CONTROL_UI_PORT) : `0.0.0.0:${CONTROL_UI_PORT}`;
+    return isLoopbackHostname(hostname) ? String(CONTROL_UI_PORT) : `0.0.0.0:${CONTROL_UI_PORT}`;
   } catch {
-    return /(?:^|\/\/)(?:localhost|127\.0\.0\.1|\[?::1\]?)(?::\d+)?(?:\/|$)/i.test(rawUrl)
+    return /(?:^|\/\/)(?:localhost|127(?:\.\d{1,3}){3}|\[?::1\]?)(?::\d+)?(?:\/|$)/i.test(rawUrl)
       ? String(CONTROL_UI_PORT)
       : `0.0.0.0:${CONTROL_UI_PORT}`;
   }
