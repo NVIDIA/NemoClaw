@@ -17,11 +17,12 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { create as createTar } from "tar";
+import { createHash } from "node:crypto";
 import JSON5 from "json5";
 import type { PluginLogger } from "../index.js";
 
 const SANDBOX_MIGRATION_DIR = "/sandbox/.nemoclaw/migration";
-const SNAPSHOT_VERSION = 2;
+const SNAPSHOT_VERSION = 3;
 
 export type MigrationRootKind = "workspace" | "agentDir" | "skillsExtraDir";
 
@@ -65,6 +66,7 @@ export interface SnapshotManifest {
   hasExternalConfig: boolean;
   externalRoots: MigrationExternalRoot[];
   warnings: string[];
+  blueprintDigest?: string | null;
 }
 
 export interface SnapshotBundle {
@@ -474,9 +476,32 @@ export function detectHostOpenClaw(env: NodeJS.ProcessEnv = process.env): HostOp
   };
 }
 
-function copyDirectory(sourcePath: string, destinationPath: string): void {
+function computeFileDigest(filePath: string): string | null {
+  try {
+    if (!existsSync(filePath)) return null;
+    return createHash("sha256").update(readFileSync(filePath)).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Basenames that MUST NOT be copied into snapshot bundles.
+ * These files contain credential references or session tokens
+ * that should never cross the sandbox boundary.
+ */
+const CREDENTIAL_SENSITIVE_BASENAMES = new Set(["auth-profiles.json"]);
+
+function copyDirectory(
+  sourcePath: string,
+  destinationPath: string,
+  options?: { stripCredentials?: boolean },
+): void {
   cpSync(sourcePath, destinationPath, {
     recursive: true,
+    filter: options?.stripCredentials
+      ? (source: string) => !CREDENTIAL_SENSITIVE_BASENAMES.has(path.basename(source).toLowerCase())
+      : undefined,
   });
 }
 
@@ -549,7 +574,7 @@ function prepareSandboxState(snapshotDir: string, manifest: SnapshotManifest): s
   const preparedStateDir = path.join(snapshotDir, "sandbox-bundle", "openclaw");
   rmSync(preparedStateDir, { recursive: true, force: true });
   mkdirSync(path.dirname(preparedStateDir), { recursive: true });
-  copyDirectory(path.join(snapshotDir, "openclaw"), preparedStateDir);
+  copyDirectory(path.join(snapshotDir, "openclaw"), preparedStateDir, { stripCredentials: true });
 
   const configSourcePath = resolveConfigSourcePath(manifest, snapshotDir);
   const config = existsSync(configSourcePath) ? (loadConfigDocument(configSourcePath) ?? {}) : {};
@@ -560,6 +585,9 @@ function prepareSandboxState(snapshotDir: string, manifest: SnapshotManifest): s
     }
   }
 
+  // Strip gateway config (contains auth tokens) — sandbox entrypoint regenerates it
+  delete (config as Record<string, unknown>)["gateway"];
+
   const configPath = path.join(preparedStateDir, "openclaw.json");
   writeFileSync(configPath, JSON.stringify(config, null, 2));
   chmodSync(configPath, 0o600);
@@ -569,7 +597,7 @@ function prepareSandboxState(snapshotDir: string, manifest: SnapshotManifest): s
 export function createSnapshotBundle(
   hostState: HostOpenClawState,
   logger: PluginLogger,
-  options: { persist: boolean },
+  options: { persist: boolean; blueprintPath?: string },
 ): SnapshotBundle | null {
   if (!hostState.stateDir || !hostState.homeDir) {
     logger.error("Cannot snapshot host OpenClaw state: no state directory was resolved.");
@@ -587,7 +615,7 @@ export function createSnapshotBundle(
   try {
     mkdirSync(parentDir, { recursive: true });
     const snapshotStateDir = path.join(parentDir, "openclaw");
-    copyDirectory(hostState.stateDir, snapshotStateDir);
+    copyDirectory(hostState.stateDir, snapshotStateDir, { stripCredentials: true });
 
     if (hostState.configPath && hostState.hasExternalConfig) {
       const configSnapshotDir = path.join(parentDir, "config");
@@ -601,7 +629,7 @@ export function createSnapshotBundle(
     for (const root of hostState.externalRoots) {
       const destination = path.join(parentDir, root.snapshotRelativePath);
       mkdirSync(path.dirname(destination), { recursive: true });
-      copyDirectory(root.sourcePath, destination);
+      copyDirectory(root.sourcePath, destination, { stripCredentials: true });
       externalRoots.push({
         ...root,
         symlinkPaths: collectSymlinkPaths(root.sourcePath),
@@ -618,6 +646,17 @@ export function createSnapshotBundle(
       externalRoots,
       warnings: hostState.warnings,
     };
+
+    if (options.blueprintPath) {
+      const digest = computeFileDigest(options.blueprintPath);
+      if (!digest) {
+        throw new Error(
+          `Cannot compute blueprint digest for ${options.blueprintPath}. ` +
+            "The file may be missing or unreadable.",
+        );
+      }
+      manifest.blueprintDigest = digest;
+    }
 
     writeSnapshotManifest(parentDir, manifest);
 
@@ -663,7 +702,11 @@ export function loadSnapshotManifest(snapshotDir: string): SnapshotManifest {
   return readSnapshotManifest(snapshotDir);
 }
 
-export function restoreSnapshotToHost(snapshotDir: string, logger: PluginLogger): boolean {
+export function restoreSnapshotToHost(
+  snapshotDir: string,
+  logger: PluginLogger,
+  options?: { blueprintPath?: string },
+): boolean {
   const manifest = readSnapshotManifest(snapshotDir);
   const snapshotStateDir = path.join(snapshotDir, "openclaw");
   if (!existsSync(snapshotStateDir)) {
@@ -735,6 +778,34 @@ export function restoreSnapshotToHost(snapshotDir: string, logger: PluginLogger)
       logger.error(
         `Snapshot manifest configPath is outside the trusted host root. ` +
           `Refusing to restore. configPath=${manifest.configPath}, trustedRoot=${trustedRoot}`,
+      );
+      return false;
+    }
+  }
+
+  // SECURITY: Validate blueprint digest.
+  // When a blueprintDigest is present in the manifest, it MUST be a non-empty
+  // string and MUST match the current blueprint — fail closed on mismatch,
+  // empty string, or null. Snapshots without a blueprintDigest (including all
+  // legacy v2 manifests and v3 snapshots created without a blueprint) skip
+  // verification.
+  if ("blueprintDigest" in manifest) {
+    if (!manifest.blueprintDigest || typeof manifest.blueprintDigest !== "string") {
+      logger.error("Snapshot manifest has empty or invalid blueprintDigest. Refusing to restore.");
+      return false;
+    }
+    const currentDigest = options?.blueprintPath ? computeFileDigest(options.blueprintPath) : null;
+    if (!currentDigest) {
+      logger.error(
+        "Snapshot contains a blueprintDigest but no blueprint is available for verification. " +
+          "Refusing to restore.",
+      );
+      return false;
+    }
+    if (currentDigest !== manifest.blueprintDigest) {
+      logger.error(
+        `Blueprint digest mismatch. Snapshot was created with digest=${manifest.blueprintDigest} ` +
+          `but current blueprint has digest=${currentDigest}. Refusing to restore.`,
       );
       return false;
     }

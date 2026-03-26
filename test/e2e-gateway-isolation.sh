@@ -187,6 +187,33 @@ else
   fail "sandbox CAN kill gateway processes: $OUT"
 fi
 
+# ── Test 12: Dangerous capabilities are dropped by entrypoint ────
+
+info "12. Entrypoint drops dangerous capabilities from bounding set"
+# Run the entrypoint (which re-execs through capsh) and check CapBnd.
+# The entrypoint drops cap_net_raw (bit 13 = 0x2000) among others.
+# We read /proc/self/status CapBnd after the entrypoint has run.
+OUT=$(docker run --rm "$IMAGE" bash -c '
+  # We are inside the capsh-wrapped entrypoint. Read our bounding set.
+  CAP_BND=$(grep "^CapBnd:" /proc/self/status | awk "{print \$2}")
+  echo "CapBnd=$CAP_BND"
+  # Check cap_net_raw (bit 13) is NOT set
+  BND_DEC=$((16#$CAP_BND))
+  NET_RAW_BIT=$((1 << 13))
+  if [ $((BND_DEC & NET_RAW_BIT)) -ne 0 ]; then
+    echo "DANGEROUS: cap_net_raw present"
+  else
+    echo "SAFE: cap_net_raw dropped"
+  fi
+' 2>&1)
+if echo "$OUT" | grep -q "SAFE: cap_net_raw dropped"; then
+  pass "entrypoint drops dangerous capabilities (cap_net_raw not in bounding set)"
+elif echo "$OUT" | grep -q "DANGEROUS"; then
+  fail "cap_net_raw still present after entrypoint: $OUT"
+else
+  fail "could not verify capability state: $OUT"
+fi
+
 # ── Summary ──────────────────────────────────────────────────────
 
 echo ""

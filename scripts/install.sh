@@ -407,21 +407,48 @@ pre_extract_openclaw() {
   rm -rf "$tmpdir"
 }
 
+# ── Resolve release tag ──────────────────────────────────────────
+# Priority: NEMOCLAW_INSTALL_TAG env var > GitHub releases API > "main" fallback.
+resolve_release_tag() {
+  if [ -n "${NEMOCLAW_INSTALL_TAG:-}" ]; then
+    printf "%s" "$NEMOCLAW_INSTALL_TAG"
+    return 0
+  fi
+
+  local response tag
+  response="$(curl -fsSL --max-time 10 \
+    https://api.github.com/repos/NVIDIA/NemoClaw/releases/latest 2>/dev/null)" || true
+  tag="$(printf '%s' "$response" \
+    | grep '"tag_name"' \
+    | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/' \
+    | head -1 || true)"
+
+  if [ -n "$tag" ] && printf '%s' "$tag" | grep -qE '^v[0-9]'; then
+    printf "%s" "$tag"
+  else
+    printf "main"
+  fi
+}
+
 # ── Install NemoClaw CLI ─────────────────────────────────────────
 
 info "Installing nemoclaw CLI..."
+# Resolve the latest release tag so we never install raw main.
+NEMOCLAW_RELEASE_REF="$(resolve_release_tag)"
+info "Resolved install ref: ${NEMOCLAW_RELEASE_REF}"
 # Clone first so we can pre-extract openclaw before npm install (GH-503).
 # npm install -g git+https://... does this internally but we can't hook
 # into its extraction pipeline, so we do it ourselves.
 NEMOCLAW_SRC="${HOME}/.nemoclaw/source"
 rm -rf "$NEMOCLAW_SRC"
 mkdir -p "$(dirname "$NEMOCLAW_SRC")"
-git clone --depth 1 https://github.com/NVIDIA/NemoClaw.git "$NEMOCLAW_SRC"
+git clone --depth 1 --branch "$NEMOCLAW_RELEASE_REF" https://github.com/NVIDIA/NemoClaw.git "$NEMOCLAW_SRC"
 pre_extract_openclaw "$NEMOCLAW_SRC" || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
-# Use sudo for npm link when the global prefix requires it (e.g., nodesource),
-# but skip sudo if already root (e.g., Docker containers).
+# Use sudo for npm link only when the global prefix directory is not writable
+# by the current user (e.g., system-managed nodesource installs to /usr).
 SUDO=""
-if [ "$NODE_MGR" = "nodesource" ] && [ "$(id -u)" -ne 0 ]; then
+NPM_GLOBAL_PREFIX="$(npm config get prefix 2>/dev/null)" || true
+if [ -n "$NPM_GLOBAL_PREFIX" ] && [ ! -w "$NPM_GLOBAL_PREFIX" ] && [ "$(id -u)" -ne 0 ]; then
   SUDO="sudo"
 fi
 (cd "$NEMOCLAW_SRC" && npm install --ignore-scripts && cd nemoclaw && npm install --ignore-scripts && npm run build && cd .. && $SUDO npm link)
