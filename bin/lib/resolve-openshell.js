@@ -24,7 +24,7 @@ function resolveOpenshell(opts = {}) {
     try {
       const found = execSync("command -v openshell", { encoding: "utf-8" }).trim();
       if (found.startsWith("/")) return found;
-    } catch {}
+    } catch { /* ignored */ }
   } else if (opts.commandVResult && opts.commandVResult.startsWith("/")) {
     return opts.commandVResult;
   }

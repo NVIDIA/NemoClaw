@@ -15,7 +15,8 @@
 #
 # Priority groups (prek runs same-priority hooks in parallel):
 #   0  — General file fixers (whitespace, EOF, line endings)
-#   5  — Shell / Python / TS formatters (shfmt, ruff format, prettier)
+#   4  — SPDX header insertion (--fix)
+#   5  — Shell / TS formatters (shfmt, prettier)
 #   6  — Fixes that should follow formatters (ruff check --fix, eslint --fix)
 #  10  — Linters and read-only checks
 #  20  — Project-level checks (vitest)
@@ -55,6 +56,18 @@ repos:
         pass_filenames: false
         priority: 0
 
+  # ── Priority 4: SPDX headers (insert if missing; runs before language formatters) ──
+  - repo: local
+    hooks:
+      - id: spdx-headers
+        name: SPDX license headers (insert if missing)
+        entry: bash scripts/check-spdx-headers.sh --fix
+        language: system
+        files: ^(nemoclaw/src/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
+        exclude: ^nemoclaw-blueprint/.*__init__\.py$
+        pass_filenames: true
+        priority: 4
+
   # ── Priority 5: formatters ────────────────────────────────────────────────
   - repo: https://github.com/scop/pre-commit-shfmt
     rev: v3.12.0-2
@@ -67,17 +80,6 @@ repos:
           - -ci
           - -bn
         priority: 5
-
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.7
-    hooks:
-      - id: ruff-format
-        files: ^(nemoclaw-blueprint/.*\.py|scripts/.*\.py)$
-        priority: 5
-      - id: ruff
-        args: [--fix]
-        files: ^(nemoclaw-blueprint/.*\.py|scripts/.*\.py)$
-        priority: 6
 
   - repo: local
     hooks:
@@ -97,6 +99,16 @@ repos:
         entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root/nemoclaw" && files=() && for f in "$@"; do files+=("${f#nemoclaw/}"); done && npx eslint --fix "${files[@]}"' --
         language: system
         files: ^nemoclaw/.*\.ts$
+        pass_filenames: true
+        priority: 6
+
+  - repo: local
+    hooks:
+      - id: eslint-js
+        name: ESLint (JavaScript)
+        entry: npx eslint --fix
+        language: system
+        files: ^(bin|test|scripts|docs/_ext)/.*\.js$
         pass_filenames: true
         priority: 6
 
@@ -128,9 +140,6 @@ repos:
     rev: v0.11.0.1
     hooks:
       - id: shellcheck
-        args:
-          - --severity=warning
-          - --exclude=SC1091
         priority: 10
 
   - repo: local
@@ -141,16 +150,6 @@ repos:
         language: system
         files: (Dockerfile[^/]*|.*\.dockerfile)$
         types: [file]
-        priority: 10
-
-  - repo: local
-    hooks:
-      - id: spdx-headers
-        name: SPDX license headers
-        entry: bash scripts/check-spdx-headers.sh
-        language: system
-        files: ^(nemoclaw/src/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
-        pass_filenames: true
         priority: 10
 
   - repo: https://github.com/gitleaks/gitleaks
@@ -198,12 +197,12 @@ repos:
         stages: [pre-push]
         priority: 10
 
-      - id: pyright-check
-        name: Pyright (nemoclaw-blueprint)
-        entry: bash -c 'cd nemoclaw-blueprint && uv run --with pyright pyright'
+      - id: tsc-check-js
+        name: TypeScript type check (JavaScript)
+        entry: npx tsc -p jsconfig.json
         language: system
         pass_filenames: false
-        always_run: true
+        files: ^(bin|test|scripts)/.*\.js$
         stages: [pre-push]
         priority: 10
 

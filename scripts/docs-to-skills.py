@@ -11,7 +11,7 @@ Usage:
 Make sure to run this script using the following command to generate the skills and keep the locations and names consistent.
 
 ```bash
-python scripts/docs-to-skills.py docs/ .agents/skills/docs/ --prefix nemoclaw
+python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw
 ```
 
 What it does:
@@ -40,16 +40,17 @@ Naming:
   override specific names when the heuristic doesn't produce the right result.
 
 Usage:
-    python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw
-    python scripts/docs-to-skills.py docs/ output/ --prefix nemoclaw --dry-run
-    python scripts/docs-to-skills.py docs/ output/ --strategy individual --prefix nemoclaw
-    python scripts/docs-to-skills.py docs/ output/ --prefix nemoclaw --name-map about=overview
-    python scripts/docs-to-skills.py docs/ output/ --exclude "release-notes.md"
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw --dry-run
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --strategy individual --prefix nemoclaw
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw --name-map about=overview
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw --exclude "release-notes.md"
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import textwrap
@@ -892,7 +893,7 @@ CONTENT_TYPE_ROLE = {
 def generate_skill(
     name: str,
     pages: list[DocPage],
-    output_dir: Path,
+    output_dirs: list[Path],
     *,
     docs_dir: Path | None = None,
     doc_to_skill: dict[str, str] | None = None,
@@ -900,6 +901,7 @@ def generate_skill(
 ) -> dict:
     """Generate a complete skill directory from a group of doc pages.
 
+    Writes identical output to each directory in *output_dirs*.
     Returns a summary dict for reporting.
     """
     keywords = extract_trigger_keywords(pages)
@@ -1074,10 +1076,9 @@ def generate_skill(
         ref_files[ref_name] = body
 
     # --- Write output ---
-    skill_dir = output_dir / name
     summary = {
         "name": name,
-        "dir": str(skill_dir),
+        "dirs": [str(d / name) for d in output_dirs],
         "pages": [str(p.path) for p in pages],
         "skill_md_lines": len(skill_md.split("\n")),
         "reference_files": list(ref_files.keys()),
@@ -1087,14 +1088,20 @@ def generate_skill(
         summary["dry_run"] = True
         return summary
 
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "SKILL.md").write_text(skill_md.rstrip("\n") + "\n", encoding="utf-8")
+    for output_dir in output_dirs:
+        skill_dir = output_dir / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            skill_md.rstrip("\n") + "\n", encoding="utf-8"
+        )
 
-    if ref_files:
-        refs_dir = skill_dir / "references"
-        refs_dir.mkdir(exist_ok=True)
-        for fname, content in ref_files.items():
-            (refs_dir / fname).write_text(content.rstrip("\n") + "\n", encoding="utf-8")
+        if ref_files:
+            refs_dir = skill_dir / "references"
+            refs_dir.mkdir(exist_ok=True)
+            for fname, content in ref_files.items():
+                (refs_dir / fname).write_text(
+                    content.rstrip("\n") + "\n", encoding="utf-8"
+                )
 
     return summary
 
@@ -1201,17 +1208,20 @@ def main():
               smart       Group by directory, merge concept pages as context
 
             Examples:
-              %(prog)s docs/ .agents/skills/generated/ --prefix nemoclaw
-              %(prog)s docs/ output/ --strategy individual --prefix nemoclaw
-              %(prog)s docs/ output/ --prefix nemoclaw --name-map about=overview
-              %(prog)s docs/ output/ --strategy smart --dry-run
+              %(prog)s docs/ .agents/skills/ --prefix nemoclaw
+              %(prog)s docs/ .agents/skills/ --strategy individual --prefix nemoclaw
+              %(prog)s docs/ .agents/skills/ --prefix nemoclaw --name-map about=overview
+              %(prog)s docs/ .agents/skills/ --prefix nemoclaw --dry-run
         """),
     )
     parser.add_argument(
         "docs_dir", type=Path, help="Path to the documentation directory"
     )
     parser.add_argument(
-        "output_dir", type=Path, help="Output directory for generated skills"
+        "output_dirs",
+        type=Path,
+        nargs="+",
+        help="Output directories for generated skills (e.g. .agents/skills/ .claude/skills/)",
     )
     parser.add_argument(
         "--strategy",
@@ -1322,21 +1332,45 @@ def main():
                 pass
 
     # Generate skills
-    print(
-        f"\n{'[DRY RUN] ' if args.dry_run else ''}Generating skills to {args.output_dir}/"
-    )
+    dirs_str = ", ".join(str(d) for d in args.output_dirs)
+    print(f"\n{'[DRY RUN] ' if args.dry_run else ''}Generating skills to {dirs_str}")
     summaries: list[dict] = []
     for group_name, group_pages in sorted(groups.items()):
         name = skill_names[group_name]
         summary = generate_skill(
             name,
             group_pages,
-            args.output_dir,
+            args.output_dirs,
             docs_dir=docs_dir_resolved,
             doc_to_skill=doc_to_skill,
             dry_run=args.dry_run,
         )
         summaries.append(summary)
+
+    # Ensure .claude/skills symlink exists
+    if not args.dry_run:
+        claude_skills = Path(".claude/skills")
+        for out_dir in args.output_dirs:
+            # Only create symlink if output is under .agents/skills
+            if ".agents/skills" in str(out_dir):
+                agents_skills = Path(out_dir)
+                if claude_skills.is_symlink():
+                    if claude_skills.resolve() == agents_skills.resolve():
+                        break  # already correct
+                    else:
+                        claude_skills.unlink()
+                elif claude_skills.is_dir():
+                    print(f"\n⚠ {claude_skills} is a real directory, not a symlink.")
+                    print(
+                        f"  Remove it and re-run, or manually symlink to {agents_skills}"
+                    )
+                    break
+                # Create parent and symlink
+                claude_skills.parent.mkdir(parents=True, exist_ok=True)
+                rel = os.path.relpath(agents_skills, claude_skills.parent)
+                claude_skills.symlink_to(rel)
+                print(f"\n✔ Created symlink: {claude_skills} → {rel}")
+                break
 
     # Report
     print("\n" + "=" * 60)
@@ -1364,7 +1398,7 @@ def main():
 
     if args.dry_run:
         print("\nDry run complete. No files were written.")
-        print(f"Re-run without --dry-run to generate skills in {args.output_dir}/")
+        print(f"Re-run without --dry-run to generate skills in {dirs_str}")
 
 
 if __name__ == "__main__":

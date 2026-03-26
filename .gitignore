@@ -14,8 +14,9 @@ desktop.ini
 Thumbs.db
 
 # Project-specific
-.claude/
 draft_newsletter_*
+research/
+specs/
 vdr-notes/
 
 # Security: secrets, credentials, and keys
