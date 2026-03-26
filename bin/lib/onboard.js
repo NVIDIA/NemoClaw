@@ -2213,7 +2213,7 @@ async function setupPolicies(sandboxName) {
 // ── Dashboard ────────────────────────────────────────────────────
 
 const CONTROL_UI_PORT = 18789;
-const CONTROL_UI_PATH = "/chat?session=main";
+const CONTROL_UI_PATH = "/";
 
 function findOpenclawJsonPath(dir) {
   if (!fs.existsSync(dir)) return null;
