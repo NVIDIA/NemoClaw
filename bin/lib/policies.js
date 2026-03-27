@@ -149,7 +149,6 @@ function mergePresetIntoPolicy(currentPolicy, presetEntries) {
   }
   return merged;
 }
-// eslint-disable-next-line complexity
 function applyPreset(sandboxName, presetName) {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
