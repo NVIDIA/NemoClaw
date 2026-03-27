@@ -404,10 +404,11 @@ fi
 # C7: No real secret patterns in sandbox config files
 info "C7: Checking for secret patterns in sandbox config..."
 
-# Search for real API key patterns (not our test fakes)
-c7_nvapi=$(sandbox_exec "grep -r 'nvapi-' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | head -5" || true)
-c7_ghp=$(sandbox_exec "grep -r 'ghp_' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | head -5" || true)
-c7_npm=$(sandbox_exec "grep -r 'npm_' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | head -5" || true)
+# Search for real API key patterns (not our test fakes).
+# Exclude policy preset files (e.g. npm.yaml contains "npm_yarn" rule names, not secrets).
+c7_nvapi=$(sandbox_exec "grep -r 'nvapi-' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | grep -v '/policies/' | head -5" || true)
+c7_ghp=$(sandbox_exec "grep -r 'ghp_' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | grep -v '/policies/' | head -5" || true)
+c7_npm=$(sandbox_exec "grep -r 'npm_' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | grep -v '/policies/' | head -5" || true)
 
 if [ -z "$c7_nvapi" ] && [ -z "$c7_ghp" ] && [ -z "$c7_npm" ]; then
   pass "C7: No secret patterns (nvapi-, ghp_, npm_) found in sandbox config"
