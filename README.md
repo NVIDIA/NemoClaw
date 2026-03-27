@@ -296,13 +296,13 @@ See the full [CLI reference](https://docs.nvidia.com/nemoclaw/latest/reference/c
 
 Refer to the documentation for more information on NemoClaw.
 
-- [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html): Learn what NemoClaw does and how it fits together.
-- [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html): Learn about the plugin, blueprint, and sandbox lifecycle.
-- [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html): Learn about the plugin structure, blueprint lifecycle, and sandbox environment.
-- [Inference Profiles](https://docs.nvidia.com/nemoclaw/latest/reference/inference-profiles.html): Learn how NemoClaw configures routed inference providers.
-- [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html): Learn about egress control and policy customization.
-- [CLI Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html): Learn about the full command reference.
-- [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html): Troubleshoot common issues and resolution steps.
+- [Overview](docs/about/overview.md): Learn what NemoClaw does and how it fits together.
+- [How It Works](docs/about/how-it-works.md): Learn about the plugin, blueprint, and sandbox lifecycle.
+- [Architecture](docs/reference/architecture.md): Learn about the plugin structure, blueprint lifecycle, and sandbox environment.
+- [Inference Profiles](docs/reference/inference-profiles.md): Learn how NemoClaw configures routed inference providers.
+- [Network Policies](docs/reference/network-policies.md): Learn about egress control and policy customization.
+- [CLI Commands](docs/reference/commands.md): Learn about the full command reference.
+- [Troubleshooting](docs/reference/troubleshooting.md): Troubleshoot common issues and resolution steps.
 - [Discord](https://discord.gg/XFpfPv9Uvx): Join the community for questions and discussion.
 
 ## License
