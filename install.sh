@@ -134,10 +134,13 @@ trap_signal() {
   trap - "$sig"
   kill -s "$sig" "$$"
 }
-trap cleanup EXIT
-trap 'trap_signal INT' INT
-trap 'trap_signal TERM' TERM
-trap 'trap_signal HUP' HUP
+
+register_cleanup_traps() {
+  trap cleanup EXIT
+  trap 'trap_signal INT' INT
+  trap 'trap_signal TERM' TERM
+  trap 'trap_signal HUP' HUP
+}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -406,6 +409,7 @@ install_nodejs() {
   curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh" -o "$nvm_tmp" \
     || {
       rm -f "$nvm_tmp"
+      remove_tracked_file "$nvm_tmp"
       error "Failed to download nvm installer"
     }
   local actual_hash
@@ -419,11 +423,13 @@ install_nodejs() {
   fi
   if [[ "$actual_hash" != "$NVM_SHA256" ]]; then
     rm -f "$nvm_tmp"
+    remove_tracked_file "$nvm_tmp"
     error "nvm installer integrity check failed\n  Expected: $NVM_SHA256\n  Actual:   $actual_hash"
   fi
   info "nvm installer integrity verified"
   spin "Installing nvm..." bash "$nvm_tmp"
   rm -f "$nvm_tmp"
+  remove_tracked_file "$nvm_tmp"
   ensure_nvm_loaded
   spin "Installing Node.js 22..." bash -c ". \"$NVM_DIR/nvm.sh\" && nvm install 22 --no-progress"
   ensure_nvm_loaded
@@ -525,6 +531,7 @@ pre_extract_openclaw() {
   info "Pre-extracting openclaw@${openclaw_version} with system tar (GH-503 workaround)…"
   local tmpdir
   tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' EXIT INT TERM HUP
   # Not tracked in _cleanup_files: this function runs in a child shell via
   # spin()/bash -c, so array mutations do not reach the parent.  The child
   # cleans up tmpdir itself; on interrupt, spin() kills the child PID.
@@ -679,6 +686,7 @@ post_install_message() {
 # Main
 # ---------------------------------------------------------------------------
 main() {
+  register_cleanup_traps
   # Parse flags
   NON_INTERACTIVE=""
   for arg in "$@"; do

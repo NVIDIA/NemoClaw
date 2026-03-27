@@ -1080,6 +1080,25 @@ describe("installer pure helpers", () => {
     );
   }
 
+  it("does not install cleanup traps when sourced", () => {
+    const r = spawnSync(
+      "bash",
+      [
+        "-c",
+        `source "${INSTALLER}" 2>/dev/null; [[ -z "$(trap -p EXIT)" && -z "$(trap -p INT)" && -z "$(trap -p TERM)" && -z "$(trap -p HUP)" ]] && echo clean`,
+      ],
+      {
+        cwd: path.join(import.meta.dirname, ".."),
+        encoding: "utf-8",
+        env: {
+          HOME: os.tmpdir(),
+          PATH: TEST_SYSTEM_PATH,
+        },
+      },
+    );
+    expect(r.stdout.trim()).toBe("clean");
+  });
+
   // -- version_gte --
 
   it("version_gte: equal versions return 0", () => {
