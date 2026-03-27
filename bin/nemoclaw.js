@@ -1165,7 +1165,33 @@ function sandboxLogs(sandboxName, follow) {
   exitWithSpawnResult(result);
 }
 
-function sandboxGatewayToken(sandboxName) {
+/**
+ * Wait for a TCP port to accept connections, with timeout.
+ */
+function waitForPort(port, timeoutMs = 10000) {
+  const net = require("net");
+  const start = Date.now();
+  return new Promise((resolve, reject) => {
+    function tryConnect() {
+      const sock = net.createConnection({ port, host: "127.0.0.1" }, () => {
+        sock.destroy();
+        resolve();
+      });
+      sock.on("error", () => {
+        sock.destroy();
+        if (Date.now() - start > timeoutMs) {
+          reject(new Error(`Port ${port} not ready after ${timeoutMs}ms`));
+        } else {
+          setTimeout(tryConnect, 500);
+        }
+      });
+    }
+    tryConnect();
+  });
+}
+
+async function sandboxGatewayToken(sandboxName) {
+  await ensureLiveSandboxOrExit(sandboxName);
   const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
   if (!token) {
     console.error(`  ${_RD}Error${R}: Could not retrieve gateway auth token from sandbox '${sandboxName}'.`);
@@ -1179,8 +1205,9 @@ function sandboxGatewayToken(sandboxName) {
 
 async function sandboxOpen(sandboxName) {
   await ensureLiveSandboxOrExit(sandboxName);
-  // Ensure port forward is alive before opening
+  // Start port forward and wait for it to be ready
   runOpenshell(["forward", "start", "--background", "18789", sandboxName], { ignoreError: true });
+  await waitForPort(18789, 10000);
 
   const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
   if (!token) {
@@ -1197,11 +1224,14 @@ async function sandboxOpen(sandboxName) {
   console.log(`  Opening Control UI at ${safeUrl} ...`);
 
   // Open URL in default browser (platform-appropriate)
-  const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  // Windows "start" is a cmd built-in, not an executable — requires shell: true
+  const isWin = process.platform === "win32";
+  const opener = process.platform === "darwin" ? "open" : isWin ? "start" : "xdg-open";
   try {
-    const child = require("child_process").spawn(opener, [url], {
+    const child = require("child_process").spawn(opener, isWin ? ["", url] : [url], {
       stdio: "ignore",
       detached: true,
+      shell: isWin,
     });
     child.unref();
   } catch (_e) {
@@ -1464,7 +1494,7 @@ const [cmd, ...args] = process.argv.slice(2);
         sandboxPolicyList(cmd);
         break;
       case "gateway-token":
-        sandboxGatewayToken(cmd);
+        await sandboxGatewayToken(cmd);
         break;
       case "open":
         await sandboxOpen(cmd);
