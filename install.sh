@@ -21,6 +21,31 @@ resolve_installer_version() {
 
 NEMOCLAW_VERSION="$(resolve_installer_version)"
 
+# Resolve which Git ref to install from.
+# Priority: NEMOCLAW_INSTALL_TAG env var > GitHub releases API > "main" fallback.
+resolve_release_tag() {
+  # Allow explicit override (for CI, pinning, or testing).
+  if [[ -n "${NEMOCLAW_INSTALL_TAG:-}" ]]; then
+    printf "%s" "$NEMOCLAW_INSTALL_TAG"
+    return 0
+  fi
+
+  # Query the GitHub releases API for the latest published release.
+  local response tag
+  response="$(curl -fsSL --max-time 10 \
+    https://api.github.com/repos/NVIDIA/NemoClaw/releases/latest 2>/dev/null)" || true
+  tag="$(printf '%s' "$response" \
+    | grep '"tag_name"' \
+    | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/' \
+    | head -1 || true)"
+
+  if [[ -n "$tag" && "$tag" =~ ^v[0-9] ]]; then
+    printf "%s" "$tag"
+  else
+    printf "main"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Color / style — disabled when NO_COLOR is set or stdout is not a TTY.
 # Uses exact NVIDIA green #76B900 on truecolor terminals; 256-color otherwise.
@@ -132,6 +157,7 @@ usage() {
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
+  printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
   printf "    NEMOCLAW_PROVIDER             cloud | ollama | nim | vllm\n"
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
@@ -187,15 +213,17 @@ spin() {
 
 command_exists() { command -v "$1" &>/dev/null; }
 
-MIN_NODE_MAJOR=20
+MIN_NODE_VERSION="22.16.0"
 MIN_NPM_MAJOR=10
-RECOMMENDED_NODE_MAJOR=22
-RUNTIME_REQUIREMENT_MSG="NemoClaw requires Node.js >=${MIN_NODE_MAJOR} and npm >=${MIN_NPM_MAJOR} (recommended Node.js ${RECOMMENDED_NODE_MAJOR})."
+RUNTIME_REQUIREMENT_MSG="NemoClaw requires Node.js >=${MIN_NODE_VERSION} and npm >=${MIN_NPM_MAJOR}."
 NEMOCLAW_SHIM_DIR="${HOME}/.local/bin"
 ORIGINAL_PATH="${PATH:-}"
 
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
+# Rejects prerelease suffixes (e.g. "22.16.0-rc.1") to avoid arithmetic errors.
 version_gte() {
+  [[ "$1" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || return 1
+  [[ "$2" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || return 1
   local -a a b
   IFS=. read -ra a <<<"$1"
   IFS=. read -ra b <<<"$2"
@@ -274,7 +302,7 @@ ensure_supported_runtime() {
   [[ "$node_major" =~ ^[0-9]+$ ]] || error "Could not determine Node.js version from '${node_version}'. ${RUNTIME_REQUIREMENT_MSG}"
   [[ "$npm_major" =~ ^[0-9]+$ ]] || error "Could not determine npm version from '${npm_version}'. ${RUNTIME_REQUIREMENT_MSG}"
 
-  if ((node_major < MIN_NODE_MAJOR || npm_major < MIN_NPM_MAJOR)); then
+  if ! version_gte "${node_version#v}" "$MIN_NODE_VERSION" || ((npm_major < MIN_NPM_MAJOR)); then
     error "Unsupported runtime detected: Node.js ${node_version:-unknown}, npm ${npm_version:-unknown}. ${RUNTIME_REQUIREMENT_MSG} Upgrade Node.js and rerun the installer."
   fi
 
@@ -318,9 +346,9 @@ install_nodejs() {
   spin "Installing nvm..." bash "$nvm_tmp"
   rm -f "$nvm_tmp"
   ensure_nvm_loaded
-  spin "Installing Node.js ${RECOMMENDED_NODE_MAJOR}..." bash -c ". \"$NVM_DIR/nvm.sh\" && nvm install ${RECOMMENDED_NODE_MAJOR} --no-progress"
+  spin "Installing Node.js 22..." bash -c ". \"$NVM_DIR/nvm.sh\" && nvm install 22 --no-progress"
   ensure_nvm_loaded
-  nvm use "${RECOMMENDED_NODE_MAJOR}" --silent
+  nvm use 22 --silent
   info "Node.js installed: $(node --version)"
 }
 
@@ -444,6 +472,7 @@ pre_extract_openclaw() {
 }
 
 install_nemoclaw() {
+  command_exists git || error "git was not found on PATH."
   if [[ -f "./package.json" ]] && grep -q '"name": "nemoclaw"' ./package.json 2>/dev/null; then
     info "NemoClaw package.json found in current directory — installing from source…"
     spin "Preparing OpenClaw package" bash -c "$(declare -f info warn pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$(pwd)" \
@@ -453,13 +482,17 @@ install_nemoclaw() {
     spin "Linking NemoClaw CLI" npm link
   else
     info "Installing NemoClaw from GitHub…"
+    # Resolve the latest release tag so we never install raw main.
+    local release_ref
+    release_ref="$(resolve_release_tag)"
+    info "Resolved install ref: ${release_ref}"
     # Clone first so we can pre-extract openclaw before npm install (GH-503).
     # npm install -g git+https://... does this internally but we can't hook
     # into its extraction pipeline, so we do it ourselves.
     local nemoclaw_src="${HOME}/.nemoclaw/source"
     rm -rf "$nemoclaw_src"
     mkdir -p "$(dirname "$nemoclaw_src")"
-    spin "Cloning NemoClaw source" git clone --depth 1 https://github.com/NVIDIA/NemoClaw.git "$nemoclaw_src"
+    spin "Cloning NemoClaw source" git clone --depth 1 --branch "$release_ref" https://github.com/NVIDIA/NemoClaw.git "$nemoclaw_src"
     spin "Preparing OpenClaw package" bash -c "$(declare -f info warn pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
       || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
     spin "Installing NemoClaw dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"
@@ -610,4 +643,6 @@ main() {
   post_install_message
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { [[ "$0" == "bash" ]] || [[ "$0" == "-bash" ]]; }; }; then
+  main "$@"
+fi
