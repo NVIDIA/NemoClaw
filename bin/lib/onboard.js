@@ -4520,9 +4520,11 @@ async function onboard(opts = {}) {
 module.exports = {
   buildProviderArgs,
   buildSandboxConfigSyncScript,
+  buildControlUiUrls,
   compactText,
   copyBuildContextDir,
   classifySandboxCreateFailure,
+  fetchGatewayAuthTokenFromSandbox,
   createSandbox,
   formatEnvAssignment,
   getFutureShellPathHint,

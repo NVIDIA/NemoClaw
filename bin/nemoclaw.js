@@ -30,7 +30,11 @@ const {
   validateName,
 } = require("./lib/runner");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
-const { startGatewayForRecovery } = require("./lib/onboard");
+const {
+  buildControlUiUrls,
+  fetchGatewayAuthTokenFromSandbox,
+  startGatewayForRecovery,
+} = require("./lib/onboard");
 const {
   getCredential,
   deleteCredential,
@@ -1162,57 +1166,48 @@ function sandboxLogs(sandboxName, follow) {
 }
 
 function sandboxGatewayToken(sandboxName) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-token-"));
-  try {
-    const qn = shellQuote(sandboxName);
-    const destDir = `${tmpDir}${path.sep}`;
-    const result = spawnSync("bash", ["-c", `openshell sandbox download ${qn} /sandbox/.openclaw/openclaw.json ${shellQuote(destDir)}`], {
-      stdio: ["ignore", "ignore", "ignore"],
-    });
-    if (result.status !== 0) {
-      console.error(`  ${_RD}Error${R}: Could not retrieve config from sandbox '${sandboxName}'.`);
-      console.error(`  Make sure the sandbox is running and accessible.`);
-      process.exit(1);
-    }
-    // Find the downloaded file (may be nested in subdirectory)
-    const candidates = [
-      path.join(tmpDir, "openclaw.json"),
-      path.join(tmpDir, "sandbox", ".openclaw", "openclaw.json"),
-    ];
-    let jsonPath = null;
-    for (const p of candidates) {
-      if (fs.existsSync(p)) { jsonPath = p; break; }
-    }
-    // Fallback: recursive search
-    if (!jsonPath) {
-      const findResult = spawnSync("find", [tmpDir, "-name", "openclaw.json", "-type", "f"], {
-        encoding: "utf-8",
-      });
-      const found = (findResult.stdout || "").trim().split("\n").filter(Boolean)[0];
-      if (found) jsonPath = found;
-    }
-    if (!jsonPath) {
-      console.error(`  ${_RD}Error${R}: openclaw.json not found in sandbox '${sandboxName}'.`);
-      process.exit(1);
-    }
-    const cfg = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
-    const token = cfg && cfg.gateway && cfg.gateway.auth && cfg.gateway.auth.token;
-    if (typeof token === "string" && token.length > 0) {
-      console.log(token);
-    } else {
-      console.error(`  ${_RD}Error${R}: Gateway auth token not found in sandbox config.`);
-      console.error(`  The sandbox may not have been fully onboarded yet.`);
-      process.exit(1);
-    }
-  } catch (e) {
-    console.error(`  ${_RD}Error${R}: ${e.message}`);
+  const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
+  if (!token) {
+    console.error(`  ${_RD}Error${R}: Could not retrieve gateway auth token from sandbox '${sandboxName}'.`);
+    console.error(`  Make sure the sandbox is running and accessible.`);
     process.exit(1);
-  } finally {
-    try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
-      // ignore cleanup errors
-    }
+  }
+  // Print warning to stderr before token to stdout
+  console.error(`  ${YW}⚠️  Treat this token like a password. Do not share it or include it in logs/screencasts.${R}`);
+  console.log(token);
+}
+
+async function sandboxOpen(sandboxName) {
+  await ensureLiveSandboxOrExit(sandboxName);
+  // Ensure port forward is alive before opening
+  runOpenshell(["forward", "start", "--background", "18789", sandboxName], { ignoreError: true });
+
+  const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
+  if (!token) {
+    console.error(`  ${_RD}Error${R}: Could not retrieve gateway auth token from sandbox '${sandboxName}'.`);
+    console.error(`  Make sure the sandbox is running and accessible.`);
+    process.exit(1);
+  }
+
+  const urls = buildControlUiUrls(token);
+  const url = urls[0]; // Use the first URL (localhost)
+
+  // Log without token to avoid exposure in terminal history/screencasts
+  const safeUrl = url.replace(/#.*$/, "");
+  console.log(`  Opening Control UI at ${safeUrl} ...`);
+
+  // Open URL in default browser (platform-appropriate)
+  const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  try {
+    const child = require("child_process").spawn(opener, [url], {
+      stdio: "ignore",
+      detached: true,
+    });
+    child.unref();
+  } catch (_e) {
+    console.error(`  ${_RD}Error${R}: Could not open browser. Please open this URL manually:`);
+    console.error(`  ${url}`);
+    process.exit(1);
   }
 }
 
@@ -1345,7 +1340,8 @@ function help() {
     nemoclaw <name> connect          Shell into a running sandbox
     nemoclaw <name> status           Sandbox health + NIM status
     nemoclaw <name> logs ${D}[--follow]${R}  Stream sandbox logs
-    nemoclaw <name> gateway-token    Print the gateway auth token
+    nemoclaw <name> open             Open Control UI in browser with auth token
+    nemoclaw <name> gateway-token    Print the gateway auth token ${D}(for scripts)${R}
     nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
 
   ${G}Policy Presets:${R}
@@ -1470,12 +1466,15 @@ const [cmd, ...args] = process.argv.slice(2);
       case "gateway-token":
         sandboxGatewayToken(cmd);
         break;
+      case "open":
+        await sandboxOpen(cmd);
+        break;
       case "destroy":
         await sandboxDestroy(cmd, actionArgs);
         break;
       default:
         console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, gateway-token, destroy`);
+        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, gateway-token, open, destroy`);
         process.exit(1);
     }
     return;
