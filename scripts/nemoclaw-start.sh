@@ -205,6 +205,80 @@ PYAUTOPAIR
   echo "[gateway] auto-pair watcher launched (pid $!)"
 }
 
+# ── Proxy environment ────────────────────────────────────────────
+# OpenShell injects HTTP_PROXY/HTTPS_PROXY/NO_PROXY into the sandbox, but its
+# NO_PROXY is limited to 127.0.0.1,localhost,::1 — missing inference.local and
+# the gateway IP.  Without these entries, LLM inference requests are routed
+# through the egress proxy instead of going direct, and the proxy gateway IP
+# itself gets proxied (potential infinite loop).
+#
+# NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT can be overridden at sandbox
+# creation time if the gateway IP or port changes in a future OpenShell release.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/626
+PROXY_HOST="${NEMOCLAW_PROXY_HOST:-10.200.0.1}"
+PROXY_PORT="${NEMOCLAW_PROXY_PORT:-3128}"
+_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
+_NO_PROXY_VAL="localhost,127.0.0.1,::1,inference.local,${PROXY_HOST}"
+export HTTP_PROXY="$_PROXY_URL"
+export HTTPS_PROXY="$_PROXY_URL"
+export NO_PROXY="$_NO_PROXY_VAL"
+export http_proxy="$_PROXY_URL"
+export https_proxy="$_PROXY_URL"
+export no_proxy="$_NO_PROXY_VAL"
+
+# OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
+# time a user connects via `openshell sandbox connect`.  The connect path spawns
+# `/bin/bash -i` (interactive, non-login), which sources ~/.bashrc — NOT
+# ~/.profile or /etc/profile.d/*.  Write the full proxy config to ~/.bashrc so
+# interactive sessions see the correct values.
+#
+# Both uppercase and lowercase variants are required: Node.js undici prefers
+# lowercase (no_proxy) over uppercase (NO_PROXY) when both are set.
+# curl/wget use uppercase.  gRPC C-core uses lowercase.
+#
+# Also write to ~/.profile for login-shell paths (e.g. `sandbox create -- cmd`
+# which spawns `bash -lc`).
+#
+# Idempotency: begin/end markers delimit the block so it can be replaced
+# on restart if NEMOCLAW_PROXY_HOST/PORT change, without duplicating.
+_PROXY_MARKER_BEGIN="# nemoclaw-proxy-config begin"
+_PROXY_MARKER_END="# nemoclaw-proxy-config end"
+_PROXY_SNIPPET="${_PROXY_MARKER_BEGIN}
+export HTTP_PROXY=\"$_PROXY_URL\"
+export HTTPS_PROXY=\"$_PROXY_URL\"
+export NO_PROXY=\"$_NO_PROXY_VAL\"
+export http_proxy=\"$_PROXY_URL\"
+export https_proxy=\"$_PROXY_URL\"
+export no_proxy=\"$_NO_PROXY_VAL\"
+${_PROXY_MARKER_END}"
+
+if [ "$(id -u)" -eq 0 ]; then
+  _SANDBOX_HOME=$(getent passwd sandbox 2>/dev/null | cut -d: -f6)
+  _SANDBOX_HOME="${_SANDBOX_HOME:-/sandbox}"
+else
+  _SANDBOX_HOME="${HOME:-/sandbox}"
+fi
+
+_write_proxy_snippet() {
+  local target="$1"
+  if [ -f "$target" ] && grep -qF "$_PROXY_MARKER_BEGIN" "$target" 2>/dev/null; then
+    local tmp
+    tmp="$(mktemp)"
+    awk -v b="$_PROXY_MARKER_BEGIN" -v e="$_PROXY_MARKER_END" \
+      '$0==b{s=1;next} $0==e{s=0;next} !s' "$target" >"$tmp"
+    printf '%s\n' "$_PROXY_SNIPPET" >>"$tmp"
+    cat "$tmp" >"$target"
+    rm -f "$tmp"
+    return 0
+  fi
+  printf '\n%s\n' "$_PROXY_SNIPPET" >>"$target"
+}
+
+if [ -w "$_SANDBOX_HOME" ]; then
+  _write_proxy_snippet "${_SANDBOX_HOME}/.bashrc"
+  _write_proxy_snippet "${_SANDBOX_HOME}/.profile"
+fi
+
 # ── Main ─────────────────────────────────────────────────────────
 
 echo 'Setting up NemoClaw...'

@@ -14,7 +14,7 @@ Open an issue when you encounter one of the following situations.
 
 Install the following before you begin.
 
-- Node.js 20+ and npm 10+
+- Node.js 22.16+ and npm 10+
 - Python 3.11+ (for blueprint and documentation builds)
 - Docker (running)
 - [uv](https://docs.astral.sh/uv/) (for Python dependency management)
