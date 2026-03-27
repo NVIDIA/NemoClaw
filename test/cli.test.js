@@ -68,6 +68,12 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Unknown onboard option")).toBeTruthy();
   });
 
+  it("accepts onboard --resume in CLI parsing", () => {
+    const r = run("onboard --resume --non-interactiv");
+    expect(r.code).toBe(1);
+    expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
+  });
+
   it("debug --help exits 0 and shows usage", () => {
     const r = run("debug --help");
     expect(r.code).toBe(0);
@@ -81,6 +87,7 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out.includes("Collecting diagnostics")).toBeTruthy();
     expect(r.out.includes("System")).toBeTruthy();
+    expect(r.out.includes("Onboard Session")).toBeTruthy();
     expect(r.out.includes("Done")).toBeTruthy();
   });
 

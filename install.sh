@@ -124,18 +124,38 @@ print_banner() {
 
 print_done() {
   local elapsed=$((SECONDS - _INSTALL_START))
-  local sandbox_name
-  sandbox_name="$(resolve_default_sandbox_name)"
   info "=== Installation complete ==="
   printf "\n"
   printf "  ${C_GREEN}${C_BOLD}NemoClaw${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$elapsed"
   printf "\n"
-  printf "  ${C_GREEN}Your OpenClaw Sandbox is live.${C_RESET}\n"
-  printf "  ${C_DIM}Sandbox in, break things, and tell us what you find.${C_RESET}\n"
-  printf "\n"
-  printf "  ${C_GREEN}Next:${C_RESET}\n"
-  printf "  %s$%s nemoclaw %s connect\n" "$C_GREEN" "$C_RESET" "$sandbox_name"
-  printf "  %ssandbox@%s$%s openclaw tui\n" "$C_GREEN" "$sandbox_name" "$C_RESET"
+  if [[ "$ONBOARD_RAN" == true ]]; then
+    local sandbox_name
+    sandbox_name="$(resolve_default_sandbox_name)"
+    printf "  ${C_GREEN}Your OpenClaw Sandbox is live.${C_RESET}\n"
+    printf "  ${C_DIM}Sandbox in, break things, and tell us what you find.${C_RESET}\n"
+    printf "\n"
+    printf "  ${C_GREEN}Next:${C_RESET}\n"
+    printf "  %s$%s nemoclaw %s connect\n" "$C_GREEN" "$C_RESET" "$sandbox_name"
+    printf "  %ssandbox@%s$%s openclaw tui\n" "$C_GREEN" "$sandbox_name" "$C_RESET"
+  elif [[ "$NEMOCLAW_READY_NOW" == true ]]; then
+    printf "  ${C_GREEN}NemoClaw CLI is ready in this shell.${C_RESET}\n"
+    printf "  ${C_DIM}Onboarding has not run yet.${C_RESET}\n"
+    printf "\n"
+    printf "  ${C_GREEN}Next:${C_RESET}\n"
+    printf "  %s$%s nemoclaw onboard\n" "$C_GREEN" "$C_RESET"
+  else
+    printf "  ${C_GREEN}NemoClaw CLI is installed.${C_RESET}\n"
+    printf "  ${C_DIM}Onboarding did not run because this shell cannot resolve 'nemoclaw' yet.${C_RESET}\n"
+    printf "\n"
+    printf "  ${C_GREEN}Next:${C_RESET}\n"
+    if [[ -n "$NEMOCLAW_RECOVERY_EXPORT_DIR" ]]; then
+      printf "  %s$%s export PATH=\"%s:\$PATH\"\n" "$C_GREEN" "$C_RESET" "$NEMOCLAW_RECOVERY_EXPORT_DIR"
+    fi
+    if [[ -n "$NEMOCLAW_RECOVERY_PROFILE" ]]; then
+      printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$NEMOCLAW_RECOVERY_PROFILE"
+    fi
+    printf "  %s$%s nemoclaw onboard\n" "$C_GREEN" "$C_RESET"
+  fi
   printf "\n"
   printf "  ${C_BOLD}GitHub${C_RESET}  ${C_DIM}https://github.com/nvidia/nemoclaw${C_RESET}\n"
   printf "  ${C_BOLD}Docs${C_RESET}    ${C_DIM}https://docs.nvidia.com/nemoclaw/latest/${C_RESET}\n"
@@ -218,6 +238,10 @@ MIN_NPM_MAJOR=10
 RUNTIME_REQUIREMENT_MSG="NemoClaw requires Node.js >=${MIN_NODE_VERSION} and npm >=${MIN_NPM_MAJOR}."
 NEMOCLAW_SHIM_DIR="${HOME}/.local/bin"
 ORIGINAL_PATH="${PATH:-}"
+NEMOCLAW_READY_NOW=false
+NEMOCLAW_RECOVERY_PROFILE=""
+NEMOCLAW_RECOVERY_EXPORT_DIR=""
+ONBOARD_RAN=false
 
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
 # Rejects prerelease suffixes (e.g. "22.16.0-rc.1") to avoid arithmetic errors.
@@ -246,6 +270,30 @@ ensure_nvm_loaded() {
   if [[ -s "$NVM_DIR/nvm.sh" ]]; then
     \. "$NVM_DIR/nvm.sh"
   fi
+}
+
+detect_shell_profile() {
+  local profile="$HOME/.bashrc"
+  case "$(basename "${SHELL:-}")" in
+    zsh)
+      profile="$HOME/.zshrc"
+      ;;
+    fish)
+      profile="$HOME/.config/fish/config.fish"
+      ;;
+    tcsh)
+      profile="$HOME/.tcshrc"
+      ;;
+    csh)
+      profile="$HOME/.cshrc"
+      ;;
+    *)
+      if [[ ! -f "$HOME/.bashrc" && -f "$HOME/.profile" ]]; then
+        profile="$HOME/.profile"
+      fi
+      ;;
+  esac
+  printf "%s" "$profile"
 }
 
 # Refresh PATH so that npm global bin is discoverable.
@@ -509,12 +557,10 @@ install_nemoclaw() {
 # ---------------------------------------------------------------------------
 verify_nemoclaw() {
   if command_exists nemoclaw; then
+    NEMOCLAW_READY_NOW=true
     info "Verified: nemoclaw is available at $(command -v nemoclaw)"
     return 0
   fi
-
-  # nemoclaw not on PATH — try to diagnose and suggest a fix
-  warn "nemoclaw is not on PATH after installation."
 
   local npm_bin
   npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
@@ -522,17 +568,19 @@ verify_nemoclaw() {
   if [[ -n "$npm_bin" && -x "$npm_bin/nemoclaw" ]]; then
     ensure_nemoclaw_shim || true
     if command_exists nemoclaw; then
+      NEMOCLAW_READY_NOW=true
       info "Verified: nemoclaw is available at $(command -v nemoclaw)"
       return 0
     fi
 
-    warn "Found nemoclaw at $npm_bin/nemoclaw but could not expose it on PATH."
-    warn ""
-    warn "Add one of these directories to your shell profile:"
-    warn "  $NEMOCLAW_SHIM_DIR"
-    warn "  $npm_bin"
-    warn ""
-    warn "Continuing — nemoclaw is installed but requires a PATH update."
+    NEMOCLAW_RECOVERY_PROFILE="$(detect_shell_profile)"
+    if [[ -x "$NEMOCLAW_SHIM_DIR/nemoclaw" ]]; then
+      NEMOCLAW_RECOVERY_EXPORT_DIR="$NEMOCLAW_SHIM_DIR"
+    else
+      NEMOCLAW_RECOVERY_EXPORT_DIR="$npm_bin"
+    fi
+    warn "Found nemoclaw at $npm_bin/nemoclaw but this shell still cannot resolve it."
+    warn "Onboarding will be skipped until PATH is updated."
     return 0
   else
     warn "Could not locate the nemoclaw executable."
@@ -547,14 +595,33 @@ verify_nemoclaw() {
 # ---------------------------------------------------------------------------
 run_onboard() {
   info "Running nemoclaw onboard…"
+  local -a onboard_cmd=(onboard)
+  if command_exists node && [[ -f "${HOME}/.nemoclaw/onboard-session.json" ]]; then
+    if node -e '
+      const fs = require("fs");
+      const file = process.argv[1];
+      try {
+        const data = JSON.parse(fs.readFileSync(file, "utf8"));
+        const resumable = data && data.resumable !== false;
+        const status = data && data.status;
+        process.exit(resumable && status && status !== "complete" ? 0 : 1);
+      } catch {
+        process.exit(1);
+      }
+    ' "${HOME}/.nemoclaw/onboard-session.json"; then
+      info "Found an interrupted onboarding session — resuming it."
+      onboard_cmd+=(--resume)
+    fi
+  fi
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
-    nemoclaw onboard --non-interactive
+    onboard_cmd+=(--non-interactive)
+    nemoclaw "${onboard_cmd[@]}"
   elif [ -t 0 ]; then
-    nemoclaw onboard
+    nemoclaw "${onboard_cmd[@]}"
   elif exec 3</dev/tty; then
     info "Installer stdin is piped; attaching onboarding to /dev/tty…"
     local status=0
-    nemoclaw onboard <&3 || status=$?
+    nemoclaw "${onboard_cmd[@]}" <&3 || status=$?
     exec 3<&-
     return "$status"
   else
@@ -565,30 +632,32 @@ run_onboard() {
 # 6. Post-install message (printed last — after onboarding — so PATH hints stay visible)
 # ---------------------------------------------------------------------------
 post_install_message() {
-  # Only show shell reload instructions when Node was installed via a
-  # version manager that modifies PATH in shell profile files.
-  # nvm and fnm require sourcing the profile; nodesource/brew install to
-  # system paths already on PATH.
-  if [[ ! -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]]; then
+  if [[ "$NEMOCLAW_READY_NOW" == true ]]; then
     return 0
   fi
 
-  local profile="$HOME/.bashrc"
-  if [[ -n "${ZSH_VERSION:-}" ]] || [[ "$(basename "${SHELL:-}")" == "zsh" ]]; then
-    profile="$HOME/.zshrc"
-  elif [[ ! -f "$HOME/.bashrc" && -f "$HOME/.profile" ]]; then
-    profile="$HOME/.profile"
+  if [[ -z "$NEMOCLAW_RECOVERY_EXPORT_DIR" ]]; then
+    return 0
+  fi
+
+  if [[ -z "$NEMOCLAW_RECOVERY_PROFILE" ]]; then
+    NEMOCLAW_RECOVERY_PROFILE="$(detect_shell_profile)"
   fi
 
   echo ""
   echo "  ──────────────────────────────────────────────────"
-  warn "Your current shell may not have the updated PATH."
+  warn "Your current shell cannot resolve 'nemoclaw' yet."
   echo ""
   echo "  To use nemoclaw now, run:"
   echo ""
-  echo "    source $profile"
+  echo "    export PATH=\"${NEMOCLAW_RECOVERY_EXPORT_DIR}:\$PATH\""
+  echo "    source ${NEMOCLAW_RECOVERY_PROFILE}"
   echo ""
-  echo "  Or open a new terminal window."
+  echo "  Then run:"
+  echo ""
+  echo "    nemoclaw onboard"
+  echo ""
+  echo "  Or open a new terminal window after updating your shell profile."
   echo "  ──────────────────────────────────────────────────"
   echo ""
 }
@@ -635,8 +704,9 @@ main() {
   step 3 "Onboarding"
   if command_exists nemoclaw; then
     run_onboard
+    ONBOARD_RAN=true
   else
-    warn "Skipping onboarding — nemoclaw is not on PATH. Run 'nemoclaw onboard' after updating your PATH."
+    warn "Skipping onboarding — this shell still cannot resolve 'nemoclaw'."
   fi
 
   print_done
