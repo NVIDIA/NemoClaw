@@ -1331,3 +1331,48 @@ const { setupInference } = require(${onboardPath});
   });
 
 });
+
+describe("spawnSync timeout safety", () => {
+  const onboardSrc = fs.readFileSync(
+    path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
+    "utf8"
+  );
+  const lines = onboardSrc.split("\n");
+
+  // Find every line that starts a spawnSync call, then scan ahead for the
+  // closing options object.  We collect the text from the spawnSync line
+  // through the next line containing only "});", which is the end of the
+  // options object in the codebase's formatting.
+  function collectSpawnBlocks() {
+    const blocks = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (/spawnSync\(/.test(lines[i])) {
+        let block = lines[i];
+        for (let j = i + 1; j < lines.length; j++) {
+          block += "\n" + lines[j];
+          if (/^\s*\);/.test(lines[j]) || /^\s*\}\);/.test(lines[j])) break;
+        }
+        blocks.push({ line: i + 1, text: block });
+      }
+    }
+    return blocks;
+  }
+
+  const spawnBlocks = collectSpawnBlocks();
+
+  it("has non-sleep spawnSync calls to test", () => {
+    const actionable = spawnBlocks.filter(({ text }) => !/spawnSync\("sleep"/.test(text));
+    expect(actionable.length).toBeGreaterThan(0);
+  });
+
+  it("every spawnSync call that runs an external command includes a timeout", () => {
+    const missing = [];
+    for (const { line, text } of spawnBlocks) {
+      if (/spawnSync\("sleep"/.test(text)) continue;
+      if (!text.includes("timeout")) {
+        missing.push(`line ${line}: ${text.split("\n")[0].trim()}`);
+      }
+    }
+    expect(missing, `spawnSync calls missing timeout:\n${missing.join("\n")}`).toHaveLength(0);
+  });
+});

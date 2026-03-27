@@ -637,6 +637,12 @@ function summarizeProbeError(body, status) {
   return `HTTP ${status}: ${compact.slice(0, 200)}`;
 }
 
+/** True when spawnSync killed the child due to its timeout option. */
+function isSpawnTimeout(result) {
+  return result.error?.code === "ETIMEDOUT" ||
+    (result.status == null && result.signal === "SIGTERM");
+}
+
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
   const probes = [
     {
@@ -678,11 +684,16 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
       const result = spawnSync("bash", ["-c", cmd], {
         cwd: ROOT,
         encoding: "utf8",
+        timeout: 30_000,
         env: {
           ...process.env,
           NEMOCLAW_PROBE_API_KEY: apiKey,
         },
       });
+      if (isSpawnTimeout(result)) {
+        failures.push({ name: probe.name, httpStatus: 0, curlStatus: 1, message: "timed out" });
+        continue;
+      }
       const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
       const status = Number(String(result.stdout || "").trim());
       if (result.status === 0 && status >= 200 && status < 300) {
@@ -727,11 +738,15 @@ function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
       },
     });
+    if (isSpawnTimeout(result)) {
+      return { ok: false, message: "timed out", failures: [{ name: "Anthropic Messages API", httpStatus: 0, curlStatus: 1, message: "timed out" }] };
+    }
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     const status = Number(String(result.stdout || "").trim());
     if (result.status === 0 && status >= 200 && status < 300) {
@@ -867,11 +882,15 @@ function fetchNvidiaEndpointModels(apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
       },
     });
+    if (isSpawnTimeout(result)) {
+      return { ok: false, message: "timed out" };
+    }
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     const status = Number(String(result.stdout || "").trim());
     if (result.status !== 0 || !(status >= 200 && status < 300)) {
@@ -920,11 +939,15 @@ function fetchOpenAiLikeModels(endpointUrl, apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
       },
     });
+    if (isSpawnTimeout(result)) {
+      return { ok: false, status: 0, message: "timed out" };
+    }
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     const status = Number(String(result.stdout || "").trim());
     if (result.status !== 0 || !(status >= 200 && status < 300)) {
@@ -957,11 +980,15 @@ function fetchAnthropicModels(endpointUrl, apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
       },
     });
+    if (isSpawnTimeout(result)) {
+      return { ok: false, status: 0, message: "timed out" };
+    }
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     const status = Number(String(result.stdout || "").trim());
     if (result.status !== 0 || !(status >= 200 && status < 300)) {
@@ -1223,6 +1250,7 @@ function pullOllamaModel(model) {
     cwd: ROOT,
     encoding: "utf8",
     stdio: "inherit",
+    timeout: 300_000,
     env: { ...process.env },
   });
   return result.status === 0;
@@ -1358,6 +1386,7 @@ function installOpenshell() {
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf-8",
+    timeout: 120_000,
   });
   if (result.status !== 0) {
     const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
