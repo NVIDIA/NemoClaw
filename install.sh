@@ -21,6 +21,31 @@ resolve_installer_version() {
 
 NEMOCLAW_VERSION="$(resolve_installer_version)"
 
+# Resolve which Git ref to install from.
+# Priority: NEMOCLAW_INSTALL_TAG env var > GitHub releases API > "main" fallback.
+resolve_release_tag() {
+  # Allow explicit override (for CI, pinning, or testing).
+  if [[ -n "${NEMOCLAW_INSTALL_TAG:-}" ]]; then
+    printf "%s" "$NEMOCLAW_INSTALL_TAG"
+    return 0
+  fi
+
+  # Query the GitHub releases API for the latest published release.
+  local response tag
+  response="$(curl -fsSL --max-time 10 \
+    https://api.github.com/repos/NVIDIA/NemoClaw/releases/latest 2>/dev/null)" || true
+  tag="$(printf '%s' "$response" \
+    | grep '"tag_name"' \
+    | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/' \
+    | head -1 || true)"
+
+  if [[ -n "$tag" && "$tag" =~ ^v[0-9] ]]; then
+    printf "%s" "$tag"
+  else
+    printf "main"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Color / style — disabled when NO_COLOR is set or stdout is not a TTY.
 # Uses exact NVIDIA green #76B900 on truecolor terminals; 256-color otherwise.
@@ -99,18 +124,38 @@ print_banner() {
 
 print_done() {
   local elapsed=$((SECONDS - _INSTALL_START))
-  local sandbox_name
-  sandbox_name="$(resolve_default_sandbox_name)"
   info "=== Installation complete ==="
   printf "\n"
   printf "  ${C_GREEN}${C_BOLD}NemoClaw${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$elapsed"
   printf "\n"
-  printf "  ${C_GREEN}Your OpenClaw Sandbox is live.${C_RESET}\n"
-  printf "  ${C_DIM}Sandbox in, break things, and tell us what you find.${C_RESET}\n"
-  printf "\n"
-  printf "  ${C_GREEN}Next:${C_RESET}\n"
-  printf "  %s$%s nemoclaw %s connect\n" "$C_GREEN" "$C_RESET" "$sandbox_name"
-  printf "  %ssandbox@%s$%s openclaw tui\n" "$C_GREEN" "$sandbox_name" "$C_RESET"
+  if [[ "$ONBOARD_RAN" == true ]]; then
+    local sandbox_name
+    sandbox_name="$(resolve_default_sandbox_name)"
+    printf "  ${C_GREEN}Your OpenClaw Sandbox is live.${C_RESET}\n"
+    printf "  ${C_DIM}Sandbox in, break things, and tell us what you find.${C_RESET}\n"
+    printf "\n"
+    printf "  ${C_GREEN}Next:${C_RESET}\n"
+    printf "  %s$%s nemoclaw %s connect\n" "$C_GREEN" "$C_RESET" "$sandbox_name"
+    printf "  %ssandbox@%s$%s openclaw tui\n" "$C_GREEN" "$sandbox_name" "$C_RESET"
+  elif [[ "$NEMOCLAW_READY_NOW" == true ]]; then
+    printf "  ${C_GREEN}NemoClaw CLI is ready in this shell.${C_RESET}\n"
+    printf "  ${C_DIM}Onboarding has not run yet.${C_RESET}\n"
+    printf "\n"
+    printf "  ${C_GREEN}Next:${C_RESET}\n"
+    printf "  %s$%s nemoclaw onboard\n" "$C_GREEN" "$C_RESET"
+  else
+    printf "  ${C_GREEN}NemoClaw CLI is installed.${C_RESET}\n"
+    printf "  ${C_DIM}Onboarding did not run because this shell cannot resolve 'nemoclaw' yet.${C_RESET}\n"
+    printf "\n"
+    printf "  ${C_GREEN}Next:${C_RESET}\n"
+    if [[ -n "$NEMOCLAW_RECOVERY_EXPORT_DIR" ]]; then
+      printf "  %s$%s export PATH=\"%s:\$PATH\"\n" "$C_GREEN" "$C_RESET" "$NEMOCLAW_RECOVERY_EXPORT_DIR"
+    fi
+    if [[ -n "$NEMOCLAW_RECOVERY_PROFILE" ]]; then
+      printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$NEMOCLAW_RECOVERY_PROFILE"
+    fi
+    printf "  %s$%s nemoclaw onboard\n" "$C_GREEN" "$C_RESET"
+  fi
   printf "\n"
   printf "  ${C_BOLD}GitHub${C_RESET}  ${C_DIM}https://github.com/nvidia/nemoclaw${C_RESET}\n"
   printf "  ${C_BOLD}Docs${C_RESET}    ${C_DIM}https://docs.nvidia.com/nemoclaw/latest/${C_RESET}\n"
@@ -132,6 +177,7 @@ usage() {
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
+  printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
   printf "    NEMOCLAW_PROVIDER             cloud | ollama | nim | vllm\n"
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
@@ -187,15 +233,21 @@ spin() {
 
 command_exists() { command -v "$1" &>/dev/null; }
 
-MIN_NODE_MAJOR=20
+MIN_NODE_VERSION="22.16.0"
 MIN_NPM_MAJOR=10
-RECOMMENDED_NODE_MAJOR=22
-RUNTIME_REQUIREMENT_MSG="NemoClaw requires Node.js >=${MIN_NODE_MAJOR} and npm >=${MIN_NPM_MAJOR} (recommended Node.js ${RECOMMENDED_NODE_MAJOR})."
+RUNTIME_REQUIREMENT_MSG="NemoClaw requires Node.js >=${MIN_NODE_VERSION} and npm >=${MIN_NPM_MAJOR}."
 NEMOCLAW_SHIM_DIR="${HOME}/.local/bin"
 ORIGINAL_PATH="${PATH:-}"
+NEMOCLAW_READY_NOW=false
+NEMOCLAW_RECOVERY_PROFILE=""
+NEMOCLAW_RECOVERY_EXPORT_DIR=""
+ONBOARD_RAN=false
 
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
+# Rejects prerelease suffixes (e.g. "22.16.0-rc.1") to avoid arithmetic errors.
 version_gte() {
+  [[ "$1" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || return 1
+  [[ "$2" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || return 1
   local -a a b
   IFS=. read -ra a <<<"$1"
   IFS=. read -ra b <<<"$2"
@@ -218,6 +270,30 @@ ensure_nvm_loaded() {
   if [[ -s "$NVM_DIR/nvm.sh" ]]; then
     \. "$NVM_DIR/nvm.sh"
   fi
+}
+
+detect_shell_profile() {
+  local profile="$HOME/.bashrc"
+  case "$(basename "${SHELL:-}")" in
+    zsh)
+      profile="$HOME/.zshrc"
+      ;;
+    fish)
+      profile="$HOME/.config/fish/config.fish"
+      ;;
+    tcsh)
+      profile="$HOME/.tcshrc"
+      ;;
+    csh)
+      profile="$HOME/.cshrc"
+      ;;
+    *)
+      if [[ ! -f "$HOME/.bashrc" && -f "$HOME/.profile" ]]; then
+        profile="$HOME/.profile"
+      fi
+      ;;
+  esac
+  printf "%s" "$profile"
 }
 
 # Refresh PATH so that npm global bin is discoverable.
@@ -274,7 +350,7 @@ ensure_supported_runtime() {
   [[ "$node_major" =~ ^[0-9]+$ ]] || error "Could not determine Node.js version from '${node_version}'. ${RUNTIME_REQUIREMENT_MSG}"
   [[ "$npm_major" =~ ^[0-9]+$ ]] || error "Could not determine npm version from '${npm_version}'. ${RUNTIME_REQUIREMENT_MSG}"
 
-  if ((node_major < MIN_NODE_MAJOR || npm_major < MIN_NPM_MAJOR)); then
+  if ! version_gte "${node_version#v}" "$MIN_NODE_VERSION" || ((npm_major < MIN_NPM_MAJOR)); then
     error "Unsupported runtime detected: Node.js ${node_version:-unknown}, npm ${npm_version:-unknown}. ${RUNTIME_REQUIREMENT_MSG} Upgrade Node.js and rerun the installer."
   fi
 
@@ -318,9 +394,9 @@ install_nodejs() {
   spin "Installing nvm..." bash "$nvm_tmp"
   rm -f "$nvm_tmp"
   ensure_nvm_loaded
-  spin "Installing Node.js ${RECOMMENDED_NODE_MAJOR}..." bash -c ". \"$NVM_DIR/nvm.sh\" && nvm install ${RECOMMENDED_NODE_MAJOR} --no-progress"
+  spin "Installing Node.js 22..." bash -c ". \"$NVM_DIR/nvm.sh\" && nvm install 22 --no-progress"
   ensure_nvm_loaded
-  nvm use "${RECOMMENDED_NODE_MAJOR}" --silent
+  nvm use 22 --silent
   info "Node.js installed: $(node --version)"
 }
 
@@ -444,6 +520,7 @@ pre_extract_openclaw() {
 }
 
 install_nemoclaw() {
+  command_exists git || error "git was not found on PATH."
   if [[ -f "./package.json" ]] && grep -q '"name": "nemoclaw"' ./package.json 2>/dev/null; then
     info "NemoClaw package.json found in current directory — installing from source…"
     spin "Preparing OpenClaw package" bash -c "$(declare -f info warn pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$(pwd)" \
@@ -453,13 +530,17 @@ install_nemoclaw() {
     spin "Linking NemoClaw CLI" npm link
   else
     info "Installing NemoClaw from GitHub…"
+    # Resolve the latest release tag so we never install raw main.
+    local release_ref
+    release_ref="$(resolve_release_tag)"
+    info "Resolved install ref: ${release_ref}"
     # Clone first so we can pre-extract openclaw before npm install (GH-503).
     # npm install -g git+https://... does this internally but we can't hook
     # into its extraction pipeline, so we do it ourselves.
     local nemoclaw_src="${HOME}/.nemoclaw/source"
     rm -rf "$nemoclaw_src"
     mkdir -p "$(dirname "$nemoclaw_src")"
-    spin "Cloning NemoClaw source" git clone --depth 1 https://github.com/NVIDIA/NemoClaw.git "$nemoclaw_src"
+    spin "Cloning NemoClaw source" git clone --depth 1 --branch "$release_ref" https://github.com/NVIDIA/NemoClaw.git "$nemoclaw_src"
     spin "Preparing OpenClaw package" bash -c "$(declare -f info warn pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
       || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
     spin "Installing NemoClaw dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"
@@ -476,12 +557,10 @@ install_nemoclaw() {
 # ---------------------------------------------------------------------------
 verify_nemoclaw() {
   if command_exists nemoclaw; then
+    NEMOCLAW_READY_NOW=true
     info "Verified: nemoclaw is available at $(command -v nemoclaw)"
     return 0
   fi
-
-  # nemoclaw not on PATH — try to diagnose and suggest a fix
-  warn "nemoclaw is not on PATH after installation."
 
   local npm_bin
   npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
@@ -489,17 +568,19 @@ verify_nemoclaw() {
   if [[ -n "$npm_bin" && -x "$npm_bin/nemoclaw" ]]; then
     ensure_nemoclaw_shim || true
     if command_exists nemoclaw; then
+      NEMOCLAW_READY_NOW=true
       info "Verified: nemoclaw is available at $(command -v nemoclaw)"
       return 0
     fi
 
-    warn "Found nemoclaw at $npm_bin/nemoclaw but could not expose it on PATH."
-    warn ""
-    warn "Add one of these directories to your shell profile:"
-    warn "  $NEMOCLAW_SHIM_DIR"
-    warn "  $npm_bin"
-    warn ""
-    warn "Continuing — nemoclaw is installed but requires a PATH update."
+    NEMOCLAW_RECOVERY_PROFILE="$(detect_shell_profile)"
+    if [[ -x "$NEMOCLAW_SHIM_DIR/nemoclaw" ]]; then
+      NEMOCLAW_RECOVERY_EXPORT_DIR="$NEMOCLAW_SHIM_DIR"
+    else
+      NEMOCLAW_RECOVERY_EXPORT_DIR="$npm_bin"
+    fi
+    warn "Found nemoclaw at $npm_bin/nemoclaw but this shell still cannot resolve it."
+    warn "Onboarding will be skipped until PATH is updated."
     return 0
   else
     warn "Could not locate the nemoclaw executable."
@@ -514,14 +595,33 @@ verify_nemoclaw() {
 # ---------------------------------------------------------------------------
 run_onboard() {
   info "Running nemoclaw onboard…"
+  local -a onboard_cmd=(onboard)
+  if command_exists node && [[ -f "${HOME}/.nemoclaw/onboard-session.json" ]]; then
+    if node -e '
+      const fs = require("fs");
+      const file = process.argv[1];
+      try {
+        const data = JSON.parse(fs.readFileSync(file, "utf8"));
+        const resumable = data && data.resumable !== false;
+        const status = data && data.status;
+        process.exit(resumable && status && status !== "complete" ? 0 : 1);
+      } catch {
+        process.exit(1);
+      }
+    ' "${HOME}/.nemoclaw/onboard-session.json"; then
+      info "Found an interrupted onboarding session — resuming it."
+      onboard_cmd+=(--resume)
+    fi
+  fi
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
-    nemoclaw onboard --non-interactive
+    onboard_cmd+=(--non-interactive)
+    nemoclaw "${onboard_cmd[@]}"
   elif [ -t 0 ]; then
-    nemoclaw onboard
+    nemoclaw "${onboard_cmd[@]}"
   elif exec 3</dev/tty; then
     info "Installer stdin is piped; attaching onboarding to /dev/tty…"
     local status=0
-    nemoclaw onboard <&3 || status=$?
+    nemoclaw "${onboard_cmd[@]}" <&3 || status=$?
     exec 3<&-
     return "$status"
   else
@@ -529,33 +629,35 @@ run_onboard() {
   fi
 }
 
-# 6. Post-install message
+# 6. Post-install message (printed last — after onboarding — so PATH hints stay visible)
 # ---------------------------------------------------------------------------
 post_install_message() {
-  # Only show shell reload instructions when Node was installed via a
-  # version manager that modifies PATH in shell profile files.
-  # nvm and fnm require sourcing the profile; nodesource/brew install to
-  # system paths already on PATH.
-  if [[ ! -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]]; then
+  if [[ "$NEMOCLAW_READY_NOW" == true ]]; then
     return 0
   fi
 
-  local profile="$HOME/.bashrc"
-  if [[ -n "${ZSH_VERSION:-}" ]] || [[ "$(basename "${SHELL:-}")" == "zsh" ]]; then
-    profile="$HOME/.zshrc"
-  elif [[ ! -f "$HOME/.bashrc" && -f "$HOME/.profile" ]]; then
-    profile="$HOME/.profile"
+  if [[ -z "$NEMOCLAW_RECOVERY_EXPORT_DIR" ]]; then
+    return 0
+  fi
+
+  if [[ -z "$NEMOCLAW_RECOVERY_PROFILE" ]]; then
+    NEMOCLAW_RECOVERY_PROFILE="$(detect_shell_profile)"
   fi
 
   echo ""
   echo "  ──────────────────────────────────────────────────"
-  warn "Your current shell may not have the updated PATH."
+  warn "Your current shell cannot resolve 'nemoclaw' yet."
   echo ""
   echo "  To use nemoclaw now, run:"
   echo ""
-  echo "    source $profile"
+  echo "    export PATH=\"${NEMOCLAW_RECOVERY_EXPORT_DIR}:\$PATH\""
+  echo "    source ${NEMOCLAW_RECOVERY_PROFILE}"
   echo ""
-  echo "  Or open a new terminal window."
+  echo "  Then run:"
+  echo ""
+  echo "    nemoclaw onboard"
+  echo ""
+  echo "  Or open a new terminal window after updating your shell profile."
   echo "  ──────────────────────────────────────────────────"
   echo ""
 }
@@ -598,16 +700,19 @@ main() {
   # install_or_upgrade_ollama
   install_nemoclaw
   verify_nemoclaw
-  post_install_message
 
   step 3 "Onboarding"
   if command_exists nemoclaw; then
     run_onboard
+    ONBOARD_RAN=true
   else
-    warn "Skipping onboarding — nemoclaw is not on PATH. Run 'nemoclaw onboard' after updating your PATH."
+    warn "Skipping onboarding — this shell still cannot resolve 'nemoclaw'."
   fi
 
   print_done
+  post_install_message
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { [[ "$0" == "bash" ]] || [[ "$0" == "-bash" ]]; }; }; then
+  main "$@"
+fi
