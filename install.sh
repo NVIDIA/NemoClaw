@@ -67,6 +67,73 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Cleanup — kill backgrounded processes and remove temp files on exit/signal.
+# ---------------------------------------------------------------------------
+_cleanup_pids=()
+_cleanup_files=()
+
+remove_tracked_pid() {
+  local target="$1"
+  local kept=()
+  local value
+  for value in "${_cleanup_pids[@]}"; do
+    if [[ "$value" != "$target" ]]; then
+      kept+=("$value")
+    fi
+  done
+  if (( ${#kept[@]} )); then
+    _cleanup_pids=("${kept[@]}")
+  else
+    _cleanup_pids=()
+  fi
+}
+
+remove_tracked_file() {
+  local target="$1"
+  local kept=()
+  local value
+  for value in "${_cleanup_files[@]}"; do
+    if [[ "$value" != "$target" ]]; then
+      kept+=("$value")
+    fi
+  done
+  if (( ${#kept[@]} )); then
+    _cleanup_files=("${kept[@]}")
+  else
+    _cleanup_files=()
+  fi
+}
+
+cleanup() {
+  local rc=$?
+  set +e
+  if (( ${#_cleanup_pids[@]} )); then
+    for pid in "${_cleanup_pids[@]}"; do
+      kill "$pid" 2>/dev/null || true
+    done
+  fi
+  if (( ${#_cleanup_files[@]} )); then
+    for f in "${_cleanup_files[@]}"; do
+      rm -rf "$f"
+    done
+  fi
+  return "$rc"
+}
+
+# Handle signals by running cleanup and then re-raising so the parent sees
+# the correct signal exit status instead of silently continuing.
+trap_signal() {
+  local sig="$1"
+  cleanup
+  trap - "$sig"
+  kill -s "$sig" "$$"
+}
+trap cleanup EXIT
+trap 'trap_signal INT' INT
+trap 'trap_signal TERM' TERM
+trap 'trap_signal HUP' HUP
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 info() { printf "${C_CYAN}[INFO]${C_RESET}  %s\n" "$*"; }
@@ -186,8 +253,10 @@ spin() {
 
   local log
   log=$(mktemp)
+  _cleanup_files+=("$log")
   "$@" >"$log" 2>&1 &
   local pid=$! i=0
+  _cleanup_pids+=("$pid")
   local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
 
   while kill -0 "$pid" 2>/dev/null; do
@@ -208,6 +277,9 @@ spin() {
     printf "\n"
   fi
   rm -f "$log"
+  # Untrack resources so cleanup() does not act on stale/recycled entries.
+  remove_tracked_pid "$pid"
+  remove_tracked_file "$log"
   return $status
 }
 
@@ -324,6 +396,7 @@ install_nodejs() {
   local NVM_SHA256="4b7412c49960c7d31e8df72da90c1fb5b8cccb419ac99537b737028d497aba4f"
   local nvm_tmp
   nvm_tmp="$(mktemp)"
+  _cleanup_files+=("$nvm_tmp")
   curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh" -o "$nvm_tmp" \
     || {
       rm -f "$nvm_tmp"
@@ -446,6 +519,9 @@ pre_extract_openclaw() {
   info "Pre-extracting openclaw@${openclaw_version} with system tar (GH-503 workaround)…"
   local tmpdir
   tmpdir="$(mktemp -d)"
+  # Not tracked in _cleanup_files: this function runs in a child shell via
+  # spin()/bash -c, so array mutations do not reach the parent.  The child
+  # cleans up tmpdir itself; on interrupt, spin() kills the child PID.
   if npm pack "openclaw@${openclaw_version}" --pack-destination "$tmpdir" >/dev/null 2>&1; then
     local tgz
     tgz="$(find "$tmpdir" -maxdepth 1 -name 'openclaw-*.tgz' -print -quit)"
