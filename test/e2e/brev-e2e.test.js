@@ -289,6 +289,31 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
         { timeout: 120_000 },
       );
       console.log(`[${elapsed()}] nemoclaw CLI installed`);
+
+      // Register the sandbox in nemoclaw's local registry.
+      // setup.sh creates the sandbox via openshell directly but doesn't write
+      // ~/.nemoclaw/sandboxes.json, which `nemoclaw <name> status` needs.
+      console.log(`[${elapsed()}] Registering sandbox in nemoclaw registry...`);
+      ssh(
+        `mkdir -p ~/.nemoclaw && cat > ~/.nemoclaw/sandboxes.json << 'REGISTRY'
+{
+  "sandboxes": {
+    "e2e-test": {
+      "name": "e2e-test",
+      "createdAt": "${new Date().toISOString()}",
+      "model": null,
+      "nimContainer": null,
+      "provider": "nvidia-nim",
+      "gpuEnabled": false,
+      "policies": []
+    }
+  },
+  "defaultSandbox": "e2e-test"
+}
+REGISTRY`,
+        { timeout: 10_000 },
+      );
+      console.log(`[${elapsed()}] Sandbox registered`);
     }
 
     console.log(`[${elapsed()}] beforeAll complete — total bootstrap time: ${elapsed()}`);
