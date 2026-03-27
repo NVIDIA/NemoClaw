@@ -76,6 +76,9 @@ remove_tracked_pid() {
   local target="$1"
   local kept=()
   local value
+  if (( ${#_cleanup_pids[@]} == 0 )); then
+    return
+  fi
   for value in "${_cleanup_pids[@]}"; do
     if [[ "$value" != "$target" ]]; then
       kept+=("$value")
@@ -92,6 +95,9 @@ remove_tracked_file() {
   local target="$1"
   local kept=()
   local value
+  if (( ${#_cleanup_files[@]} == 0 )); then
+    return
+  fi
   for value in "${_cleanup_files[@]}"; do
     if [[ "$value" != "$target" ]]; then
       kept+=("$value")
