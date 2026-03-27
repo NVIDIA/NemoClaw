@@ -229,7 +229,7 @@ SANDBOX_BUILD_START=$(date +%s)
   while true; do
     sleep 30
     if [ ! -f "$CREATE_LOG" ]; then break; fi
-    ELAPSED=$(( $(date +%s) - SANDBOX_BUILD_START ))
+    ELAPSED=$(($(date +%s) - SANDBOX_BUILD_START))
     LAST_STEP=$(grep -oE "^Step [0-9]+/[0-9]+" "$CREATE_LOG" 2>/dev/null | tail -1 || true)
     LAST_LINE=$(tail -1 "$CREATE_LOG" 2>/dev/null | head -c 120 || true)
     # Filter out lines that might contain secrets
@@ -255,7 +255,7 @@ set -e
 kill "$PROGRESS_PID" 2>/dev/null || true
 wait "$PROGRESS_PID" 2>/dev/null || true
 
-SANDBOX_BUILD_ELAPSED=$(( $(date +%s) - SANDBOX_BUILD_START ))
+SANDBOX_BUILD_ELAPSED=$(($(date +%s) - SANDBOX_BUILD_START))
 info "Sandbox build finished in ${SANDBOX_BUILD_ELAPSED}s (exit code: $CREATE_RC)"
 
 rm -rf "$BUILD_CTX"
