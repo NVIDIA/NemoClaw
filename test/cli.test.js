@@ -231,6 +231,97 @@ describe("CLI dispatch", () => {
     expect(iConnect).toBeGreaterThan(iForward);
   });
 
+  it("reconnect rejects an explicit sandbox name that is not in the registry", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-reconnect-unknown-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        "printf '%s\\n' \"$*\"",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const r = runWithEnv("reconnect beta", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out.includes("Unknown sandbox 'beta'")).toBeTruthy();
+    expect(r.out.includes("Use `nemoclaw list` to view registered sandboxes.")).toBeTruthy();
+  });
+
+  it("reconnect rejects more than one positional sandbox argument", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-reconnect-extra-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+          beta: {
+            name: "beta",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        "printf '%s\\n' \"$*\"",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const r = runWithEnv("reconnect alpha beta", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out.includes("Too many positional arguments for `reconnect`.")).toBeTruthy();
+    expect(r.out.includes("Usage: `nemoclaw reconnect [sandbox-name]`.")).toBeTruthy();
+  });
+
   it("reconnect starts the named gateway when it is missing", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-reconnect-missing-gateway-"));
     const localBin = path.join(home, "bin");

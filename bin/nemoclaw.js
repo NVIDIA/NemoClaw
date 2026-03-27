@@ -573,6 +573,15 @@ function resolveReconnectSandboxName(requestedName) {
     process.exit(1);
   }
   validateName(sandboxName, "sandbox name");
+
+  if (requestedName) {
+    const existingSandbox = registry.getSandbox(sandboxName);
+    if (!existingSandbox) {
+      console.error(`  Unknown sandbox '${sandboxName}'.`);
+      console.error("  Use `nemoclaw list` to view registered sandboxes.");
+      process.exit(1);
+    }
+  }
   return sandboxName;
 }
 
@@ -589,6 +598,11 @@ async function sandboxConnect(sandboxName) {
 }
 
 async function reconnect(args = []) {
+  if (args.length > 1) {
+    console.error("  Too many positional arguments for `reconnect`.");
+    console.error("  Usage: `nemoclaw reconnect [sandbox-name]`.");
+    process.exit(1);
+  }
   const sandboxName = resolveReconnectSandboxName(args[0]);
   console.log(`  Reconnecting to sandbox '${sandboxName}'...`);
   await sandboxConnect(sandboxName);
