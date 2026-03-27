@@ -29,7 +29,7 @@
     ".dockerignore"
   ],
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.16.0"
   },
   "repository": {
     "type": "git",
