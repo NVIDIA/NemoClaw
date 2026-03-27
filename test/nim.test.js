@@ -117,7 +117,7 @@ describe("nim", () => {
     });
 
     it("uses published docker port when no port is provided", () => {
-      for (const mapping of ["0.0.0.0:9000", ":::9000"]) {
+      for (const mapping of ["0.0.0.0:9000", "127.0.0.1:9000", "[::]:9000", ":::9000"]) {
         const runCapture = vi.fn((cmd) => {
           if (cmd.includes("docker inspect")) return "running";
           if (cmd.includes("docker port")) return mapping;
