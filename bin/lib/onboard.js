@@ -1091,6 +1091,75 @@ async function preflight() {
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
+async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
+  step(3, 7, "Starting OpenShell gateway");
+
+  const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
+  const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
+  if (isGatewayHealthy(gatewayStatus, gwInfo)) {
+    console.log("  ✓ Reusing existing gateway");
+    runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
+    process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+    return;
+  }
+
+  if (hasStaleGateway(gwInfo)) {
+    runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+  }
+
+  const gwArgs = ["--name", GATEWAY_NAME];
+  const gatewayEnv = {};
+  const openshellVersion = getInstalledOpenshellVersion();
+  const stableGatewayImage = openshellVersion
+    ? `ghcr.io/nvidia/openshell/cluster:${openshellVersion}`
+    : null;
+  if (stableGatewayImage && openshellVersion) {
+    gatewayEnv.OPENSHELL_CLUSTER_IMAGE = stableGatewayImage;
+    gatewayEnv.IMAGE_TAG = openshellVersion;
+    console.log(`  Using pinned OpenShell gateway image: ${stableGatewayImage}`);
+  }
+
+  const startResult = runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: true, env: gatewayEnv });
+  if (startResult.status !== 0) {
+    console.error("  Gateway failed to start. Cleaning up stale state...");
+    destroyGateway();
+    if (exitOnFailure) {
+      console.error("  Stale state removed. Please rerun: nemoclaw onboard");
+      process.exit(1);
+    }
+    throw new Error("Gateway failed to start");
+  }
+
+  // Verify health
+  for (let i = 0; i < 5; i++) {
+    const status = runCaptureOpenshell(["status"], { ignoreError: true });
+    const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
+    if (isGatewayHealthy(status, gwInfo)) {
+      console.log("  ✓ Gateway is healthy");
+      break;
+    }
+    if (i === 4) {
+      console.error("  Gateway health check failed. Cleaning up stale state...");
+      destroyGateway();
+      if (exitOnFailure) {
+        console.error("  Stale state removed. Please rerun: nemoclaw onboard");
+        process.exit(1);
+      }
+      throw new Error("Gateway failed to start");
+    }
+    sleep(2);
+  }
+
+  const runtime = getContainerRuntime();
+  if (shouldPatchCoredns(runtime)) {
+    console.log("  Patching CoreDNS for Colima...");
+    run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" ${GATEWAY_NAME} 2>&1 || true`, { ignoreError: true });
+  }
+  sleep(5);
+  runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
+  process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+}
+
 async function startGateway(_gpu) {
   return startGatewayWithOptions(_gpu, { exitOnFailure: true });
 }

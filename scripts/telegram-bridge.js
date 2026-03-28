@@ -17,7 +17,7 @@
  */
 
 const https = require("https");
-const { execFileSync, spawn } = require("child_process");
+const { execFileSync, spawn, spawnSync } = require("child_process");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 const { shellQuote, validateName } = require("../bin/lib/runner");
 
@@ -127,7 +127,15 @@ function buildTelegramToolCheckCommand(sessionId) {
 
 function runCommandInSandbox(command, sessionId, timeoutMs = 120000) {
   return new Promise((resolve) => {
-    const sshConfig = execSync(`"${OPENSHELL}" sandbox ssh-config "${SANDBOX}"`, { encoding: "utf-8" });
+    const result = spawnSync(OPENSHELL, ["sandbox", "ssh-config", SANDBOX], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (result.status !== 0) {
+      resolve({ code: 1, stdout: "", stderr: `Failed to get ssh-config: ${result.stderr}` });
+      return;
+    }
+    const sshConfig = result.stdout;
     const confPath = `/tmp/nemoclaw-tg-ssh-${sessionId}.conf`;
     require("fs").writeFileSync(confPath, sshConfig);
 
