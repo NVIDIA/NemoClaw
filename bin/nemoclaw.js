@@ -26,6 +26,8 @@ const {
   syncSandboxControlUiConfig,
 } = require("./lib/onboard");
 
+  const { resolveOpenshell } = require("./lib/resolve-openshell");
+
 // Color / style — respects NO_COLOR and non-TTY environments.
 // Uses exact NVIDIA green #76B900 on truecolor terminals; 256-color otherwise.
 // ---------------------------------------------------------------------------
@@ -483,6 +485,97 @@ function listSandboxes() {
 
 // ── Sandbox-scoped actions ───────────────────────────────────────
 
+async function getReconciledSandboxGatewayState(sandboxName) {
+  const openshellPath = resolveOpenshell() || "openshell";
+  const getResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true });
+  const getOutput = getResult.stdout || getResult.stderr || "";
+  
+  if (getResult.status === 0) {
+    return { state: "present", output: getOutput.trim() };
+  }
+
+  // Command failed, check what the error is
+  if (!getOutput.trim()) {
+    return { state: "unknown", output: "Command produced no output" };
+  }
+
+  // Try to detect the reason for failure
+  if (/No active gateway/i.test(getOutput)) {
+    // Gateway not running, try to recover by starting it
+      run(`${openshellPath} gateway select ${GATEWAY_NAME} 2>&1`, { ignoreError: true });
+      const selectResult = run(`${openshellPath} status 2>&1`, { ignoreError: true });
+    const selectOutput = selectResult.stdout || selectResult.stderr || "";
+    
+    if (selectResult.status === 0 && isGatewayConnected(selectOutput)) {
+      // Gateway is connected after select, try again
+        const retryResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true });
+      const retryOutput = retryResult.stdout || retryResult.stderr || "";
+      if (retryResult.status === 0) {
+        return { state: "present", output: retryOutput.trim(), recoveredGateway: true, recoveryVia: "select" };
+      }
+    }
+    
+    // Need to start the gateway
+    run(`${openshellPath} gateway start --name ${GATEWAY_NAME} 2>&1`, { ignoreError: true });
+    run(`${openshellPath} gateway select ${GATEWAY_NAME} 2>&1`, { ignoreError: true });
+    
+    // Wait a bit and retry
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    const retryResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true });
+    const retryOutput = retryResult.stdout || retryResult.stderr || "";
+    if (retryResult.status === 0) {
+      return { state: "present", output: retryOutput.trim(), recoveredGateway: true, recoveryVia: "start" };
+    }
+  }
+
+  if (/transport error|tcp connect error|Connection refused|Connection reset by peer/i.test(getOutput)) {
+    // Gateway is not accepting connections, try to recover
+    run(`${openshellPath} gateway select ${GATEWAY_NAME} 2>&1`, { ignoreError: true });
+    const selectResult = run(`${openshellPath} status 2>&1`, { ignoreError: true });
+    const selectOutput = selectResult.stdout || selectResult.stderr || "";
+    
+    if (selectResult.status === 0 && isGatewayConnected(selectOutput)) {
+      // Gateway is connected after select, try again
+        const retryResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true });
+      const retryOutput = retryResult.stdout || retryResult.stderr || "";
+      if (retryResult.status === 0) {
+        return { state: "present", output: retryOutput.trim(), recoveredGateway: true, recoveryVia: "select" };
+      }
+    }
+    
+    // Need to start the gateway
+    run(`${openshellPath} gateway start --name ${GATEWAY_NAME} 2>&1`, { ignoreError: true });
+    run(`${openshellPath} gateway select ${GATEWAY_NAME} 2>&1`, { ignoreError: true });
+    
+    // Wait a bit and retry
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    const retryResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true });
+    const retryOutput = retryResult.stdout || retryResult.stderr || "";
+    if (retryResult.status === 0) {
+      return { state: "present", output: retryOutput.trim(), recoveredGateway: true, recoveryVia: "start" };
+    }
+    
+    return { state: "gateway_unreachable_after_restart", output: getOutput.trim() };
+  }
+
+  if (/not found|does not exist/i.test(getOutput)) {
+    // Sandbox doesn't exist
+    return { state: "missing", output: getOutput.trim() };
+  }
+
+  return { state: "unknown", output: getOutput.trim() };
+}
+
+function printGatewayLifecycleHint(output, sandboxName, logFn) {
+  // Print helpful hints based on error messages
+  if (/Connection refused|Connection reset|transport error/i.test(output)) {
+    logFn("  Hint: The gateway may need to be restarted or is unhealthy.");
+    logFn(`  Try: openshell gateway start --name ${GATEWAY_NAME}`);
+  }
+}
+
 function sandboxConnect(sandboxName) {
   if (!ensureLiveSandboxForAction(sandboxName, "connect to")) {
     process.exit(1);
@@ -505,8 +598,8 @@ async function sandboxStatus(sandboxName) {
   if (sb) {
     console.log("");
     console.log(`  Sandbox: ${sb.name}`);
-    console.log(`    Model:    ${(live && live.model) || sb.model || "unknown"}`);
-    console.log(`    Provider: ${(live && live.provider) || sb.provider || "unknown"}`);
+    console.log(`    Model:    ${sb.model || "unknown"}`);
+    console.log(`    Provider: ${sb.provider || "unknown"}`);
     console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
     if (!isLive) {
