@@ -199,10 +199,10 @@ describe("CLI dispatch", () => {
     });
 
     expect(r.code).toBe(0);
-    const calls = fs.readFileSync(markerFile, "utf8");
+    const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
     expect(calls).toContain("sandbox get alpha");
     expect(calls).toContain("sandbox connect alpha");
-    expect(calls).not.toContain("forward start --background 18789 alpha");
+    expect(calls.some((call) => call.startsWith("forward start --background 18789"))).toBe(false);
   });
 
   it("removes stale registry entries when connect targets a missing live sandbox", () => {
