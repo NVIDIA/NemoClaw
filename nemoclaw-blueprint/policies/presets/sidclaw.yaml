@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: sidclaw
+  description: "SidClaw agent governance — policy evaluation, human approval, audit trails"
+
+network_policies:
+  sidclaw:
+    name: sidclaw
+    endpoints:
+      - host: api.sidclaw.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: POST, path: "/api/v1/evaluate" }
+          - allow: { method: GET, path: "/api/v1/approvals/**" }
+          - allow: { method: POST, path: "/api/v1/approvals/*/approve" }
+          - allow: { method: POST, path: "/api/v1/approvals/*/deny" }
+          - allow: { method: POST, path: "/api/v1/traces/*/outcome" }
+          - allow: { method: GET, path: "/api/v1/agents/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/python3 }
