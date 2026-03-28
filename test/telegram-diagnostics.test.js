@@ -112,6 +112,26 @@ describe("telegram diagnostics", () => {
         }
         throw new Error(`unexpected path: ${filePath}`);
       },
+      // Add stubs for required fs methods to satisfy type checks
+      rename: () => {},
+      renameSync: () => {},
+      truncate: () => {},
+      truncateSync: () => {},
+      stat: () => {},
+      statSync: () => {},
+      lstat: () => {},
+      lstatSync: () => {},
+      unlink: () => {},
+      unlinkSync: () => {},
+      readdir: () => {},
+      readdirSync: () => {},
+      mkdir: () => {},
+      mkdirSync: () => {},
+      rmdir: () => {},
+      rmdirSync: () => {},
+      createReadStream: () => {},
+      createWriteStream: () => {},
+      // ...add more as needed for compatibility
     };
 
     assert.equal(getTelegramBridgeToken("the-crucible", fakeFs), "from-bridge");

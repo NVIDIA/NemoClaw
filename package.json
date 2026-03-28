@@ -16,6 +16,7 @@
     "prepublishOnly": "cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
   "dependencies": {
+    "execa": "^9.6.1",
     "openclaw": "2026.3.11"
   },
   "files": [
