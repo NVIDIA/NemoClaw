@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("path");
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 
-const policies = require("../bin/lib/policies");
+// Polyfill __dirname for ESM
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+import { describe, it, expect } from "vitest";
+import policies from "../bin/lib/policies";
 
 describe("policies", () => {
   describe("listPresets", () => {

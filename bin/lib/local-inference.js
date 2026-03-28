@@ -3,6 +3,7 @@
 
 const fs = require("fs");
 const { isWsl } = require("./platform");
+const { shellQuote } = require("./runner");
 
 const HOST_GATEWAY_URL = "http://host.openshell.internal";
 const DOCKER_DESKTOP_HOST_URL = "http://host.docker.internal:11434";
@@ -304,7 +305,7 @@ function validateLocalProvider(provider, runCapture, opts = {}) {
       };
     case "ollama-local": {
       const routeTargets = getOllamaRouteCandidates(endpoint);
-      const routeTarget = routeTargets[0] || `${HOST_GATEWAY_URL}:11434`;
+      // Removed unused variable routeTarget
       const message =
         endpoint?.source === "wsl-host" || endpoint?.source === "override"
           ? `Local Ollama is responding on ${endpoint.displayTarget}, but containers cannot reach ${routeTargets.join(", ")}. Ensure Docker Desktop hostnames are available and the Windows firewall allows access to that host and port from containers.`
@@ -458,9 +459,6 @@ function getDefaultOllamaModel(runCapture, opts = {}) {
   return models.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : models[0];
 }
 
-function shellQuote(value) {
-  return `'${String(value).replace(/'/g, `'\\''`)}'`;
-}
 
 function getOllamaWarmupCommand(model, opts = {}) {
   const optionBag = /** @type {Record<string, any>} */ (typeof opts === "object" && opts !== null ? opts : {});
@@ -510,7 +508,9 @@ function validateOllamaModel(model, runCapture, opts = {}) {
         message: `Selected Ollama model '${model}' failed the local probe: ${parsed.error.trim()}`,
       };
     }
-  } catch { /* ignored */ }
+  } catch {
+    // Ignore JSON parse errors; treat as successful if no error string is found
+  }
 
   return { ok: true };
 }

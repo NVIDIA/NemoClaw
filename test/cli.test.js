@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
+import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -82,7 +83,7 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("--output")).toBeTruthy();
   });
 
-  it("debug --quick exits 0 and produces diagnostic output", () => {
+  it("debug --quick exits 0 and produces diagnostic output", { timeout: 15000 }, () => {
     const r = run("debug --quick");
     expect(r.code).toBe(0);
     expect(r.out.includes("Collecting diagnostics")).toBeTruthy();

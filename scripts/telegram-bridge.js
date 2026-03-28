@@ -100,9 +100,6 @@ async function sendTyping(chatId) {
 
 // ── Run agent inside sandbox ──────────────────────────────────────
 
-function shellQuote(value) {
-  return `'${String(value).replace(/'/g, `'\\''`)}'`;
-}
 
 function buildAgentCommand(message, sessionId) {
   return (

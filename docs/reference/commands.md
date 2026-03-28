@@ -127,7 +127,8 @@ $ nemoclaw my-assistant logs [--follow]
 ### `nemoclaw <name> destroy`
 
 Stop the NIM container and delete the sandbox.
-This removes the sandbox from the registry.
+For a live sandbox, NemoClaw prompts for explicit confirmation before deletion.
+If the entry is stale, NemoClaw offers to remove only the local registry entry.
 
 :::{warning}
 Destroying a sandbox permanently deletes all files inside it, including
@@ -138,6 +139,14 @@ Back up your workspace first by following the instructions at [Back Up and Resto
 ```console
 $ nemoclaw my-assistant destroy
 ```
+
+For a stale registry entry:
+
+```console
+$ nemoclaw my-assistant destroy
+```
+
+NemoClaw reports that OpenShell cannot load the sandbox and prompts to remove the stale local entry instead of attempting a delete that cannot succeed.
 
 ### `nemoclaw <name> policy-add`
 

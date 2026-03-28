@@ -1,11 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
+import { describe, it } from "vitest";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+
+// Use a stable dirname for both CJS and ESM-like runners without self-referencing TDZ.
+const TEST_DIR = typeof globalThis.__dirname === "string"
+  ? globalThis.__dirname
+  : (typeof import.meta !== "undefined" && import.meta.url
+      ? path.dirname(new URL(import.meta.url).pathname)
+      : process.cwd());
 const { spawnSync } = require("node:child_process");
 
 const {
@@ -70,8 +80,11 @@ describe("onboard helpers", () => {
     assert.match(script, /cat > ~\/\.nemoclaw\/config\.json/);
     assert.match(script, /"model": "nemotron-3-nano:30b"/);
     assert.match(script, /"credentialEnv": "OPENAI_API_KEY"/);
-    assert.doesNotMatch(script, /cat > ~\/\.openclaw\/openclaw\.json/);
-    assert.doesNotMatch(script, /openclaw models set/);
+    assert.match(script, /openclaw models set 'inference\/nemotron-3-nano:30b'/);
+    assert.match(script, /cfg\.setdefault\('agents', {}\)\.setdefault\('defaults', {}\)\.setdefault\('model', {}\)\['primary'\]/);
+    assert.match(script, /providers_cfg\["inference"\]/);
+    assert.match(script, /providers_cfg\["inference"\]\s*=\s*json\.loads\(/);
+    assert.match(script, /inference\/nemotron-3-nano:30b/);
     assert.match(script, /^exit$/m);
   });
 
@@ -123,8 +136,8 @@ describe("onboard helpers", () => {
     });
 
     assert.match(script, /openclaw models set 'inference\/qwen3\.5:35b-a3b'/);
-    assert.match(script, /\\"contextWindow\\":8192/);
-    assert.match(script, /\\"maxTokens\\":4096/);
+      assert.match(script, /"contextWindow"\s*:\s*8192/);
+      assert.match(script, /"maxTokens"\s*:\s*4096/);
   });
 
   it("merges Control UI allowed origins into the sandbox OpenClaw config", () => {
@@ -237,11 +250,48 @@ describe("onboard helpers", () => {
     });
 
     assert.deepEqual(access, [
-      { label: "Dashboard", url: "http://127.0.0.1:18789/" },
+      {
+        label: "Dashboard",
+        url: "http://127.0.0.1:18789/?gatewayUrl=ws%3A%2F%2F127.0.0.1%3A18789#token=abc123",
+      },
       {
         label: "VS Code/WSL",
         url: "http://172.18.117.56:18789/?gatewayUrl=ws%3A%2F%2F172.18.117.56%3A18789#token=abc123",
       },
+    ]);
+  });
+
+  it("includes the authenticated primary dashboard URL outside WSL", () => {
+    const access = getDashboardAccessInfo("the-crucible", {
+      env: {},
+      platform: "linux",
+      release: "6.8.0-generic",
+      runCapture: (command) => {
+        if (command.includes("NEMOCLAW_GATEWAY_TOKEN=")) {
+          return "NEMOCLAW_GATEWAY_TOKEN=abc123";
+        }
+        return "";
+      },
+    });
+
+    assert.deepEqual(access, [
+      {
+        label: "Dashboard",
+        url: "http://127.0.0.1:18789/?gatewayUrl=ws%3A%2F%2F127.0.0.1%3A18789#token=abc123",
+      },
+    ]);
+  });
+
+  it("falls back to the plain primary dashboard URL when the token is unavailable", () => {
+    const access = getDashboardAccessInfo("the-crucible", {
+      env: {},
+      platform: "linux",
+      release: "6.8.0-generic",
+      runCapture: () => "",
+    });
+
+    assert.deepEqual(access, [
+      { label: "Dashboard", url: "http://127.0.0.1:18789/" },
     ]);
   });
 
@@ -263,7 +313,10 @@ describe("onboard helpers", () => {
     });
 
     assert.deepEqual(access, [
-      { label: "Dashboard", url: "http://127.0.0.1:18789/" },
+      {
+        label: "Dashboard",
+        url: "http://127.0.0.1:18789/?gatewayUrl=ws%3A%2F%2F127.0.0.1%3A18789#token=abc123",
+      },
       {
         label: "VS Code/WSL",
         url: "http://172.18.117.56:18789/?gatewayUrl=ws%3A%2F%2F172.18.117.56%3A18789#token=abc123",
@@ -303,7 +356,7 @@ describe("onboard helpers", () => {
   });
 
   it("recreates when the local registry is stale instead of offering to keep a missing sandbox", () => {
-    const repoRoot = path.join(__dirname, "..");
+    const repoRoot = path.join(TEST_DIR, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-stale-"));
     const scriptPath = path.join(tmpDir, "stale-registry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
@@ -380,7 +433,7 @@ const { createSandbox } = require(${onboardPath});
   });
 
   it("keeps a live sandbox and hydrates missing local registry state", () => {
-    const repoRoot = path.join(__dirname, "..");
+    const repoRoot = path.join(TEST_DIR, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-live-"));
     const scriptPath = path.join(tmpDir, "live-sandbox-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));

@@ -6,11 +6,8 @@ const fs = require("fs");
 
 const { getCredential } = require("./credentials");
 const { resolveOpenshell } = require("./resolve-openshell");
-const { ROOT } = require("./runner");
+const { ROOT, shellQuote } = require("./runner");
 
-function shellQuote(value) {
-  return `'${String(value).replace(/'/g, `'\\''`)}'`;
-}
 
 function getTelegramBridgeToken(sandboxName, fsModule = fs) {
   if (!sandboxName || !/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(sandboxName)) {

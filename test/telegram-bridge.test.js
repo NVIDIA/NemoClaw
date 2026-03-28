@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it, mock } = require("node:test");
-const assert = require("node:assert/strict");
+import { describe, it, vi } from "vitest";
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
 
 describe("telegram bridge", () => {
   it("builds Telegram channel agent commands", () => {
@@ -12,7 +15,7 @@ describe("telegram bridge", () => {
     process.env.TELEGRAM_BOT_TOKEN = "token";
     process.env.NVIDIA_API_KEY = "secret";
 
-    const restoreResolve = mock.method(require("../bin/lib/resolve-openshell"), "resolveOpenshell", () => "/usr/bin/openshell");
+    const restoreResolve = vi.spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell").mockImplementation(() => "/usr/bin/openshell");
     const { buildAgentCommand, buildTelegramToolCheckCommand } = require("../scripts/telegram-bridge.js");
 
     try {
@@ -31,7 +34,7 @@ describe("telegram bridge", () => {
       assert.match(checkCommand, /--target '12345'/);
       assert.match(checkCommand, /--dry-run --json/);
     } finally {
-      restoreResolve.mock.restore();
+      restoreResolve.mockRestore();
       process.env.TELEGRAM_BOT_TOKEN = originalToken;
       process.env.NVIDIA_API_KEY = originalApiKey;
       delete require.cache[require.resolve("../scripts/telegram-bridge.js")];
@@ -45,7 +48,7 @@ describe("telegram bridge", () => {
     process.env.TELEGRAM_BOT_TOKEN = "token";
     process.env.NVIDIA_API_KEY = "secret";
 
-    const restoreResolve = mock.method(require("../bin/lib/resolve-openshell"), "resolveOpenshell", () => "/usr/bin/openshell");
+    const restoreResolve = vi.spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell").mockImplementation(() => "/usr/bin/openshell");
     const { normalizeAgentResponse } = require("../scripts/telegram-bridge.js");
 
     try {
@@ -65,7 +68,7 @@ describe("telegram bridge", () => {
         /still having trouble sending messages via the OpenClaw Telegram tool/i,
       );
     } finally {
-      restoreResolve.mock.restore();
+      restoreResolve.mockRestore();
       process.env.TELEGRAM_BOT_TOKEN = originalToken;
       process.env.NVIDIA_API_KEY = originalApiKey;
       delete require.cache[require.resolve("../scripts/telegram-bridge.js")];
@@ -79,7 +82,7 @@ describe("telegram bridge", () => {
     process.env.TELEGRAM_BOT_TOKEN = "token";
     process.env.NVIDIA_API_KEY = "secret";
 
-    const restoreResolve = mock.method(require("../bin/lib/resolve-openshell"), "resolveOpenshell", () => "/usr/bin/openshell");
+    const restoreResolve = vi.spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell").mockImplementation(() => "/usr/bin/openshell");
     const { formatAgentFailure, summarizeStderr } = require("../scripts/telegram-bridge.js");
 
     try {
@@ -94,7 +97,7 @@ describe("telegram bridge", () => {
       assert.match(formatAgentFailure(255, stderr), /ssh: connect to host failed/);
       assert.doesNotMatch(formatAgentFailure(255, stderr), /UNDICI-EHPA/);
     } finally {
-      restoreResolve.mock.restore();
+      restoreResolve.mockRestore();
       process.env.TELEGRAM_BOT_TOKEN = originalToken;
       process.env.NVIDIA_API_KEY = originalApiKey;
       delete require.cache[require.resolve("../scripts/telegram-bridge.js")];

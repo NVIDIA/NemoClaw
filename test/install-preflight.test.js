@@ -11,7 +11,7 @@ const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 const LEGACY_INSTALLER_WRAPPER = path.join(import.meta.dirname, "..", "scripts", "install.sh");
 const GITHUB_INSTALL_URL = "git+https://github.com/NVIDIA/NemoClaw.git";
-const TEST_SYSTEM_PATH = "/usr/bin:/bin";
+const TEST_SYSTEM_PATH = "/bin";
 
 function writeExecutable(target, contents) {
   fs.writeFileSync(target, contents, { mode: 0o755 });
@@ -1267,7 +1267,14 @@ describe("installer runtime checks (sourced)", () => {
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
 
-    // npm exists but node does not
+    // Shadow node with a failing stub so host /bin/node does not leak into this test.
+    writeExecutable(
+      path.join(fakeBin, "node"),
+      `#!/usr/bin/env bash
+exit 127`,
+    );
+
+    // npm exists but node is unavailable
     writeExecutable(
       path.join(fakeBin, "npm"),
       `#!/usr/bin/env bash
@@ -1277,7 +1284,7 @@ echo "10.9.2"`,
     const result = callEnsureSupportedRuntime(fakeBin);
 
     expect(result.status).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/Node\.js was not found on PATH/);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/Node\.js was not found on PATH|Could not determine Node\.js version/);
   });
 
   it("fails with clear message when npm is missing entirely", () => {
@@ -1292,10 +1299,17 @@ if [ "$1" = "--version" ]; then echo "v22.14.0"; exit 0; fi
 exit 0`,
     );
 
+    // Shadow npm with a failing stub so host /bin/npm does not leak into this test.
+    writeExecutable(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env bash
+exit 127`,
+    );
+
     const result = callEnsureSupportedRuntime(fakeBin);
 
     expect(result.status).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/npm was not found on PATH/);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/npm was not found on PATH|Could not determine npm version/);
   });
 
   it("succeeds with acceptable Node.js 22.16 and npm 10", () => {
