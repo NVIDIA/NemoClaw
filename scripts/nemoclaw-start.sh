@@ -272,6 +272,27 @@ for agent in agent_list:
 PYSESSIONS
 }
 
+# NO_PROXY is limited to 127.0.0.1,localhost,::1 — missing the gateway IP.
+# The gateway IP itself must bypass the proxy to avoid proxy loops.
+#
+# Do NOT add inference.local here. OpenShell intentionally routes that hostname
+# through the proxy path; bypassing the proxy forces a direct DNS lookup inside
+# the sandbox, which breaks inference.local resolution.
+#
+# NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT can be overridden at sandbox
+# creation time if the gateway IP or port changes in a future OpenShell release.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/626
+PROXY_HOST="${NEMOCLAW_PROXY_HOST:-10.200.0.1}"
+PROXY_PORT="${NEMOCLAW_PROXY_PORT:-3128}"
+_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
+_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"
+export HTTP_PROXY="$_PROXY_URL"
+export HTTPS_PROXY="$_PROXY_URL"
+export NO_PROXY="$_NO_PROXY_VAL"
+export http_proxy="$_PROXY_URL"
+export https_proxy="$_PROXY_URL"
+export no_proxy="$_NO_PROXY_VAL"
+
 echo 'Setting up NemoClaw...'
 openclaw doctor --fix > /dev/null 2>&1 || true
 write_auth_profile
