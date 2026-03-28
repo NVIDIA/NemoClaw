@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: clawmetry
+  description: "ClawMetry Cloud observability — structured telemetry, token cost tracking, and fleet monitoring for NemoClaw sandboxes"
+
+network_policies:
+  clawmetry:
+    name: clawmetry
+    endpoints:
+      - host: "*.clawmetry.com"
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: "*", path: "/**" }
+      - host: clawmetry.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: "*", path: "/**" }
+    binaries:
+      - { path: /usr/bin/python3 }
+      - { path: /usr/local/bin/python3 }
+      - { path: /sandbox/.openclaw/workspace/.venv/bin/python3 }
+      - { path: /sandbox/.openclaw/workspace/.venv/bin/clawmetry }
+      - { path: /sandbox/.venv/bin/python3 }
+      - { path: /sandbox/.venv/bin/clawmetry }
