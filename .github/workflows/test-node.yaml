@@ -11,8 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -24,18 +23,12 @@ jobs:
           node -v
           npm -v
 
-      # 🔥 CRITICAL STEP (YOU WERE MISSING THIS)
-      - name: Authenticate GitHub CLI
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "$GH_TOKEN" | gh auth login --with-token
-          gh auth status
+      - name: Export GH_TOKEN globally
+        run: echo "GH_TOKEN=${{ github.token }}" >> $GITHUB_ENV
 
       - name: Run installer
         env:
           NEMOCLAW_NON_INTERACTIVE: 1
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -e
           set -x
