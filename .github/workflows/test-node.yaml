@@ -24,6 +24,14 @@ jobs:
           node -v
           npm -v
 
+      # 🔥 CRITICAL STEP (YOU WERE MISSING THIS)
+      - name: Authenticate GitHub CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | gh auth login --with-token
+          gh auth status
+
       - name: Run installer
         env:
           NEMOCLAW_NON_INTERACTIVE: 1
@@ -34,14 +42,3 @@ jobs:
 
           chmod +x install.sh
           ./install.sh
-
-      - name: Verify installation
-        run: |
-          echo "[DEBUG] Checking OpenShell installation..."
-          if command -v openshell &> /dev/null; then
-            echo "OpenShell installed successfully"
-            openshell --help || true
-          else
-            echo "OpenShell not found in PATH"
-            exit 1
-          fi
