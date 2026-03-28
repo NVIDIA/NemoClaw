@@ -1267,8 +1267,7 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   // command (awk, always 0) unless pipefail is set. Removing the pipe
   // lets the real exit code flow through to run().
   const createCommand = `openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1`;
-  const createResult = streamSandboxCreate(createCommand, sandboxEnv, { ignoreError: true });
-
+  const createResult = await streamSandboxCreate(createCommand, sandboxEnv, { ignoreError: true });
   // Clean up build context regardless of outcome
   run(`rm -rf "${buildCtx}"`, { ignoreError: true });
 
