@@ -26,7 +26,6 @@ jobs:
       - name: Run installer
         env:
           NEMOCLAW_NON_INTERACTIVE: 1
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -e
           set -x
