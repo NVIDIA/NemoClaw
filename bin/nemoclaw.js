@@ -7,7 +7,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
-const { ROOT, SCRIPTS, run, runCapture, runInteractive, shellQuote } = require("./lib/runner");
+const { ROOT, SCRIPTS, run, runCapture, runInteractive, shellQuote, validateName } = require("./lib/runner");
 const {
   ensureApiKey,
   ensureGithubToken,

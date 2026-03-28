@@ -1,9 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
-const { execSync } = require("child_process");
+import { describe, it, expect } from "vitest";
+import assert from "node:assert/strict";
+import { execSync, execFileSync } from "node:child_process";
+import { writeFileSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 const { getServiceSandboxEnv } = require("../bin/nemoclaw.js");
 

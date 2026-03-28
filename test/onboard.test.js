@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it } from "vitest";
+import { describe, it, expect } from "vitest";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -22,6 +22,7 @@ const {
   buildAuthenticatedDashboardUrl,
   buildControlUiConfigSyncScript,
   buildSandboxConfigSyncScript,
+  classifySandboxCreateFailure,
   getControlUiAllowedOrigins,
   getDashboardForwardPort,
   getDashboardForwardStartCommand,

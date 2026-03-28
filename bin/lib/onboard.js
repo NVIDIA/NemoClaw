@@ -24,6 +24,7 @@ const {
 const {
   CLOUD_MODEL_OPTIONS,
   DEFAULT_CLOUD_MODEL,
+  getOpenClawPrimaryModel,
   getProviderSelectionConfig,
   parseGatewayInference,
 } = require("./inference-config");
@@ -383,6 +384,39 @@ function getDashboardForwardPort(options = {}) {
   return isWslEnvironment(options.env, options.platform, options.release)
     ? "0.0.0.0:18789"
     : "18789";
+}
+
+function classifySandboxCreateFailure(output = "") {
+  const text = String(output || "");
+  const uploadedToGateway =
+    /\[progress\]\s+Uploaded to gateway/i.test(text) ||
+    /Image .*available in the gateway/i.test(text);
+
+  if (/failed to read image export stream|Timeout error/i.test(text)) {
+    return {
+      kind: "image_transfer_timeout",
+      uploadedToGateway,
+    };
+  }
+
+  if (/Connection reset by peer/i.test(text)) {
+    return {
+      kind: "image_transfer_reset",
+      uploadedToGateway,
+    };
+  }
+
+  if (/Created sandbox:/i.test(text)) {
+    return {
+      kind: "sandbox_create_incomplete",
+      uploadedToGateway: true,
+    };
+  }
+
+  return {
+    kind: "unknown",
+    uploadedToGateway,
+  };
 }
 
 function getDashboardForwardStartCommand(sandboxName, options = {}) {
@@ -776,13 +810,6 @@ function parsePolicyPresetEnv(value) {
     .filter(Boolean);
 }
 
-function streamSandboxCreate(createCommand, sandboxEnv, opts = {}) {
-  return run(createCommand, {
-    ...opts,
-    env: sandboxEnv,
-  });
-}
-
 function isSafeModelId(value) {
   return /^[A-Za-z0-9._:/-]+$/.test(value);
 }
@@ -1006,58 +1033,6 @@ async function preflight() {
 }
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
-
-async function startGateway(gpu, reusingGateway) {
-  step(2, 7, "Starting OpenShell gateway");
-
-  if (!reusingGateway) {
-    // Destroy old gateway only if not reusing
-    run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
-    
-    const gwArgs = ["--name", "nemoclaw"];
-    // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
-    // routed through a host-side provider (Ollama, vLLM, or cloud API) — the
-    // sandbox itself does not need direct GPU access. Passing --gpu causes
-    // FailedPrecondition errors when the gateway's k3s device plugin cannot
-    // allocate GPUs. See: https://build.nvidia.com/spark/nemoclaw/instructions
-
-    const startResult = run(`openshell gateway start ${gwArgs.join(" ")}`, { ignoreError: true });
-    if (startResult.status !== 0) {
-      console.error("  Gateway failed to start. Cleaning up stale state...");
-      destroyGateway();
-      process.exit(startResult.status || 1);
-    }
-  } else {
-    console.log("  Reusing existing gateway...");
-    // Ensure we are targeted at the right context
-    run("openshell gateway start --name nemoclaw || true", { ignoreError: true });
-  }
-
-  for (let i = 0; i < 5; i++) {
-    const status = runCaptureOpenshell(["status"], { ignoreError: true });
-    const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
-    const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    if (isGatewayHealthy(status, namedInfo, currentInfo)) {
-      console.log("  ✓ Gateway is healthy");
-      break;
-    }
-    if (i === 4) {
-      console.error("  Gateway failed to start (or reuse). Run: openshell gateway info");
-      process.exit(1);
-    }
-    sleep(2);
-  }
-
-  // CoreDNS fix — always run. k3s-inside-Docker has broken DNS on all platforms.
-  const runtime = getContainerRuntime();
-  if (shouldPatchCoredns(runtime)) {
-    console.log("  Patching CoreDNS for Colima...");
-    run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" ${GATEWAY_NAME} 2>&1 || true`, { ignoreError: true });
-  }
-  sleep(5);
-  runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
-  process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
-}
 
 async function startGateway(_gpu) {
   return startGatewayWithOptions(_gpu, { exitOnFailure: true });
@@ -2178,6 +2153,7 @@ module.exports = {
   buildAuthenticatedDashboardUrl,
   buildControlUiConfigSyncScript,
   buildSandboxConfigSyncScript,
+  classifySandboxCreateFailure,
   getControlUiAllowedOrigins,
   getDashboardForwardPort,
   getDashboardForwardStartCommand,
