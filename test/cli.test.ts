@@ -738,6 +738,185 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Upgrade OpenShell by rerunning `nemoclaw onboard`")).toBeTruthy();
   });
 
+  it("deploy uses brev --type and --gpu-name instead of legacy --gpu", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-deploy-brev-"));
+    const localBin = path.join(home, "bin");
+    const markerFile = path.join(home, "brev-args");
+    fs.mkdirSync(localBin, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(localBin, "brev"),
+      [
+        "#!/usr/bin/env bash",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        "printf '%s\\n' \"$*\" >> \"$marker_file\"",
+        "if [ \"$1\" = \"ls\" ] && [ \"$2\" = \"--json\" ]; then",
+        "  echo '[{\"name\":\"pr-998-test\",\"status\":\"RUNNING\",\"build_status\":\"COMPLETED\",\"shell_status\":\"READY\"}]'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"ls\" ]; then",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "ssh"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "-o" ] || [ "$1" = "-F" ] || [ "$1" = "-q" ] || [ "$1" = "-t" ]; then',
+        "  if printf '%s\\n' \"$*\" | grep -q 'echo \\$HOME'; then",
+        `    echo ${JSON.stringify(home)}`,
+        "  fi",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+    fs.writeFileSync(path.join(localBin, "rsync"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(localBin, "scp"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(localBin, "ssh-keyscan"), "#!/usr/bin/env bash\necho 'test-host-key'\n", {
+      mode: 0o755,
+    });
+
+    const r = runWithEnv("deploy pr-998-test", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NVIDIA_API_KEY: "nvapi-test",
+      NEMOCLAW_GPU: "a2-highgpu-1g:nvidia-tesla-a100:1",
+      NEMOCLAW_DEPLOY_NO_CONNECT: "1",
+      NEMOCLAW_DEPLOY_NO_START_SERVICES: "1",
+    }, 25000);
+
+    expect(r.code).toBe(0);
+    const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n");
+    expect(
+      calls.some((call) =>
+        call.includes("create pr-998-test --type a2-highgpu-1g --gpu-name A100 --provider gcp"),
+      ),
+    ).toBe(true);
+    expect(calls.some((call) => call.includes("--gpu "))).toBe(false);
+  }, 25000);
+
+  it("deploy prefers direct Brev overrides when provided", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-deploy-brev-override-"));
+    const localBin = path.join(home, "bin");
+    const markerFile = path.join(home, "brev-args");
+    fs.mkdirSync(localBin, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(localBin, "brev"),
+      [
+        "#!/usr/bin/env bash",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        "printf '%s\\n' \"$*\" >> \"$marker_file\"",
+        "if [ \"$1\" = \"ls\" ] && [ \"$2\" = \"--json\" ]; then",
+        "  echo '[{\"name\":\"pr-998-override\",\"status\":\"RUNNING\",\"build_status\":\"COMPLETED\",\"shell_status\":\"READY\"}]'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"ls\" ]; then",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "ssh"),
+      [
+        "#!/usr/bin/env bash",
+        "if printf '%s\\n' \"$*\" | grep -q 'echo \\$HOME'; then",
+        `  echo ${JSON.stringify(home)}`,
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+    fs.writeFileSync(path.join(localBin, "rsync"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(localBin, "scp"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(localBin, "ssh-keyscan"), "#!/usr/bin/env bash\necho 'test-host-key'\n", {
+      mode: 0o755,
+    });
+
+    const r = runWithEnv("deploy pr-998-override", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NVIDIA_API_KEY: "nvapi-test",
+      NEMOCLAW_GPU: "a2-highgpu-1g:nvidia-tesla-a100:1",
+      NEMOCLAW_BREV_TYPE: "l4-standard",
+      NEMOCLAW_BREV_GPU_NAME: "l4",
+      NEMOCLAW_DEPLOY_NO_CONNECT: "1",
+      NEMOCLAW_DEPLOY_NO_START_SERVICES: "1",
+    }, 25000);
+
+    expect(r.code).toBe(0);
+    const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n");
+    expect(
+      calls.some((call) =>
+        call.includes("create pr-998-override --type l4-standard --gpu-name L4 --provider gcp"),
+      ),
+    ).toBe(true);
+  }, 25000);
+
+  it("deploy falls back to the default Brev values when no GPU env is set", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-deploy-brev-default-"));
+    const localBin = path.join(home, "bin");
+    const markerFile = path.join(home, "brev-args");
+    fs.mkdirSync(localBin, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(localBin, "brev"),
+      [
+        "#!/usr/bin/env bash",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        "printf '%s\\n' \"$*\" >> \"$marker_file\"",
+        "if [ \"$1\" = \"ls\" ] && [ \"$2\" = \"--json\" ]; then",
+        "  echo '[{\"name\":\"pr-998-default\",\"status\":\"RUNNING\",\"build_status\":\"COMPLETED\",\"shell_status\":\"READY\"}]'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"ls\" ]; then",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "ssh"),
+      [
+        "#!/usr/bin/env bash",
+        "if printf '%s\\n' \"$*\" | grep -q 'echo \\$HOME'; then",
+        `  echo ${JSON.stringify(home)}`,
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+    fs.writeFileSync(path.join(localBin, "rsync"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(localBin, "scp"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(localBin, "ssh-keyscan"), "#!/usr/bin/env bash\necho 'test-host-key'\n", {
+      mode: 0o755,
+    });
+
+    const r = runWithEnv("deploy pr-998-default", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NVIDIA_API_KEY: "nvapi-test",
+      NEMOCLAW_DEPLOY_NO_CONNECT: "1",
+      NEMOCLAW_DEPLOY_NO_START_SERVICES: "1",
+    }, 25000);
+
+    expect(r.code).toBe(0);
+    const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n");
+    expect(
+      calls.some((call) =>
+        call.includes("create pr-998-default --type a2-highgpu-1g --gpu-name A100 --provider gcp"),
+      ),
+    ).toBe(true);
+  }, 25000);
+
   it("connect does not pre-start a duplicate port forward", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-forward-"));
     const localBin = path.join(home, "bin");

@@ -105,6 +105,22 @@ export function inferDeployProvider(
   return null;
 }
 
+function normalizeBrevGpuName(value: string | undefined): string {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  return trimmed.replace(/^nvidia-tesla-/i, "").toUpperCase();
+}
+
+function resolveBrevCreateConfig(env: NodeJS.ProcessEnv): { type: string; gpuName: string } {
+  const legacyGpu = String(env.NEMOCLAW_GPU || "").trim();
+  const legacyParts = legacyGpu.includes(":") ? legacyGpu.split(":") : [legacyGpu];
+  const type = String(env.NEMOCLAW_BREV_TYPE || legacyParts[0] || "a2-highgpu-1g").trim();
+  const gpuName = normalizeBrevGpuName(
+    env.NEMOCLAW_BREV_GPU_NAME || legacyParts[1] || "A100",
+  );
+  return { type, gpuName };
+}
+
 export function buildDeployEnvLines(opts: {
   env: NodeJS.ProcessEnv;
   sandboxName: string;
@@ -240,7 +256,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
 
   const name = validateName(instanceName, "instance name");
   const qname = shellQuote(name);
-  const gpu = env.NEMOCLAW_GPU || "a2-highgpu-1g:nvidia-tesla-a100:1";
+  const { type, gpuName } = resolveBrevCreateConfig(env);
   const brevProvider = String(env.NEMOCLAW_BREV_PROVIDER || "gcp").trim().toLowerCase();
   const skipConnect = ["1", "true"].includes(
     String(env.NEMOCLAW_DEPLOY_NO_CONNECT || "").toLowerCase(),
@@ -296,8 +312,10 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
   }
 
   if (!exists) {
-    log(`  Creating Brev instance '${name}' (${gpu}, provider=${brevProvider})...`);
-    run(`brev create ${qname} --type ${shellQuote(gpu)} --provider ${shellQuote(brevProvider)}`);
+    log(`  Creating Brev instance '${name}' (${type}, ${gpuName}, provider=${brevProvider})...`);
+    run(
+      `brev create ${qname} --type ${shellQuote(type)} --gpu-name ${shellQuote(gpuName)} --provider ${shellQuote(brevProvider)}`,
+    );
   } else {
     log(`  Brev instance '${name}' already exists.`);
   }
