@@ -1,0 +1,62 @@
+# nemoclaw-blueprint/policies/presets/ollama.yaml
+#
+# Policy preset — Local Ollama inference endpoint
+#
+# Allows the sandboxed agent to reach a locally running Ollama instance
+# for self-hosted LLM inference, as an alternative to the NVIDIA Endpoint API.
+#
+# Usage:
+#   openshell policy set ollama.yaml
+#
+# Prerequisites:
+#   Ollama must be running on the host machine:
+#     ollama serve
+#
+# Supported models (examples):
+#   ollama pull llama3.2:3b
+#   ollama pull mistral
+#   ollama pull gemma3
+#
+# Notes:
+#   - Ollama runs on host port 11434 by default
+#   - The sandbox reaches the host via host-gateway
+#   - Change the port if you run Ollama on a non-default port
+#   - This preset enables local/offline inference with no API key required
+#
+# Security:
+#   - Scoped to openclaw binary only (binaries field)
+#   - Only GET and POST methods allowed (list models + generate)
+#   - No other host access granted by this preset
+
+version: "1"
+name: ollama
+description: >
+  Allows the sandboxed OpenClaw agent to reach a locally running Ollama
+  instance for self-hosted LLM inference. Use this as an alternative to
+  the NVIDIA Endpoint API when running models locally.
+
+egress:
+  # Ollama REST API — local inference endpoint
+  - host: host-gateway       # resolves to the Docker host from inside sandbox
+    ports: [11434]
+    methods: [GET, POST]
+    binaries: [openclaw]
+    description: >
+      Ollama local inference API. GET /api/tags lists available models.
+      POST /api/generate and POST /api/chat run inference.
+
+  # Optional: Ollama model registry (only needed if agent pulls models)
+  # Uncomment if you want the agent to pull models autonomously.
+  # Recommendation: pull models manually before sandboxing the agent.
+  #
+  # - host: registry.ollama.ai
+  #   ports: [443]
+  #   methods: [GET]
+  #   binaries: [openclaw]
+  #   description: Ollama model registry for pulling models inside sandbox.
+  #
+  # - host: ollama.com
+  #   ports: [443]
+  #   methods: [GET]
+  #   binaries: [openclaw]
+  #   description: Ollama website and model library.
