@@ -1955,7 +1955,6 @@ async function setupNim(gpu) {
       if (ollamaRunning) suggestions.push("Ollama");
       if (suggestions.length > 0) {
         console.log(`  Detected local inference option${suggestions.length > 1 ? "s" : ""}: ${suggestions.join(", ")}`);
-        console.log("  Select one explicitly to use it. Press Enter to keep NVIDIA Endpoints.");
         console.log("");
       }
 
