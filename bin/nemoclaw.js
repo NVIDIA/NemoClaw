@@ -562,8 +562,6 @@ function listSandboxes() {
 
 async function sandboxConnect(sandboxName) {
   await ensureLiveSandboxOrExit(sandboxName);
-  // Ensure port forward is alive before connecting
-  runOpenshell(["forward", "start", "--background", "18789", sandboxName], { ignoreError: true });
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
     stdio: "inherit",
     cwd: ROOT,
