@@ -221,7 +221,7 @@ function sleep(seconds) {
 
 function waitForSandboxReady(sandboxName, attempts = 10, delaySeconds = 2) {
   for (let i = 0; i < attempts; i += 1) {
-    const exists = runCapture(`openshell sandbox get "${sandboxName}" 2>/dev/null`, { ignoreError: true });
+    const exists = runCapture(`openshell sandbox get ${shellQuote(sandboxName)} 2>/dev/null`, { ignoreError: true });
     if (exists) return true;
     sleep(delaySeconds);
   }
@@ -507,7 +507,7 @@ async function createSandbox(gpu) {
   if (!ready) {
     // Clean up the orphaned sandbox so the next onboard retry with the same
     // name doesn't fail on "sandbox already exists".
-    const delResult = run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+    const delResult = run(`openshell sandbox delete ${shellQuote(sandboxName)} 2>/dev/null || true`, { ignoreError: true });
     console.error("");
     console.error(`  Sandbox '${sandboxName}' was created but did not become ready within 60s.`);
     if (delResult.status === 0) {
@@ -800,7 +800,7 @@ async function setupOpenclaw(sandboxName, model, provider) {
       onboardedAt: new Date().toISOString(),
     };
     const script = buildSandboxConfigSyncScript(sandboxConfig);
-    run(`cat <<'EOF_NEMOCLAW_SYNC' | openshell sandbox connect "${sandboxName}"
+    run(`cat <<'EOF_NEMOCLAW_SYNC' | openshell sandbox connect ${shellQuote(sandboxName)}
 ${script}
 EOF_NEMOCLAW_SYNC`, { stdio: ["ignore", "ignore", "inherit"] });
   }
