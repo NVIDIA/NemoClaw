@@ -26,6 +26,18 @@ const {
   syncSandboxControlUiConfig,
 } = require("./lib/onboard");
 
+// Color / style — respects NO_COLOR and non-TTY environments.
+// Uses exact NVIDIA green #76B900 on truecolor terminals; 256-color otherwise.
+// ---------------------------------------------------------------------------
+const _useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
+const _tc = _useColor && (process.env.COLORTERM === "truecolor" || process.env.COLORTERM === "24bit");
+const G = _useColor ? (_tc ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "";
+const B = _useColor ? "\x1b[1m" : "";
+const D = _useColor ? "\x1b[2m" : "";
+const R = _useColor ? "\x1b[0m" : "";
+const _RD = _useColor ? "\x1b[1;31m" : "";
+const YW = _useColor ? "\x1b[1;33m" : "";
+
 // ── Global commands ──────────────────────────────────────────────
 
 const GLOBAL_COMMANDS = new Set([

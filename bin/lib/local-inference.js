@@ -10,6 +10,8 @@ const DOCKER_DESKTOP_HOST_URL = "http://host.docker.internal:11434";
 const DOCKER_DESKTOP_GATEWAY_URL = "http://gateway.docker.internal:11434";
 const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
 const DEFAULT_OLLAMA_MODEL = "nemotron-3-nano:30b";
+const SMALL_OLLAMA_MODEL = "qwen2.5:7b";
+const LARGE_OLLAMA_MIN_MEMORY_MB = 32768;
 const OLLAMA_DEFAULT_SERVICE_URL = "http://localhost:11434";
 const DEFAULT_OLLAMA_CONTEXT_WINDOW = 4096;
 const DEFAULT_OLLAMA_MAX_TOKENS = 4096;
@@ -186,6 +188,17 @@ function resolveOllamaEndpoint(runCapture, opts = {}) {
   }
 
   return null;
+}
+
+function getLocalProviderValidationBaseUrl(provider) {
+  switch (provider) {
+    case "vllm-local":
+      return "http://localhost:8000/v1";
+    case "ollama-local":
+      return "http://localhost:11434/v1";
+    default:
+      return null;
+  }
 }
 
 function getLocalProviderBaseUrl(provider, opts = {}) {
@@ -459,6 +472,13 @@ function getDefaultOllamaModel(runCapture, opts = {}) {
   return models.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : models[0];
 }
 
+function getBootstrapOllamaModelOptions(gpu) {
+  const options = [SMALL_OLLAMA_MODEL];
+  if (gpu && gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB) {
+    options.push(DEFAULT_OLLAMA_MODEL);
+  }
+  return options;
+}
 
 function getOllamaWarmupCommand(model, opts = {}) {
   const optionBag = /** @type {Record<string, any>} */ (typeof opts === "object" && opts !== null ? opts : {});

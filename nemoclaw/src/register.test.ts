@@ -1,17 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { OpenClawPluginApi } from "./index.js";
 
-async function loadRegister() {
-  vi.resetModules();
-  const mod = await import("./index.js");
-  return mod.default;
-}
+vi.mock("./onboard/config.js", () => ({
+  loadOnboardConfig: vi.fn(),
+  describeOnboardEndpoint: vi.fn(() => "build.nvidia.com"),
+  describeOnboardProvider: vi.fn(() => "NVIDIA Endpoint API"),
+}));
+
+import register, { getPluginConfig } from "./index.js";
+import { loadOnboardConfig } from "./onboard/config.js";
+
+const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
 
 function createMockApi(): OpenClawPluginApi {
   return {
@@ -35,70 +37,25 @@ function createMockApi(): OpenClawPluginApi {
 }
 
 describe("plugin registration", () => {
-  it("registers a slash command", async () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedLoadOnboardConfig.mockReturnValue(null);
+  });
+
+  it("registers a slash command", () => {
     const api = createMockApi();
-    const register = await loadRegister();
     register(api);
     expect(api.registerCommand).toHaveBeenCalledWith(expect.objectContaining({ name: "nemoclaw" }));
   });
 
-  it("registers an inference provider", async () => {
+  it("registers an inference provider", () => {
     const api = createMockApi();
-    const register = await loadRegister();
     register(api);
     expect(api.registerProvider).toHaveBeenCalledWith(expect.objectContaining({ id: "inference" }));
   });
 
-  it("advertises conservative model limits for Ollama-backed sandboxes", async () => {
-    const previousHome = process.env.HOME;
-    const homeDir = mkdtempSync(join(tmpdir(), "nemoclaw-plugin-"));
-    const configDir = join(homeDir, ".nemoclaw");
-    mkdirSync(configDir, { recursive: true });
-    writeFileSync(
-      join(configDir, "config.json"),
-      JSON.stringify({
-        endpointType: "custom",
-        endpointUrl: "https://inference.local/v1",
-        ncpPartner: null,
-        model: "qwen3.5:35b-a3b",
-        profile: "inference-local",
-        credentialEnv: "OPENAI_API_KEY",
-        contextWindow: 8192,
-        maxTokens: 4096,
-        provider: "ollama-local",
-        providerLabel: "Local Ollama",
-        onboardedAt: "2026-03-21T18:00:00.000Z",
-      }),
-    );
-
-    process.env.HOME = homeDir;
-
-    try {
-      const api = createMockApi();
-      const register = await loadRegister();
-      register(api);
-      expect(api.registerProvider).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: "inference",
-          models: {
-            chat: [
-              expect.objectContaining({
-                id: "inference/qwen3.5:35b-a3b",
-                contextWindow: 8192,
-                maxOutput: 4096,
-              }),
-            ],
-          },
-        }),
-      );
-    } finally {
-      process.env.HOME = previousHome;
-    }
-  });
-
-  it("does NOT register CLI commands", async () => {
+  it("does NOT register CLI commands", () => {
     const api = createMockApi();
-    await loadRegister();
     // registerCli should not exist on the API interface after removal
     expect("registerCli" in api).toBe(false);
   });

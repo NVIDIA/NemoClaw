@@ -2178,7 +2178,6 @@ module.exports = {
   buildAuthenticatedDashboardUrl,
   buildControlUiConfigSyncScript,
   buildSandboxConfigSyncScript,
-  createSandbox,
   getControlUiAllowedOrigins,
   getDashboardForwardPort,
   getDashboardForwardStartCommand,

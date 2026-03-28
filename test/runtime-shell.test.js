@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
+import assert from "node:assert";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
