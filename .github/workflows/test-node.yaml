@@ -11,7 +11,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -25,8 +26,22 @@ jobs:
 
       - name: Run installer
         env:
-            NEMOCLAW_NON_INTERACTIVE: 1
-            GH_TOKEN: ${{ github.token }}
+          NEMOCLAW_NON_INTERACTIVE: 1
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -e
+          set -x
+
           chmod +x install.sh
           ./install.sh
+
+      - name: Verify installation
+        run: |
+          echo "[DEBUG] Checking OpenShell installation..."
+          if command -v openshell &> /dev/null; then
+            echo "OpenShell installed successfully"
+            openshell --help || true
+          else
+            echo "OpenShell not found in PATH"
+            exit 1
+          fi
