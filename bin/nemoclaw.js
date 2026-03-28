@@ -487,7 +487,7 @@ function listSandboxes() {
 
 async function getReconciledSandboxGatewayState(sandboxName) {
   const openshellPath = resolveOpenshell() || "openshell";
-  const getResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true });
+  const getResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
   const getOutput = getResult.stdout || getResult.stderr || "";
   
   if (getResult.status === 0) {
@@ -502,28 +502,28 @@ async function getReconciledSandboxGatewayState(sandboxName) {
   // Try to detect the reason for failure
   if (/No active gateway/i.test(getOutput)) {
     // Gateway not running, try to recover by starting it
-      run(`${openshellPath} gateway select ${GATEWAY_NAME} 2>&1`, { ignoreError: true });
-      const selectResult = run(`${openshellPath} status 2>&1`, { ignoreError: true });
-    const selectOutput = selectResult.stdout || selectResult.stderr || "";
+    run(`${openshellPath} gateway select ${GATEWAY_NAME} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
+    const selectResult = run(`${openshellPath} status 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
+    const selectOutput = (selectResult.stdout || selectResult.stderr || "").toString();
     
     if (selectResult.status === 0 && isGatewayConnected(selectOutput)) {
       // Gateway is connected after select, try again
-        const retryResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true });
-      const retryOutput = retryResult.stdout || retryResult.stderr || "";
+      const retryResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
+      const retryOutput = (retryResult.stdout || retryResult.stderr || "").toString();
       if (retryResult.status === 0) {
         return { state: "present", output: retryOutput.trim(), recoveredGateway: true, recoveryVia: "select" };
       }
     }
     
     // Need to start the gateway
-    run(`${openshellPath} gateway start --name ${GATEWAY_NAME} 2>&1`, { ignoreError: true });
-    run(`${openshellPath} gateway select ${GATEWAY_NAME} 2>&1`, { ignoreError: true });
+    run(`${openshellPath} gateway start --name ${GATEWAY_NAME} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
+    run(`${openshellPath} gateway select ${GATEWAY_NAME} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
     
     // Wait a bit and retry
     await new Promise(resolve => setTimeout(resolve, 500));
     
-    const retryResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true });
-    const retryOutput = retryResult.stdout || retryResult.stderr || "";
+    const retryResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
+    const retryOutput = (retryResult.stdout || retryResult.stderr || "").toString();
     if (retryResult.status === 0) {
       return { state: "present", output: retryOutput.trim(), recoveredGateway: true, recoveryVia: "start" };
     }
@@ -531,28 +531,28 @@ async function getReconciledSandboxGatewayState(sandboxName) {
 
   if (/transport error|tcp connect error|Connection refused|Connection reset by peer/i.test(getOutput)) {
     // Gateway is not accepting connections, try to recover
-    run(`${openshellPath} gateway select ${GATEWAY_NAME} 2>&1`, { ignoreError: true });
-    const selectResult = run(`${openshellPath} status 2>&1`, { ignoreError: true });
-    const selectOutput = selectResult.stdout || selectResult.stderr || "";
+    run(`${openshellPath} gateway select ${GATEWAY_NAME} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
+    const selectResult = run(`${openshellPath} status 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
+    const selectOutput = (selectResult.stdout || selectResult.stderr || "").toString();
     
     if (selectResult.status === 0 && isGatewayConnected(selectOutput)) {
       // Gateway is connected after select, try again
-        const retryResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true });
-      const retryOutput = retryResult.stdout || retryResult.stderr || "";
+      const retryResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
+      const retryOutput = (retryResult.stdout || retryResult.stderr || "").toString();
       if (retryResult.status === 0) {
         return { state: "present", output: retryOutput.trim(), recoveredGateway: true, recoveryVia: "select" };
       }
     }
     
     // Need to start the gateway
-    run(`${openshellPath} gateway start --name ${GATEWAY_NAME} 2>&1`, { ignoreError: true });
-    run(`${openshellPath} gateway select ${GATEWAY_NAME} 2>&1`, { ignoreError: true });
+    run(`${openshellPath} gateway start --name ${GATEWAY_NAME} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
+    run(`${openshellPath} gateway select ${GATEWAY_NAME} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
     
     // Wait a bit and retry
     await new Promise(resolve => setTimeout(resolve, 500));
     
-    const retryResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true });
-    const retryOutput = retryResult.stdout || retryResult.stderr || "";
+    const retryResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
+    const retryOutput = (retryResult.stdout || retryResult.stderr || "").toString();
     if (retryResult.status === 0) {
       return { state: "present", output: retryOutput.trim(), recoveredGateway: true, recoveryVia: "start" };
     }
