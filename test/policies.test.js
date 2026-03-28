@@ -136,6 +136,121 @@ describe("policies", () => {
     });
   });
 
+  describe("extractPresetEntries", () => {
+    it("returns null for null input", () => {
+      expect(policies.extractPresetEntries(null)).toBe(null);
+    });
+
+    it("returns null for undefined input", () => {
+      expect(policies.extractPresetEntries(undefined)).toBe(null);
+    });
+
+    it("returns null for empty string", () => {
+      expect(policies.extractPresetEntries("")).toBe(null);
+    });
+
+    it("returns null when no network_policies section exists", () => {
+      const content = "preset:\n  name: test\n  description: test preset";
+      expect(policies.extractPresetEntries(content)).toBe(null);
+    });
+
+    it("extracts indented entries from network_policies section", () => {
+      const content = [
+        "preset:",
+        "  name: test",
+        "",
+        "network_policies:",
+        "  test_rule:",
+        "    name: test_rule",
+        "    endpoints:",
+        "      - host: example.com",
+        "        port: 443",
+      ].join("\n");
+      const entries = policies.extractPresetEntries(content);
+      expect(entries).toContain("test_rule:");
+      expect(entries).toContain("host: example.com");
+      expect(entries).toContain("port: 443");
+    });
+
+    it("strips trailing whitespace from extracted entries", () => {
+      const content = "network_policies:\n  rule:\n    name: rule\n\n\n";
+      const entries = policies.extractPresetEntries(content);
+      expect(entries).not.toMatch(/\n$/);
+    });
+
+    it("works on every real preset file", () => {
+      for (const p of policies.listPresets()) {
+        const content = policies.loadPreset(p.name);
+        const entries = policies.extractPresetEntries(content);
+        expect(entries).toBeTruthy();
+        expect(entries).toContain("endpoints:");
+      }
+    });
+
+    it("does not include preset metadata header", () => {
+      const content = [
+        "preset:",
+        "  name: test",
+        "  description: desc",
+        "",
+        "network_policies:",
+        "  rule:",
+        "    name: rule",
+      ].join("\n");
+      const entries = policies.extractPresetEntries(content);
+      expect(entries).not.toContain("preset:");
+      expect(entries).not.toContain("description:");
+    });
+  });
+
+  describe("parseCurrentPolicy", () => {
+    it("returns empty string for null input", () => {
+      expect(policies.parseCurrentPolicy(null)).toBe("");
+    });
+
+    it("returns empty string for undefined input", () => {
+      expect(policies.parseCurrentPolicy(undefined)).toBe("");
+    });
+
+    it("returns empty string for empty string input", () => {
+      expect(policies.parseCurrentPolicy("")).toBe("");
+    });
+
+    it("strips metadata header before --- separator", () => {
+      const raw = [
+        "Version: 3",
+        "Hash: abc123",
+        "Updated: 2026-03-26",
+        "---",
+        "version: 1",
+        "",
+        "network_policies:",
+        "  rule: {}",
+      ].join("\n");
+      const result = policies.parseCurrentPolicy(raw);
+      expect(result).toBe("version: 1\n\nnetwork_policies:\n  rule: {}");
+      expect(result).not.toContain("Hash:");
+      expect(result).not.toContain("Updated:");
+    });
+
+    it("returns raw content when no --- separator exists", () => {
+      const raw = "version: 1\nnetwork_policies:\n  rule: {}";
+      expect(policies.parseCurrentPolicy(raw)).toBe(raw);
+    });
+
+    it("trims whitespace around extracted YAML", () => {
+      const raw = "Header: value\n---\n  \nversion: 1\n  ";
+      const result = policies.parseCurrentPolicy(raw);
+      expect(result).toBe("version: 1");
+    });
+
+    it("handles --- appearing as first line", () => {
+      const raw = "---\nversion: 1\nnetwork_policies: {}";
+      const result = policies.parseCurrentPolicy(raw);
+      expect(result).toBe("version: 1\nnetwork_policies: {}");
+    });
+  });
+
   describe("mergePresetIntoPolicy", () => {
     const sampleEntries = "  - host: example.com\n    allow: true";
 
