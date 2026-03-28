@@ -8,7 +8,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { spawnSync } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
 const {
   getDefaultOllamaModel,
@@ -41,6 +41,7 @@ const onboardSession = require("./onboard-session");
 const policies = require("./policies");
 const { checkPortAvailable } = require("./preflight");
 const { getInferenceRuntimeStatus } = require("./inference-status");
+const GATEWAY_NAME = "nemoclaw";
 const DEFAULT_MANAGED_CONTEXT_WINDOW = 131072;
 const DEFAULT_MANAGED_MAX_TOKENS = 4096;
 const DEFAULT_OLLAMA_CONTEXT_WINDOW = 4096;
@@ -417,6 +418,36 @@ function classifySandboxCreateFailure(output = "") {
     kind: "unknown",
     uploadedToGateway,
   };
+}
+
+function printSandboxCreateRecoveryHints(output = "") {
+  const failure = classifySandboxCreateFailure(output);
+  if (failure.kind === "image_transfer_timeout") {
+    console.error("  Hint: image upload into the OpenShell gateway timed out.");
+    console.error("  Recovery: nemoclaw onboard --resume");
+    if (failure.uploadedToGateway) {
+      console.error("  Progress reached the gateway upload stage, so resume may be able to reuse existing gateway state.");
+    }
+    console.error("  If this repeats, check Docker memory and retry on a host with more RAM.");
+    return;
+  }
+  if (failure.kind === "image_transfer_reset") {
+    console.error("  Hint: the image push/import stream was interrupted.");
+    console.error("  Recovery: nemoclaw onboard --resume");
+    if (failure.uploadedToGateway) {
+      console.error("  The image appears to have reached the gateway before the stream failed.");
+    }
+    console.error("  If this repeats, restart Docker or the gateway and retry.");
+    return;
+  }
+  if (failure.kind === "sandbox_create_incomplete") {
+    console.error("  Hint: sandbox creation started but the create stream did not finish cleanly.");
+    console.error("  Recovery: nemoclaw onboard --resume");
+    console.error("  Check: openshell sandbox list        # verify whether the sandbox became ready");
+    return;
+  }
+  console.error("  Recovery: nemoclaw onboard --resume");
+  console.error("  Or:      nemoclaw onboard");
 }
 
 function getDashboardForwardStartCommand(sandboxName, options = {}) {
@@ -910,6 +941,32 @@ function runCurlJson(url, opts = {}) {
   };
 }
 
+let OPENSHELL_BIN = null;
+
+function getOpenshellBinary() {
+  if (OPENSHELL_BIN) return OPENSHELL_BIN;
+  const resolved = resolveOpenshell();
+  if (!resolved) {
+    console.error("  openshell CLI not found.");
+    console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+    process.exit(1);
+  }
+  OPENSHELL_BIN = resolved;
+  return OPENSHELL_BIN;
+}
+
+function openshellShellCommand(args) {
+  return [shellQuote(getOpenshellBinary()), ...args.map((arg) => shellQuote(arg))].join(" ");
+}
+
+function runOpenshell(args, opts = {}) {
+  return run(openshellShellCommand(args), opts);
+}
+
+function runCaptureOpenshell(args, opts = {}) {
+  return runCapture(openshellShellCommand(args), opts);
+}
+
 // ── Step 1: Preflight ────────────────────────────────────────────
 
 // eslint-disable-next-line complexity
@@ -1085,6 +1142,50 @@ async function recoverGatewayRuntime() {
   return false;
 }
 
+function shouldIncludeBuildContextPath(sourceRoot, candidatePath) {
+  const relative = path.relative(sourceRoot, candidatePath);
+  if (!relative || relative === "") return true;
+
+  const segments = relative.split(path.sep);
+  const basename = path.basename(candidatePath);
+  const excludedSegments = new Set([
+    ".venv",
+    ".ruff_cache",
+    ".pytest_cache",
+    ".mypy_cache",
+    "__pycache__",
+    "node_modules",
+    ".git",
+  ]);
+
+  if (basename === ".DS_Store" || basename.startsWith("._")) {
+    return false;
+  }
+
+  return !segments.some((segment) => excludedSegments.has(segment));
+}
+
+function copyBuildContextDir(sourceDir, destinationDir) {
+  fs.cpSync(sourceDir, destinationDir, {
+    recursive: true,
+    filter: (candidatePath) => shouldIncludeBuildContextPath(sourceDir, candidatePath),
+  });
+}
+
+function sandboxExistsInGateway(sandboxName) {
+  const output = runCaptureOpenshell(["sandbox", "get", sandboxName], { ignoreError: true });
+  return Boolean(output);
+}
+
+function pruneStaleSandboxEntry(sandboxName) {
+  const existing = registry.getSandbox(sandboxName);
+  const liveExists = sandboxExistsInGateway(sandboxName);
+  if (existing && !liveExists) {
+    registry.removeSandbox(sandboxName);
+  }
+  return liveExists;
+}
+
 // ── Step 3: Sandbox ──────────────────────────────────────────────
 
 async function promptValidatedSandboxName() {
@@ -1103,29 +1204,26 @@ async function promptValidatedSandboxName() {
     process.exit(1);
   }
 
-  // Reconcile NemoClaw's local registry with OpenShell before deciding
-  // whether there is an existing sandbox we can actually reuse.
-  const sandboxState = getSandboxState(sandboxName);
-  if (sandboxState.hasStaleRegistryEntry) {
-    console.log(`  Detected stale local sandbox entry for '${sandboxName}'.`);
-    console.log("  OpenShell does not have this sandbox, so NemoClaw will recreate it.");
-    registry.removeSandbox(sandboxName);
-  }
-  if (sandboxState.shouldHydrateRegistry) {
-    console.log(`  Found existing OpenShell sandbox '${sandboxName}'.`);
-    console.log("  Syncing local NemoClaw state before continuing.");
-    registry.registerSandbox({
-      name: sandboxName,
-      gpuEnabled: !!gpu,
-    });
-  }
+  return sandboxName;
+}
 
-  if (sandboxState.liveSandboxExists) {
-    if (isNonInteractive()) {
-      if (process.env.NEMOCLAW_RECREATE_SANDBOX !== "1") {
-        console.error(`  Sandbox '${sandboxName}' already exists.`);
-        console.error("  Set NEMOCLAW_RECREATE_SANDBOX=1 to recreate it in non-interactive mode.");
-        process.exit(1);
+async function createSandbox(gpu, model, provider, preferredInferenceApi = null, sandboxNameOverride = null) {
+  step(5, 7, "Creating sandbox");
+
+  const sandboxName = sandboxNameOverride || (await promptValidatedSandboxName());
+
+  // Reconcile local registry state with the live OpenShell gateway state.
+  const liveExists = pruneStaleSandboxEntry(sandboxName);
+
+  if (liveExists) {
+    const existingSandboxState = getSandboxReuseState(sandboxName);
+    if (existingSandboxState === "ready" && process.env.NEMOCLAW_RECREATE_SANDBOX !== "1") {
+      if (isNonInteractive()) {
+        note(`  [non-interactive] Sandbox '${sandboxName}' exists and is ready — reusing it`);
+      } else {
+        console.log(`  Sandbox '${sandboxName}' already exists and is ready.`);
+        console.log("  Reusing existing sandbox.");
+        console.log("  Set NEMOCLAW_RECREATE_SANDBOX=1 to recreate it instead.");
       }
       return sandboxName;
     }
@@ -1133,14 +1231,7 @@ async function promptValidatedSandboxName() {
     if (existingSandboxState === "ready") {
       note(`  Sandbox '${sandboxName}' exists and is ready — recreating by explicit request.`);
     } else {
-      const recreate = await prompt(`  Sandbox '${sandboxName}' already exists. Recreate? [y/N]: `);
-      if (recreate.toLowerCase() !== "y") {
-        console.log("  Keeping existing sandbox.");
-        syncSandboxControlUiConfig(sandboxName);
-        run(`openshell forward stop 18789 2>/dev/null || true`, { ignoreError: true });
-        run(getDashboardForwardStartCommand(sandboxName), { ignoreError: true });
-        return sandboxName;
-      }
+      note(`  Sandbox '${sandboxName}' exists but is not ready — recreating it.`);
     }
     // Destroy old sandbox
     runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
@@ -2154,6 +2245,7 @@ module.exports = {
   buildControlUiConfigSyncScript,
   buildSandboxConfigSyncScript,
   classifySandboxCreateFailure,
+  createSandbox,
   getControlUiAllowedOrigins,
   getDashboardForwardPort,
   getDashboardForwardStartCommand,
