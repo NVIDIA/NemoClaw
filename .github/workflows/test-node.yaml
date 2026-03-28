@@ -26,6 +26,7 @@ jobs:
       - name: Run installer
         env:
             NEMOCLAW_NON_INTERACTIVE: 1
+            GH_TOKEN: ${{ github.token }}
         run: |
           chmod +x install.sh
           ./install.sh
