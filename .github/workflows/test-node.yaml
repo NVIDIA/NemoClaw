@@ -24,6 +24,8 @@ jobs:
           npm -v
 
       - name: Run installer
+        env:
+            NEMOCLAW_NON_INTERACTIVE: 1
         run: |
           chmod +x install.sh
           ./install.sh
