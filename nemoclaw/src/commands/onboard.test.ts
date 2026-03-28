@@ -16,6 +16,8 @@ vi.mock("node:child_process", () => ({
 vi.mock("../onboard/config.js", () => ({
   loadOnboardConfig: vi.fn(() => null),
   saveOnboardConfig: vi.fn(),
+  describeOnboardEndpoint: vi.fn(() => "test-endpoint"),
+  describeOnboardProvider: vi.fn(() => "test-provider"),
 }));
 
 vi.mock("../onboard/validate.js", () => ({
