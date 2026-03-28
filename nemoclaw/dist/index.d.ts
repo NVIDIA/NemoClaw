@@ -121,6 +121,11 @@ export interface NemoClawConfig {
     sandboxName: string;
     inferenceProvider: string;
 }
+/**
+ * Normalizes a sandbox name to lowercase and validates it.
+ * Returns the normalized name or the default if invalid.
+ */
+export declare function normalizeSandboxName(name: string | unknown, defaultName: string): string;
 export declare function getPluginConfig(api: OpenClawPluginApi): NemoClawConfig;
 export default function register(api: OpenClawPluginApi): void;
 //# sourceMappingURL=index.d.ts.map
