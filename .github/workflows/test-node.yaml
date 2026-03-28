@@ -1,0 +1,29 @@
+name: Test Node Fix
+
+on:
+  push:
+    branches:
+      - test/node-version-validation
+  workflow_dispatch:
+
+jobs:
+  test-install:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # - name: Setup Node.js
+      #   uses: actions/setup-node@v4
+      #   with:
+      #     node-version: '22'
+
+      - name: Verify Node
+        run: |
+          node -v
+          npm -v
+
+      - name: Run installer
+        run: |
+          chmod +x install.sh
+          ./install.sh
