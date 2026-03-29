@@ -198,7 +198,14 @@ function nimStatusByName(name) {
 
     let healthy = false;
     if (state === "running") {
-      const health = runCapture(`curl -sf http://localhost:8000/v1/models 2>/dev/null`, {
+      // Resolve the host port dynamically instead of assuming 8000.
+      // The container always listens on 8000 internally, but the host
+      // mapping is configurable via startNimContainer(... port).
+      const hostPort = runCapture(
+        `docker inspect --format '{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostPort}}' ${shellQuote(name)} 2>/dev/null`,
+        { ignoreError: true }
+      ) || "8000";
+      const health = runCapture(`curl -sf http://localhost:${Number(hostPort)}/v1/models 2>/dev/null`, {
         ignoreError: true,
       });
       healthy = !!health;
