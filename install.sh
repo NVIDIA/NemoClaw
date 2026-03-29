@@ -245,10 +245,6 @@ spin() {
     local status=$?
   fi
 
-  # Remove from global cleanup since we handled it here.
-  _cleanup_pids=("${_cleanup_pids[@]/$pid/}")
-  _cleanup_files=("${_cleanup_files[@]/$log/}")
-
   if [[ $status -eq 0 ]]; then
     printf "\r  ${C_GREEN}✓${C_RESET}  %s\n" "$msg"
   else
@@ -257,6 +253,11 @@ spin() {
     printf "\n"
   fi
   rm -f "$log"
+
+  # Deregister only after cleanup actions are complete, so the global EXIT
+  # trap still covers this pid/log if a signal arrives before this point.
+  _cleanup_pids=("${_cleanup_pids[@]/$pid/}")
+  _cleanup_files=("${_cleanup_files[@]/$log/}")
   return $status
 }
 
