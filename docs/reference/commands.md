@@ -177,14 +177,14 @@ Gathers system info, Docker state, sandbox logs, and gateway health into a summa
 Use `--output` to save a tarball for attaching to GitHub issues.
 
 ```console
-$ nemoclaw debug [--quick] [--sandbox NAME] [--output FILE]
+$ nemoclaw debug [--quick] [--sandbox NAME] [--output|-o FILE]
 ```
 
 | Flag | Description |
 |---|---|
 | `--quick` | Minimal diagnostics (skip slow checks) |
 | `--sandbox NAME` | Target a specific sandbox |
-| `--output FILE` | Save diagnostics as a `.tar.gz` tarball |
+| `--output FILE`, `-o FILE` | Save diagnostics as a `.tar.gz` tarball |
 
 ### `nemoclaw uninstall`
 
