@@ -678,6 +678,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
       const result = spawnSync("bash", ["-c", cmd], {
         cwd: ROOT,
         encoding: "utf8",
+        timeout: 30_000,
         env: {
           ...process.env,
           NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -727,6 +728,7 @@ function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -867,6 +869,7 @@ function fetchNvidiaEndpointModels(apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -920,6 +923,7 @@ function fetchOpenAiLikeModels(endpointUrl, apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -957,6 +961,7 @@ function fetchAnthropicModels(endpointUrl, apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -1223,6 +1228,7 @@ function pullOllamaModel(model) {
     cwd: ROOT,
     encoding: "utf8",
     stdio: "inherit",
+    timeout: 600_000,
     env: { ...process.env },
   });
   return result.status === 0;
@@ -1358,6 +1364,7 @@ function installOpenshell() {
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf-8",
+    timeout: 300_000,
   });
   if (result.status !== 0) {
     const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
