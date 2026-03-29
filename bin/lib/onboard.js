@@ -1231,6 +1231,10 @@ function pullOllamaModel(model) {
     timeout: 600_000,
     env: { ...process.env },
   });
+  if (result.signal === "SIGTERM") {
+    console.error(`  Model pull timed out after 10 minutes. Try a smaller model or check your network connection.`);
+    return false;
+  }
   return result.status === 0;
 }
 
