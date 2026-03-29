@@ -170,6 +170,37 @@ Show the sandbox list and the status of auxiliary services.
 $ nemoclaw status
 ```
 
+### `nemoclaw debug`
+
+Collect diagnostic information for bug reports.
+Gathers system info, Docker state, sandbox logs, and gateway health into a summary printed to stdout.
+Use `--output` to save a tarball for attaching to GitHub issues.
+
+```console
+$ nemoclaw debug [--quick] [--sandbox NAME] [--output FILE]
+```
+
+| Flag | Description |
+|---|---|
+| `--quick` | Minimal diagnostics (skip slow checks) |
+| `--sandbox NAME` | Target a specific sandbox |
+| `--output FILE` | Save diagnostics as a `.tar.gz` tarball |
+
+### `nemoclaw uninstall`
+
+Remove NemoClaw and optionally clean up associated resources.
+Runs the local `uninstall.sh` if available, otherwise falls back to the remote script from GitHub.
+
+```console
+$ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
+```
+
+| Flag | Description |
+|---|---|
+| `--yes` | Skip the confirmation prompt |
+| `--keep-openshell` | Leave the OpenShell binary installed |
+| `--delete-models` | Remove NemoClaw-pulled Ollama models |
+
 ### `nemoclaw setup-spark`
 
 Set up NemoClaw on DGX Spark.
