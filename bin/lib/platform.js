@@ -36,7 +36,10 @@ function isUnsupportedMacosRuntime(runtime, opts = {}) {
 }
 
 function shouldPatchCoredns(runtime) {
-  return runtime === "colima";
+  // k3s-inside-Docker has broken DNS forwarding on all platforms
+  // (systemd-resolved, Docker Desktop DNS, Colima DNS).
+  // Always patch CoreDNS to use a non-loopback upstream.
+  return runtime !== "unknown";
 }
 
 function getColimaDockerSocketCandidates(opts = {}) {
