@@ -210,10 +210,16 @@ spin() {
   local pid=$! i=0
   local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
 
+  # Ensure Ctrl+C kills the background process and cleans up the temp file.
+  trap 'kill "$pid" 2>/dev/null; rm -f "$log"; exit 130' INT TERM
+
   while kill -0 "$pid" 2>/dev/null; do
     printf "\r  ${C_GREEN}%s${C_RESET}  %s" "${frames[$((i++ % 10))]}" "$msg"
     sleep 0.08
   done
+
+  # Restore default signal handling after the background process exits.
+  trap - INT TERM
 
   if wait "$pid"; then
     local status=0
