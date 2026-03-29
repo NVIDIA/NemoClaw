@@ -41,7 +41,8 @@ Key fields in the output include the following:
 - Blueprint run ID, which is the identifier for the most recent blueprint execution.
 - Inference provider, which shows the active provider, model, and endpoint.
 
-Run `nemoclaw <name> status` on the host to check sandbox state. Use `openshell sandbox list` for the underlying sandbox details.
+Run `nemoclaw <name> status` on the host to check sandbox state.
+Use `openshell sandbox list` for the underlying sandbox details.
 
 ## View Blueprint and Sandbox Logs
 
