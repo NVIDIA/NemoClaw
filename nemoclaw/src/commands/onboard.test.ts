@@ -101,7 +101,7 @@ describe("cliOnboard — ollama provider config", () => {
     await cliOnboard({
       endpoint: "build",
       model: "nvidia/nemotron-3-super-120b-a12b",
-      apiKey: "nvapi-test1234",
+      apiKey: "TEST_API_KEY",
       logger: makeLogger(),
       pluginConfig: defaultPluginConfig,
     });
@@ -113,9 +113,13 @@ describe("cliOnboard — ollama provider config", () => {
 
   it("includes OLLAMA_REASONING_EFFORT=none in provider update when provider already exists", async () => {
     // Make provider create throw AlreadyExists to trigger the update path
-    vi.mocked(execFileSync).mockImplementationOnce(() => {
-      const err = Object.assign(new Error("AlreadyExists"), { stderr: "AlreadyExists" });
-      throw err;
+    vi.mocked(execFileSync).mockImplementationOnce((cmd, args) => {
+      // Only throw when it's a provider create command
+      if (cmd === "openshell" && args?.includes("provider") && args?.includes("create")) {
+        const err = Object.assign(new Error("AlreadyExists"), { stderr: "AlreadyExists" });
+        throw err;
+      }
+      return "";
     });
 
     await cliOnboard({
