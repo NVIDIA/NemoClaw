@@ -78,6 +78,7 @@ function sshWithSecrets(cmd, { timeout = 600_000, stream = false } = {}) {
 
   // When stream=true, pipe stdout/stderr to the CI log in real time
   // so long-running steps (bootstrap) show progress instead of silence.
+  /** @type {import("child_process").StdioOptions} */
   const stdio = stream ? ["pipe", "inherit", "inherit"] : ["pipe", "pipe", "pipe"];
 
   // Pipe secrets via stdin so they don't appear in ps/process listings

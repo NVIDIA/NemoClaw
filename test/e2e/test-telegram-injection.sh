@@ -2,6 +2,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# shellcheck disable=SC2016,SC2034,SC2329
+# SC2016: Single-quoted strings are intentional — these are injection payloads
+#         that must NOT be expanded by the shell.
+# SC2034: Some variables are used indirectly or reserved for future test cases.
+# SC2329: Helper functions may be invoked conditionally or in later test phases.
+
 # Telegram Bridge Command Injection E2E Tests
 #
 # Validates that PR #119's fix prevents shell command injection through
