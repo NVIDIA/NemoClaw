@@ -1,4 +1,15 @@
 # NemoClaw sandbox image — OpenClaw + NemoClaw plugin inside OpenShell
+#
+# Layers PR-specific code (plugin, blueprint, config, startup script) on top
+# of the pre-built base image from GHCR. The base image contains all the
+# expensive, rarely-changing layers (apt, gosu, users, openclaw CLI).
+#
+# For local builds without GHCR access, build the base first:
+#   docker build -f Dockerfile.base -t ghcr.io/nvidia/nemoclaw/sandbox-base:latest .
+
+# Global ARG — must be declared before the first FROM to be visible
+# to all FROM directives. Can be overridden via --build-arg.
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 
 # Stage 1: Build TypeScript plugin from source
 FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d AS builder
@@ -7,67 +18,24 @@ COPY nemoclaw/src/ /opt/nemoclaw/src/
 WORKDIR /opt/nemoclaw
 RUN npm install && npm run build
 
-# Stage 2: Runtime image
-FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d
+# Stage 2: Runtime image — pull cached base from GHCR
+FROM ${BASE_IMAGE}
 
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3=3.11.2-1+b1 \
-        python3-pip=23.0.1+dfsg-1 \
-        python3-venv=3.11.2-1+b1 \
-        curl=7.88.1-10+deb12u14 \
-        git=1:2.39.5-0+deb12u3 \
-        ca-certificates=20230311+deb12u1 \
-        iproute2=6.1.0-3 \
+# Harden: remove unnecessary build tools and network probes from base image (#830)
+RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
+        netcat-openbsd netcat-traditional ncat 2>/dev/null || true) \
+    && apt-get autoremove --purge -y \
     && rm -rf /var/lib/apt/lists/*
-
-# Create sandbox user (matches OpenShell convention)
-RUN groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
-    && mkdir -p /sandbox/.nemoclaw \
-    && chown -R sandbox:sandbox /sandbox
-
-# Split .openclaw into immutable config dir + writable state dir.
-# The policy makes /sandbox/.openclaw read-only via Landlock, so the agent
-# cannot modify openclaw.json, auth tokens, or CORS settings.  Writable
-# state (agents, plugins, etc.) lives in .openclaw-data, reached via symlinks.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/514
-RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
-        /sandbox/.openclaw-data/extensions \
-        /sandbox/.openclaw-data/workspace \
-        /sandbox/.openclaw-data/skills \
-        /sandbox/.openclaw-data/hooks \
-        /sandbox/.openclaw-data/identity \
-        /sandbox/.openclaw-data/devices \
-        /sandbox/.openclaw-data/canvas \
-        /sandbox/.openclaw-data/cron \
-    && mkdir -p /sandbox/.openclaw \
-    && ln -s /sandbox/.openclaw-data/agents /sandbox/.openclaw/agents \
-    && ln -s /sandbox/.openclaw-data/extensions /sandbox/.openclaw/extensions \
-    && ln -s /sandbox/.openclaw-data/workspace /sandbox/.openclaw/workspace \
-    && ln -s /sandbox/.openclaw-data/skills /sandbox/.openclaw/skills \
-    && ln -s /sandbox/.openclaw-data/hooks /sandbox/.openclaw/hooks \
-    && ln -s /sandbox/.openclaw-data/identity /sandbox/.openclaw/identity \
-    && ln -s /sandbox/.openclaw-data/devices /sandbox/.openclaw/devices \
-    && ln -s /sandbox/.openclaw-data/canvas /sandbox/.openclaw/canvas \
-    && ln -s /sandbox/.openclaw-data/cron /sandbox/.openclaw/cron \
-    && touch /sandbox/.openclaw-data/update-check.json \
-    && ln -s /sandbox/.openclaw-data/update-check.json /sandbox/.openclaw/update-check.json \
-    && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
-
-# Install OpenClaw CLI and PyYAML for blueprint runner (single layer)
-RUN npm install -g openclaw@2026.3.11 \
-    && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
 
 # Copy built plugin and blueprint into the sandbox
 COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
 COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
-COPY nemoclaw/package.json /opt/nemoclaw/
+COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 
 # Install runtime dependencies only (no devDependencies, no build step)
 WORKDIR /opt/nemoclaw
-RUN npm install --omit=dev
+RUN npm ci --omit=dev
 
 # Set up blueprint for local resolution
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
@@ -75,7 +43,7 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 
 # Copy startup script
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
-RUN chmod +x /usr/local/bin/nemoclaw-start
+RUN chmod 755 /usr/local/bin/nemoclaw-start
 
 # Build args for config that varies per deployment.
 # nemoclaw onboard passes these at image build time.
@@ -159,12 +127,26 @@ RUN openclaw doctor --fix > /dev/null 2>&1 || true \
 # The Landlock policy (/sandbox/.openclaw in read_only) provides defense-in-depth
 # once OpenShell enables enforcement.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/514
+# Lock the entire .openclaw directory tree.
+# SECURITY: chmod 755 (not 1777) — the sandbox user can READ but not WRITE
+# to this directory. This prevents the agent from replacing symlinks
+# (e.g., pointing /sandbox/.openclaw/hooks to an attacker-controlled path).
+# The writable state lives in .openclaw-data, reached via the symlinks.
+# hadolint ignore=DL3002
 USER root
 RUN chown root:root /sandbox/.openclaw \
     && find /sandbox/.openclaw -mindepth 1 -maxdepth 1 -exec chown -h root:root {} + \
-    && chmod 1777 /sandbox/.openclaw \
+    && chmod 755 /sandbox/.openclaw \
     && chmod 444 /sandbox/.openclaw/openclaw.json
-USER sandbox
 
-ENTRYPOINT ["/bin/bash"]
-CMD []
+# Pin config hash at build time so the entrypoint can verify integrity.
+# Prevents the agent from creating a copy with a tampered config and
+# restarting the gateway pointing at it.
+RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
+    && chmod 444 /sandbox/.openclaw/.config-hash \
+    && chown root:root /sandbox/.openclaw/.config-hash
+
+# Entrypoint runs as root to start the gateway as the gateway user,
+# then drops to sandbox for agent commands. See nemoclaw-start.sh.
+ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
+CMD ["/bin/bash"]

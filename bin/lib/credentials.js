@@ -4,7 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const readline = require("readline");
-const { execSync } = require("child_process");
+const { execFileSync } = require("child_process");
 
 const CREDS_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
 const CREDS_FILE = path.join(CREDS_DIR, "credentials.json");
@@ -14,7 +14,7 @@ function loadCredentials() {
     if (fs.existsSync(CREDS_FILE)) {
       return JSON.parse(fs.readFileSync(CREDS_FILE, "utf-8"));
     }
-  } catch {}
+  } catch { /* ignored */ }
   return {};
 }
 
@@ -81,6 +81,7 @@ function promptSecret(question) {
           // Ignore terminal escape/control sequences such as Delete, arrows,
           // Home/End, etc. while leaving the buffered secret untouched.
           const rest = text.slice(i);
+          // eslint-disable-next-line no-control-regex
           const match = rest.match(/^\u001b(?:\[[0-9;?]*[~A-Za-z]|\][^\u0007]*\u0007|.)/);
           if (match) {
             i += match[0].length - 1;
@@ -173,7 +174,10 @@ async function ensureApiKey() {
 
 function isRepoPrivate(repo) {
   try {
-    const json = execSync(`gh api repos/${repo} --jq .private 2>/dev/null`, { encoding: "utf-8" }).trim();
+    const json = execFileSync("gh", ["api", `repos/${repo}`, "--jq", ".private"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
     return json === "true";
   } catch {
     return false;
@@ -188,12 +192,15 @@ async function ensureGithubToken() {
   }
 
   try {
-    token = execSync("gh auth token 2>/dev/null", { encoding: "utf-8" }).trim();
+    token = execFileSync("gh", ["auth", "token"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
     if (token) {
       process.env.GITHUB_TOKEN = token;
       return;
     }
-  } catch {}
+  } catch { /* ignored */ }
 
   console.log("");
   console.log("  ┌──────────────────────────────────────────────────┐");
