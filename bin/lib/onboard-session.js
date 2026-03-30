@@ -227,9 +227,7 @@ function acquireOnboardLock(command = null) {
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const fd = fs.openSync(LOCK_FILE, "wx", 0o600);
-      fs.writeFileSync(fd, payload);
-      fs.closeSync(fd);
+      fs.writeFileSync(LOCK_FILE, payload, { flag: "wx", mode: 0o600 });
       return { acquired: true, lockFile: LOCK_FILE, stale: false };
     } catch (error) {
       if (error?.code !== "EEXIST") {
