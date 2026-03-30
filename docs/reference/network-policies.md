@@ -20,7 +20,7 @@ status: published
 
 # Network Policies
 
-NemoClaw runs with a strict-by-default network policy.
+NemoClaw runs with a deny-by-default network policy.
 The sandbox can only reach endpoints that are explicitly allowed.
 Any request to an unlisted destination is intercepted by OpenShell, and the operator is prompted to approve or deny it in real time through the TUI.
 
@@ -88,8 +88,8 @@ The following endpoint groups are allowed by default:
 
 * - `npm_registry`
   - `registry.npmjs.org:443`
-  - `/usr/local/bin/openclaw`, `/usr/local/bin/npm`
-  - GET only
+  - `/usr/local/bin/openclaw`, `/usr/local/bin/npm`, `/usr/local/bin/node`
+  - All methods, all paths
 
 * - `telegram`
   - `api.telegram.org:443`
@@ -127,10 +127,10 @@ This opens a split tmux session with the TUI on the left and the agent on the ri
 
 ### Static Changes
 
-Edit `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and re-run setup:
+Edit `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and re-run the onboard wizard:
 
 ```console
-$ nemoclaw setup
+$ nemoclaw onboard
 ```
 
 ### Dynamic Changes

@@ -1,11 +1,11 @@
 ---
 title:
-  page: "Switch NemoClaw Inference Providers at Runtime"
-  nav: "Switch Inference Providers"
-description: "Change the active inference provider without restarting the sandbox."
-keywords: ["switch nemoclaw inference provider", "change inference runtime"]
+  page: "Switch NemoClaw Inference Models at Runtime"
+  nav: "Switch Inference Models"
+description: "Change the active inference model without restarting the sandbox."
+keywords: ["switch nemoclaw inference model", "change inference runtime"]
 topics: ["generative_ai", "ai_agents"]
-tags: ["openclaw", "openshell", "inference_routing", "nim", "vllm"]
+tags: ["openclaw", "openshell", "inference_routing"]
 content:
   type: how_to
   difficulty: technical_beginner
@@ -18,9 +18,9 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# Switch Inference Providers at Runtime
+# Switch Inference Models at Runtime
 
-Change the active inference provider while the sandbox is running.
+Change the active inference model while the sandbox is running.
 No restart is required.
 
 ## Prerequisites
@@ -28,70 +28,71 @@ No restart is required.
 - A running NemoClaw sandbox.
 - The OpenShell CLI on your `PATH`.
 
-## Switch to NVIDIA Cloud
+## Switch to a Different Model
 
-Set the provider to `nvidia-nim` and specify a model from [build.nvidia.com](https://build.nvidia.com):
+Switching happens through the OpenShell inference route.
+Use the provider and model that match the upstream you want to use.
 
-```console
-$ openshell inference set --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b
-```
-
-This profile requires the `NVIDIA_API_KEY` environment variable.
-The `nemoclaw setup` command stores this key in `~/.nemoclaw/credentials.json` on first run.
-
-## Switch to Local vLLM
-
-Set the provider to `vllm-local` and specify a model served by vLLM on the host:
+### NVIDIA Endpoints
 
 ```console
-$ openshell inference set --provider vllm-local --model nvidia/nemotron-3-nano-30b-a3b
+$ openshell inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
 ```
 
-The vLLM server must be running before you switch.
-Bind the server to `0.0.0.0` and make sure the host firewall allows the bridge subnet to reach port `8000`.
-Refer to [Set Up Local vLLM](set-up-local-vllm.md) for setup instructions.
-
-## Switch to Local NIM
-
-Set the provider to `nim-local` and specify a model served by a NIM container on your network:
+### OpenAI
 
 ```console
-$ openshell inference set --provider nim-local --model nvidia/nemotron-3-super-120b-a12b
+$ openshell inference set --provider openai-api --model gpt-5.4
 ```
 
-This profile requires the `NIM_API_KEY` environment variable.
-Refer to [Set Up a Local NIM Service](set-up-local-nim.md) for setup instructions.
+### Anthropic
 
-## Verify the Active Provider
+```console
+$ openshell inference set --provider anthropic-prod --model claude-sonnet-4-6
+```
+
+### Google Gemini
+
+```console
+$ openshell inference set --provider gemini-api --model gemini-2.5-flash
+```
+
+### Compatible Endpoints
+
+If you onboarded a custom compatible endpoint, switch models with the provider created for that endpoint:
+
+```console
+$ openshell inference set --provider compatible-endpoint --model <model-name>
+```
+
+```console
+$ openshell inference set --provider compatible-anthropic-endpoint --model <model-name>
+```
+
+If the provider itself needs to change, rerun `nemoclaw onboard`.
+
+## Verify the Active Model
 
 Run the status command to confirm the change:
 
 ```console
-$ openclaw nemoclaw status
+$ nemoclaw <name> status
 ```
 
 Add the `--json` flag for machine-readable output:
 
 ```console
-$ openclaw nemoclaw status --json
+$ nemoclaw <name> status --json
 ```
 
 The output includes the active provider, model, and endpoint.
 
-## Available Models
+## Notes
 
-The following table lists the models registered with the `nvidia-nim` provider.
-You can switch to any of these models at runtime.
-
-| Model ID | Label | Context Window | Max Output |
-|---|---|---|---|
-| `nvidia/nemotron-3-super-120b-a12b` | Nemotron 3 Super 120B | 131,072 | 8,192 |
-| `nvidia/llama-3.1-nemotron-ultra-253b-v1` | Nemotron Ultra 253B | 131,072 | 4,096 |
-| `nvidia/llama-3.3-nemotron-super-49b-v1.5` | Nemotron Super 49B v1.5 | 131,072 | 4,096 |
-| `nvidia/nemotron-3-nano-30b-a3b` | Nemotron 3 Nano 30B | 131,072 | 4,096 |
+- The host keeps provider credentials.
+- The sandbox continues to use `inference.local`.
+- Runtime switching changes the OpenShell route. It does not rewrite your stored credentials.
 
 ## Related Topics
 
 - [Inference Profiles](../reference/inference-profiles.md) for full profile configuration details.
-- [Set Up Local vLLM](set-up-local-vllm.md) for offline development with vLLM.
-- [Set Up a Local NIM Service](set-up-local-nim.md) for on-premises NIM deployment.

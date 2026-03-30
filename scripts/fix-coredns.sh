@@ -2,73 +2,76 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Fix CoreDNS on local OpenShell gateways running under Colima.
+# Fix CoreDNS on local OpenShell gateways.
 #
 # Problem: k3s CoreDNS forwards to /etc/resolv.conf which inside the
-# CoreDNS pod resolves to 127.0.0.11 (Docker's embedded DNS). That
-# address is NOT reachable from k3s pods, causing DNS to fail and
-# CoreDNS to CrashLoop.
+# CoreDNS pod resolves to a loopback address (127.0.0.11 on Docker,
+# 127.0.0.53 on systemd-resolved hosts). That address is NOT reachable
+# from k3s pods, causing DNS to fail and CoreDNS to CrashLoop.
 #
-# Fix: forward CoreDNS to the container's default gateway IP, which
-# is reachable from pods and routes DNS through Docker to the host.
+# Fix: forward CoreDNS to a real upstream DNS server, discovered from
+# the container's resolv.conf, the host's resolv.conf, or
+# systemd-resolved's actual upstream.
 #
-# Run this after `openshell gateway start` on Colima setups.
+# Run this after `openshell gateway start` on any Docker-based setup.
 #
 # Usage: ./scripts/fix-coredns.sh [gateway-name]
 
 set -euo pipefail
 
 GATEWAY_NAME="${1:-}"
-
-# Find Colima socket (legacy or XDG path)
-COLIMA_SOCKET=""
-for _sock in "$HOME/.colima/default/docker.sock" "$HOME/.config/colima/default/docker.sock"; do
-  if [ -S "$_sock" ]; then
-    COLIMA_SOCKET="$_sock"
-    break
-  fi
-done
-unset _sock
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=./lib/runtime.sh
+. "$SCRIPT_DIR/lib/runtime.sh"
 
 if [ -z "${DOCKER_HOST:-}" ]; then
-  if [ -n "$COLIMA_SOCKET" ]; then
-    export DOCKER_HOST="unix://$COLIMA_SOCKET"
-  else
-    echo "Skipping CoreDNS patch: Colima socket not found."
-    exit 0
+  if docker_host="$(detect_docker_host)"; then
+    export DOCKER_HOST="$docker_host"
   fi
 fi
 
 # Find the cluster container
-CLUSTER=$(docker ps --filter "name=openshell-cluster" --format '{{.Names}}' | head -1)
+CLUSTERS="$(docker ps --filter "name=openshell-cluster" --format '{{.Names}}')"
+CLUSTER="$(select_openshell_cluster_container "$GATEWAY_NAME" "$CLUSTERS" || true)"
 if [ -z "$CLUSTER" ]; then
-  echo "ERROR: No openshell cluster container found."
+  if [ -n "$GATEWAY_NAME" ]; then
+    echo "ERROR: Could not uniquely determine the openshell cluster container for gateway '$GATEWAY_NAME'."
+  else
+    echo "ERROR: Could not uniquely determine the openshell cluster container."
+  fi
   exit 1
 fi
 
-# Get the container's upstream DNS from /etc/resolv.conf — this is the address
-# the Docker/Colima VM uses for DNS and is reachable from k3s pods.
-# The docker bridge gateway (172.17.0.1) does NOT serve DNS in Colima.
-GATEWAY_IP=$(docker exec "$CLUSTER" grep nameserver /etc/resolv.conf | head -1 | awk '{print $2}')
-if [ -z "$GATEWAY_IP" ]; then
-  echo "ERROR: Could not determine container gateway IP."
-  exit 1
+CONTAINER_RESOLV_CONF="$(docker exec "$CLUSTER" cat /etc/resolv.conf 2>/dev/null || true)"
+HOST_RESOLV_CONF="$(cat /etc/resolv.conf 2>/dev/null || true)"
+
+# Detect the container runtime so resolve_coredns_upstream can use
+# runtime-specific fallbacks (e.g. Colima VM nameserver).
+RUNTIME="unknown"
+if command -v colima >/dev/null 2>&1 && [[ "${DOCKER_HOST:-}" == *colima* ]]; then
+  RUNTIME="colima"
+fi
+UPSTREAM_DNS="$(resolve_coredns_upstream "$CONTAINER_RESOLV_CONF" "$HOST_RESOLV_CONF" "$RUNTIME" || true)"
+
+# If all resolv.conf sources returned loopback only (common on systemd-resolved
+# hosts where /etc/resolv.conf is 127.0.0.53), try resolvectl for real upstreams.
+if [ -z "$UPSTREAM_DNS" ] && command -v resolvectl >/dev/null 2>&1; then
+  UPSTREAM_DNS="$(resolvectl status 2>/dev/null \
+    | awk '/Current DNS Server:/ { print $NF; exit }')"
 fi
 
-# Sanity check: don't use 127.x.x.x — it won't work from pods
-if [[ "$GATEWAY_IP" == 127.* ]]; then
-  echo "ERROR: Gateway IP is $GATEWAY_IP (loopback). Cannot use from k3s pods."
-  echo "Falling back to public DNS (8.8.8.8)."
-  GATEWAY_IP="8.8.8.8"
+if [ -z "$UPSTREAM_DNS" ]; then
+  echo "WARNING: Could not determine a non-loopback DNS upstream. Falling back to 8.8.8.8."
+  UPSTREAM_DNS="8.8.8.8"
 fi
 
-echo "Patching CoreDNS to forward to $GATEWAY_IP..."
+echo "Patching CoreDNS to forward to $UPSTREAM_DNS..."
 
-docker exec "$CLUSTER" kubectl patch configmap coredns -n kube-system --type merge -p "{\"data\":{\"Corefile\":\".:53 {\\n    errors\\n    health\\n    ready\\n    kubernetes cluster.local in-addr.arpa ip6.arpa {\\n      pods insecure\\n      fallthrough in-addr.arpa ip6.arpa\\n    }\\n    hosts /etc/coredns/NodeHosts {\\n      ttl 60\\n      reload 15s\\n      fallthrough\\n    }\\n    prometheus :9153\\n    cache 30\\n    loop\\n    reload\\n    loadbalance\\n    forward . $GATEWAY_IP\\n}\\n\"}}" > /dev/null
+docker exec "$CLUSTER" kubectl patch configmap coredns -n kube-system --type merge -p "{\"data\":{\"Corefile\":\".:53 {\\n    errors\\n    health\\n    ready\\n    kubernetes cluster.local in-addr.arpa ip6.arpa {\\n      pods insecure\\n      fallthrough in-addr.arpa ip6.arpa\\n    }\\n    hosts /etc/coredns/NodeHosts {\\n      ttl 60\\n      reload 15s\\n      fallthrough\\n    }\\n    prometheus :9153\\n    cache 30\\n    loop\\n    reload\\n    loadbalance\\n    forward . $UPSTREAM_DNS\\n}\\n\"}}" >/dev/null
 
-docker exec "$CLUSTER" kubectl rollout restart deploy/coredns -n kube-system > /dev/null
+docker exec "$CLUSTER" kubectl rollout restart deploy/coredns -n kube-system >/dev/null
 
 echo "CoreDNS patched. Waiting for rollout..."
-docker exec "$CLUSTER" kubectl rollout status deploy/coredns -n kube-system --timeout=30s > /dev/null
+docker exec "$CLUSTER" kubectl rollout status deploy/coredns -n kube-system --timeout=30s >/dev/null
 
 echo "Done. DNS should resolve in ~10 seconds."
