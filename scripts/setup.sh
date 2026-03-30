@@ -201,6 +201,7 @@ cp -r "$REPO_DIR/nemoclaw" "$BUILD_CTX/nemoclaw"
 cp -r "$REPO_DIR/nemoclaw-blueprint" "$BUILD_CTX/nemoclaw-blueprint"
 cp -r "$REPO_DIR/scripts" "$BUILD_CTX/scripts"
 rm -rf "$BUILD_CTX/nemoclaw/node_modules"
+rm -rf "$BUILD_CTX/nemoclaw-blueprint/.venv"
 
 # Capture full output to a temp file so we can filter for display but still
 # detect failures. The raw log is kept on failure for debugging.

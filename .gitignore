@@ -3,6 +3,7 @@
 *.tsbuildinfo
 .pytest_cache/
 __pycache__/
+.venv/
 coverage/
 dist/
 docs/_build/
