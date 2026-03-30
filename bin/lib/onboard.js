@@ -448,7 +448,7 @@ function hydrateCredentialEnv(envName) {
 }
 
 function getCurlTimingArgs() {
-  return ["--connect-timeout 5", "--max-time 20"];
+  return ["--connect-timeout 10", "--max-time 60"];
 }
 
 function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {

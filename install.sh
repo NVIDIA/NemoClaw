@@ -6,6 +6,20 @@
 
 set -euo pipefail
 
+# Global cleanup state — ensures background processes are killed and temp files
+# are removed on any exit path (set -e, unhandled signal, unexpected error).
+_cleanup_pids=()
+_cleanup_files=()
+_global_cleanup() {
+  for pid in "${_cleanup_pids[@]:-}"; do
+    kill "$pid" 2>/dev/null || true
+  done
+  for f in "${_cleanup_files[@]:-}"; do
+    rm -f "$f" 2>/dev/null || true
+  done
+}
+trap _global_cleanup EXIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 DEFAULT_NEMOCLAW_VERSION="0.1.0"
 TOTAL_STEPS=3
@@ -210,16 +224,27 @@ spin() {
   local pid=$! i=0
   local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
 
+  # Register with global cleanup so any exit path reaps the child and temp file.
+  _cleanup_pids+=("$pid")
+  _cleanup_files+=("$log")
+
+  # Ensure Ctrl+C kills the background process and cleans up the temp file.
+  trap 'kill "$pid" 2>/dev/null; rm -f "$log"; exit 130' INT TERM
+
   while kill -0 "$pid" 2>/dev/null; do
     printf "\r  ${C_GREEN}%s${C_RESET}  %s" "${frames[$((i++ % 10))]}" "$msg"
     sleep 0.08
   done
+
+  # Restore default signal handling after the background process exits.
+  trap - INT TERM
 
   if wait "$pid"; then
     local status=0
   else
     local status=$?
   fi
+
   if [[ $status -eq 0 ]]; then
     printf "\r  ${C_GREEN}✓${C_RESET}  %s\n" "$msg"
   else
@@ -228,6 +253,11 @@ spin() {
     printf "\n"
   fi
   rm -f "$log"
+
+  # Deregister only after cleanup actions are complete, so the global EXIT
+  # trap still covers this pid/log if a signal arrives before this point.
+  _cleanup_pids=("${_cleanup_pids[@]/$pid/}")
+  _cleanup_files=("${_cleanup_files[@]/$log/}")
   return $status
 }
 
@@ -262,8 +292,11 @@ version_gte() {
 # Ensure nvm environment is loaded in the current shell.
 # Skip if node is already on PATH — sourcing nvm.sh can reset PATH and
 # override the caller's node/npm (e.g. in test environments with stubs).
+# Pass --force to load nvm even when node is on PATH (needed when upgrading).
 ensure_nvm_loaded() {
-  command -v node &>/dev/null && return 0
+  if [[ "${1:-}" != "--force" ]]; then
+    command -v node &>/dev/null && return 0
+  fi
   if [[ -z "${NVM_DIR:-}" ]]; then
     export NVM_DIR="$HOME/.nvm"
   fi
@@ -362,11 +395,19 @@ ensure_supported_runtime() {
 # ---------------------------------------------------------------------------
 install_nodejs() {
   if command_exists node; then
-    info "Node.js found: $(node --version)"
-    return
+    local current_version current_npm_major
+    current_version="$(node --version 2>/dev/null || true)"
+    current_npm_major="$(version_major "$(npm --version 2>/dev/null || echo 0)")"
+    if version_gte "${current_version#v}" "$MIN_NODE_VERSION" \
+      && [[ "$current_npm_major" =~ ^[0-9]+$ ]] \
+      && ((current_npm_major >= MIN_NPM_MAJOR)); then
+      info "Node.js found: ${current_version}"
+      return
+    fi
+    warn "Node.js ${current_version}, npm major ${current_npm_major:-unknown} found but NemoClaw requires Node.js >=${MIN_NODE_VERSION} and npm >=${MIN_NPM_MAJOR} — upgrading via nvm…"
+  else
+    info "Node.js not found — installing via nvm…"
   fi
-
-  info "Node.js not found — installing via nvm…"
   # IMPORTANT: update NVM_SHA256 when changing NVM_VERSION
   local NVM_VERSION="v0.40.4"
   local NVM_SHA256="4b7412c49960c7d31e8df72da90c1fb5b8cccb419ac99537b737028d497aba4f"
@@ -393,10 +434,11 @@ install_nodejs() {
   info "nvm installer integrity verified"
   spin "Installing nvm..." bash "$nvm_tmp"
   rm -f "$nvm_tmp"
-  ensure_nvm_loaded
+  ensure_nvm_loaded --force
   spin "Installing Node.js 22..." bash -c ". \"$NVM_DIR/nvm.sh\" && nvm install 22 --no-progress"
-  ensure_nvm_loaded
+  ensure_nvm_loaded --force
   nvm use 22 --silent
+  nvm alias default 22 2>/dev/null || true
   info "Node.js installed: $(node --version)"
 }
 
@@ -558,6 +600,7 @@ install_nemoclaw() {
 verify_nemoclaw() {
   if command_exists nemoclaw; then
     NEMOCLAW_READY_NOW=true
+    ensure_nemoclaw_shim || true
     info "Verified: nemoclaw is available at $(command -v nemoclaw)"
     return 0
   fi
