@@ -39,7 +39,7 @@ const registry = require("./registry");
 const nim = require("./nim");
 const onboardSession = require("./onboard-session");
 const policies = require("./policies");
-const { checkPortAvailable } = require("./preflight");
+const { checkPortAvailable, ensureSwap, getMemoryInfo } = require("./preflight");
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const DIM = USE_COLOR ? "\x1b[2m" : "";
@@ -1574,13 +1574,13 @@ async function preflight() {
         if (portCheck.pid) {
           console.error(`       sudo kill ${portCheck.pid}`);
         } else {
-          console.error(`       lsof -i :${port} -sTCP:LISTEN -P -n`);
+          console.error(`       sudo lsof -i :${port} -sTCP:LISTEN -P -n`);
         }
         console.error("       # or, if it's a systemd service:");
         console.error("       systemctl --user stop openclaw-gateway.service");
       } else {
         console.error(`     Could not identify the process using port ${port}.`);
-        console.error(`     Run: lsof -i :${port} -sTCP:LISTEN`);
+        console.error(`     Run: sudo lsof -i :${port} -sTCP:LISTEN`);
       }
       console.error("");
       console.error(`     Detail: ${portCheck.reason}`);
@@ -1601,6 +1601,45 @@ async function preflight() {
     console.log("  ⓘ NIM requires NVIDIA GPU — will use cloud inference");
   } else {
     console.log("  ⓘ No GPU detected — will use cloud inference");
+  }
+
+  // Memory / swap check (Linux only)
+  if (process.platform === "linux") {
+    const mem = getMemoryInfo();
+    if (mem) {
+      if (mem.totalMB < 12000) {
+        console.log(`  ⚠ Low memory detected (${mem.totalRamMB} MB RAM + ${mem.totalSwapMB} MB swap = ${mem.totalMB} MB total)`);
+
+        let proceedWithSwap = false;
+        if (!isNonInteractive()) {
+          const answer = await prompt(
+            "  Create a 4 GB swap file to prevent OOM during sandbox build? (requires sudo) [y/N]: "
+          );
+          proceedWithSwap = answer && answer.toLowerCase().startsWith("y");
+        }
+
+        if (!proceedWithSwap) {
+          console.log("  ⓘ Skipping swap creation. Sandbox build may fail with OOM on this system.");
+        } else {
+          console.log("  Creating 4 GB swap file to prevent OOM during sandbox build...");
+          const swapResult = ensureSwap(12000);
+          if (swapResult.ok && swapResult.swapCreated) {
+            console.log("  ✓ Swap file created and activated");
+          } else if (swapResult.ok) {
+            if (swapResult.reason) {
+              console.log(`  ⓘ ${swapResult.reason} — existing swap should help prevent OOM`);
+            } else {
+              console.log(`  ✓ Memory OK: ${mem.totalRamMB} MB RAM + ${mem.totalSwapMB} MB swap`);
+            }
+          } else {
+            console.log(`  ⚠ Could not create swap: ${swapResult.reason}`);
+            console.log("  Sandbox creation may fail with OOM on low-memory systems.");
+          }
+        }
+      } else {
+        console.log(`  ✓ Memory OK: ${mem.totalRamMB} MB RAM + ${mem.totalSwapMB} MB swap`);
+      }
+    }
   }
 
   return gpu;
@@ -1729,7 +1768,7 @@ async function recoverGatewayRuntime() {
   });
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
 
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 10; i++) {
     status = runCaptureOpenshell(["status"], { ignoreError: true });
     if (status.includes("Connected") && isSelectedGateway(status)) {
       process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
@@ -1836,7 +1875,6 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   if (slackToken) {
     sandboxEnv.SLACK_BOT_TOKEN = slackToken;
   }
-
   // Run without piping through awk — the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
@@ -1884,7 +1922,7 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
       ready = true;
       break;
     }
-    require("child_process").spawnSync("sleep", ["2"]);
+    sleep(2);
   }
 
   if (!ready) {
@@ -1901,6 +1939,23 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
     }
     console.error("  Retry: nemoclaw onboard");
     process.exit(1);
+  }
+
+  // Wait for NemoClaw dashboard to become fully ready (web server live)
+  // This prevents port forwards from connecting to a non-existent port
+  // or seeing 502/503 errors during initial load.
+  console.log("  Waiting for NemoClaw dashboard to become ready...");
+  for (let i = 0; i < 15; i++) {
+    const readyMatch = runCapture(`openshell sandbox exec ${sandboxName} curl -sf http://localhost:18789/ 2>/dev/null || echo "no"`, { ignoreError: true });
+    if (readyMatch && !readyMatch.includes("no")) {
+      console.log("  ✓ Dashboard is live");
+      break;
+    }
+    if (i === 14) {
+      console.warn("  Dashboard taking longer than expected to start. Continuing...");
+    } else {
+      sleep(2);
+    }
   }
 
   // Release any stale forward on port 18789 before claiming it for the new sandbox.
