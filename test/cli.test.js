@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
-import { spawnSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,7 +15,7 @@ function run(args) {
 
 function runWithEnv(args, env = {}, timeout = 10000) {
   try {
-    const out = spawnSync(`node "${CLI}" ${args}`, {
+    const out = execSync(`node "${CLI}" ${args}`, {
       encoding: "utf-8",
       timeout,
       env: { ...process.env, HOME: "/tmp/nemoclaw-cli-test-" + Date.now(), ...env },
