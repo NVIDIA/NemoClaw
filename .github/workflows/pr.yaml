@@ -179,3 +179,45 @@ jobs:
 
       - name: Run gateway isolation E2E tests
         run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh
+
+  check-markdown-links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get changed markdown files
+        id: changed
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          if ! files=$(git diff --name-only --diff-filter=ACMRT "$base" -- \
+            '*.md' \
+            ':(exclude)node_modules/**' \
+            ':(exclude)dist/**' \
+            ':(exclude)_build/**' \
+            ':(exclude)_deps/**'); then
+            echo "::error::Failed to compute changed markdown files from base $base"
+            exit 1
+          fi
+          if [ -z "$files" ]; then
+            echo "No markdown files changed."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "$files"
+            # Write file list as single line for the next step.
+            echo "files<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$files" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check markdown links
+        if: steps.changed.outputs.skip != 'true'
+        env:
+          MD_FILES: ${{ steps.changed.outputs.files }}
+        run: |
+          # shellcheck disable=SC2086
+          bash scripts/check-markdown-links.sh $MD_FILES
