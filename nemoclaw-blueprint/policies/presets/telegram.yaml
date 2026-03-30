@@ -19,3 +19,6 @@ network_policies:
           - allow: { method: POST, path: "/bot*/**" }
     binaries:
       - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+      - { path: /usr/bin/curl }
+      - { path: /usr/bin/bash }

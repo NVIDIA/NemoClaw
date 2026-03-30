@@ -43,3 +43,6 @@ network_policies:
         access: full
     binaries:
       - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+      - { path: /usr/bin/curl }
+      - { path: /usr/bin/bash }
