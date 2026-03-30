@@ -43,7 +43,7 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 
 # Copy startup script
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
-RUN chmod +x /usr/local/bin/nemoclaw-start
+RUN chmod 755 /usr/local/bin/nemoclaw-start
 
 # Build args for config that varies per deployment.
 # nemoclaw onboard passes these at image build time.

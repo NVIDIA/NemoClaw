@@ -100,7 +100,6 @@ const { setupNim } = require(${onboardPath});
     assert.match(payload.messages[0], /Choose \[/);
     assert.match(payload.messages[1], /Choose model \[1\]/);
     assert.ok(payload.lines.some((line) => line.includes("Detected local inference option")));
-    assert.ok(payload.lines.some((line) => line.includes("Press Enter to keep NVIDIA Endpoints")));
     assert.ok(payload.lines.some((line) => line.includes("Cloud models:")));
     assert.ok(payload.lines.some((line) => line.includes("Responses API available")));
   });
@@ -1303,5 +1302,212 @@ const { setupNim } = require(${onboardPath});
     assert.ok(payload.lines.some((line) => line.includes("OpenAI endpoint validation failed")));
     assert.ok(payload.lines.some((line) => line.includes("Please choose a provider/model again")));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 2);
+  });
+
+  it("forces openai-completions for vLLM even when probe detects openai-responses", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-override-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "vllm-override-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    // Fake curl: /v1/responses returns 200 (so probe detects openai-responses),
+    // /v1/models returns a vLLM model list
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body=''
+status="200"
+outfile=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if echo "$url" | grep -q '/v1/models'; then
+  body='{"data":[{"id":"meta-llama/Llama-3.3-70B-Instruct"}]}'
+elif echo "$url" | grep -q '/v1/responses'; then
+  body='{"id":"resp_123","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}'
+elif echo "$url" | grep -q '/v1/chat/completions'; then
+  body='{"id":"chatcmpl-123","choices":[{"message":{"content":"ok"}}]}'
+fi
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+
+    // vLLM is option 7 (build, openai, custom, anthropic, anthropicCompatible, gemini, vllm)
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["7"];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  if (command.includes("command -v ollama")) return "";
+  if (command.includes("localhost:11434")) return "";
+  if (command.includes("localhost:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_EXPERIMENTAL: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "vllm-local");
+    assert.equal(payload.result.model, "meta-llama/Llama-3.3-70B-Instruct");
+    // Key assertion: even though probe detected openai-responses, the override
+    // forces openai-completions so tool-call-parser works correctly.
+    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    assert.ok(payload.lines.some((line) => line.includes("Using existing vLLM")));
+    assert.ok(payload.lines.some((line) => line.includes("tool-call-parser requires")));
+  });
+
+  it("forces openai-completions for NIM-local even when probe detects openai-responses", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-nim-override-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "nim-override-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const nimPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "nim.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    // Fake curl: /v1/responses returns 200 (probe detects openai-responses)
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body=''
+status="200"
+outfile=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if echo "$url" | grep -q '/v1/models'; then
+  body='{"data":[{"id":"nvidia/nemotron-3-nano"}]}'
+elif echo "$url" | grep -q '/v1/responses'; then
+  body='{"id":"resp_123","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}'
+elif echo "$url" | grep -q '/v1/chat/completions'; then
+  body='{"id":"chatcmpl-123","choices":[{"message":{"content":"ok"}}]}'
+fi
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+
+    // NIM-local is option 7 (build, openai, custom, anthropic, anthropicCompatible, gemini, nim-local)
+    // No ollama, no vLLM — only NIM-local shows up as experimental option
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+// Mock nim module before onboard.js requires it
+const nimMod = require(${nimPath});
+nimMod.listModels = () => [{ name: "nvidia/nemotron-3-nano", image: "fake", minGpuMemoryMB: 8000 }];
+nimMod.pullNimImage = () => {};
+nimMod.containerName = () => "nemoclaw-nim-test";
+nimMod.startNimContainerByName = () => "container-123";
+nimMod.waitForNimHealth = () => true;
+
+// Select option 7 (nim-local), then model 1
+const answers = ["7", "1"];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  if (command.includes("command -v ollama")) return "";
+  if (command.includes("localhost:11434")) return "";
+  if (command.includes("localhost:8000/v1/models")) return "";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    // Pass a GPU object with nimCapable: true
+    const result = await setupNim({ type: "nvidia", totalMemoryMB: 16000, nimCapable: true });
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_EXPERIMENTAL: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "vllm-local");
+    assert.equal(payload.result.model, "nvidia/nemotron-3-nano");
+    // Key assertion: NIM uses vLLM internally — same override must apply.
+    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    assert.ok(payload.lines.some((line) => line.includes("tool-call-parser requires")));
   });
 });

@@ -9,6 +9,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
+const pRetry = require("p-retry");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
 const {
   getDefaultOllamaModel,
@@ -29,6 +30,7 @@ const {
 const {
   inferContainerRuntime,
   isUnsupportedMacosRuntime,
+  isWsl,
   shouldPatchCoredns,
 } = require("./platform");
 const { resolveOpenshell } = require("./resolve-openshell");
@@ -448,7 +450,7 @@ function hydrateCredentialEnv(envName) {
 }
 
 function getCurlTimingArgs() {
-  return ["--connect-timeout 5", "--max-time 20"];
+  return ["--connect-timeout 10", "--max-time 60"];
 }
 
 function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
@@ -678,6 +680,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
       const result = spawnSync("bash", ["-c", cmd], {
         cwd: ROOT,
         encoding: "utf8",
+        timeout: 30_000,
         env: {
           ...process.env,
           NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -727,6 +730,7 @@ function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -867,6 +871,7 @@ function fetchNvidiaEndpointModels(apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -920,6 +925,7 @@ function fetchOpenAiLikeModels(endpointUrl, apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -957,6 +963,7 @@ function fetchAnthropicModels(endpointUrl, apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -1223,8 +1230,13 @@ function pullOllamaModel(model) {
     cwd: ROOT,
     encoding: "utf8",
     stdio: "inherit",
+    timeout: 600_000,
     env: { ...process.env },
   });
+  if (result.signal === "SIGTERM") {
+    console.error(`  Model pull timed out after 10 minutes. Try a smaller model or check your network connection.`);
+    return false;
+  }
   return result.status === 0;
 }
 
@@ -1358,6 +1370,7 @@ function installOpenshell() {
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf-8",
+    timeout: 300_000,
   });
   if (result.status !== 0) {
     const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
@@ -1614,41 +1627,57 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
     console.log(`  Using pinned OpenShell gateway image: ${gatewayEnv.OPENSHELL_CLUSTER_IMAGE}`);
   }
 
-  const startResult = runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: true, env: gatewayEnv });
-  if (startResult.status !== 0) {
-    console.error("  Gateway failed to start. Cleaning up stale state...");
-    destroyGateway();
+  // Retry gateway start with exponential backoff. On some hosts (Horde VMs,
+  // first-run environments) the embedded k3s needs more time than OpenShell's
+  // internal health-check window allows. Retrying after a clean destroy lets
+  // the second attempt benefit from cached images and cleaner cgroup state.
+  // See: https://github.com/NVIDIA/OpenShell/issues/433
+  const retries = exitOnFailure ? 2 : 0;
+  try {
+    await pRetry(() => {
+      runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: true, env: gatewayEnv });
+
+      for (let i = 0; i < 5; i++) {
+        const status = runCaptureOpenshell(["status"], { ignoreError: true });
+        const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
+        const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+        if (isGatewayHealthy(status, namedInfo, currentInfo)) {
+          return; // success
+        }
+        if (i < 4) sleep(2);
+      }
+
+      throw new Error("Gateway failed to start");
+    }, {
+      retries,
+      minTimeout: 10_000,
+      factor: 3,
+      onFailedAttempt: (err) => {
+        console.log(`  Gateway start attempt ${err.attemptNumber} failed. ${err.retriesLeft} retries left...`);
+        if (err.retriesLeft > 0 && exitOnFailure) {
+          destroyGateway();
+        }
+      },
+    });
+  } catch {
     if (exitOnFailure) {
-      console.error("  Stale state removed. Please rerun: nemoclaw onboard");
+      console.error(`  Gateway failed to start after ${retries + 1} attempts.`);
+      console.error("  Gateway state preserved for diagnostics.");
+      console.error("");
+      console.error("  Troubleshooting:");
+      console.error("    openshell doctor logs --name nemoclaw");
+      console.error("    openshell doctor check");
       process.exit(1);
     }
     throw new Error("Gateway failed to start");
   }
 
-  for (let i = 0; i < 5; i++) {
-    const status = runCaptureOpenshell(["status"], { ignoreError: true });
-    const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
-    const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    if (isGatewayHealthy(status, namedInfo, currentInfo)) {
-      console.log("  ✓ Gateway is healthy");
-      break;
-    }
-    if (i === 4) {
-      console.error("  Gateway health check failed. Cleaning up stale state...");
-      destroyGateway();
-      if (exitOnFailure) {
-        console.error("  Stale state removed. Please rerun: nemoclaw onboard");
-        process.exit(1);
-      }
-      throw new Error("Gateway failed to start");
-    }
-    sleep(2);
-  }
+  console.log("  ✓ Gateway is healthy");
 
-  // CoreDNS fix — always run. k3s-inside-Docker has broken DNS on all platforms.
+  // CoreDNS fix — k3s-inside-Docker has broken DNS forwarding on all platforms.
   const runtime = getContainerRuntime();
   if (shouldPatchCoredns(runtime)) {
-    console.log("  Patching CoreDNS for Colima...");
+    console.log("  Patching CoreDNS DNS forwarding...");
     run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" ${GATEWAY_NAME} 2>&1 || true`, { ignoreError: true });
   }
   sleep(5);
@@ -1878,6 +1907,11 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
     gpuEnabled: !!gpu,
   });
 
+  // DNS proxy — run a forwarder in the sandbox pod so the isolated
+  // sandbox namespace can resolve hostnames (fixes #626).
+  console.log("  Setting up sandbox DNS proxy...");
+  run(`bash "${path.join(SCRIPTS, "setup-dns-proxy.sh")}" ${GATEWAY_NAME} "${sandboxName}" 2>&1 || true`, { ignoreError: true });
+
   console.log(`  ✓ Sandbox '${sandboxName}' created`);
   return sandboxName;
 }
@@ -1955,7 +1989,6 @@ async function setupNim(gpu) {
       if (ollamaRunning) suggestions.push("Ollama");
       if (suggestions.length > 0) {
         console.log(`  Detected local inference option${suggestions.length > 1 ? "s" : ""}: ${suggestions.join(", ")}`);
-        console.log("  Select one explicitly to use it. Press Enter to keep NVIDIA Endpoints.");
         console.log("");
       }
 
@@ -2159,13 +2192,23 @@ async function setupNim(gpu) {
           if (!preferredInferenceApi) {
             continue selectionLoop;
           }
+          // NIM uses vLLM internally — same tool-call-parser limitation
+          // applies to /v1/responses. Force chat completions.
+          if (preferredInferenceApi !== "openai-completions") {
+            console.log("  ℹ Using chat completions API (tool-call-parser requires /v1/chat/completions)");
+          }
+          preferredInferenceApi = "openai-completions";
         }
       }
       break;
     } else if (selected.key === "ollama") {
       if (!ollamaRunning) {
         console.log("  Starting Ollama...");
-        run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
+        // On WSL2, binding to 0.0.0.0 creates a dual-stack socket that Docker
+        // cannot reach via host-gateway. The default 127.0.0.1 binding works
+        // because WSL2 relays IPv4-only sockets to the Windows host.
+        const ollamaEnv = isWsl() ? "" : "OLLAMA_HOST=0.0.0.0:11434 ";
+        run(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
         sleep(2);
       }
       console.log("  ✓ Using Ollama on localhost:11434");
@@ -2203,6 +2246,7 @@ async function setupNim(gpu) {
       }
       break;
     } else if (selected.key === "install-ollama") {
+      // macOS only — this option is gated by process.platform === "darwin" above
       console.log("  Installing Ollama via Homebrew...");
       run("brew install ollama", { ignoreError: true });
       console.log("  Starting Ollama...");
@@ -2275,6 +2319,13 @@ async function setupNim(gpu) {
       if (!preferredInferenceApi) {
         continue selectionLoop;
       }
+      // Force chat completions — vLLM's /v1/responses endpoint does not
+      // run the --tool-call-parser, so tool calls arrive as raw text.
+      // See: https://github.com/NVIDIA/NemoClaw/issues/976
+      if (preferredInferenceApi !== "openai-completions") {
+        console.log("  ℹ Using chat completions API (tool-call-parser requires /v1/chat/completions)");
+      }
+      preferredInferenceApi = "openai-completions";
       break;
     }
   }

@@ -134,10 +134,15 @@ describe("platform helpers", () => {
   });
 
   describe("shouldPatchCoredns", () => {
-    it("patches CoreDNS for Colima only", () => {
+    it("patches CoreDNS for all known runtimes", () => {
       expect(shouldPatchCoredns("colima")).toBe(true);
-      expect(shouldPatchCoredns("docker-desktop")).toBe(false);
-      expect(shouldPatchCoredns("docker")).toBe(false);
+      expect(shouldPatchCoredns("docker-desktop")).toBe(true);
+      expect(shouldPatchCoredns("docker")).toBe(true);
+      expect(shouldPatchCoredns("podman")).toBe(true);
+    });
+
+    it("skips unknown runtimes", () => {
+      expect(shouldPatchCoredns("unknown")).toBe(false);
     });
   });
 });
