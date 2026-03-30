@@ -1574,13 +1574,13 @@ async function preflight() {
         if (portCheck.pid) {
           console.error(`       sudo kill ${portCheck.pid}`);
         } else {
-          console.error(`       lsof -i :${port} -sTCP:LISTEN -P -n`);
+          console.error(`       sudo lsof -i :${port} -sTCP:LISTEN -P -n`);
         }
         console.error("       # or, if it's a systemd service:");
         console.error("       systemctl --user stop openclaw-gateway.service");
       } else {
         console.error(`     Could not identify the process using port ${port}.`);
-        console.error(`     Run: lsof -i :${port} -sTCP:LISTEN`);
+        console.error(`     Run: sudo lsof -i :${port} -sTCP:LISTEN`);
       }
       console.error("");
       console.error(`     Detail: ${portCheck.reason}`);
