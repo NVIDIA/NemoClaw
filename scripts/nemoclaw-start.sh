@@ -425,14 +425,29 @@ if [ "$(id -u)" -ne 0 ]; then
     for sub in $subdirs; do
       mkdir -p "${data_dir}/${sub}" 2>/dev/null || true
     done
-    if find "$data_dir" -maxdepth 0 ! -user "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
-      chown -R "$(id -u):$(id -g)" "$data_dir" 2>/dev/null || true
-      echo "[setup] fixed ownership on ${data_dir}"
+    if find "$data_dir" ! -uid "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
+      if chown -R "$(id -u):$(id -g)" "$data_dir" 2>/dev/null; then
+        echo "[setup] fixed ownership on ${data_dir}"
+      else
+        echo "[setup] could not fix ownership on ${data_dir}; writes may fail" >&2
+      fi
     fi
-    if [ ! -e "${openclaw_dir}/identity" ] && [ -d "${data_dir}/identity" ]; then
+    if [ -d "${data_dir}/identity" ]; then
       mkdir -p "${openclaw_dir}" 2>/dev/null || true
-      ln -sf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null || true
-      echo "[setup] created identity symlink"
+      if [ -L "${openclaw_dir}/identity" ]; then
+        local current_target expected_target
+        current_target="$(readlink -f "${openclaw_dir}/identity" 2>/dev/null || true)"
+        expected_target="$(readlink -f "${data_dir}/identity" 2>/dev/null || true)"
+        if [ "$current_target" != "$expected_target" ]; then
+          ln -snf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null || true
+          echo "[setup] repaired identity symlink"
+        fi
+      elif [ ! -e "${openclaw_dir}/identity" ]; then
+        ln -snf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null || true
+        echo "[setup] created identity symlink"
+      else
+        echo "[setup] ${openclaw_dir}/identity exists and is not a symlink; leaving as-is" >&2
+      fi
     fi
   }
   fix_openclaw_data_ownership
