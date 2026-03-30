@@ -17,10 +17,10 @@ network_policies:
         rules:
           - allow: { method: POST, path: "/api/v1/evaluate" }
           - allow: { method: GET, path: "/api/v1/approvals/**" }
-          - allow: { method: POST, path: "/api/v1/approvals/*/approve" }
-          - allow: { method: POST, path: "/api/v1/approvals/*/deny" }
           - allow: { method: POST, path: "/api/v1/traces/*/outcome" }
           - allow: { method: GET, path: "/api/v1/agents/**" }
+    # Both runtimes needed: @sidclaw/sdk (TypeScript) and sidclaw (Python).
+    # If your agent uses only one, override with a narrower binaries list.
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/python3 }
