@@ -438,6 +438,7 @@ install_nodejs() {
   spin "Installing Node.js 22..." bash -c ". \"$NVM_DIR/nvm.sh\" && nvm install 22 --no-progress"
   ensure_nvm_loaded --force
   nvm use 22 --silent
+  nvm alias default 22 --silent 2>/dev/null || true
   info "Node.js installed: $(node --version)"
 }
 
