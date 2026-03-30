@@ -57,7 +57,6 @@ To follow the log output in real time:
 $ nemoclaw <name> logs -f
 ```
 
-
 ## Monitor Network Activity in the TUI
 
 Open the OpenShell terminal UI for a live view of sandbox network activity and egress requests:

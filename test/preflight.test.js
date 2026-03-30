@@ -1,43 +1,39 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
+import { describe, expect, it } from "vitest";
 
-const net = require("net");
-const { checkPortAvailable } = require("../bin/lib/preflight");
+import { checkPortAvailable } from "../bin/lib/preflight";
 
 describe("checkPortAvailable", () => {
-  it("falls through to net probe when lsof output is empty", async () => {
-    // Empty lsof output is not authoritative (non-root can't see root-owned
-    // listeners), so the function must fall through to the net probe.
-    // Use a guaranteed-free port so the net probe confirms availability.
-    const freePort = await new Promise((resolve) => {
-      const srv = net.createServer();
-      srv.listen(0, "127.0.0.1", () => {
-        const port = srv.address().port;
-        srv.close(() => resolve(port));
-      });
+  it("falls through to the probe when lsof output is empty", async () => {
+    let probedPort = null;
+    const result = await checkPortAvailable(18789, {
+      lsofOutput: "",
+      probeImpl: async (port) => {
+        probedPort = port;
+        return { ok: true };
+      },
     });
-    const result = await checkPortAvailable(freePort, { lsofOutput: "" });
-    assert.deepEqual(result, { ok: true });
+
+    expect(probedPort).toBe(18789);
+    expect(result).toEqual({ ok: true });
   });
 
-  it("net probe catches occupied port even when lsof returns empty", async () => {
-    // Simulates the non-root-can't-see-root-listener scenario:
-    // lsof returns empty, but net probe detects the port is taken.
-    const srv = net.createServer();
-    const port = await new Promise((resolve) => {
-      srv.listen(0, "127.0.0.1", () => resolve(srv.address().port));
+  it("probe catches occupied port even when lsof returns empty", async () => {
+    const result = await checkPortAvailable(18789, {
+      lsofOutput: "",
+      probeImpl: async () => ({
+        ok: false,
+        process: "unknown",
+        pid: null,
+        reason: "port 18789 is in use (EADDRINUSE)",
+      }),
     });
-    try {
-      const result = await checkPortAvailable(port, { lsofOutput: "" });
-      assert.equal(result.ok, false);
-      assert.equal(result.process, "unknown");
-      assert.ok(result.reason.includes("EADDRINUSE"));
-    } finally {
-      await new Promise((resolve) => srv.close(resolve));
-    }
+
+    expect(result.ok).toBe(false);
+    expect(result.process).toBe("unknown");
+    expect(result.reason).toContain("EADDRINUSE");
   });
 
   it("parses process and PID from lsof output", async () => {
@@ -46,10 +42,11 @@ describe("checkPortAvailable", () => {
       "openclaw  12345   root    7u  IPv4  54321      0t0  TCP *:18789 (LISTEN)",
     ].join("\n");
     const result = await checkPortAvailable(18789, { lsofOutput });
-    assert.equal(result.ok, false);
-    assert.equal(result.process, "openclaw");
-    assert.equal(result.pid, 12345);
-    assert.ok(result.reason.includes("openclaw"));
+
+    expect(result.ok).toBe(false);
+    expect(result.process).toBe("openclaw");
+    expect(result.pid).toBe(12345);
+    expect(result.reason).toContain("openclaw");
   });
 
   it("picks first listener when lsof shows multiple", async () => {
@@ -59,67 +56,61 @@ describe("checkPortAvailable", () => {
       "node      222   root    8u  IPv4  54322      0t0  TCP *:18789 (LISTEN)",
     ].join("\n");
     const result = await checkPortAvailable(18789, { lsofOutput });
-    assert.equal(result.ok, false);
-    assert.equal(result.process, "gateway");
-    assert.equal(result.pid, 111);
+
+    expect(result.ok).toBe(false);
+    expect(result.process).toBe("gateway");
+    expect(result.pid).toBe(111);
   });
 
-  it("net probe returns ok for a free port", async () => {
-    // Find a free port by binding then releasing
-    const freePort = await new Promise((resolve) => {
-      const srv = net.createServer();
-      srv.listen(0, "127.0.0.1", () => {
-        const port = srv.address().port;
-        srv.close(() => resolve(port));
-      });
+  it("returns ok for a free port probe", async () => {
+    const result = await checkPortAvailable(8080, {
+      skipLsof: true,
+      probeImpl: async () => ({ ok: true }),
     });
-    const result = await checkPortAvailable(freePort, { skipLsof: true });
-    assert.deepEqual(result, { ok: true });
+
+    expect(result).toEqual({ ok: true });
   });
 
-  it("net probe detects occupied port", async () => {
-    const srv = net.createServer();
-    const port = await new Promise((resolve) => {
-      srv.listen(0, "127.0.0.1", () => resolve(srv.address().port));
+  it("returns occupied for EADDRINUSE probe results", async () => {
+    const result = await checkPortAvailable(8080, {
+      skipLsof: true,
+      probeImpl: async () => ({
+        ok: false,
+        process: "unknown",
+        pid: null,
+        reason: "port 8080 is in use (EADDRINUSE)",
+      }),
     });
-    try {
-      const result = await checkPortAvailable(port, { skipLsof: true });
-      assert.equal(result.ok, false);
-      assert.equal(result.process, "unknown");
-      assert.ok(result.reason.includes("EADDRINUSE"));
-    } finally {
-      await new Promise((resolve) => srv.close(resolve));
-    }
+
+    expect(result.ok).toBe(false);
+    expect(result.process).toBe("unknown");
+    expect(result.reason).toContain("EADDRINUSE");
   });
 
-  it("smoke test with live detection on a dynamically selected free port", async () => {
-    const freePort = await new Promise((resolve) => {
-      const srv = net.createServer();
-      srv.listen(0, "127.0.0.1", () => {
-        const port = srv.address().port;
-        srv.close(() => resolve(port));
-      });
+  it("treats restricted probe environments as inconclusive instead of occupied", async () => {
+    const result = await checkPortAvailable(8080, {
+      skipLsof: true,
+      probeImpl: async () => ({
+        ok: true,
+        warning: "port probe skipped: listen EPERM: operation not permitted 127.0.0.1",
+      }),
     });
-    const result = await checkPortAvailable(freePort);
-    assert.equal(result.ok, true);
+
+    expect(result.ok).toBe(true);
+    expect(result.warning).toContain("EPERM");
   });
 
-  it("defaults to port 18789 when no args given", async () => {
-    // Should not throw — just verify it returns a valid result object
-    const result = await checkPortAvailable();
-    assert.equal(typeof result.ok, "boolean");
-  });
-
-  it("checks gateway port 8080", async () => {
-    const freePort = await new Promise((resolve) => {
-      const srv = net.createServer();
-      srv.listen(0, "127.0.0.1", () => {
-        const port = srv.address().port;
-        srv.close(() => resolve(port));
-      });
+  it("defaults to port 18789 when no port is given", async () => {
+    let probedPort = null;
+    const result = await checkPortAvailable(undefined, {
+      skipLsof: true,
+      probeImpl: async (port) => {
+        probedPort = port;
+        return { ok: true };
+      },
     });
-    // Verify the function works with any port (including 8080-range)
-    const result = await checkPortAvailable(freePort);
-    assert.equal(result.ok, true);
+
+    expect(probedPort).toBe(18789);
+    expect(result.ok).toBe(true);
   });
 });

@@ -44,7 +44,7 @@ function detectGpu() {
         };
       }
     }
-  } catch {}
+  } catch { /* ignored */ }
 
   // Fallback: DGX Spark (GB10) — VRAM not queryable due to unified memory architecture
   try {
@@ -58,7 +58,7 @@ function detectGpu() {
       try {
         const memLine = runCapture("free -m | awk '/Mem:/ {print $2}'", { ignoreError: true });
         if (memLine) totalMemoryMB = parseInt(memLine.trim(), 10) || 0;
-      } catch {}
+      } catch { /* ignored */ }
       return {
         type: "nvidia",
         count: 1,
@@ -68,7 +68,7 @@ function detectGpu() {
         spark: true,
       };
     }
-  } catch {}
+  } catch { /* ignored */ }
 
   // macOS: detect Apple Silicon or discrete GPU
   if (process.platform === "darwin") {
@@ -94,7 +94,7 @@ function detectGpu() {
             try {
               const memBytes = runCapture("sysctl -n hw.memsize", { ignoreError: true });
               if (memBytes) memoryMB = Math.floor(parseInt(memBytes, 10) / 1024 / 1024);
-            } catch {}
+            } catch { /* ignored */ }
           }
 
           return {
@@ -108,7 +108,7 @@ function detectGpu() {
           };
         }
       }
-    } catch {}
+    } catch { /* ignored */ }
   }
 
   return null;
@@ -127,6 +127,10 @@ function pullNimImage(model) {
 
 function startNimContainer(sandboxName, model, port = 8000) {
   const name = containerName(sandboxName);
+  return startNimContainerByName(name, model, port);
+}
+
+function startNimContainerByName(name, model, port = 8000) {
   const image = getImageForModel(model);
   if (!image) {
     console.error(`  Unknown model: ${model}`);
@@ -146,7 +150,7 @@ function startNimContainer(sandboxName, model, port = 8000) {
 
 function waitForNimHealth(port = 8000, timeout = 300) {
   const start = Date.now();
-  const interval = 5000;
+  const _interval = 5000;
   const safePort = Number(port);
   console.log(`  Waiting for NIM health on port ${safePort} (timeout: ${timeout}s)...`);
 
@@ -159,7 +163,7 @@ function waitForNimHealth(port = 8000, timeout = 300) {
         console.log("  NIM is healthy.");
         return true;
       }
-    } catch {}
+    } catch { /* ignored */ }
     // Synchronous sleep via spawnSync
     require("child_process").spawnSync("sleep", ["5"]);
   }
@@ -169,6 +173,10 @@ function waitForNimHealth(port = 8000, timeout = 300) {
 
 function stopNimContainer(sandboxName) {
   const name = containerName(sandboxName);
+  stopNimContainerByName(name);
+}
+
+function stopNimContainerByName(name) {
   const qn = shellQuote(name);
   console.log(`  Stopping NIM container: ${name}`);
   run(`docker stop ${qn} 2>/dev/null || true`, { ignoreError: true });
@@ -177,6 +185,10 @@ function stopNimContainer(sandboxName) {
 
 function nimStatus(sandboxName) {
   const name = containerName(sandboxName);
+  return nimStatusByName(name);
+}
+
+function nimStatusByName(name) {
   try {
     const state = runCapture(
       `docker inspect --format '{{.State.Status}}' ${shellQuote(name)} 2>/dev/null`,
@@ -204,7 +216,10 @@ module.exports = {
   detectGpu,
   pullNimImage,
   startNimContainer,
+  startNimContainerByName,
   waitForNimHealth,
   stopNimContainer,
+  stopNimContainerByName,
   nimStatus,
+  nimStatusByName,
 };
