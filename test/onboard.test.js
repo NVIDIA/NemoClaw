@@ -138,6 +138,36 @@ describe("onboard helpers", () => {
         primaryModelRef: "openai/gpt-5.4",
         inferenceBaseUrl: "https://inference.local/v1",
         inferenceApi: "openai-responses",
+        inferenceCompat: {
+          supportsStore: false,
+        },
+      }
+    );
+  });
+
+  it("marks OpenAI gpt-5 models as supportsStore false", () => {
+    assert.deepEqual(
+      getSandboxInferenceConfig("gpt-5-mini", "openai-api", "openai-responses"),
+      {
+        providerKey: "openai",
+        primaryModelRef: "openai/gpt-5-mini",
+        inferenceBaseUrl: "https://inference.local/v1",
+        inferenceApi: "openai-responses",
+        inferenceCompat: {
+          supportsStore: false,
+        },
+      }
+    );
+  });
+
+  it("leaves non-gpt-5 OpenAI models unchanged", () => {
+    assert.deepEqual(
+      getSandboxInferenceConfig("gpt-4.1-mini", "openai-api", "openai-responses"),
+      {
+        providerKey: "openai",
+        primaryModelRef: "openai/gpt-4.1-mini",
+        inferenceBaseUrl: "https://inference.local/v1",
+        inferenceApi: "openai-responses",
         inferenceCompat: null,
       }
     );

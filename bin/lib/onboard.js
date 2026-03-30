@@ -437,10 +437,20 @@ function getSandboxInferenceConfig(model, provider = null, preferredInferenceApi
   let inferenceApi = preferredInferenceApi || "openai-completions";
   let inferenceCompat = null;
 
+  const requiresStatelessResponsesCompat =
+    provider === "openai-api" &&
+    typeof model === "string" &&
+    /^gpt-5(?:[.-]|$)/.test(model);
+
   switch (provider) {
     case "openai-api":
       providerKey = "openai";
       primaryModelRef = `openai/${model}`;
+      if (requiresStatelessResponsesCompat) {
+        inferenceCompat = {
+          supportsStore: false,
+        };
+      }
       break;
     case "anthropic-prod":
     case "compatible-anthropic-endpoint":
