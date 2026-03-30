@@ -21,10 +21,11 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-info() { echo -e "${GREEN}[brev]${NC} $1"; }
-warn() { echo -e "${YELLOW}[brev]${NC} $1"; }
+_ts() { date '+%H:%M:%S'; }
+info() { echo -e "${GREEN}[$(_ts) brev]${NC} $1"; }
+warn() { echo -e "${YELLOW}[$(_ts) brev]${NC} $1"; }
 fail() {
-  echo -e "${RED}[brev]${NC} $1"
+  echo -e "${RED}[$(_ts) brev]${NC} $1"
   exit 1
 }
 
@@ -120,7 +121,9 @@ fi
 
 # --- 4. vLLM (local inference, if GPU present) ---
 VLLM_MODEL="nvidia/nemotron-3-nano-30b-a3b"
-if command -v nvidia-smi >/dev/null 2>&1; then
+if [ "${SKIP_VLLM:-}" = "1" ]; then
+  info "Skipping vLLM install (SKIP_VLLM=1)"
+elif command -v nvidia-smi >/dev/null 2>&1; then
   if ! python3 -c "import vllm" 2>/dev/null; then
     info "Installing vLLM..."
     if ! command -v pip3 >/dev/null 2>&1; then

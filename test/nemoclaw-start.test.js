@@ -15,4 +15,24 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(src).toMatch(/touch \/tmp\/gateway\.log/);
     expect(src).toMatch(/nohup "\$OPENCLAW" gateway run >\/tmp\/gateway\.log 2>&1 &/);
   });
+
+  it("exits on config integrity failure in non-root mode", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+    // Non-root block must call verify_config_integrity and exit 1 on failure
+    expect(src).toMatch(
+      /if ! verify_config_integrity; then\s+.*exit 1/s,
+    );
+    // Must not contain the old "proceeding anyway" fallback
+    expect(src).not.toMatch(/proceeding anyway/i);
+  });
+
+  it("calls verify_config_integrity in both root and non-root paths", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+    // The function must be called at least twice: once in the non-root
+    // if-block and once in the root path below it.
+    const calls = src.match(/verify_config_integrity/g) || [];
+    expect(calls.length).toBeGreaterThanOrEqual(3); // definition + 2 call sites
+  });
 });

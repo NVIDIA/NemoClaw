@@ -156,6 +156,7 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/npm }
+      - { path: /usr/local/bin/node }
 
   # ── Messaging — pre-allowed for OpenClaw agent notifications ────
   # Restricted to node processes to prevent arbitrary data exfiltration
