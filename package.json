@@ -12,12 +12,16 @@
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p jsconfig.json",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
-    "prepare": "if [ -d .git ]; then if command -v prek >/dev/null 2>&1; then prek install; elif [ -d node_modules/@j178/prek ]; then echo \"ERROR: prek package found but binary not in PATH\" && exit 1; else echo \"Skipping git hook setup (prek not installed)\"; fi; fi",
+    "prepare": "npm install --omit=dev --ignore-scripts 2>/dev/null || true && if [ -d .git ]; then if command -v prek >/dev/null 2>&1; then prek install; elif [ -d node_modules/@j178/prek ]; then echo \"ERROR: prek package found but binary not in PATH\" && exit 1; else echo \"Skipping git hook setup (prek not installed)\"; fi; fi",
     "prepublishOnly": "cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
   "dependencies": {
-    "openclaw": "2026.3.11"
+    "openclaw": "2026.3.11",
+    "p-retry": "^4.6.2"
   },
+  "bundleDependencies": [
+    "p-retry"
+  ],
   "files": [
     "bin/",
     "nemoclaw/dist/",
@@ -42,8 +46,8 @@
     "@j178/prek": "^0.3.6",
     "@types/node": "^25.5.0",
     "@vitest/coverage-v8": "^4.1.0",
-    "execa": "^9.6.1",
     "eslint": "^10.1.0",
+    "execa": "^9.6.1",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "vitest": "^4.1.0"
