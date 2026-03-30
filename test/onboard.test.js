@@ -10,16 +10,60 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildSandboxConfigSyncScript,
+  classifySandboxCreateFailure,
+  getGatewayReuseState,
   getFutureShellPathHint,
-  getInstalledOpenshellVersion,
-  isGatewayHealthy,
   getSandboxInferenceConfig,
+  getInstalledOpenshellVersion,
+  getRequestedModelHint,
+  getRequestedProviderHint,
+  getRequestedSandboxNameHint,
+  getResumeConfigConflicts,
+  getResumeSandboxConflict,
+  getSandboxStateFromOutputs,
   getStableGatewayImageRef,
+  isGatewayHealthy,
   patchStagedDockerfile,
+  printSandboxCreateRecoveryHints,
+  shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
 } from "../bin/lib/onboard";
 
 describe("onboard helpers", () => {
+  it("classifies sandbox create timeout failures and tracks upload progress", () => {
+    expect(
+      classifySandboxCreateFailure("Error: failed to read image export stream\nTimeout error").kind
+    ).toBe("image_transfer_timeout");
+    expect(
+      classifySandboxCreateFailure(
+        [
+          "  Pushing image openshell/sandbox-from:123 into gateway \"nemoclaw\"",
+          "  [progress] Uploaded to gateway",
+          "Error: failed to read image export stream",
+        ].join("\n")
+      )
+    ).toEqual({
+      kind: "image_transfer_timeout",
+      uploadedToGateway: true,
+    });
+  });
+
+  it("classifies sandbox create connection resets and incomplete create streams", () => {
+    expect(classifySandboxCreateFailure("Connection reset by peer").kind).toBe("image_transfer_reset");
+    expect(
+      classifySandboxCreateFailure(
+        [
+          "  Image openshell/sandbox-from:123 is available in the gateway.",
+          "Created sandbox: my-assistant",
+          "Error: stream closed unexpectedly",
+        ].join("\n")
+      )
+    ).toEqual({
+      kind: "sandbox_create_incomplete",
+      uploadedToGateway: true,
+    });
+  });
+
   it("builds a sandbox sync script that only writes nemoclaw config", () => {
     const script = buildSandboxConfigSyncScript({
       endpointType: "custom",
@@ -153,31 +197,220 @@ describe("onboard helpers", () => {
     expect(getStableGatewayImageRef("bogus")).toBe(null);
   });
 
-  it("recognizes only a connected named NemoClaw gateway as healthy", () => {
+  it("treats the gateway as healthy only when nemoclaw is running and connected", () => {
     expect(
       isGatewayHealthy(
-        "Server Status\n\n  Gateway: nemoclaw\n  Status: Connected",
+        "Gateway status: Connected\nGateway: nemoclaw",
+        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080",
         "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080"
       )
     ).toBe(true);
     expect(
       isGatewayHealthy(
-        "Server Status\n\n  Gateway: openshell\n  Status: Connected",
-        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080"
+        "\u001b[1mServer Status\u001b[0m\n\n  Gateway: openshell\n  Server: https://127.0.0.1:8080\n  Status: Connected",
+        "Error:   × No gateway metadata found for 'nemoclaw'.",
+        "Gateway Info\n\n  Gateway: openshell\n  Gateway endpoint: https://127.0.0.1:8080"
       )
     ).toBe(false);
     expect(
       isGatewayHealthy(
         "Server Status\n\n  Gateway: openshell\n  Status: Connected",
-        "Error: no gateway metadata found"
+        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080",
+        "Gateway Info\n\n  Gateway: openshell\n  Gateway endpoint: https://127.0.0.1:8080"
+      )
+    ).toBe(false);
+    expect(isGatewayHealthy("Gateway status: Disconnected", "Gateway: nemoclaw")).toBe(false);
+    expect(isGatewayHealthy("Gateway status: Connected", "Gateway: something-else")).toBe(false);
+  });
+
+  it("classifies gateway reuse states conservatively", () => {
+    expect(
+      getGatewayReuseState(
+        "Gateway status: Connected\nGateway: nemoclaw",
+        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080",
+        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080"
+      )
+    ).toBe("healthy");
+    expect(
+      getGatewayReuseState(
+        "Gateway status: Connected",
+        "Error:   × No gateway metadata found for 'nemoclaw'.",
+        "Gateway Info\n\n  Gateway: openshell\n  Gateway endpoint: https://127.0.0.1:8080"
+      )
+    ).toBe("foreign-active");
+    expect(
+      getGatewayReuseState(
+        "Server Status\n\n  Gateway: openshell\n  Status: Connected",
+        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080",
+        "Gateway Info\n\n  Gateway: openshell\n  Gateway endpoint: https://127.0.0.1:8080"
+      )
+    ).toBe("foreign-active");
+    expect(
+      getGatewayReuseState(
+        "Gateway status: Disconnected",
+        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080"
+      )
+    ).toBe("stale");
+    expect(
+      getGatewayReuseState(
+        "Gateway status: Connected\nGateway: nemoclaw",
+        "",
+        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080"
+      )
+    ).toBe("active-unnamed");
+    expect(
+      getGatewayReuseState(
+        "Gateway status: Connected",
+        "",
+        "Gateway Info\n\n  Gateway: openshell\n  Gateway endpoint: https://127.0.0.1:8080"
+      )
+    ).toBe("foreign-active");
+    expect(getGatewayReuseState("", "")).toBe("missing");
+  });
+
+  it("classifies sandbox reuse states from openshell outputs", () => {
+    expect(
+      getSandboxStateFromOutputs(
+        "my-assistant",
+        "Name: my-assistant",
+        "my-assistant   Ready   2m ago"
+      )
+    ).toBe("ready");
+    expect(
+      getSandboxStateFromOutputs(
+        "my-assistant",
+        "Name: my-assistant",
+        "my-assistant   NotReady   init failed"
+      )
+    ).toBe("not_ready");
+    expect(getSandboxStateFromOutputs("my-assistant", "", "")).toBe("missing");
+  });
+
+  it("filters local-only artifacts out of the sandbox build context", () => {
+    expect(
+      shouldIncludeBuildContextPath(
+        "/repo/nemoclaw-blueprint",
+        "/repo/nemoclaw-blueprint/orchestrator/main.py"
+      )
+    ).toBe(true);
+    expect(
+      shouldIncludeBuildContextPath(
+        "/repo/nemoclaw-blueprint",
+        "/repo/nemoclaw-blueprint/.venv/bin/python"
       )
     ).toBe(false);
     expect(
-      isGatewayHealthy(
-        "Server Status\n\n  Gateway: nemoclaw\n  Status: Disconnected",
-        "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080"
+      shouldIncludeBuildContextPath(
+        "/repo/nemoclaw-blueprint",
+        "/repo/nemoclaw-blueprint/.ruff_cache/cache"
       )
     ).toBe(false);
+    expect(
+      shouldIncludeBuildContextPath(
+        "/repo/nemoclaw-blueprint",
+        "/repo/nemoclaw-blueprint/._pyvenv.cfg"
+      )
+    ).toBe(false);
+  });
+
+  it("normalizes sandbox name hints from the environment", () => {
+    const previous = process.env.NEMOCLAW_SANDBOX_NAME;
+    process.env.NEMOCLAW_SANDBOX_NAME = "  My-Assistant  ";
+    try {
+      expect(getRequestedSandboxNameHint()).toBe("my-assistant");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      } else {
+        process.env.NEMOCLAW_SANDBOX_NAME = previous;
+      }
+    }
+  });
+
+  it("detects resume conflicts when a different sandbox is requested", () => {
+    const previous = process.env.NEMOCLAW_SANDBOX_NAME;
+    process.env.NEMOCLAW_SANDBOX_NAME = "other-sandbox";
+    try {
+      expect(getResumeSandboxConflict({ sandboxName: "my-assistant" })).toEqual({
+        requestedSandboxName: "other-sandbox",
+        recordedSandboxName: "my-assistant",
+      });
+      expect(getResumeSandboxConflict({ sandboxName: "other-sandbox" })).toBe(null);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      } else {
+        process.env.NEMOCLAW_SANDBOX_NAME = previous;
+      }
+    }
+  });
+
+  it("returns provider and model hints only for non-interactive runs", () => {
+    const previousProvider = process.env.NEMOCLAW_PROVIDER;
+    const previousModel = process.env.NEMOCLAW_MODEL;
+    process.env.NEMOCLAW_PROVIDER = "cloud";
+    process.env.NEMOCLAW_MODEL = "nvidia/test-model";
+    try {
+      expect(getRequestedProviderHint(true)).toBe("build");
+      expect(getRequestedModelHint(true)).toBe("nvidia/test-model");
+      expect(getRequestedProviderHint(false)).toBe(null);
+      expect(getRequestedModelHint(false)).toBe(null);
+    } finally {
+      if (previousProvider === undefined) {
+        delete process.env.NEMOCLAW_PROVIDER;
+      } else {
+        process.env.NEMOCLAW_PROVIDER = previousProvider;
+      }
+      if (previousModel === undefined) {
+        delete process.env.NEMOCLAW_MODEL;
+      } else {
+        process.env.NEMOCLAW_MODEL = previousModel;
+      }
+    }
+  });
+
+  it("detects resume conflicts for explicit provider and model changes", () => {
+    const previousProvider = process.env.NEMOCLAW_PROVIDER;
+    const previousModel = process.env.NEMOCLAW_MODEL;
+    process.env.NEMOCLAW_PROVIDER = "cloud";
+    process.env.NEMOCLAW_MODEL = "nvidia/other-model";
+    try {
+      // Provider conflict uses a two-stage alias chain in non-interactive mode:
+      // "cloud" first resolves to the requested hint, then that hint resolves
+      // to the effective provider name "nvidia-prod" for conflict comparison.
+      expect(
+        getResumeConfigConflicts(
+          {
+            sandboxName: "my-assistant",
+            provider: "nvidia-nim",
+            model: "nvidia/nemotron-3-super-120b-a12b",
+          },
+          { nonInteractive: true }
+        )
+      ).toEqual([
+        {
+          field: "provider",
+          requested: "nvidia-prod",
+          recorded: "nvidia-nim",
+        },
+        {
+          field: "model",
+          requested: "nvidia/other-model",
+          recorded: "nvidia/nemotron-3-super-120b-a12b",
+        },
+      ]);
+    } finally {
+      if (previousProvider === undefined) {
+        delete process.env.NEMOCLAW_PROVIDER;
+      } else {
+        process.env.NEMOCLAW_PROVIDER = previousProvider;
+      }
+      if (previousModel === undefined) {
+        delete process.env.NEMOCLAW_MODEL;
+      } else {
+        process.env.NEMOCLAW_MODEL = previousModel;
+      }
+    }
   });
 
   it("returns a future-shell PATH hint for user-local openshell installs", () => {
@@ -271,6 +504,175 @@ const { setupInference } = require(${onboardPath});
     assert.doesNotMatch(commands[1].command, /nvapi-secret-value/);
     assert.match(commands[1].command, /provider' 'create'/);
     assert.match(commands[2].command, /inference' 'set'/);
+  });
+
+  it("detects when the live inference route already matches the requested provider and model", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-inference-ready-"));
+    const fakeOpenshell = path.join(tmpDir, "openshell");
+    const scriptPath = path.join(tmpDir, "inference-ready-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+
+    fs.writeFileSync(
+      fakeOpenshell,
+      `#!/usr/bin/env bash
+if [ "$1" = "inference" ] && [ "$2" = "get" ]; then
+  cat <<'EOF'
+Gateway inference:
+
+  Route: inference.local
+  Provider: nvidia-prod
+  Model: nvidia/nemotron-3-super-120b-a12b
+  Version: 1
+EOF
+  exit 0
+fi
+exit 1
+`,
+      { mode: 0o755 }
+    );
+
+    fs.writeFileSync(
+      scriptPath,
+      `
+const { isInferenceRouteReady } = require(${onboardPath});
+console.log(JSON.stringify({
+  same: isInferenceRouteReady("nvidia-prod", "nvidia/nemotron-3-super-120b-a12b"),
+  otherModel: isInferenceRouteReady("nvidia-prod", "nvidia/other-model"),
+  otherProvider: isInferenceRouteReady("openai-api", "nvidia/nemotron-3-super-120b-a12b"),
+}));
+`
+    );
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        PATH: `${tmpDir}:${process.env.PATH || ""}`,
+      },
+    });
+
+    try {
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout.trim())).toEqual({
+        same: true,
+        otherModel: false,
+        otherProvider: false,
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("detects when OpenClaw is already configured inside the sandbox", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-ready-"));
+    const fakeOpenshell = path.join(tmpDir, "openshell");
+    const scriptPath = path.join(tmpDir, "openclaw-ready-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+
+    fs.writeFileSync(
+      fakeOpenshell,
+      `#!/usr/bin/env bash
+if [ "$1" = "sandbox" ] && [ "$2" = "download" ]; then
+  dest="\${@: -1}"
+  mkdir -p "$dest/sandbox/.openclaw"
+  cat > "$dest/sandbox/.openclaw/openclaw.json" <<'EOF'
+{"gateway":{"auth":{"token":"test-token"}}}
+EOF
+  exit 0
+fi
+exit 1
+`,
+      { mode: 0o755 }
+    );
+
+    fs.writeFileSync(
+      scriptPath,
+      `
+const { isOpenclawReady } = require(${onboardPath});
+console.log(JSON.stringify({
+  ready: isOpenclawReady("my-assistant"),
+}));
+`
+    );
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        PATH: `${tmpDir}:${process.env.PATH || ""}`,
+      },
+    });
+
+    try {
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout.trim())).toEqual({ ready: true });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("detects when recorded policy presets are already applied", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-ready-"));
+    const registryDir = path.join(tmpDir, ".nemoclaw");
+    const registryFile = path.join(registryDir, "sandboxes.json");
+    const scriptPath = path.join(tmpDir, "policy-ready-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      registryFile,
+      JSON.stringify(
+        {
+          sandboxes: {
+            "my-assistant": {
+              name: "my-assistant",
+              policies: ["pypi", "npm"],
+            },
+          },
+          defaultSandbox: "my-assistant",
+        },
+        null,
+        2
+      )
+    );
+
+    fs.writeFileSync(
+      scriptPath,
+      `
+const { arePolicyPresetsApplied } = require(${onboardPath});
+console.log(JSON.stringify({
+  ready: arePolicyPresetsApplied("my-assistant", ["pypi", "npm"]),
+  missing: arePolicyPresetsApplied("my-assistant", ["pypi", "slack"]),
+  empty: arePolicyPresetsApplied("my-assistant", []),
+}));
+`
+    );
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+      },
+    });
+
+    try {
+      expect(result.status).toBe(0);
+      const payload = JSON.parse(result.stdout.trim());
+      expect(payload).toEqual({
+        ready: true,
+        missing: false,
+        empty: false,
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("uses native Anthropic provider creation without embedding the secret in argv", () => {
@@ -415,6 +817,76 @@ const { setupInference } = require(${onboardPath});
     assert.match(commands[3].command, /inference' 'set' '--no-verify'/);
   });
 
+  it("hydrates stored provider credentials when setupInference runs without process env set", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-cred-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-resume-credential-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const credentials = require(${credentialsPath});
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (command.includes("inference") && command.includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: openai-api",
+      "  Model: gpt-5.4",
+      "  Version: 1",
+    ].join("\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+
+credentials.saveCredential("OPENAI_API_KEY", "sk-stored-secret");
+delete process.env.OPENAI_API_KEY;
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference("test-box", "gpt-5.4", "openai-api", "https://api.openai.com/v1", "OPENAI_API_KEY");
+  console.log(JSON.stringify({ commands, openai: process.env.OPENAI_API_KEY || null }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.equal(payload.openai, "sk-stored-secret");
+    assert.equal(payload.commands[1].env.OPENAI_API_KEY, "sk-stored-secret");
+    assert.doesNotMatch(payload.commands[1].command, /sk-stored-secret/);
+  });
+
   it("drops stale local sandbox registry entries when the live sandbox is gone", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-stale-sandbox-"));
@@ -462,68 +934,6 @@ console.log(JSON.stringify({ liveExists, sandbox: registry.getSandbox("my-assist
     const payload = JSON.parse(payloadLine);
     assert.equal(payload.liveExists, false);
     assert.equal(payload.sandbox, null);
-  });
-
-  it("reuses an existing healthy gateway instead of destroying it", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-gateway-reuse-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "gateway-reuse-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
-
-    const script = String.raw`
-const runner = require(${runnerPath});
-const commands = [];
-
-runner.run = (command, opts = {}) => {
-  commands.push(command);
-  return { status: 0 };
-};
-runner.runCapture = (command) => {
-  if (command.includes("'status'")) {
-    return "Server Status\n\n  Gateway: nemoclaw\n  Status: Connected";
-  }
-  if (command.includes("'gateway' 'info' '-g' 'nemoclaw'")) {
-    return "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080";
-  }
-  if (command.includes("'--version'")) {
-    return "openshell 0.0.12";
-  }
-  return "";
-};
-
-const { startGateway } = require(${onboardPath});
-
-(async () => {
-  await startGateway(null);
-  console.log(JSON.stringify(commands));
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
-    });
-
-    assert.equal(result.status, 0, result.stderr);
-    const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 1);
-    assert.match(commands[0], /gateway' 'select' 'nemoclaw'/);
-    assert.doesNotMatch(commands[0], /gateway' 'destroy'/);
-    assert.doesNotMatch(commands[0], /gateway' 'start'/);
   });
 
   it("builds the sandbox without uploading an external OpenClaw config file", async () => {
@@ -735,6 +1145,54 @@ const { createSandbox } = require(${onboardPath});
     assert.equal(payload.unrefCalls, 1);
     assert.equal(payload.stdoutDestroyCalls, 1);
     assert.equal(payload.stderrDestroyCalls, 1);
+  });
+
+  it("prints resume guidance when sandbox image upload times out", () => {
+    const errors = [];
+    const originalError = console.error;
+    console.error = (...args) => errors.push(args.join(" "));
+    try {
+      printSandboxCreateRecoveryHints(
+        [
+          "  Pushing image openshell/sandbox-from:123 into gateway nemoclaw",
+          "  [progress] Uploaded to gateway",
+          "Error: failed to read image export stream",
+          "Timeout error",
+        ].join("\n")
+      );
+    } finally {
+      console.error = originalError;
+    }
+
+    const joined = errors.join("\n");
+    assert.match(joined, /Hint: image upload into the OpenShell gateway timed out\./);
+    assert.match(joined, /Recovery: nemoclaw onboard --resume/);
+    assert.match(
+      joined,
+      /Progress reached the gateway upload stage, so resume may be able to reuse existing gateway state\./
+    );
+  });
+
+  it("prints resume guidance when sandbox image upload resets after transfer progress", () => {
+    const errors = [];
+    const originalError = console.error;
+    console.error = (...args) => errors.push(args.join(" "));
+    try {
+      printSandboxCreateRecoveryHints(
+        [
+          "  Pushing image openshell/sandbox-from:123 into gateway nemoclaw",
+          "  [progress] Uploaded to gateway",
+          "Error: Connection reset by peer",
+        ].join("\n")
+      );
+    } finally {
+      console.error = originalError;
+    }
+
+    const joined = errors.join("\n");
+    assert.match(joined, /Hint: the image push\/import stream was interrupted\./);
+    assert.match(joined, /Recovery: nemoclaw onboard --resume/);
+    assert.match(joined, /The image appears to have reached the gateway before the stream failed\./);
   });
 
   it("accepts gateway inference when system inference is separately not configured", () => {

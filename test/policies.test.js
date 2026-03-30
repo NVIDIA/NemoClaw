@@ -136,6 +136,41 @@ describe("policies", () => {
     });
   });
 
+  describe("mergePresetIntoPolicy", () => {
+    const sampleEntries = "  - host: example.com\n    allow: true";
+
+    it("appends network_policies when current policy has content but no version header", () => {
+      const versionless = "some_key:\n  foo: bar";
+      const merged = policies.mergePresetIntoPolicy(versionless, sampleEntries);
+      expect(merged.startsWith("version: 1\n")).toBe(true);
+      expect(merged).toContain("some_key:");
+      expect(merged).toContain("network_policies:");
+      expect(merged).toContain("example.com");
+    });
+
+    it("appends preset entries when current policy has network_policies but no version", () => {
+      const versionlessWithNp =
+        "network_policies:\n  - host: existing.com\n    allow: true";
+      const merged = policies.mergePresetIntoPolicy(versionlessWithNp, sampleEntries);
+      expect(merged.trimStart().startsWith("version: 1\n")).toBe(true);
+      expect(merged).toContain("existing.com");
+      expect(merged).toContain("example.com");
+    });
+
+    it("keeps existing version when present", () => {
+      const withVersion = "version: 2\n\nnetwork_policies:\n  - host: old.com";
+      const merged = policies.mergePresetIntoPolicy(withVersion, sampleEntries);
+      expect(merged).toContain("version: 2");
+      expect(merged).toContain("example.com");
+    });
+
+    it("returns version + network_policies when current policy is empty", () => {
+      const merged = policies.mergePresetIntoPolicy("", sampleEntries);
+      expect(merged.startsWith("version: 1\n\nnetwork_policies:")).toBe(true);
+      expect(merged).toContain("example.com");
+    });
+  });
+
   describe("preset YAML schema", () => {
     it("no preset has rules at NetworkPolicyRuleDef level", () => {
       // rules must be inside endpoints, not as sibling of endpoints/binaries
