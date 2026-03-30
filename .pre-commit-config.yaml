@@ -63,7 +63,7 @@ repos:
         name: SPDX license headers (insert if missing)
         entry: bash scripts/check-spdx-headers.sh --fix
         language: system
-        files: ^(nemoclaw/src/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
+        files: ^(nemoclaw/src/.*\.ts|scripts/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
         exclude: ^nemoclaw-blueprint/.*__init__\.py$
         pass_filenames: true
         priority: 4
@@ -205,6 +205,25 @@ repos:
         files: ^(bin|test|scripts)/.*\.js$
         stages: [pre-push]
         priority: 10
+
+      - id: tsc-check-cli
+        name: TypeScript type check (CLI)
+        entry: npx tsc -p tsconfig.cli.json
+        language: system
+        pass_filenames: false
+        files: ^(bin|scripts)/
+        types_or: [ts, tsx]
+        stages: [pre-push]
+        priority: 10
+
+      - id: vitest-root
+        name: Vitest (unit tests)
+        entry: npx vitest run --project cli
+        language: system
+        pass_filenames: false
+        files: ^(bin|test|scripts)/
+        stages: [pre-push]
+        priority: 20
 
 default_language_version:
   python: python3
