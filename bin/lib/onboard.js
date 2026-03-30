@@ -30,6 +30,7 @@ const {
 const {
   inferContainerRuntime,
   isUnsupportedMacosRuntime,
+  isWsl,
   shouldPatchCoredns,
 } = require("./platform");
 const { resolveOpenshell } = require("./resolve-openshell");
@@ -2192,7 +2193,11 @@ async function setupNim(gpu) {
     } else if (selected.key === "ollama") {
       if (!ollamaRunning) {
         console.log("  Starting Ollama...");
-        run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
+        // On WSL2, binding to 0.0.0.0 creates a dual-stack socket that Docker
+        // cannot reach via host-gateway. The default 127.0.0.1 binding works
+        // because WSL2 relays IPv4-only sockets to the Windows host.
+        const ollamaEnv = isWsl() ? "" : "OLLAMA_HOST=0.0.0.0:11434 ";
+        run(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
         sleep(2);
       }
       console.log("  ✓ Using Ollama on localhost:11434");
@@ -2230,6 +2235,7 @@ async function setupNim(gpu) {
       }
       break;
     } else if (selected.key === "install-ollama") {
+      // macOS only — this option is gated by process.platform === "darwin" above
       console.log("  Installing Ollama via Homebrew...");
       run("brew install ollama", { ignoreError: true });
       console.log("  Starting Ollama...");
