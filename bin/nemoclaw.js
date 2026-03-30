@@ -519,12 +519,15 @@ function showStatus() {
   // Show sandbox registry
   const { sandboxes, defaultSandbox } = registry.listSandboxes();
   if (sandboxes.length > 0) {
+    const live = parseGatewayInference(
+      captureOpenshell(["inference", "get"], { ignoreError: true }).output
+    );
     console.log("");
     console.log("  Sandboxes:");
     for (const sb of sandboxes) {
       const def = sb.name === defaultSandbox ? " *" : "";
-      const model = sb.model ? ` (${sb.model})` : "";
-      console.log(`    ${sb.name}${def}${model}`);
+      const model = (live && live.model) || sb.model;
+      console.log(`    ${sb.name}${def}${model ? ` (${model})` : ""}`);
     }
     console.log("");
   }
@@ -542,12 +545,17 @@ function listSandboxes() {
     return;
   }
 
+  // Query live gateway inference once; prefer it over stale registry values.
+  const live = parseGatewayInference(
+    captureOpenshell(["inference", "get"], { ignoreError: true }).output
+  );
+
   console.log("");
   console.log("  Sandboxes:");
   for (const sb of sandboxes) {
     const def = sb.name === defaultSandbox ? " *" : "";
-    const model = sb.model || "unknown";
-    const provider = sb.provider || "unknown";
+    const model = (live && live.model) || sb.model || "unknown";
+    const provider = (live && live.provider) || sb.provider || "unknown";
     const gpu = sb.gpuEnabled ? "GPU" : "CPU";
     const presets = sb.policies && sb.policies.length > 0 ? sb.policies.join(", ") : "none";
     console.log(`    ${sb.name}${def}`);
