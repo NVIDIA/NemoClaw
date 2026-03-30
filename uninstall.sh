@@ -493,6 +493,46 @@ remove_optional_ollama_models() {
   done
 }
 
+remove_nemoclaw_swap() {
+  if [ ! -f /swapfile ]; then
+    info "No /swapfile found; skipping swap cleanup."
+    return 0
+  fi
+
+  if [ ! -f "$NEMOCLAW_STATE_DIR/managed_swap" ]; then
+    warn "No NemoClaw-managed swap marker found, skipping swap cleanup."
+    return 0
+  fi
+
+  local swap_file
+  swap_file=$(cat "$NEMOCLAW_STATE_DIR/managed_swap" 2>/dev/null || echo "")
+  if [ "$swap_file" != "/swapfile" ]; then
+    warn "Marker file does not point to /swapfile, skipping swap cleanup."
+    return 0
+  fi
+
+  if [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
+    warn "Skipping swap cleanup in non-interactive mode (requires sudo)."
+    return 0
+  fi
+
+  info "Deactivating and removing /swapfile..."
+  sudo swapoff /swapfile 2>/dev/null || true
+  sudo rm -f /swapfile
+
+  if [ -f /swapfile ]; then
+    warn "Failed to remove /swapfile. Please remove it manually."
+    return 1
+  fi
+
+  # Clean fstab entry
+  if grep -q '/swapfile' /etc/fstab 2>/dev/null; then
+    sudo sed -i '\|^/swapfile[[:space:]]|d' /etc/fstab
+    info "Removed /swapfile entry from /etc/fstab"
+  fi
+  info "Swap file removed"
+}
+
 remove_runtime_temp_artifacts() {
   remove_glob_paths "${TMP_ROOT}/nemoclaw-create-*.log"
   remove_glob_paths "${TMP_ROOT}/nemoclaw-tg-ssh-*.conf"
@@ -545,6 +585,10 @@ main() {
   remove_optional_ollama_models
 
   step 6 "State and binaries"
+  info "Removing NemoClaw-managed swap file..."
+  remove_nemoclaw_swap
+
+  info "Removing runtime temp artifacts..."
   remove_runtime_temp_artifacts
   remove_openshell_binary
   remove_nemoclaw_state
