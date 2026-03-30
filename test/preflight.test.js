@@ -178,6 +178,7 @@ describe("ensureSwap", () => {
       platform: "linux",
       memoryInfo: { totalRamMB: 4000, totalSwapMB: 0, totalMB: 4000 },
       dryRun: true,
+      swapfileExists: false,
     });
     assert.equal(result.ok, true);
     assert.equal(result.swapCreated, true);
