@@ -107,6 +107,16 @@ elif command -v gtimeout >/dev/null 2>&1; then
   TIMEOUT_BIN="gtimeout"
 fi
 
+SCRIPT_DIR=""
+REPO_ROOT=""
+ONBOARD_SESSION_HELPER=""
+SCRIPT_PATH="${BASH_SOURCE[0]:-}"
+if [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+  REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+  ONBOARD_SESSION_HELPER="${REPO_ROOT}/bin/lib/onboard-session.js"
+fi
+
 # Redact known sensitive patterns (API keys, tokens, passwords in env/args).
 redact() {
   sed -E \
@@ -241,6 +251,24 @@ collect "openshell-logs" openshell logs "$SANDBOX_NAME"
 
 if [ "$QUICK" = false ]; then
   collect "openshell-gateway-info" openshell gateway info
+fi
+
+# -- Onboard session state --
+
+section "Onboard Session"
+if [ -n "$ONBOARD_SESSION_HELPER" ] && [ -f "$ONBOARD_SESSION_HELPER" ] && command -v node >/dev/null 2>&1; then
+  # shellcheck disable=SC2016
+  collect "onboard-session-summary" node -e '
+    const helper = require(process.argv[1]);
+    const summary = helper.summarizeForDebug();
+    if (!summary) {
+      process.stdout.write("No onboard session state found.\n");
+      process.exit(0);
+    }
+    process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+  ' "$ONBOARD_SESSION_HELPER"
+else
+  echo "  (onboard session helper not available, skipping)"
 fi
 
 # -- Sandbox internals (via SSH using openshell ssh-config) --

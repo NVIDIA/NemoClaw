@@ -48,10 +48,11 @@ vi.mock("node:fs", async (importOriginal) => {
       if (!entry) throw new Error(`ENOENT: ${src}`);
       store.set(dest, { ...entry });
     }),
-    cpSync: vi.fn((src: string, dest: string) => {
+    cpSync: vi.fn((src: string, dest: string, opts?: { filter?: (source: string) => boolean }) => {
       // Shallow copy: copy all entries whose path starts with src
       for (const [k, v] of store) {
         if (k === src || k.startsWith(src + "/")) {
+          if (opts?.filter && !opts.filter(k)) continue;
           const relative = k.slice(src.length);
           store.set(dest + relative, { ...v });
         }
@@ -455,7 +456,7 @@ describe("commands/migration-state", () => {
         expect.unreachable("bundle should not be null");
         return;
       }
-      expect(bundle.manifest.version).toBe(2);
+      expect(bundle.manifest.version).toBe(3);
       expect(bundle.manifest.homeDir).toBe("/home/user");
       expect(bundle.temporary).toBe(false);
     });
@@ -528,6 +529,294 @@ describe("commands/migration-state", () => {
         return;
       }
       expect(bundle.manifest.externalRoots.length).toBe(1);
+    });
+
+    it("excludes auth-profiles.json from snapshot", () => {
+      const logger = makeLogger();
+      addDir("/home/user/.openclaw");
+      addFile("/home/user/.openclaw/openclaw.json", JSON.stringify({ version: 1 }));
+      addDir("/home/user/.openclaw/agents/main/agent");
+      addFile(
+        "/home/user/.openclaw/agents/main/agent/auth-profiles.json",
+        JSON.stringify({ "nvidia:manual": { type: "api_key" } }),
+      );
+      addFile(
+        "/home/user/.openclaw/agents/main/agent/config.json",
+        JSON.stringify({ name: "main" }),
+      );
+
+      const hostState: HostOpenClawState = {
+        exists: true,
+        homeDir: "/home/user",
+        stateDir: "/home/user/.openclaw",
+        configDir: "/home/user/.openclaw",
+        configPath: "/home/user/.openclaw/openclaw.json",
+        workspaceDir: null,
+        extensionsDir: null,
+        skillsDir: null,
+        hooksDir: null,
+        externalRoots: [],
+        warnings: [],
+        errors: [],
+        hasExternalConfig: false,
+      };
+
+      const bundle = createSnapshotBundle(hostState, logger, { persist: false });
+      if (bundle === null) {
+        expect.unreachable("bundle should not be null");
+        return;
+      }
+
+      // auth-profiles.json should not exist anywhere in the snapshot
+      const snapshotKeys = [...store.keys()].filter((k) => k.startsWith(bundle.snapshotDir));
+      const authProfileKeys = snapshotKeys.filter((k) => k.endsWith("auth-profiles.json"));
+      expect(authProfileKeys).toHaveLength(0);
+
+      // config.json should still be present
+      const configKeys = snapshotKeys.filter((k) => k.endsWith("agents/main/agent/config.json"));
+      expect(configKeys.length).toBeGreaterThan(0);
+    });
+
+    it("strips gateway key and credential fields from sandbox openclaw.json", () => {
+      const logger = makeLogger();
+      addDir("/home/user/.openclaw");
+      addFile(
+        "/home/user/.openclaw/openclaw.json",
+        JSON.stringify({
+          version: 1,
+          gateway: { auth: { token: "secret123" } },
+          nvidia: { apiKey: "nvapi-test-key" },
+          agents: { defaults: { model: { primary: "test-model" } } },
+        }),
+      );
+
+      const hostState: HostOpenClawState = {
+        exists: true,
+        homeDir: "/home/user",
+        stateDir: "/home/user/.openclaw",
+        configDir: "/home/user/.openclaw",
+        configPath: "/home/user/.openclaw/openclaw.json",
+        workspaceDir: null,
+        extensionsDir: null,
+        skillsDir: null,
+        hooksDir: null,
+        externalRoots: [],
+        warnings: [],
+        errors: [],
+        hasExternalConfig: false,
+      };
+
+      const bundle = createSnapshotBundle(hostState, logger, { persist: false });
+      if (bundle === null) {
+        expect.unreachable("bundle should not be null");
+        return;
+      }
+
+      // Read the sandbox-bundle openclaw.json
+      const sandboxConfigEntry = store.get(bundle.preparedStateDir + "/openclaw.json");
+      if (!sandboxConfigEntry?.content) {
+        expect.unreachable("sandbox config entry should exist with content");
+        return;
+      }
+      const sandboxConfig = JSON.parse(sandboxConfigEntry.content);
+      // gateway key should be removed entirely
+      expect(sandboxConfig).not.toHaveProperty("gateway");
+      // credential fields should be stripped
+      expect(sandboxConfig.nvidia.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
+      // non-credential fields should be preserved
+      expect(sandboxConfig.version).toBe(1);
+      expect(sandboxConfig.agents.defaults.model.primary).toBe("test-model");
+    });
+
+    it("strips pattern-matched credential fields (accessToken, privateKey, etc.)", () => {
+      const logger = makeLogger();
+      addDir("/home/user/.openclaw");
+      addFile(
+        "/home/user/.openclaw/openclaw.json",
+        JSON.stringify({
+          version: 1,
+          provider: {
+            accessToken: "test-access-token",
+            refreshToken: "test-refresh-token",
+            privateKey: "test-private-key",
+            clientSecret: "test-client-secret",
+            displayName: "should-be-preserved",
+          },
+        }),
+      );
+
+      const hostState: HostOpenClawState = {
+        exists: true,
+        homeDir: "/home/user",
+        stateDir: "/home/user/.openclaw",
+        configDir: "/home/user/.openclaw",
+        configPath: "/home/user/.openclaw/openclaw.json",
+        workspaceDir: null,
+        extensionsDir: null,
+        skillsDir: null,
+        hooksDir: null,
+        externalRoots: [],
+        warnings: [],
+        errors: [],
+        hasExternalConfig: false,
+      };
+
+      const bundle = createSnapshotBundle(hostState, logger, { persist: false });
+      if (bundle === null) {
+        expect.unreachable("bundle should not be null");
+        return;
+      }
+
+      const sandboxConfigEntry = store.get(bundle.preparedStateDir + "/openclaw.json");
+      if (!sandboxConfigEntry?.content) {
+        expect.unreachable("sandbox config entry should exist with content");
+        return;
+      }
+      const sandboxConfig = JSON.parse(sandboxConfigEntry.content);
+      expect(sandboxConfig.provider.accessToken).toBe("[STRIPPED_BY_MIGRATION]");
+      expect(sandboxConfig.provider.refreshToken).toBe("[STRIPPED_BY_MIGRATION]");
+      expect(sandboxConfig.provider.privateKey).toBe("[STRIPPED_BY_MIGRATION]");
+      expect(sandboxConfig.provider.clientSecret).toBe("[STRIPPED_BY_MIGRATION]");
+      expect(sandboxConfig.provider.displayName).toBe("should-be-preserved");
+    });
+
+    it("records blueprintDigest when blueprintPath is provided", () => {
+      const logger = makeLogger();
+      addDir("/home/user/.openclaw");
+      addFile("/home/user/.openclaw/openclaw.json", JSON.stringify({ version: 1 }));
+      addFile("/test/blueprint.yaml", "version: 0.1.0\ndigest: ''\n");
+
+      const hostState: HostOpenClawState = {
+        exists: true,
+        homeDir: "/home/user",
+        stateDir: "/home/user/.openclaw",
+        configDir: "/home/user/.openclaw",
+        configPath: "/home/user/.openclaw/openclaw.json",
+        workspaceDir: null,
+        extensionsDir: null,
+        skillsDir: null,
+        hooksDir: null,
+        externalRoots: [],
+        warnings: [],
+        errors: [],
+        hasExternalConfig: false,
+      };
+
+      const bundle = createSnapshotBundle(hostState, logger, {
+        persist: false,
+        blueprintPath: "/test/blueprint.yaml",
+      });
+      if (bundle === null) {
+        expect.unreachable("bundle should not be null");
+        return;
+      }
+      expect(typeof bundle.manifest.blueprintDigest).toBe("string");
+      expect((bundle.manifest.blueprintDigest ?? "").length).toBeGreaterThan(0);
+    });
+
+    it("blueprintDigest is undefined when no blueprintPath given", () => {
+      const logger = makeLogger();
+      addDir("/home/user/.openclaw");
+      addFile("/home/user/.openclaw/openclaw.json", JSON.stringify({ version: 1 }));
+
+      const hostState: HostOpenClawState = {
+        exists: true,
+        homeDir: "/home/user",
+        stateDir: "/home/user/.openclaw",
+        configDir: "/home/user/.openclaw",
+        configPath: "/home/user/.openclaw/openclaw.json",
+        workspaceDir: null,
+        extensionsDir: null,
+        skillsDir: null,
+        hooksDir: null,
+        externalRoots: [],
+        warnings: [],
+        errors: [],
+        hasExternalConfig: false,
+      };
+
+      const bundle = createSnapshotBundle(hostState, logger, { persist: false });
+      if (bundle === null) {
+        expect.unreachable("bundle should not be null");
+        return;
+      }
+      expect(bundle.manifest.blueprintDigest).toBeUndefined();
+    });
+
+    it("fails when blueprintPath is provided but file is missing", () => {
+      const logger = makeLogger();
+      addDir("/home/user/.openclaw");
+      addFile("/home/user/.openclaw/openclaw.json", JSON.stringify({ version: 1 }));
+
+      const hostState: HostOpenClawState = {
+        exists: true,
+        homeDir: "/home/user",
+        stateDir: "/home/user/.openclaw",
+        configDir: "/home/user/.openclaw",
+        configPath: "/home/user/.openclaw/openclaw.json",
+        workspaceDir: null,
+        extensionsDir: null,
+        skillsDir: null,
+        hooksDir: null,
+        externalRoots: [],
+        warnings: [],
+        errors: [],
+        hasExternalConfig: false,
+      };
+
+      // /test/nonexistent.yaml does not exist in store
+      const bundle = createSnapshotBundle(hostState, logger, {
+        persist: false,
+        blueprintPath: "/test/nonexistent.yaml",
+      });
+      expect(bundle).toBeNull();
+      expect(logger.error).toHaveBeenCalled();
+    });
+
+    it("sanitizes credentials in the snapshot directory itself (not just sandbox-bundle)", () => {
+      const logger = makeLogger();
+      addDir("/home/user/.openclaw");
+      addFile(
+        "/home/user/.openclaw/openclaw.json",
+        JSON.stringify({
+          version: 1,
+          gateway: { auth: { token: "secret123" } },
+          nvidia: { apiKey: "nvapi-test-key" },
+        }),
+      );
+
+      const hostState: HostOpenClawState = {
+        exists: true,
+        homeDir: "/home/user",
+        stateDir: "/home/user/.openclaw",
+        configDir: "/home/user/.openclaw",
+        configPath: "/home/user/.openclaw/openclaw.json",
+        workspaceDir: null,
+        extensionsDir: null,
+        skillsDir: null,
+        hooksDir: null,
+        externalRoots: [],
+        warnings: [],
+        errors: [],
+        hasExternalConfig: false,
+      };
+
+      const bundle = createSnapshotBundle(hostState, logger, { persist: false });
+      if (bundle === null) {
+        expect.unreachable("bundle should not be null");
+        return;
+      }
+
+      // Check the snapshot-level openclaw.json (not sandbox-bundle)
+      const snapshotConfigEntry = store.get(bundle.snapshotDir + "/openclaw/openclaw.json");
+      if (!snapshotConfigEntry?.content) {
+        expect.unreachable("snapshot config entry should exist with content");
+        return;
+      }
+      const snapshotConfig = JSON.parse(snapshotConfigEntry.content);
+      expect(snapshotConfig).not.toHaveProperty("gateway");
+      expect(snapshotConfig.nvidia.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
+      expect(snapshotConfig.version).toBe(1);
     });
   });
 
@@ -893,6 +1182,237 @@ describe("commands/migration-state", () => {
           delete process.env.OPENCLAW_CONFIG_PATH;
         } else {
           process.env.OPENCLAW_CONFIG_PATH = origConfigPath;
+        }
+      }
+    });
+
+    it("restore succeeds when blueprint digest matches", () => {
+      const logger = makeLogger();
+      const origHome = process.env.HOME;
+      process.env.HOME = "/home/user";
+      try {
+        const blueprintContent = "version: 0.1.0\ndigest: ''\n";
+        addFile("/test/blueprint.yaml", blueprintContent);
+
+        // First create a snapshot with blueprintPath to get the real digest
+        addDir("/home/user/.openclaw");
+        addFile("/home/user/.openclaw/openclaw.json", JSON.stringify({ version: 1 }));
+        const hostState: HostOpenClawState = {
+          exists: true,
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configDir: "/home/user/.openclaw",
+          configPath: "/home/user/.openclaw/openclaw.json",
+          workspaceDir: null,
+          extensionsDir: null,
+          skillsDir: null,
+          hooksDir: null,
+          externalRoots: [],
+          warnings: [],
+          errors: [],
+          hasExternalConfig: false,
+        };
+        const bundle = createSnapshotBundle(hostState, logger, {
+          persist: false,
+          blueprintPath: "/test/blueprint.yaml",
+        });
+        if (bundle === null) {
+          expect.unreachable("bundle should not be null");
+          return;
+        }
+        const digest = bundle.manifest.blueprintDigest;
+        expect(digest).toBeTruthy();
+
+        // Now set up for restore with matching digest
+        store.clear();
+        const manifest: SnapshotManifest = {
+          version: 3,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configPath: null,
+          hasExternalConfig: false,
+          externalRoots: [],
+          warnings: [],
+          blueprintDigest: digest,
+        };
+        addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
+        addDir("/snapshots/snap1/openclaw");
+        addFile("/snapshots/snap1/openclaw/openclaw.json", JSON.stringify({ restored: true }));
+        addFile("/test/blueprint.yaml", blueprintContent);
+
+        const result = restoreSnapshotToHost("/snapshots/snap1", logger, {
+          blueprintPath: "/test/blueprint.yaml",
+        });
+        expect(result).toBe(true);
+      } finally {
+        if (origHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = origHome;
+        }
+      }
+    });
+
+    it("restore fails when blueprint digest mismatches", () => {
+      const logger = makeLogger();
+      const origHome = process.env.HOME;
+      process.env.HOME = "/home/user";
+      try {
+        const manifest: SnapshotManifest = {
+          version: 3,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configPath: null,
+          hasExternalConfig: false,
+          externalRoots: [],
+          warnings: [],
+          blueprintDigest: "wrong-hash-value",
+        };
+        addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
+        addDir("/snapshots/snap1/openclaw");
+        addFile("/test/blueprint.yaml", "version: 0.1.0\n");
+
+        const result = restoreSnapshotToHost("/snapshots/snap1", logger, {
+          blueprintPath: "/test/blueprint.yaml",
+        });
+        expect(result).toBe(false);
+        expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("digest mismatch"));
+      } finally {
+        if (origHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = origHome;
+        }
+      }
+    });
+
+    it("restore fails when manifest has empty string blueprintDigest", () => {
+      const logger = makeLogger();
+      const origHome = process.env.HOME;
+      process.env.HOME = "/home/user";
+      try {
+        const manifest: SnapshotManifest = {
+          version: 3,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configPath: null,
+          hasExternalConfig: false,
+          externalRoots: [],
+          warnings: [],
+          blueprintDigest: "",
+        };
+        addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
+        addDir("/snapshots/snap1/openclaw");
+
+        const result = restoreSnapshotToHost("/snapshots/snap1", logger);
+        expect(result).toBe(false);
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.stringContaining("invalid blueprintDigest"),
+        );
+      } finally {
+        if (origHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = origHome;
+        }
+      }
+    });
+
+    it("restore fails when manifest has digest but no blueprintPath provided", () => {
+      const logger = makeLogger();
+      const origHome = process.env.HOME;
+      process.env.HOME = "/home/user";
+      try {
+        const manifest: SnapshotManifest = {
+          version: 3,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configPath: null,
+          hasExternalConfig: false,
+          externalRoots: [],
+          warnings: [],
+          blueprintDigest: "abc123",
+        };
+        addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
+        addDir("/snapshots/snap1/openclaw");
+
+        const result = restoreSnapshotToHost("/snapshots/snap1", logger);
+        expect(result).toBe(false);
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.stringContaining("no blueprint is available"),
+        );
+      } finally {
+        if (origHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = origHome;
+        }
+      }
+    });
+
+    it("restore succeeds when manifest has no blueprintDigest (backward compat)", () => {
+      const logger = makeLogger();
+      const origHome = process.env.HOME;
+      process.env.HOME = "/home/user";
+      try {
+        const manifest: SnapshotManifest = {
+          version: 2,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configPath: null,
+          hasExternalConfig: false,
+          externalRoots: [],
+          warnings: [],
+          // no blueprintDigest field
+        };
+        addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
+        addDir("/snapshots/snap1/openclaw");
+        addFile("/snapshots/snap1/openclaw/openclaw.json", JSON.stringify({ restored: true }));
+
+        const result = restoreSnapshotToHost("/snapshots/snap1", logger);
+        expect(result).toBe(true);
+      } finally {
+        if (origHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = origHome;
+        }
+      }
+    });
+
+    it("restore succeeds for v3 snapshot created without blueprintPath", () => {
+      const logger = makeLogger();
+      const origHome = process.env.HOME;
+      process.env.HOME = "/home/user";
+      try {
+        // v3 manifest with no blueprintDigest field — created without a blueprint
+        const manifest: SnapshotManifest = {
+          version: 3,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          homeDir: "/home/user",
+          stateDir: "/home/user/.openclaw",
+          configPath: null,
+          hasExternalConfig: false,
+          externalRoots: [],
+          warnings: [],
+          // blueprintDigest intentionally omitted
+        };
+        addFile("/snapshots/snap1/snapshot.json", JSON.stringify(manifest));
+        addDir("/snapshots/snap1/openclaw");
+        addFile("/snapshots/snap1/openclaw/openclaw.json", JSON.stringify({ restored: true }));
+
+        const result = restoreSnapshotToHost("/snapshots/snap1", logger);
+        expect(result).toBe(true);
+      } finally {
+        if (origHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = origHome;
         }
       }
     });

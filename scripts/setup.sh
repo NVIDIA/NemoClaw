@@ -34,10 +34,11 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=./lib/runtime.sh
 . "$SCRIPT_DIR/lib/runtime.sh"
 
-info() { echo -e "${GREEN}>>>${NC} $1"; }
-warn() { echo -e "${YELLOW}>>>${NC} $1"; }
+_ts() { date '+%H:%M:%S'; }
+info() { echo -e "${GREEN}[$(_ts)]${NC} $1"; }
+warn() { echo -e "${YELLOW}[$(_ts)]${NC} $1"; }
 fail() {
-  echo -e "${RED}>>>${NC} $1"
+  echo -e "${RED}[$(_ts)]${NC} $1"
   exit 1
 }
 
@@ -92,7 +93,7 @@ fi
 if [ "$CONTAINER_RUNTIME" != "unknown" ]; then
   info "Container runtime: $CONTAINER_RUNTIME"
 fi
-SANDBOX_NAME="${1:-nemoclaw}"
+SANDBOX_NAME="${1:-${NEMOCLAW_SANDBOX_NAME:-nemoclaw}}"
 info "Using sandbox name: ${SANDBOX_NAME}"
 
 OPEN_SHELL_VERSION_RAW="$(openshell -V 2>/dev/null || true)"
@@ -109,23 +110,34 @@ fi
 # 1. Gateway — always start fresh to avoid stale state
 info "Starting OpenShell gateway..."
 openshell gateway destroy -g nemoclaw >/dev/null 2>&1 || true
+docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | grep . && docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | xargs docker volume rm || true
 GATEWAY_ARGS=(--name nemoclaw)
 command -v nvidia-smi >/dev/null 2>&1 && GATEWAY_ARGS+=(--gpu)
-openshell gateway start "${GATEWAY_ARGS[@]}" 2>&1 | grep -E "Gateway|✓|Error|error" || true
+if ! openshell gateway start "${GATEWAY_ARGS[@]}" 2>&1 | grep -E "Gateway|✓|Error|error"; then
+  warn "Gateway start failed. Cleaning up stale state..."
+  openshell gateway destroy -g nemoclaw >/dev/null 2>&1 || true
+  docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | grep . && docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | xargs docker volume rm || true
+  fail "Stale state removed. Please rerun: nemoclaw onboard"
+fi
 
 # Verify gateway is actually healthy (may need a moment after start)
 for i in 1 2 3 4 5; do
   if openshell status 2>&1 | grep -q "Connected"; then
     break
   fi
-  [ "$i" -eq 5 ] && fail "Gateway failed to start. Check 'openshell gateway info' and Docker logs."
+  if [ "$i" -eq 5 ]; then
+    warn "Gateway health check failed. Cleaning up stale state..."
+    openshell gateway destroy -g nemoclaw >/dev/null 2>&1 || true
+    docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | grep . && docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | xargs docker volume rm || true
+    fail "Stale state removed. Please rerun: nemoclaw onboard"
+  fi
   sleep 2
 done
 info "Gateway is healthy"
 
-# 2. CoreDNS fix (Colima only)
-if [ "$CONTAINER_RUNTIME" = "colima" ]; then
-  info "Patching CoreDNS for Colima..."
+# 2. CoreDNS fix — k3s-inside-Docker has broken DNS forwarding on all platforms
+if [ "$CONTAINER_RUNTIME" != "unknown" ]; then
+  info "Patching CoreDNS DNS forwarding..."
   bash "$SCRIPT_DIR/fix-coredns.sh" nemoclaw 2>&1 || warn "CoreDNS patch failed (may not be needed)"
 fi
 
@@ -177,9 +189,44 @@ fi
 info "Setting inference route to nvidia-nim / Nemotron 3 Super..."
 openshell inference set --no-verify --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b >/dev/null 2>&1
 
-# 5. Build and create sandbox
+# 5. Swap check — prevent OOM during sandbox image push (Linux only)
+if [ "$(uname -s)" = "Linux" ]; then
+  MIN_TOTAL_MB=12000
+  total_ram_mb=$(awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 0)
+  total_swap_mb=$(awk '/SwapTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 0)
+  total_mb=$((total_ram_mb + total_swap_mb))
+  if [ "$total_mb" -lt "$MIN_TOTAL_MB" ] && [ ! -f /swapfile ]; then
+    # Bail if disk can't fit a 4 GB swap file
+    free_disk_kb=$(df / --output=avail -k 2>/dev/null | tail -1 | tr -d ' ')
+    if [ -n "$free_disk_kb" ] && [ "$free_disk_kb" -lt 5000000 ]; then
+      warn "Insufficient disk space ($((free_disk_kb / 1024)) MB free, need ~5 GB) to create swap file. Skipping."
+    else
+      warn "Low memory detected (${total_mb} MB). Sandbox creation may fail with OOM."
+      warn "Consider manually creating a swap file:"
+      warn "  sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile"
+    fi
+  elif [ "$total_mb" -ge "$MIN_TOTAL_MB" ]; then
+    info "Memory OK: ${total_ram_mb} MB RAM + ${total_swap_mb} MB swap"
+  fi
+fi
+
+# 6. Build and create sandbox
 info "Deleting old ${SANDBOX_NAME} sandbox (if any)..."
 openshell sandbox delete "$SANDBOX_NAME" >/dev/null 2>&1 || true
+
+# Pre-build the base image if it's not available (GHCR image may not exist on
+# forks or before the first base-image workflow run). This ensures the
+# Dockerfile's `FROM ${BASE_IMAGE}` can resolve locally.
+BASE_IMAGE="${BASE_IMAGE:-ghcr.io/nvidia/nemoclaw/sandbox-base:latest}"
+if ! docker image inspect "$BASE_IMAGE" >/dev/null 2>&1 && ! docker pull "$BASE_IMAGE" 2>/dev/null; then
+  if [ -f "$REPO_DIR/Dockerfile.base" ]; then
+    info "Base image not in registry — building Dockerfile.base locally..."
+    docker build -f "$REPO_DIR/Dockerfile.base" -t "$BASE_IMAGE" "$REPO_DIR" 2>&1 | tail -5
+    info "Local base image built"
+  else
+    warn "Dockerfile.base not found — sandbox build may fall back to full rebuild"
+  fi
+fi
 
 info "Building and creating NemoClaw sandbox (this takes a few minutes on first run)..."
 
@@ -190,18 +237,48 @@ cp -r "$REPO_DIR/nemoclaw" "$BUILD_CTX/nemoclaw"
 cp -r "$REPO_DIR/nemoclaw-blueprint" "$BUILD_CTX/nemoclaw-blueprint"
 cp -r "$REPO_DIR/scripts" "$BUILD_CTX/scripts"
 rm -rf "$BUILD_CTX/nemoclaw/node_modules"
+bash "$BUILD_CTX/scripts/clean-staged-tree.sh" "$BUILD_CTX/nemoclaw-blueprint" 2>/dev/null || true
 
 # Capture full output to a temp file so we can filter for display but still
 # detect failures. The raw log is kept on failure for debugging.
 CREATE_LOG=$(mktemp /tmp/nemoclaw-create-XXXXXX.log)
+SANDBOX_BUILD_START=$(date +%s)
+
+# Background progress reporter: tails the log for Docker build steps and
+# prints a heartbeat every 30s so CI (and humans) can see what's happening.
+(
+  while true; do
+    sleep 30
+    if [ ! -f "$CREATE_LOG" ]; then break; fi
+    ELAPSED=$(($(date +%s) - SANDBOX_BUILD_START))
+    LAST_STEP=$(grep -oE "^Step [0-9]+/[0-9]+" "$CREATE_LOG" 2>/dev/null | tail -1 || true)
+    LAST_LINE=$(tail -1 "$CREATE_LOG" 2>/dev/null | head -c 120 || true)
+    # Filter out lines that might contain secrets
+    if echo "$LAST_LINE" | grep -qi "API_KEY\|TOKEN\|SECRET\|CREDENTIAL"; then
+      LAST_LINE="[filtered]"
+    fi
+    echo -e "${GREEN}[$(_ts)]${NC} ⏳ Sandbox build ${ELAPSED}s elapsed${LAST_STEP:+ — $LAST_STEP}${LAST_LINE:+ — $LAST_LINE}"
+  done
+) &
+PROGRESS_PID=$!
+
 set +e
 # NVIDIA_API_KEY is NOT passed into the sandbox. Inference is proxied through
 # the OpenShell gateway which injects the stored credential server-side.
 openshell sandbox create --from "$BUILD_CTX/Dockerfile" --name "$SANDBOX_NAME" \
   --provider nvidia-nim \
+  --no-tty -- true \
   >"$CREATE_LOG" 2>&1
 CREATE_RC=$?
 set -e
+
+# Stop progress reporter
+kill "$PROGRESS_PID" 2>/dev/null || true
+wait "$PROGRESS_PID" 2>/dev/null || true
+
+SANDBOX_BUILD_ELAPSED=$(($(date +%s) - SANDBOX_BUILD_START))
+info "Sandbox build finished in ${SANDBOX_BUILD_ELAPSED}s (exit code: $CREATE_RC)"
+
 rm -rf "$BUILD_CTX"
 
 # Show progress lines (filter apt noise and env var dumps that contain NVIDIA_API_KEY)
@@ -234,7 +311,12 @@ if ! echo "$SANDBOX_LINE" | grep -q "Ready"; then
   fail "Sandbox created but not Ready (phase: ${SANDBOX_PHASE:-unknown}). Check 'openshell sandbox get ${SANDBOX_NAME}'."
 fi
 
-# 6. Done
+# 6. DNS proxy — run a forwarder in the sandbox pod so the isolated
+# sandbox namespace can resolve hostnames (fixes #626).
+info "Setting up sandbox DNS proxy..."
+bash "$SCRIPT_DIR/setup-dns-proxy.sh" nemoclaw "$SANDBOX_NAME" 2>&1 || warn "DNS proxy setup failed (sandbox DNS may not work)"
+
+# 7. Done
 echo ""
 info "Setup complete!"
 echo ""
