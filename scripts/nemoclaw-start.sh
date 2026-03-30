@@ -295,7 +295,8 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled"
   export HOME=/sandbox
   if ! verify_config_integrity; then
-    echo "[SECURITY WARNING] Config integrity check failed — proceeding anyway (non-root mode)"
+    echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)"
+    exit 1
   fi
   write_auth_profile
 
