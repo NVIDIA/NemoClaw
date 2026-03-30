@@ -430,6 +430,7 @@ if [ "$(id -u)" -ne 0 ]; then
       echo "[setup] fixed ownership on ${data_dir}"
     fi
     if [ ! -e "${openclaw_dir}/identity" ] && [ -d "${data_dir}/identity" ]; then
+      mkdir -p "${openclaw_dir}" 2>/dev/null || true
       ln -sf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null || true
       echo "[setup] created identity symlink"
     fi
