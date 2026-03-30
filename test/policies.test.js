@@ -169,6 +169,84 @@ describe("policies", () => {
       expect(merged.startsWith("version: 1\n\nnetwork_policies:")).toBe(true);
       expect(merged).toContain("example.com");
     });
+
+    it("does not create duplicate keys when the same preset is applied twice", () => {
+      const telegramEntries = policies.extractPresetEntries(
+        policies.loadPreset("telegram"),
+      );
+      const base = "version: 1\n\nnetwork_policies:\n" + telegramEntries;
+      const merged = policies.mergePresetIntoPolicy(base, telegramEntries);
+
+      const keyCount = (merged.match(/telegram_bot:/g) || []).length;
+      expect(keyCount).toBe(1);
+    });
+
+    it("replaces stale entry when preset is re-applied (update semantics)", () => {
+      const stale =
+        "version: 1\n\nnetwork_policies:\n" +
+        "  telegram_bot:\n" +
+        "    name: telegram_bot\n" +
+        "    endpoints:\n" +
+        "      - host: old.stale.example.com\n" +
+        "        port: 443\n";
+      const telegramEntries = policies.extractPresetEntries(
+        policies.loadPreset("telegram"),
+      );
+      const merged = policies.mergePresetIntoPolicy(stale, telegramEntries);
+
+      expect(merged).not.toContain("old.stale.example.com");
+      expect(merged).toContain("api.telegram.org");
+      expect((merged.match(/telegram_bot:/g) || []).length).toBe(1);
+    });
+
+    it("preserves unrelated entries when deduplicating", () => {
+      const telegramEntries = policies.extractPresetEntries(
+        policies.loadPreset("telegram"),
+      );
+      const existing =
+        "version: 1\n\nnetwork_policies:\n" +
+        "  github:\n" +
+        "    name: github\n" +
+        "    endpoints:\n" +
+        "      - host: github.com\n" +
+        "        port: 443\n" +
+        "  telegram_bot:\n" +
+        "    name: telegram_bot\n" +
+        "    endpoints:\n" +
+        "      - host: api.telegram.org\n" +
+        "        port: 443\n";
+      const merged = policies.mergePresetIntoPolicy(existing, telegramEntries);
+
+      expect(merged).toContain("github:");
+      expect(merged).toContain("api.telegram.org");
+      expect((merged.match(/telegram_bot:/g) || []).length).toBe(1);
+    });
+
+    it("does not strip same-named keys outside network_policies", () => {
+      const telegramEntries = policies.extractPresetEntries(
+        policies.loadPreset("telegram"),
+      );
+      // Contrived policy where a non-network_policies section has a key
+      // matching the preset entry name ("telegram_bot").
+      const existing =
+        "version: 1\n\n" +
+        "other_section:\n" +
+        "  telegram_bot:\n" +
+        "    some_setting: true\n\n" +
+        "network_policies:\n" +
+        "  telegram_bot:\n" +
+        "    name: telegram_bot\n" +
+        "    endpoints:\n" +
+        "      - host: api.telegram.org\n" +
+        "        port: 443\n";
+      const merged = policies.mergePresetIntoPolicy(existing, telegramEntries);
+
+      // The key inside other_section must survive
+      expect(merged).toContain("other_section:");
+      expect(merged).toContain("some_setting: true");
+      // The network_policies entry is replaced (not duplicated)
+      expect((merged.match(/telegram_bot:/g) || []).length).toBe(2);
+    });
   });
 
   describe("preset YAML schema", () => {

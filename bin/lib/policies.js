@@ -94,9 +94,68 @@ function buildPolicyGetCommand(sandboxName) {
 }
 
 /**
+ * Extract top-level mapping key names from a network_policies block.
+ * Keys are 2-space-indented identifiers followed by a colon, e.g. "  telegram_bot:".
+ */
+function extractPolicyKeyNames(text) {
+  const keys = [];
+  for (const m of text.matchAll(/^ {2}([a-zA-Z_][\w-]*):/gm)) {
+    keys.push(m[1]);
+  }
+  return keys;
+}
+
+/**
+ * Remove entries from the network_policies block whose key names appear in
+ * `keysToRemove`. Only operates within the `network_policies:` section so
+ * identically named keys in other top-level sections are not affected.
+ * Each entry starts at a 2-space-indented key line and extends to just before
+ * the next 2-space-indented key or the next top-level (non-indented) key.
+ */
+function stripPolicyKeys(policyText, keysToRemove) {
+  if (!keysToRemove.length) return policyText;
+  const removeSet = new Set(keysToRemove);
+  const lines = policyText.split("\n");
+  const result = [];
+  let inNetworkPolicies = false;
+  let skipping = false;
+
+  for (const line of lines) {
+    // Track when we enter/leave the network_policies section
+    if (/^network_policies\s*:/.test(line)) {
+      inNetworkPolicies = true;
+      result.push(line);
+      continue;
+    }
+    // Any other top-level key exits the section (and ends any skip)
+    if (/^\S/.test(line)) {
+      inNetworkPolicies = false;
+      skipping = false;
+    }
+
+    if (inNetworkPolicies) {
+      const keyMatch = line.match(/^ {2}([a-zA-Z_][\w-]*):/);
+      if (keyMatch) {
+        skipping = removeSet.has(keyMatch[1]);
+        if (skipping) continue;
+      }
+    }
+
+    if (!skipping) {
+      result.push(line);
+    }
+  }
+  return result.join("\n");
+}
+
+/**
  * Merge preset entries into existing policy YAML. Handles versionless policies
  * by ensuring the merged result has a version header when the current policy
  * has content but no version field. Pure function for testing.
+ *
+ * When a preset entry's key already exists in the current policy, the old
+ * entry is replaced (update semantics) so re-applying a preset picks up
+ * any changes without creating duplicate mapping keys.
  *
  * @param {string} currentPolicy - Existing policy YAML (may be versionless)
  * @param {string} presetEntries - Indented network_policies entries from preset
@@ -110,9 +169,14 @@ function mergePresetIntoPolicy(currentPolicy, presetEntries) {
     return "version: 1\n\nnetwork_policies:\n" + presetEntries;
   }
 
+  // Strip existing entries whose keys overlap with the incoming preset
+  // so re-applying a preset replaces rather than duplicates.
+  const incomingKeys = extractPolicyKeyNames(presetEntries);
+  const deduped = stripPolicyKeys(currentPolicy, incomingKeys);
+
   let merged;
-  if (/^network_policies\s*:/m.test(currentPolicy)) {
-    const lines = currentPolicy.split("\n");
+  if (/^network_policies\s*:/m.test(deduped)) {
+    const lines = deduped.split("\n");
     const result = [];
     let inNetworkPolicies = false;
     let inserted = false;
@@ -220,6 +284,8 @@ module.exports = {
   loadPreset,
   getPresetEndpoints,
   extractPresetEntries,
+  extractPolicyKeyNames,
+  stripPolicyKeys,
   parseCurrentPolicy,
   buildPolicySetCommand,
   buildPolicyGetCommand,
