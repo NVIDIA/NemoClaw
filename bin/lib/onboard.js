@@ -1729,7 +1729,7 @@ async function recoverGatewayRuntime() {
   });
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
 
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 10; i++) {
     status = runCaptureOpenshell(["status"], { ignoreError: true });
     if (status.includes("Connected") && isSelectedGateway(status)) {
       process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
@@ -1836,7 +1836,6 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   if (slackToken) {
     sandboxEnv.SLACK_BOT_TOKEN = slackToken;
   }
-
   // Run without piping through awk — the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
@@ -1884,7 +1883,7 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
       ready = true;
       break;
     }
-    require("child_process").spawnSync("sleep", ["2"]);
+    sleep(2);
   }
 
   if (!ready) {
@@ -1901,6 +1900,23 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
     }
     console.error("  Retry: nemoclaw onboard");
     process.exit(1);
+  }
+
+  // Wait for NemoClaw dashboard to become fully ready (web server live)
+  // This prevents port forwards from connecting to a non-existent port
+  // or seeing 502/503 errors during initial load.
+  console.log("  Waiting for NemoClaw dashboard to become ready...");
+  for (let i = 0; i < 15; i++) {
+    const readyMatch = runCapture(`openshell sandbox exec ${sandboxName} curl -sf http://localhost:18789/ 2>/dev/null || echo "no"`, { ignoreError: true });
+    if (readyMatch && !readyMatch.includes("no")) {
+      console.log("  ✓ Dashboard is live");
+      break;
+    }
+    if (i === 14) {
+      console.warn("  Dashboard taking longer than expected to start. Continuing...");
+    } else {
+      sleep(2);
+    }
   }
 
   // Release any stale forward on port 18789 before claiming it for the new sandbox.
