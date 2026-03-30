@@ -21,29 +21,33 @@ const { execFileSync, spawn } = require("child_process");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 const { shellQuote, validateName } = require("../bin/lib/runner");
 
-const OPENSHELL = resolveOpenshell();
-if (!OPENSHELL) {
-  console.error("openshell not found on PATH or in common locations");
-  process.exit(1);
+let OPENSHELL, TOKEN, API_KEY, SANDBOX, ALLOWED_CHATS;
+
+function init() {
+  OPENSHELL = resolveOpenshell();
+  if (!OPENSHELL) {
+    console.error("openshell not found on PATH or in common locations");
+    process.exit(1);
+  }
+
+  TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+  API_KEY = process.env.NVIDIA_API_KEY;
+  SANDBOX = process.env.SANDBOX_NAME || "nemoclaw";
+  try { validateName(SANDBOX, "SANDBOX_NAME"); } catch (e) { console.error(e.message); process.exit(1); }
+  ALLOWED_CHATS = process.env.ALLOWED_CHAT_IDS
+    ? process.env.ALLOWED_CHAT_IDS.split(",").map((s) => s.trim())
+    : null;
+
+  if (!TOKEN) { console.error("TELEGRAM_BOT_TOKEN required"); process.exit(1); }
+  if (!API_KEY) { console.error("NVIDIA_API_KEY required"); process.exit(1); }
 }
-
-const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const API_KEY = process.env.NVIDIA_API_KEY;
-const SANDBOX = process.env.SANDBOX_NAME || "nemoclaw";
-try { validateName(SANDBOX, "SANDBOX_NAME"); } catch (e) { console.error(e.message); process.exit(1); }
-const ALLOWED_CHATS = process.env.ALLOWED_CHAT_IDS
-  ? process.env.ALLOWED_CHAT_IDS.split(",").map((s) => s.trim())
-  : null;
-
-if (!TOKEN) { console.error("TELEGRAM_BOT_TOKEN required"); process.exit(1); }
-if (!API_KEY) { console.error("NVIDIA_API_KEY required"); process.exit(1); }
 
 let offset = 0;
 const activeSessions = new Map(); // chatId → message history
-
-const COOLDOWN_MS = 5000;
-const lastMessageTime = new Map();
-const busyChats = new Set();
+const chatQueues = new Map();     // chatId → Promise chain (serializes agent calls per chat)
+const chatQueueDepths = new Map(); // chatId → number of pending jobs
+const chatEpochs = new Map();     // chatId → generation counter (bumped on /reset)
+const MAX_QUEUE_DEPTH = 5;
 
 // ── Telegram API helpers ──────────────────────────────────────────
 
@@ -198,45 +202,52 @@ async function poll() {
         // Handle /reset
         if (msg.text === "/reset") {
           activeSessions.delete(chatId);
+          chatQueues.delete(chatId);
+          chatQueueDepths.delete(chatId);
+          chatEpochs.set(chatId, (chatEpochs.get(chatId) || 0) + 1);
           await sendMessage(chatId, "Session reset.", msg.message_id);
           continue;
         }
 
-        // Rate limiting: per-chat cooldown
-        const now = Date.now();
-        const lastTime = lastMessageTime.get(chatId) || 0;
-        if (now - lastTime < COOLDOWN_MS) {
-          const wait = Math.ceil((COOLDOWN_MS - (now - lastTime)) / 1000);
-          await sendMessage(chatId, `Please wait ${wait}s before sending another message.`, msg.message_id);
+        // Queue message so only one agent call runs per chat at a time,
+        // preventing session-file lock collisions on the same session ID.
+        const depth = chatQueueDepths.get(chatId) || 0;
+        if (depth >= MAX_QUEUE_DEPTH) {
+          await sendMessage(chatId, "Still processing, please wait.", msg.message_id);
           continue;
         }
 
-        // Per-chat serialization: reject if this chat already has an active session
-        if (busyChats.has(chatId)) {
-          await sendMessage(chatId, "Still processing your previous message.", msg.message_id);
-          continue;
-        }
+        const messageId = msg.message_id;
+        const text = msg.text;
+        const epoch = chatEpochs.get(chatId) || 0;
+        chatQueueDepths.set(chatId, depth + 1);
+        const job = async () => {
+          // If the session was reset since this job was enqueued, skip it
+          // so the old and new session identities never overlap.
+          if ((chatEpochs.get(chatId) || 0) !== epoch) return;
+          await sendTyping(chatId);
+          const typingInterval = setInterval(() => sendTyping(chatId), 4000);
+          try {
+            const sessionId = epoch > 0 ? `${chatId}-e${epoch}` : chatId;
+            const response = await runAgentInSandbox(text, sessionId);
+            clearInterval(typingInterval);
+            console.log(`[${chatId}] agent: ${response.slice(0, 100)}...`);
+            await sendMessage(chatId, response, messageId);
+          } catch (err) {
+            clearInterval(typingInterval);
+            await sendMessage(chatId, `Error: ${err.message}`, messageId);
+          } finally {
+            chatQueueDepths.set(chatId, (chatQueueDepths.get(chatId) || 1) - 1);
+            if (chatQueueDepths.get(chatId) <= 0) chatQueueDepths.delete(chatId);
+          }
+        };
 
-        lastMessageTime.set(chatId, now);
-        busyChats.add(chatId);
-
-        // Send typing indicator
-        await sendTyping(chatId);
-
-        // Keep a typing indicator going while agent runs
-        const typingInterval = setInterval(() => sendTyping(chatId), 4000);
-
-        try {
-          const response = await runAgentInSandbox(msg.text, chatId);
-          clearInterval(typingInterval);
-          console.log(`[${chatId}] agent: ${response.slice(0, 100)}...`);
-          await sendMessage(chatId, response, msg.message_id);
-        } catch (err) {
-          clearInterval(typingInterval);
-          await sendMessage(chatId, `Error: ${err.message}`, msg.message_id);
-        } finally {
-          busyChats.delete(chatId);
-        }
+        const prev = chatQueues.get(chatId) || Promise.resolve();
+        const next = prev.then(job, job);
+        chatQueues.set(chatId, next);
+        void next.finally(() => {
+          if (chatQueues.get(chatId) === next) chatQueues.delete(chatId);
+        });
       }
     }
   } catch (err) {
@@ -273,4 +284,10 @@ async function main() {
   poll();
 }
 
-main();
+// ── Exports (for testing) ──────────────────────────────────────────
+module.exports = { chatQueues, chatQueueDepths, chatEpochs, MAX_QUEUE_DEPTH };
+
+if (require.main === module) {
+  init();
+  main();
+}
