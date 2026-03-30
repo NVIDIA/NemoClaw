@@ -59,7 +59,7 @@ echo "unexpected npm invocation: $*" >&2; exit 98`,
 // ---------------------------------------------------------------------------
 
 describe("installer runtime preflight", () => {
-  it("fails fast with a clear message on unsupported Node.js and npm", () => {
+  it("attempts nvm upgrade when system Node.js is below minimum version", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-preflight-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -88,6 +88,14 @@ exit 98
 `,
     );
 
+    // Fake curl that fails — prevents real nvm download and keeps the test fast.
+    writeExecutable(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+exit 1
+`,
+    );
+
     const result = spawnSync("bash", [INSTALLER], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -100,10 +108,9 @@ exit 98
 
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).not.toBe(0);
-    expect(output).toMatch(/Unsupported runtime detected/);
-    expect(output).toMatch(/Node\.js >=22\.16\.0 and npm >=10/);
-    expect(output).toMatch(/v18\.19\.1/);
-    expect(output).toMatch(/9\.8\.1/);
+    expect(output).toMatch(/v18\.19\.1.*found but NemoClaw requires/);
+    expect(output).toMatch(/upgrading via nvm/);
+    expect(output).toMatch(/Failed to download nvm installer/);
   });
 
   it("uses the HTTPS GitHub fallback when not installing from a repo checkout", () => {
@@ -200,7 +207,7 @@ exit 98
 
     expect(result.status).toBe(0);
     expect(fs.readFileSync(gitLog, "utf-8")).toMatch(/clone.*NemoClaw\.git/);
-  });
+  }, 60_000);
 
   it("prints the HTTPS GitHub remediation when the binary is missing", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-remediation-"));

@@ -141,25 +141,21 @@ If neither is found, verify that Colima is running:
 $ colima status
 ```
 
-### `NVIDIA_API_KEY` prompt during onboard
+### Sandbox creation killed by OOM (exit 137)
 
-While `nemoclaw onboard` prompts for an `NVIDIA_API_KEY`, it is not a hard prerequisite to finish the onboarding process.
-You can proceed without a key; the CLI will prompt you again only when an operation specifically requires it (e.g., when routing inference to an NVIDIA-hosted model).
+On systems with 8 GB RAM or less and no swap configured, the sandbox image push can exhaust available memory and get killed by the Linux OOM killer (exit code 137).
 
-If you have a key and want to set it manually, export it as an environment variable:
+NemoClaw automatically detects low memory during onboarding and prompts to create a 4 GB swap file.
+If this automatic step fails or you are using a custom setup flow, create swap manually before running `nemoclaw onboard`:
 
 ```console
-$ export NVIDIA_API_KEY=nvapi-...
+$ sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none
+$ sudo chmod 600 /swapfile
+$ sudo mkswap /swapfile
+$ sudo swapon /swapfile
+$ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+$ nemoclaw onboard
 ```
-
-### How to update or reset the `NVIDIA_API_KEY`
-
-NemoClaw stores your API key in `~/.nemoclaw/credentials.json`.
-If you need to update it or if you entered an incorrect key during onboarding:
-
-1. **Environment Variable:** Export `NVIDIA_API_KEY` in your shell. This takes precedence over the stored credential.
-2. **Manual Edit:** Edit `~/.nemoclaw/credentials.json` directly and update the `apiKey` field.
-3. **Reset:** Delete the `~/.nemoclaw/credentials.json` file. The CLI will prompt you for a new key the next time one is required.
 
 ## Runtime
 

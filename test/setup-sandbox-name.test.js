@@ -16,8 +16,9 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 describe("setup.sh sandbox name parameterization (#197)", () => {
   const content = fs.readFileSync(path.join(ROOT, "scripts/setup.sh"), "utf-8");
 
-  it("accepts sandbox name as $1 with default", () => {
-    expect(content.includes('SANDBOX_NAME="${1:-nemoclaw}"')).toBeTruthy();
+  it("accepts sandbox name as $1 with env var fallback and default", () => {
+    // $1 takes priority, then NEMOCLAW_SANDBOX_NAME env var, then "nemoclaw"
+    expect(content.includes('SANDBOX_NAME="${1:-${NEMOCLAW_SANDBOX_NAME:-nemoclaw}}"')).toBeTruthy();
   });
 
   it("sandbox create uses $SANDBOX_NAME, not hardcoded", () => {
@@ -51,16 +52,24 @@ describe("setup.sh sandbox name parameterization (#197)", () => {
 
   it("$1 arg actually sets SANDBOX_NAME in bash", () => {
     const result = execSync(
-      'bash -c \'SANDBOX_NAME="${1:-nemoclaw}"; echo "$SANDBOX_NAME"\' -- my-test-box',
+      'bash -c \'SANDBOX_NAME="${1:-${NEMOCLAW_SANDBOX_NAME:-nemoclaw}}"; echo "$SANDBOX_NAME"\' -- my-test-box',
       { encoding: "utf-8" }
     ).trim();
     expect(result).toBe("my-test-box");
   });
 
-  it("no arg defaults to nemoclaw in bash", () => {
+  it("NEMOCLAW_SANDBOX_NAME env var is used when no $1 arg", () => {
     const result = execSync(
-      'bash -c \'SANDBOX_NAME="${1:-nemoclaw}"; echo "$SANDBOX_NAME"\'',
-      { encoding: "utf-8" }
+      'bash -c \'SANDBOX_NAME="${1:-${NEMOCLAW_SANDBOX_NAME:-nemoclaw}}"; echo "$SANDBOX_NAME"\'',
+      { encoding: "utf-8", env: { ...process.env, NEMOCLAW_SANDBOX_NAME: "e2e-test" } }
+    ).trim();
+    expect(result).toBe("e2e-test");
+  });
+
+  it("no arg and no env var defaults to nemoclaw in bash", () => {
+    const result = execSync(
+      'bash -c \'SANDBOX_NAME="${1:-${NEMOCLAW_SANDBOX_NAME:-nemoclaw}}"; echo "$SANDBOX_NAME"\'',
+      { encoding: "utf-8", env: { PATH: process.env.PATH } }
     ).trim();
     expect(result).toBe("nemoclaw");
   });

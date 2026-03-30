@@ -161,13 +161,13 @@ describe("service environment", () => {
       expect(vars.HTTPS_PROXY).toBe("http://10.200.0.1:8080");
     });
 
-    it("NO_PROXY includes loopback and inference.local", () => {
+    it("NO_PROXY includes loopback only, not inference.local", () => {
       const vars = extractProxyVars();
       const noProxy = vars.NO_PROXY.split(",");
       expect(noProxy).toContain("localhost");
       expect(noProxy).toContain("127.0.0.1");
       expect(noProxy).toContain("::1");
-      expect(noProxy).toContain("inference.local");
+      expect(noProxy).not.toContain("inference.local");
     });
 
     it("NO_PROXY includes OpenShell gateway IP", () => {
@@ -180,7 +180,7 @@ describe("service environment", () => {
       expect(vars.http_proxy).toBe("http://10.200.0.1:3128");
       expect(vars.https_proxy).toBe("http://10.200.0.1:3128");
       const noProxy = vars.no_proxy.split(",");
-      expect(noProxy).toContain("inference.local");
+      expect(noProxy).not.toContain("inference.local");
       expect(noProxy).toContain("10.200.0.1");
     });
 
@@ -211,11 +211,11 @@ describe("service environment", () => {
         expect(bashrc).toContain("export HTTP_PROXY=");
         expect(bashrc).toContain("export HTTPS_PROXY=");
         expect(bashrc).toContain("export NO_PROXY=");
-        expect(bashrc).toContain("inference.local");
+        expect(bashrc).not.toContain("inference.local");
         expect(bashrc).toContain("10.200.0.1");
 
         const profile = readFileSync(join(fakeHome, ".profile"), "utf-8");
-        expect(profile).toContain("inference.local");
+        expect(profile).not.toContain("inference.local");
       } finally {
         try { unlinkSync(tmpFile); } catch { /* ignore */ }
         try { execFileSync("rm", ["-rf", fakeHome]); } catch { /* ignore */ }
@@ -306,10 +306,10 @@ describe("service environment", () => {
           "# nemoclaw-proxy-config begin",
           'export HTTP_PROXY="http://10.200.0.1:3128"',
           'export HTTPS_PROXY="http://10.200.0.1:3128"',
-          'export NO_PROXY="localhost,127.0.0.1,::1,inference.local,10.200.0.1"',
+          'export NO_PROXY="localhost,127.0.0.1,::1,10.200.0.1"',
           'export http_proxy="http://10.200.0.1:3128"',
           'export https_proxy="http://10.200.0.1:3128"',
-          'export no_proxy="localhost,127.0.0.1,::1,inference.local,10.200.0.1"',
+          'export no_proxy="localhost,127.0.0.1,::1,10.200.0.1"',
           "# nemoclaw-proxy-config end",
         ].join("\n");
         writeFileSync(join(fakeHome, ".bashrc"), bashrcContent);
@@ -323,8 +323,8 @@ describe("service environment", () => {
           'echo "no_proxy=$no_proxy"',
         ].join("; ")], { encoding: "utf-8" }).trim();
 
-        expect(out).toContain("NO_PROXY=localhost,127.0.0.1,::1,inference.local,10.200.0.1");
-        expect(out).toContain("no_proxy=localhost,127.0.0.1,::1,inference.local,10.200.0.1");
+        expect(out).toContain("NO_PROXY=localhost,127.0.0.1,::1,10.200.0.1");
+        expect(out).toContain("no_proxy=localhost,127.0.0.1,::1,10.200.0.1");
       } finally {
         try { execFileSync("rm", ["-rf", fakeHome]); } catch { /* ignore */ }
       }

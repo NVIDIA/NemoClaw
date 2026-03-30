@@ -9,6 +9,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
+const pRetry = require("p-retry");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
 const {
   getDefaultOllamaModel,
@@ -29,6 +30,7 @@ const {
 const {
   inferContainerRuntime,
   isUnsupportedMacosRuntime,
+  isWsl,
   shouldPatchCoredns,
 } = require("./platform");
 const { resolveOpenshell } = require("./resolve-openshell");
@@ -37,7 +39,7 @@ const registry = require("./registry");
 const nim = require("./nim");
 const onboardSession = require("./onboard-session");
 const policies = require("./policies");
-const { checkPortAvailable } = require("./preflight");
+const { checkPortAvailable, ensureSwap, getMemoryInfo } = require("./preflight");
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const DIM = USE_COLOR ? "\x1b[2m" : "";
@@ -448,7 +450,7 @@ function hydrateCredentialEnv(envName) {
 }
 
 function getCurlTimingArgs() {
-  return ["--connect-timeout 5", "--max-time 20"];
+  return ["--connect-timeout 10", "--max-time 60"];
 }
 
 function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
@@ -523,8 +525,9 @@ function isOpenclawReady(sandboxName) {
   return Boolean(fetchGatewayAuthTokenFromSandbox(sandboxName));
 }
 
-function writeSandboxConfigSyncFile(script, tmpDir = os.tmpdir(), now = Date.now()) {
-  const scriptFile = path.join(tmpDir, `nemoclaw-sync-${now}.sh`);
+function writeSandboxConfigSyncFile(script, tmpDir = os.tmpdir()) {
+  const dir = fs.mkdtempSync(path.join(tmpDir, "nemoclaw-sync-"));
+  const scriptFile = path.join(dir, "sync.sh");
   fs.writeFileSync(scriptFile, `${script}\n`, { mode: 0o600 });
   return scriptFile;
 }
@@ -663,7 +666,8 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
 
   const failures = [];
   for (const probe of probes) {
-    const bodyFile = path.join(os.tmpdir(), `nemoclaw-probe-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+    const probeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-probe-"));
+    const bodyFile = path.join(probeDir, "body.json");
     try {
       const cmd = [
         "curl -sS",
@@ -678,6 +682,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
       const result = spawnSync("bash", ["-c", cmd], {
         cwd: ROOT,
         encoding: "utf8",
+        timeout: 30_000,
         env: {
           ...process.env,
           NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -695,7 +700,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
         message: summarizeProbeError(body, status || result.status || 0),
       });
     } finally {
-      fs.rmSync(bodyFile, { force: true });
+      fs.rmSync(probeDir, { recursive: true, force: true });
     }
   }
 
@@ -707,7 +712,8 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
 }
 
 function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
-  const bodyFile = path.join(os.tmpdir(), `nemoclaw-anthropic-probe-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+  const probeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-anthropic-probe-"));
+  const bodyFile = path.join(probeDir, "body.json");
   try {
     const cmd = [
       "curl -sS",
@@ -727,6 +733,7 @@ function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -749,7 +756,7 @@ function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
       ],
     };
   } finally {
-    fs.rmSync(bodyFile, { force: true });
+    fs.rmSync(probeDir, { recursive: true, force: true });
   }
 }
 
@@ -853,7 +860,8 @@ async function validateCustomAnthropicSelection(label, endpointUrl, model, crede
 }
 
 function fetchNvidiaEndpointModels(apiKey) {
-  const bodyFile = path.join(os.tmpdir(), `nemoclaw-nvidia-models-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+  const probeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-nvidia-models-"));
+  const bodyFile = path.join(probeDir, "body.json");
   try {
     const cmd = [
       "curl -sS",
@@ -867,6 +875,7 @@ function fetchNvidiaEndpointModels(apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -885,7 +894,7 @@ function fetchNvidiaEndpointModels(apiKey) {
   } catch (error) {
     return { ok: false, message: error.message || String(error) };
   } finally {
-    fs.rmSync(bodyFile, { force: true });
+    fs.rmSync(probeDir, { recursive: true, force: true });
   }
 }
 
@@ -907,7 +916,8 @@ function validateNvidiaEndpointModel(model, apiKey) {
 }
 
 function fetchOpenAiLikeModels(endpointUrl, apiKey) {
-  const bodyFile = path.join(os.tmpdir(), `nemoclaw-openai-models-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+  const probeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openai-models-"));
+  const bodyFile = path.join(probeDir, "body.json");
   try {
     const cmd = [
       "curl -sS",
@@ -920,6 +930,7 @@ function fetchOpenAiLikeModels(endpointUrl, apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -938,12 +949,13 @@ function fetchOpenAiLikeModels(endpointUrl, apiKey) {
   } catch (error) {
     return { ok: false, status: 0, message: error.message || String(error) };
   } finally {
-    fs.rmSync(bodyFile, { force: true });
+    fs.rmSync(probeDir, { recursive: true, force: true });
   }
 }
 
 function fetchAnthropicModels(endpointUrl, apiKey) {
-  const bodyFile = path.join(os.tmpdir(), `nemoclaw-anthropic-models-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+  const probeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-anthropic-models-"));
+  const bodyFile = path.join(probeDir, "body.json");
   try {
     const cmd = [
       "curl -sS",
@@ -957,6 +969,7 @@ function fetchAnthropicModels(endpointUrl, apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -975,7 +988,7 @@ function fetchAnthropicModels(endpointUrl, apiKey) {
   } catch (error) {
     return { ok: false, status: 0, message: error.message || String(error) };
   } finally {
-    fs.rmSync(bodyFile, { force: true });
+    fs.rmSync(probeDir, { recursive: true, force: true });
   }
 }
 
@@ -1223,8 +1236,13 @@ function pullOllamaModel(model) {
     cwd: ROOT,
     encoding: "utf8",
     stdio: "inherit",
+    timeout: 600_000,
     env: { ...process.env },
   });
+  if (result.signal === "SIGTERM") {
+    console.error(`  Model pull timed out after 10 minutes. Try a smaller model or check your network connection.`);
+    return false;
+  }
   return result.status === 0;
 }
 
@@ -1358,6 +1376,7 @@ function installOpenshell() {
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf-8",
+    timeout: 300_000,
   });
   if (result.status !== 0) {
     const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
@@ -1574,11 +1593,53 @@ async function preflight() {
   const gpu = nim.detectGpu();
   if (gpu && gpu.type === "nvidia") {
     console.log(`  ✓ NVIDIA GPU detected: ${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`);
+    if (!gpu.nimCapable) {
+      console.log("  ⓘ GPU VRAM too small for local NIM — will use cloud inference");
+    }
   } else if (gpu && gpu.type === "apple") {
     console.log(`  ✓ Apple GPU detected: ${gpu.name}${gpu.cores ? ` (${gpu.cores} cores)` : ""}, ${gpu.totalMemoryMB} MB unified memory`);
     console.log("  ⓘ NIM requires NVIDIA GPU — will use cloud inference");
   } else {
     console.log("  ⓘ No GPU detected — will use cloud inference");
+  }
+
+  // Memory / swap check (Linux only)
+  if (process.platform === "linux") {
+    const mem = getMemoryInfo();
+    if (mem) {
+      if (mem.totalMB < 12000) {
+        console.log(`  ⚠ Low memory detected (${mem.totalRamMB} MB RAM + ${mem.totalSwapMB} MB swap = ${mem.totalMB} MB total)`);
+
+        let proceedWithSwap = false;
+        if (!isNonInteractive()) {
+          const answer = await prompt(
+            "  Create a 4 GB swap file to prevent OOM during sandbox build? (requires sudo) [y/N]: "
+          );
+          proceedWithSwap = answer && answer.toLowerCase().startsWith("y");
+        }
+
+        if (!proceedWithSwap) {
+          console.log("  ⓘ Skipping swap creation. Sandbox build may fail with OOM on this system.");
+        } else {
+          console.log("  Creating 4 GB swap file to prevent OOM during sandbox build...");
+          const swapResult = ensureSwap(12000);
+          if (swapResult.ok && swapResult.swapCreated) {
+            console.log("  ✓ Swap file created and activated");
+          } else if (swapResult.ok) {
+            if (swapResult.reason) {
+              console.log(`  ⓘ ${swapResult.reason} — existing swap should help prevent OOM`);
+            } else {
+              console.log(`  ✓ Memory OK: ${mem.totalRamMB} MB RAM + ${mem.totalSwapMB} MB swap`);
+            }
+          } else {
+            console.log(`  ⚠ Could not create swap: ${swapResult.reason}`);
+            console.log("  Sandbox creation may fail with OOM on low-memory systems.");
+          }
+        }
+      } else {
+        console.log(`  ✓ Memory OK: ${mem.totalRamMB} MB RAM + ${mem.totalSwapMB} MB swap`);
+      }
+    }
   }
 
   return gpu;
@@ -1614,41 +1675,57 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
     console.log(`  Using pinned OpenShell gateway image: ${gatewayEnv.OPENSHELL_CLUSTER_IMAGE}`);
   }
 
-  const startResult = runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: true, env: gatewayEnv });
-  if (startResult.status !== 0) {
-    console.error("  Gateway failed to start. Cleaning up stale state...");
-    destroyGateway();
+  // Retry gateway start with exponential backoff. On some hosts (Horde VMs,
+  // first-run environments) the embedded k3s needs more time than OpenShell's
+  // internal health-check window allows. Retrying after a clean destroy lets
+  // the second attempt benefit from cached images and cleaner cgroup state.
+  // See: https://github.com/NVIDIA/OpenShell/issues/433
+  const retries = exitOnFailure ? 2 : 0;
+  try {
+    await pRetry(() => {
+      runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: true, env: gatewayEnv });
+
+      for (let i = 0; i < 5; i++) {
+        const status = runCaptureOpenshell(["status"], { ignoreError: true });
+        const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
+        const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+        if (isGatewayHealthy(status, namedInfo, currentInfo)) {
+          return; // success
+        }
+        if (i < 4) sleep(2);
+      }
+
+      throw new Error("Gateway failed to start");
+    }, {
+      retries,
+      minTimeout: 10_000,
+      factor: 3,
+      onFailedAttempt: (err) => {
+        console.log(`  Gateway start attempt ${err.attemptNumber} failed. ${err.retriesLeft} retries left...`);
+        if (err.retriesLeft > 0 && exitOnFailure) {
+          destroyGateway();
+        }
+      },
+    });
+  } catch {
     if (exitOnFailure) {
-      console.error("  Stale state removed. Please rerun: nemoclaw onboard");
+      console.error(`  Gateway failed to start after ${retries + 1} attempts.`);
+      console.error("  Gateway state preserved for diagnostics.");
+      console.error("");
+      console.error("  Troubleshooting:");
+      console.error("    openshell doctor logs --name nemoclaw");
+      console.error("    openshell doctor check");
       process.exit(1);
     }
     throw new Error("Gateway failed to start");
   }
 
-  for (let i = 0; i < 5; i++) {
-    const status = runCaptureOpenshell(["status"], { ignoreError: true });
-    const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
-    const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    if (isGatewayHealthy(status, namedInfo, currentInfo)) {
-      console.log("  ✓ Gateway is healthy");
-      break;
-    }
-    if (i === 4) {
-      console.error("  Gateway health check failed. Cleaning up stale state...");
-      destroyGateway();
-      if (exitOnFailure) {
-        console.error("  Stale state removed. Please rerun: nemoclaw onboard");
-        process.exit(1);
-      }
-      throw new Error("Gateway failed to start");
-    }
-    sleep(2);
-  }
+  console.log("  ✓ Gateway is healthy");
 
-  // CoreDNS fix — always run. k3s-inside-Docker has broken DNS on all platforms.
+  // CoreDNS fix — k3s-inside-Docker has broken DNS forwarding on all platforms.
   const runtime = getContainerRuntime();
   if (shouldPatchCoredns(runtime)) {
-    console.log("  Patching CoreDNS for Colima...");
+    console.log("  Patching CoreDNS DNS forwarding...");
     run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" ${GATEWAY_NAME} 2>&1 || true`, { ignoreError: true });
   }
   sleep(5);
@@ -1691,7 +1768,7 @@ async function recoverGatewayRuntime() {
   });
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
 
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 10; i++) {
     status = runCaptureOpenshell(["status"], { ignoreError: true });
     if (status.includes("Connected") && isSelectedGateway(status)) {
       process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
@@ -1798,7 +1875,6 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   if (slackToken) {
     sandboxEnv.SLACK_BOT_TOKEN = slackToken;
   }
-
   // Run without piping through awk — the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
@@ -1846,7 +1922,7 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
       ready = true;
       break;
     }
-    require("child_process").spawnSync("sleep", ["2"]);
+    sleep(2);
   }
 
   if (!ready) {
@@ -1865,6 +1941,23 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
     process.exit(1);
   }
 
+  // Wait for NemoClaw dashboard to become fully ready (web server live)
+  // This prevents port forwards from connecting to a non-existent port
+  // or seeing 502/503 errors during initial load.
+  console.log("  Waiting for NemoClaw dashboard to become ready...");
+  for (let i = 0; i < 15; i++) {
+    const readyMatch = runCapture(`openshell sandbox exec ${sandboxName} curl -sf http://localhost:18789/ 2>/dev/null || echo "no"`, { ignoreError: true });
+    if (readyMatch && !readyMatch.includes("no")) {
+      console.log("  ✓ Dashboard is live");
+      break;
+    }
+    if (i === 14) {
+      console.warn("  Dashboard taking longer than expected to start. Continuing...");
+    } else {
+      sleep(2);
+    }
+  }
+
   // Release any stale forward on port 18789 before claiming it for the new sandbox.
   // A previous onboard run may have left the port forwarded to a different sandbox,
   // which would silently prevent the new sandbox's dashboard from being reachable.
@@ -1877,6 +1970,11 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
     name: sandboxName,
     gpuEnabled: !!gpu,
   });
+
+  // DNS proxy — run a forwarder in the sandbox pod so the isolated
+  // sandbox namespace can resolve hostnames (fixes #626).
+  console.log("  Setting up sandbox DNS proxy...");
+  run(`bash "${path.join(SCRIPTS, "setup-dns-proxy.sh")}" ${GATEWAY_NAME} "${sandboxName}" 2>&1 || true`, { ignoreError: true });
 
   console.log(`  ✓ Sandbox '${sandboxName}' created`);
   return sandboxName;
@@ -1955,7 +2053,6 @@ async function setupNim(gpu) {
       if (ollamaRunning) suggestions.push("Ollama");
       if (suggestions.length > 0) {
         console.log(`  Detected local inference option${suggestions.length > 1 ? "s" : ""}: ${suggestions.join(", ")}`);
-        console.log("  Select one explicitly to use it. Press Enter to keep NVIDIA Endpoints.");
         console.log("");
       }
 
@@ -2159,13 +2256,23 @@ async function setupNim(gpu) {
           if (!preferredInferenceApi) {
             continue selectionLoop;
           }
+          // NIM uses vLLM internally — same tool-call-parser limitation
+          // applies to /v1/responses. Force chat completions.
+          if (preferredInferenceApi !== "openai-completions") {
+            console.log("  ℹ Using chat completions API (tool-call-parser requires /v1/chat/completions)");
+          }
+          preferredInferenceApi = "openai-completions";
         }
       }
       break;
     } else if (selected.key === "ollama") {
       if (!ollamaRunning) {
         console.log("  Starting Ollama...");
-        run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
+        // On WSL2, binding to 0.0.0.0 creates a dual-stack socket that Docker
+        // cannot reach via host-gateway. The default 127.0.0.1 binding works
+        // because WSL2 relays IPv4-only sockets to the Windows host.
+        const ollamaEnv = isWsl() ? "" : "OLLAMA_HOST=0.0.0.0:11434 ";
+        run(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
         sleep(2);
       }
       console.log("  ✓ Using Ollama on localhost:11434");
@@ -2203,6 +2310,7 @@ async function setupNim(gpu) {
       }
       break;
     } else if (selected.key === "install-ollama") {
+      // macOS only — this option is gated by process.platform === "darwin" above
       console.log("  Installing Ollama via Homebrew...");
       run("brew install ollama", { ignoreError: true });
       console.log("  Starting Ollama...");
@@ -2275,6 +2383,13 @@ async function setupNim(gpu) {
       if (!preferredInferenceApi) {
         continue selectionLoop;
       }
+      // Force chat completions — vLLM's /v1/responses endpoint does not
+      // run the --tool-call-parser, so tool calls arrive as raw text.
+      // See: https://github.com/NVIDIA/NemoClaw/issues/976
+      if (preferredInferenceApi !== "openai-completions") {
+        console.log("  ℹ Using chat completions API (tool-call-parser requires /v1/chat/completions)");
+      }
+      preferredInferenceApi = "openai-completions";
       break;
     }
   }
@@ -2363,7 +2478,7 @@ async function setupOpenclaw(sandboxName, model, provider) {
         { stdio: ["ignore", "ignore", "inherit"] }
       );
     } finally {
-      fs.unlinkSync(scriptFile);
+      fs.rmSync(path.dirname(scriptFile), { recursive: true, force: true });
     }
   }
 
