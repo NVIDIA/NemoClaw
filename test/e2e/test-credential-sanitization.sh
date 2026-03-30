@@ -120,6 +120,7 @@ fi
 pass "node found"
 
 # Verify sandbox is running
+# shellcheck disable=SC2034  # status_output captures stderr for diagnostics on failure
 if status_output=$(nemoclaw "$SANDBOX_NAME" status 2>&1); then
   pass "Sandbox '${SANDBOX_NAME}' is running"
 else
