@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it, beforeEach } = require("node:test");
-const assert = require("node:assert/strict");
-const { execSync, spawnSync } = require("child_process");
-const path = require("path");
-const fs = require("fs");
-const os = require("os");
+import assert from "node:assert/strict";
+import { execSync } from "node:child_process";
+import path from "node:path";
+import fs from "node:fs";
+import os from "node:os";
+import { describe, it } from "vitest";
+import { fileURLToPath } from "node:url";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SETUP_APPLE_SCRIPT = path.join(__dirname, "..", "scripts", "setup-apple.sh");
 
 // Helper: run the setup-apple script with a mocked environment
@@ -46,17 +48,13 @@ function createMockScript(commands) {
     let scriptContent = "#!/usr/bin/env bash\n";
 
     if (typeof behavior === "string") {
-      // Simple output
       scriptContent += `echo "${behavior}"\n`;
     } else if (behavior.exit) {
-      // Exit with code
       scriptContent += `exit ${behavior.exit}\n`;
     } else if (behavior.output) {
-      // Output and exit code
       scriptContent += `echo "${behavior.output}"\n`;
       scriptContent += `exit ${behavior.exit || 0}\n`;
     } else if (behavior.script) {
-      // Custom script
       scriptContent += behavior.script;
     }
 
@@ -69,10 +67,7 @@ function createMockScript(commands) {
 describe("setup-apple.sh", () => {
   describe("Platform detection", () => {
     it("fails on non-macOS platforms", () => {
-      // This test can only fully run on Linux or other non-Darwin platforms
-      // On macOS, we can't easily mock uname -s
       if (process.platform === "darwin") {
-        // Skip on actual macOS - can't mock uname easily
         assert.ok(true, "Skipping platform check on actual macOS");
       } else {
         const result = runSetupApple();
@@ -91,7 +86,6 @@ describe("setup-apple.sh", () => {
       }
 
       const result = runSetupApple();
-      // Should detect macOS (may fail later on other checks, but should pass platform check)
       assert.ok(
         result.out.includes("macOS detected") || result.err.includes("Node.js not found"),
         "Should detect macOS or fail on later checks"
@@ -100,21 +94,18 @@ describe("setup-apple.sh", () => {
   });
 
   describe("Node.js version checks", () => {
-    it("fails when Node.js is not found", function () {
+    it("fails when Node.js is not found", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      // Create a PATH without node
-      const { dir, mockBin } = createMockScript({});
+      const { mockBin } = createMockScript({});
       const result = runSetupApple({
         PATH: mockBin,
       });
 
-      // Script should fail with non-zero exit code (could be 1 or 127 for command not found)
       assert.notEqual(result.code, 0, "Should exit with non-zero code");
-      // The error messages come through stdout or stderr, or the script may fail on command check
       const output = result.out + result.err;
       assert.ok(
         output.includes("Node.js") || result.code !== 0,
@@ -122,13 +113,13 @@ describe("setup-apple.sh", () => {
       );
     });
 
-    it("fails when Node.js version is less than 20", function () {
+    it("fails when Node.js version is less than 20", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      const { dir, mockBin } = createMockScript({
+      const { mockBin } = createMockScript({
         node: {
           script: `#!/usr/bin/env bash
 if [[ "$1" == "-v" ]]; then
@@ -154,13 +145,12 @@ fi
       );
     });
 
-    it("passes when Node.js version is 20 or higher", function () {
+    it("passes when Node.js version is 20 or higher", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      // Check actual Node.js version
       const nodeVersion = process.versions.node.split(".")[0];
       if (parseInt(nodeVersion) < 20) {
         assert.ok(true, "Skipping test - Node.js 20+ required to test this scenario");
@@ -168,7 +158,6 @@ fi
       }
 
       const result = runSetupApple();
-      // May fail on Docker or other checks, but Node.js check should pass
       assert.ok(
         result.out.includes("Node.js") && result.out.includes("OK"),
         "Should show Node.js OK"
@@ -177,24 +166,21 @@ fi
   });
 
   describe("Docker socket detection", () => {
-    it("fails when no Docker socket is found", function () {
+    it("fails when no Docker socket is found", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      // This is hard to test in isolation without mocking filesystem
-      // We'd need to ensure no Docker sockets exist
       assert.ok(true, "Docker socket detection requires filesystem mocking");
     });
 
-    it("detects Docker Desktop socket", function () {
+    it("detects Docker Desktop socket", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      // Check if Docker Desktop socket exists
       const desktopSocket = path.join(os.homedir(), ".docker/run/docker.sock");
       if (fs.existsSync(desktopSocket)) {
         const result = runSetupApple();
@@ -206,13 +192,12 @@ fi
       }
     });
 
-    it("detects Colima socket", function () {
+    it("detects Colima socket", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      // Check if Colima socket exists
       const colimaSocket1 = path.join(os.homedir(), ".colima/default/docker.sock");
       const colimaSocket2 = path.join(os.homedir(), ".config/colima/default/docker.sock");
 
@@ -226,36 +211,32 @@ fi
       }
     });
 
-    it("fails when Docker is installed but not responding", function () {
+    it("fails when Docker is installed but not responding", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      // This requires Docker to be installed but not running - hard to test reliably
       assert.ok(true, "Docker responsiveness test requires specific setup");
     });
   });
 
   describe("Docker memory allocation checks", () => {
-    it("warns when Docker memory is less than 8GB", function () {
+    it("warns when Docker memory is less than 8GB", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      // This requires a running Docker with low memory allocation
-      // Hard to test without actually configuring Docker
       assert.ok(true, "Docker memory check requires running Docker instance");
     });
 
-    it("shows OK when Docker memory is 8GB or more", function () {
+    it("shows OK when Docker memory is 8GB or more", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      // Check if Docker is running and has sufficient memory
       try {
         const memBytes = execSync("docker info --format '{{.MemTotal}}' 2>/dev/null", {
           encoding: "utf-8",
@@ -281,41 +262,18 @@ fi
   });
 
   describe("Ollama detection", () => {
-    it("warns when Ollama is not installed", function () {
+    it("warns when Ollama is not installed", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      const { dir, mockBin } = createMockScript({
-        node: {
-          script: `#!/usr/bin/env bash
-if [[ "$1" == "-v" ]]; then
-  echo "v20.0.0"
-elif [[ "$1" == "-e" ]]; then
-  echo "20"
-fi
-`,
-        },
-        sw_vers: { output: "13.0" },
-        docker: {
-          script: `#!/usr/bin/env bash
-if [[ "$1" == "info" ]]; then
-  echo "OK"
-fi
-exit 0
-`,
-        },
-      });
-
-      // Note: Full script will still fail on Docker socket detection
-      // This is a limited test for Ollama check logic
       assert.ok(true, "Ollama detection requires full environment mock");
     });
 
-    it("detects installed Ollama", function () {
+    it("detects installed Ollama", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
@@ -323,7 +281,6 @@ exit 0
         execSync("which ollama", { encoding: "utf-8", stdio: "pipe" });
         const result = runSetupApple();
 
-        // If Ollama is installed, should see either installed message or version
         if (result.out.includes("Ollama")) {
           assert.ok(
             result.out.includes("Ollama installed") || result.out.includes("Ollama is"),
@@ -335,16 +292,15 @@ exit 0
       }
     });
 
-    it("checks if Ollama is running", function () {
+    it("checks if Ollama is running", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
       try {
         execSync("which ollama", { encoding: "utf-8", stdio: "pipe" });
 
-        // Try to check if Ollama is running
         try {
           execSync("curl -sf http://localhost:11434/api/tags", {
             encoding: "utf-8",
@@ -360,7 +316,6 @@ exit 0
             );
           }
         } catch {
-          // Ollama not running - that's OK, just skip
           assert.ok(true, "Ollama not running - skipping");
         }
       } catch {
@@ -368,9 +323,9 @@ exit 0
       }
     });
 
-    it("warns about OLLAMA_HOST configuration", function () {
+    it("warns about OLLAMA_HOST configuration", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
@@ -395,19 +350,16 @@ exit 0
   });
 
   describe("OpenShell CLI installation", () => {
-    it("attempts to install openshell if not found", function () {
+    it("attempts to install openshell if not found", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      // Check if openshell is already installed
       try {
         execSync("which openshell", { encoding: "utf-8", stdio: "pipe" });
         assert.ok(true, "openshell already installed - skipping install test");
       } catch {
-        // openshell not found - script should attempt to install it
-        // This would require the install-openshell.sh script to exist
         const installScript = path.join(__dirname, "..", "scripts", "install-openshell.sh");
         if (fs.existsSync(installScript)) {
           assert.ok(true, "install-openshell.sh exists - installation would be attempted");
@@ -417,9 +369,9 @@ exit 0
       }
     });
 
-    it("detects installed openshell CLI", function () {
+    it("detects installed openshell CLI", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
@@ -438,26 +390,23 @@ exit 0
       }
     });
 
-    it("fails if openshell installation fails", function () {
+    it("fails if openshell installation fails", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      // This would require mocking a failed installation
-      // Hard to test without extensive environment mocking
       assert.ok(true, "Failed installation test requires environment mocking");
     });
   });
 
   describe("Apple GPU detection", () => {
-    it("detects Apple GPU and chipset", function () {
+    it("detects Apple GPU and chipset", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      // Only test on Apple Silicon
       if (process.arch !== "arm64") {
         assert.ok(true, "Not running on Apple Silicon - skipping");
         return;
@@ -465,7 +414,6 @@ exit 0
 
       const result = runSetupApple();
 
-      // Should detect Apple GPU information
       if (result.out.includes("Apple GPU")) {
         assert.ok(
           result.out.includes("Apple GPU") || result.out.includes("Chipset"),
@@ -474,9 +422,9 @@ exit 0
       }
     });
 
-    it("detects unified memory size", function () {
+    it("detects unified memory size", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
@@ -487,7 +435,6 @@ exit 0
 
       const result = runSetupApple();
 
-      // Should show unified memory information
       if (result.out.includes("Unified memory")) {
         assert.ok(
           result.out.includes("GB") && result.out.includes("Unified memory"),
@@ -496,9 +443,9 @@ exit 0
       }
     });
 
-    it("shows cloud inference note for Apple Silicon", function () {
+    it("shows cloud inference note for Apple Silicon", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
@@ -509,7 +456,6 @@ exit 0
 
       const result = runSetupApple();
 
-      // Should mention cloud inference or NIM
       if (result.out.includes("NIM")) {
         assert.ok(
           result.out.includes("NVIDIA GPU") || result.out.includes("cloud"),
@@ -520,13 +466,12 @@ exit 0
   });
 
   describe("nvm detection and warnings", () => {
-    it("warns when nvm is detected", function () {
+    it("warns when nvm is detected", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      // Check if NVM_DIR is set or ~/.nvm exists
       const nvmDir = process.env.NVM_DIR || path.join(os.homedir(), ".nvm");
 
       if (process.env.NVM_DIR || fs.existsSync(nvmDir)) {
@@ -543,9 +488,9 @@ exit 0
       }
     });
 
-    it("suggests nvm alias default command", function () {
+    it("suggests nvm alias default command", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
@@ -565,15 +510,14 @@ exit 0
   });
 
   describe("Success completion", () => {
-    it("shows next steps message on completion", function () {
+    it("shows next steps message on completion", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
       const result = runSetupApple();
 
-      // If the script completes successfully, should show next steps
       if (result.code === 0) {
         assert.ok(
           result.out.includes("nemoclaw onboard") || result.out.includes("Next step"),
@@ -582,9 +526,9 @@ exit 0
       }
     });
 
-    it("mentions nemoclaw onboard command", function () {
+    it("mentions nemoclaw onboard command", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
@@ -598,9 +542,9 @@ exit 0
       }
     });
 
-    it("shows setup checks complete message", function () {
+    it("shows setup checks complete message", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
@@ -616,14 +560,13 @@ exit 0
   });
 
   describe("Error handling", () => {
-    it("exits with non-zero code on errors", function () {
+    it("exits with non-zero code on errors", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      // Create environment that will fail (no Node.js in PATH)
-      const { dir, mockBin } = createMockScript({});
+      const { mockBin } = createMockScript({});
       const result = runSetupApple({
         PATH: mockBin,
       });
@@ -631,30 +574,26 @@ exit 0
       assert.notEqual(result.code, 0, "Should exit with non-zero code on error");
     });
 
-    it("shows error messages in red", function () {
+    it("shows error messages in red", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      // Error messages use ANSI color codes
-      // This is visible in actual output but hard to test programmatically
       assert.ok(true, "Color output testing requires visual inspection");
     });
 
-    it("stops execution on first critical error", function () {
+    it("stops execution on first critical error", () => {
       if (process.platform !== "darwin") {
-        this.skip();
+        assert.ok(true, "Skipping macOS-only test");
         return;
       }
 
-      // Script uses set -e, so should stop on first error
-      const { dir, mockBin } = createMockScript({});
+      const { mockBin } = createMockScript({});
       const result = runSetupApple({
         PATH: mockBin,
       });
 
-      // Should fail on Node.js check and not proceed to Docker checks
       assert.notEqual(result.code, 0, "Should fail early on critical errors");
     });
   });
@@ -675,13 +614,11 @@ exit 0
           stdio: "pipe",
         });
 
-        // Should run without syntax errors (may fail on checks, but should execute)
         assert.ok(
           out.includes("macOS") || out.includes("Node.js") || out.includes("Docker"),
           "Should execute setup-apple script"
         );
       } catch (err) {
-        // Script may fail on checks, but should at least start
         const output = (err.stdout || "") + (err.stderr || "");
         assert.ok(
           output.includes("macOS") || output.includes("Node.js"),
