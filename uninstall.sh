@@ -7,7 +7,7 @@
 #   - NemoClaw helper services
 #   - All OpenShell sandboxes plus the NemoClaw gateway/providers
 #   - NemoClaw/OpenShell/OpenClaw Docker images built or pulled for the sandbox flow
-#   - ~/.nemoclaw plus ~/.config/{openshell,nemoclaw} state
+#   - ~/.nemoclaw plus ~/.config/{openshell,nemoclaw} state, including onboard-session.json
 #   - Global nemoclaw npm install/link
 #   - OpenShell binary if it was installed to the standard installer path
 #
@@ -305,8 +305,10 @@ remove_nemoclaw_cli() {
     warn "npm not found; skipping nemoclaw npm uninstall."
   fi
 
-  if [ -L "${NEMOCLAW_SHIM_DIR}/nemoclaw" ] || [ -f "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
+  if [ -L "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
     remove_path "${NEMOCLAW_SHIM_DIR}/nemoclaw"
+  elif [ -f "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
+    warn "Leaving ${NEMOCLAW_SHIM_DIR}/nemoclaw in place because it is not an installer-managed shim."
   fi
 }
 
