@@ -134,7 +134,7 @@ async function recoverNamedGatewayRuntime() {
   }
 
   const shouldStartGateway = [before.state, after.state].some((state) =>
-    ["named_unhealthy", "named_unreachable", "connected_other"].includes(state)
+    ["missing_named", "named_unhealthy", "named_unreachable", "connected_other"].includes(state)
   );
 
   if (shouldStartGateway) {
@@ -201,6 +201,7 @@ function printGatewayLifecycleHint(output = "", sandboxName = "", writer = conso
   }
 }
 
+// eslint-disable-next-line complexity
 async function getReconciledSandboxGatewayState(sandboxName) {
   let lookup = getSandboxGatewayState(sandboxName);
   if (lookup.state === "present") {
@@ -333,15 +334,16 @@ function exitWithSpawnResult(result) {
 
 async function onboard(args) {
   const { onboard: runOnboard } = require("./lib/onboard");
-  const allowedArgs = new Set(["--non-interactive"]);
+  const allowedArgs = new Set(["--non-interactive", "--resume"]);
   const unknownArgs = args.filter((arg) => !allowedArgs.has(arg));
   if (unknownArgs.length > 0) {
     console.error(`  Unknown onboard option(s): ${unknownArgs.join(", ")}`);
-    console.error("  Usage: nemoclaw onboard [--non-interactive]");
+    console.error("  Usage: nemoclaw onboard [--non-interactive] [--resume]");
     process.exit(1);
   }
   const nonInteractive = args.includes("--non-interactive");
-  await runOnboard({ nonInteractive });
+  const resume = args.includes("--resume");
+  await runOnboard({ nonInteractive, resume });
 }
 
 async function setup() {
@@ -360,6 +362,7 @@ async function setupSpark() {
   run(`sudo bash "${SCRIPTS}/setup-spark.sh"`);
 }
 
+// eslint-disable-next-line complexity
 async function deploy(instanceName) {
   if (!instanceName) {
     console.error("  Usage: nemoclaw deploy <instance-name>");
@@ -516,12 +519,15 @@ function showStatus() {
   // Show sandbox registry
   const { sandboxes, defaultSandbox } = registry.listSandboxes();
   if (sandboxes.length > 0) {
+    const live = parseGatewayInference(
+      captureOpenshell(["inference", "get"], { ignoreError: true }).output
+    );
     console.log("");
     console.log("  Sandboxes:");
     for (const sb of sandboxes) {
       const def = sb.name === defaultSandbox ? " *" : "";
-      const model = sb.model ? ` (${sb.model})` : "";
-      console.log(`    ${sb.name}${def}${model}`);
+      const model = (live && live.model) || sb.model;
+      console.log(`    ${sb.name}${def}${model ? ` (${model})` : ""}`);
     }
     console.log("");
   }
@@ -539,12 +545,17 @@ function listSandboxes() {
     return;
   }
 
+  // Query live gateway inference once; prefer it over stale registry values.
+  const live = parseGatewayInference(
+    captureOpenshell(["inference", "get"], { ignoreError: true }).output
+  );
+
   console.log("");
   console.log("  Sandboxes:");
   for (const sb of sandboxes) {
     const def = sb.name === defaultSandbox ? " *" : "";
-    const model = sb.model || "unknown";
-    const provider = sb.provider || "unknown";
+    const model = (live && live.model) || sb.model || "unknown";
+    const provider = (live && live.provider) || sb.provider || "unknown";
     const gpu = sb.gpuEnabled ? "GPU" : "CPU";
     const presets = sb.policies && sb.policies.length > 0 ? sb.policies.join(", ") : "none";
     console.log(`    ${sb.name}${def}`);
@@ -559,8 +570,6 @@ function listSandboxes() {
 
 async function sandboxConnect(sandboxName) {
   await ensureLiveSandboxOrExit(sandboxName);
-  // Ensure port forward is alive before connecting
-  runOpenshell(["forward", "start", "--background", "18789", sandboxName], { ignoreError: true });
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
     stdio: "inherit",
     cwd: ROOT,
@@ -569,6 +578,7 @@ async function sandboxConnect(sandboxName) {
   exitWithSpawnResult(result);
 }
 
+// eslint-disable-next-line complexity
 async function sandboxStatus(sandboxName) {
   const sb = registry.getSandbox(sandboxName);
   const live = parseGatewayInference(
@@ -757,6 +767,7 @@ function help() {
 
 const [cmd, ...args] = process.argv.slice(2);
 
+// eslint-disable-next-line complexity
 (async () => {
   // No command → help
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
