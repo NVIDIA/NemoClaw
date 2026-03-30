@@ -516,6 +516,44 @@ install_or_upgrade_ollama() {
 }
 
 # ---------------------------------------------------------------------------
+# Fix npm permissions for global installs (Linux only).
+# If the npm global prefix points to a system directory (e.g. /usr or
+# /usr/local) the user likely lacks write permissions and npm link will fail
+# with EACCES.  Redirect the prefix to ~/.npm-global so the install succeeds
+# without sudo.
+# ---------------------------------------------------------------------------
+fix_npm_permissions() {
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    return 0
+  fi
+
+  local npm_prefix
+  npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+  if [[ -z "$npm_prefix" ]]; then
+    return 0
+  fi
+
+  if [[ -w "$npm_prefix" || -w "$npm_prefix/lib" ]]; then
+    return 0
+  fi
+
+  info "npm global prefix '${npm_prefix}' is not writable — configuring user-local installs"
+  mkdir -p "$HOME/.npm-global"
+  npm config set prefix "$HOME/.npm-global"
+
+  # shellcheck disable=SC2016
+  local path_line='export PATH="$HOME/.npm-global/bin:$PATH"'
+  for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    if [[ -f "$rc" ]] && ! grep -q ".npm-global" "$rc"; then
+      printf '\n# Added by NemoClaw installer\n%s\n' "$path_line" >>"$rc"
+    fi
+  done
+
+  export PATH="$HOME/.npm-global/bin:$PATH"
+  ok "npm configured for user-local installs (~/.npm-global)"
+}
+
+# ---------------------------------------------------------------------------
 # 3. NemoClaw
 # ---------------------------------------------------------------------------
 # Work around openclaw tarball missing directory entries (GH-503).
@@ -741,6 +779,7 @@ main() {
 
   step 2 "NemoClaw CLI"
   # install_or_upgrade_ollama
+  fix_npm_permissions
   install_nemoclaw
   verify_nemoclaw
 
