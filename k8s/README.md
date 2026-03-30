@@ -1,5 +1,7 @@
 # NemoClaw on Kubernetes
 
+> **⚠️ Experimental**: This deployment method is intended for **trying out NemoClaw on Kubernetes**, not for production use. It requires a **privileged pod** running **Docker-in-Docker (DinD)** to create isolated sandbox environments. Operational requirements (storage, runtime, security policies) vary by cluster configuration.
+
 Run [NemoClaw](https://github.com/NVIDIA/NemoClaw) on Kubernetes with GPU inference powered by [Dynamo](https://github.com/ai-dynamo/dynamo) or any OpenAI-compatible endpoint.
 
 ---
@@ -10,7 +12,8 @@ Run [NemoClaw](https://github.com/NVIDIA/NemoClaw) on Kubernetes with GPU infere
 
 - Kubernetes cluster with `kubectl` access
 - An OpenAI-compatible inference endpoint (Dynamo vLLM, vLLM, etc.)
-- Namespace with permissions to create privileged pods
+- Permissions to create **privileged pods** (required for Docker-in-Docker)
+- Sufficient node resources (~8GB memory, 2 CPUs for DinD container)
 
 ### 1. Deploy NemoClaw
 
