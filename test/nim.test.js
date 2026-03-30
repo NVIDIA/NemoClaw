@@ -1,11 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "module";
-import { describe, it, expect, vi } from "vitest";
-import nim from "../bin/lib/nim";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
+const runner = require("../bin/lib/runner");
+const nim    = require("../bin/lib/nim");
+
+const _originalRunCapture = runner.runCapture;
+afterEach(() => {
+  runner.runCapture = _originalRunCapture;
+  vi.restoreAllMocks();
+});
+
 const NIM_PATH = require.resolve("../bin/lib/nim");
 const RUNNER_PATH = require.resolve("../bin/lib/runner");
 
@@ -85,6 +93,74 @@ describe("nim", () => {
         expect(gpu.nimCapable).toBe(false);
         expect(gpu.name).toBeTruthy();
       }
+    });
+  });
+
+  describe("detectGpu unified-memory fallback", () => {
+    /** Build a runCapture mock where VRAM query returns [N/A] and GPU name returns `name`. */
+    function mockUnifiedMemoryGpu(name, systemMemMB = "65536") {
+      runner.runCapture = vi.fn().mockImplementation((cmd) => {
+        if (cmd.includes("--query-gpu=memory.total")) return "[N/A]";
+        if (cmd.includes("--query-gpu=name"))         return name;
+        if (cmd.includes("free -m"))                  return systemMemMB;
+        return "";
+      });
+    }
+
+    it("detects DGX Spark (GB10) via unified-memory fallback", () => {
+      mockUnifiedMemoryGpu("NVIDIA Graphics Device GB10");
+      const gpu = nim.detectGpu();
+      expect(gpu).not.toBeNull();
+      expect(gpu.type).toBe("nvidia");
+      expect(gpu.nimCapable).toBe(true);
+      expect(gpu.spark).toBe(true);
+      expect(gpu.totalMemoryMB).toBe(65536);
+    });
+
+    it("detects Jetson AGX Thor via unified-memory fallback", () => {
+      mockUnifiedMemoryGpu("Jetson AGX Thor");
+      const gpu = nim.detectGpu();
+      expect(gpu).not.toBeNull();
+      expect(gpu.type).toBe("nvidia");
+      expect(gpu.nimCapable).toBe(true);
+      expect(gpu.spark).toBe(true);
+    });
+
+    it("detects Jetson AGX Orin via unified-memory fallback", () => {
+      mockUnifiedMemoryGpu("Jetson AGX Orin");
+      const gpu = nim.detectGpu();
+      expect(gpu).not.toBeNull();
+      expect(gpu.type).toBe("nvidia");
+      expect(gpu.nimCapable).toBe(true);
+      expect(gpu.spark).toBe(true);
+    });
+
+    it("does not trigger fallback for desktop GPU names", () => {
+      // Desktop GPUs return valid VRAM, but even if VRAM were [N/A],
+      // the name must not match any unified-memory tag.
+      runner.runCapture = vi.fn().mockImplementation((cmd) => {
+        if (cmd.includes("--query-gpu=memory.total")) return "[N/A]";
+        if (cmd.includes("--query-gpu=name"))         return "NVIDIA GeForce RTX 4090";
+        return "";
+      });
+      const gpu = nim.detectGpu();
+      // Should NOT match as a unified-memory device
+      if (gpu) {
+        expect(gpu.spark).toBeUndefined();
+      }
+    });
+
+    it("skips fallback when VRAM is queryable", () => {
+      runner.runCapture = vi.fn().mockImplementation((cmd) => {
+        if (cmd.includes("--query-gpu=memory.total")) return "24564";
+        if (cmd.includes("--query-gpu=name"))         return "NVIDIA GeForce RTX 4090";
+        return "";
+      });
+      const gpu = nim.detectGpu();
+      expect(gpu).not.toBeNull();
+      expect(gpu.type).toBe("nvidia");
+      expect(gpu.totalMemoryMB).toBe(24564);
+      expect(gpu.spark).toBeUndefined();
     });
   });
 
