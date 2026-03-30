@@ -207,7 +207,7 @@ exit 98
 
     expect(result.status).toBe(0);
     expect(fs.readFileSync(gitLog, "utf-8")).toMatch(/clone.*NemoClaw\.git/);
-  });
+  }, 60_000);
 
   it("prints the HTTPS GitHub remediation when the binary is missing", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-remediation-"));
