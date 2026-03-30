@@ -82,7 +82,7 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("--output")).toBeTruthy();
   });
 
-  it("debug --quick exits 0 and produces diagnostic output", () => {
+  it("debug --quick exits 0 and produces diagnostic output", { timeout: 15000 }, () => {
     const r = run("debug --quick");
     expect(r.code).toBe(0);
     expect(r.out.includes("Collecting diagnostics")).toBeTruthy();

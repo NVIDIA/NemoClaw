@@ -30,6 +30,7 @@ const {
 const {
   inferContainerRuntime,
   isUnsupportedMacosRuntime,
+  isWsl,
   shouldPatchCoredns,
 } = require("./platform");
 const { resolveOpenshell } = require("./resolve-openshell");
@@ -681,6 +682,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
       const result = spawnSync("bash", ["-c", cmd], {
         cwd: ROOT,
         encoding: "utf8",
+        timeout: 30_000,
         env: {
           ...process.env,
           NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -731,6 +733,7 @@ function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -872,6 +875,7 @@ function fetchNvidiaEndpointModels(apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -926,6 +930,7 @@ function fetchOpenAiLikeModels(endpointUrl, apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -964,6 +969,7 @@ function fetchAnthropicModels(endpointUrl, apiKey) {
     const result = spawnSync("bash", ["-c", cmd], {
       cwd: ROOT,
       encoding: "utf8",
+      timeout: 30_000,
       env: {
         ...process.env,
         NEMOCLAW_PROBE_API_KEY: apiKey,
@@ -1230,8 +1236,13 @@ function pullOllamaModel(model) {
     cwd: ROOT,
     encoding: "utf8",
     stdio: "inherit",
+    timeout: 600_000,
     env: { ...process.env },
   });
+  if (result.signal === "SIGTERM") {
+    console.error(`  Model pull timed out after 10 minutes. Try a smaller model or check your network connection.`);
+    return false;
+  }
   return result.status === 0;
 }
 
@@ -1365,6 +1376,7 @@ function installOpenshell() {
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf-8",
+    timeout: 300_000,
   });
   if (result.status !== 0) {
     const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
@@ -1581,6 +1593,9 @@ async function preflight() {
   const gpu = nim.detectGpu();
   if (gpu && gpu.type === "nvidia") {
     console.log(`  ✓ NVIDIA GPU detected: ${gpu.count} GPU(s), ${gpu.totalMemoryMB} MB VRAM`);
+    if (!gpu.nimCapable) {
+      console.log("  ⓘ GPU VRAM too small for local NIM — will use cloud inference");
+    }
   } else if (gpu && gpu.type === "apple") {
     console.log(`  ✓ Apple GPU detected: ${gpu.name}${gpu.cores ? ` (${gpu.cores} cores)` : ""}, ${gpu.totalMemoryMB} MB unified memory`);
     console.log("  ⓘ NIM requires NVIDIA GPU — will use cloud inference");
@@ -2198,7 +2213,11 @@ async function setupNim(gpu) {
     } else if (selected.key === "ollama") {
       if (!ollamaRunning) {
         console.log("  Starting Ollama...");
-        run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
+        // On WSL2, binding to 0.0.0.0 creates a dual-stack socket that Docker
+        // cannot reach via host-gateway. The default 127.0.0.1 binding works
+        // because WSL2 relays IPv4-only sockets to the Windows host.
+        const ollamaEnv = isWsl() ? "" : "OLLAMA_HOST=0.0.0.0:11434 ";
+        run(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
         sleep(2);
       }
       console.log("  ✓ Using Ollama on localhost:11434");
@@ -2236,6 +2255,7 @@ async function setupNim(gpu) {
       }
       break;
     } else if (selected.key === "install-ollama") {
+      // macOS only — this option is gated by process.platform === "darwin" above
       console.log("  Installing Ollama via Homebrew...");
       run("brew install ollama", { ignoreError: true });
       console.log("  Starting Ollama...");
