@@ -292,10 +292,10 @@ echo 'Setting up NemoClaw...'
 # separation and run everything as the current user (sandbox).
 # Gateway process isolation is not available in this mode.
 if [ "$(id -u)" -ne 0 ]; then
-  echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled"
+  echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled" >&2
   export HOME=/sandbox
   if ! verify_config_integrity; then
-    echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)"
+    echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
   write_auth_profile
@@ -316,9 +316,9 @@ if [ "$(id -u)" -ne 0 ]; then
   # Start gateway in background, auto-pair, then wait
   nohup "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
-  echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)"
+  echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
   start_auto_pair
-  print_dashboard_urls
+  print_dashboard_urls >&2
   wait "$GATEWAY_PID"
   exit $?
 fi

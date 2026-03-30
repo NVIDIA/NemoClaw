@@ -35,4 +35,23 @@ describe("nemoclaw-start non-root fallback", () => {
     const calls = src.match(/verify_config_integrity/g) || [];
     expect(calls.length).toBeGreaterThanOrEqual(3); // definition + 2 call sites
   });
+
+  it("sends non-root startup diagnostics to stderr, not stdout (#1064)", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+    // Extract the non-root block (between the if and fi)
+    const nonRootBlock = src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)^fi$/m);
+    expect(nonRootBlock).toBeTruthy();
+    const block = nonRootBlock[1];
+
+    // Every echo in the non-root block should redirect to stderr
+    const echoLines = block.match(/^\s*echo\s+".+".*$/gm) || [];
+    expect(echoLines.length).toBeGreaterThan(0);
+    for (const line of echoLines) {
+      expect(line).toContain(">&2");
+    }
+
+    // print_dashboard_urls call should also redirect to stderr
+    expect(block).toContain("print_dashboard_urls >&2");
+  });
 });
