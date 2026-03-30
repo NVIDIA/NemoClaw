@@ -26,9 +26,12 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-info()    { echo -e "${GREEN}[debug]${NC} $1"; }
-warn()    { echo -e "${YELLOW}[debug]${NC} $1"; }
-fail()    { echo -e "${RED}[debug]${NC} $1"; exit 1; }
+info() { echo -e "${GREEN}[debug]${NC} $1"; }
+warn() { echo -e "${YELLOW}[debug]${NC} $1"; }
+fail() {
+  echo -e "${RED}[debug]${NC} $1"
+  exit 1
+}
 section() { echo -e "\n${CYAN}═══ $1 ═══${NC}\n"; }
 
 # ── Parse flags ──────────────────────────────────────────────────
@@ -47,11 +50,11 @@ while [ $# -gt 0 ]; do
       QUICK=true
       shift
       ;;
-    --output|-o)
+    --output | -o)
       OUTPUT="${2:?--output requires a path}"
       shift 2
       ;;
-    --help|-h)
+    --help | -h)
       cat <<'USAGE'
 Usage: scripts/debug.sh [OPTIONS]
 
@@ -104,6 +107,16 @@ elif command -v gtimeout >/dev/null 2>&1; then
   TIMEOUT_BIN="gtimeout"
 fi
 
+SCRIPT_DIR=""
+REPO_ROOT=""
+ONBOARD_SESSION_HELPER=""
+SCRIPT_PATH="${BASH_SOURCE[0]:-}"
+if [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+  REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+  ONBOARD_SESSION_HELPER="${REPO_ROOT}/bin/lib/onboard-session.js"
+fi
+
 # Redact known sensitive patterns (API keys, tokens, passwords in env/args).
 redact() {
   sed -E \
@@ -130,12 +143,12 @@ collect() {
   local rc=0
   local tmpout="${outfile}.raw"
   if [ -n "$TIMEOUT_BIN" ]; then
-    "$TIMEOUT_BIN" 30 "$@" > "$tmpout" 2>&1 || rc=$?
+    "$TIMEOUT_BIN" 30 "$@" >"$tmpout" 2>&1 || rc=$?
   else
-    "$@" > "$tmpout" 2>&1 || rc=$?
+    "$@" >"$tmpout" 2>&1 || rc=$?
   fi
 
-  redact < "$tmpout" > "$outfile"
+  redact <"$tmpout" >"$outfile"
   rm -f "$tmpout"
 
   cat "$outfile"
@@ -240,18 +253,36 @@ if [ "$QUICK" = false ]; then
   collect "openshell-gateway-info" openshell gateway info
 fi
 
+# -- Onboard session state --
+
+section "Onboard Session"
+if [ -n "$ONBOARD_SESSION_HELPER" ] && [ -f "$ONBOARD_SESSION_HELPER" ] && command -v node >/dev/null 2>&1; then
+  # shellcheck disable=SC2016
+  collect "onboard-session-summary" node -e '
+    const helper = require(process.argv[1]);
+    const summary = helper.summarizeForDebug();
+    if (!summary) {
+      process.stdout.write("No onboard session state found.\n");
+      process.exit(0);
+    }
+    process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+  ' "$ONBOARD_SESSION_HELPER"
+else
+  echo "  (onboard session helper not available, skipping)"
+fi
+
 # -- Sandbox internals (via SSH using openshell ssh-config) --
 
 if command -v openshell &>/dev/null \
   && openshell sandbox list 2>/dev/null \
-    | awk 'NF { if (tolower($1) == "name") next; print $1 }' \
+  | awk 'NF { if (tolower($1) == "name") next; print $1 }' \
     | grep -Fxq -- "$SANDBOX_NAME"; then
   section "Sandbox Internals"
 
   # Build a temporary SSH config so we can run commands inside the sandbox.
   # This follows the pattern from OpenShell's own demo.sh.
   SANDBOX_SSH_CONFIG=$(mktemp "${TMPDIR_BASE}/nemoclaw-ssh-XXXXXX")
-  if openshell sandbox ssh-config "$SANDBOX_NAME" > "$SANDBOX_SSH_CONFIG" 2>/dev/null; then
+  if openshell sandbox ssh-config "$SANDBOX_NAME" >"$SANDBOX_SSH_CONFIG" 2>/dev/null; then
     SANDBOX_SSH_HOST="openshell-${SANDBOX_NAME}"
     SANDBOX_SSH_OPTS=(-F "$SANDBOX_SSH_CONFIG" -o StrictHostKeyChecking=no -o ConnectTimeout=10)
 
@@ -322,4 +353,3 @@ fi
 echo ""
 info "Done. If filing a bug, run with --output and attach the tarball to your issue:"
 info "  nemoclaw debug --output /tmp/nemoclaw-debug.tar.gz"
-

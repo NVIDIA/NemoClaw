@@ -22,7 +22,7 @@ status: published
 
 The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes. It is installed when you run `npm install -g nemoclaw`.
 
-### `/nemoclaw` Slash Command
+## `/nemoclaw` Slash Command
 
 The `/nemoclaw` slash command is available inside the OpenClaw chat interface for quick actions:
 
@@ -44,7 +44,9 @@ Use this command for new installs and for recreating a sandbox after changes to 
 $ nemoclaw onboard
 ```
 
-The first run prompts for your NVIDIA API key and saves it to `~/.nemoclaw/credentials.json`.
+The wizard prompts for a provider first, then collects the provider credential if needed.
+Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
+Credentials are stored in `~/.nemoclaw/credentials.json`.
 
 The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
@@ -103,6 +105,12 @@ $ nemoclaw my-assistant logs [--follow]
 
 Stop the NIM container and delete the sandbox.
 This removes the sandbox from the registry.
+
+:::{warning}
+Destroying a sandbox permanently deletes all files inside it, including
+[workspace files](../workspace/workspace-files.md) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes).
+Back up your workspace first by following the instructions at [Back Up and Restore](../workspace/backup-restore.md).
+:::
 
 ```console
 $ nemoclaw my-assistant destroy
@@ -172,3 +180,33 @@ After the fixes complete, the script prompts you to run `nemoclaw onboard` to co
 ```console
 $ sudo nemoclaw setup-spark
 ```
+
+### `nemoclaw debug`
+
+Collect diagnostics for bug reports.
+Gathers system info, Docker state, gateway logs, and sandbox status into a summary or tarball.
+
+```console
+$ nemoclaw debug [--quick] [--sandbox NAME] [--output PATH]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--quick` | Collect minimal diagnostics only |
+| `--sandbox NAME` | Target a specific sandbox (default: auto-detect) |
+| `--output PATH` | Write diagnostics tarball to the given path |
+
+### `nemoclaw uninstall`
+
+Remove NemoClaw, destroying all sandboxes and the gateway.
+Runs the bundled `uninstall.sh` if available, otherwise downloads it from GitHub.
+
+```console
+$ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--yes` | Skip the confirmation prompt |
+| `--keep-openshell` | Leave the openshell binary installed |
+| `--delete-models` | Remove NemoClaw-pulled Ollama models |

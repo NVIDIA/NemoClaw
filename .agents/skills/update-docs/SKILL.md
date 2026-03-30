@@ -115,7 +115,7 @@ When creating a new page:
 
 After drafting all updates, present a summary to the user:
 
-```
+```markdown
 ## Doc Updates from Commits
 
 ### Updated pages

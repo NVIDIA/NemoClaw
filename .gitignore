@@ -1,32 +1,46 @@
-node_modules/
-dist/
+# Build artifacts and caches
+*.pyc
+*.tsbuildinfo
 .pytest_cache/
 __pycache__/
-*.pyc
-.DS_Store
-docs/_build/
 coverage/
-vdr-notes/
-draft_newsletter_*
+dist/
+docs/_build/
+node_modules/
 
-# Security: prevent accidental commit of secrets and credentials
+# OS metadata
+.DS_Store
+desktop.ini
+Thumbs.db
+
+# Project-specific
+draft_newsletter_*
+research/
+specs/
+vdr-notes/
+
+# Security: secrets, credentials, and keys
+*_ecdsa
+*_ed25519
+*_rsa
+*.jks
+*.key
+*.keystore
+*.p12
+*.pem
+*.pfx
+*.tfvars
+.direnv/
 .env
 .env.*
-*.pem
-*.key
-*.p12
-*.pfx
-*.jks
-*.keystore
-.npmrc
+.envrc
 .netrc
-*_rsa
-*_ed25519
-*_ecdsa
+.npmrc
+.pypirc
 credentials.json
-
-# Security: prevent accidental commit of disclosure drafts
 DRAFT-*.md
-
-# Claude Code worktrees and local state
-.claude/
+key.json
+secrets.json
+secrets.yaml
+service-account*.json
+token.json

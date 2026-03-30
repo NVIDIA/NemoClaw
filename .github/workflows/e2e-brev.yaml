@@ -1,0 +1,160 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: e2e-brev
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to test"
+        required: true
+        default: "main"
+      pr_number:
+        description: "PR number (for status reporting, optional)"
+        required: false
+        default: ""
+      test_suite:
+        description: "Test suite to run"
+        required: true
+        default: "full"
+        type: choice
+        options:
+          - full
+          - credential-sanitization
+          - all
+      keep_alive:
+        description: "Keep Brev instance alive after tests (for SSH debugging)"
+        required: false
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      branch:
+        required: true
+        type: string
+      pr_number:
+        required: false
+        type: string
+        default: ""
+      test_suite:
+        required: false
+        type: string
+        default: "full"
+      keep_alive:
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      BREV_API_TOKEN:
+        required: true
+      NVIDIA_API_KEY:
+        required: true
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+concurrency:
+  group: e2e-brev-${{ inputs.pr_number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-brev:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Create check run (pending)
+        if: inputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_SHA=$(gh pr view ${{ inputs.pr_number }} --json headRefOid -q .headRefOid)
+          CHECK_RUN_ID=$(gh api repos/${{ github.repository }}/check-runs \
+            -f name="Brev E2E (${{ inputs.test_suite }})" \
+            -f head_sha="$PR_SHA" \
+            -f status="in_progress" \
+            -f "output[title]=Running on ephemeral Brev instance" \
+            -f "output[summary]=Tests in progress..." \
+            --jq '.id')
+          echo "CHECK_RUN_ID=$CHECK_RUN_ID" >> "$GITHUB_ENV"
+          echo "PR_SHA=$PR_SHA" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Brev CLI
+        run: |
+          # Pin to v0.6.310 — v0.6.322 removed --cpu flag and defaults to GPU instances
+          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.310/brev-cli_0.6.310_linux_amd64.tar.gz"
+          tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
+          chmod +x /usr/local/bin/brev
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+
+      - name: Run ephemeral Brev E2E
+        env:
+          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          INSTANCE_NAME: e2e-pr-${{ inputs.pr_number || github.run_id }}
+          TEST_SUITE: ${{ inputs.test_suite }}
+          KEEP_ALIVE: ${{ inputs.keep_alive }}
+        run: npx vitest run --project e2e-brev --reporter=verbose
+
+      - name: Update check run (completed)
+        if: always() && inputs.pr_number != '' && env.CHECK_RUN_ID != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CONCLUSION=${{ job.status == 'success' && 'success' || 'failure' }}
+          gh api repos/${{ github.repository }}/check-runs/${{ env.CHECK_RUN_ID }} \
+            -X PATCH \
+            -f status="completed" \
+            -f conclusion="$CONCLUSION" \
+            -f "output[title]=Brev E2E (${{ inputs.test_suite }}): ${CONCLUSION}" \
+            -f "output[summary]=See workflow run for details."
+
+      - name: Post PR comment
+        if: always() && inputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            EMOJI="✅"
+            STATUS="PASSED"
+          else
+            EMOJI="❌"
+            STATUS="FAILED"
+          fi
+          INSTANCE="e2e-pr-${{ inputs.pr_number || github.run_id }}"
+          BODY="${EMOJI} **Brev E2E** (${{ inputs.test_suite }}): **${STATUS}** on branch \`${{ inputs.branch }}\` — [See logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          if [ "${{ inputs.keep_alive }}" = "true" ]; then
+            BODY="${BODY}
+
+          > **Instance \`${INSTANCE}\` is still running.** To SSH in:
+          > \`\`\`
+          > brev refresh && ssh ${INSTANCE}
+          > \`\`\`
+          > When done, delete it: \`brev delete ${INSTANCE}\`"
+          fi
+          gh pr comment ${{ inputs.pr_number }} --repo ${{ github.repository }} --body "$BODY"
+
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-brev-logs
+          path: /tmp/brev-e2e-*.log
+          if-no-files-found: ignore
