@@ -35,16 +35,18 @@ function detectGpu() {
       const perGpuMB = lines.map((l) => parseInt(l.trim(), 10)).filter((n) => !isNaN(n));
       if (perGpuMB.length > 0) {
         const totalMemoryMB = perGpuMB.reduce((a, b) => a + b, 0);
+        // Only mark nimCapable if at least one NIM model fits in GPU VRAM
+        const canRunNim = nimImages.models.some((m) => m.minGpuMemoryMB <= totalMemoryMB);
         return {
           type: "nvidia",
           count: perGpuMB.length,
           totalMemoryMB,
           perGpuMB: perGpuMB[0],
-          nimCapable: true,
+          nimCapable: canRunNim,
         };
       }
     }
-  } catch {}
+  } catch { /* ignored */ }
 
   // Fallback: DGX Spark (GB10) — VRAM not queryable due to unified memory architecture
   try {
@@ -58,7 +60,7 @@ function detectGpu() {
       try {
         const memLine = runCapture("free -m | awk '/Mem:/ {print $2}'", { ignoreError: true });
         if (memLine) totalMemoryMB = parseInt(memLine.trim(), 10) || 0;
-      } catch {}
+      } catch { /* ignored */ }
       return {
         type: "nvidia",
         count: 1,
@@ -68,7 +70,7 @@ function detectGpu() {
         spark: true,
       };
     }
-  } catch {}
+  } catch { /* ignored */ }
 
   // macOS: detect Apple Silicon or discrete GPU
   if (process.platform === "darwin") {
@@ -94,7 +96,7 @@ function detectGpu() {
             try {
               const memBytes = runCapture("sysctl -n hw.memsize", { ignoreError: true });
               if (memBytes) memoryMB = Math.floor(parseInt(memBytes, 10) / 1024 / 1024);
-            } catch {}
+            } catch { /* ignored */ }
           }
 
           return {
@@ -108,7 +110,7 @@ function detectGpu() {
           };
         }
       }
-    } catch {}
+    } catch { /* ignored */ }
   }
 
   return null;
@@ -127,6 +129,10 @@ function pullNimImage(model) {
 
 function startNimContainer(sandboxName, model, port = 8000) {
   const name = containerName(sandboxName);
+  return startNimContainerByName(name, model, port);
+}
+
+function startNimContainerByName(name, model, port = 8000) {
   const image = getImageForModel(model);
   if (!image) {
     console.error(`  Unknown model: ${model}`);
@@ -146,22 +152,21 @@ function startNimContainer(sandboxName, model, port = 8000) {
 
 function waitForNimHealth(port = 8000, timeout = 300) {
   const start = Date.now();
-  const interval = 5000;
-  const safePort = Number(port);
-  console.log(`  Waiting for NIM health on port ${safePort} (timeout: ${timeout}s)...`);
+  const intervalSec = 5;
+  const hostPort = Number(port);
+  console.log(`  Waiting for NIM health on port ${hostPort} (timeout: ${timeout}s)...`);
 
   while ((Date.now() - start) / 1000 < timeout) {
     try {
-      const result = runCapture(`curl -sf http://localhost:${safePort}/v1/models`, {
+      const result = runCapture(`curl -sf http://localhost:${hostPort}/v1/models`, {
         ignoreError: true,
       });
       if (result) {
         console.log("  NIM is healthy.");
         return true;
       }
-    } catch {}
-    // Synchronous sleep via spawnSync
-    require("child_process").spawnSync("sleep", ["5"]);
+    } catch { /* ignored */ }
+    require("child_process").spawnSync("sleep", [String(intervalSec)]);
   }
   console.error(`  NIM did not become healthy within ${timeout}s.`);
   return false;
@@ -169,26 +174,44 @@ function waitForNimHealth(port = 8000, timeout = 300) {
 
 function stopNimContainer(sandboxName) {
   const name = containerName(sandboxName);
+  stopNimContainerByName(name);
+}
+
+function stopNimContainerByName(name) {
   const qn = shellQuote(name);
   console.log(`  Stopping NIM container: ${name}`);
   run(`docker stop ${qn} 2>/dev/null || true`, { ignoreError: true });
   run(`docker rm ${qn} 2>/dev/null || true`, { ignoreError: true });
 }
 
-function nimStatus(sandboxName) {
+function nimStatus(sandboxName, port) {
   const name = containerName(sandboxName);
+  return nimStatusByName(name, port);
+}
+
+function nimStatusByName(name, port) {
   try {
+    const qn = shellQuote(name);
     const state = runCapture(
-      `docker inspect --format '{{.State.Status}}' ${shellQuote(name)} 2>/dev/null`,
+      `docker inspect --format '{{.State.Status}}' ${qn} 2>/dev/null`,
       { ignoreError: true }
     );
     if (!state) return { running: false, container: name };
 
     let healthy = false;
     if (state === "running") {
-      const health = runCapture(`curl -sf http://localhost:8000/v1/models 2>/dev/null`, {
-        ignoreError: true,
-      });
+      let resolvedHostPort = port != null ? Number(port) : 0;
+      if (!resolvedHostPort) {
+        const mapping = runCapture(`docker port ${qn} 8000 2>/dev/null`, {
+          ignoreError: true,
+        });
+        const m = mapping && mapping.match(/:(\d+)\s*$/);
+        resolvedHostPort = m ? Number(m[1]) : 8000;
+      }
+      const health = runCapture(
+        `curl -sf http://localhost:${resolvedHostPort}/v1/models 2>/dev/null`,
+        { ignoreError: true }
+      );
       healthy = !!health;
     }
     return { running: state === "running", healthy, container: name, state };
@@ -204,7 +227,10 @@ module.exports = {
   detectGpu,
   pullNimImage,
   startNimContainer,
+  startNimContainerByName,
   waitForNimHealth,
   stopNimContainer,
+  stopNimContainerByName,
   nimStatus,
+  nimStatusByName,
 };

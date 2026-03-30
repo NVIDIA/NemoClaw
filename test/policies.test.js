@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { describe, it, expect } from "vitest";
-import path from "node:path";
 import policies from "../bin/lib/policies";
 
 describe("policies", () => {
@@ -20,8 +20,21 @@ describe("policies", () => {
     });
 
     it("returns expected preset names", () => {
-      const names = policies.listPresets().map((p) => p.name).sort();
-      const expected = ["discord", "docker", "huggingface", "jira", "npm", "outlook", "pypi", "slack", "telegram"];
+      const names = policies
+        .listPresets()
+        .map((p) => p.name)
+        .sort();
+      const expected = [
+        "discord",
+        "docker",
+        "huggingface",
+        "jira",
+        "npm",
+        "outlook",
+        "pypi",
+        "slack",
+        "telegram",
+      ];
       expect(names).toEqual(expected);
     });
   });
@@ -70,27 +83,91 @@ describe("policies", () => {
 
   describe("buildPolicySetCommand", () => {
     it("shell-quotes sandbox name to prevent injection", () => {
-      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-      expect(cmd).toBe("openshell policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'");
+      const cmd = policies.buildPolicySetCommand(
+        "/tmp/policy.yaml",
+        "my-assistant",
+      );
+      expect(cmd).toBe(
+        "openshell policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'",
+      );
     });
 
     it("escapes shell metacharacters in sandbox name", () => {
-      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test; whoami");
+      const cmd = policies.buildPolicySetCommand(
+        "/tmp/policy.yaml",
+        "test; whoami",
+      );
       expect(cmd.includes("'test; whoami'")).toBeTruthy();
     });
 
     it("places --wait before the sandbox name", () => {
-      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test-box");
+      const cmd = policies.buildPolicySetCommand(
+        "/tmp/policy.yaml",
+        "test-box",
+      );
       const waitIdx = cmd.indexOf("--wait");
       const nameIdx = cmd.indexOf("'test-box'");
       expect(waitIdx < nameIdx).toBeTruthy();
+    });
+
+    it("uses the resolved openshell binary when provided by the installer path", () => {
+      process.env.NEMOCLAW_OPENSHELL_BIN = "/tmp/fake path/openshell";
+      try {
+        const cmd = policies.buildPolicySetCommand(
+          "/tmp/policy.yaml",
+          "my-assistant",
+        );
+        assert.equal(
+          cmd,
+          "'/tmp/fake path/openshell' policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'",
+        );
+      } finally {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      }
     });
   });
 
   describe("buildPolicyGetCommand", () => {
     it("shell-quotes sandbox name", () => {
       const cmd = policies.buildPolicyGetCommand("my-assistant");
-      expect(cmd).toBe("openshell policy get --full 'my-assistant' 2>/dev/null");
+      expect(cmd).toBe(
+        "openshell policy get --full 'my-assistant' 2>/dev/null",
+      );
+    });
+  });
+
+  describe("mergePresetIntoPolicy", () => {
+    const sampleEntries = "  - host: example.com\n    allow: true";
+
+    it("appends network_policies when current policy has content but no version header", () => {
+      const versionless = "some_key:\n  foo: bar";
+      const merged = policies.mergePresetIntoPolicy(versionless, sampleEntries);
+      expect(merged.startsWith("version: 1\n")).toBe(true);
+      expect(merged).toContain("some_key:");
+      expect(merged).toContain("network_policies:");
+      expect(merged).toContain("example.com");
+    });
+
+    it("appends preset entries when current policy has network_policies but no version", () => {
+      const versionlessWithNp =
+        "network_policies:\n  - host: existing.com\n    allow: true";
+      const merged = policies.mergePresetIntoPolicy(versionlessWithNp, sampleEntries);
+      expect(merged.trimStart().startsWith("version: 1\n")).toBe(true);
+      expect(merged).toContain("existing.com");
+      expect(merged).toContain("example.com");
+    });
+
+    it("keeps existing version when present", () => {
+      const withVersion = "version: 2\n\nnetwork_policies:\n  - host: old.com";
+      const merged = policies.mergePresetIntoPolicy(withVersion, sampleEntries);
+      expect(merged).toContain("version: 2");
+      expect(merged).toContain("example.com");
+    });
+
+    it("returns version + network_policies when current policy is empty", () => {
+      const merged = policies.mergePresetIntoPolicy("", sampleEntries);
+      expect(merged.startsWith("version: 1\n\nnetwork_policies:")).toBe(true);
+      expect(merged).toContain("example.com");
     });
   });
 
@@ -106,7 +183,7 @@ describe("policies", () => {
           // rules: at 8+ space indent (inside an endpoint) is correct
           if (/^\s{4}rules:/.test(line)) {
             expect.unreachable(
-              `${p.name} line ${i + 1}: rules at policy level (should be inside endpoint)`
+              `${p.name} line ${i + 1}: rules at policy level (should be inside endpoint)`,
             );
           }
         }
@@ -127,15 +204,9 @@ describe("policies", () => {
       const packagePresets = ["pypi", "npm"];
       for (const name of packagePresets) {
         const content = policies.loadPreset(name);
-        assert.ok(content, `preset not found: ${name}`);
-        assert.ok(
-          !content.includes("tls: terminate"),
-          `${name} preset must not use tls: terminate (breaks CONNECT tunneling)`
-        );
-        assert.ok(
-          content.includes("access: full"),
-          `${name} preset must use access: full for package manager compatibility`
-        );
+        expect(content).toBeTruthy();
+        expect(content.includes("tls: terminate")).toBe(false);
+        expect(content.includes("access: full")).toBe(true);
       }
     });
 
@@ -148,15 +219,9 @@ describe("policies", () => {
       ];
       for (const { name, expectedBinary } of packagePresets) {
         const content = policies.loadPreset(name);
-        assert.ok(content, `preset not found: ${name}`);
-        assert.ok(
-          content.includes("binaries:"),
-          `${name} preset must include a binaries section`
-        );
-        assert.ok(
-          content.includes(expectedBinary),
-          `${name} preset binaries must include ${expectedBinary}`
-        );
+        expect(content).toBeTruthy();
+        expect(content.includes("binaries:")).toBe(true);
+        expect(content.includes(expectedBinary)).toBe(true);
       }
     });
   });
