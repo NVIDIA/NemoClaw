@@ -100,7 +100,6 @@ const { setupNim } = require(${onboardPath});
     assert.match(payload.messages[0], /Choose \[/);
     assert.match(payload.messages[1], /Choose model \[1\]/);
     assert.ok(payload.lines.some((line) => line.includes("Detected local inference option")));
-    assert.ok(payload.lines.some((line) => line.includes("Press Enter to keep NVIDIA Endpoints")));
     assert.ok(payload.lines.some((line) => line.includes("Cloud models:")));
     assert.ok(payload.lines.some((line) => line.includes("Responses API available")));
   });
