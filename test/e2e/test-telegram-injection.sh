@@ -379,17 +379,18 @@ else
   fail "T7: SANDBOX_NAME '--help' was ACCEPTED — option injection possible!"
 fi
 
-# Additional invalid names
+# Additional invalid names — pass via process.argv to avoid shell expansion of
+# backticks and $() in double-quoted node -e strings.
 for invalid_name in '$(whoami)' '`id`' 'foo bar' '../etc/passwd' 'UPPERCASE'; do
   t_result=$(cd "$REPO" && node -e "
     const { validateName } = require('./bin/lib/runner');
     try {
-      validateName('$invalid_name', 'SANDBOX_NAME');
+      validateName(process.argv[1], 'SANDBOX_NAME');
       console.log('ACCEPTED');
     } catch (e) {
       console.log('REJECTED');
     }
-  " 2>&1)
+  " -- "$invalid_name" 2>&1)
 
   if echo "$t_result" | grep -q "REJECTED"; then
     pass "T6/T7 extra: SANDBOX_NAME '${invalid_name}' correctly rejected"

@@ -111,6 +111,7 @@ function waitForSsh(maxAttempts = 60, intervalMs = 5_000) {
 
 function runRemoteTest(scriptPath) {
   const cmd = [
+    `set -o pipefail`,
     `source ~/.nvm/nvm.sh 2>/dev/null || true`,
     `cd ${remoteDir}`,
     `export npm_config_prefix=$HOME/.local`,
@@ -205,6 +206,14 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
         execSync(`sleep ${setupPollInterval / 1000}`);
       }
 
+      // Fail fast if neither readiness marker appeared within the timeout
+      if (Date.now() - setupStart >= setupMaxWait) {
+        throw new Error(
+          `Launchable setup did not complete within ${setupMaxWait / 60_000} minutes. ` +
+          `Neither '=== Ready ===' in /tmp/launch-plugin.log nor install-ran marker found.`,
+        );
+      }
+
       // The launch script installs Docker, OpenShell CLI, clones NemoClaw main,
       // and sets up code-server — but it does NOT run `nemoclaw onboard` (that's
       // deferred to an interactive code-server terminal). So at this point we have:
@@ -222,7 +231,7 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
 
       // Install deps for our branch
       console.log(`[${elapsed()}] Running npm ci to sync dependencies...`);
-      sshWithSecrets(`source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${remoteDir} && npm ci --ignore-scripts 2>&1 | tail -5`, { timeout: 300_000, stream: true });
+      sshWithSecrets(`set -o pipefail && source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${remoteDir} && npm ci --ignore-scripts 2>&1 | tail -5`, { timeout: 300_000, stream: true });
       console.log(`[${elapsed()}] Dependencies synced`);
 
       // Run nemoclaw onboard (non-interactive) — this is the path real users take.

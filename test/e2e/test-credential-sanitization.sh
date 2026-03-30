@@ -69,14 +69,21 @@ fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-test}"
 
-# Run a command inside the sandbox and capture output
+# Run a command inside the sandbox and capture output.
+# Returns __PROBE_FAILED__ and exit 1 if SSH setup or execution fails,
+# so callers can distinguish "no output" from "probe never ran".
 sandbox_exec() {
   local cmd="$1"
   local ssh_config
   ssh_config="$(mktemp)"
-  openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null
+  if ! openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
+    rm -f "$ssh_config"
+    echo "__PROBE_FAILED__"
+    return 1
+  fi
 
   local result
+  local rc=0
   result=$(timeout 60 ssh -F "$ssh_config" \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
@@ -84,9 +91,13 @@ sandbox_exec() {
     -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" \
     "$cmd" \
-    2>&1) || true
+    2>&1) || rc=$?
 
   rm -f "$ssh_config"
+  if [ "$rc" -ne 0 ] && [ -z "$result" ]; then
+    echo "__PROBE_FAILED__"
+    return 1
+  fi
   echo "$result"
 }
 
@@ -396,7 +407,9 @@ section "Phase 2: Runtime Sandbox Credential Check"
 info "C6: Checking for auth-profiles.json inside sandbox..."
 c6_result=$(sandbox_exec "find /sandbox -name 'auth-profiles.json' 2>/dev/null | head -5")
 
-if [ -z "$c6_result" ]; then
+if [ "$c6_result" = "__PROBE_FAILED__" ]; then
+  fail "C6: Sandbox probe failed — SSH did not execute; cannot verify auth-profiles.json absence"
+elif [ -z "$c6_result" ]; then
   pass "C6: No auth-profiles.json found inside sandbox"
 else
   fail "C6: auth-profiles.json found inside sandbox: $c6_result"
@@ -411,7 +424,9 @@ c7_nvapi=$(sandbox_exec "grep -r 'nvapi-' /sandbox/.openclaw/ /sandbox/.nemoclaw
 c7_ghp=$(sandbox_exec "grep -r 'ghp_' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | grep -v '/policies/' | head -5" || true)
 c7_npm=$(sandbox_exec "grep -r 'npm_' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | grep -v '/policies/' | head -5" || true)
 
-if [ -z "$c7_nvapi" ] && [ -z "$c7_ghp" ] && [ -z "$c7_npm" ]; then
+if [ "$c7_nvapi" = "__PROBE_FAILED__" ] || [ "$c7_ghp" = "__PROBE_FAILED__" ] || [ "$c7_npm" = "__PROBE_FAILED__" ]; then
+  fail "C7: Sandbox probe failed — SSH did not execute; cannot verify secret absence"
+elif [ -z "$c7_nvapi" ] && [ -z "$c7_ghp" ] && [ -z "$c7_npm" ]; then
   pass "C7: No secret patterns (nvapi-, ghp_, npm_) found in sandbox config"
 else
   fail "C7: Secret patterns found in sandbox — nvapi: ${c7_nvapi:0:100}, ghp: ${c7_ghp:0:100}, npm: ${c7_npm:0:100}"
