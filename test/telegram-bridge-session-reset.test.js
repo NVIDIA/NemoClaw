@@ -7,24 +7,19 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { describe, it, expect } from "vitest";
+
+const require = createRequire(import.meta.url);
 
 const BRIDGE_SRC = fs.readFileSync(
   path.join(import.meta.dirname, "..", "scripts", "telegram-bridge.js"),
   "utf-8",
 );
 
-// Extract and evaluate the isSessionLockFailure function from the source
-// so we test the real implementation without triggering the script's
-// top-level side effects (process.exit, openshell resolution, etc.).
-
-const fnMatch = BRIDGE_SRC.match(
-  /function isSessionLockFailure\(result\)\s*\{[\s\S]*?^\}/m,
-);
-if (!fnMatch) throw new Error("Could not extract isSessionLockFailure from telegram-bridge.js");
-const isSessionLockFailure = new Function(
-  `${fnMatch[0]}; return isSessionLockFailure;`,
-)();
+// Import the exported utility directly instead of regex-extracting it.
+// The require is safe because init() only runs when require.main === module.
+const { isSessionLockFailure } = require("../scripts/telegram-bridge");
 
 describe("isSessionLockFailure", () => {
   it("detects exit code 255 as a lock failure when stderr mentions session lock", () => {

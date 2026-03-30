@@ -301,6 +301,9 @@ async function main() {
   poll();
 }
 
+// ── Exports (for testing) ──────────────────────────────────────────
+module.exports = { isSessionLockFailure, getSessionId, rotateSession };
+
 if (require.main === module) {
   init();
   main();
