@@ -189,7 +189,28 @@ fi
 info "Setting inference route to nvidia-nim / Nemotron 3 Super..."
 openshell inference set --no-verify --provider nvidia-nim --model nvidia/nemotron-3-super-120b-a12b >/dev/null 2>&1
 
-# 5. Build and create sandbox
+# 5. Swap check — prevent OOM during sandbox image push (Linux only)
+if [ "$(uname -s)" = "Linux" ]; then
+  MIN_TOTAL_MB=12000
+  total_ram_mb=$(awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 0)
+  total_swap_mb=$(awk '/SwapTotal/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 0)
+  total_mb=$((total_ram_mb + total_swap_mb))
+  if [ "$total_mb" -lt "$MIN_TOTAL_MB" ] && [ ! -f /swapfile ]; then
+    # Bail if disk can't fit a 4 GB swap file
+    free_disk_kb=$(df / --output=avail -k 2>/dev/null | tail -1 | tr -d ' ')
+    if [ -n "$free_disk_kb" ] && [ "$free_disk_kb" -lt 5000000 ]; then
+      warn "Insufficient disk space ($((free_disk_kb / 1024)) MB free, need ~5 GB) to create swap file. Skipping."
+    else
+      warn "Low memory detected (${total_mb} MB). Sandbox creation may fail with OOM."
+      warn "Consider manually creating a swap file:"
+      warn "  sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile"
+    fi
+  elif [ "$total_mb" -ge "$MIN_TOTAL_MB" ]; then
+    info "Memory OK: ${total_ram_mb} MB RAM + ${total_swap_mb} MB swap"
+  fi
+fi
+
+# 6. Build and create sandbox
 info "Deleting old ${SANDBOX_NAME} sandbox (if any)..."
 openshell sandbox delete "$SANDBOX_NAME" >/dev/null 2>&1 || true
 

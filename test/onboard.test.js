@@ -428,9 +428,13 @@ describe("onboard helpers", () => {
   it("writes sandbox sync scripts to a temp file for stdin redirection", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-test-"));
     try {
-      const scriptFile = writeSandboxConfigSyncFile("echo test", tmpDir, 1234);
-      expect(scriptFile).toBe(path.join(tmpDir, "nemoclaw-sync-1234.sh"));
+      const scriptFile = writeSandboxConfigSyncFile("echo test", tmpDir);
+      expect(scriptFile).toMatch(/nemoclaw-sync-.*[/\\]sync\.sh$/);
       expect(fs.readFileSync(scriptFile, "utf8")).toBe("echo test\n");
+      if (process.platform !== "win32") {
+        const stat = fs.statSync(scriptFile);
+        expect(stat.mode & 0o777).toBe(0o600);
+      }
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
