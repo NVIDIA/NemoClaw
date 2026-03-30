@@ -17,6 +17,7 @@ function createFakeNpmEnv(tmp) {
 
   return {
     ...process.env,
+    HOME: tmp,
     PATH: `${fakeBin}:${process.env.PATH || "/usr/bin:/bin"}`,
   };
 }
@@ -97,7 +98,7 @@ describe("uninstall helpers", () => {
 
     const result = spawnSync(
       "bash",
-      ["-c", `HOME="${tmp}" source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_cli`],
+      ["-c", `source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_cli`],
       {
         cwd: path.join(import.meta.dirname, ".."),
         encoding: "utf-8",
@@ -119,7 +120,7 @@ describe("uninstall helpers", () => {
 
     const result = spawnSync(
       "bash",
-      ["-c", `HOME="${tmp}" source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_cli`],
+      ["-c", `source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_cli`],
       {
         cwd: path.join(import.meta.dirname, ".."),
         encoding: "utf-8",
@@ -142,10 +143,11 @@ describe("uninstall helpers", () => {
 
     const result = spawnSync(
       "bash",
-      ["-c", `HOME="${tmp}" source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_state`],
+      ["-c", `source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_state`],
       {
         cwd: path.join(import.meta.dirname, ".."),
         encoding: "utf-8",
+        env: { ...process.env, HOME: tmp },
       }
     );
 

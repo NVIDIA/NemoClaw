@@ -624,6 +624,12 @@ describe("runner", () => {
       expect(stdoutText()).toContain("PROGRESS:100:Apply complete");
     });
 
+    it("rejects --plan flag (not yet implemented)", async () => {
+      await expect(
+        main(["apply", "--profile", "default", "--plan", "/tmp/saved-plan.json"]),
+      ).rejects.toThrow(/--plan is not yet implemented/);
+    });
+
     it("parses --dry-run and --endpoint-url for plan", async () => {
       await main([
         "plan",
