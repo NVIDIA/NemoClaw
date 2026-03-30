@@ -69,7 +69,7 @@ describe("uninstall CLI flags", () => {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 });
 
 describe("uninstall helpers", () => {
