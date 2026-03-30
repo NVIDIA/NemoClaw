@@ -395,13 +395,16 @@ ensure_supported_runtime() {
 # ---------------------------------------------------------------------------
 install_nodejs() {
   if command_exists node; then
-    local current_version
+    local current_version current_npm_major
     current_version="$(node --version 2>/dev/null || true)"
-    if version_gte "${current_version#v}" "$MIN_NODE_VERSION"; then
+    current_npm_major="$(version_major "$(npm --version 2>/dev/null || echo 0)")"
+    if version_gte "${current_version#v}" "$MIN_NODE_VERSION" \
+      && [[ "$current_npm_major" =~ ^[0-9]+$ ]] \
+      && ((current_npm_major >= MIN_NPM_MAJOR)); then
       info "Node.js found: ${current_version}"
       return
     fi
-    warn "Node.js ${current_version} found but NemoClaw requires >=${MIN_NODE_VERSION} — upgrading via nvm…"
+    warn "Node.js ${current_version}, npm major ${current_npm_major:-unknown} found but NemoClaw requires Node.js >=${MIN_NODE_VERSION} and npm >=${MIN_NPM_MAJOR} — upgrading via nvm…"
   else
     info "Node.js not found — installing via nvm…"
   fi

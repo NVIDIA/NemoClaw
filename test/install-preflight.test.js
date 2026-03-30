@@ -108,7 +108,7 @@ exit 1
 
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).not.toBe(0);
-    expect(output).toMatch(/v18\.19\.1 found but NemoClaw requires >=22\.16\.0/);
+    expect(output).toMatch(/v18\.19\.1.*found but NemoClaw requires/);
     expect(output).toMatch(/upgrading via nvm/);
     expect(output).toMatch(/Failed to download nvm installer/);
   });
