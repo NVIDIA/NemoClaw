@@ -166,6 +166,111 @@ function getMemoryInfo(opts) {
   return null;
 }
 
+function hasSwapfile() {
+  try {
+    fs.accessSync("/swapfile");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getExistingSwapResult(mem) {
+  if (!hasSwapfile()) {
+    return null;
+  }
+
+  const swaps = (() => {
+    try {
+      return fs.readFileSync("/proc/swaps", "utf-8");
+    } catch {
+      return "";
+    }
+  })();
+
+  if (swaps.includes("/swapfile")) {
+    return {
+      ok: true,
+      totalMB: mem.totalMB,
+      swapCreated: false,
+      reason: "/swapfile already exists",
+    };
+  }
+
+  try {
+    runCapture("sudo swapon /swapfile", { ignoreError: false });
+    return { ok: true, totalMB: mem.totalMB + 4096, swapCreated: true };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `found orphaned /swapfile but could not activate it: ${err.message}`,
+    };
+  }
+}
+
+function checkSwapDiskSpace() {
+  try {
+    const dfOut = runCapture("df / --output=avail -k 2>/dev/null | tail -1", { ignoreError: true });
+    const freeKB = parseInt((dfOut || "").trim(), 10);
+    if (!isNaN(freeKB) && freeKB < 5000000) {
+      return {
+        ok: false,
+        reason: `insufficient disk space (${Math.floor(freeKB / 1024)} MB free, need ~5 GB) to create swap file`,
+      };
+    }
+  } catch {
+    // df unavailable — let dd fail naturally if out of space
+  }
+
+  return null;
+}
+
+function writeManagedSwapMarker() {
+  const nemoclawDir = path.join(os.homedir(), ".nemoclaw");
+  if (!fs.existsSync(nemoclawDir)) {
+    runCapture(`mkdir -p ${nemoclawDir}`, { ignoreError: true });
+  }
+
+  try {
+    fs.writeFileSync(path.join(nemoclawDir, "managed_swap"), "/swapfile");
+  } catch {
+    // Best effort marker write.
+  }
+}
+
+function cleanupPartialSwap() {
+  try {
+    runCapture("sudo swapoff /swapfile 2>/dev/null || true", { ignoreError: true });
+    runCapture("sudo rm -f /swapfile", { ignoreError: true });
+  } catch {
+    // Best effort cleanup
+  }
+}
+
+function createSwapfile(mem) {
+  try {
+    runCapture("sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none", { ignoreError: false });
+    runCapture("sudo chmod 600 /swapfile", { ignoreError: false });
+    runCapture("sudo mkswap /swapfile", { ignoreError: false });
+    runCapture("sudo swapon /swapfile", { ignoreError: false });
+    runCapture(
+      "grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab",
+      { ignoreError: false }
+    );
+    writeManagedSwapMarker();
+
+    return { ok: true, totalMB: mem.totalMB + 4096, swapCreated: true };
+  } catch (err) {
+    cleanupPartialSwap();
+    return {
+      ok: false,
+      reason: `swap creation failed: ${err.message}. Create swap manually:\n` +
+        "  sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none && sudo chmod 600 /swapfile && " +
+        "sudo mkswap /swapfile && sudo swapon /swapfile",
+    };
+  }
+}
+
 /**
  * Ensure the system has enough memory (RAM + swap) for sandbox operations.
  *
@@ -191,13 +296,12 @@ function ensureSwap(minTotalMB, opts = {}) {
     ...opts,
   };
   const threshold = minTotalMB ?? 12000;
-  const platform = o.platform;
 
-  if (platform !== "linux") {
+  if (o.platform !== "linux") {
     return { ok: true, totalMB: 0, swapCreated: false };
   }
 
-  const mem = o.memoryInfo ?? o.getMemoryInfoImpl({ platform });
+  const mem = o.memoryInfo ?? o.getMemoryInfoImpl({ platform: o.platform });
   if (!mem) {
     return { ok: false, reason: "could not read memory info" };
   }
@@ -206,48 +310,7 @@ function ensureSwap(minTotalMB, opts = {}) {
     return { ok: true, totalMB: mem.totalMB, swapCreated: false };
   }
 
-  if (!o.dryRun) {
-    const swapfileExists = (() => {
-      try {
-        fs.accessSync("/swapfile");
-        return true;
-      } catch {
-        return false;
-      }
-    })();
-
-    if (swapfileExists) {
-      const swaps = (() => {
-        try {
-          return fs.readFileSync("/proc/swaps", "utf-8");
-        } catch {
-          return "";
-        }
-      })();
-
-      if (swaps.includes("/swapfile")) {
-        // Active swap — nothing to do
-        return {
-          ok: true,
-          totalMB: mem.totalMB,
-          swapCreated: false,
-          reason: "/swapfile already exists",
-        };
-      }
-      // File exists but isn't active — re-activate rather than overwrite
-      try {
-        runCapture("sudo swapon /swapfile", { ignoreError: false });
-        return { ok: true, totalMB: mem.totalMB + 4096, swapCreated: true };
-      } catch (err) {
-        return {
-          ok: false,
-          reason: `found orphaned /swapfile but could not activate it: ${err.message}`,
-        };
-      }
-    }
-    // No swapfile at all — fall through to creation
-  } else {
-    // In dry-run mode, simulate the check
+  if (o.dryRun) {
     if (o.swapfileExists) {
       return {
         ok: true,
@@ -256,66 +319,20 @@ function ensureSwap(minTotalMB, opts = {}) {
         reason: "/swapfile already exists",
       };
     }
-  }
-
-  // Bail if disk is too small for a 4 GB swap file
-  if (!o.dryRun) {
-    try {
-      const dfOut = runCapture("df / --output=avail -k 2>/dev/null | tail -1", { ignoreError: true });
-      const freeKB = parseInt((dfOut || "").trim(), 10);
-      if (!isNaN(freeKB) && freeKB < 5000000) {
-        return {
-          ok: false,
-          reason: `insufficient disk space (${Math.floor(freeKB / 1024)} MB free, need ~5 GB) to create swap file`,
-        };
-      }
-    } catch {
-      // df unavailable — let dd fail naturally if out of space
-    }
-  }
-
-  if (o.dryRun) {
     return { ok: true, totalMB: mem.totalMB, swapCreated: true };
   }
 
-  // Create 4 GB swap file
-  try {
-    runCapture("sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none", { ignoreError: false });
-    runCapture("sudo chmod 600 /swapfile", { ignoreError: false });
-    runCapture("sudo mkswap /swapfile", { ignoreError: false });
-    runCapture("sudo swapon /swapfile", { ignoreError: false });
-    runCapture(
-      "grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab",
-      { ignoreError: false }
-    );
-
-    const nemoclawDir = path.join(os.homedir(), ".nemoclaw");
-    if (!fs.existsSync(nemoclawDir)) {
-      runCapture(`mkdir -p ${nemoclawDir}`, { ignoreError: true });
-    }
-    try {
-      fs.writeFileSync(path.join(nemoclawDir, "managed_swap"), "/swapfile");
-    } catch {
-    }
-
-    return { ok: true, totalMB: mem.totalMB + 4096, swapCreated: true };
-  } catch (err) {
-    // Attempt cleanup of partial state
-    try {
-      runCapture("sudo swapoff /swapfile 2>/dev/null || true", { ignoreError: true });
-      runCapture("sudo rm -f /swapfile", { ignoreError: true });
-    } catch {
-      // Best effort cleanup
-    }
-
-    return {
-      ok: false,
-      reason: `swap creation failed: ${err.message}. Create swap manually:\n` +
-        "  sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none && sudo chmod 600 /swapfile && " +
-        "sudo mkswap /swapfile && sudo swapon /swapfile",
-    };
+  const existingSwapResult = getExistingSwapResult(mem);
+  if (existingSwapResult) {
+    return existingSwapResult;
   }
+
+  const diskSpaceResult = checkSwapDiskSpace();
+  if (diskSpaceResult) {
+    return diskSpaceResult;
+  }
+
+  return createSwapfile(mem);
 }
 
 module.exports = { checkPortAvailable, probePortAvailability, getMemoryInfo, ensureSwap };
-

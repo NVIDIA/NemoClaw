@@ -970,6 +970,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  if (command.includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -1070,6 +1071,7 @@ runner.runCapture = (command) => {
     sandboxListCalls += 1;
     return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
   }
+  if (command.includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
   return "";
 };
 registry.registerSandbox = () => true;
