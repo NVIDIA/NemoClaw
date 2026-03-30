@@ -6,6 +6,20 @@
 
 set -euo pipefail
 
+# Global cleanup state — ensures background processes are killed and temp files
+# are removed on any exit path (set -e, unhandled signal, unexpected error).
+_cleanup_pids=()
+_cleanup_files=()
+_global_cleanup() {
+  for pid in "${_cleanup_pids[@]:-}"; do
+    kill "$pid" 2>/dev/null || true
+  done
+  for f in "${_cleanup_files[@]:-}"; do
+    rm -f "$f" 2>/dev/null || true
+  done
+}
+trap _global_cleanup EXIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 DEFAULT_NEMOCLAW_VERSION="0.1.0"
 TOTAL_STEPS=3
@@ -210,16 +224,27 @@ spin() {
   local pid=$! i=0
   local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
 
+  # Register with global cleanup so any exit path reaps the child and temp file.
+  _cleanup_pids+=("$pid")
+  _cleanup_files+=("$log")
+
+  # Ensure Ctrl+C kills the background process and cleans up the temp file.
+  trap 'kill "$pid" 2>/dev/null; rm -f "$log"; exit 130' INT TERM
+
   while kill -0 "$pid" 2>/dev/null; do
     printf "\r  ${C_GREEN}%s${C_RESET}  %s" "${frames[$((i++ % 10))]}" "$msg"
     sleep 0.08
   done
+
+  # Restore default signal handling after the background process exits.
+  trap - INT TERM
 
   if wait "$pid"; then
     local status=0
   else
     local status=$?
   fi
+
   if [[ $status -eq 0 ]]; then
     printf "\r  ${C_GREEN}✓${C_RESET}  %s\n" "$msg"
   else
@@ -228,6 +253,11 @@ spin() {
     printf "\n"
   fi
   rm -f "$log"
+
+  # Deregister only after cleanup actions are complete, so the global EXIT
+  # trap still covers this pid/log if a signal arrives before this point.
+  _cleanup_pids=("${_cleanup_pids[@]/$pid/}")
+  _cleanup_files=("${_cleanup_files[@]/$log/}")
   return $status
 }
 
