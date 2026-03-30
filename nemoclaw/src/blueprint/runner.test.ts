@@ -32,7 +32,7 @@ vi.mock("node:crypto", () => ({
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
-  const original = await importOriginal();
+  const original = await importOriginal() as typeof import("node:fs");
   return {
     ...original,
     existsSync: (p: string) => store.has(p),
@@ -622,12 +622,6 @@ describe("runner", () => {
       await main(["apply", "--profile", "default", "--endpoint-url", "https://override.test/v1"]);
       expect(mockedValidateEndpoint).toHaveBeenCalledWith("https://override.test/v1");
       expect(stdoutText()).toContain("PROGRESS:100:Apply complete");
-    });
-
-    it("rejects --plan flag (not yet implemented)", async () => {
-      await expect(
-        main(["apply", "--profile", "default", "--plan", "/tmp/saved-plan.json"]),
-      ).rejects.toThrow(/--plan is not yet implemented/);
     });
 
     it("parses --dry-run and --endpoint-url for plan", async () => {

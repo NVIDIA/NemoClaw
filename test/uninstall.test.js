@@ -13,11 +13,8 @@ function createFakeNpmEnv(tmp) {
   const fakeBin = path.join(tmp, "bin");
   const npmPath = path.join(fakeBin, "npm");
   fs.mkdirSync(fakeBin, { recursive: true });
-  fs.writeFileSync(
-    npmPath,
-    "#!/usr/bin/env bash\nexit 0\n",
-    { mode: 0o755 }
-  );
+  fs.writeFileSync(npmPath, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
   return {
     ...process.env,
     PATH: `${fakeBin}:${process.env.PATH || "/usr/bin:/bin"}`,
@@ -45,9 +42,10 @@ describe("uninstall CLI flags", () => {
     fs.mkdirSync(fakeBin);
 
     try {
-      // Provide stub executables so the uninstaller can run its steps as no-ops
       for (const cmd of ["npm", "openshell", "docker", "ollama", "pgrep"]) {
-        fs.writeFileSync(path.join(fakeBin, cmd), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+        fs.writeFileSync(path.join(fakeBin, cmd), "#!/usr/bin/env bash\nexit 0\n", {
+          mode: 0o755,
+        });
       }
 
       const result = spawnSync("bash", [UNINSTALL_SCRIPT, "--yes"], {
@@ -62,7 +60,6 @@ describe("uninstall CLI flags", () => {
       });
 
       expect(result.status).toBe(0);
-      // Banner and bye statement should be present
       const output = `${result.stdout}${result.stderr}`;
       expect(output).toMatch(/NemoClaw/);
       expect(output).toMatch(/Claws retracted/);
@@ -76,11 +73,11 @@ describe("uninstall helpers", () => {
   it("returns the expected gateway volume candidate", () => {
     const result = spawnSync(
       "bash",
-      ["-lc", `source "${UNINSTALL_SCRIPT}"; gateway_volume_candidates nemoclaw`],
+      ["-c", `source "${UNINSTALL_SCRIPT}"; gateway_volume_candidates nemoclaw`],
       {
         cwd: path.join(import.meta.dirname, ".."),
         encoding: "utf-8",
-      },
+      }
     );
 
     expect(result.status).toBe(0);
@@ -92,6 +89,7 @@ describe("uninstall helpers", () => {
     const shimDir = path.join(tmp, ".local", "bin");
     const shimPath = path.join(shimDir, "nemoclaw");
     const targetPath = path.join(tmp, "prefix", "bin", "nemoclaw");
+
     fs.mkdirSync(shimDir, { recursive: true });
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
     fs.writeFileSync(targetPath, "#!/usr/bin/env bash\n", { mode: 0o755 });
@@ -99,12 +97,12 @@ describe("uninstall helpers", () => {
 
     const result = spawnSync(
       "bash",
-      ["-lc", `HOME="${tmp}" source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_cli`],
+      ["-c", `HOME="${tmp}" source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_cli`],
       {
         cwd: path.join(import.meta.dirname, ".."),
         encoding: "utf-8",
         env: createFakeNpmEnv(tmp),
-      },
+      }
     );
 
     expect(result.status).toBe(0);
@@ -115,17 +113,18 @@ describe("uninstall helpers", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-"));
     const shimDir = path.join(tmp, ".local", "bin");
     const shimPath = path.join(shimDir, "nemoclaw");
+
     fs.mkdirSync(shimDir, { recursive: true });
     fs.writeFileSync(shimPath, "#!/usr/bin/env bash\n", { mode: 0o755 });
 
     const result = spawnSync(
       "bash",
-      ["-lc", `HOME="${tmp}" source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_cli`],
+      ["-c", `HOME="${tmp}" source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_cli`],
       {
         cwd: path.join(import.meta.dirname, ".."),
         encoding: "utf-8",
         env: createFakeNpmEnv(tmp),
-      },
+      }
     );
 
     expect(result.status).toBe(0);
@@ -137,16 +136,17 @@ describe("uninstall helpers", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-session-"));
     const stateDir = path.join(tmp, ".nemoclaw");
     const sessionPath = path.join(stateDir, "onboard-session.json");
+
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(sessionPath, JSON.stringify({ status: "complete" }));
 
     const result = spawnSync(
       "bash",
-      ["-lc", `HOME="${tmp}" source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_state`],
+      ["-c", `HOME="${tmp}" source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_state`],
       {
         cwd: path.join(import.meta.dirname, ".."),
         encoding: "utf-8",
-      },
+      }
     );
 
     expect(result.status).toBe(0);
