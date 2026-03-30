@@ -216,6 +216,15 @@ repos:
         stages: [pre-push]
         priority: 10
 
+      - id: vitest-root
+        name: Vitest (unit tests)
+        entry: npx vitest run --project cli
+        language: system
+        pass_filenames: false
+        files: ^(bin|test|scripts)/
+        stages: [pre-push]
+        priority: 20
+
 default_language_version:
   python: python3
 
