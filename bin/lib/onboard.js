@@ -9,6 +9,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
+const pRetry = require("p-retry");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
 const {
   getDefaultOllamaModel,
@@ -448,7 +449,7 @@ function hydrateCredentialEnv(envName) {
 }
 
 function getCurlTimingArgs() {
-  return ["--connect-timeout 5", "--max-time 20"];
+  return ["--connect-timeout 10", "--max-time 60"];
 }
 
 function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
@@ -1614,41 +1615,57 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
     console.log(`  Using pinned OpenShell gateway image: ${gatewayEnv.OPENSHELL_CLUSTER_IMAGE}`);
   }
 
-  const startResult = runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: true, env: gatewayEnv });
-  if (startResult.status !== 0) {
-    console.error("  Gateway failed to start. Cleaning up stale state...");
-    destroyGateway();
+  // Retry gateway start with exponential backoff. On some hosts (Horde VMs,
+  // first-run environments) the embedded k3s needs more time than OpenShell's
+  // internal health-check window allows. Retrying after a clean destroy lets
+  // the second attempt benefit from cached images and cleaner cgroup state.
+  // See: https://github.com/NVIDIA/OpenShell/issues/433
+  const retries = exitOnFailure ? 2 : 0;
+  try {
+    await pRetry(() => {
+      runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: true, env: gatewayEnv });
+
+      for (let i = 0; i < 5; i++) {
+        const status = runCaptureOpenshell(["status"], { ignoreError: true });
+        const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
+        const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+        if (isGatewayHealthy(status, namedInfo, currentInfo)) {
+          return; // success
+        }
+        if (i < 4) sleep(2);
+      }
+
+      throw new Error("Gateway failed to start");
+    }, {
+      retries,
+      minTimeout: 10_000,
+      factor: 3,
+      onFailedAttempt: (err) => {
+        console.log(`  Gateway start attempt ${err.attemptNumber} failed. ${err.retriesLeft} retries left...`);
+        if (err.retriesLeft > 0 && exitOnFailure) {
+          destroyGateway();
+        }
+      },
+    });
+  } catch {
     if (exitOnFailure) {
-      console.error("  Stale state removed. Please rerun: nemoclaw onboard");
+      console.error(`  Gateway failed to start after ${retries + 1} attempts.`);
+      console.error("  Gateway state preserved for diagnostics.");
+      console.error("");
+      console.error("  Troubleshooting:");
+      console.error("    openshell doctor logs --name nemoclaw");
+      console.error("    openshell doctor check");
       process.exit(1);
     }
     throw new Error("Gateway failed to start");
   }
 
-  for (let i = 0; i < 5; i++) {
-    const status = runCaptureOpenshell(["status"], { ignoreError: true });
-    const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
-    const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    if (isGatewayHealthy(status, namedInfo, currentInfo)) {
-      console.log("  ✓ Gateway is healthy");
-      break;
-    }
-    if (i === 4) {
-      console.error("  Gateway health check failed. Cleaning up stale state...");
-      destroyGateway();
-      if (exitOnFailure) {
-        console.error("  Stale state removed. Please rerun: nemoclaw onboard");
-        process.exit(1);
-      }
-      throw new Error("Gateway failed to start");
-    }
-    sleep(2);
-  }
+  console.log("  ✓ Gateway is healthy");
 
-  // CoreDNS fix — always run. k3s-inside-Docker has broken DNS on all platforms.
+  // CoreDNS fix — k3s-inside-Docker has broken DNS forwarding on all platforms.
   const runtime = getContainerRuntime();
   if (shouldPatchCoredns(runtime)) {
-    console.log("  Patching CoreDNS for Colima...");
+    console.log("  Patching CoreDNS DNS forwarding...");
     run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" ${GATEWAY_NAME} 2>&1 || true`, { ignoreError: true });
   }
   sleep(5);
@@ -1877,6 +1894,11 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
     name: sandboxName,
     gpuEnabled: !!gpu,
   });
+
+  // DNS proxy — run a forwarder in the sandbox pod so the isolated
+  // sandbox namespace can resolve hostnames (fixes #626).
+  console.log("  Setting up sandbox DNS proxy...");
+  run(`bash "${path.join(SCRIPTS, "setup-dns-proxy.sh")}" ${GATEWAY_NAME} "${sandboxName}" 2>&1 || true`, { ignoreError: true });
 
   console.log(`  ✓ Sandbox '${sandboxName}' created`);
   return sandboxName;

@@ -134,9 +134,9 @@ for i in 1 2 3 4 5; do
 done
 info "Gateway is healthy"
 
-# 2. CoreDNS fix (Colima only)
-if [ "$CONTAINER_RUNTIME" = "colima" ]; then
-  info "Patching CoreDNS for Colima..."
+# 2. CoreDNS fix — k3s-inside-Docker has broken DNS forwarding on all platforms
+if [ "$CONTAINER_RUNTIME" != "unknown" ]; then
+  info "Patching CoreDNS DNS forwarding..."
   bash "$SCRIPT_DIR/fix-coredns.sh" nemoclaw 2>&1 || warn "CoreDNS patch failed (may not be needed)"
 fi
 
@@ -246,7 +246,12 @@ if ! echo "$SANDBOX_LINE" | grep -q "Ready"; then
   fail "Sandbox created but not Ready (phase: ${SANDBOX_PHASE:-unknown}). Check 'openshell sandbox get ${SANDBOX_NAME}'."
 fi
 
-# 6. Done
+# 6. DNS proxy — run a forwarder in the sandbox pod so the isolated
+# sandbox namespace can resolve hostnames (fixes #626).
+info "Setting up sandbox DNS proxy..."
+bash "$SCRIPT_DIR/setup-dns-proxy.sh" nemoclaw "$SANDBOX_NAME" 2>&1 || warn "DNS proxy setup failed (sandbox DNS may not work)"
+
+# 7. Done
 echo ""
 info "Setup complete!"
 echo ""
