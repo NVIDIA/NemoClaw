@@ -73,7 +73,7 @@ jobs:
         run: npx vitest run --coverage
 
       - name: Check coverage ratchet
-        run: bash scripts/check-coverage-ratchet.sh
+        run: npx tsx scripts/check-coverage-ratchet.ts
 
   build-sandbox-images:
     runs-on: ubuntu-latest

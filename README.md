@@ -22,6 +22,80 @@ It also includes open source models such as [NVIDIA Nemotron](https://build.nvid
 
 ---
 
+## Architecture
+
+**OpenShell** is a general-purpose agent runtime. It provides sandbox containers, a credential-storing gateway, inference proxying, and policy enforcement — but no opinions about what runs inside.
+
+**NemoClaw** is an opinionated reference stack built on OpenShell. It adds:
+
+| Layer | What it provides |
+|-------|------------------|
+| **Onboarding** | Guided setup that validates credentials, selects providers, and creates a working sandbox in one command. |
+| **Blueprint** | A hardened Dockerfile with security policies, capability drops, and least-privilege network rules. |
+| **State management** | Safe migration of agent state across machines with credential stripping and integrity verification. |
+| **Messaging bridges** | Host-side processes that connect Telegram, Discord, and Slack to the sandboxed agent. |
+
+OpenShell handles *how* to sandbox an agent securely. NemoClaw handles *what* goes in the sandbox and makes the setup accessible.
+
+```mermaid
+graph LR
+    classDef nemoclaw fill:#76b900,stroke:#5a8f00,color:#fff,stroke-width:2px,font-weight:bold
+    classDef openshell fill:#1a1a1a,stroke:#1a1a1a,color:#fff,stroke-width:2px,font-weight:bold
+    classDef sandbox fill:#444,stroke:#76b900,color:#fff,stroke-width:2px,font-weight:bold
+    classDef agent fill:#f5f5f5,stroke:#e0e0e0,color:#1a1a1a,stroke-width:1px
+    classDef external fill:#f5f5f5,stroke:#e0e0e0,color:#1a1a1a,stroke-width:1px
+    classDef user fill:#fff,stroke:#76b900,color:#1a1a1a,stroke-width:2px,font-weight:bold
+
+    USER(["👤 User"]):::user
+
+    subgraph EXTERNAL["External Services"]
+        INFERENCE["Inference Provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM</small>"]:::external
+        MSGAPI["Messaging Platforms<br/><small>Telegram · Discord · Slack</small>"]:::external
+        INTERNET["Internet<br/><small>PyPI · npm · GitHub · APIs</small>"]:::external
+    end
+
+    subgraph HOST["Host Machine"]
+
+        subgraph NEMOCLAW["NemoClaw"]
+            direction TB
+            NCLI["CLI + Onboarding<br/><small>Guided setup · provider selection<br/>credential validation · deploy</small>"]:::nemoclaw
+            BRIDGE["Messaging Bridges<br/><small>Connect chat platforms<br/>to sandboxed agent</small>"]:::nemoclaw
+            BP["Blueprint<br/><small>Hardened Dockerfile<br/>Network policies · Presets<br/>Security configuration</small>"]:::nemoclaw
+            MIGRATE["State Management<br/><small>Migration snapshots<br/>Credential stripping<br/>Integrity verification</small>"]:::nemoclaw
+        end
+
+        subgraph OPENSHELL["OpenShell"]
+            direction TB
+            GW["Gateway<br/><small>Credential store<br/>Inference proxy<br/>Policy engine<br/>Device auth</small>"]:::openshell
+            OSCLI["openshell CLI<br/><small>provider · sandbox<br/>gateway · policy</small>"]:::openshell
+
+            subgraph SANDBOX["Sandbox Container 🔒"]
+                direction TB
+                AGENT["Agent<br/><small>OpenClaw or any<br/>compatible agent</small>"]:::agent
+                PLUG["NemoClaw Plugin<br/><small>Extends agent with<br/>managed configuration</small>"]:::sandbox
+            end
+        end
+    end
+
+    USER -->|"nemoclaw onboard<br/>nemoclaw connect"| NCLI
+    USER -->|"Chat messages"| MSGAPI
+
+    NCLI -->|"Orchestrates"| OSCLI
+    BP -->|"Defines sandbox<br/>shape + policies"| SANDBOX
+    MIGRATE -->|"Safe state<br/>transfer"| SANDBOX
+
+    AGENT -->|"Inference requests<br/><small>no credentials</small>"| GW
+    GW -->|"Proxied with<br/>credential injected"| INFERENCE
+
+    MSGAPI -->|"Bot messages"| BRIDGE
+    BRIDGE -->|"Relayed as data<br/>via SSH"| AGENT
+
+    AGENT -.->|"Policy-gated"| INTERNET
+    GW -.->|"Enforced by<br/>gateway"| INTERNET
+```
+
+---
+
 ## Quick Start
 
 Follow these steps to get started with NemoClaw and your first sandboxed OpenClaw agent.
@@ -51,7 +125,7 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | Dependency | Version                          |
 |------------|----------------------------------|
 | Linux      | Ubuntu 22.04 LTS or later |
-| Node.js    | 20 or later |
+| Node.js    | 22.16 or later |
 | npm        | 10 or later |
 | Container runtime | Supported runtime installed and running |
 | [OpenShell](https://github.com/NVIDIA/OpenShell) | Installed |
@@ -221,6 +295,20 @@ During onboarding, NemoClaw validates the selected provider and model before it 
 Credentials stay on the host in `~/.nemoclaw/credentials.json`. The sandbox only sees the routed `inference.local` endpoint, not your raw provider key.
 
 Local Ollama is supported in the standard onboarding flow. Local vLLM remains experimental, and local host-routed inference on macOS still depends on OpenShell host-routing support in addition to the local service itself being reachable on the host.
+
+## Host-Side State and Config
+
+NemoClaw keeps its operator-facing state on the host rather than inside the sandbox.
+These are the main files new users usually need to locate:
+
+| Path | Purpose |
+|---|---|
+| `~/.nemoclaw/credentials.json` | Provider credentials saved during onboarding |
+| `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata, including the default sandbox selection |
+| `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw snapshots or restores during migration flows |
+
+Common environment variables for optional services and local access include `TELEGRAM_BOT_TOKEN`, `ALLOWED_CHAT_IDS`, and `CHAT_UI_URL`.
+For normal sandbox setup and reconfiguration, prefer `nemoclaw onboard` over editing these files by hand.
 
 ---
 
