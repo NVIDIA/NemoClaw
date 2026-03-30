@@ -1207,7 +1207,15 @@ async function sandboxOpen(sandboxName) {
   await ensureLiveSandboxOrExit(sandboxName);
   // Start port forward and wait for it to be ready
   runOpenshell(["forward", "start", "--background", "18789", sandboxName], { ignoreError: true });
-  await waitForPort(18789, 10000);
+  try {
+    await waitForPort(18789, 10000);
+  } catch (_e) {
+    console.error(`  ${_RD}Error${R}: Port forward timed out — could not reach localhost:18789.`);
+    console.error(`  The sandbox '${sandboxName}' may still be starting. Try again in a moment, or run:`);
+    console.error(`    nemoclaw ${sandboxName} gateway-token`);
+    console.error(`  to retrieve the token manually.`);
+    process.exit(1);
+  }
 
   const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
   if (!token) {
@@ -1227,18 +1235,18 @@ async function sandboxOpen(sandboxName) {
   // Windows "start" is a cmd built-in, not an executable — requires shell: true
   const isWin = process.platform === "win32";
   const opener = process.platform === "darwin" ? "open" : isWin ? "start" : "xdg-open";
-  try {
-    const child = require("child_process").spawn(opener, isWin ? ["", url] : [url], {
-      stdio: "ignore",
-      detached: true,
-      shell: isWin,
-    });
-    child.unref();
-  } catch (_e) {
+  const child = require("child_process").spawn(opener, isWin ? ["", url] : [url], {
+    stdio: "ignore",
+    detached: true,
+    shell: isWin,
+  });
+  child.on("error", () => {
     console.error(`  ${_RD}Error${R}: Could not open browser. Please open this URL manually:`);
-    console.error(`  ${url}`);
+    console.error(`  ${safeUrl}`);
+    console.error(`  If you need the auth token for manual login, run: nemoclaw ${sandboxName} gateway-token`);
     process.exit(1);
-  }
+  });
+  child.unref();
 }
 
 async function sandboxPolicyAdd(sandboxName, args = []) {
