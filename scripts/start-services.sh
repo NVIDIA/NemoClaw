@@ -97,7 +97,7 @@ stop_service() {
 show_status() {
   mkdir -p "$PIDDIR"
   echo ""
-  for svc in telegram-bridge cloudflared; do
+  for svc in telegram-bridge slack-bridge cloudflared; do
     if is_running "$svc"; then
       echo -e "  ${GREEN}●${NC} $svc  (PID $(cat "$PIDDIR/$svc.pid"))"
     else
@@ -119,6 +119,7 @@ do_stop() {
   mkdir -p "$PIDDIR"
   stop_service cloudflared
   stop_service telegram-bridge
+  stop_service slack-bridge
   info "All services stopped."
 }
 
@@ -154,6 +155,12 @@ do_start() {
   if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
     SANDBOX_NAME="$SANDBOX_NAME" start_service telegram-bridge \
       node "$REPO_DIR/scripts/telegram-bridge.js"
+  fi
+
+  # Slack bridge (only if both tokens provided)
+  if [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n "${SLACK_APP_TOKEN:-}" ]; then
+    SANDBOX_NAME="$SANDBOX_NAME" start_service slack-bridge \
+      node "$REPO_DIR/scripts/slack-bridge.js"
   fi
 
   # 3. cloudflared tunnel
@@ -196,6 +203,12 @@ do_start() {
     echo "  │  Telegram:    bridge running                        │"
   else
     echo "  │  Telegram:    not started (no token)                │"
+  fi
+
+  if is_running slack-bridge; then
+    echo "  │  Slack:       bridge running                        │"
+  else
+    echo "  │  Slack:       not started (missing tokens)          │"
   fi
 
   echo "  │                                                     │"

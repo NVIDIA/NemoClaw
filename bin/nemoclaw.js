@@ -468,6 +468,12 @@ async function deploy(instanceName) {
 
 async function start() {
   await ensureApiKey();
+
+  const creds = require("./lib/credentials").loadCredentials();
+  for (const [k, v] of Object.entries(creds)) {
+    if (!process.env[k]) process.env[k] = v;
+  }
+
   const { defaultSandbox } = registry.listSandboxes();
   const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
   const sandboxEnv = safeName ? `SANDBOX_NAME=${shellQuote(safeName)}` : "";
@@ -475,7 +481,10 @@ async function start() {
 }
 
 function stop() {
-  run(`bash "${SCRIPTS}/start-services.sh" --stop`);
+  const { defaultSandbox } = registry.listSandboxes();
+  const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
+  const sandboxEnv = safeName ? `SANDBOX_NAME=${shellQuote(safeName)}` : "";
+  run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh" --stop`);
 }
 
 function debug(args) {
@@ -533,7 +542,10 @@ function showStatus() {
   }
 
   // Show service status
-  run(`bash "${SCRIPTS}/start-services.sh" --status`);
+  const { defaultSandbox: ds2 } = registry.listSandboxes();
+  const sn2 = ds2 && /^[a-zA-Z0-9._-]+$/.test(ds2) ? ds2 : null;
+  const se2 = sn2 ? `SANDBOX_NAME=${shellQuote(sn2)}` : "";
+  run(`${se2} bash "${SCRIPTS}/start-services.sh" --status`);
 }
 
 function listSandboxes() {

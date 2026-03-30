@@ -1865,6 +1865,7 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   // See: crates/openshell-sandbox/src/proxy.rs (header stripping),
   //      crates/openshell-router/src/backend.rs (server-side auth injection).
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
+
   const sandboxEnv = { ...process.env };
   delete sandboxEnv.NVIDIA_API_KEY;
   const discordToken = getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN;
@@ -1874,6 +1875,14 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   const slackToken = getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN;
   if (slackToken) {
     sandboxEnv.SLACK_BOT_TOKEN = slackToken;
+  }
+  const slackAppToken = getCredential("SLACK_APP_TOKEN") || process.env.SLACK_APP_TOKEN;
+  if (slackAppToken) {
+    sandboxEnv.SLACK_APP_TOKEN = slackAppToken;
+  }
+  const slackGateway = getCredential("NEMOCLAW_OPENCLAW_SLACK_GATEWAY") || process.env.NEMOCLAW_OPENCLAW_SLACK_GATEWAY;
+  if (slackGateway) {
+    sandboxEnv.NEMOCLAW_OPENCLAW_SLACK_GATEWAY = slackGateway;
   }
   // Run without piping through awk — the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
