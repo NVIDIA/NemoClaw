@@ -262,8 +262,11 @@ version_gte() {
 # Ensure nvm environment is loaded in the current shell.
 # Skip if node is already on PATH — sourcing nvm.sh can reset PATH and
 # override the caller's node/npm (e.g. in test environments with stubs).
+# Pass --force to load nvm even when node is on PATH (needed when upgrading).
 ensure_nvm_loaded() {
-  command -v node &>/dev/null && return 0
+  if [[ "${1:-}" != "--force" ]]; then
+    command -v node &>/dev/null && return 0
+  fi
   if [[ -z "${NVM_DIR:-}" ]]; then
     export NVM_DIR="$HOME/.nvm"
   fi
@@ -362,11 +365,16 @@ ensure_supported_runtime() {
 # ---------------------------------------------------------------------------
 install_nodejs() {
   if command_exists node; then
-    info "Node.js found: $(node --version)"
-    return
+    local current_version
+    current_version="$(node --version 2>/dev/null || true)"
+    if version_gte "${current_version#v}" "$MIN_NODE_VERSION"; then
+      info "Node.js found: ${current_version}"
+      return
+    fi
+    warn "Node.js ${current_version} found but NemoClaw requires >=${MIN_NODE_VERSION} — upgrading via nvm…"
+  else
+    info "Node.js not found — installing via nvm…"
   fi
-
-  info "Node.js not found — installing via nvm…"
   # IMPORTANT: update NVM_SHA256 when changing NVM_VERSION
   local NVM_VERSION="v0.40.4"
   local NVM_SHA256="4b7412c49960c7d31e8df72da90c1fb5b8cccb419ac99537b737028d497aba4f"
@@ -393,9 +401,9 @@ install_nodejs() {
   info "nvm installer integrity verified"
   spin "Installing nvm..." bash "$nvm_tmp"
   rm -f "$nvm_tmp"
-  ensure_nvm_loaded
+  ensure_nvm_loaded --force
   spin "Installing Node.js 22..." bash -c ". \"$NVM_DIR/nvm.sh\" && nvm install 22 --no-progress"
-  ensure_nvm_loaded
+  ensure_nvm_loaded --force
   nvm use 22 --silent
   info "Node.js installed: $(node --version)"
 }
