@@ -1,11 +1,6 @@
 # NemoClaw on Kubernetes
 # Uses official installer with Docker-in-Docker for sandbox isolation.
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: nemoclaw
----
+# Prerequisites: kubectl create namespace nemoclaw
 apiVersion: v1
 kind: Pod
 metadata:

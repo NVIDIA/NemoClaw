@@ -15,6 +15,7 @@ Run [NemoClaw](https://github.com/NVIDIA/NemoClaw) on Kubernetes with GPU infere
 ### 1. Deploy NemoClaw
 
 ```bash
+kubectl create namespace nemoclaw
 kubectl apply -f https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/k8s/nemoclaw-k8s.yaml
 ```
 
@@ -124,7 +125,7 @@ sandbox@my-assistant:~$ openclaw agent --agent main -m "What is 7 times 8?"
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Kubernetes Cluster                          │
 │                                                                 │
@@ -148,6 +149,7 @@ sandbox@my-assistant:~$ openclaw agent --agent main -m "What is 7 times 8?"
 ```
 
 **How it works:**
+
 1. NemoClaw runs in a privileged pod with Docker-in-Docker
 2. OpenShell creates a nested k3s cluster for sandbox isolation
 3. A socat proxy bridges K8s DNS to the nested environment
@@ -164,6 +166,7 @@ kubectl describe pod nemoclaw -n nemoclaw
 ```
 
 Common issues:
+
 - Missing privileged security context
 - Insufficient memory (needs ~8GB for DinD)
 
