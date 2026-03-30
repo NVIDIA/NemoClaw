@@ -1,0 +1,119 @@
+# NemoClaw on Kubernetes
+# Uses official installer with Docker-in-Docker for sandbox isolation.
+# Prerequisites: kubectl create namespace nemoclaw
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nemoclaw
+  namespace: nemoclaw
+  labels:
+    app: nemoclaw
+spec:
+  containers:
+    # Docker daemon (DinD)
+    - name: dind
+      image: docker:24-dind
+      securityContext:
+        privileged: true
+      env:
+        - name: DOCKER_TLS_CERTDIR
+          value: ""
+      command: ["dockerd", "--host=unix:///var/run/docker.sock"]
+      volumeMounts:
+        - name: docker-storage
+          mountPath: /var/lib/docker
+        - name: docker-socket
+          mountPath: /var/run
+        - name: docker-config
+          mountPath: /etc/docker
+      resources:
+        requests:
+          memory: "8Gi"
+          cpu: "2"
+
+    # Workspace - runs official NemoClaw installer
+    - name: workspace
+      image: node:22
+      command:
+        - bash
+        - -c
+        - |
+          set -e
+
+          # Install packages
+          echo "[1/4] Installing packages..."
+          apt-get update -qq
+          apt-get install -y -qq docker.io socat curl >/dev/null 2>&1
+
+          # Start socat proxy for K8s DNS bridge
+          echo "[2/4] Starting socat proxy..."
+          socat TCP-LISTEN:8000,fork,reuseaddr TCP:$DYNAMO_HOST &
+          # Add hosts entry so validation can reach socat via host.openshell.internal
+          echo "127.0.0.1 host.openshell.internal" >> /etc/hosts
+          sleep 1
+
+          # Wait for Docker
+          echo "[3/4] Waiting for Docker daemon..."
+          for i in $(seq 1 30); do
+            if docker info >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          docker info >/dev/null 2>&1 || { echo "Docker not ready"; exit 1; }
+          echo "Docker ready"
+
+          # Run official NemoClaw installer
+          echo "[4/4] Running NemoClaw installer..."
+          curl -fsSL https://nvidia.com/nemoclaw.sh | bash
+
+          # Keep running after onboard
+          echo "Onboard complete. Container staying alive."
+          exec sleep infinity
+      env:
+        - name: DOCKER_HOST
+          value: unix:///var/run/docker.sock
+        # Dynamo endpoint (raw host:port for socat) - UPDATE THIS FOR YOUR CLUSTER
+        - name: DYNAMO_HOST
+          value: "vllm-agg-frontend.dynamo.svc.cluster.local:8000"
+        # NemoClaw config (uses host.openshell.internal via socat)
+        - name: NEMOCLAW_NON_INTERACTIVE
+          value: "1"
+        - name: NEMOCLAW_PROVIDER
+          value: "custom"
+        - name: NEMOCLAW_ENDPOINT_URL
+          value: "http://host.openshell.internal:8000/v1"
+        - name: COMPATIBLE_API_KEY
+          value: "dummy"
+        - name: NEMOCLAW_MODEL
+          value: "meta-llama/Llama-3.1-8B-Instruct"
+        - name: NEMOCLAW_SANDBOX_NAME
+          value: "my-assistant"
+        - name: NEMOCLAW_POLICY_MODE
+          value: "skip"
+      volumeMounts:
+        - name: docker-socket
+          mountPath: /var/run
+        - name: docker-config
+          mountPath: /etc/docker
+      resources:
+        requests:
+          memory: "4Gi"
+          cpu: "2"
+
+  initContainers:
+    # Configure Docker daemon for cgroup v2
+    - name: init-docker-config
+      image: busybox
+      command: ["sh", "-c", "echo '{\"default-cgroupns-mode\":\"host\"}' > /etc/docker/daemon.json"]
+      volumeMounts:
+        - name: docker-config
+          mountPath: /etc/docker
+
+  volumes:
+    - name: docker-storage
+      emptyDir: {}
+    - name: docker-socket
+      emptyDir: {}
+    - name: docker-config
+      emptyDir: {}
+
+  restartPolicy: Never
