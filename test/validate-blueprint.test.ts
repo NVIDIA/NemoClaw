@@ -83,4 +83,43 @@ describe("base sandbox policy", () => {
   it("has 'network_policies'", () => {
     expect("network_policies" in policy).toBe(true);
   });
+
+  it("no endpoint rule uses wildcard method", () => {
+    const np = policy.network_policies as Record<string, Record<string, unknown>>;
+    const violations: string[] = [];
+    for (const [policyName, cfg] of Object.entries(np)) {
+      const endpoints = cfg.endpoints as Array<Record<string, unknown>> | undefined;
+      if (!endpoints) continue;
+      for (const ep of endpoints) {
+        const rules = ep.rules as Array<Record<string, Record<string, string>>> | undefined;
+        if (!rules) continue;
+        for (const rule of rules) {
+          const method = rule.allow?.method;
+          if (method === "*") {
+            violations.push(`${policyName} → ${ep.host}: method "*"`);
+          }
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it("every endpoint with rules has protocol: rest and enforcement: enforce", () => {
+    const np = policy.network_policies as Record<string, Record<string, unknown>>;
+    const violations: string[] = [];
+    for (const [policyName, cfg] of Object.entries(np)) {
+      const endpoints = cfg.endpoints as Array<Record<string, unknown>> | undefined;
+      if (!endpoints) continue;
+      for (const ep of endpoints) {
+        if (!ep.rules) continue;
+        if (ep.protocol !== "rest") {
+          violations.push(`${policyName} → ${ep.host}: missing protocol: rest`);
+        }
+        if (ep.enforcement !== "enforce") {
+          violations.push(`${policyName} → ${ep.host}: missing enforcement: enforce`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
 });
