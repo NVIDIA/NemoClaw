@@ -180,3 +180,33 @@ After the fixes complete, the script prompts you to run `nemoclaw onboard` to co
 ```console
 $ sudo nemoclaw setup-spark
 ```
+
+### `nemoclaw debug`
+
+Collect diagnostics for bug reports.
+Gathers system info, Docker state, gateway logs, and sandbox status into a summary or tarball.
+
+```console
+$ nemoclaw debug [--quick] [--sandbox NAME] [--output PATH]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--quick` | Collect minimal diagnostics only |
+| `--sandbox NAME` | Target a specific sandbox (default: auto-detect) |
+| `--output PATH` | Write diagnostics tarball to the given path |
+
+### `nemoclaw uninstall`
+
+Remove NemoClaw, destroying all sandboxes and the gateway.
+Runs the bundled `uninstall.sh` if available, otherwise downloads it from GitHub.
+
+```console
+$ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--yes` | Skip the confirmation prompt |
+| `--keep-openshell` | Leave the openshell binary installed |
+| `--delete-models` | Remove NemoClaw-pulled Ollama models |
