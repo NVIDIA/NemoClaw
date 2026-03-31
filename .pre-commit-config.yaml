@@ -193,7 +193,7 @@ repos:
         entry: bash -c 'cd nemoclaw && npx tsc --noEmit --incremental'
         language: system
         pass_filenames: false
-        always_run: true
+        files: ^nemoclaw/
         stages: [pre-push]
         priority: 10
 
