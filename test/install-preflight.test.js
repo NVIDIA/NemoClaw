@@ -29,7 +29,7 @@ function writeNodeStub(fakeBin) {
 if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.16.0"; exit 0; fi
 if [ "$1" = "-e" ]; then
   if [[ "$2" == *"dependencies.openclaw"* ]]; then
-    echo "2026.3.11"
+    echo "2026.3.28"
     exit 0
   fi
   exit 0
@@ -143,7 +143,7 @@ printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
-  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.28"}}' > "$target/package.json"
   echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
   exit 0
 fi
@@ -237,7 +237,7 @@ exit 99
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
-  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.28"}}' > "$target/package.json"
   echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
   exit 0
 fi
@@ -379,7 +379,7 @@ exit 98
 if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
-  tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
+  tar -czf "$tmpdir/openclaw-2026.3.28.tgz" -C "$tmpdir" package
   exit 0
 fi
 if [ "$1" = "install" ]; then exit 0; fi
@@ -449,7 +449,7 @@ fi`,
       `if [ "$1" = "pack" ]; then
   tmpdir="$4"
   mkdir -p "$tmpdir/package"
-  tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
+  tar -czf "$tmpdir/openclaw-2026.3.28.tgz" -C "$tmpdir" package
   exit 0
 fi
 if [ "$1" = "install" ]; then exit 0; fi
@@ -507,7 +507,7 @@ fi`,
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
-  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.28"}}' > "$target/package.json"
   echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
   exit 0
 fi
@@ -570,7 +570,7 @@ exit 99
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
-  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.28"}}' > "$target/package.json"
   echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
   exit 0
 fi
@@ -688,7 +688,7 @@ exit 99
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
-  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.28"}}' > "$target/package.json"
   echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
   exit 0
 fi
@@ -984,7 +984,7 @@ exit 0`,
     // Write package.json that triggers source-checkout path
     fs.writeFileSync(
       path.join(tmp, "package.json"),
-      JSON.stringify({ name: "nemoclaw", version: "0.1.0", dependencies: { openclaw: "2026.3.11" } }, null, 2),
+      JSON.stringify({ name: "nemoclaw", version: "0.1.0", dependencies: { openclaw: "2026.3.28" } }, null, 2),
     );
     fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
     fs.writeFileSync(
@@ -1043,7 +1043,7 @@ printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
-  echo '{"name":"nemoclaw","version":"0.5.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw","version":"0.5.0","dependencies":{"openclaw":"2026.3.28"}}' > "$target/package.json"
   echo '{"name":"nemoclaw-plugin","version":"0.5.0"}' > "$target/nemoclaw/package.json"
   exit 0
 fi
@@ -1462,7 +1462,7 @@ printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
-  echo '{"name":"nemoclaw","version":"0.5.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw","version":"0.5.0","dependencies":{"openclaw":"2026.3.28"}}' > "$target/package.json"
   echo '{"name":"nemoclaw-plugin","version":"0.5.0"}' > "$target/nemoclaw/package.json"
   exit 0
 fi
@@ -1502,7 +1502,7 @@ printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
-  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.28"}}' > "$target/package.json"
   echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
   exit 0
 fi
@@ -1543,7 +1543,7 @@ printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
 if [ "$1" = "clone" ]; then
   target="\${@: -1}"
   mkdir -p "$target/nemoclaw"
-  echo '{"name":"nemoclaw","version":"0.2.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw","version":"0.2.0","dependencies":{"openclaw":"2026.3.28"}}' > "$target/package.json"
   echo '{"name":"nemoclaw-plugin","version":"0.2.0"}' > "$target/nemoclaw/package.json"
   exit 0
 fi
