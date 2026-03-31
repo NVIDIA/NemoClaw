@@ -120,7 +120,11 @@ function buildRecoveredSandboxEntry(name, metadata = {}) {
     model: metadata.model || null,
     provider: metadata.provider || null,
     gpuEnabled: metadata.gpuEnabled === true,
-    policies: Array.isArray(metadata.policies) ? metadata.policies : [],
+    policies: Array.isArray(metadata.policies)
+      ? metadata.policies
+      : Array.isArray(metadata.policyPresets)
+        ? metadata.policyPresets
+        : [],
     nimContainer: metadata.nimContainer || null,
   };
 }
@@ -136,13 +140,19 @@ function upsertRecoveredSandbox(name, metadata = {}) {
 }
 
 function shouldRecoverRegistryEntries(current, session, requestedSandboxName) {
+  const hasSessionSandbox = Boolean(session?.sandboxName);
+  const missingSessionSandbox =
+    hasSessionSandbox &&
+    !current.sandboxes.some((sandbox) => sandbox.name === session.sandboxName);
   const missingRequestedSandbox =
     Boolean(requestedSandboxName) &&
     !current.sandboxes.some((sandbox) => sandbox.name === requestedSandboxName);
-  const hasRecoverySeed = current.sandboxes.length > 0 || Boolean(session?.sandboxName) || Boolean(requestedSandboxName);
+  const hasRecoverySeed = current.sandboxes.length > 0 || hasSessionSandbox || Boolean(requestedSandboxName);
   return {
     missingRequestedSandbox,
-    shouldRecover: hasRecoverySeed && (current.sandboxes.length === 0 || missingRequestedSandbox),
+    shouldRecover:
+      hasRecoverySeed &&
+      (current.sandboxes.length === 0 || missingRequestedSandbox || missingSessionSandbox),
   };
 }
 
@@ -160,10 +170,12 @@ function seedRecoveryMetadata(current, session, requestedSandboxName) {
       model: session.model || null,
       provider: session.provider || null,
       nimContainer: session.nimContainer || null,
+      policyPresets: session.policyPresets || null,
     })
   );
+  const sessionSandboxMissing = !current.sandboxes.some((sandbox) => sandbox.name === session.sandboxName);
   const shouldRecoverSessionSandbox =
-    current.sandboxes.length === 0 || requestedSandboxName === session.sandboxName;
+    current.sandboxes.length === 0 || sessionSandboxMissing || requestedSandboxName === session.sandboxName;
   if (shouldRecoverSessionSandbox) {
     recoveredFromSession = upsertRecoveredSandbox(session.sandboxName, metadataByName.get(session.sandboxName));
   }
@@ -195,9 +207,9 @@ async function recoverRegistryFromLiveGateway(metadataByName) {
   return recoveredFromGateway;
 }
 
-function applyRecoveredDefault(requestedSandboxName, session) {
+function applyRecoveredDefault(currentDefaultSandbox, requestedSandboxName, session) {
   const recovered = registry.listSandboxes();
-  const preferredDefault = requestedSandboxName || session?.sandboxName || null;
+  const preferredDefault = requestedSandboxName || (!currentDefaultSandbox ? session?.sandboxName || null : null);
   if (preferredDefault && recovered.sandboxes.some((sandbox) => sandbox.name === preferredDefault)) {
     registry.setDefault(preferredDefault);
   }
@@ -217,7 +229,7 @@ async function recoverRegistryEntries({ requestedSandboxName = null } = {}) {
   const recoveredFromGateway = shouldProbeLiveGateway
     ? await recoverRegistryFromLiveGateway(seeded.metadataByName)
     : 0;
-  const recovered = applyRecoveredDefault(requestedSandboxName, session);
+  const recovered = applyRecoveredDefault(current.defaultSandbox, requestedSandboxName, session);
   return {
     ...recovered,
     recoveredFromSession: seeded.recoveredFromSession,
@@ -876,8 +888,11 @@ function sandboxLogs(sandboxName, follow) {
     printOldLogsCompatibilityGuidance(installedVersion);
     process.exit(1);
   }
+  if (result.status === null || result.signal) {
+    exitWithSpawnResult(result);
+  }
   console.error(`  Command failed (exit ${result.status}): openshell ${args.join(" ")}`);
-  process.exit(result.status || 1);
+  exitWithSpawnResult(result);
 }
 
 async function reconnect(args = []) {

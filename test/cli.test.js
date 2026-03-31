@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -145,6 +145,7 @@ describe("CLI dispatch", () => {
 
     expect(r.code).toBe(0);
     expect(fs.readFileSync(markerFile, "utf8")).toContain("logs alpha --tail");
+    expect(fs.readFileSync(markerFile, "utf8")).not.toContain("--follow");
   });
 
   it("passes plain logs through without the tail flag", () => {
@@ -358,6 +359,22 @@ describe("CLI dispatch", () => {
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(nemoclawDir, { recursive: true });
     fs.writeFileSync(
+      path.join(nemoclawDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          gamma: {
+            name: "gamma",
+            model: "existing-model",
+            provider: "existing-provider",
+            gpuEnabled: false,
+            policies: ["npm"],
+          },
+        },
+        defaultSandbox: "gamma",
+      }),
+      { mode: 0o600 }
+    );
+    fs.writeFileSync(
       path.join(nemoclawDir, "onboard-session.json"),
       JSON.stringify({
         version: 1,
@@ -377,7 +394,7 @@ describe("CLI dispatch", () => {
         credentialEnv: null,
         preferredInferenceApi: null,
         nimContainer: null,
-        policyPresets: null,
+        policyPresets: ["pypi"],
         metadata: { gatewayName: "nemoclaw" },
         steps: {
           preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -432,9 +449,12 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out.includes("Recovered sandbox inventory from the last onboard session.")).toBeTruthy();
     expect(r.out.includes("alpha")).toBeTruthy();
+    expect(r.out.includes("gamma")).toBeTruthy();
     const saved = JSON.parse(fs.readFileSync(path.join(nemoclawDir, "sandboxes.json"), "utf8"));
     expect(saved.sandboxes.alpha).toBeTruthy();
-    expect(saved.defaultSandbox).toBe("alpha");
+    expect(saved.sandboxes.alpha.policies).toEqual(["pypi"]);
+    expect(saved.sandboxes.gamma).toBeTruthy();
+    expect(saved.defaultSandbox).toBe("gamma");
   });
 
   it("imports additional live sandboxes into the registry during list recovery", () => {
@@ -443,6 +463,22 @@ describe("CLI dispatch", () => {
     const nemoclawDir = path.join(home, ".nemoclaw");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(nemoclawDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(nemoclawDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          gamma: {
+            name: "gamma",
+            model: "existing-model",
+            provider: "existing-provider",
+            gpuEnabled: false,
+            policies: ["npm"],
+          },
+        },
+        defaultSandbox: "gamma",
+      }),
+      { mode: 0o600 }
+    );
     fs.writeFileSync(
       path.join(nemoclawDir, "onboard-session.json"),
       JSON.stringify({
@@ -463,7 +499,7 @@ describe("CLI dispatch", () => {
         credentialEnv: null,
         preferredInferenceApi: null,
         nimContainer: null,
-        policyPresets: null,
+        policyPresets: ["pypi"],
         metadata: { gatewayName: "nemoclaw" },
         steps: {
           preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -522,9 +558,13 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Recovered 1 sandbox entry from the live OpenShell gateway.")).toBeTruthy();
     expect(r.out.includes("alpha")).toBeTruthy();
     expect(r.out.includes("beta")).toBeTruthy();
+    expect(r.out.includes("gamma")).toBeTruthy();
     const saved = JSON.parse(fs.readFileSync(path.join(nemoclawDir, "sandboxes.json"), "utf8"));
     expect(saved.sandboxes.alpha).toBeTruthy();
+    expect(saved.sandboxes.alpha.policies).toEqual(["pypi"]);
     expect(saved.sandboxes.beta).toBeTruthy();
+    expect(saved.sandboxes.gamma).toBeTruthy();
+    expect(saved.defaultSandbox).toBe("gamma");
   });
 
   it("reconnect uses the last onboard session when the registry is empty", () => {
@@ -658,6 +698,50 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(1);
     expect(r.out.includes("Unknown sandbox 'beta'.")).toBeTruthy();
     expect(r.out.includes("Use `nemoclaw list` to view registered sandboxes.")).toBeTruthy();
+  });
+
+  it("preserves SIGINT exit semantics for logs --follow", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-sigint-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        "if [ \"$1\" = \"--version\" ]; then",
+        "  echo 'openshell 0.0.16'",
+        "  exit 0",
+        "fi",
+        "kill -INT $$",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const result = spawnSync(process.execPath, [CLI, "alpha", "logs", "--follow"], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: { ...process.env, HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+    });
+
+    expect(result.status).toBe(130);
   });
 
   it("keeps registry entries when status hits a gateway-level transport error", () => {
