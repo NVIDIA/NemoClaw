@@ -486,17 +486,23 @@ describe("onboard helpers", () => {
   });
 
   it("writes sandbox sync scripts to a temp file for stdin redirection", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-test-"));
+    const scriptFile = writeSandboxConfigSyncFile("echo test");
     try {
-      const scriptFile = writeSandboxConfigSyncFile("echo test", tmpDir);
-      expect(scriptFile).toMatch(/nemoclaw-sync-.*[/\\]sync\.sh$/);
+      expect(scriptFile).toMatch(/nemoclaw-sync.*\.sh$/);
       expect(fs.readFileSync(scriptFile, "utf8")).toBe("echo test\n");
+      // Verify the file lives inside a mkdtemp-created directory (not directly in /tmp)
+      const parentDir = path.dirname(scriptFile);
+      expect(parentDir).not.toBe(os.tmpdir());
+      expect(parentDir).toContain("nemoclaw-sync");
       if (process.platform !== "win32") {
         const stat = fs.statSync(scriptFile);
         expect(stat.mode & 0o777).toBe(0o600);
       }
     } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      const parentDir = path.dirname(scriptFile);
+      if (parentDir !== os.tmpdir() && path.basename(parentDir).startsWith("nemoclaw-sync-")) {
+        fs.rmSync(parentDir, { recursive: true, force: true });
+      }
     }
   });
 
@@ -1797,5 +1803,24 @@ const { setupInference } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.equal(commands.length, 3);
+  });
+
+  it("re-prompts on invalid sandbox names instead of exiting in interactive mode", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
+      "utf-8",
+    );
+    // Extract the promptValidatedSandboxName function body
+    const fnMatch = source.match(
+      /async function promptValidatedSandboxName\(\)\s*\{([\s\S]*?)\n\}/,
+    );
+    assert.ok(fnMatch, "promptValidatedSandboxName function not found");
+    const fnBody = fnMatch[1];
+    // Verify the retry loop exists within this function
+    assert.match(fnBody, /while\s*\(true\)/);
+    assert.match(fnBody, /Please try again/);
+    // Non-interactive still exits within this function
+    assert.match(fnBody, /isNonInteractive\(\)/);
+    assert.match(fnBody, /process\.exit\(1\)/);
   });
 });
