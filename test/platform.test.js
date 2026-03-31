@@ -20,28 +20,34 @@ import {
 describe("platform helpers", () => {
   describe("isWsl", () => {
     it("detects WSL from environment", () => {
-      expect(isWsl({
-        platform: "linux",
-        env: { WSL_DISTRO_NAME: "Ubuntu" },
-        release: "6.6.87.2-microsoft-standard-WSL2",
-      })).toBe(true);
+      expect(
+        isWsl({
+          platform: "linux",
+          env: { WSL_DISTRO_NAME: "Ubuntu" },
+          release: "6.6.87.2-microsoft-standard-WSL2",
+        }),
+      ).toBe(true);
     });
 
     it("does not treat macOS as WSL", () => {
-      expect(isWsl({
-        platform: "darwin",
-        env: {},
-        release: "24.6.0",
-      })).toBe(false);
+      expect(
+        isWsl({
+          platform: "darwin",
+          env: {},
+          release: "24.6.0",
+        }),
+      ).toBe(false);
     });
 
     it("detects WSL from /proc version text even without WSL env vars", () => {
-      expect(isWsl({
-        platform: "linux",
-        env: {},
-        release: "6.6.87-generic",
-        procVersion: "Linux version 6.6.87.2-microsoft-standard-WSL2",
-      })).toBe(true);
+      expect(
+        isWsl({
+          platform: "linux",
+          env: {},
+          release: "6.6.87-generic",
+          procVersion: "Linux version 6.6.87.2-microsoft-standard-WSL2",
+        }),
+      ).toBe(true);
     });
   });
 
@@ -75,11 +81,15 @@ describe("platform helpers", () => {
       const sockets = new Set([path.join(home, ".config/colima/default/docker.sock")]);
       const existsSync = (socketPath) => sockets.has(socketPath);
 
-      expect(findColimaDockerSocket({ home, existsSync })).toBe(path.join(home, ".config/colima/default/docker.sock"));
+      expect(findColimaDockerSocket({ home, existsSync })).toBe(
+        path.join(home, ".config/colima/default/docker.sock"),
+      );
     });
 
     it("returns null when no Colima socket exists", () => {
-      expect(findColimaDockerSocket({ home: "/tmp/test-home", existsSync: () => false })).toBeNull();
+      expect(
+        findColimaDockerSocket({ home: "/tmp/test-home", existsSync: () => false }),
+      ).toBeNull();
     });
 
     it("uses fs.existsSync when no custom existsSync is provided", () => {
@@ -94,12 +104,14 @@ describe("platform helpers", () => {
 
   describe("detectDockerHost", () => {
     it("respects an existing DOCKER_HOST", () => {
-      expect(detectDockerHost({
-        env: { DOCKER_HOST: "unix:///custom/docker.sock" },
-        platform: "darwin",
-        home: "/tmp/test-home",
-        existsSync: () => false,
-      })).toEqual({
+      expect(
+        detectDockerHost({
+          env: { DOCKER_HOST: "unix:///custom/docker.sock" },
+          platform: "darwin",
+          home: "/tmp/test-home",
+          existsSync: () => false,
+        }),
+      ).toEqual({
         dockerHost: "unix:///custom/docker.sock",
         source: "env",
         socketPath: null,
@@ -134,12 +146,14 @@ describe("platform helpers", () => {
     });
 
     it("returns null when no auto-detected socket is available", () => {
-      expect(detectDockerHost({
-        env: {},
-        platform: "linux",
-        home: "/tmp/test-home",
-        existsSync: () => false,
-      })).toBe(null);
+      expect(
+        detectDockerHost({
+          env: {},
+          platform: "linux",
+          home: "/tmp/test-home",
+          existsSync: () => false,
+        }),
+      ).toBe(null);
     });
 
     it("uses fs.existsSync when no custom existsSync is provided", () => {

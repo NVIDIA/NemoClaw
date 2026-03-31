@@ -7,7 +7,9 @@ import { resolveOpenshell } from "../bin/lib/resolve-openshell";
 
 describe("resolveOpenshell", () => {
   it("returns an absolute command -v result immediately", () => {
-    expect(resolveOpenshell({ commandVResult: "/usr/local/bin/openshell" })).toBe("/usr/local/bin/openshell");
+    expect(resolveOpenshell({ commandVResult: "/usr/local/bin/openshell" })).toBe(
+      "/usr/local/bin/openshell",
+    );
   });
 
   it("ignores non-absolute command -v output and falls back to known locations", () => {
@@ -16,7 +18,7 @@ describe("resolveOpenshell", () => {
         home: "/tmp/test-home",
         commandVResult: "openshell",
         checkExecutable: (candidate) => candidate === "/usr/local/bin/openshell",
-      })
+      }),
     ).toBe("/usr/local/bin/openshell");
   });
 
@@ -26,7 +28,7 @@ describe("resolveOpenshell", () => {
         home: "/tmp/test-home",
         commandVResult: "",
         checkExecutable: (candidate) => candidate === "/tmp/test-home/.local/bin/openshell",
-      })
+      }),
     ).toBe("/tmp/test-home/.local/bin/openshell");
   });
 
@@ -36,7 +38,7 @@ describe("resolveOpenshell", () => {
         home: "relative-home",
         commandVResult: null,
         checkExecutable: (candidate) => candidate === "/usr/bin/openshell",
-      })
+      }),
     ).toBe("/usr/bin/openshell");
   });
 
@@ -46,7 +48,7 @@ describe("resolveOpenshell", () => {
         home: "/tmp/test-home",
         commandVResult: "",
         checkExecutable: () => false,
-      })
+      }),
     ).toBe(null);
   });
 });

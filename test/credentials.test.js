@@ -38,7 +38,7 @@ describe("credential prompts", () => {
     expect(credentials.getCredential("TEST_API_KEY")).toBe("nvapi-saved-key");
 
     const saved = JSON.parse(
-      fs.readFileSync(path.join(home, ".nemoclaw", "credentials.json"), "utf-8")
+      fs.readFileSync(path.join(home, ".nemoclaw", "credentials.json"), "utf-8"),
     );
     expect(saved).toEqual({ TEST_API_KEY: "nvapi-saved-key" });
   });
@@ -90,7 +90,7 @@ describe("credential prompts", () => {
   it("settles the outer prompt promise on secret prompt errors", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "bin", "lib", "credentials.js"),
-      "utf-8"
+      "utf-8",
     );
 
     expect(source).toMatch(/return new Promise\(\(resolve, reject\) => \{/);
@@ -101,7 +101,7 @@ describe("credential prompts", () => {
   it("re-raises SIGINT from standard readline prompts instead of treating it like an empty answer", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "bin", "lib", "credentials.js"),
-      "utf-8"
+      "utf-8",
     );
 
     expect(source).toContain('rl.on("SIGINT"');
@@ -115,7 +115,7 @@ describe("credential prompts", () => {
 
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "bin", "lib", "credentials.js"),
-      "utf-8"
+      "utf-8",
     );
     expect(source).toMatch(/while \(true\) \{/);
     expect(source).toMatch(/Invalid key\. Must start with nvapi-/);
@@ -125,7 +125,7 @@ describe("credential prompts", () => {
   it("masks secret input with asterisks while preserving the underlying value", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "bin", "lib", "credentials.js"),
-      "utf-8"
+      "utf-8",
     );
 
     expect(source).toContain('output.write("*")');

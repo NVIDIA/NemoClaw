@@ -489,7 +489,9 @@ fi`,
     });
 
     expect(result.status).toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/Found an interrupted onboarding session — resuming it\./);
+    expect(`${result.stdout}${result.stderr}`).toMatch(
+      /Found an interrupted onboarding session — resuming it\./,
+    );
     expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(/^onboard --resume --non-interactive$/m);
   });
 
@@ -786,22 +788,15 @@ describe("installer release-tag resolution", () => {
    * `fakeBin` must contain a `curl` stub (and optionally `node`).
    */
   function callResolveReleaseTag(fakeBin, env = {}) {
-    return spawnSync(
-      "bash",
-      [
-        "-c",
-        `source "${INSTALLER}" 2>/dev/null; resolve_release_tag`,
-      ],
-      {
-        cwd: path.join(import.meta.dirname, ".."),
-        encoding: "utf-8",
-        env: {
-          HOME: os.tmpdir(),
-          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-          ...env,
-        },
+    return spawnSync("bash", ["-c", `source "${INSTALLER}" 2>/dev/null; resolve_release_tag`], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        HOME: os.tmpdir(),
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        ...env,
       },
-    );
+    });
   }
 
   it("defaults to 'latest' with no env override", () => {
@@ -881,7 +876,11 @@ exit 0`,
     // Write package.json that triggers source-checkout path
     fs.writeFileSync(
       path.join(tmp, "package.json"),
-      JSON.stringify({ name: "nemoclaw", version: "0.1.0", dependencies: { openclaw: "2026.3.11" } }, null, 2),
+      JSON.stringify(
+        { name: "nemoclaw", version: "0.1.0", dependencies: { openclaw: "2026.3.11" } },
+        null,
+        2,
+      ),
     );
     fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
     fs.writeFileSync(
@@ -982,19 +981,15 @@ describe("installer pure helpers", () => {
    * Helper: source install.sh and call a function, returning stdout.
    */
   function callInstallerFn(fnCall, env = {}) {
-    return spawnSync(
-      "bash",
-      ["-c", `source "${INSTALLER}" 2>/dev/null; ${fnCall}`],
-      {
-        cwd: path.join(import.meta.dirname, ".."),
-        encoding: "utf-8",
-        env: {
-          HOME: os.tmpdir(),
-          PATH: TEST_SYSTEM_PATH,
-          ...env,
-        },
+    return spawnSync("bash", ["-c", `source "${INSTALLER}" 2>/dev/null; ${fnCall}`], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        HOME: os.tmpdir(),
+        PATH: TEST_SYSTEM_PATH,
+        ...env,
       },
-    );
+    });
   }
 
   // -- version_gte --
