@@ -84,10 +84,42 @@ describe("setup-dns-proxy.sh", () => {
   it("performs runtime verification of resolv.conf, iptables, and DNS resolution", () => {
     const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
     expect(content).toContain("cat /etc/resolv.conf");
-    expect(content).toContain("iptables -C OUTPUT");
+    expect(content).toContain("-C OUTPUT");
     expect(content).toContain("getent hosts");
     expect(content).toContain("VERIFY_PASS");
     expect(content).toContain("VERIFY_FAIL");
+  });
+
+  it("probes well-known paths when iptables is not on PATH (#557)", () => {
+    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
+    // Must check /sbin/iptables and /usr/sbin/iptables as fallback paths
+    expect(content).toContain("/sbin/iptables");
+    expect(content).toContain("/usr/sbin/iptables");
+    expect(content).toContain("IPTABLES_BIN");
+  });
+
+  it("uses discovered iptables binary for both rule insertion and verification", () => {
+    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
+    // The discovered IPTABLES_BIN should be used in the -C check and -I insert
+    expect(content).toContain('"$IPTABLES_BIN" -C OUTPUT');
+    expect(content).toContain('"$IPTABLES_BIN" -I OUTPUT');
+    // Verification step should also use the discovered binary
+    expect(content).toContain("IPTABLES_CHECK");
+  });
+
+  it("warns when iptables is not found at any path", () => {
+    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
+    expect(content).toContain("iptables not found in pod");
+    expect(content).toContain("Cannot add UDP DNS exception");
+  });
+
+  it("backs up resolv.conf before rewriting and restores on iptables failure", () => {
+    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
+    // Backup: save original resolv.conf once before any rewrite
+    expect(content).toContain("resolv.conf.orig");
+    expect(content).toContain("cp /etc/resolv.conf /tmp/resolv.conf.orig");
+    // Restore: copy backup back when iptables is not found
+    expect(content).toContain("cp /tmp/resolv.conf.orig /etc/resolv.conf");
   });
 });
 
