@@ -124,6 +124,17 @@ describe("inference selection config", () => {
       provider: "vllm-local",
       providerLabel: "Local vLLM",
     });
+
+    expect(getProviderSelectionConfig("bedrock", "anthropic.claude-3-7-sonnet")).toEqual({
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "anthropic.claude-3-7-sonnet",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: "BEDROCK_API_KEY",
+      provider: "bedrock",
+      providerLabel: "Amazon Bedrock (OpenAI-compatible)",
+    });
   });
 
   it("returns null for unknown providers", () => {
@@ -141,10 +152,12 @@ describe("inference selection config", () => {
     expect(getProviderSelectionConfig("compatible-endpoint").model).toBe("custom-model");
     expect(getProviderSelectionConfig("compatible-anthropic-endpoint").model).toBe("custom-anthropic-model");
     expect(getProviderSelectionConfig("vllm-local").model).toBe("vllm-local");
+    expect(getProviderSelectionConfig("bedrock").model).toBe("nvidia.nemotron-super-3-120b");
   });
 
   it("builds a default OpenClaw primary model for non-ollama providers", () => {
     expect(getOpenClawPrimaryModel("nvidia-prod")).toBe(`${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`);
+    expect(getOpenClawPrimaryModel("ollama-local")).toBe(`${MANAGED_PROVIDER_ID}/${DEFAULT_OLLAMA_MODEL}`);
   });
 });
 

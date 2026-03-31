@@ -2,11 +2,67 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { describe, it, expect } from "vitest";
+import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+async function importCredentialsModule(home) {
+  vi.resetModules();
+  vi.doUnmock("fs");
+  vi.doUnmock("child_process");
+  vi.doUnmock("readline");
+  vi.stubEnv("HOME", home);
+  return import("../bin/lib/credentials.js");
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.resetModules();
+  vi.unstubAllEnvs();
+});
 
 describe("credential prompts", () => {
+  it("loads, normalizes, and saves credentials from disk", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credentials = await importCredentialsModule(home);
+
+    expect(credentials.loadCredentials()).toEqual({});
+
+    credentials.saveCredential("TEST_API_KEY", "  nvapi-saved-key \r\n");
+
+    expect(credentials.CREDS_DIR).toBe(path.join(home, ".nemoclaw"));
+    expect(credentials.CREDS_FILE).toBe(path.join(home, ".nemoclaw", "credentials.json"));
+    expect(credentials.loadCredentials()).toEqual({ TEST_API_KEY: "nvapi-saved-key" });
+    expect(credentials.getCredential("TEST_API_KEY")).toBe("nvapi-saved-key");
+
+    const saved = JSON.parse(
+      fs.readFileSync(path.join(home, ".nemoclaw", "credentials.json"), "utf-8")
+    );
+    expect(saved).toEqual({ TEST_API_KEY: "nvapi-saved-key" });
+  });
+
+  it("prefers environment credentials and ignores malformed credential files", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".nemoclaw", "credentials.json"), "{not-json");
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.loadCredentials()).toEqual({});
+
+    vi.stubEnv("TEST_API_KEY", "  nvapi-from-env \n");
+    expect(credentials.getCredential("TEST_API_KEY")).toBe("nvapi-from-env");
+  });
+
+  it("returns null for missing or blank credential values", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credentials = await importCredentialsModule(home);
+
+    credentials.saveCredential("EMPTY_VALUE", " \r\n ");
+    expect(credentials.getCredential("MISSING_VALUE")).toBe(null);
+    expect(credentials.getCredential("EMPTY_VALUE")).toBe(null);
+  });
+
   it("exits cleanly when answers are staged through a pipe", () => {
     const script = `
       set -euo pipefail
