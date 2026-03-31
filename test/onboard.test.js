@@ -951,6 +951,20 @@ const { setupInference } = require(${onboardPath});
     assert.match(source, /skippedStepMessage\("policies", \(recordedPolicyPresets \|\| \[\]\)\.join\(", "\)\)/);
   });
 
+  it("surfaces sandbox-create phases and silence heartbeats during long image operations", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
+      "utf-8"
+    );
+
+    assert.match(source, /function setPhase\(nextPhase\)/);
+    assert.match(source, /Building sandbox image\.\.\./);
+    assert.match(source, /Uploading image into OpenShell gateway\.\.\./);
+    assert.match(source, /Creating sandbox in gateway\.\.\./);
+    assert.match(source, /Still building sandbox image\.\.\. \(\$\{elapsed\}s elapsed\)/);
+    assert.match(source, /Still uploading image into OpenShell gateway\.\.\. \(\$\{elapsed\}s elapsed\)/);
+  });
+
   it("hydrates stored provider credentials when setupInference runs without process env set", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-cred-"));

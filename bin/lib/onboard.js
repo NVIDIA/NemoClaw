@@ -293,12 +293,45 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
   let settled = false;
   let polling = false;
   const pollIntervalMs = options.pollIntervalMs || 2000;
+  const heartbeatIntervalMs = options.heartbeatIntervalMs || 5000;
+  const silentPhaseMs = options.silentPhaseMs || 15000;
+  const startedAt = Date.now();
+  let lastOutputAt = startedAt;
+  let currentPhase = "build";
+  let lastHeartbeatPhase = null;
+  let lastHeartbeatBucket = -1;
+
+  function elapsedSeconds() {
+    return Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  }
+
+  function setPhase(nextPhase) {
+    if (!nextPhase || nextPhase === currentPhase) return;
+    currentPhase = nextPhase;
+    lastHeartbeatPhase = null;
+    lastHeartbeatBucket = -1;
+    const phaseLine =
+      nextPhase === "build"
+        ? "  Building sandbox image..."
+        : nextPhase === "upload"
+          ? "  Uploading image into OpenShell gateway..."
+          : nextPhase === "create"
+            ? "  Creating sandbox in gateway..."
+            : nextPhase === "ready"
+              ? "  Waiting for sandbox to become ready..."
+              : null;
+    if (phaseLine && phaseLine !== lastPrintedLine) {
+      console.log(phaseLine);
+      lastPrintedLine = phaseLine;
+    }
+  }
 
   function finish(result) {
     if (settled) return;
     settled = true;
     if (pending) flushLine(pending);
     if (readyTimer) clearInterval(readyTimer);
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
     resolvePromise(result);
   }
 
@@ -315,6 +348,7 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
   function shouldShowLine(line) {
     return (
       /^ {2}Building image /.test(line) ||
+      /^ {2}Step \d+\/\d+ : /.test(line) ||
       /^ {2}Context: /.test(line) ||
       /^ {2}Gateway: /.test(line) ||
       /^Successfully built /.test(line) ||
@@ -332,6 +366,14 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
     const line = rawLine.replace(/\r/g, "").trimEnd();
     if (!line) return;
     lines.push(line);
+    lastOutputAt = Date.now();
+    if (/^ {2}Building image /.test(line) || /^ {2}Step \d+\/\d+ : /.test(line)) {
+      setPhase("build");
+    } else if (/^ {2}Pushing image /.test(line) || /^\s*\[progress\]/.test(line) || /^ {2}Image .*available in the gateway/.test(line)) {
+      setPhase("upload");
+    } else if (/^Created sandbox: /.test(line)) {
+      setPhase("create");
+    }
     if (shouldShowLine(line) && line !== lastPrintedLine) {
       console.log(line);
       lastPrintedLine = line;
@@ -362,6 +404,7 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
             return;
           }
           if (!ready) return;
+          setPhase("ready");
           const detail = "Sandbox reported Ready before create stream exited; continuing.";
           lines.push(detail);
           if (detail !== lastPrintedLine) {
@@ -381,6 +424,33 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
       }, pollIntervalMs)
     : null;
   readyTimer?.unref?.();
+
+  setPhase("build");
+  const heartbeatTimer = setInterval(() => {
+    if (settled) return;
+    const silentForMs = Date.now() - lastOutputAt;
+    if (silentForMs < silentPhaseMs) return;
+    const elapsed = elapsedSeconds();
+    const bucket = Math.floor(elapsed / 15);
+    if (currentPhase === lastHeartbeatPhase && bucket === lastHeartbeatBucket) {
+      return;
+    }
+    const heartbeatLine =
+      currentPhase === "upload"
+        ? `  Still uploading image into OpenShell gateway... (${elapsed}s elapsed)`
+        : currentPhase === "create"
+          ? `  Still creating sandbox in gateway... (${elapsed}s elapsed)`
+          : currentPhase === "ready"
+            ? `  Still waiting for sandbox to become ready... (${elapsed}s elapsed)`
+            : `  Still building sandbox image... (${elapsed}s elapsed)`;
+    if (heartbeatLine !== lastPrintedLine) {
+      console.log(heartbeatLine);
+      lastPrintedLine = heartbeatLine;
+      lastHeartbeatPhase = currentPhase;
+      lastHeartbeatBucket = bucket;
+    }
+  }, heartbeatIntervalMs);
+  heartbeatTimer.unref?.();
 
   return new Promise((resolve) => {
     resolvePromise = resolve;
