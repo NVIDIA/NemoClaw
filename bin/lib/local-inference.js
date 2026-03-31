@@ -98,7 +98,9 @@ function validateLocalProvider(provider, runCapture) {
       return {
         ok: false,
         message:
-          "Local Ollama is responding on localhost, but containers cannot reach http://host.openshell.internal:11434. Ensure Ollama listens on 0.0.0.0:11434 instead of 127.0.0.1 so sandboxes can reach it.",
+          process.platform === "darwin"
+            ? "Local Ollama is responding on localhost, but containers cannot reach http://host.openshell.internal:11434. Restart Docker Desktop and ensure host networking is enabled."
+            : "Local Ollama is responding on localhost, but containers cannot reach http://host.openshell.internal:11434. Ensure Ollama listens on 0.0.0.0:11434 (not 127.0.0.1) so sandboxes can reach it via the Docker bridge.",
       };
     default:
       return { ok: false, message: "The selected local inference provider is unavailable from containers." };

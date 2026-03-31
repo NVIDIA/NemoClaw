@@ -173,7 +173,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
     # Start Ollama service if not running
     if ! check_local_provider_health "ollama-local"; then
       info "Starting Ollama service..."
-      OLLAMA_HOST=0.0.0.0:11434 ollama serve >/dev/null 2>&1 &
+      OLLAMA_HOST=127.0.0.1:11434 ollama serve >/dev/null 2>&1 &
       sleep 2
     fi
     OLLAMA_LOCAL_BASE_URL="$(get_local_provider_base_url "ollama-local")"

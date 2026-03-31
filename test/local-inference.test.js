@@ -62,7 +62,40 @@ describe("local inference helpers", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/host\.openshell\.internal:11434/);
-    expect(result.message).toMatch(/0\.0\.0\.0:11434/);
+  });
+
+  it("gives platform-specific guidance when ollama-local container reachability fails on Linux", () => {
+    const original = process.platform;
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+    try {
+      let callCount = 0;
+      const result = validateLocalProvider("ollama-local", () => {
+        callCount += 1;
+        return callCount === 1 ? '{"models":[]}' : "";
+      });
+      expect(result.ok).toBe(false);
+      expect(result.message).toMatch(/0\.0\.0\.0:11434/);
+      expect(result.message).toMatch(/Docker bridge/);
+    } finally {
+      Object.defineProperty(process, "platform", { value: original, configurable: true });
+    }
+  });
+
+  it("gives platform-specific guidance when ollama-local container reachability fails on macOS", () => {
+    const original = process.platform;
+    Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+    try {
+      let callCount = 0;
+      const result = validateLocalProvider("ollama-local", () => {
+        callCount += 1;
+        return callCount === 1 ? '{"models":[]}' : "";
+      });
+      expect(result.ok).toBe(false);
+      expect(result.message).toMatch(/Docker Desktop/);
+      expect(result.message).not.toMatch(/0\.0\.0\.0/);
+    } finally {
+      Object.defineProperty(process, "platform", { value: original, configurable: true });
+    }
   });
 
   it("returns a clear error when vllm-local is unavailable", () => {

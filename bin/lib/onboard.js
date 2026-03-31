@@ -2636,10 +2636,19 @@ async function setupNim(gpu) {
     } else if (selected.key === "ollama") {
       if (!ollamaRunning) {
         console.log("  Starting Ollama...");
-        // On WSL2, binding to 0.0.0.0 creates a dual-stack socket that Docker
-        // cannot reach via host-gateway. The default 127.0.0.1 binding works
-        // because WSL2 relays IPv4-only sockets to the Windows host.
-        const ollamaEnv = isWsl() ? "" : "OLLAMA_HOST=0.0.0.0:11434 ";
+        // On macOS, Docker Desktop routes host-gateway through the VM so
+        // 127.0.0.1 is reachable from containers — bind to localhost to
+        // avoid exposing Ollama to the LAN (CWE-668, NVBUG 6014821).
+        // On Linux, containers access the host via the Docker bridge IP
+        // so 0.0.0.0 is required for reachability.
+        // On WSL2, the default binding works without override.
+        let ollamaEnv = "";
+        if (!isWsl()) {
+          ollamaEnv =
+            process.platform === "darwin"
+              ? "OLLAMA_HOST=127.0.0.1:11434 "
+              : "OLLAMA_HOST=0.0.0.0:11434 ";
+        }
         run(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
         sleep(2);
       }
@@ -2686,7 +2695,7 @@ async function setupNim(gpu) {
       console.log("  Installing Ollama via Homebrew...");
       run("brew install ollama", { ignoreError: true });
       console.log("  Starting Ollama...");
-      run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
+      run("OLLAMA_HOST=127.0.0.1:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
         sleep(2);
       console.log("  ✓ Using Ollama on localhost:11434");
       provider = "ollama-local";

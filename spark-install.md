@@ -96,11 +96,13 @@ ollama run nemotron-3-super:120b
 # type /bye to exit
 ```
 
-### 4. Configure Ollama to Listen on All Interfaces
+### 4. Configure Ollama to Listen on All Interfaces (Linux only)
 
-By default Ollama binds to `127.0.0.1`, which is not reachable from inside the sandbox container. Configure it to listen on all interfaces:
+On Linux, Ollama's default `127.0.0.1` binding is not reachable from inside the sandbox container because Docker containers access the host via the bridge IP, not loopback. Configure Ollama to listen on all interfaces:
 
 > **Note:** `OLLAMA_HOST=0.0.0.0` exposes Ollama on your network. If you're not on a trusted LAN, restrict access with host firewall rules (`ufw`, `iptables`, etc.).
+>
+> **macOS users:** Docker Desktop routes `host-gateway` through the VM, so the default `127.0.0.1` binding works — skip this step. The NemoClaw onboarding wizard handles this automatically.
 
 ```bash
 sudo mkdir -p /etc/systemd/system/ollama.service.d
