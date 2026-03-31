@@ -78,11 +78,19 @@ async function sendMessage(channel, text, thread_ts) {
     chunks.push(text.slice(i, i + 3000));
   }
   for (const chunk of chunks) {
-    await slackApi("chat.postMessage", {
-      channel,
-      text: chunk,
-      thread_ts,
-    }, BOT_TOKEN);
+    try {
+      const res = await slackApi("chat.postMessage", {
+        channel,
+        text: chunk,
+        thread_ts,
+      }, BOT_TOKEN);
+      if (!res.ok) {
+        console.error(`Failed to send message to ${channel}: ${res.error}`);
+      }
+    } catch (err) {
+      console.error(`Error sending message to ${channel}: ${err.message}`);
+      throw err;
+    }
   }
 }
 
@@ -173,13 +181,22 @@ async function connectSocketMode() {
 
   const ws = new WebSocket(res.url);
 
+  let reconnectAttempts = 0;
+  const MAX_RECONNECT_DELAY = 60000;
+
   ws.addEventListener("open", () => {
     reconnectAttempts = 0;
     console.log("Connected to Slack Socket Mode.");
   });
 
   ws.addEventListener("message", async (event) => {
-    const msg = JSON.parse(event.data);
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch (err) {
+      console.error("Failed to parse WebSocket message:", err.message);
+      return;
+    }
 
     if (msg.type === "hello") return;
 
@@ -239,9 +256,6 @@ async function connectSocketMode() {
     }
   });
 
-  let reconnectAttempts = 0;
-  const MAX_RECONNECT_DELAY = 60000;
-
   ws.addEventListener("close", () => {
     console.log("Socket Mode connection closed. Reconnecting...");
     const delay = Math.min(3000 * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
@@ -281,5 +295,9 @@ async function main() {
 
   connectSocketMode();
 }
+
+process.on("unhandledRejection", (err) => {
+  console.error("Unhandled rejection:", err);
+});
 
 main();
