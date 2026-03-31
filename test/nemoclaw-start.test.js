@@ -35,4 +35,29 @@ describe("nemoclaw-start non-root fallback", () => {
     const calls = src.match(/verify_config_integrity/g) || [];
     expect(calls.length).toBeGreaterThanOrEqual(3); // definition + 2 call sites
   });
+
+  it("sends startup diagnostics to stderr so they do not leak into bridge output (#1064)", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+    expect(src).toContain("echo 'Setting up NemoClaw...' >&2");
+
+    const nonRootBlock = src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)^fi$/m);
+    expect(nonRootBlock).toBeTruthy();
+    const block = nonRootBlock[1];
+
+    const echoLines = block.match(/^\s*echo\s+.+$/gm) || [];
+    expect(echoLines.length).toBeGreaterThan(0);
+    for (const line of echoLines) {
+      expect(line).toContain(">&2");
+    }
+
+    const dashboardFn = src.match(/print_dashboard_urls\(\) \{([\s\S]*?)^\}/m);
+    expect(dashboardFn).toBeTruthy();
+    const dashboardBody = dashboardFn[1];
+    const dashboardEchoes = dashboardBody.match(/^\s*echo\s+.+$/gm) || [];
+    expect(dashboardEchoes.length).toBeGreaterThan(0);
+    for (const line of dashboardEchoes) {
+      expect(line).toContain(">&2");
+    }
+  });
 });
