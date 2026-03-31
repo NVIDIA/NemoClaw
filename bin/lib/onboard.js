@@ -2001,6 +2001,8 @@ async function promptValidatedSandboxName() {
   return sandboxName;
 }
 
+// ── Step 5: Sandbox ──────────────────────────────────────────────
+
 // eslint-disable-next-line complexity
 async function createSandbox(gpu, model, provider, preferredInferenceApi = null, sandboxNameOverride = null) {
   step(5, 7, "Creating sandbox");
@@ -2176,7 +2178,7 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   return sandboxName;
 }
 
-// ── Step 4: NIM ──────────────────────────────────────────────────
+// ── Step 3: Inference selection ──────────────────────────────────
 
 // eslint-disable-next-line complexity
 async function setupNim(gpu) {
@@ -2653,7 +2655,7 @@ async function setupNim(gpu) {
   return { model, provider, endpointUrl, credentialEnv, preferredInferenceApi, nimContainer };
 }
 
-// ── Step 5: Inference provider ───────────────────────────────────
+// ── Step 4: Inference provider ───────────────────────────────────
 
 // eslint-disable-next-line complexity
 async function setupInference(sandboxName, model, provider, endpointUrl = null, credentialEnv = null) {
@@ -3378,7 +3380,6 @@ async function onboard(opts = {}) {
           }
         }
       }
-      sandboxName = sandboxName || (await promptValidatedSandboxName());
       startRecordedStep("sandbox", { sandboxName, provider, model });
       sandboxName = await createSandbox(gpu, model, provider, preferredInferenceApi, sandboxName);
       onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
