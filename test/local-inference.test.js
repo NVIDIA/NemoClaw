@@ -6,10 +6,13 @@ import { describe, it, expect } from "vitest";
 import {
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
+  LARGE_OLLAMA_MIN_MEMORY_MB,
   getDefaultOllamaModel,
+  getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
   getLocalProviderContainerReachabilityCheck,
   getLocalProviderHealthCheck,
+  getLocalProviderValidationBaseUrl,
   getOllamaModelOptions,
   getOllamaProbeCommand,
   getOllamaWarmupCommand,
@@ -28,8 +31,27 @@ describe("local inference helpers", () => {
     expect(getLocalProviderBaseUrl("ollama-local")).toBe("http://host.openshell.internal:11434/v1");
   });
 
+  it("returns null for unknown local provider URLs", () => {
+    expect(getLocalProviderBaseUrl("unknown-provider")).toBeNull();
+    expect(getLocalProviderValidationBaseUrl("unknown-provider")).toBeNull();
+    expect(getLocalProviderHealthCheck("unknown-provider")).toBeNull();
+    expect(getLocalProviderContainerReachabilityCheck("unknown-provider")).toBeNull();
+  });
+
+  it("returns the expected validation URL for vllm-local", () => {
+    expect(getLocalProviderValidationBaseUrl("vllm-local")).toBe("http://localhost:8000/v1");
+  });
+
   it("returns the expected health check command for ollama-local", () => {
     expect(getLocalProviderHealthCheck("ollama-local")).toBe("curl -sf http://localhost:11434/api/tags 2>/dev/null");
+  });
+
+  it("returns the expected validation and health check commands for vllm-local", () => {
+    expect(getLocalProviderValidationBaseUrl("ollama-local")).toBe("http://localhost:11434/v1");
+    expect(getLocalProviderHealthCheck("vllm-local")).toBe("curl -sf http://localhost:8000/v1/models 2>/dev/null");
+    expect(getLocalProviderContainerReachabilityCheck("vllm-local")).toBe(
+      `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:8000/v1/models 2>/dev/null`
+    );
   });
 
   it("returns the expected container reachability command for ollama-local", () => {
@@ -71,6 +93,20 @@ describe("local inference helpers", () => {
     expect(result.message).toMatch(/http:\/\/localhost:8000/);
   });
 
+  it("returns a clear error when vllm-local is not reachable from containers", () => {
+    let callCount = 0;
+    const result = validateLocalProvider("vllm-local", () => {
+      callCount += 1;
+      return callCount === 1 ? '{"data":[]}' : "";
+    });
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/host\.openshell\.internal:8000/);
+  });
+
+  it("treats unknown local providers as already valid", () => {
+    expect(validateLocalProvider("custom-provider", () => "")).toEqual({ ok: true });
+  });
+
   it("parses model names from ollama list output", () => {
     expect(parseOllamaList(
       [
@@ -79,6 +115,10 @@ describe("local inference helpers", () => {
         "qwen3:32b                   def456          20 GB     1 day ago",
       ].join("\n"),
     )).toEqual(["nemotron-3-nano:30b", "qwen3:32b"]);
+  });
+
+  it("ignores headers and blank lines in ollama list output", () => {
+    expect(parseOllamaList("NAME ID SIZE MODIFIED\n\n")).toEqual([]);
   });
 
   it("returns parsed ollama model options when available", () => {
@@ -98,6 +138,12 @@ describe("local inference helpers", () => {
         })
       )
     ).toEqual(["nemotron-3-nano:30b", "qwen2.5:7b"]);
+  });
+
+  it("returns no tags for malformed Ollama API output", () => {
+    expect(parseOllamaTags("{not-json")).toEqual([]);
+    expect(parseOllamaTags(JSON.stringify({ models: null }))).toEqual([]);
+    expect(parseOllamaTags(JSON.stringify({ models: [{}, { name: "qwen2.5:7b" }] }))).toEqual(["qwen2.5:7b"]);
   });
 
   it("prefers Ollama /api/tags over parsing the CLI list output", () => {
@@ -129,11 +175,28 @@ describe("local inference helpers", () => {
     ).toBe("qwen3:32b");
   });
 
+  it("falls back to bootstrap model options when no Ollama models are installed", () => {
+    expect(getBootstrapOllamaModelOptions(null)).toEqual(["qwen2.5:7b"]);
+    expect(
+      getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB - 1 })
+    ).toEqual(["qwen2.5:7b"]);
+    expect(
+      getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB })
+    ).toEqual(["qwen2.5:7b", DEFAULT_OLLAMA_MODEL]);
+    expect(getDefaultOllamaModel(() => "", { totalMemoryMB: 16384 })).toBe("qwen2.5:7b");
+  });
+
   it("builds a background warmup command for ollama models", () => {
     const command = getOllamaWarmupCommand("nemotron-3-nano:30b");
     expect(command).toMatch(/^nohup curl -s http:\/\/localhost:11434\/api\/generate /);
     expect(command).toMatch(/"model":"nemotron-3-nano:30b"/);
     expect(command).toMatch(/"keep_alive":"15m"/);
+  });
+
+  it("supports custom probe and warmup tuning", () => {
+    expect(getOllamaWarmupCommand("qwen2.5:7b", "30m")).toMatch(/"keep_alive":"30m"/);
+    expect(getOllamaProbeCommand("qwen2.5:7b", 30, "5m")).toMatch(/--max-time 30/);
+    expect(getOllamaProbeCommand("qwen2.5:7b", 30, "5m")).toMatch(/"keep_alive":"5m"/);
   });
 
   it("builds a foreground probe command for ollama models", () => {
@@ -163,5 +226,9 @@ describe("local inference helpers", () => {
       () => JSON.stringify({ model: "nemotron-3-nano:30b", response: "hello", done: true }),
     );
     expect(result).toEqual({ ok: true });
+  });
+
+  it("treats non-JSON probe output as success once the model responds", () => {
+    expect(validateOllamaModel("nemotron-3-nano:30b", () => "ok")).toEqual({ ok: true });
   });
 });

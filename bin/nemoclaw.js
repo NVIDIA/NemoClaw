@@ -33,6 +33,8 @@ const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
 const { parseGatewayInference } = require("./lib/inference-config");
+const onboardSession = require("./lib/onboard-session");
+const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -44,6 +46,7 @@ const GLOBAL_COMMANDS = new Set([
 
 const REMOTE_UNINSTALL_URL = "https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh";
 let OPENSHELL_BIN = null;
+const MIN_LOGS_OPENSHELL_VERSION = "0.0.7";
 
 function getOpenshellBinary() {
   if (!OPENSHELL_BIN) {
@@ -83,9 +86,162 @@ function captureOpenshell(args, opts = {}) {
   };
 }
 
+function parseVersionFromText(value = "") {
+  const match = String(value || "").match(/([0-9]+\.[0-9]+\.[0-9]+)/);
+  return match ? match[1] : null;
+}
+
+function versionGte(left = "0.0.0", right = "0.0.0") {
+  const lhs = String(left).split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const rhs = String(right).split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const length = Math.max(lhs.length, rhs.length);
+  for (let index = 0; index < length; index += 1) {
+    const a = lhs[index] || 0;
+    const b = rhs[index] || 0;
+    if (a > b) return true;
+    if (a < b) return false;
+  }
+  return true;
+}
+
+function getInstalledOpenshellVersion() {
+  const versionResult = captureOpenshell(["--version"], { ignoreError: true });
+  return parseVersionFromText(versionResult.output);
+}
+
 function stripAnsi(value = "") {
   // eslint-disable-next-line no-control-regex
   return String(value).replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function buildRecoveredSandboxEntry(name, metadata = {}) {
+  return {
+    name,
+    model: metadata.model || null,
+    provider: metadata.provider || null,
+    gpuEnabled: metadata.gpuEnabled === true,
+    policies: Array.isArray(metadata.policies)
+      ? metadata.policies
+      : Array.isArray(metadata.policyPresets)
+        ? metadata.policyPresets
+        : [],
+    nimContainer: metadata.nimContainer || null,
+  };
+}
+
+function upsertRecoveredSandbox(name, metadata = {}) {
+  let validName;
+  try {
+    validName = validateName(name, "sandbox name");
+  } catch {
+    return false;
+  }
+
+  const entry = buildRecoveredSandboxEntry(validName, metadata);
+  if (registry.getSandbox(validName)) {
+    registry.updateSandbox(validName, entry);
+    return false;
+  }
+  registry.registerSandbox(entry);
+  return true;
+}
+
+function shouldRecoverRegistryEntries(current, session, requestedSandboxName) {
+  const hasSessionSandbox = Boolean(session?.sandboxName);
+  const missingSessionSandbox =
+    hasSessionSandbox &&
+    !current.sandboxes.some((sandbox) => sandbox.name === session.sandboxName);
+  const missingRequestedSandbox =
+    Boolean(requestedSandboxName) &&
+    !current.sandboxes.some((sandbox) => sandbox.name === requestedSandboxName);
+  const hasRecoverySeed = current.sandboxes.length > 0 || hasSessionSandbox || Boolean(requestedSandboxName);
+  return {
+    missingRequestedSandbox,
+    shouldRecover:
+      hasRecoverySeed &&
+      (current.sandboxes.length === 0 || missingRequestedSandbox || missingSessionSandbox),
+  };
+}
+
+function seedRecoveryMetadata(current, session, requestedSandboxName) {
+  const metadataByName = new Map(current.sandboxes.map((sandbox) => [sandbox.name, sandbox]));
+  let recoveredFromSession = false;
+
+  if (!session?.sandboxName) {
+    return { metadataByName, recoveredFromSession };
+  }
+
+  metadataByName.set(
+    session.sandboxName,
+    buildRecoveredSandboxEntry(session.sandboxName, {
+      model: session.model || null,
+      provider: session.provider || null,
+      nimContainer: session.nimContainer || null,
+      policyPresets: session.policyPresets || null,
+    })
+  );
+  const sessionSandboxMissing = !current.sandboxes.some((sandbox) => sandbox.name === session.sandboxName);
+  const shouldRecoverSessionSandbox =
+    current.sandboxes.length === 0 || sessionSandboxMissing || requestedSandboxName === session.sandboxName;
+  if (shouldRecoverSessionSandbox) {
+    recoveredFromSession = upsertRecoveredSandbox(session.sandboxName, metadataByName.get(session.sandboxName));
+  }
+  return { metadataByName, recoveredFromSession };
+}
+
+async function recoverRegistryFromLiveGateway(metadataByName) {
+  if (!resolveOpenshell()) {
+    return 0;
+  }
+  const recovery = await recoverNamedGatewayRuntime();
+  const canInspectLiveGateway =
+    recovery.recovered ||
+    recovery.before?.state === "healthy_named" ||
+    recovery.after?.state === "healthy_named";
+  if (!canInspectLiveGateway) {
+    return 0;
+  }
+
+  let recoveredFromGateway = 0;
+  const liveList = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  const liveNames = Array.from(parseLiveSandboxNames(liveList.output));
+  for (const name of liveNames) {
+    const metadata = metadataByName.get(name) || {};
+    if (upsertRecoveredSandbox(name, metadata)) {
+      recoveredFromGateway += 1;
+    }
+  }
+  return recoveredFromGateway;
+}
+
+function applyRecoveredDefault(currentDefaultSandbox, requestedSandboxName, session) {
+  const recovered = registry.listSandboxes();
+  const preferredDefault = requestedSandboxName || (!currentDefaultSandbox ? session?.sandboxName || null : null);
+  if (preferredDefault && recovered.sandboxes.some((sandbox) => sandbox.name === preferredDefault)) {
+    registry.setDefault(preferredDefault);
+  }
+  return registry.listSandboxes();
+}
+
+async function recoverRegistryEntries({ requestedSandboxName = null } = {}) {
+  const current = registry.listSandboxes();
+  const session = onboardSession.loadSession();
+  const recoveryCheck = shouldRecoverRegistryEntries(current, session, requestedSandboxName);
+  if (!recoveryCheck.shouldRecover) {
+    return { ...current, recoveredFromSession: false, recoveredFromGateway: 0 };
+  }
+
+  const seeded = seedRecoveryMetadata(current, session, requestedSandboxName);
+  const shouldProbeLiveGateway = current.sandboxes.length > 0 || Boolean(session?.sandboxName);
+  const recoveredFromGateway = shouldProbeLiveGateway
+    ? await recoverRegistryFromLiveGateway(seeded.metadataByName)
+    : 0;
+  const recovered = applyRecoveredDefault(current.defaultSandbox, requestedSandboxName, session);
+  return {
+    ...recovered,
+    recoveredFromSession: seeded.recoveredFromSession,
+    recoveredFromGateway,
+  };
 }
 
 function hasNamedGateway(output = "") {
@@ -300,6 +456,13 @@ async function ensureLiveSandboxOrExit(sandboxName) {
   printGatewayLifecycleHint(lookup.output, sandboxName);
   console.error("  Check `openshell status` and the active gateway, then retry.");
   process.exit(1);
+}
+
+function printOldLogsCompatibilityGuidance(installedVersion = null) {
+  const versionText = installedVersion ? ` (${installedVersion})` : "";
+  console.error(`  Installed OpenShell${versionText} is too old or incompatible with \`nemoclaw logs\`.`);
+  console.error(`  NemoClaw expects \`openshell logs <name>\` and live streaming via \`--tail\`.`);
+  console.error("  Upgrade OpenShell by rerunning `nemoclaw onboard`, or reinstall the OpenShell CLI and try again.");
 }
 
 function resolveUninstallScript() {
@@ -551,11 +714,18 @@ function showStatus() {
   run(`bash "${SCRIPTS}/start-services.sh" --status`);
 }
 
-function listSandboxes() {
-  const { sandboxes, defaultSandbox } = registry.listSandboxes();
+async function listSandboxes() {
+  const recovery = await recoverRegistryEntries();
+  const { sandboxes, defaultSandbox } = recovery;
   if (sandboxes.length === 0) {
     console.log("");
-    console.log("  No sandboxes registered. Run `nemoclaw onboard` to get started.");
+    const session = onboardSession.loadSession();
+    if (session?.sandboxName) {
+      console.log(`  No sandboxes registered locally, but the last onboarded sandbox was '${session.sandboxName}'.`);
+      console.log("  Retry `nemoclaw <name> connect` or `nemoclaw <name> status` once the gateway/runtime is healthy.");
+    } else {
+      console.log("  No sandboxes registered. Run `nemoclaw onboard` to get started.");
+    }
     console.log("");
     return;
   }
@@ -566,6 +736,14 @@ function listSandboxes() {
   );
 
   console.log("");
+  if (recovery.recoveredFromSession) {
+    console.log("  Recovered sandbox inventory from the last onboard session.");
+    console.log("");
+  }
+  if (recovery.recoveredFromGateway > 0) {
+    console.log(`  Recovered ${recovery.recoveredFromGateway} sandbox entr${recovery.recoveredFromGateway === 1 ? "y" : "ies"} from the live OpenShell gateway.`);
+    console.log("");
+  }
   console.log("  Sandboxes:");
   for (const sb of sandboxes) {
     const def = sb.name === defaultSandbox ? " *" : "";
@@ -664,9 +842,44 @@ async function sandboxStatus(sandboxName) {
 }
 
 function sandboxLogs(sandboxName, follow) {
+  const installedVersion = getInstalledOpenshellVersion();
+  if (installedVersion && !versionGte(installedVersion, MIN_LOGS_OPENSHELL_VERSION)) {
+    printOldLogsCompatibilityGuidance(installedVersion);
+    process.exit(1);
+  }
+
   const args = ["logs", sandboxName];
-  if (follow) args.push("--follow");
-  runOpenshell(args);
+  if (follow) args.push("--tail");
+  const result = spawnSync(getOpenshellBinary(), args, {
+    cwd: ROOT,
+    env: process.env,
+    encoding: "utf-8",
+    stdio: follow ? ["ignore", "inherit", "pipe"] : ["ignore", "pipe", "pipe"],
+  });
+  const stdout = String(result.stdout || "");
+  const stderr = String(result.stderr || "");
+  const combined = `${stdout}${stderr}`;
+  if (!follow && stdout) {
+    process.stdout.write(stdout);
+  }
+  if (result.status === 0) {
+    return;
+  }
+  if (stderr) {
+    process.stderr.write(stderr);
+  }
+  if (
+    /unrecognized subcommand 'logs'|unexpected argument '--tail'|unexpected argument '--follow'/i.test(combined) ||
+    (installedVersion && !versionGte(installedVersion, MIN_LOGS_OPENSHELL_VERSION))
+  ) {
+    printOldLogsCompatibilityGuidance(installedVersion);
+    process.exit(1);
+  }
+  if (result.status === null || result.signal) {
+    exitWithSpawnResult(result);
+  }
+  console.error(`  Command failed (exit ${result.status}): openshell ${args.join(" ")}`);
+  exitWithSpawnResult(result);
 }
 
 async function sandboxPolicyAdd(sandboxName) {
@@ -802,7 +1015,7 @@ const [cmd, ...args] = process.argv.slice(2);
       case "status":      showStatus(); break;
       case "debug":       debug(args); break;
       case "uninstall":   uninstall(args); break;
-      case "list":        listSandboxes(); break;
+      case "list":        await listSandboxes(); break;
       case "--version":
       case "-v": {
         const pkg = require(path.join(__dirname, "..", "package.json"));
@@ -834,6 +1047,15 @@ const [cmd, ...args] = process.argv.slice(2);
         process.exit(1);
     }
     return;
+  }
+
+  if (args[0] === "connect") {
+    validateName(cmd, "sandbox name");
+    await recoverRegistryEntries({ requestedSandboxName: cmd });
+    if (registry.getSandbox(cmd)) {
+      await sandboxConnect(cmd);
+      return;
+    }
   }
 
   // Unknown command — suggest

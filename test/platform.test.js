@@ -3,10 +3,13 @@
 
 import { describe, it, expect } from "vitest";
 import path from "node:path";
+import fs from "node:fs";
+import os from "node:os";
 
 import {
   detectDockerHost,
   findColimaDockerSocket,
+  getColimaDockerSocketCandidates,
   getDockerSocketCandidates,
   inferContainerRuntime,
   isUnsupportedMacosRuntime,
@@ -31,6 +34,15 @@ describe("platform helpers", () => {
         release: "24.6.0",
       })).toBe(false);
     });
+
+    it("detects WSL from /proc version text even without WSL env vars", () => {
+      expect(isWsl({
+        platform: "linux",
+        env: {},
+        release: "6.6.87-generic",
+        procVersion: "Linux version 6.6.87.2-microsoft-standard-WSL2",
+      })).toBe(true);
+    });
   });
 
   describe("getDockerSocketCandidates", () => {
@@ -48,6 +60,15 @@ describe("platform helpers", () => {
     });
   });
 
+  describe("getColimaDockerSocketCandidates", () => {
+    it("returns both legacy and config-path Colima sockets", () => {
+      expect(getColimaDockerSocketCandidates({ home: "/tmp/test-home" })).toEqual([
+        "/tmp/test-home/.colima/default/docker.sock",
+        "/tmp/test-home/.config/colima/default/docker.sock",
+      ]);
+    });
+  });
+
   describe("findColimaDockerSocket", () => {
     it("finds the first available Colima socket", () => {
       const home = "/tmp/test-home";
@@ -55,6 +76,19 @@ describe("platform helpers", () => {
       const existsSync = (socketPath) => sockets.has(socketPath);
 
       expect(findColimaDockerSocket({ home, existsSync })).toBe(path.join(home, ".config/colima/default/docker.sock"));
+    });
+
+    it("returns null when no Colima socket exists", () => {
+      expect(findColimaDockerSocket({ home: "/tmp/test-home", existsSync: () => false })).toBeNull();
+    });
+
+    it("uses fs.existsSync when no custom existsSync is provided", () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-colima-"));
+      const socketPath = path.join(home, ".config/colima/default/docker.sock");
+      fs.mkdirSync(path.dirname(socketPath), { recursive: true });
+      fs.writeFileSync(socketPath, "");
+
+      expect(findColimaDockerSocket({ home })).toBe(socketPath);
     });
   });
 
@@ -107,6 +141,19 @@ describe("platform helpers", () => {
         existsSync: () => false,
       })).toBe(null);
     });
+
+    it("uses fs.existsSync when no custom existsSync is provided", () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-"));
+      const socketPath = path.join(home, ".docker/run/docker.sock");
+      fs.mkdirSync(path.dirname(socketPath), { recursive: true });
+      fs.writeFileSync(socketPath, "");
+
+      expect(detectDockerHost({ env: {}, platform: "darwin", home })).toEqual({
+        dockerHost: `unix://${socketPath}`,
+        source: "socket",
+        socketPath,
+      });
+    });
   });
 
   describe("inferContainerRuntime", () => {
@@ -120,6 +167,12 @@ describe("platform helpers", () => {
 
     it("detects Colima", () => {
       expect(inferContainerRuntime("Server: Colima\n Docker Engine - Community")).toBe("colima");
+    });
+
+    it("detects plain Docker and unknown output", () => {
+      expect(inferContainerRuntime("Docker Engine - Community")).toBe("docker");
+      expect(inferContainerRuntime("")).toBe("unknown");
+      expect(inferContainerRuntime("some unrelated runtime")).toBe("unknown");
     });
   });
 
