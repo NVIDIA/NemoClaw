@@ -17,6 +17,7 @@
  */
 
 const https = require("https");
+const fs = require("fs");
 const { execFileSync, spawn } = require("child_process");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 const { shellQuote, validateName } = require("../bin/lib/runner");
@@ -36,7 +37,6 @@ try { validateName(SANDBOX, "SANDBOX_NAME"); } catch (e) { console.error(e.messa
 if (!APP_TOKEN || !BOT_TOKEN) { console.error("SLACK_APP_TOKEN and SLACK_BOT_TOKEN required"); process.exit(1); }
 if (!API_KEY) { console.error("NVIDIA_API_KEY required"); process.exit(1); }
 
-const activeSessions = new Map(); // channelId → message history
 const COOLDOWN_MS = 5000;
 const lastMessageTime = new Map();
 const busyChats = new Set();
@@ -90,19 +90,30 @@ async function sendMessage(channel, text, thread_ts) {
 
 function runAgentInSandbox(message, sessionId) {
   return new Promise((resolve) => {
-    const sshConfig = execFileSync(OPENSHELL, ["sandbox", "ssh-config", SANDBOX], { encoding: "utf-8" });
+    let sshConfig;
+    try {
+      sshConfig = execFileSync(OPENSHELL, ["sandbox", "ssh-config", SANDBOX], { encoding: "utf-8" });
+    } catch (err) {
+      resolve(`Failed to get SSH config for sandbox '${SANDBOX}': ${err.message}`);
+      return;
+    }
 
-    const confDir = require("fs").mkdtempSync("/tmp/nemoclaw-slack-ssh-");
+    const confDir = fs.mkdtempSync("/tmp/nemoclaw-slack-ssh-");
     const confPath = `${confDir}/config`;
-    require("fs").writeFileSync(confPath, sshConfig, { mode: 0o600 });
+    fs.writeFileSync(confPath, sshConfig, { mode: 0o600 });
 
     const safeSessionId = String(sessionId).replace(/[^a-zA-Z0-9-]/g, "");
     const cmd = `export NVIDIA_API_KEY=${shellQuote(API_KEY)} && nemoclaw-start openclaw agent --agent main --local -m ${shellQuote(message)} --session-id ${shellQuote("slack-" + safeSessionId)}`;
 
     const proc = spawn("ssh", ["-T", "-F", confPath, `openshell-${SANDBOX}`, cmd], {
-      timeout: 120000,
       stdio: ["ignore", "pipe", "pipe"],
     });
+
+    let killed = false;
+    const timeoutId = setTimeout(() => {
+      killed = true;
+      proc.kill("SIGTERM");
+    }, 120000);
 
     let stdout = "";
     let stderr = "";
@@ -111,7 +122,8 @@ function runAgentInSandbox(message, sessionId) {
     proc.stderr.on("data", (d) => (stderr += d.toString()));
 
     proc.on("close", (code) => {
-      try { require("fs").unlinkSync(confPath); require("fs").rmdirSync(confDir); } catch { /* ignored */ }
+      clearTimeout(timeoutId);
+      try { fs.unlinkSync(confPath); fs.rmdirSync(confDir); } catch { /* ignored */ }
 
       const lines = stdout.split("\n");
       const responseLines = lines.filter(
@@ -129,6 +141,11 @@ function runAgentInSandbox(message, sessionId) {
       );
 
       const response = responseLines.join("\n").trim();
+
+      if (killed) {
+        resolve("Agent request timed out after 120 seconds.");
+        return;
+      }
 
       if (response) {
         resolve(response);
@@ -157,6 +174,7 @@ async function connectSocketMode() {
   const ws = new WebSocket(res.url);
 
   ws.addEventListener("open", () => {
+    reconnectAttempts = 0;
     console.log("Connected to Slack Socket Mode.");
   });
 
@@ -170,25 +188,24 @@ async function connectSocketMode() {
     }
 
     if (msg.type === "events_api" && msg.payload && msg.payload.event) {
-      const event = msg.payload.event;
+      const slackEvent = msg.payload.event;
 
       // Ignore bot messages
-      if (event.bot_id || event.subtype === "bot_message") return;
+      if (slackEvent.bot_id || slackEvent.subtype === "bot_message") return;
 
-      if (event.type === "message" || event.type === "app_mention") {
-        const text = event.text || "";
+      if (slackEvent.type === "message" || slackEvent.type === "app_mention") {
+        const text = slackEvent.text || "";
         // If app_mention, strip the mention
         const cleanText = text.replace(/<@[A-Z0-9]+>/g, "").trim();
         if (!cleanText) return;
 
-        const channel = event.channel;
-        const thread_ts = event.thread_ts || event.ts;
+        const channel = slackEvent.channel;
+        const thread_ts = slackEvent.thread_ts || slackEvent.ts;
         const sessionId = thread_ts; // Use thread as session
 
-        console.log(`[${channel}] ${event.user}: ${cleanText}`);
+        console.log(`[${channel}] ${slackEvent.user}: ${cleanText}`);
 
         if (cleanText === "reset") {
-          activeSessions.delete(sessionId);
           await sendMessage(channel, "Session reset.", thread_ts);
           return;
         }
@@ -222,9 +239,14 @@ async function connectSocketMode() {
     }
   });
 
+  let reconnectAttempts = 0;
+  const MAX_RECONNECT_DELAY = 60000;
+
   ws.addEventListener("close", () => {
     console.log("Socket Mode connection closed. Reconnecting...");
-    setTimeout(connectSocketMode, 3000);
+    const delay = Math.min(3000 * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
+    reconnectAttempts++;
+    setTimeout(connectSocketMode, delay);
   });
 
   ws.addEventListener("error", (err) => {
@@ -248,7 +270,8 @@ async function main() {
   console.log("  │                                                     │");
   console.log(`  │  Bot:      @${(authTest.user + "                    ").slice(0, 37)}│`);
   console.log("  │  Sandbox:  " + (SANDBOX + "                              ").slice(0, 40) + "│");
-  console.log("  │  Model:    nvidia/nemotron-3-super-120b-a12b       │");
+  const modelName = process.env.NEMOCLAW_MODEL || "unknown";
+  console.log(`  │  Model:    ${(modelName + "                                        ").slice(0, 39)}│`);
   console.log("  │                                                     │");
   console.log("  │  Messages are forwarded to the OpenClaw agent      │");
   console.log("  │  inside the sandbox. Run 'openshell term' in       │");
