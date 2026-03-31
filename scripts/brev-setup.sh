@@ -37,6 +37,20 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export NEEDRESTART_MODE=a
 export DEBIAN_FRONTEND=noninteractive
 
+# ── Sudo privilege audit (NVBUG 6002888) ─────────────────────────────
+# This script runs on fresh Brev VMs and requires root for system
+# package management. All sudo calls are categorized:
+#   [pkg]  apt-get install/update, gpg --dearmor, tee sources.list
+#   [bin]  install -m 755 (system binary placement)
+#   [svc]  systemctl restart
+#   [cfg]  nvidia-ctk runtime configure, usermod -aG
+#   [run]  executing downloaded scripts as root (NodeSource setup)
+# A single apt-get update runs upfront to avoid repeated privilege
+# escalation for index refreshes.
+
+info "Refreshing package index..."
+sudo apt-get update -qq >/dev/null 2>&1
+
 # --- 0. Node.js (needed for services) ---
 if ! command -v node >/dev/null 2>&1; then
   info "Installing Node.js..."
@@ -57,7 +71,6 @@ fi
 # --- 1. Docker ---
 if ! command -v docker >/dev/null 2>&1; then
   info "Installing Docker..."
-  sudo apt-get update -qq >/dev/null 2>&1
   sudo apt-get install -y -qq docker.io >/dev/null 2>&1
   sudo usermod -aG docker "$(whoami)"
   info "Docker installed"
@@ -74,7 +87,6 @@ if command -v nvidia-smi >/dev/null 2>&1; then
     curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
       | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
       | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
-    sudo apt-get update -qq >/dev/null 2>&1
     sudo apt-get install -y -qq nvidia-container-toolkit >/dev/null 2>&1
     sudo nvidia-ctk runtime configure --runtime=docker >/dev/null 2>&1
     sudo systemctl restart docker
@@ -88,7 +100,6 @@ fi
 if ! command -v openshell >/dev/null 2>&1; then
   info "Installing openshell CLI from GitHub release..."
   if ! command -v gh >/dev/null 2>&1; then
-    sudo apt-get update -qq >/dev/null 2>&1
     sudo apt-get install -y -qq gh >/dev/null 2>&1
   fi
   ARCH="$(uname -m)"
