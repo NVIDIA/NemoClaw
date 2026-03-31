@@ -1360,6 +1360,176 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
   });
 
+  it("lets users type back at a lower-level model prompt to return to provider selection", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-model-back-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "model-back-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"id":"resp_123"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 }
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["3", "https://proxy.example.com/v1", "back", "1", ""];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-good"; };
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  process.env.COMPATIBLE_API_KEY = "proxy-key";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "nvidia-prod");
+    assert.ok(payload.lines.some((line) => line.includes("Returning to provider selection.")));
+    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 2);
+    assert.equal(payload.messages.filter((message) => /OpenAI-compatible base URL/.test(message)).length, 1);
+  });
+
+  it("lets users type back after a transport validation failure to return to provider selection", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-transport-back-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "transport-back-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+outfile=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if echo "$url" | grep -q 'api.openai.com'; then
+  printf '%s' 'curl: (6) Could not resolve host: api.openai.com' >&2
+  exit 6
+fi
+printf '%s' '{"id":"resp_123"}' > "$outfile"
+printf '200'
+`,
+      { mode: 0o755 }
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["2", "", "back", "1", ""];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-good"; };
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENAI_API_KEY = "sk-test";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "nvidia-prod");
+    assert.ok(payload.lines.some((line) => line.includes("could not resolve the provider hostname")));
+    assert.ok(payload.lines.some((line) => line.includes("Returning to provider selection.")));
+    assert.equal(payload.messages.filter((message) => /Retry validation\? \[Y\/n\/back\/exit\]/.test(message)).length, 1);
+    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 2);
+  });
+
   it("returns to provider selection when endpoint validation fails interactively", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-selection-retry-"));
@@ -1549,7 +1719,7 @@ const { setupNim } = require(${onboardPath});
     assert.ok(payload.lines.some((line) => line.includes("NVIDIA Endpoints authorization failed")));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length, 1);
-    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\/back\/exit\]/.test(message)));
     assert.ok(payload.messages.some((message) => /NVIDIA Endpoints API key: /.test(message)));
   });
 
@@ -1618,7 +1788,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "openai-responses");
     assert.equal(payload.key, "sk-good");
     assert.ok(payload.lines.some((line) => line.includes("OpenAI authorization failed")));
-    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\/back\/exit\]/.test(message)));
     assert.ok(payload.messages.some((message) => /OpenAI API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length, 2);
@@ -1689,7 +1859,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
     assert.equal(payload.key, "anthropic-good");
     assert.ok(payload.lines.some((line) => line.includes("Anthropic authorization failed")));
-    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\/back\/exit\]/.test(message)));
     assert.ok(payload.messages.some((message) => /Anthropic API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length, 2);
@@ -1760,7 +1930,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "openai-responses");
     assert.equal(payload.key, "gemini-good");
     assert.ok(payload.lines.some((line) => line.includes("Google Gemini authorization failed")));
-    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\/back\/exit\]/.test(message)));
     assert.ok(payload.messages.some((message) => /Google Gemini API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(payload.messages.filter((message) => /Choose model \[5\]/.test(message)).length, 2);
@@ -1832,7 +2002,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "openai-responses");
     assert.equal(payload.key, "proxy-good");
     assert.ok(payload.lines.some((line) => line.includes("Other OpenAI-compatible endpoint authorization failed")));
-    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\/back\/exit\]/.test(message)));
     assert.ok(payload.messages.some((message) => /Other OpenAI-compatible endpoint API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /OpenAI-compatible base URL/.test(message)).length, 1);
     assert.equal(payload.messages.filter((message) => /Other OpenAI-compatible endpoint model/.test(message)).length, 2);
@@ -1905,7 +2075,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
     assert.equal(payload.key, "anthropic-proxy-good");
     assert.ok(payload.lines.some((line) => line.includes("Other Anthropic-compatible endpoint authorization failed")));
-    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\/back\/exit\]/.test(message)));
     assert.ok(payload.messages.some((message) => /Other Anthropic-compatible endpoint API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Anthropic-compatible base URL/.test(message)).length, 1);
     assert.equal(payload.messages.filter((message) => /Other Anthropic-compatible endpoint model/.test(message)).length, 2);

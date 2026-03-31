@@ -52,6 +52,7 @@ const DIM = USE_COLOR ? "\x1b[2m" : "";
 const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN = null;
 const GATEWAY_NAME = "nemoclaw";
+const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
 
 const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
@@ -507,9 +508,50 @@ function summarizeProbeFailure(body = "", status = 0, curlStatus = 0, stderr = "
   return summarizeProbeError(body, status);
 }
 
+function getNavigationChoice(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "back") return "back";
+  if (normalized === "exit" || normalized === "quit") return "exit";
+  return null;
+}
+
+function exitOnboardFromPrompt() {
+  console.log("  Exiting onboarding.");
+  process.exit(1);
+}
+
+function getTransportRecoveryMessage(failure = {}) {
+  const text = compactText(`${failure.message || ""} ${failure.stderr || ""}`).toLowerCase();
+  if (failure.httpStatus === 429) {
+    return "  The provider is rate limiting validation requests right now.";
+  }
+  if (failure.httpStatus >= 500 && failure.httpStatus < 600) {
+    return "  The provider endpoint is reachable but currently failing upstream.";
+  }
+  if (failure.curlStatus === 6 || /could not resolve host|name or service not known/.test(text)) {
+    return "  Validation could not resolve the provider hostname. Check DNS, VPN, or the endpoint URL.";
+  }
+  if (failure.curlStatus === 7 || /connection refused|failed to connect/.test(text)) {
+    return "  Validation could not connect to the provider endpoint. Check the URL, proxy, or that the service is up.";
+  }
+  if (failure.curlStatus === 28 || /timed out|timeout/.test(text)) {
+    return "  Validation timed out before the provider replied. Retry, or check network/proxy health.";
+  }
+  if (failure.curlStatus === 35 || failure.curlStatus === 60 || /ssl|tls|certificate/.test(text)) {
+    return "  Validation hit a TLS/certificate error. Check HTTPS trust and whether the endpoint URL is correct.";
+  }
+  if (/proxy/.test(text)) {
+    return "  Validation hit a proxy/connectivity error. Check proxy environment settings and endpoint reachability.";
+  }
+  return "  Validation hit a network or transport error.";
+}
+
 function classifyValidationFailure({ httpStatus = 0, curlStatus = 0, message = "" } = {}) {
   const normalized = compactText(message).toLowerCase();
   if (curlStatus) {
+    return { kind: "transport", retry: "retry" };
+  }
+  if (httpStatus === 429 || (httpStatus >= 500 && httpStatus < 600)) {
     return { kind: "transport", retry: "retry" };
   }
   if (httpStatus === 401 || httpStatus === 403) {
@@ -543,8 +585,9 @@ function getProbeRecovery(probe, options = {}) {
   if (failures.some((failure) => classifyValidationFailure(failure).kind === "credential")) {
     return { kind: "credential", retry: "credential" };
   }
-  if (failures.some((failure) => classifyValidationFailure(failure).kind === "transport")) {
-    return { kind: "transport", retry: "retry" };
+  const transportFailure = failures.find((failure) => classifyValidationFailure(failure).kind === "transport");
+  if (transportFailure) {
+    return { kind: "transport", retry: "retry", failure: transportFailure };
   }
   if (allowModelRetry && failures.some((failure) => classifyValidationFailure(failure).kind === "model")) {
     return { kind: "model", retry: "model" };
@@ -618,6 +661,7 @@ async function replaceNamedCredential(envName, label, helpUrl = null) {
   }
 }
 
+// eslint-disable-next-line complexity
 async function promptValidationRecovery(label, recovery, credentialEnv = null, helpUrl = null) {
   if (isNonInteractive()) {
     process.exit(1);
@@ -625,7 +669,15 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
 
   if (recovery.kind === "credential" && credentialEnv) {
     console.log(`  ${label} authorization failed. Re-enter the API key or choose a different provider/model.`);
-    const choice = (await prompt("  Re-enter API key now? [Y/n]: ")).trim().toLowerCase();
+    const choice = (await prompt("  Re-enter API key now? [Y/n/back/exit]: ")).trim().toLowerCase();
+    if (choice === "back") {
+      console.log("  Returning to provider selection.");
+      console.log("");
+      return "selection";
+    }
+    if (choice === "exit" || choice === "quit") {
+      exitOnboardFromPrompt();
+    }
     if (choice === "" || choice === "y" || choice === "yes") {
       await replaceNamedCredential(credentialEnv, `${label} API key`, helpUrl);
       return "credential";
@@ -636,8 +688,16 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
   }
 
   if (recovery.kind === "transport") {
-    console.log(`  ${label} validation hit a network or transport error.`);
-    const choice = (await prompt("  Retry validation? [Y/n]: ")).trim().toLowerCase();
+    console.log(getTransportRecoveryMessage(recovery.failure || {}));
+    const choice = (await prompt("  Retry validation? [Y/n/back/exit]: ")).trim().toLowerCase();
+    if (choice === "back") {
+      console.log("  Returning to provider selection.");
+      console.log("");
+      return "selection";
+    }
+    if (choice === "exit" || choice === "quit") {
+      exitOnboardFromPrompt();
+    }
     if (choice === "" || choice === "y" || choice === "yes") {
       console.log("");
       return "retry";
@@ -1155,6 +1215,13 @@ async function promptManualModelId(promptLabel, errorLabel, validator = null) {
   while (true) {
     const manual = await prompt(promptLabel);
     const trimmed = manual.trim();
+    const navigation = getNavigationChoice(trimmed);
+    if (navigation === "back") {
+      return BACK_TO_SELECTION;
+    }
+    if (navigation === "exit") {
+      exitOnboardFromPrompt();
+    }
     if (!trimmed || !isSafeModelId(trimmed)) {
       console.error(`  Invalid ${errorLabel} model id.`);
       continue;
@@ -1272,6 +1339,13 @@ async function promptCloudModel() {
   console.log("");
 
   const choice = await prompt("  Choose model [1]: ");
+  const navigation = getNavigationChoice(choice);
+  if (navigation === "back") {
+    return BACK_TO_SELECTION;
+  }
+  if (navigation === "exit") {
+    exitOnboardFromPrompt();
+  }
   const index = parseInt(choice || "1", 10) - 1;
   if (index >= 0 && index < CLOUD_MODEL_OPTIONS.length) {
     return CLOUD_MODEL_OPTIONS[index].id;
@@ -1297,6 +1371,13 @@ async function promptRemoteModel(label, providerKey, defaultModel, validator = n
   console.log("");
 
   const choice = await prompt(`  Choose model [${defaultIndex + 1}]: `);
+  const navigation = getNavigationChoice(choice);
+  if (navigation === "back") {
+    return BACK_TO_SELECTION;
+  }
+  if (navigation === "exit") {
+    exitOnboardFromPrompt();
+  }
   const index = parseInt(choice || String(defaultIndex + 1), 10) - 1;
   if (index >= 0 && index < options.length) {
     return options[index];
@@ -1308,6 +1389,13 @@ async function promptRemoteModel(label, providerKey, defaultModel, validator = n
 async function promptInputModel(label, defaultModel, validator = null) {
   while (true) {
     const value = await prompt(`  ${label} model [${defaultModel}]: `);
+    const navigation = getNavigationChoice(value);
+    if (navigation === "back") {
+      return BACK_TO_SELECTION;
+    }
+    if (navigation === "exit") {
+      exitOnboardFromPrompt();
+    }
     const trimmed = (value || defaultModel).trim();
     if (!trimmed || !isSafeModelId(trimmed)) {
       console.error(`  Invalid ${label} model id.`);
@@ -2173,17 +2261,37 @@ async function setupNim(gpu) {
       preferredInferenceApi = null;
 
       if (selected.key === "custom") {
-        endpointUrl = normalizeProviderBaseUrl(isNonInteractive()
+        const endpointInput = isNonInteractive()
           ? (process.env.NEMOCLAW_ENDPOINT_URL || "").trim()
-          : await prompt("  OpenAI-compatible base URL (e.g., https://openrouter.ai/api/v1): "), "openai");
+          : await prompt("  OpenAI-compatible base URL (e.g., https://openrouter.ai/api/v1): ");
+        const navigation = getNavigationChoice(endpointInput);
+        if (navigation === "back") {
+          console.log("  Returning to provider selection.");
+          console.log("");
+          continue selectionLoop;
+        }
+        if (navigation === "exit") {
+          exitOnboardFromPrompt();
+        }
+        endpointUrl = normalizeProviderBaseUrl(endpointInput, "openai");
         if (!endpointUrl) {
           console.error("  Endpoint URL is required for Other OpenAI-compatible endpoint.");
           process.exit(1);
         }
       } else if (selected.key === "anthropicCompatible") {
-        endpointUrl = normalizeProviderBaseUrl(isNonInteractive()
+        const endpointInput = isNonInteractive()
           ? (process.env.NEMOCLAW_ENDPOINT_URL || "").trim()
-          : await prompt("  Anthropic-compatible base URL (e.g., https://proxy.example.com): "), "anthropic");
+          : await prompt("  Anthropic-compatible base URL (e.g., https://proxy.example.com): ");
+        const navigation = getNavigationChoice(endpointInput);
+        if (navigation === "back") {
+          console.log("  Returning to provider selection.");
+          console.log("");
+          continue selectionLoop;
+        }
+        if (navigation === "exit") {
+          exitOnboardFromPrompt();
+        }
+        endpointUrl = normalizeProviderBaseUrl(endpointInput, "anthropic");
         if (!endpointUrl) {
           console.error("  Endpoint URL is required for Other Anthropic-compatible endpoint.");
           process.exit(1);
@@ -2200,6 +2308,11 @@ async function setupNim(gpu) {
           await ensureApiKey();
         }
         model = requestedModel || (isNonInteractive() ? DEFAULT_CLOUD_MODEL : await promptCloudModel()) || DEFAULT_CLOUD_MODEL;
+        if (model === BACK_TO_SELECTION) {
+          console.log("  Returning to provider selection.");
+          console.log("");
+          continue selectionLoop;
+        }
       } else {
         if (isNonInteractive()) {
           if (!process.env[credentialEnv]) {
@@ -2225,6 +2338,11 @@ async function setupNim(gpu) {
             model = await promptRemoteModel(remoteConfig.label, selected.key, defaultModel, modelValidator);
           } else {
             model = await promptInputModel(remoteConfig.label, defaultModel, modelValidator);
+          }
+          if (model === BACK_TO_SELECTION) {
+            console.log("  Returning to provider selection.");
+            console.log("");
+            continue selectionLoop;
           }
 
           if (selected.key === "custom") {
