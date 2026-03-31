@@ -104,7 +104,7 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("nemoclaw debug")).toBeTruthy();
   });
 
-  it("passes --follow through to openshell logs", () => {
+  it("maps --follow to openshell --tail flag", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-follow-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -144,7 +144,7 @@ describe("CLI dispatch", () => {
     });
 
     expect(r.code).toBe(0);
-    expect(fs.readFileSync(markerFile, "utf8")).toContain("logs alpha --follow");
+    expect(fs.readFileSync(markerFile, "utf8")).toContain("logs alpha --tail");
   });
 
   it("connect does not pre-start a duplicate port forward", () => {
