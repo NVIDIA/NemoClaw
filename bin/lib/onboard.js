@@ -735,11 +735,15 @@ function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
 
 function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
   const createArgs = buildProviderArgs("create", name, type, credentialEnv, baseUrl);
-  const createResult = runOpenshell(createArgs, { ignoreError: true, env });
-  if (createResult.status === 0) return { ok: true };
+  const runOpts = { ignoreError: true, env, stdio: ["ignore", "pipe", "pipe"] };
+  const createResult = runOpenshell(createArgs, runOpts);
+  if (createResult.status === 0) {
+    console.log(`✓ Created provider ${name}`);
+    return { ok: true };
+  }
 
   const updateArgs = buildProviderArgs("update", name, type, credentialEnv, baseUrl);
-  const updateResult = runOpenshell(updateArgs, { ignoreError: true, env });
+  const updateResult = runOpenshell(updateArgs, runOpts);
   if (updateResult.status !== 0) {
     const output = compactText(`${createResult.stderr || ""} ${updateResult.stderr || ""}`) ||
       compactText(`${createResult.stdout || ""} ${updateResult.stdout || ""}`) ||
@@ -750,6 +754,7 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
       message: output,
     };
   }
+  console.log(`✓ Updated provider ${name}`);
   return { ok: true };
 }
 

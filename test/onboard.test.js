@@ -915,6 +915,17 @@ const { setupInference } = require(${onboardPath});
     assert.match(source, /local curl invocation error/);
   });
 
+  it("suppresses expected provider-create AlreadyExists noise when update succeeds", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
+      "utf-8"
+    );
+
+    assert.match(source, /stdio: \["ignore", "pipe", "pipe"\]/);
+    assert.match(source, /console\.log\(`✓ Created provider \$\{name\}`\)/);
+    assert.match(source, /console\.log\(`✓ Updated provider \$\{name\}`\)/);
+  });
+
   it("hydrates stored provider credentials when setupInference runs without process env set", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-cred-"));
