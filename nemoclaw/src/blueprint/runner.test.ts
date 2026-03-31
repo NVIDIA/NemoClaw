@@ -79,8 +79,17 @@ vi.mock("./ssrf.js", () => ({
 const { validateEndpointUrl } = await import("./ssrf.js");
 const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
 
-const { emitRunId, loadBlueprint, actionPlan, actionApply, actionStatus, actionRollback, main } =
-  await import("./runner.js");
+const {
+  emitRunId,
+  loadBlueprint,
+  actionPlan,
+  actionApply,
+  actionStatus,
+  actionRollback,
+  main,
+  validateMountPath,
+  loadPolicyMounts,
+} = await import("./runner.js");
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -644,6 +653,134 @@ describe("runner", () => {
       expect(out).toContain('"dry_run": true');
       expect(out).toContain('"endpoint": "https://ep.test"');
       expect(mockedValidateEndpoint).toHaveBeenCalledWith("https://ep.test");
+    });
+  });
+
+  // ── validateMountPath ──────────────────────────────────────────
+
+  describe("validateMountPath", () => {
+    it("returns the path unchanged for a valid absolute path", () => {
+      expect(validateMountPath("/data/models", "host_path")).toBe("/data/models");
+    });
+
+    it("rejects a path containing .. components", () => {
+      expect(() => validateMountPath("/data/../etc/passwd", "host_path")).toThrow(/path traversal/);
+    });
+
+    it("rejects a relative path", () => {
+      expect(() => validateMountPath("data/models", "host_path")).toThrow(/absolute path/);
+    });
+
+    it("rejects a path containing null bytes", () => {
+      expect(() => validateMountPath("/data/mo\0dels", "host_path")).toThrow(/null bytes/);
+    });
+
+    it("throws when path is empty", () => {
+      expect(() => validateMountPath("", "host_path")).toThrow(/required/);
+    });
+  });
+
+  // ── loadPolicyMounts ───────────────────────────────────────────
+
+  describe("loadPolicyMounts", () => {
+    it("returns [] when the policy file is absent", () => {
+      expect(loadPolicyMounts("/nonexistent/blueprint")).toEqual([]);
+    });
+
+    it("returns [] when the mounts section is absent", () => {
+      addFile("/blueprint/policies/openclaw-sandbox.yaml", YAML.stringify({ version: 1 }));
+      expect(loadPolicyMounts("/blueprint")).toEqual([]);
+    });
+
+    it("returns [] and writes a stderr warning when YAML is malformed", () => {
+      addFile("/blueprint/policies/openclaw-sandbox.yaml", "mounts: [\n  bad: yaml: {\n");
+      const stderrChunks: string[] = [];
+      vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+        stderrChunks.push(String(chunk));
+        return true;
+      });
+      const result = loadPolicyMounts("/blueprint");
+      expect(result).toEqual([]);
+      expect(stderrChunks.join("")).toMatch(/could not parse mounts/);
+    });
+
+    it("returns parsed mounts from a valid policy file", () => {
+      addFile(
+        "/blueprint/policies/openclaw-sandbox.yaml",
+        YAML.stringify({
+          mounts: [
+            { host_path: "/data/models", container_path: "/mnt/models" },
+            { host_path: "/data/weights", container_path: "/mnt/weights", read_only: true },
+          ],
+        }),
+      );
+      const result = loadPolicyMounts("/blueprint");
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual({ host_path: "/data/models", container_path: "/mnt/models" });
+      expect(result[1]).toEqual({
+        host_path: "/data/weights",
+        container_path: "/mnt/weights",
+        read_only: true,
+      });
+    });
+
+    it("filters out entries missing host_path or container_path", () => {
+      addFile(
+        "/blueprint/policies/openclaw-sandbox.yaml",
+        YAML.stringify({
+          mounts: [
+            { host_path: "/data/ok", container_path: "/mnt/ok" },
+            { container_path: "/mnt/orphan" },
+          ],
+        }),
+      );
+      expect(loadPolicyMounts("/blueprint")).toHaveLength(1);
+    });
+  });
+
+  // ── mounts warning in actionApply ─────────────────────────────
+
+  describe("mounts warning (OpenShell#500)", () => {
+    beforeEach(() => {
+      captureStdout();
+      mockExeca.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+    });
+
+    it("writes a warning to stderr when mounts are declared", async () => {
+      process.env.NEMOCLAW_BLUEPRINT_PATH = "/blueprint";
+      addFile(
+        "/blueprint/policies/openclaw-sandbox.yaml",
+        YAML.stringify({
+          mounts: [{ host_path: "/data/models", container_path: "/mnt/models", read_only: true }],
+        }),
+      );
+
+      const stderrChunks: string[] = [];
+      vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+        stderrChunks.push(String(chunk));
+        return true;
+      });
+
+      await actionApply("default", minimalBlueprint());
+
+      const stderr = stderrChunks.join("");
+      expect(stderr).toContain("OpenShell#500");
+      expect(stderr).toContain("/data/models:/mnt/models:ro");
+    });
+
+    it("does not write a warning when mounts: [] is empty", async () => {
+      process.env.NEMOCLAW_BLUEPRINT_PATH = "/blueprint";
+      addFile("/blueprint/policies/openclaw-sandbox.yaml", YAML.stringify({ mounts: [] }));
+
+      const stderrChunks: string[] = [];
+      vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+        stderrChunks.push(String(chunk));
+        return true;
+      });
+
+      await actionApply("default", minimalBlueprint());
+
+      expect(stderrChunks.join("")).not.toContain("OpenShell#500");
     });
   });
 });

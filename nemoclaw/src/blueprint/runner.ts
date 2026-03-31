@@ -24,6 +24,50 @@ import { validateEndpointUrl } from "./ssrf.js";
 
 type Action = "plan" | "apply" | "status" | "rollback";
 
+// ── Mount types ─────────────────────────────────────────────────
+
+export interface MountConfig {
+  host_path: string;
+  container_path: string;
+  read_only?: boolean;
+}
+
+interface PolicyDocument {
+  mounts?: MountConfig[];
+}
+
+// Keep in sync with bin/lib/mounts.js:validateMountPath
+export function validateMountPath(p: string, label: string): string {
+  if (!p || typeof p !== "string") throw new Error(`${label} is required`);
+  if (!p.startsWith("/")) throw new Error(`${label} must be an absolute path: ${p}`);
+  if (p.includes("\0")) throw new Error(`${label} must not contain null bytes`);
+  const parts = p.split("/");
+  if (parts.some((s) => s === "..")) {
+    throw new Error(`${label} must not contain path traversal: ${p}`);
+  }
+  return p;
+}
+
+export function loadPolicyMounts(blueprintPath: string): MountConfig[] {
+  const policyFile = join(blueprintPath, "policies", "openclaw-sandbox.yaml");
+  let content: string;
+  try {
+    content = readFileSync(policyFile, "utf-8");
+  } catch {
+    return []; // file absent — silently skip
+  }
+  try {
+    const doc = YAML.parse(content) as PolicyDocument;
+    if (!Array.isArray(doc.mounts)) return [];
+    return doc.mounts.filter(
+      (m) => typeof m.host_path === "string" && typeof m.container_path === "string",
+    );
+  } catch (err) {
+    process.stderr.write(`Warning: could not parse mounts from policy: ${String(err)}\n`);
+    return [];
+  }
+}
+
 // ── Logging helpers ─────────────────────────────────────────────
 
 function log(msg: string): void {
@@ -161,31 +205,35 @@ export interface RunPlan {
     credential_env: string | undefined;
   };
   policy_additions: Record<string, unknown>;
+  mounts: MountConfig[];
   dry_run: boolean;
 }
 
-export async function actionPlan(
+/**
+ * Build a RunPlan from the blueprint and policy — pure computation, no progress
+ * output. Both actionPlan and actionApply call this so mounts are loaded and
+ * validated exactly once and the plan is the single source of truth.
+ */
+async function buildPlan(
+  rid: string,
   profile: string,
   blueprint: Blueprint,
   options?: { dryRun?: boolean; endpointUrl?: string },
 ): Promise<RunPlan> {
-  const rid = emitRunId();
-  progress(10, "Validating blueprint");
-
   const { inferenceCfg, sandboxCfg } = await resolveRunConfig(
     profile,
     blueprint,
     options?.endpointUrl,
   );
 
-  progress(20, "Checking prerequisites");
-  if (!(await openshellAvailable())) {
-    throw new Error(
-      "openshell CLI not found. Install OpenShell first.\n  See: https://github.com/NVIDIA/OpenShell",
-    );
+  const blueprintPath = process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".";
+  const mounts = loadPolicyMounts(blueprintPath);
+  for (const mount of mounts) {
+    validateMountPath(mount.host_path, "host_path");
+    validateMountPath(mount.container_path, "container_path");
   }
 
-  const plan: RunPlan = {
+  return {
     run_id: rid,
     profile,
     sandbox: {
@@ -201,8 +249,29 @@ export async function actionPlan(
       credential_env: inferenceCfg.credential_env,
     },
     policy_additions: blueprint.components?.policy?.additions ?? {},
+    mounts,
     dry_run: options?.dryRun ?? false,
   };
+}
+
+export async function actionPlan(
+  profile: string,
+  blueprint: Blueprint,
+  options?: { dryRun?: boolean; endpointUrl?: string },
+): Promise<RunPlan> {
+  const rid = emitRunId();
+  progress(10, "Validating blueprint");
+
+  // Validate profile and resolve config before the openshell check so a bad
+  // profile produces a descriptive error rather than "openshell CLI not found".
+  const plan = await buildPlan(rid, profile, blueprint, options);
+
+  progress(20, "Checking prerequisites");
+  if (!(await openshellAvailable())) {
+    throw new Error(
+      "openshell CLI not found. Install OpenShell first.\n  See: https://github.com/NVIDIA/OpenShell",
+    );
+  }
 
   progress(100, "Plan complete");
   log(JSON.stringify(plan, null, 2));
@@ -221,16 +290,11 @@ export async function actionApply(
   }
 
   const rid = emitRunId();
+  const plan = await buildPlan(rid, profile, blueprint, { endpointUrl: options?.endpointUrl });
 
-  const { inferenceCfg, sandboxCfg } = await resolveRunConfig(
-    profile,
-    blueprint,
-    options?.endpointUrl,
-  );
-
-  const sandboxName = sandboxCfg.name ?? "openclaw";
-  const sandboxImage = sandboxCfg.image ?? "openclaw";
-  const forwardPorts = sandboxCfg.forward_ports ?? [18789];
+  const sandboxName = plan.sandbox.name;
+  const sandboxImage = plan.sandbox.image;
+  const forwardPorts = plan.sandbox.forward_ports;
 
   progress(20, "Creating OpenClaw sandbox");
   const createArgs = [
@@ -245,6 +309,20 @@ export async function actionApply(
   for (const port of forwardPorts) {
     createArgs.push("--forward", String(port));
   }
+  if (plan.mounts.length > 0) {
+    process.stderr.write(
+      "Warning: mounts are declared but OpenShell does not yet support --volume " +
+        "(see NVIDIA/OpenShell#500). The following mounts will be ignored:\n" +
+        plan.mounts
+          .map((m) =>
+            m.read_only === true
+              ? `  ${m.host_path}:${m.container_path}:ro`
+              : `  ${m.host_path}:${m.container_path}`,
+          )
+          .join("\n") +
+        "\n",
+    );
+  }
 
   const createResult = await runCmd(createArgs, { reject: false });
   if (createResult.exitCode !== 0) {
@@ -256,13 +334,16 @@ export async function actionApply(
   }
 
   progress(50, "Configuring inference provider");
-  const providerName = inferenceCfg.provider_name ?? "default";
-  const providerType = inferenceCfg.provider_type ?? "openai";
-  const endpoint = inferenceCfg.endpoint ?? "";
-  const model = inferenceCfg.model ?? "";
+  const providerName = plan.inference.provider_name ?? "default";
+  const providerType = plan.inference.provider_type ?? "openai";
+  const endpoint = plan.inference.endpoint ?? "";
+  const model = plan.inference.model ?? "";
 
-  const credentialEnv = inferenceCfg.credential_env;
-  const credentialDefault = inferenceCfg.credential_default ?? "";
+  // credential_default is intentionally absent from the plan (never persisted).
+  // Read it fresh from the blueprint profile so actionApply can still fall back to it.
+  const credentialDefault =
+    blueprint.components?.inference?.profiles?.[profile]?.credential_default ?? "";
+  const credentialEnv = plan.inference.credential_env;
   let credential = "";
   if (credentialEnv) {
     credential = process.env[credentialEnv] ?? credentialDefault;
@@ -311,10 +392,10 @@ export async function actionApply(
         profile,
         sandbox_name: sandboxName,
         inference: {
-          provider_type: inferenceCfg.provider_type,
-          provider_name: inferenceCfg.provider_name,
-          endpoint: inferenceCfg.endpoint,
-          model: inferenceCfg.model,
+          provider_type: plan.inference.provider_type,
+          provider_name: plan.inference.provider_name,
+          endpoint: plan.inference.endpoint,
+          model: plan.inference.model,
           // Omit credential_env and credential_default — secrets must not be persisted
         },
         timestamp: new Date().toISOString(),

@@ -30,6 +30,7 @@ const {
   shellQuote,
   validateName,
 } = require("./lib/runner");
+const mounts = require("./lib/mounts");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
 const { startGatewayForRecovery } = require("./lib/onboard");
 const {
@@ -1088,6 +1089,66 @@ function sandboxPolicyList(sandboxName) {
   console.log("");
 }
 
+function sandboxMountList(sandboxName) {
+  const list = mounts.loadMountsFromPolicy();
+
+  console.log("");
+  console.log(`  Mounts for sandbox '${sandboxName}':`);
+  if (list.length === 0) {
+    console.log("    (none configured)");
+    console.log("");
+    console.log(
+      `  To add a mount: nemoclaw ${sandboxName} mount-add <host-path> <container-path> [--read-only]`,
+    );
+  } else {
+    for (const m of list) {
+      const ro = m.read_only ? "  [read-only]" : "";
+      console.log(`    ${m.host_path}  →  ${m.container_path}${ro}`);
+    }
+    console.log("");
+    console.log("  Note: mounts take effect on the next sandbox creation.");
+    console.log(
+      `  To add more: nemoclaw ${sandboxName} mount-add <host-path> <container-path> [--read-only]`,
+    );
+  }
+  console.log("");
+}
+
+function sandboxMountAdd(sandboxName, args) {
+  const hostPath = args[0];
+  const containerPath = args[1];
+  const readOnly = args.includes("--read-only");
+
+  if (!hostPath || !containerPath) {
+    console.error("  Usage: nemoclaw <name> mount-add <host-path> <container-path> [--read-only]");
+    console.error("");
+    console.error("  Examples:");
+    console.error("    nemoclaw openclaw mount-add /home/user/datasets /data/datasets --read-only");
+    console.error("    nemoclaw openclaw mount-add /home/user/projects /workspace/projects");
+    process.exit(1);
+  }
+
+  try {
+    mounts.validateMountPath(hostPath, "host-path");
+    mounts.validateMountPath(containerPath, "container-path");
+  } catch (err) {
+    console.error(`  ${err.message}`);
+    process.exit(1);
+  }
+
+  const added = mounts.addMountToPolicy(hostPath, containerPath, readOnly);
+  if (!added) {
+    console.log(`  Mount already configured: ${hostPath} → ${containerPath}`);
+    return;
+  }
+
+  const roNote = readOnly ? " (read-only)" : "";
+  console.log(`  ${G}✓${R} Added mount${roNote}: ${hostPath} → ${containerPath}`);
+  console.log("  This mount will take effect on the next sandbox creation.");
+  console.log(`  Note: --volume support is pending (NVIDIA/OpenShell#500). The mount is`);
+  console.log(`  recorded in the policy now so it takes effect automatically once supported.`);
+}
+
 async function sandboxDestroy(sandboxName, args = []) {
   const skipConfirm = args.includes("--yes") || args.includes("--force");
   if (!skipConfirm) {
@@ -1142,6 +1203,10 @@ function help() {
   ${G}Policy Presets:${R}
     nemoclaw <name> policy-add       Add a network or filesystem policy preset
     nemoclaw <name> policy-list      List presets ${D}(● = applied)${R}
+
+  ${G}Host Mounts:${R}
+    nemoclaw <name> mount-list       List host→sandbox bind mounts
+    nemoclaw <name> mount-add        Add a bind mount ${D}(--read-only optional)${R}
 
   ${G}Deploy:${R}
     nemoclaw deploy <instance>       Deploy to a Brev VM and start services
@@ -1249,12 +1314,20 @@ const [cmd, ...args] = process.argv.slice(2);
       case "policy-list":
         sandboxPolicyList(cmd);
         break;
+      case "mount-list":
+        sandboxMountList(cmd);
+        break;
+      case "mount-add":
+        await sandboxMountAdd(cmd, actionArgs);
+        break;
       case "destroy":
         await sandboxDestroy(cmd, actionArgs);
         break;
       default:
         console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, destroy`);
+        console.error(
+          `  Valid actions: connect, status, logs, policy-add, policy-list, mount-list, mount-add, destroy`,
+        );
         process.exit(1);
     }
     return;

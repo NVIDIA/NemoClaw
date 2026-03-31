@@ -36,6 +36,22 @@ filesystem_policy:
     - /dev/null
     - /sandbox/.openclaw-data       # Writable agent/plugin state (symlinked from .openclaw)
 
+# Host filesystem mounts — bind-mounted into the sandbox at creation time.
+# Each entry is translated into a Docker --volume flag (host_path:container_path[:ro]).
+# Mount paths must be absolute. Container paths must also appear in
+# filesystem_policy.read_write (or read_only) for Landlock to permit access.
+# Static mounts are applied once at sandbox creation and cannot be hot-added.
+#
+# Example:
+#   mounts:
+#     - host_path: /home/user/datasets
+#       container_path: /data/datasets
+#       read_only: true
+#     - host_path: /home/user/projects
+#       container_path: /workspace/projects
+
+mounts: []
+
 landlock:
   compatibility: best_effort
 
