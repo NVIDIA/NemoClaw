@@ -6,11 +6,11 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const YAML = require("yaml");
 const { ROOT, run, runCapture, shellQuote } = require("./runner");
 const registry = require("./registry");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
-
 function getOpenshellCommand() {
   const binary = process.env.NEMOCLAW_OPENSHELL_BIN;
   if (!binary) return "openshell";
@@ -76,8 +76,23 @@ function extractPresetEntries(presetContent) {
 function parseCurrentPolicy(raw) {
   if (!raw) return "";
   const sep = raw.indexOf("---");
-  if (sep === -1) return raw;
-  return raw.slice(sep + 3).trim();
+  const candidate = (sep === -1 ? raw : raw.slice(sep + 3)).trim();
+  if (!candidate) return "";
+  if (/^(error|failed|invalid|warning|status)\b/i.test(candidate)) {
+    return "";
+  }
+  if (!/^[a-z_][a-z0-9_]*\s*:/m.test(candidate)) {
+    return "";
+  }
+  try {
+    const parsed = YAML.parse(candidate);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return "";
+    }
+  } catch {
+    return "";
+  }
+  return candidate;
 }
 
 /**
@@ -104,16 +119,17 @@ function buildPolicyGetCommand(sandboxName) {
  * @returns {string} Merged YAML with version header when missing
  */
 function mergePresetIntoPolicy(currentPolicy, presetEntries) {
+  const normalizedCurrentPolicy = parseCurrentPolicy(currentPolicy);
   if (!presetEntries) {
-    return currentPolicy || "version: 1\n\nnetwork_policies:\n";
+    return normalizedCurrentPolicy || "version: 1\n\nnetwork_policies:\n";
   }
-  if (!currentPolicy) {
+  if (!normalizedCurrentPolicy) {
     return "version: 1\n\nnetwork_policies:\n" + presetEntries;
   }
 
   let merged;
-  if (/^network_policies\s*:/m.test(currentPolicy)) {
-    const lines = currentPolicy.split("\n");
+  if (/^network_policies\s*:/m.test(normalizedCurrentPolicy)) {
+    const lines = normalizedCurrentPolicy.split("\n");
     const result = [];
     let inNetworkPolicies = false;
     let inserted = false;
@@ -142,11 +158,11 @@ function mergePresetIntoPolicy(currentPolicy, presetEntries) {
 
     merged = result.join("\n");
   } else {
-    merged = currentPolicy.trimEnd() + "\n\nnetwork_policies:\n" + presetEntries;
+    merged = normalizedCurrentPolicy.trimEnd() + "\n\nnetwork_policies:\n" + presetEntries;
   }
 
   if (!merged.trimStart().startsWith("version:")) {
-    merged = "version: 1\n" + merged;
+    merged = "version: 1\n\n" + merged;
   }
   return merged;
 }

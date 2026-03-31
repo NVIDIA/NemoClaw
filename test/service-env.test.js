@@ -3,12 +3,52 @@
 
 import { describe, it, expect } from "vitest";
 import { execSync, execFileSync } from "node:child_process";
-import { writeFileSync, unlinkSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, unlinkSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveOpenshell } from "../bin/lib/resolve-openshell";
 
 describe("service environment", () => {
+  describe("start-services behavior", () => {
+    const scriptPath = join(import.meta.dirname, "../scripts/start-services.sh");
+
+    it("starts local-only services without NVIDIA_API_KEY", () => {
+      const workspace = mkdtempSync(join(tmpdir(), "nemoclaw-services-no-key-"));
+      const result = execFileSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          NVIDIA_API_KEY: "",
+          TELEGRAM_BOT_TOKEN: "",
+          SANDBOX_NAME: "test-box",
+          TMPDIR: workspace,
+        },
+      });
+
+      expect(result).not.toContain("NVIDIA_API_KEY required");
+      expect(result).toContain("TELEGRAM_BOT_TOKEN not set");
+      expect(result).toContain("Telegram:    not started (no token)");
+    });
+
+    it("warns and skips Telegram bridge when token is set without NVIDIA_API_KEY", () => {
+      const workspace = mkdtempSync(join(tmpdir(), "nemoclaw-services-missing-key-"));
+      const result = execFileSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          NVIDIA_API_KEY: "",
+          TELEGRAM_BOT_TOKEN: "test-token",
+          SANDBOX_NAME: "test-box",
+          TMPDIR: workspace,
+        },
+      });
+
+      expect(result).not.toContain("NVIDIA_API_KEY required");
+      expect(result).toContain("NVIDIA_API_KEY not set");
+      expect(result).toContain("Telegram:    not started (no token)");
+    });
+  });
+
   describe("resolveOpenshell logic", () => {
     it("returns command -v result when absolute path", () => {
       expect(resolveOpenshell({ commandVResult: "/usr/bin/openshell" })).toBe("/usr/bin/openshell");

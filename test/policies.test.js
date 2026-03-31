@@ -233,6 +233,21 @@ describe("policies", () => {
       const result = policies.parseCurrentPolicy(raw);
       expect(result).toBe("version: 1\nnetwork_policies: {}");
     });
+
+    it("drops metadata-only or truncated policy reads", () => {
+      const raw = "Version: 3\nHash: abc123";
+      expect(policies.parseCurrentPolicy(raw)).toBe("");
+    });
+
+    it("drops non-policy error output instead of treating it as YAML", () => {
+      const raw = "Error: failed to parse sandbox policy YAML";
+      expect(policies.parseCurrentPolicy(raw)).toBe("");
+    });
+
+    it("drops syntactically invalid or truncated YAML bodies", () => {
+      const raw = "Version: 3\n---\nversion: 1\nnetwork_policies";
+      expect(policies.parseCurrentPolicy(raw)).toBe("");
+    });
   });
 
   describe("mergePresetIntoPolicy", () => {
@@ -266,6 +281,18 @@ describe("policies", () => {
       const merged = policies.mergePresetIntoPolicy("", sampleEntries);
       expect(merged.startsWith("version: 1\n\nnetwork_policies:")).toBe(true);
       expect(merged).toContain("example.com");
+    });
+
+    it("rebuilds from a clean scaffold when current policy read is truncated", () => {
+      const merged = policies.mergePresetIntoPolicy("Version: 3\nHash: abc123", sampleEntries);
+      expect(merged).toBe(
+        "version: 1\n\nnetwork_policies:\n  - host: example.com\n    allow: true",
+      );
+    });
+
+    it("adds a blank line after synthesized version headers", () => {
+      const merged = policies.mergePresetIntoPolicy("some_key:\n  foo: bar", sampleEntries);
+      expect(merged.startsWith("version: 1\n\nsome_key:")).toBe(true);
     });
   });
 

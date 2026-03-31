@@ -5,6 +5,7 @@
 
 const { run, runCapture, shellQuote } = require("./runner");
 const nimImages = require("./nim-images.json");
+const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier"];
 
 function containerName(sandboxName) {
   return `nemoclaw-nim-${sandboxName}`;
@@ -23,6 +24,10 @@ function listModels() {
   }));
 }
 
+function canRunNimWithMemory(totalMemoryMB) {
+  return nimImages.models.some((m) => m.minGpuMemoryMB <= totalMemoryMB);
+}
+
 function detectGpu() {
   // Try NVIDIA first — query VRAM
   try {
@@ -34,14 +39,12 @@ function detectGpu() {
       const perGpuMB = lines.map((l) => parseInt(l.trim(), 10)).filter((n) => !isNaN(n));
       if (perGpuMB.length > 0) {
         const totalMemoryMB = perGpuMB.reduce((a, b) => a + b, 0);
-        // Only mark nimCapable if at least one NIM model fits in GPU VRAM
-        const canRunNim = nimImages.models.some((m) => m.minGpuMemoryMB <= totalMemoryMB);
         return {
           type: "nvidia",
           count: perGpuMB.length,
           totalMemoryMB,
           perGpuMB: perGpuMB[0],
-          nimCapable: canRunNim,
+          nimCapable: canRunNimWithMemory(totalMemoryMB),
         };
       }
     }
@@ -49,13 +52,19 @@ function detectGpu() {
     /* ignored */
   }
 
-  // Fallback: DGX Spark (GB10) — VRAM not queryable due to unified memory architecture
+  // Fallback: unified-memory NVIDIA devices where discrete VRAM is not queryable.
   try {
     const nameOutput = runCapture("nvidia-smi --query-gpu=name --format=csv,noheader,nounits", {
       ignoreError: true,
     });
-    if (nameOutput && nameOutput.includes("GB10")) {
-      // GB10 has 128GB unified memory shared with Grace CPU — use system RAM
+    const gpuNames = nameOutput
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const unifiedGpuNames = gpuNames.filter((name) =>
+      UNIFIED_MEMORY_GPU_TAGS.some((tag) => new RegExp(tag, "i").test(name)),
+    );
+    if (unifiedGpuNames.length > 0) {
       let totalMemoryMB = 0;
       try {
         const memLine = runCapture("free -m | awk '/Mem:/ {print $2}'", { ignoreError: true });
@@ -63,13 +72,18 @@ function detectGpu() {
       } catch {
         /* ignored */
       }
+      const count = unifiedGpuNames.length;
+      const perGpuMB = count > 0 ? Math.floor(totalMemoryMB / count) : totalMemoryMB;
+      const isSpark = unifiedGpuNames.some((name) => /GB10/i.test(name));
       return {
         type: "nvidia",
-        count: 1,
+        name: unifiedGpuNames[0],
+        count,
         totalMemoryMB,
-        perGpuMB: totalMemoryMB,
-        nimCapable: true,
-        spark: true,
+        perGpuMB: perGpuMB || totalMemoryMB,
+        nimCapable: canRunNimWithMemory(totalMemoryMB),
+        unifiedMemory: true,
+        spark: isSpark,
       };
     }
   } catch {
@@ -232,6 +246,7 @@ module.exports = {
   containerName,
   getImageForModel,
   listModels,
+  canRunNimWithMemory,
   detectGpu,
   pullNimImage,
   startNimContainer,

@@ -69,6 +69,8 @@ const REMOTE_UNINSTALL_URL =
   "https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh";
 let OPENSHELL_BIN = null;
 const MIN_LOGS_OPENSHELL_VERSION = "0.0.7";
+const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
+const DASHBOARD_FORWARD_PORT = "18789";
 
 function getOpenshellBinary() {
   if (!OPENSHELL_BIN) {
@@ -106,6 +108,23 @@ function captureOpenshell(args, opts = {}) {
     status: result.status ?? 1,
     output: `${result.stdout || ""}${opts.ignoreError ? "" : result.stderr || ""}`.trim(),
   };
+}
+
+function cleanupGatewayAfterLastSandbox() {
+  runOpenshell(["forward", "stop", DASHBOARD_FORWARD_PORT], { ignoreError: true });
+  runOpenshell(["gateway", "destroy", "-g", NEMOCLAW_GATEWAY_NAME], { ignoreError: true });
+  run(
+    `docker volume ls -q --filter "name=openshell-cluster-${NEMOCLAW_GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${NEMOCLAW_GATEWAY_NAME}" | xargs docker volume rm || true`,
+    { ignoreError: true },
+  );
+}
+
+function hasNoLiveSandboxes() {
+  const liveList = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  if (liveList.status !== 0) {
+    return false;
+  }
+  return parseLiveSandboxNames(liveList.output).size === 0;
 }
 
 function parseVersionFromText(value = "") {
@@ -748,7 +767,6 @@ async function deploy(instanceName) {
 }
 
 async function start() {
-  await ensureApiKey();
   const { defaultSandbox } = registry.listSandboxes();
   const safeName =
     defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
@@ -1088,9 +1106,17 @@ async function sandboxDestroy(sandboxName, args = []) {
   else nim.stopNimContainer(sandboxName);
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
-  runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
+  const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
 
-  registry.removeSandbox(sandboxName);
+  const removed = registry.removeSandbox(sandboxName);
+  if (
+    deleteResult.status === 0 &&
+    removed &&
+    registry.listSandboxes().sandboxes.length === 0 &&
+    hasNoLiveSandboxes()
+  ) {
+    cleanupGatewayAfterLastSandbox();
+  }
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);
 }
 
