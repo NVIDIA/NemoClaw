@@ -322,7 +322,9 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
-    expect(fs.readFileSync(bashLog, "utf8")).not.toContain("docker volume ls -q --filter");
+    if (fs.existsSync(bashLog)) {
+      expect(fs.readFileSync(bashLog, "utf8")).not.toContain("docker volume ls -q --filter");
+    }
   });
 
   it("keeps the gateway runtime when the live gateway still reports sandboxes", () => {
@@ -385,7 +387,9 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("beta Ready");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
-    expect(fs.readFileSync(bashLog, "utf8")).not.toContain("docker volume ls -q --filter");
+    if (fs.existsSync(bashLog)) {
+      expect(fs.readFileSync(bashLog, "utf8")).not.toContain("docker volume ls -q --filter");
+    }
   });
 
   it("passes plain logs through without the tail flag", () => {
