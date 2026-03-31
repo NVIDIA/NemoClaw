@@ -1526,7 +1526,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "nvidia-prod");
     assert.ok(payload.lines.some((line) => line.includes("could not resolve the provider hostname")));
     assert.ok(payload.lines.some((line) => line.includes("Returning to provider selection.")));
-    assert.equal(payload.messages.filter((message) => /Retry validation\? \[Y\/n\/back\/exit\]/.test(message)).length, 1);
+    assert.equal(payload.messages.filter((message) => /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message)).length, 1);
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 2);
   });
 
@@ -1669,7 +1669,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["", "", "y", "nvapi-good"];
+const answers = ["", "", "retry", "nvapi-good"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1719,7 +1719,7 @@ const { setupNim } = require(${onboardPath});
     assert.ok(payload.lines.some((line) => line.includes("NVIDIA Endpoints authorization failed")));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length, 1);
-    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\/back\/exit\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message)));
     assert.ok(payload.messages.some((message) => /NVIDIA Endpoints API key: /.test(message)));
   });
 
@@ -1739,7 +1739,7 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["2", "", "y", "sk-good", ""];
+const answers = ["2", "", "retry", "sk-good", ""];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1788,7 +1788,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "openai-responses");
     assert.equal(payload.key, "sk-good");
     assert.ok(payload.lines.some((line) => line.includes("OpenAI authorization failed")));
-    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\/back\/exit\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message)));
     assert.ok(payload.messages.some((message) => /OpenAI API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length, 2);
@@ -1810,7 +1810,7 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["4", "", "y", "anthropic-good", ""];
+const answers = ["4", "", "retry", "anthropic-good", ""];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1859,7 +1859,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
     assert.equal(payload.key, "anthropic-good");
     assert.ok(payload.lines.some((line) => line.includes("Anthropic authorization failed")));
-    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\/back\/exit\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message)));
     assert.ok(payload.messages.some((message) => /Anthropic API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length, 2);
@@ -1881,7 +1881,7 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["6", "", "y", "gemini-good", ""];
+const answers = ["6", "", "retry", "gemini-good", ""];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1930,7 +1930,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "openai-responses");
     assert.equal(payload.key, "gemini-good");
     assert.ok(payload.lines.some((line) => line.includes("Google Gemini authorization failed")));
-    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\/back\/exit\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message)));
     assert.ok(payload.messages.some((message) => /Google Gemini API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(payload.messages.filter((message) => /Choose model \[5\]/.test(message)).length, 2);
@@ -1952,7 +1952,7 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["3", "https://proxy.example.com/v1/chat/completions?token=secret#frag", "custom-model", "y", "proxy-good", "custom-model"];
+const answers = ["3", "https://proxy.example.com/v1/chat/completions?token=secret#frag", "custom-model", "retry", "proxy-good", "custom-model"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -2002,7 +2002,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "openai-responses");
     assert.equal(payload.key, "proxy-good");
     assert.ok(payload.lines.some((line) => line.includes("Other OpenAI-compatible endpoint authorization failed")));
-    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\/back\/exit\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message)));
     assert.ok(payload.messages.some((message) => /Other OpenAI-compatible endpoint API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /OpenAI-compatible base URL/.test(message)).length, 1);
     assert.equal(payload.messages.filter((message) => /Other OpenAI-compatible endpoint model/.test(message)).length, 2);
@@ -2025,7 +2025,7 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["5", "https://proxy.example.com/v1/messages?token=secret#frag", "claude-proxy", "y", "anthropic-proxy-good", "claude-proxy"];
+const answers = ["5", "https://proxy.example.com/v1/messages?token=secret#frag", "claude-proxy", "retry", "anthropic-proxy-good", "claude-proxy"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -2075,7 +2075,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
     assert.equal(payload.key, "anthropic-proxy-good");
     assert.ok(payload.lines.some((line) => line.includes("Other Anthropic-compatible endpoint authorization failed")));
-    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\/back\/exit\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message)));
     assert.ok(payload.messages.some((message) => /Other Anthropic-compatible endpoint API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Anthropic-compatible base URL/.test(message)).length, 1);
     assert.equal(payload.messages.filter((message) => /Other Anthropic-compatible endpoint model/.test(message)).length, 2);

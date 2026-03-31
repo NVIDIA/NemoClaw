@@ -840,7 +840,7 @@ const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
 
 const commands = [];
-const answers = ["y", "sk-good"];
+const answers = ["retry", "sk-good"];
 let inferenceSetCalls = 0;
 
 credentials.prompt = async () => answers.shift() || "";

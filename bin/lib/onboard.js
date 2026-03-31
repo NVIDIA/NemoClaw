@@ -661,7 +661,6 @@ async function replaceNamedCredential(envName, label, helpUrl = null) {
   }
 }
 
-// eslint-disable-next-line complexity
 async function promptValidationRecovery(label, recovery, credentialEnv = null, helpUrl = null) {
   if (isNonInteractive()) {
     process.exit(1);
@@ -669,7 +668,7 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
 
   if (recovery.kind === "credential" && credentialEnv) {
     console.log(`  ${label} authorization failed. Re-enter the API key or choose a different provider/model.`);
-    const choice = (await prompt("  Re-enter API key now? [Y/n/back/exit]: ")).trim().toLowerCase();
+    const choice = (await prompt("  Type 'retry', 'back', or 'exit' [retry]: ")).trim().toLowerCase();
     if (choice === "back") {
       console.log("  Returning to provider selection.");
       console.log("");
@@ -678,7 +677,7 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
     if (choice === "exit" || choice === "quit") {
       exitOnboardFromPrompt();
     }
-    if (choice === "" || choice === "y" || choice === "yes") {
+    if (choice === "" || choice === "retry") {
       await replaceNamedCredential(credentialEnv, `${label} API key`, helpUrl);
       return "credential";
     }
@@ -689,7 +688,7 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
 
   if (recovery.kind === "transport") {
     console.log(getTransportRecoveryMessage(recovery.failure || {}));
-    const choice = (await prompt("  Retry validation? [Y/n/back/exit]: ")).trim().toLowerCase();
+    const choice = (await prompt("  Type 'retry', 'back', or 'exit' [retry]: ")).trim().toLowerCase();
     if (choice === "back") {
       console.log("  Returning to provider selection.");
       console.log("");
@@ -698,7 +697,7 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
     if (choice === "exit" || choice === "quit") {
       exitOnboardFromPrompt();
     }
-    if (choice === "" || choice === "y" || choice === "yes") {
+    if (choice === "" || choice === "retry") {
       console.log("");
       return "retry";
     }
