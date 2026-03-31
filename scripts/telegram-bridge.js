@@ -2,6 +2,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+// Jetson Tegra kernels have a non-functional IPv6 stack. Node.js v22 happy
+// eyeballs (autoSelectFamily) tries IPv6 even when dns.setDefaultResultOrder
+// is set to 'ipv4first', causing all outbound HTTPS requests to fail with
+// ETIMEDOUT. Force IPv4 at the DNS layer which is the only reliable fix.
+// See: https://github.com/nodejs/node/issues/52216
+const dns = require("dns");
+const fs = require("fs");
+if (fs.existsSync("/etc/nv_tegra_release")) {
+  const _lookup = dns.lookup;
+  dns.lookup = function (hostname, options, callback) {
+    if (typeof options === "function") { callback = options; options = {}; }
+    if (typeof options === "number") options = { family: options };
+    options = Object.assign({}, options, { family: 4 });
+    return _lookup.call(dns, hostname, options, callback);
+  };
+}
+
 /**
  * Telegram → NemoClaw bridge.
  *
