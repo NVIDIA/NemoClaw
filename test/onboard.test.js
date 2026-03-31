@@ -904,6 +904,17 @@ const { setupInference } = require(${onboardPath});
     assert.deepEqual(providerEnvs, ["sk-bad", "sk-good"]);
   });
 
+  it("uses split curl timeout args and does not mislabel curl usage errors as timeouts", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
+      "utf-8"
+    );
+
+    assert.match(source, /return \["--connect-timeout", "10", "--max-time", "60"\];/);
+    assert.match(source, /failure\.curlStatus === 2/);
+    assert.match(source, /local curl invocation error/);
+  });
+
   it("hydrates stored provider credentials when setupInference runs without process env set", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-cred-"));

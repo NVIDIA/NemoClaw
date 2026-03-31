@@ -457,7 +457,7 @@ function hydrateCredentialEnv(envName) {
 }
 
 function getCurlTimingArgs() {
-  return ["--connect-timeout 10", "--max-time 60"];
+  return ["--connect-timeout", "10", "--max-time", "60"];
 }
 
 function compactText(value = "") {
@@ -522,6 +522,9 @@ function exitOnboardFromPrompt() {
 
 function getTransportRecoveryMessage(failure = {}) {
   const text = compactText(`${failure.message || ""} ${failure.stderr || ""}`).toLowerCase();
+  if (failure.curlStatus === 2 || /option .* is unknown|curl --help|curl --manual/.test(text)) {
+    return "  Validation hit a local curl invocation error. Retry after updating NemoClaw or use a different provider temporarily.";
+  }
   if (failure.httpStatus === 429) {
     return "  The provider is rate limiting validation requests right now.";
   }
