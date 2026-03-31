@@ -53,4 +53,14 @@ describe("credential prompts", () => {
     expect(source).toMatch(/Invalid key\. Must start with nvapi-/);
     expect(source).toMatch(/continue;/);
   });
+
+  it("masks secret input with asterisks while preserving the underlying value", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "credentials.js"),
+      "utf-8"
+    );
+
+    expect(source).toContain('output.write("*")');
+    expect(source).toContain('output.write("\\b \\b")');
+  });
 });

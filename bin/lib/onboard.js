@@ -463,6 +463,36 @@ function compactText(value = "") {
   return String(value).replace(/\s+/g, " ").trim();
 }
 
+function stripEndpointSuffix(pathname = "", suffixes = []) {
+  for (const suffix of suffixes) {
+    if (pathname === suffix) return "";
+    if (pathname.endsWith(suffix)) {
+      return pathname.slice(0, -suffix.length);
+    }
+  }
+  return pathname;
+}
+
+function normalizeProviderBaseUrl(value, flavor) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  try {
+    const url = new URL(raw);
+    url.search = "";
+    url.hash = "";
+    const suffixes = flavor === "anthropic"
+      ? ["/v1/messages", "/v1/models", "/messages", "/models"]
+      : ["/responses", "/chat/completions", "/completions", "/models"];
+    let pathname = stripEndpointSuffix(url.pathname.replace(/\/+$/, ""), suffixes);
+    pathname = pathname.replace(/\/+$/, "");
+    url.pathname = pathname || "/";
+    return url.pathname === "/" ? url.origin : `${url.origin}${url.pathname}`;
+  } catch {
+    return raw.replace(/[?#].*$/, "").replace(/\/+$/, "");
+  }
+}
+
 function summarizeCurlFailure(curlStatus = 0, stderr = "", body = "") {
   const detail = compactText(stderr || body);
   return detail
@@ -2071,12 +2101,7 @@ async function setupNim(gpu) {
   const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
   const requestedModel = isNonInteractive() ? getNonInteractiveModel(requestedProvider || "build") : null;
   const options = [];
-  options.push({
-    key: "build",
-    label:
-      "NVIDIA Endpoints" +
-      (!ollamaRunning && !(EXPERIMENTAL && vllmRunning) ? " (recommended)" : ""),
-  });
+  options.push({ key: "build", label: "NVIDIA Endpoints" });
   options.push({ key: "openai", label: "OpenAI" });
   options.push({ key: "custom", label: "Other OpenAI-compatible endpoint" });
   options.push({ key: "anthropic", label: "Anthropic" });
@@ -2148,17 +2173,17 @@ async function setupNim(gpu) {
       preferredInferenceApi = null;
 
       if (selected.key === "custom") {
-        endpointUrl = isNonInteractive()
+        endpointUrl = normalizeProviderBaseUrl(isNonInteractive()
           ? (process.env.NEMOCLAW_ENDPOINT_URL || "").trim()
-          : await prompt("  OpenAI-compatible base URL (e.g., https://openrouter.ai/api/v1): ");
+          : await prompt("  OpenAI-compatible base URL (e.g., https://openrouter.ai/api/v1): "), "openai");
         if (!endpointUrl) {
           console.error("  Endpoint URL is required for Other OpenAI-compatible endpoint.");
           process.exit(1);
         }
       } else if (selected.key === "anthropicCompatible") {
-        endpointUrl = isNonInteractive()
+        endpointUrl = normalizeProviderBaseUrl(isNonInteractive()
           ? (process.env.NEMOCLAW_ENDPOINT_URL || "").trim()
-          : await prompt("  Anthropic-compatible base URL (e.g., https://proxy.example.com): ");
+          : await prompt("  Anthropic-compatible base URL (e.g., https://proxy.example.com): "), "anthropic");
         if (!endpointUrl) {
           console.error("  Endpoint URL is required for Other Anthropic-compatible endpoint.");
           process.exit(1);

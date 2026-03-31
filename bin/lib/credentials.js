@@ -79,7 +79,10 @@ function promptSecret(question) {
         }
 
         if (ch === "\u0008" || ch === "\u007f") {
-          answer = answer.slice(0, -1);
+          if (answer.length > 0) {
+            answer = answer.slice(0, -1);
+            output.write("\b \b");
+          }
           continue;
         }
 
@@ -97,6 +100,7 @@ function promptSecret(question) {
 
         if (ch >= " ") {
           answer += ch;
+          output.write("*");
         }
       }
     }
