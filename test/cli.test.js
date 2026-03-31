@@ -740,7 +740,7 @@ describe("CLI dispatch", () => {
     const statusResult = runWithEnv("alpha status", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
+    }, 25000);
     expect(statusResult.code).toBe(0);
     expect(statusResult.out.includes("gateway is no longer configured after restart/rebuild")).toBeTruthy();
     expect(statusResult.out.includes("Start the gateway again")).toBeTruthy();

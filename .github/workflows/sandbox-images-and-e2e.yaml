@@ -1,0 +1,109 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: sandbox-images-and-e2e
+
+on:
+  workflow_call:
+    inputs:
+      run_arm64:
+        description: "Build sandbox images on arm64 too"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-sandbox-images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve sandbox base image
+        uses: ./.github/actions/resolve-sandbox-base-image
+
+      - name: Build production image
+        run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production .
+
+      - name: Build sandbox test image (fixtures layered on production)
+        run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production -t nemoclaw-sandbox-test .
+
+      - name: Save images to tarballs
+        run: |
+          docker save nemoclaw-sandbox-test | gzip > /tmp/sandbox-test-image.tar.gz
+          docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz
+
+      - name: Upload sandbox test image
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-test-image
+          path: /tmp/sandbox-test-image.tar.gz
+          retention-days: 1
+
+      - name: Upload isolation image
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolation-image
+          path: /tmp/isolation-image.tar.gz
+          retention-days: 1
+
+  build-sandbox-images-arm64:
+    if: inputs.run_arm64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve sandbox base image
+        uses: ./.github/actions/resolve-sandbox-base-image
+
+      - name: Build production image on arm64
+        run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production-arm64 .
+
+      - name: Build sandbox test image on arm64
+        run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production-arm64 -t nemoclaw-sandbox-test-arm64 .
+
+  test-e2e-sandbox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-sandbox-images
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sandbox-test-image
+          path: /tmp
+
+      - name: Load image
+        run: gunzip -c /tmp/sandbox-test-image.tar.gz | docker load
+
+      - name: Run sandbox E2E tests
+        run: docker run --rm -v "${{ github.workspace }}/test:/opt/test" nemoclaw-sandbox-test /opt/test/e2e-test.sh
+
+  test-e2e-gateway-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-sandbox-images
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: isolation-image
+          path: /tmp
+
+      - name: Load image
+        run: gunzip -c /tmp/isolation-image.tar.gz | docker load
+
+      - name: Run gateway isolation E2E tests
+        run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh
