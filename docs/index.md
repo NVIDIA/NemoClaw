@@ -176,6 +176,16 @@ Understand agent identity, memory, and configuration files that persist in the s
 {bdg-secondary}`Concept`
 :::
 
+:::{grid-item-card} Security Best Practices
+:link: security/best-practices
+:link-type: doc
+
+Controls reference, risk framework, and posture profiles for sandbox security.
+
++++
+{bdg-secondary}`Concept`
+:::
+
 :::{grid-item-card} How-To Guides
 :link: inference/switch-inference-providers
 :link-type: doc
@@ -223,6 +233,13 @@ Switch Inference Providers <inference/switch-inference-providers>
 
 Approve or Deny Network Requests <network-policy/approve-network-requests>
 Customize the Network Policy <network-policy/customize-network-policy>
+```
+
+```{toctree}
+:caption: Security
+:hidden:
+
+Security Best Practices <security/best-practices>
 ```
 
 ```{toctree}
