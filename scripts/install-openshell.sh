@@ -79,13 +79,22 @@ esac
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
+CHECKSUM_FILE="openshell-checksums-sha256.txt"
 if command -v gh >/dev/null 2>&1; then
   GH_TOKEN="${GITHUB_TOKEN:-}" gh release download --repo NVIDIA/OpenShell \
     --pattern "$ASSET" --dir "$tmpdir"
+  GH_TOKEN="${GITHUB_TOKEN:-}" gh release download --repo NVIDIA/OpenShell \
+    --pattern "$CHECKSUM_FILE" --dir "$tmpdir"
 else
   curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/latest/download/$ASSET" \
     -o "$tmpdir/$ASSET"
+  curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/latest/download/$CHECKSUM_FILE" \
+    -o "$tmpdir/$CHECKSUM_FILE"
 fi
+
+info "Verifying SHA-256 checksum..."
+(cd "$tmpdir" && grep -F "$ASSET" "$CHECKSUM_FILE" | shasum -a 256 -c -) \
+  || fail "SHA-256 checksum verification failed for $ASSET"
 
 tar xzf "$tmpdir/$ASSET" -C "$tmpdir"
 

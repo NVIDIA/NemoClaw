@@ -87,7 +87,7 @@ describe("credential exposure in process arguments", () => {
     const src = fs.readFileSync(ONBOARD_JS, "utf-8");
 
     expect(src).toMatch(/function getCurlTimingArgs\(\)/);
-    expect(src).toMatch(/--connect-timeout 10/);
-    expect(src).toMatch(/--max-time 60/);
+    expect(src).toMatch(/"--connect-timeout", "10"/);
+    expect(src).toMatch(/"--max-time", "60"/);
   });
 });

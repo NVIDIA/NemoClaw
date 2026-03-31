@@ -40,4 +40,38 @@ describe("credential prompts", () => {
     expect(source).toMatch(/reject\(err\);\s*process\.kill\(process\.pid, "SIGINT"\);/);
     expect(source).toMatch(/reject\(err\);\s*\}\);/);
   });
+
+  it("re-raises SIGINT from standard readline prompts instead of treating it like an empty answer", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "credentials.js"),
+      "utf-8"
+    );
+
+    expect(source).toContain('rl.on("SIGINT"');
+    expect(source).toContain('new Error("Prompt interrupted")');
+    expect(source).toContain('process.kill(process.pid, "SIGINT")');
+  });
+
+  it("normalizes credential values and keeps prompting on invalid NVIDIA API key prefixes", async () => {
+    const credentials = await import("../bin/lib/credentials.js");
+    expect(credentials.normalizeCredentialValue("  nvapi-good-key\r\n")).toBe("nvapi-good-key");
+
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "credentials.js"),
+      "utf-8"
+    );
+    expect(source).toMatch(/while \(true\) \{/);
+    expect(source).toMatch(/Invalid key\. Must start with nvapi-/);
+    expect(source).toMatch(/continue;/);
+  });
+
+  it("masks secret input with asterisks while preserving the underlying value", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "credentials.js"),
+      "utf-8"
+    );
+
+    expect(source).toContain('output.write("*")');
+    expect(source).toContain('output.write("\\b \\b")');
+  });
 });
