@@ -10,11 +10,28 @@ const { execFileSync } = require("child_process");
 const UNSAFE_HOME_PATHS = new Set(["/tmp", "/var/tmp", "/dev/shm", "/"]);
 
 function resolveHomeDir() {
-  const home = process.env.HOME || os.homedir();
-  if (!home || UNSAFE_HOME_PATHS.has(home)) {
+  const raw = process.env.HOME || os.homedir();
+  if (!raw) {
     throw new Error(
       "Cannot determine safe home directory for credential storage. " +
-      "HOME resolves to '" + (home || "") + "' which is world-readable. " +
+      "Set the HOME environment variable to a user-owned directory."
+    );
+  }
+  const home = path.resolve(raw);
+  try {
+    const real = fs.realpathSync(home);
+    if (UNSAFE_HOME_PATHS.has(real)) {
+      throw new Error(
+        "Cannot store credentials: HOME resolves to '" + real + "' which is world-readable. " +
+        "Set the HOME environment variable to a user-owned directory."
+      );
+    }
+  } catch (e) {
+    if (e.code !== "ENOENT") throw e;
+  }
+  if (UNSAFE_HOME_PATHS.has(home)) {
+    throw new Error(
+      "Cannot store credentials: HOME resolves to '" + home + "' which is world-readable. " +
       "Set the HOME environment variable to a user-owned directory."
     );
   }
@@ -53,9 +70,11 @@ function saveCredential(key, value) {
   const dir = getCredsDir();
   const file = getCredsFile();
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
   const creds = loadCredentials();
   creds[key] = normalizeCredentialValue(value);
   fs.writeFileSync(file, JSON.stringify(creds, null, 2), { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
 }
 
 function getCredential(key) {
