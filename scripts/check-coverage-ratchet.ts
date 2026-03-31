@@ -29,11 +29,12 @@ function loadJSON<T>(repoRelative: string): T {
 }
 
 function main(): void {
-  const [
-    summaryPath = "coverage/plugin/coverage-summary.json",
-    thresholdPath = "ci/coverage-threshold-plugin.json",
-    label = "coverage",
-  ] = process.argv.slice(2);
+  const [summaryPath, thresholdPath, label = "coverage"] = process.argv.slice(2);
+  if (!summaryPath || !thresholdPath) {
+    throw new Error(
+      "Usage: check-coverage-ratchet.ts <coverage-summary.json> <coverage-threshold.json> [label]"
+    );
+  }
   const summary = loadJSON<{ total: Record<string, { pct: number }> }>(summaryPath);
   const thresholds = loadJSON<Thresholds>(thresholdPath);
 

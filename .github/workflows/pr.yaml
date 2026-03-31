@@ -26,6 +26,7 @@ jobs:
         uses: ./.github/actions/basic-checks
 
   sandbox-images-and-e2e:
+    needs: checks
     uses: ./.github/workflows/sandbox-images-and-e2e.yaml
     with:
       run_arm64: true
