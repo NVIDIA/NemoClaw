@@ -83,8 +83,8 @@ repos:
 
   - repo: local
     hooks:
-      - id: nemoclaw-prettier
-        name: Prettier (nemoclaw TypeScript)
+      - id: prettier-plugin
+        name: Prettier (plugin)
         entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root/nemoclaw" && files=() && for f in "$@"; do files+=("${f#nemoclaw/}"); done && npx prettier --write "${files[@]}"' --
         language: system
         files: ^nemoclaw/.*\.ts$
@@ -94,8 +94,8 @@ repos:
   # ── Priority 6: auto-fix after formatting ─────────────────────────────────
   - repo: local
     hooks:
-      - id: nemoclaw-eslint
-        name: ESLint (nemoclaw TypeScript)
+      - id: eslint-plugin
+        name: ESLint (plugin)
         entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root/nemoclaw" && files=() && for f in "$@"; do files+=("${f#nemoclaw/}"); done && npx eslint --fix "${files[@]}"' --
         language: system
         files: ^nemoclaw/.*\.ts$
@@ -104,8 +104,8 @@ repos:
 
   - repo: local
     hooks:
-      - id: eslint-js
-        name: ESLint (JavaScript)
+      - id: eslint-cli
+        name: ESLint (CLI)
         entry: npx eslint --fix
         language: system
         files: ^(bin|test|scripts|docs/_ext)/.*\.js$
@@ -177,8 +177,8 @@ repos:
   # ── pre-push hooks ─────────────────────────────────────────────────────────
   - repo: local
     hooks:
-      - id: tsc-check
-        name: TypeScript type check (tsc --noEmit)
+      - id: tsc-plugin
+        name: TypeScript (plugin)
         entry: bash -c 'cd nemoclaw && npx tsc --noEmit --incremental'
         language: system
         pass_filenames: false
@@ -186,8 +186,8 @@ repos:
         stages: [pre-push]
         priority: 10
 
-      - id: tsc-check-js
-        name: TypeScript type check (JavaScript)
+      - id: tsc-js
+        name: TypeScript (JS config)
         entry: npx tsc -p jsconfig.json
         language: system
         pass_filenames: false
@@ -195,8 +195,8 @@ repos:
         stages: [pre-push]
         priority: 10
 
-      - id: tsc-check-cli
-        name: TypeScript type check (CLI)
+      - id: tsc-cli
+        name: TypeScript (CLI)
         entry: npx tsc -p tsconfig.cli.json
         language: system
         pass_filenames: false
