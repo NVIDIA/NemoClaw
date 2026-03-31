@@ -3175,8 +3175,23 @@ function startRecordedStep(stepName, updates = {}) {
   }
 }
 
-function resumeStepMessage(stepName, detail) {
-  console.log(`  [resume] Skipping ${stepName}${detail ? ` (${detail})` : ""}`);
+const ONBOARD_STEP_INDEX = {
+  preflight: { number: 1, title: "Preflight checks" },
+  gateway: { number: 2, title: "Starting OpenShell gateway" },
+  provider_selection: { number: 3, title: "Configuring inference (NIM)" },
+  inference: { number: 4, title: "Setting up inference provider" },
+  sandbox: { number: 5, title: "Creating sandbox" },
+  openclaw: { number: 6, title: "Setting up OpenClaw inside sandbox" },
+  policies: { number: 7, title: "Policy presets" },
+};
+
+function skippedStepMessage(stepName, detail, reason = "resume") {
+  const stepInfo = ONBOARD_STEP_INDEX[stepName];
+  if (stepInfo) {
+    step(stepInfo.number, 7, stepInfo.title);
+  }
+  const prefix = reason === "reuse" ? "[reuse]" : "[resume]";
+  console.log(`  ${prefix} Skipping ${stepName}${detail ? ` (${detail})` : ""}`);
 }
 
 // ── Main ─────────────────────────────────────────────────────────
@@ -3272,7 +3287,7 @@ async function onboard(opts = {}) {
     let gpu;
     const resumePreflight = resume && session?.steps?.preflight?.status === "complete";
     if (resumePreflight) {
-      resumeStepMessage("preflight", "cached");
+      skippedStepMessage("preflight", "cached");
       gpu = nim.detectGpu();
     } else {
       startRecordedStep("preflight");
@@ -3287,8 +3302,9 @@ async function onboard(opts = {}) {
     const canReuseHealthyGateway = gatewayReuseState === "healthy";
     const resumeGateway = resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
     if (resumeGateway) {
-      resumeStepMessage("gateway", "running");
+      skippedStepMessage("gateway", "running");
     } else if (!resume && canReuseHealthyGateway) {
+      skippedStepMessage("gateway", "running", "reuse");
       note("  Reusing healthy NemoClaw gateway.");
     } else {
       if (resume && session?.steps?.gateway?.status === "complete") {
@@ -3320,7 +3336,7 @@ async function onboard(opts = {}) {
       typeof provider === "string" &&
       typeof model === "string";
     if (resumeProviderSelection) {
-      resumeStepMessage("provider selection", `${provider} / ${model}`);
+      skippedStepMessage("provider_selection", `${provider} / ${model}`);
       hydrateCredentialEnv(credentialEnv);
     } else {
       startRecordedStep("provider_selection", { sandboxName });
@@ -3349,7 +3365,7 @@ async function onboard(opts = {}) {
       typeof model === "string" &&
       isInferenceRouteReady(provider, model);
     if (resumeInference) {
-      resumeStepMessage("inference", `${provider} / ${model}`);
+      skippedStepMessage("inference", `${provider} / ${model}`);
       if (nimContainer) {
         registry.updateSandbox(sandboxName, { nimContainer });
       }
@@ -3367,7 +3383,7 @@ async function onboard(opts = {}) {
     const sandboxReuseState = getSandboxReuseState(sandboxName);
     const resumeSandbox = resume && session?.steps?.sandbox?.status === "complete" && sandboxReuseState === "ready";
     if (resumeSandbox) {
-      resumeStepMessage("sandbox", sandboxName);
+      skippedStepMessage("sandbox", sandboxName);
     } else {
       if (resume && session?.steps?.sandbox?.status === "complete") {
         if (sandboxReuseState === "not_ready") {
@@ -3387,7 +3403,7 @@ async function onboard(opts = {}) {
 
     const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
     if (resumeOpenclaw) {
-      resumeStepMessage("openclaw", sandboxName);
+      skippedStepMessage("openclaw", sandboxName);
       onboardSession.markStepComplete("openclaw", { sandboxName, provider, model });
     } else {
       startRecordedStep("openclaw", { sandboxName, provider, model });
@@ -3401,7 +3417,7 @@ async function onboard(opts = {}) {
       sandboxName &&
       arePolicyPresetsApplied(sandboxName, recordedPolicyPresets || []);
     if (resumePolicies) {
-      resumeStepMessage("policies", (recordedPolicyPresets || []).join(", "));
+      skippedStepMessage("policies", (recordedPolicyPresets || []).join(", "));
       onboardSession.markStepComplete("policies", { sandboxName, provider, model, policyPresets: recordedPolicyPresets || [] });
     } else {
       startRecordedStep("policies", {

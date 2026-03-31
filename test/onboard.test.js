@@ -938,6 +938,19 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
+  it("prints numbered step headers even when onboarding skips resumed steps", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
+      "utf-8"
+    );
+
+    assert.match(source, /const ONBOARD_STEP_INDEX = \{/);
+    assert.match(source, /function skippedStepMessage\(stepName, detail, reason = "resume"\)/);
+    assert.match(source, /step\(stepInfo\.number, 7, stepInfo\.title\);/);
+    assert.match(source, /skippedStepMessage\("openclaw", sandboxName\)/);
+    assert.match(source, /skippedStepMessage\("policies", \(recordedPolicyPresets \|\| \[\]\)\.join\(", "\)\)/);
+  });
+
   it("hydrates stored provider credentials when setupInference runs without process env set", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-cred-"));
