@@ -78,15 +78,22 @@ async function sendMessage(chatId, text, replyTo) {
     chunks.push(text.slice(i, i + 4000));
   }
   for (const chunk of chunks) {
-    await tgApi("sendMessage", {
+    // tgApi() resolves even on API errors ({ok: false}), so .catch()
+    // never fires for Markdown parse failures. Check res.ok explicitly.
+    let res = await tgApi("sendMessage", {
       chat_id: chatId,
       text: chunk,
       reply_to_message_id: replyTo,
       parse_mode: "Markdown",
-    }).catch(() =>
-      // Retry without markdown if it fails (unbalanced formatting)
-      tgApi("sendMessage", { chat_id: chatId, text: chunk, reply_to_message_id: replyTo }),
-    );
+    }).catch((e) => ({ ok: false, description: e.message }));
+    if (!res.ok) {
+      // Retry without Markdown (unbalanced formatting from LLM output)
+      res = await tgApi("sendMessage", {
+        chat_id: chatId,
+        text: chunk,
+        reply_to_message_id: replyTo,
+      }).catch((e) => ({ ok: false, description: e.message }));
+    }
   }
 }
 
