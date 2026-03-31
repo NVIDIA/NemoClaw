@@ -33,6 +33,14 @@ function runWithEnv(args, env = {}, timeout = 10000) {
   }
 }
 
+function readCommandTokens(markerFile) {
+  return fs
+    .readFileSync(markerFile, "utf8")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
 describe("CLI dispatch", () => {
   it("help exits 0 and shows sections", () => {
     const r = run("help");
@@ -253,6 +261,7 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(fs.readFileSync(markerFile, "utf8")).toContain("logs alpha --tail");
     expect(fs.readFileSync(markerFile, "utf8")).not.toContain("--follow");
+    expect(readCommandTokens(markerFile)).toEqual(["logs", "alpha", "--tail"]);
   });
 
   it("destroys the gateway runtime when the last sandbox is removed", () => {

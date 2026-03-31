@@ -140,7 +140,6 @@ Changing the proxy after onboarding requires re-running `nemoclaw onboard`.
 
 The deploy script uses the `NEMOCLAW_GPU` environment variable to select the Brev instance type and GPU name.
 The default value is `a2-highgpu-1g:nvidia-tesla-a100:1`.
-
 Legacy `NEMOCLAW_GPU` usage:
 
 ```console
