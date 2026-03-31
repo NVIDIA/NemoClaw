@@ -1,11 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: pr
+name: main
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/workflows/docs-preview-*.yaml"
+      - "ISSUE_TEMPLATE/**"
+      - ".github/ISSUE_TEMPLATE/**"
 
 permissions:
   contents: read
@@ -28,5 +34,3 @@ jobs:
   sandbox-images-and-e2e:
     needs: checks
     uses: ./.github/workflows/sandbox-images-and-e2e.yaml
-    with:
-      run_arm64: true
