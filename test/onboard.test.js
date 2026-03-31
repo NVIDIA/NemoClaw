@@ -12,6 +12,7 @@ import {
   buildSandboxConfigSyncScript,
   classifySandboxCreateFailure,
   getGatewayReuseState,
+  getPortConflictServiceHints,
   getFutureShellPathHint,
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
@@ -24,9 +25,11 @@ import {
   getStableGatewayImageRef,
   isGatewayHealthy,
   classifyValidationFailure,
+  isLoopbackHostname,
   normalizeProviderBaseUrl,
   patchStagedDockerfile,
   printSandboxCreateRecoveryHints,
+  resolveDashboardForwardTarget,
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
 } from "../bin/lib/onboard";
@@ -148,6 +151,26 @@ describe("onboard helpers", () => {
     expect(normalizeProviderBaseUrl("https://proxy.example.com/v1/messages", "anthropic")).toBe(
       "https://proxy.example.com"
     );
+  });
+
+  it("detects loopback dashboard hosts and resolves remote binds correctly", () => {
+    expect(isLoopbackHostname("localhost")).toBe(true);
+    expect(isLoopbackHostname("127.0.0.1")).toBe(true);
+    expect(isLoopbackHostname("127.0.0.42")).toBe(true);
+    expect(isLoopbackHostname("[::1]")).toBe(true);
+    expect(isLoopbackHostname("chat.example.com")).toBe(false);
+
+    expect(resolveDashboardForwardTarget("http://127.0.0.1:18789")).toBe("18789");
+    expect(resolveDashboardForwardTarget("http://127.0.0.42:18789")).toBe("18789");
+    expect(resolveDashboardForwardTarget("http://[::1]:18789")).toBe("18789");
+    expect(resolveDashboardForwardTarget("https://chat.example.com")).toBe("0.0.0.0:18789");
+    expect(resolveDashboardForwardTarget("http://10.0.0.25:18789")).toBe("0.0.0.0:18789");
+  });
+
+  it("prints platform-appropriate service hints for port conflicts", () => {
+    expect(getPortConflictServiceHints("darwin").join("\n")).toMatch(/launchctl unload/);
+    expect(getPortConflictServiceHints("darwin").join("\n")).not.toMatch(/systemctl --user/);
+    expect(getPortConflictServiceHints("linux").join("\n")).toMatch(/systemctl --user stop openclaw-gateway.service/);
   });
 
   it("patches the staged Dockerfile for Anthropic with anthropic-messages routing", () => {
@@ -1265,6 +1288,95 @@ const { createSandbox } = require(${onboardPath});
     assert.doesNotMatch(createCommand.command, /NVIDIA_API_KEY=/);
     assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
     assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
+    assert.ok(
+      payload.commands.some((entry) => entry.command.includes("'forward' 'start' '--background' '18789' 'my-assistant'")),
+      "expected default loopback dashboard forward"
+    );
+  });
+
+  it("binds the dashboard forward to 0.0.0.0 when CHAT_UI_URL points to a remote host", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-remote-forward-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "create-sandbox-remote-forward.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
+  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  if (command.includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  return "";
+};
+registry.registerSandbox = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.CHAT_UI_URL = "https://chat.example.com";
+  await createSandbox(null, "gpt-5.4");
+  console.log(JSON.stringify(commands));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const commands = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.ok(
+      commands.some((entry) =>
+        entry.command.includes("'forward' 'start' '--background' '0.0.0.0:18789' 'my-assistant'")
+      ),
+      "expected remote dashboard forward target"
+    );
   });
 
   it("continues once the sandbox is Ready even if the create stream never closes", async () => {
@@ -1384,6 +1496,74 @@ const { createSandbox } = require(${onboardPath});
     assert.equal(payload.unrefCalls, 1);
     assert.equal(payload.stdoutDestroyCalls, 1);
     assert.equal(payload.stderrDestroyCalls, 1);
+  });
+
+  it("restores the dashboard forward when onboarding reuses an existing ready sandbox", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reuse-forward-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "reuse-sandbox-forward.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
+  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  return "";
+};
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.CHAT_UI_URL = "https://chat.example.com";
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  console.log(JSON.stringify({ sandboxName, commands }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.equal(payload.sandboxName, "my-assistant");
+    assert.ok(
+      payload.commands.some((entry) =>
+        entry.command.includes("'forward' 'start' '--background' '0.0.0.0:18789' 'my-assistant'")
+      ),
+      "expected dashboard forward restore on sandbox reuse"
+    );
+    assert.ok(
+      payload.commands.every((entry) => !entry.command.includes("'sandbox' 'create'")),
+      "did not expect sandbox create when reusing existing sandbox"
+    );
   });
 
   it("prints resume guidance when sandbox image upload times out", () => {

@@ -53,6 +53,7 @@ const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN = null;
 const GATEWAY_NAME = "nemoclaw";
 const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
+const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
 
 const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
@@ -1709,6 +1710,21 @@ function getFutureShellPathHint(binDir, pathValue = process.env.PATH || "") {
   return `export PATH="${binDir}:$PATH"`;
 }
 
+function getPortConflictServiceHints(platform = process.platform) {
+  if (platform === "darwin") {
+    return [
+      "       # or, if it's a launchctl service (macOS):",
+      "       launchctl list | grep -i claw   # columns: PID | ExitStatus | Label",
+      `       launchctl unload ${OPENCLAW_LAUNCH_AGENT_PLIST}`,
+      "       # or: launchctl bootout gui/$(id -u)/ai.openclaw.gateway",
+    ];
+  }
+  return [
+    "       # or, if it's a systemd service:",
+    "       systemctl --user stop openclaw-gateway.service",
+  ];
+}
+
 function installOpenshell() {
   const result = spawnSync("bash", [path.join(SCRIPTS, "install-openshell.sh")], {
     cwd: ROOT,
@@ -1897,8 +1913,9 @@ async function preflight() {
         } else {
           console.error(`       sudo lsof -i :${port} -sTCP:LISTEN -P -n`);
         }
-        console.error("       # or, if it's a systemd service:");
-        console.error("       systemctl --user stop openclaw-gateway.service");
+        for (const hint of getPortConflictServiceHints()) {
+          console.error(hint);
+        }
       } else {
         console.error(`     Could not identify the process using port ${port}.`);
         console.error(`     Run: sudo lsof -i :${port} -sTCP:LISTEN`);
@@ -2133,6 +2150,7 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   step(5, 7, "Creating sandbox");
 
   const sandboxName = sandboxNameOverride || (await promptValidatedSandboxName());
+  const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
 
   // Reconcile local registry state with the live OpenShell gateway state.
   const liveExists = pruneStaleSandboxEntry(sandboxName);
@@ -2140,6 +2158,7 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
     if (existingSandboxState === "ready" && process.env.NEMOCLAW_RECREATE_SANDBOX !== "1") {
+      ensureDashboardForward(sandboxName, chatUiUrl);
       if (isNonInteractive()) {
         note(`  [non-interactive] Sandbox '${sandboxName}' exists and is ready — reusing it`);
       } else {
@@ -2179,7 +2198,6 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   // --gpu is intentionally omitted. See comment in startGateway().
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
-  const chatUiUrl = process.env.CHAT_UI_URL || "http://127.0.0.1:18789";
   patchStagedDockerfile(stagedDockerfile, model, chatUiUrl, String(Date.now()), provider, preferredInferenceApi);
   // Only pass non-sensitive env vars to the sandbox. NVIDIA_API_KEY is NOT
   // needed inside the sandbox — inference is proxied through the OpenShell
@@ -2284,9 +2302,7 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   // Release any stale forward on port 18789 before claiming it for the new sandbox.
   // A previous onboard run may have left the port forwarded to a different sandbox,
   // which would silently prevent the new sandbox's dashboard from being reachable.
-  runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
-  // Forward dashboard port to the new sandbox
-  runOpenshell(["forward", "start", "--background", "18789", sandboxName], { ignoreError: true });
+  ensureDashboardForward(sandboxName, chatUiUrl);
 
   // Register only after confirmed ready — prevents phantom entries
   registry.registerSandbox({
@@ -3239,6 +3255,30 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
 const CONTROL_UI_PORT = 18789;
 const CONTROL_UI_PATH = "/";
 
+function isLoopbackHostname(hostname = "") {
+  const normalized = String(hostname || "").trim().toLowerCase().replace(/^\[|\]$/g, "");
+  return normalized === "localhost" || normalized === "::1" || /^127(?:\.\d{1,3}){3}$/.test(normalized);
+}
+
+function resolveDashboardForwardTarget(chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
+  const raw = String(chatUiUrl || "").trim();
+  if (!raw) return String(CONTROL_UI_PORT);
+  try {
+    const parsed = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : `http://${raw}`);
+    return isLoopbackHostname(parsed.hostname) ? String(CONTROL_UI_PORT) : `0.0.0.0:${CONTROL_UI_PORT}`;
+  } catch {
+    return /localhost|::1|127(?:\.\d{1,3}){3}/i.test(raw)
+      ? String(CONTROL_UI_PORT)
+      : `0.0.0.0:${CONTROL_UI_PORT}`;
+  }
+}
+
+function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
+  const forwardTarget = resolveDashboardForwardTarget(chatUiUrl);
+  runOpenshell(["forward", "stop", String(CONTROL_UI_PORT)], { ignoreError: true });
+  runOpenshell(["forward", "start", "--background", forwardTarget, sandboxName], { ignoreError: true });
+}
+
 function findOpenclawJsonPath(dir) {
   if (!fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -3667,8 +3707,10 @@ module.exports = {
   getResumeSandboxConflict,
   getSandboxReuseState,
   getSandboxStateFromOutputs,
+  getPortConflictServiceHints,
   classifyValidationFailure,
   isSandboxReady,
+  isLoopbackHostname,
   normalizeProviderBaseUrl,
   onboard,
   onboardSession,
@@ -3676,6 +3718,7 @@ module.exports = {
   pruneStaleSandboxEntry,
   repairRecordedSandbox,
   recoverGatewayRuntime,
+  resolveDashboardForwardTarget,
   startGatewayForRecovery,
   runCaptureOpenshell,
   setupInference,
