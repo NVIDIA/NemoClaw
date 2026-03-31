@@ -217,7 +217,7 @@ repos:
   - repo: local
     hooks:
       - id: test-cli
-        name: Vitest (CLI test + coverage ratchet)
+        name: Test (CLI)
         entry: bash -c 'npx vitest run --project cli --coverage --coverage.reporter=text --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/cli --coverage.include="bin/**/*.js" --coverage.exclude="test/**/*.js" --coverage.exclude="test/**/*.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"'
         language: system
         pass_filenames: false
@@ -225,7 +225,7 @@ repos:
         priority: 20
 
       - id: test-plugin
-        name: Vitest (plugin test + coverage ratchet)
+        name: Test (plugin)
         entry: bash -c 'npx vitest run --project plugin --coverage --coverage.reporter=text --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/plugin --coverage.include="nemoclaw/src/**/*.ts" --coverage.exclude="**/*.test.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"'
         language: system
         pass_filenames: false
