@@ -79,20 +79,16 @@ async function sendMessage(chatId, text, replyTo) {
   }
   for (const chunk of chunks) {
     // tgApi() resolves even on API errors ({ok: false}), so .catch()
-    // never fires for Markdown parse failures. Check res.ok explicitly.
-    let res = await tgApi("sendMessage", {
+    // never fires for Markdown parse failures. Check explicitly for
+    // Telegram's "can't parse entities" error before retrying plain.
+    const res = await tgApi("sendMessage", {
       chat_id: chatId,
       text: chunk,
       reply_to_message_id: replyTo,
       parse_mode: "Markdown",
-    }).catch((e) => ({ ok: false, description: e.message }));
-    if (!res.ok) {
-      // Retry without Markdown (unbalanced formatting from LLM output)
-      res = await tgApi("sendMessage", {
-        chat_id: chatId,
-        text: chunk,
-        reply_to_message_id: replyTo,
-      }).catch((e) => ({ ok: false, description: e.message }));
+    });
+    if (res.error_code === 400 && /can't parse entities/i.test(res.description || "")) {
+      await tgApi("sendMessage", { chat_id: chatId, text: chunk, reply_to_message_id: replyTo });
     }
   }
 }
