@@ -73,7 +73,7 @@ jobs:
         run: npx vitest run --coverage
 
       - name: Check coverage ratchet
-        run: bash scripts/check-coverage-ratchet.sh
+        run: npx tsx scripts/check-coverage-ratchet.ts
 
   build-sandbox-images:
     runs-on: ubuntu-latest
@@ -82,8 +82,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Pull base image from GHCR (fall back to local build)
+        run: |
+          if docker pull ghcr.io/nvidia/nemoclaw/sandbox-base:latest 2>/dev/null; then
+            echo "BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest" >> "$GITHUB_ENV"
+          else
+            echo "::warning::GHCR base image not available, building locally"
+            docker build -f Dockerfile.base -t nemoclaw-sandbox-base-local .
+            echo "BASE_IMAGE=nemoclaw-sandbox-base-local" >> "$GITHUB_ENV"
+          fi
+
       - name: Build production image
-        run: docker build -t nemoclaw-production .
+        run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production .
 
       - name: Build sandbox test image (fixtures layered on production)
         run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production -t nemoclaw-sandbox-test .
@@ -114,8 +124,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Pull base image from GHCR (fall back to local build)
+        run: |
+          if docker pull ghcr.io/nvidia/nemoclaw/sandbox-base:latest 2>/dev/null; then
+            echo "BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest" >> "$GITHUB_ENV"
+          else
+            echo "::warning::GHCR base image not available, building locally"
+            docker build -f Dockerfile.base -t nemoclaw-sandbox-base-local .
+            echo "BASE_IMAGE=nemoclaw-sandbox-base-local" >> "$GITHUB_ENV"
+          fi
+
       - name: Build production image on arm64
-        run: docker build -t nemoclaw-production-arm64 .
+        run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production-arm64 .
 
       - name: Build sandbox test image on arm64
         run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production-arm64 -t nemoclaw-sandbox-test-arm64 .

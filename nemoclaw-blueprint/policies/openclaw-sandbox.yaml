@@ -53,15 +53,18 @@ network_policies:
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: "*", path: "/**" }
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
       - host: statsig.anthropic.com
         port: 443
         rules:
-          - allow: { method: "*", path: "/**" }
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
       - host: sentry.io
         port: 443
         rules:
-          - allow: { method: "*", path: "/**" }
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
     binaries:
       - { path: /usr/local/bin/claude }
 
@@ -74,14 +77,16 @@ network_policies:
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: "*", path: "/**" }
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
       - host: inference-api.nvidia.com
         port: 443
         protocol: rest
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: "*", path: "/**" }
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
     binaries:
       - { path: /usr/local/bin/claude }
       - { path: /usr/local/bin/openclaw }
@@ -156,6 +161,7 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/npm }
+      - { path: /usr/local/bin/node }
 
   # ── Messaging — pre-allowed for OpenClaw agent notifications ────
   # Restricted to node processes to prevent arbitrary data exfiltration
@@ -185,14 +191,13 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+      # WebSocket gateway — must use access: full (CONNECT tunnel) instead
+      # of protocol: rest. The proxy's HTTP idle timeout (~2 min) kills
+      # long-lived WebSocket connections; a CONNECT tunnel avoids
+      # HTTP-level timeouts entirely. Matches presets/discord.yaml. See #409.
       - host: gateway.discord.gg
         port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+        access: full
       - host: cdn.discordapp.com
         port: 443
         protocol: rest

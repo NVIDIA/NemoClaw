@@ -2,6 +2,8 @@
 ## Summary
 <!-- 1-3 sentences: what this PR does and why. -->
 
+Signed-off-by: Your Name <your-email@example.com>
+
 ## Related Issue
 <!-- Link to the issue: Fixes #NNN or Closes #NNN. Remove this section if none. -->
 

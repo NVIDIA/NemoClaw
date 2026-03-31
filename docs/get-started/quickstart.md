@@ -26,7 +26,7 @@ status: published
 Follow these steps to get started with NemoClaw and your first sandboxed OpenClaw agent.
 
 :::{note}
-NemoClaw currently requires a fresh installation of OpenClaw.
+NemoClaw creates a new OpenClaw instance during onboarding.
 :::
 
 ```{include} ../../README.md
