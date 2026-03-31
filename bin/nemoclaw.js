@@ -130,9 +130,16 @@ function buildRecoveredSandboxEntry(name, metadata = {}) {
 }
 
 function upsertRecoveredSandbox(name, metadata = {}) {
-  const entry = buildRecoveredSandboxEntry(name, metadata);
-  if (registry.getSandbox(name)) {
-    registry.updateSandbox(name, entry);
+  let validName;
+  try {
+    validName = validateName(name, "sandbox name");
+  } catch {
+    return false;
+  }
+
+  const entry = buildRecoveredSandboxEntry(validName, metadata);
+  if (registry.getSandbox(validName)) {
+    registry.updateSandbox(validName, entry);
     return false;
   }
   registry.registerSandbox(entry);
