@@ -40,3 +40,7 @@
 - [ ] Follows the [style guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md). Try running the `update-docs` agent skill to draft changes while complying with the style guide. For example, prompt your agent with "`/update-docs` catch up the docs for the new changes I made in this PR."
 - [ ] New pages include SPDX license header and frontmatter, if creating a new page.
 - [ ] Cross-references and links verified.
+
+---
+<!-- DCO sign-off (required by CI). Replace with your real name and email. -->
+Signed-off-by: Your Name <your-email@example.com>
