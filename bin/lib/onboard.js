@@ -675,6 +675,7 @@ function getProbeRecovery(probe, options = {}) {
   return fallback;
 }
 
+// eslint-disable-next-line complexity
 function runCurlProbe(argv) {
   const bodyFile = path.join(os.tmpdir(), `nemoclaw-curl-probe-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
   try {
@@ -690,9 +691,11 @@ function runCurlProbe(argv) {
     });
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     if (result.error) {
-      const errorCode = result.error.code || result.error.errno || 1;
+      const spawnError = /** @type {NodeJS.ErrnoException} */ (result.error);
+      const rawErrorCode = spawnError.errno ?? spawnError.code;
+      const errorCode = typeof rawErrorCode === "number" ? rawErrorCode : 1;
       const errorMessage = compactText(
-        `${result.error.message || String(result.error)} ${String(result.stderr || "")}`
+        `${spawnError.message || String(spawnError)} ${String(result.stderr || "")}`
       );
       return {
         ok: false,
@@ -2792,7 +2795,7 @@ async function setupInference(sandboxName, model, provider, endpointUrl = null, 
           process.exit(providerResult.status || 1);
         }
         const retry = await promptValidationRecovery(config.label, classifyApplyFailure(providerResult.message), resolvedCredentialEnv, config.helpUrl);
-        if (retry === "credential" || retry === "retry" || retry === "selection" || retry === "back" || retry === "model") {
+        if (retry === "credential" || retry === "retry" || retry === "selection" || retry === "model") {
           continue;
         }
         process.exit(providerResult.status || 1);
@@ -2814,7 +2817,7 @@ async function setupInference(sandboxName, model, provider, endpointUrl = null, 
         process.exit(applyResult.status || 1);
       }
       const retry = await promptValidationRecovery(config.label, classifyApplyFailure(message), resolvedCredentialEnv, config.helpUrl);
-      if (retry === "credential" || retry === "retry" || retry === "selection" || retry === "back" || retry === "model") {
+      if (retry === "credential" || retry === "retry" || retry === "selection" || retry === "model") {
         continue;
       }
       process.exit(applyResult.status || 1);
