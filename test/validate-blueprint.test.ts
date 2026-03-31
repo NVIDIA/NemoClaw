@@ -18,6 +18,19 @@ const BASE_POLICY_PATH = new URL(
   import.meta.url,
 );
 const REQUIRED_PROFILE_FIELDS = ["provider_type", "endpoint"] as const;
+const TAILSCALE_DENY_PATHS = [
+  "/var/run/tailscale",
+  "/run/tailscale",
+  "/usr/bin/tailscale",
+  "/usr/sbin/tailscale",
+  "/usr/local/bin/tailscale",
+  "/usr/bin/tailscaled",
+  "/usr/sbin/tailscaled",
+  "/usr/local/bin/tailscaled",
+  "/usr/local/sbin/tailscaled",
+  "/var/run/tailscale/tailscaled.sock",
+  "/run/tailscale/tailscaled.sock",
+] as const;
 
 const bp = YAML.parse(readFileSync(BLUEPRINT_PATH, "utf-8")) as Record<string, unknown>;
 const declared = Array.isArray(bp?.profiles) ? (bp.profiles as string[]) : [];
@@ -82,5 +95,18 @@ describe("base sandbox policy", () => {
 
   it("has 'network_policies'", () => {
     expect("network_policies" in policy).toBe(true);
+  });
+
+  it("keeps Tailscale deny paths alongside the broad /usr read_only grant", () => {
+    const filesystemPolicy = policy.filesystem_policy as
+      | { deny?: string[]; read_only?: string[] }
+      | undefined;
+    const deny = Array.isArray(filesystemPolicy?.deny) ? filesystemPolicy.deny : [];
+    const readOnly = Array.isArray(filesystemPolicy?.read_only)
+      ? filesystemPolicy.read_only
+      : [];
+
+    expect(readOnly).toContain("/usr");
+    expect(deny).toEqual(expect.arrayContaining(TAILSCALE_DENY_PATHS));
   });
 });

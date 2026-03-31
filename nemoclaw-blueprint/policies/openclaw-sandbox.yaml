@@ -17,6 +17,22 @@ version: 1
 
 filesystem_policy:
   include_workdir: true
+  deny:
+    # Block Tailscale CLI, daemon binaries, and daemon sockets to prevent the agent from
+    # establishing direct network connections that bypass the sandbox proxy
+    # (CWE-284, NVBUG 6012377). Deny takes precedence over the broad
+    # read_only /usr grant per OpenShell Landlock semantics.
+    - /var/run/tailscale
+    - /run/tailscale           # /var/run is often a symlink to /run
+    - /usr/bin/tailscale
+    - /usr/sbin/tailscale
+    - /usr/local/bin/tailscale
+    - /usr/bin/tailscaled
+    - /usr/sbin/tailscaled
+    - /usr/local/bin/tailscaled
+    - /usr/local/sbin/tailscaled
+    - /var/run/tailscale/tailscaled.sock
+    - /run/tailscale/tailscaled.sock
   read_only:
     - /usr
     - /lib
