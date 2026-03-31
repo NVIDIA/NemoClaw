@@ -47,7 +47,9 @@ describe("nim", () => {
 
   describe("getImageForModel", () => {
     it("returns correct image for known model", () => {
-      expect(nim.getImageForModel("nvidia/nemotron-3-nano-30b-a3b")).toBe("nvcr.io/nim/nvidia/nemotron-3-nano:latest");
+      expect(nim.getImageForModel("nvidia/nemotron-3-nano-30b-a3b")).toBe(
+        "nvcr.io/nim/nvidia/nemotron-3-nano:latest",
+      );
     });
 
     it("returns null for unknown model", () => {
@@ -108,7 +110,12 @@ describe("nim", () => {
         const st = nimModule.nimStatusByName("foo", 9000);
         const commands = runCapture.mock.calls.map(([cmd]) => cmd);
 
-        expect(st).toMatchObject({ running: true, healthy: true, container: "foo", state: "running" });
+        expect(st).toMatchObject({
+          running: true,
+          healthy: true,
+          container: "foo",
+          state: "running",
+        });
         expect(commands.some((cmd) => cmd.includes("docker port"))).toBe(false);
         expect(commands.some((cmd) => cmd.includes("http://localhost:9000/v1/models"))).toBe(true);
       } finally {
@@ -130,9 +137,16 @@ describe("nim", () => {
           const st = nimModule.nimStatusByName("foo");
           const commands = runCapture.mock.calls.map(([cmd]) => cmd);
 
-          expect(st).toMatchObject({ running: true, healthy: true, container: "foo", state: "running" });
+          expect(st).toMatchObject({
+            running: true,
+            healthy: true,
+            container: "foo",
+            state: "running",
+          });
           expect(commands.some((cmd) => cmd.includes("docker port"))).toBe(true);
-          expect(commands.some((cmd) => cmd.includes("http://localhost:9000/v1/models"))).toBe(true);
+          expect(commands.some((cmd) => cmd.includes("http://localhost:9000/v1/models"))).toBe(
+            true,
+          );
         } finally {
           restore();
         }
@@ -152,7 +166,12 @@ describe("nim", () => {
         const st = nimModule.nimStatusByName("foo");
         const commands = runCapture.mock.calls.map(([cmd]) => cmd);
 
-        expect(st).toMatchObject({ running: true, healthy: true, container: "foo", state: "running" });
+        expect(st).toMatchObject({
+          running: true,
+          healthy: true,
+          container: "foo",
+          state: "running",
+        });
         expect(commands.some((cmd) => cmd.includes("docker port"))).toBe(true);
         expect(commands.some((cmd) => cmd.includes("http://localhost:8000/v1/models"))).toBe(true);
       } finally {
@@ -171,7 +190,12 @@ describe("nim", () => {
         const st = nimModule.nimStatusByName("foo");
         const commands = runCapture.mock.calls.map(([cmd]) => cmd);
 
-        expect(st).toMatchObject({ running: false, healthy: false, container: "foo", state: "exited" });
+        expect(st).toMatchObject({
+          running: false,
+          healthy: false,
+          container: "foo",
+          state: "exited",
+        });
         expect(commands).toHaveLength(1);
         expect(commands.some((cmd) => cmd.includes("docker port"))).toBe(false);
         expect(commands.some((cmd) => cmd.includes("http://localhost:"))).toBe(false);

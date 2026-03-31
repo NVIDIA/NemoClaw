@@ -29,12 +29,14 @@ describe("local inference helpers", () => {
   });
 
   it("returns the expected health check command for ollama-local", () => {
-    expect(getLocalProviderHealthCheck("ollama-local")).toBe("curl -sf http://localhost:11434/api/tags 2>/dev/null");
+    expect(getLocalProviderHealthCheck("ollama-local")).toBe(
+      "curl -sf http://localhost:11434/api/tags 2>/dev/null",
+    );
   });
 
   it("returns the expected container reachability command for ollama-local", () => {
     expect(getLocalProviderContainerReachabilityCheck("ollama-local")).toBe(
-      `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:11434/api/tags 2>/dev/null`
+      `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:11434/api/tags 2>/dev/null`,
     );
   });
 
@@ -72,18 +74,22 @@ describe("local inference helpers", () => {
   });
 
   it("parses model names from ollama list output", () => {
-    expect(parseOllamaList(
-      [
-        "NAME                        ID              SIZE      MODIFIED",
-        "nemotron-3-nano:30b         abc123          24 GB     2 hours ago",
-        "qwen3:32b                   def456          20 GB     1 day ago",
-      ].join("\n"),
-    )).toEqual(["nemotron-3-nano:30b", "qwen3:32b"]);
+    expect(
+      parseOllamaList(
+        [
+          "NAME                        ID              SIZE      MODIFIED",
+          "nemotron-3-nano:30b         abc123          24 GB     2 hours ago",
+          "qwen3:32b                   def456          20 GB     1 day ago",
+        ].join("\n"),
+      ),
+    ).toEqual(["nemotron-3-nano:30b", "qwen3:32b"]);
   });
 
   it("returns parsed ollama model options when available", () => {
     expect(
-      getOllamaModelOptions(() => "nemotron-3-nano:30b  abc  24 GB  now\nqwen3:32b  def  20 GB  now")
+      getOllamaModelOptions(
+        () => "nemotron-3-nano:30b  abc  24 GB  now\nqwen3:32b  def  20 GB  now",
+      ),
     ).toEqual(["nemotron-3-nano:30b", "qwen3:32b"]);
   });
 
@@ -91,12 +97,9 @@ describe("local inference helpers", () => {
     expect(
       parseOllamaTags(
         JSON.stringify({
-          models: [
-            { name: "nemotron-3-nano:30b" },
-            { name: "qwen2.5:7b" },
-          ],
-        })
-      )
+          models: [{ name: "nemotron-3-nano:30b" }, { name: "qwen2.5:7b" }],
+        }),
+      ),
     ).toEqual(["nemotron-3-nano:30b", "qwen2.5:7b"]);
   });
 
@@ -109,7 +112,7 @@ describe("local inference helpers", () => {
           return JSON.stringify({ models: [{ name: "qwen2.5:7b" }] });
         }
         return "";
-      })
+      }),
     ).toEqual(["qwen2.5:7b"]);
   });
 
@@ -119,13 +122,15 @@ describe("local inference helpers", () => {
 
   it("prefers the default ollama model when present", () => {
     expect(
-      getDefaultOllamaModel(() => "qwen3:32b  abc  20 GB  now\nnemotron-3-nano:30b  def  24 GB  now")
+      getDefaultOllamaModel(
+        () => "qwen3:32b  abc  20 GB  now\nnemotron-3-nano:30b  def  24 GB  now",
+      ),
     ).toBe(DEFAULT_OLLAMA_MODEL);
   });
 
   it("falls back to the first listed ollama model when the default is absent", () => {
     expect(
-      getDefaultOllamaModel(() => "qwen3:32b  abc  20 GB  now\ngemma3:4b  def  3 GB  now")
+      getDefaultOllamaModel(() => "qwen3:32b  abc  20 GB  now\ngemma3:4b  def  3 GB  now"),
     ).toBe("qwen3:32b");
   });
 
@@ -149,18 +154,16 @@ describe("local inference helpers", () => {
   });
 
   it("fails ollama model validation when Ollama returns an error payload", () => {
-    const result = validateOllamaModel(
-      "gabegoodhart/minimax-m2.1:latest",
-      () => JSON.stringify({ error: "model requires more system memory" }),
+    const result = validateOllamaModel("gabegoodhart/minimax-m2.1:latest", () =>
+      JSON.stringify({ error: "model requires more system memory" }),
     );
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/requires more system memory/);
   });
 
   it("passes ollama model validation when the probe returns a normal payload", () => {
-    const result = validateOllamaModel(
-      "nemotron-3-nano:30b",
-      () => JSON.stringify({ model: "nemotron-3-nano:30b", response: "hello", done: true }),
+    const result = validateOllamaModel("nemotron-3-nano:30b", () =>
+      JSON.stringify({ model: "nemotron-3-nano:30b", response: "hello", done: true }),
     );
     expect(result).toEqual({ ok: true });
   });

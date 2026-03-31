@@ -42,9 +42,7 @@ describe("inference selection config", () => {
   });
 
   it("maps nvidia-nim to the sandbox inference route", () => {
-    expect(
-      getProviderSelectionConfig("nvidia-nim", "nvidia/nemotron-3-super-120b-a12b")
-    ).toEqual({
+    expect(getProviderSelectionConfig("nvidia-nim", "nvidia/nemotron-3-super-120b-a12b")).toEqual({
       endpointType: "custom",
       endpointUrl: INFERENCE_ROUTE_URL,
       ncpPartner: null,
@@ -57,16 +55,19 @@ describe("inference selection config", () => {
   });
 
   it("maps compatible-anthropic-endpoint to the sandbox inference route", () => {
-    assert.deepEqual(getProviderSelectionConfig("compatible-anthropic-endpoint", "claude-sonnet-proxy"), {
-      endpointType: "custom",
-      endpointUrl: INFERENCE_ROUTE_URL,
-      ncpPartner: null,
-      model: "claude-sonnet-proxy",
-      profile: DEFAULT_ROUTE_PROFILE,
-      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-      provider: "compatible-anthropic-endpoint",
-      providerLabel: "Other Anthropic-compatible endpoint",
-    });
+    assert.deepEqual(
+      getProviderSelectionConfig("compatible-anthropic-endpoint", "claude-sonnet-proxy"),
+      {
+        endpointType: "custom",
+        endpointUrl: INFERENCE_ROUTE_URL,
+        ncpPartner: null,
+        model: "claude-sonnet-proxy",
+        profile: DEFAULT_ROUTE_PROFILE,
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        provider: "compatible-anthropic-endpoint",
+        providerLabel: "Other Anthropic-compatible endpoint",
+      },
+    );
   });
 
   it("maps the remaining hosted providers to the sandbox inference route", () => {
@@ -131,7 +132,9 @@ describe("inference selection config", () => {
   });
 
   it("builds a qualified OpenClaw primary model for ollama-local", () => {
-    expect(getOpenClawPrimaryModel("ollama-local", "nemotron-3-nano:30b")).toBe(`${MANAGED_PROVIDER_ID}/nemotron-3-nano:30b`);
+    expect(getOpenClawPrimaryModel("ollama-local", "nemotron-3-nano:30b")).toBe(
+      `${MANAGED_PROVIDER_ID}/nemotron-3-nano:30b`,
+    );
   });
 
   it("falls back to provider defaults when model is omitted", () => {
@@ -139,12 +142,16 @@ describe("inference selection config", () => {
     expect(getProviderSelectionConfig("anthropic-prod").model).toBe("claude-sonnet-4-6");
     expect(getProviderSelectionConfig("gemini-api").model).toBe("gemini-2.5-flash");
     expect(getProviderSelectionConfig("compatible-endpoint").model).toBe("custom-model");
-    expect(getProviderSelectionConfig("compatible-anthropic-endpoint").model).toBe("custom-anthropic-model");
+    expect(getProviderSelectionConfig("compatible-anthropic-endpoint").model).toBe(
+      "custom-anthropic-model",
+    );
     expect(getProviderSelectionConfig("vllm-local").model).toBe("vllm-local");
   });
 
   it("builds a default OpenClaw primary model for non-ollama providers", () => {
-    expect(getOpenClawPrimaryModel("nvidia-prod")).toBe(`${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`);
+    expect(getOpenClawPrimaryModel("nvidia-prod")).toBe(
+      `${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`,
+    );
   });
 });
 

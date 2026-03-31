@@ -91,6 +91,14 @@ repos:
         pass_filenames: true
         priority: 5
 
+      - id: prettier-js
+        name: Prettier (JavaScript)
+        entry: npx prettier --write
+        language: system
+        files: ^(bin|test)/.*\.js$
+        pass_filenames: true
+        priority: 5
+
   # ── Priority 6: auto-fix after formatting ─────────────────────────────────
   - repo: local
     hooks:

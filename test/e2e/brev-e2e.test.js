@@ -102,7 +102,11 @@ function waitForSsh(maxAttempts = 60, intervalMs = 5_000) {
     } catch {
       if (i === maxAttempts) throw new Error(`SSH not ready after ${maxAttempts} attempts`);
       if (i % 5 === 0) {
-        try { brev("refresh"); } catch { /* ignore */ }
+        try {
+          brev("refresh");
+        } catch {
+          /* ignore */
+        }
       }
       execSync(`sleep ${intervalMs / 1000}`);
     }
@@ -155,18 +159,30 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
 
       // brev start with a git URL may take longer than the default 60s brev() timeout
       // (it registers the instance + kicks off provisioning before returning)
-      execFileSync("brev", [
-        "start", NEMOCLAW_REPO_URL,
-        "--name", INSTANCE_NAME,
-        "--cpu", BREV_CPU,
-        "--setup-script", LAUNCHABLE_SETUP_SCRIPT,
-        "--detached",
-      ], { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] });
+      execFileSync(
+        "brev",
+        [
+          "start",
+          NEMOCLAW_REPO_URL,
+          "--name",
+          INSTANCE_NAME,
+          "--cpu",
+          BREV_CPU,
+          "--setup-script",
+          LAUNCHABLE_SETUP_SCRIPT,
+          "--detached",
+        ],
+        { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
+      );
       instanceCreated = true;
       console.log(`[${elapsed()}] brev start returned (instance provisioning in background)`);
 
       // Wait for SSH
-      try { brev("refresh"); } catch { /* ignore */ }
+      try {
+        brev("refresh");
+      } catch {
+        /* ignore */
+      }
       waitForSsh();
       console.log(`[${elapsed()}] SSH is up`);
 
@@ -186,20 +202,29 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
         try {
           // The launch script writes to /tmp/launch-plugin.log and the last step
           // prints "=== Ready ===" when complete
-          const log = ssh("cat /tmp/launch-plugin.log 2>/dev/null || echo 'NO_LOG'", { timeout: 15_000 });
+          const log = ssh("cat /tmp/launch-plugin.log 2>/dev/null || echo 'NO_LOG'", {
+            timeout: 15_000,
+          });
           if (log.includes("=== Ready ===")) {
-            console.log(`[${elapsed()}] Launchable setup complete (detected '=== Ready ===' in log)`);
+            console.log(
+              `[${elapsed()}] Launchable setup complete (detected '=== Ready ===' in log)`,
+            );
             break;
           }
           // Also check if nemoclaw onboard has run (install marker)
-          const markerCheck = ssh("test -f ~/.cache/nemoclaw-plugin/install-ran && echo DONE || echo PENDING", { timeout: 10_000 });
+          const markerCheck = ssh(
+            "test -f ~/.cache/nemoclaw-plugin/install-ran && echo DONE || echo PENDING",
+            { timeout: 10_000 },
+          );
           if (markerCheck.includes("DONE")) {
             console.log(`[${elapsed()}] Launchable setup complete (install-ran marker found)`);
             break;
           }
           // Print last few lines of log for progress visibility
-          const tail = ssh("tail -3 /tmp/launch-plugin.log 2>/dev/null || echo '(no log yet)'", { timeout: 10_000 });
-          console.log(`[${elapsed()}] Setup still running... ${tail.replace(/\n/g, ' | ')}`);
+          const tail = ssh("tail -3 /tmp/launch-plugin.log 2>/dev/null || echo '(no log yet)'", {
+            timeout: 10_000,
+          });
+          console.log(`[${elapsed()}] Setup still running... ${tail.replace(/\n/g, " | ")}`);
         } catch {
           console.log(`[${elapsed()}] Setup poll: SSH command failed, retrying...`);
         }
@@ -210,7 +235,7 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       if (Date.now() - setupStart >= setupMaxWait) {
         throw new Error(
           `Launchable setup did not complete within ${setupMaxWait / 60_000} minutes. ` +
-          `Neither '=== Ready ===' in /tmp/launch-plugin.log nor install-ran marker found.`,
+            `Neither '=== Ready ===' in /tmp/launch-plugin.log nor install-ran marker found.`,
         );
       }
 
@@ -231,7 +256,10 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
 
       // Install deps for our branch
       console.log(`[${elapsed()}] Running npm ci to sync dependencies...`);
-      sshWithSecrets(`set -o pipefail && source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${remoteDir} && npm ci --ignore-scripts 2>&1 | tail -5`, { timeout: 300_000, stream: true });
+      sshWithSecrets(
+        `set -o pipefail && source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${remoteDir} && npm ci --ignore-scripts 2>&1 | tail -5`,
+        { timeout: 300_000, stream: true },
+      );
       console.log(`[${elapsed()}] Dependencies synced`);
 
       // Run nemoclaw onboard (non-interactive) — this is the path real users take.
@@ -253,7 +281,6 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       } catch (e) {
         console.log(`[${elapsed()}] Warning: could not check sandbox status: ${e.message}`);
       }
-
     } else {
       // --- Legacy path: bare brev create + brev-setup.sh ---
       console.log(`[${elapsed()}] Creating bare instance via brev create...`);
@@ -261,7 +288,11 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       instanceCreated = true;
 
       // Wait for SSH
-      try { brev("refresh"); } catch { /* ignore */ }
+      try {
+        brev("refresh");
+      } catch {
+        /* ignore */
+      }
       waitForSsh();
       console.log(`[${elapsed()}] SSH is up`);
 
@@ -277,7 +308,10 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
 
       // Bootstrap VM — stream output to CI log so we can see progress
       console.log(`[${elapsed()}] Running brev-setup.sh (manual bootstrap)...`);
-      sshWithSecrets(`cd ${remoteDir} && SKIP_VLLM=1 bash scripts/brev-setup.sh`, { timeout: 2_400_000, stream: true });
+      sshWithSecrets(`cd ${remoteDir} && SKIP_VLLM=1 bash scripts/brev-setup.sh`, {
+        timeout: 2_400_000,
+        stream: true,
+      });
       console.log(`[${elapsed()}] Bootstrap complete`);
 
       // Install nemoclaw CLI — brev-setup.sh creates the sandbox but doesn't

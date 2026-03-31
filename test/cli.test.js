@@ -125,17 +125,17 @@ describe("CLI dispatch", () => {
         },
         defaultSandbox: "alpha",
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
         `marker_file=${JSON.stringify(markerFile)}`,
-        "printf '%s ' \"$@\" > \"$marker_file\"",
+        'printf \'%s \' "$@" > "$marker_file"',
         "exit 0",
       ].join("\n"),
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const r = runWithEnv("alpha logs --follow", {
@@ -168,15 +168,15 @@ describe("CLI dispatch", () => {
         },
         defaultSandbox: "alpha",
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
         `marker_file=${JSON.stringify(markerFile)}`,
-        "printf '%s\\n' \"$*\" >> \"$marker_file\"",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        'printf \'%s\\n\' "$*" >> "$marker_file"',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
         "  echo 'Sandbox:'",
         "  echo",
         "  echo '  Id: abc'",
@@ -185,12 +185,12 @@ describe("CLI dispatch", () => {
         "  echo '  Phase: Ready'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"connect\" ] && [ \"$3\" = \"alpha\" ]; then",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "connect" ] && [ "$3" = "alpha" ]; then',
         "  exit 0",
         "fi",
         "exit 0",
-        ].join("\n"),
-      { mode: 0o755 }
+      ].join("\n"),
+      { mode: 0o755 },
     );
 
     const r = runWithEnv("alpha connect", {
@@ -225,19 +225,19 @@ describe("CLI dispatch", () => {
         },
         defaultSandbox: "alpha",
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
         "  echo 'Error: status: NotFound, message: \"sandbox not found\"' >&2",
         "  exit 1",
         "fi",
         "exit 0",
       ].join("\n"),
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const r = runWithEnv("alpha connect", {
@@ -271,25 +271,29 @@ describe("CLI dispatch", () => {
         },
         defaultSandbox: "alpha",
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
         "  echo 'Error: transport error: handshake verification failed' >&2",
         "  exit 1",
         "fi",
         "exit 0",
       ].join("\n"),
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha status", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    }, 25000);
+    const r = runWithEnv(
+      "alpha status",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      },
+      25000,
+    );
 
     expect(r.code).toBe(0);
     expect(r.out.includes("Could not verify sandbox 'alpha'")).toBeTruthy();
@@ -319,32 +323,32 @@ describe("CLI dispatch", () => {
         },
         defaultSandbox: "alpha",
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
         `state_file=${JSON.stringify(stateFile)}`,
-        "count=$(cat \"$state_file\" 2>/dev/null || echo 0)",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        'count=$(cat "$state_file" 2>/dev/null || echo 0)',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
         "  count=$((count + 1))",
-        "  echo \"$count\" > \"$state_file\"",
-        "  if [ \"$count\" -eq 1 ]; then",
+        '  echo "$count" > "$state_file"',
+        '  if [ "$count" -eq 1 ]; then',
         "    echo 'Error: transport error: Connection refused' >&2",
         "    exit 1",
         "  fi",
         "  echo 'Sandbox: alpha'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"status\" ]; then",
+        'if [ "$1" = "status" ]; then',
         "  echo 'Server Status'",
         "  echo",
         "  echo '  Gateway: nemoclaw'",
         "  echo '  Status: Connected'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"info\" ] && [ \"$3\" = \"-g\" ] && [ \"$4\" = \"nemoclaw\" ]; then",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
         "  echo 'Gateway Info'",
         "  echo",
         "  echo '  Gateway: nemoclaw'",
@@ -352,7 +356,7 @@ describe("CLI dispatch", () => {
         "fi",
         "exit 0",
       ].join("\n"),
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const r = runWithEnv("alpha status", {
@@ -385,47 +389,51 @@ describe("CLI dispatch", () => {
         },
         defaultSandbox: "alpha",
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
         "  echo 'Error: transport error: Connection refused' >&2",
         "  exit 1",
         "fi",
-        "if [ \"$1\" = \"status\" ]; then",
+        'if [ "$1" = "status" ]; then',
         "  echo 'Server Status'",
         "  echo",
         "  echo '  Gateway: openshell'",
         "  echo '  Status: Connected'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"info\" ] && [ \"$3\" = \"-g\" ] && [ \"$4\" = \"nemoclaw\" ]; then",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
         "  echo 'Gateway Info'",
         "  echo",
         "  echo '  Gateway: nemoclaw'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"select\" ] && [ \"$3\" = \"nemoclaw\" ]; then",
+        'if [ "$1" = "gateway" ] && [ "$2" = "select" ] && [ "$3" = "nemoclaw" ]; then',
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"start\" ] && [ \"$3\" = \"--name\" ] && [ \"$4\" = \"nemoclaw\" ]; then",
+        'if [ "$1" = "gateway" ] && [ "$2" = "start" ] && [ "$3" = "--name" ] && [ "$4" = "nemoclaw" ]; then',
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"inference\" ] && [ \"$2\" = \"get\" ]; then",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
         "  exit 0",
         "fi",
         "exit 0",
       ].join("\n"),
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha status", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    }, 25000);
+    const r = runWithEnv(
+      "alpha status",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      },
+      25000,
+    );
 
     expect(r.code).toBe(0);
     expect(r.out.includes("Recovered NemoClaw gateway runtime")).toBeFalsy();
@@ -453,39 +461,43 @@ describe("CLI dispatch", () => {
         },
         defaultSandbox: "alpha",
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
         "  printf '\\033[31mError: trans\\033[0mport error: Connec\\033[33mtion refused\\033[0m\\n' >&2",
         "  exit 1",
         "fi",
-        "if [ \"$1\" = \"status\" ]; then",
+        'if [ "$1" = "status" ]; then',
         "  echo 'Server Status'",
         "  echo",
         "  echo '  Gateway: openshell'",
         "  echo '  Status: Disconnected'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"info\" ] && [ \"$3\" = \"-g\" ] && [ \"$4\" = \"nemoclaw\" ]; then",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
         "  printf 'Gateway Info\\n\\n  Gateway: openshell\\n'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"select\" ] && [ \"$3\" = \"nemoclaw\" ]; then",
+        'if [ "$1" = "gateway" ] && [ "$2" = "select" ] && [ "$3" = "nemoclaw" ]; then',
         "  exit 0",
         "fi",
         "exit 0",
       ].join("\n"),
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha status", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    }, 25000);
+    const r = runWithEnv(
+      "alpha status",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      },
+      25000,
+    );
 
     expect(r.code).toBe(0);
     expect(r.out.includes("current gateway/runtime is not reachable")).toBeTruthy();
@@ -511,42 +523,48 @@ describe("CLI dispatch", () => {
         },
         defaultSandbox: "alpha",
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
         "  printf '\\033[31mMissing gateway auth\\033[0m token\\n' >&2",
         "  exit 1",
         "fi",
-        "if [ \"$1\" = \"status\" ]; then",
+        'if [ "$1" = "status" ]; then',
         "  echo 'Server Status'",
         "  echo",
         "  echo '  Gateway: openshell'",
         "  echo '  Status: Disconnected'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"info\" ] && [ \"$3\" = \"-g\" ] && [ \"$4\" = \"nemoclaw\" ]; then",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
         "  printf 'Gateway Info\\n\\n  Gateway: openshell\\n'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"select\" ] && [ \"$3\" = \"nemoclaw\" ]; then",
+        'if [ "$1" = "gateway" ] && [ "$2" = "select" ] && [ "$3" = "nemoclaw" ]; then',
         "  exit 0",
         "fi",
         "exit 0",
       ].join("\n"),
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
-    const r = runWithEnv("alpha status", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    }, 25000);
+    const r = runWithEnv(
+      "alpha status",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      },
+      25000,
+    );
 
     expect(r.code).toBe(0);
-    expect(r.out.includes("Verify the active gateway and retry after re-establishing the runtime.")).toBeTruthy();
+    expect(
+      r.out.includes("Verify the active gateway and retry after re-establishing the runtime."),
+    ).toBeTruthy();
   }, 25000);
 
   it("explains unrecoverable gateway trust rotation after restart", () => {
@@ -569,24 +587,24 @@ describe("CLI dispatch", () => {
         },
         defaultSandbox: "alpha",
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
         "  echo 'Error: transport error: handshake verification failed' >&2",
         "  exit 1",
         "fi",
-        "if [ \"$1\" = \"status\" ]; then",
+        'if [ "$1" = "status" ]; then',
         "  echo 'Server Status'",
         "  echo",
         "  echo '  Gateway: nemoclaw'",
         "  echo '  Status: Connected'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"info\" ] && [ \"$3\" = \"-g\" ] && [ \"$4\" = \"nemoclaw\" ]; then",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
         "  echo 'Gateway Info'",
         "  echo",
         "  echo '  Gateway: nemoclaw'",
@@ -594,13 +612,17 @@ describe("CLI dispatch", () => {
         "fi",
         "exit 0",
       ].join("\n"),
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
-    const statusResult = runWithEnv("alpha status", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    }, 25000);
+    const statusResult = runWithEnv(
+      "alpha status",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      },
+      25000,
+    );
     expect(statusResult.code).toBe(0);
     expect(statusResult.out.includes("gateway trust material rotated after restart")).toBeTruthy();
     expect(statusResult.out.includes("cannot be reattached safely")).toBeTruthy();
@@ -634,17 +656,17 @@ describe("CLI dispatch", () => {
         },
         defaultSandbox: "alpha",
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
         "  echo 'Error: transport error: Connection refused' >&2",
         "  exit 1",
         "fi",
-        "if [ \"$1\" = \"status\" ]; then",
+        'if [ "$1" = "status" ]; then',
         "  echo 'Server Status'",
         "  echo",
         "  echo '  Gateway: nemoclaw'",
@@ -653,37 +675,47 @@ describe("CLI dispatch", () => {
         "  echo 'Connection refused (os error 111)' >&2",
         "  exit 1",
         "fi",
-        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"info\" ] && [ \"$3\" = \"-g\" ] && [ \"$4\" = \"nemoclaw\" ]; then",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
         "  echo 'Gateway Info'",
         "  echo",
         "  echo '  Gateway: nemoclaw'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"select\" ] && [ \"$3\" = \"nemoclaw\" ]; then",
+        'if [ "$1" = "gateway" ] && [ "$2" = "select" ] && [ "$3" = "nemoclaw" ]; then',
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"start\" ] && [ \"$3\" = \"--name\" ] && [ \"$4\" = \"nemoclaw\" ]; then",
+        'if [ "$1" = "gateway" ] && [ "$2" = "start" ] && [ "$3" = "--name" ] && [ "$4" = "nemoclaw" ]; then',
         "  exit 0",
         "fi",
         "exit 0",
       ].join("\n"),
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
-    const statusResult = runWithEnv("alpha status", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    }, 25000);
+    const statusResult = runWithEnv(
+      "alpha status",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      },
+      25000,
+    );
     expect(statusResult.code).toBe(0);
-    expect(statusResult.out.includes("gateway is still refusing connections after restart")).toBeTruthy();
-    expect(statusResult.out.includes("Retry `openshell gateway start --name nemoclaw`")).toBeTruthy();
+    expect(
+      statusResult.out.includes("gateway is still refusing connections after restart"),
+    ).toBeTruthy();
+    expect(
+      statusResult.out.includes("Retry `openshell gateway start --name nemoclaw`"),
+    ).toBeTruthy();
 
     const connectResult = runWithEnv("alpha connect", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
     expect(connectResult.code).toBe(1);
-    expect(connectResult.out.includes("gateway is still refusing connections after restart")).toBeTruthy();
+    expect(
+      connectResult.out.includes("gateway is still refusing connections after restart"),
+    ).toBeTruthy();
     expect(connectResult.out.includes("If the gateway never becomes healthy")).toBeTruthy();
   }, 25000);
 
@@ -707,42 +739,48 @@ describe("CLI dispatch", () => {
         },
         defaultSandbox: "alpha",
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
         "  echo 'Error: transport error: Connection refused' >&2",
         "  exit 1",
         "fi",
-        "if [ \"$1\" = \"status\" ]; then",
+        'if [ "$1" = "status" ]; then',
         "  echo 'Gateway Status'",
         "  echo",
         "  echo '  Status: No gateway configured.'",
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"info\" ] && [ \"$3\" = \"-g\" ] && [ \"$4\" = \"nemoclaw\" ]; then",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
         "  exit 1",
         "fi",
-        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"select\" ] && [ \"$3\" = \"nemoclaw\" ]; then",
+        'if [ "$1" = "gateway" ] && [ "$2" = "select" ] && [ "$3" = "nemoclaw" ]; then',
         "  exit 0",
         "fi",
-        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"start\" ] && [ \"$3\" = \"--name\" ] && [ \"$4\" = \"nemoclaw\" ]; then",
+        'if [ "$1" = "gateway" ] && [ "$2" = "start" ] && [ "$3" = "--name" ] && [ "$4" = "nemoclaw" ]; then',
         "  exit 1",
         "fi",
         "exit 0",
       ].join("\n"),
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
-    const statusResult = runWithEnv("alpha status", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    }, 25000);
+    const statusResult = runWithEnv(
+      "alpha status",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      },
+      25000,
+    );
     expect(statusResult.code).toBe(0);
-    expect(statusResult.out.includes("gateway is no longer configured after restart/rebuild")).toBeTruthy();
+    expect(
+      statusResult.out.includes("gateway is no longer configured after restart/rebuild"),
+    ).toBeTruthy();
     expect(statusResult.out.includes("Start the gateway again")).toBeTruthy();
   }, 25000);
 });
@@ -769,14 +807,14 @@ describe("list shows live gateway inference", () => {
         },
         defaultSandbox: "test",
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     // Stub openshell: inference get returns live provider/model
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        "if [ \"$1\" = \"inference\" ] && [ \"$2\" = \"get\" ]; then",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
         "  echo 'Gateway inference:'",
         "  echo '  Provider: nvidia-prod'",
         "  echo '  Model: nvidia/nemotron-3-super-120b-a12b'",
@@ -785,7 +823,7 @@ describe("list shows live gateway inference", () => {
         "fi",
         "exit 0",
       ].join("\n"),
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const r = runWithEnv("list", {
@@ -819,19 +857,19 @@ describe("list shows live gateway inference", () => {
         },
         defaultSandbox: "test",
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     // Stub openshell: inference get fails
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        "if [ \"$1\" = \"inference\" ] && [ \"$2\" = \"get\" ]; then",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
         "  exit 1",
         "fi",
         "exit 0",
       ].join("\n"),
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const r = runWithEnv("list", {

@@ -14,7 +14,7 @@ function resolveHomeDir() {
   if (!raw) {
     throw new Error(
       "Cannot determine safe home directory for credential storage. " +
-      "Set the HOME environment variable to a user-owned directory."
+        "Set the HOME environment variable to a user-owned directory.",
     );
   }
   const home = path.resolve(raw);
@@ -22,8 +22,10 @@ function resolveHomeDir() {
     const real = fs.realpathSync(home);
     if (UNSAFE_HOME_PATHS.has(real)) {
       throw new Error(
-        "Cannot store credentials: HOME resolves to '" + real + "' which is world-readable. " +
-        "Set the HOME environment variable to a user-owned directory."
+        "Cannot store credentials: HOME resolves to '" +
+          real +
+          "' which is world-readable. " +
+          "Set the HOME environment variable to a user-owned directory.",
       );
     }
   } catch (e) {
@@ -31,8 +33,10 @@ function resolveHomeDir() {
   }
   if (UNSAFE_HOME_PATHS.has(home)) {
     throw new Error(
-      "Cannot store credentials: HOME resolves to '" + home + "' which is world-readable. " +
-      "Set the HOME environment variable to a user-owned directory."
+      "Cannot store credentials: HOME resolves to '" +
+        home +
+        "' which is world-readable. " +
+        "Set the HOME environment variable to a user-owned directory.",
     );
   }
   return home;
@@ -57,7 +61,9 @@ function loadCredentials() {
     if (fs.existsSync(file)) {
       return JSON.parse(fs.readFileSync(file, "utf-8"));
     }
-  } catch { /* ignored */ }
+  } catch {
+    /* ignored */
+  }
   return {};
 }
 
@@ -277,7 +283,9 @@ async function ensureGithubToken() {
       process.env.GITHUB_TOKEN = token;
       return;
     }
-  } catch { /* ignored */ }
+  } catch {
+    /* ignored */
+  }
 
   console.log("");
   console.log("  ┌──────────────────────────────────────────────────┐");

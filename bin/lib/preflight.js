@@ -75,10 +75,7 @@ async function checkPortAvailable(port, opts) {
     } else {
       const hasLsof = runCapture("command -v lsof", { ignoreError: true });
       if (hasLsof) {
-        lsofOut = runCapture(
-          `lsof -i :${p} -sTCP:LISTEN -P -n 2>/dev/null`,
-          { ignoreError: true }
-        );
+        lsofOut = runCapture(`lsof -i :${p} -sTCP:LISTEN -P -n 2>/dev/null`, { ignoreError: true });
       }
     }
 
@@ -104,10 +101,9 @@ async function checkPortAvailable(port, opts) {
       // through to the net probe (which can only detect EADDRINUSE but not
       // the owning process).
       if (dataLines.length === 0 && !o.lsofOutput) {
-        const sudoOut = runCapture(
-          `sudo lsof -i :${p} -sTCP:LISTEN -P -n 2>/dev/null`,
-          { ignoreError: true }
-        );
+        const sudoOut = runCapture(`sudo lsof -i :${p} -sTCP:LISTEN -P -n 2>/dev/null`, {
+          ignoreError: true,
+        });
         if (typeof sudoOut === "string") {
           const sudoLines = sudoOut.split("\n").filter((l) => l.trim());
           const sudoData = sudoLines.filter((l) => !l.startsWith("COMMAND"));
@@ -173,10 +169,7 @@ function getMemoryInfo(opts) {
 
   if (platform === "darwin") {
     try {
-      const memBytes = parseInt(
-        runCapture("sysctl -n hw.memsize", { ignoreError: true }),
-        10
-      );
+      const memBytes = parseInt(runCapture("sysctl -n hw.memsize", { ignoreError: true }), 10);
       if (!memBytes || isNaN(memBytes)) return null;
       const totalRamMB = Math.floor(memBytes / 1024 / 1024);
       // macOS does not use traditional swap files in the same way
@@ -272,13 +265,15 @@ function cleanupPartialSwap() {
 
 function createSwapfile(mem) {
   try {
-    runCapture("sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none", { ignoreError: false });
+    runCapture("sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none", {
+      ignoreError: false,
+    });
     runCapture("sudo chmod 600 /swapfile", { ignoreError: false });
     runCapture("sudo mkswap /swapfile", { ignoreError: false });
     runCapture("sudo swapon /swapfile", { ignoreError: false });
     runCapture(
       "grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab",
-      { ignoreError: false }
+      { ignoreError: false },
     );
     writeManagedSwapMarker();
 
@@ -287,7 +282,8 @@ function createSwapfile(mem) {
     cleanupPartialSwap();
     return {
       ok: false,
-      reason: `swap creation failed: ${err.message}. Create swap manually:\n` +
+      reason:
+        `swap creation failed: ${err.message}. Create swap manually:\n` +
         "  sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none && sudo chmod 600 /swapfile && " +
         "sudo mkswap /swapfile && sudo swapon /swapfile",
     };
