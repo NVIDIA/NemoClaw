@@ -2571,7 +2571,7 @@ async function _setupPolicies(sandboxName) {
     console.log("");
     console.log("  Available policy presets:");
     allPresets.forEach((p) => {
-      const marker = applied.includes(p.name) ? "●" : "○";
+      const marker = applied.includes(p.name) || suggestions.includes(p.name) ? "●" : "○";
       const suggested = suggestions.includes(p.name) ? " (suggested)" : "";
       console.log(`    ${marker} ${p.name} — ${p.description}${suggested}`);
     });
