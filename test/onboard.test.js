@@ -101,10 +101,17 @@ describe("onboard helpers", () => {
       ].join("\n")
     );
 
-    const originalInsecureLocalUi = process.env.NEMOCLAW_INSECURE_LOCAL_UI;
     try {
-      process.env.NEMOCLAW_INSECURE_LOCAL_UI = "1";
-      patchStagedDockerfile(dockerfilePath, "gpt-5.4", "http://127.0.0.1:19999", "build-123", "openai-api");
+      process.env.NEMOCLAW_INSECURE_LOCAL_UI = "0";
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-123",
+        "openai-api",
+        null,
+        { insecureLocalUi: true },
+      );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
       assert.match(patched, /^ARG NEMOCLAW_MODEL=gpt-5\.4$/m);
       assert.match(patched, /^ARG NEMOCLAW_PROVIDER_KEY=openai$/m);
@@ -113,11 +120,34 @@ describe("onboard helpers", () => {
       assert.match(patched, /^ARG NEMOCLAW_INSECURE_LOCAL_UI=1$/m);
       assert.match(patched, /^ARG NEMOCLAW_BUILD_ID=build-123$/m);
     } finally {
-      if (originalInsecureLocalUi === undefined) {
-        delete process.env.NEMOCLAW_INSECURE_LOCAL_UI;
-      } else {
-        process.env.NEMOCLAW_INSECURE_LOCAL_UI = originalInsecureLocalUi;
-      }
+      delete process.env.NEMOCLAW_INSECURE_LOCAL_UI;
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves insecure local UI disabled unless explicitly requested", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-ui-default-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INSECURE_LOCAL_UI=0",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n")
+    );
+
+    try {
+      process.env.NEMOCLAW_INSECURE_LOCAL_UI = "1";
+      patchStagedDockerfile(dockerfilePath, "gpt-5.4", "http://127.0.0.1:19999", "build-456", "openai-api");
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_INSECURE_LOCAL_UI=0$/m);
+    } finally {
+      delete process.env.NEMOCLAW_INSECURE_LOCAL_UI;
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });

@@ -96,7 +96,7 @@ origins = ['http://127.0.0.1:18789']; \
 origins = list(dict.fromkeys(origins + [chat_origin])); \
 loopback_hosts = {'127.0.0.1', 'localhost', '::1'}; \
 origin_hosts = {urlparse(origin).hostname for origin in origins}; \
-loopback_only_origins = bool(origin_hosts) and all(host in loopback_hosts for host in origin_hosts if host); \
+loopback_only_origins = bool(origin_hosts) and all(host and host in loopback_hosts for host in origin_hosts); \
 enable_insecure_local_ui = insecure_local_ui and loopback_only_origins; \
 providers = { \
     provider_key: { \

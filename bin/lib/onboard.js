@@ -962,7 +962,15 @@ function getSandboxInferenceConfig(model, provider = null, preferredInferenceApi
   return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
 }
 
-function patchStagedDockerfile(dockerfilePath, model, chatUiUrl, buildId = String(Date.now()), provider = null, preferredInferenceApi = null) {
+function patchStagedDockerfile(
+  dockerfilePath,
+  model,
+  chatUiUrl,
+  buildId = String(Date.now()),
+  provider = null,
+  preferredInferenceApi = null,
+  options = {},
+) {
   const {
     providerKey,
     primaryModelRef,
@@ -970,9 +978,7 @@ function patchStagedDockerfile(dockerfilePath, model, chatUiUrl, buildId = Strin
     inferenceApi,
     inferenceCompat,
   } = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
-  const insecureLocalUiValue = /^(1|true|yes|on)$/i.test(process.env.NEMOCLAW_INSECURE_LOCAL_UI || "")
-    ? "1"
-    : "0";
+  const insecureLocalUiValue = options.insecureLocalUi ? "1" : "0";
   let dockerfile = fs.readFileSync(dockerfilePath, "utf8");
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_MODEL=.*$/m,
@@ -2165,7 +2171,16 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const chatUiUrl = process.env.CHAT_UI_URL || "http://127.0.0.1:18789";
-  patchStagedDockerfile(stagedDockerfile, model, chatUiUrl, String(Date.now()), provider, preferredInferenceApi);
+  const insecureLocalUiEnabled = /^(1|true|yes|on)$/i.test(process.env.NEMOCLAW_INSECURE_LOCAL_UI || "");
+  patchStagedDockerfile(
+    stagedDockerfile,
+    model,
+    chatUiUrl,
+    String(Date.now()),
+    provider,
+    preferredInferenceApi,
+    { insecureLocalUi: insecureLocalUiEnabled },
+  );
   // Only pass non-sensitive env vars to the sandbox. NVIDIA_API_KEY is NOT
   // needed inside the sandbox — inference is proxied through the OpenShell
   // gateway which injects the stored credential server-side. The gateway

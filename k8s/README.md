@@ -5,8 +5,9 @@
 The sample manifest now uses a few safer defaults out of the box:
 - disables Kubernetes service account token automounting
 - disables service-link environment injection
-- runs the workspace container with `allowPrivilegeEscalation: false` and `RuntimeDefault` seccomp
+- runs the workspace container with `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, and `RuntimeDefault` seccomp
 - applies NemoClaw's suggested policy presets instead of skipping policy setup
+- downloads the installer to a local file with HTTPS-only curl flags before execution
 
 Run [NemoClaw](https://github.com/NVIDIA/NemoClaw) on Kubernetes with GPU inference powered by [Dynamo](https://github.com/ai-dynamo/dynamo) or any OpenAI-compatible endpoint.
 
@@ -54,10 +55,21 @@ Edit the environment variables in `nemoclaw-k8s.yaml` before deploying:
 |----------|----------|-------------|
 | `DYNAMO_HOST` | Yes | Inference endpoint for socat proxy (e.g., `vllm-frontend.dynamo.svc:8000`) |
 | `NEMOCLAW_ENDPOINT_URL` | Yes | URL the sandbox uses (usually `http://host.openshell.internal:8000/v1`) |
-| `COMPATIBLE_API_KEY` | Yes | API key (use `dummy` for Dynamo/vLLM; use a Kubernetes `Secret` for real credentials) |
+| `COMPATIBLE_API_KEY` | No | Loaded from the optional `nemoclaw-compatible-api-key` Secret; defaults to `dummy` for Dynamo/vLLM when the Secret is absent |
 | `NEMOCLAW_MODEL` | Yes | Model name (e.g., `meta-llama/Llama-3.1-8B-Instruct`) |
 | `NEMOCLAW_SANDBOX_NAME` | No | Sandbox name (default: `my-assistant`) |
 | `NEMOCLAW_POLICY_MODE` | No | Policy preset mode for non-interactive onboarding (default: `suggested`) |
+
+### Optional: Store a Real API Key in a Secret
+
+If your compatible endpoint requires authentication, create the Secret before
+you apply the manifest:
+
+```bash
+kubectl create secret generic nemoclaw-compatible-api-key \
+  -n nemoclaw \
+  --from-literal=api-key='<your-api-key>'
+```
 
 ### Example: Custom Endpoint
 
@@ -67,8 +79,6 @@ env:
     value: "my-vllm.my-namespace.svc.cluster.local:8000"
   - name: NEMOCLAW_ENDPOINT_URL
     value: "http://host.openshell.internal:8000/v1"
-  - name: COMPATIBLE_API_KEY
-    value: "dummy"
   - name: NEMOCLAW_MODEL
     value: "mistralai/Mistral-7B-Instruct-v0.3"
 ```

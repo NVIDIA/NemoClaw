@@ -16,6 +16,7 @@ describe("security configuration hardening", () => {
     expect(dockerfile).toContain("NEMOCLAW_INSECURE_LOCAL_UI=${NEMOCLAW_INSECURE_LOCAL_UI}");
     expect(dockerfile).toContain("os.environ.get('NEMOCLAW_INSECURE_LOCAL_UI', '0')");
     expect(dockerfile).toContain("loopback_hosts = {'127.0.0.1', 'localhost', '::1'}");
+    expect(dockerfile).toContain("all(host and host in loopback_hosts for host in origin_hosts)");
     expect(dockerfile).toContain("enable_insecure_local_ui = insecure_local_ui and loopback_only_origins");
     expect(dockerfile).not.toContain("'allowInsecureAuth': True");
     expect(dockerfile).not.toContain("'dangerouslyDisableDeviceAuth': True");
@@ -28,9 +29,15 @@ describe("security configuration hardening", () => {
     expect(manifest).toMatch(/automountServiceAccountToken:\s*false/);
     expect(manifest).toMatch(/enableServiceLinks:\s*false/);
     expect(manifest).toMatch(/- name: workspace[\s\S]*allowPrivilegeEscalation:\s*false/);
+    expect(manifest).toMatch(/- name: workspace[\s\S]*capabilities:\s*[\r\n]+\s*drop:\s*[\r\n]+\s*-\s*ALL/);
     expect(manifest).toMatch(/- name: workspace[\s\S]*seccompProfile:\s*[\r\n]+\s*type:\s*RuntimeDefault/);
     expect(manifest).toMatch(/- name: NEMOCLAW_POLICY_MODE[\s\S]*value:\s*"suggested"/);
-    expect(manifest).toContain("curl -fsSLo /tmp/nemoclaw-install.sh https://www.nvidia.com/nemoclaw.sh");
+    expect(manifest).toContain('export COMPATIBLE_API_KEY="${COMPATIBLE_API_KEY:-dummy}"');
+    expect(manifest).toMatch(/- name: COMPATIBLE_API_KEY[\s\S]*secretKeyRef:[\s\S]*name:\s*nemoclaw-compatible-api-key/);
+    expect(manifest).toMatch(/- name: COMPATIBLE_API_KEY[\s\S]*optional:\s*true/);
+    expect(manifest).toContain("curl --proto '=https' --tlsv1.2 --fail --show-error --silent");
+    expect(manifest).toContain("--output /tmp/nemoclaw-install.sh");
+    expect(manifest).toContain("chmod 700 /tmp/nemoclaw-install.sh");
     expect(manifest).toContain("bash /tmp/nemoclaw-install.sh");
     expect(manifest).not.toContain("curl -fsSL https://nvidia.com/nemoclaw.sh | bash");
   });
