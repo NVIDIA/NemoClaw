@@ -243,6 +243,11 @@ describe("policies", () => {
       const raw = "Error: failed to parse sandbox policy YAML";
       expect(policies.parseCurrentPolicy(raw)).toBe("");
     });
+
+    it("drops syntactically invalid or truncated YAML bodies", () => {
+      const raw = "Version: 3\n---\nversion: 1\nnetwork_policies";
+      expect(policies.parseCurrentPolicy(raw)).toBe("");
+    });
   });
 
   describe("mergePresetIntoPolicy", () => {

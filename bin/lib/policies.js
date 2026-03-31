@@ -6,6 +6,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const YAML = require("yaml");
 const { ROOT, run, runCapture, shellQuote } = require("./runner");
 const registry = require("./registry");
 
@@ -81,6 +82,14 @@ function parseCurrentPolicy(raw) {
     return "";
   }
   if (!/^[a-z_][a-z0-9_]*\s*:/m.test(candidate)) {
+    return "";
+  }
+  try {
+    const parsed = YAML.parse(candidate);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return "";
+    }
+  } catch {
     return "";
   }
   return candidate;

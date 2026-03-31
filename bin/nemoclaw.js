@@ -119,6 +119,14 @@ function cleanupGatewayAfterLastSandbox() {
   );
 }
 
+function hasNoLiveSandboxes() {
+  const liveList = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  if (liveList.status !== 0) {
+    return false;
+  }
+  return parseLiveSandboxNames(liveList.output).size === 0;
+}
+
 function parseVersionFromText(value = "") {
   const match = String(value || "").match(/([0-9]+\.[0-9]+\.[0-9]+)/);
   return match ? match[1] : null;
@@ -1098,9 +1106,15 @@ async function sandboxDestroy(sandboxName, args = []) {
   else nim.stopNimContainer(sandboxName);
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
-  runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
+  const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
 
-  if (registry.removeSandbox(sandboxName) && registry.listSandboxes().sandboxes.length === 0) {
+  const removed = registry.removeSandbox(sandboxName);
+  if (
+    deleteResult.status === 0 &&
+    removed &&
+    registry.listSandboxes().sandboxes.length === 0 &&
+    hasNoLiveSandboxes()
+  ) {
     cleanupGatewayAfterLastSandbox();
   }
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);
