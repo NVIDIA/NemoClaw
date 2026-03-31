@@ -41,6 +41,17 @@ describe("credential prompts", () => {
     expect(source).toMatch(/reject\(err\);\s*\}\);/);
   });
 
+  it("re-raises SIGINT from standard readline prompts instead of treating it like an empty answer", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "credentials.js"),
+      "utf-8"
+    );
+
+    expect(source).toContain('rl.on("SIGINT"');
+    expect(source).toContain('new Error("Prompt interrupted")');
+    expect(source).toContain('process.kill(process.pid, "SIGINT")');
+  });
+
   it("normalizes credential values and keeps prompting on invalid NVIDIA API key prefixes", async () => {
     const credentials = await import("../bin/lib/credentials.js");
     expect(credentials.normalizeCredentialValue("  nvapi-good-key\r\n")).toBe("nvapi-good-key");

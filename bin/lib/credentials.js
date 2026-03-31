@@ -135,7 +135,10 @@ function prompt(question, opts = {}) {
       return;
     }
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    rl.question(question, (answer) => {
+    let finished = false;
+    function finish(fn, value) {
+      if (finished) return;
+      finished = true;
       rl.close();
       if (!process.stdin.isTTY) {
         if (typeof process.stdin.pause === "function") {
@@ -145,7 +148,15 @@ function prompt(question, opts = {}) {
           process.stdin.unref();
         }
       }
-      resolve(answer.trim());
+      fn(value);
+    }
+    rl.on("SIGINT", () => {
+      const err = Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
+      finish(reject, err);
+      process.kill(process.pid, "SIGINT");
+    });
+    rl.question(question, (answer) => {
+      finish(resolve, answer.trim());
     });
   });
 }
