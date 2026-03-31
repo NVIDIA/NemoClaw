@@ -100,7 +100,30 @@ async function checkPortAvailable(port, opts) {
       }
       // Empty lsof output is not authoritative — non-root users cannot
       // see listeners owned by root (e.g., docker-proxy, leftover gateway).
-      // Fall through to the net probe which uses bind() at the kernel level.
+      // Retry with sudo to identify root-owned listeners before falling
+      // through to the net probe (which can only detect EADDRINUSE but not
+      // the owning process).
+      if (dataLines.length === 0 && !o.lsofOutput) {
+        const sudoOut = runCapture(
+          `sudo lsof -i :${p} -sTCP:LISTEN -P -n 2>/dev/null`,
+          { ignoreError: true }
+        );
+        if (typeof sudoOut === "string") {
+          const sudoLines = sudoOut.split("\n").filter((l) => l.trim());
+          const sudoData = sudoLines.filter((l) => !l.startsWith("COMMAND"));
+          if (sudoData.length > 0) {
+            const parts = sudoData[0].split(/\s+/);
+            const proc = parts[0] || "unknown";
+            const pid = parseInt(parts[1], 10) || null;
+            return {
+              ok: false,
+              process: proc,
+              pid,
+              reason: `sudo lsof reports ${proc} (PID ${pid}) listening on port ${p}`,
+            };
+          }
+        }
+      }
     }
   }
 
