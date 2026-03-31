@@ -125,21 +125,62 @@ describe("inference selection config", () => {
       provider: "vllm-local",
       providerLabel: "Local vLLM",
     });
-
-    expect(getProviderSelectionConfig("bedrock", "anthropic.claude-3-7-sonnet")).toEqual({
-      endpointType: "custom",
-      endpointUrl: INFERENCE_ROUTE_URL,
-      ncpPartner: null,
-      model: "anthropic.claude-3-7-sonnet",
-      profile: DEFAULT_ROUTE_PROFILE,
-      credentialEnv: "BEDROCK_API_KEY",
-      provider: "bedrock",
-      providerLabel: "Amazon Bedrock (OpenAI-compatible)",
-    });
   });
 
   it("returns null for unknown providers", () => {
     expect(getProviderSelectionConfig("bogus-provider")).toBe(null);
+  });
+
+  // Guard: the provider list is intentionally closed. CSP-specific wrappers
+  // (Bedrock, Vertex, Azure OpenAI, etc.) are already reachable through the
+  // "compatible-endpoint" or "compatible-anthropic-endpoint" options.
+  // Adding a new first-class provider key requires explicit approval.
+  it("does not grow beyond the approved provider set", () => {
+    const APPROVED_PROVIDERS = [
+      "nvidia-prod",
+      "nvidia-nim",
+      "openai-api",
+      "anthropic-prod",
+      "compatible-anthropic-endpoint",
+      "gemini-api",
+      "compatible-endpoint",
+      "vllm-local",
+      "ollama-local",
+    ];
+
+    // Every approved provider must still be recognised.
+    for (const key of APPROVED_PROVIDERS) {
+      expect(getProviderSelectionConfig(key)).not.toBe(null);
+    }
+
+    // Probe a broad set of plausible names; none outside the approved list
+    // should resolve. If this fails you are adding a new provider — use
+    // "compatible-endpoint" or "compatible-anthropic-endpoint" instead.
+    const CANDIDATES = [
+      "bedrock",
+      "vertex",
+      "azure",
+      "azure-openai",
+      "deepseek",
+      "mistral",
+      "cohere",
+      "fireworks",
+      "together",
+      "groq",
+      "lambda",
+      "replicate",
+      "perplexity",
+      "sambanova",
+    ];
+    for (const key of CANDIDATES) {
+      expect(
+        getProviderSelectionConfig(key),
+        `"${key}" resolved as a provider — the provider list is closed. ` +
+          "CSP-specific endpoints should use the compatible-endpoint or " +
+          "compatible-anthropic-endpoint options instead. " +
+          "See https://github.com/NVIDIA/NemoClaw/pull/963 for rationale.",
+      ).toBe(null);
+    }
   });
 
   it("builds a qualified OpenClaw primary model for ollama-local", () => {
@@ -157,7 +198,6 @@ describe("inference selection config", () => {
       "custom-anthropic-model",
     );
     expect(getProviderSelectionConfig("vllm-local").model).toBe("vllm-local");
-    expect(getProviderSelectionConfig("bedrock").model).toBe("nvidia.nemotron-super-3-120b");
   });
 
   it("builds a default OpenClaw primary model for non-ollama providers", () => {
