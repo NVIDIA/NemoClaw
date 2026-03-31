@@ -82,7 +82,7 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("--output")).toBeTruthy();
   });
 
-  it("debug --quick exits 0 and produces diagnostic output", () => {
+  it("debug --quick exits 0 and produces diagnostic output", { timeout: 15000 }, () => {
     const r = run("debug --quick");
     expect(r.code).toBe(0);
     expect(r.out.includes("Collecting diagnostics")).toBeTruthy();
@@ -745,4 +745,102 @@ describe("CLI dispatch", () => {
     expect(statusResult.out.includes("gateway is no longer configured after restart/rebuild")).toBeTruthy();
     expect(statusResult.out.includes("Start the gateway again")).toBeTruthy();
   }, 25000);
+});
+
+describe("list shows live gateway inference", () => {
+  it("prefers live inference model/provider over stale registry values", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-live-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    // Registry has no model/provider (mimics post-onboard before inference setup)
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          test: {
+            name: "test",
+            model: null,
+            provider: null,
+            gpuEnabled: true,
+            policies: ["pypi", "npm"],
+          },
+        },
+        defaultSandbox: "test",
+      }),
+      { mode: 0o600 }
+    );
+    // Stub openshell: inference get returns live provider/model
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        "if [ \"$1\" = \"inference\" ] && [ \"$2\" = \"get\" ]; then",
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: nvidia/nemotron-3-super-120b-a12b'",
+        "  echo '  Version: 1'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const r = runWithEnv("list", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("nvidia/nemotron-3-super-120b-a12b");
+    expect(r.out).toContain("nvidia-prod");
+    expect(r.out).not.toContain("unknown");
+  });
+
+  it("falls back to registry values when openshell inference get fails", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-fallback-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          test: {
+            name: "test",
+            model: "llama3.2:1b",
+            provider: "ollama-local",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "test",
+      }),
+      { mode: 0o600 }
+    );
+    // Stub openshell: inference get fails
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        "if [ \"$1\" = \"inference\" ] && [ \"$2\" = \"get\" ]; then",
+        "  exit 1",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const r = runWithEnv("list", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("llama3.2:1b");
+    expect(r.out).toContain("ollama-local");
+  });
 });

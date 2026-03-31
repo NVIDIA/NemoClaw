@@ -502,16 +502,31 @@ function uninstall(args) {
     exitWithSpawnResult(result);
   }
 
+  // Download to file before execution — prevents partial-download execution.
+  // Upstream URL is a rolling release so SHA-256 pinning isn't practical.
   console.log(`  Local uninstall script not found; falling back to ${REMOTE_UNINSTALL_URL}`);
-  const forwardedArgs = args.map(shellQuote).join(" ");
-  const command = forwardedArgs.length > 0
-    ? `curl -fsSL ${shellQuote(REMOTE_UNINSTALL_URL)} | bash -s -- ${forwardedArgs}`
-    : `curl -fsSL ${shellQuote(REMOTE_UNINSTALL_URL)} | bash`;
-  const result = spawnSync("bash", ["-c", command], {
-    stdio: "inherit",
-    cwd: ROOT,
-    env: process.env,
-  });
+  const uninstallDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-"));
+  const uninstallScript = path.join(uninstallDir, "uninstall.sh");
+  let result;
+  let downloadFailed = false;
+  try {
+    try {
+      execFileSync("curl", ["-fsSL", REMOTE_UNINSTALL_URL, "-o", uninstallScript], { stdio: "inherit" });
+    } catch {
+      console.error(`  Failed to download uninstall script from ${REMOTE_UNINSTALL_URL}`);
+      downloadFailed = true;
+    }
+    if (!downloadFailed) {
+      result = spawnSync("bash", [uninstallScript, ...args], {
+        stdio: "inherit",
+        cwd: ROOT,
+        env: process.env,
+      });
+    }
+  } finally {
+    fs.rmSync(uninstallDir, { recursive: true, force: true });
+  }
+  if (downloadFailed) process.exit(1);
   exitWithSpawnResult(result);
 }
 
@@ -519,12 +534,15 @@ function showStatus() {
   // Show sandbox registry
   const { sandboxes, defaultSandbox } = registry.listSandboxes();
   if (sandboxes.length > 0) {
+    const live = parseGatewayInference(
+      captureOpenshell(["inference", "get"], { ignoreError: true }).output
+    );
     console.log("");
     console.log("  Sandboxes:");
     for (const sb of sandboxes) {
       const def = sb.name === defaultSandbox ? " *" : "";
-      const model = sb.model ? ` (${sb.model})` : "";
-      console.log(`    ${sb.name}${def}${model}`);
+      const model = (live && live.model) || sb.model;
+      console.log(`    ${sb.name}${def}${model ? ` (${model})` : ""}`);
     }
     console.log("");
   }
@@ -542,12 +560,17 @@ function listSandboxes() {
     return;
   }
 
+  // Query live gateway inference once; prefer it over stale registry values.
+  const live = parseGatewayInference(
+    captureOpenshell(["inference", "get"], { ignoreError: true }).output
+  );
+
   console.log("");
   console.log("  Sandboxes:");
   for (const sb of sandboxes) {
     const def = sb.name === defaultSandbox ? " *" : "";
-    const model = sb.model || "unknown";
-    const provider = sb.provider || "unknown";
+    const model = (live && live.model) || sb.model || "unknown";
+    const provider = (live && live.provider) || sb.provider || "unknown";
     const gpu = sb.gpuEnabled ? "GPU" : "CPU";
     const presets = sb.policies && sb.policies.length > 0 ? sb.policies.join(", ") : "none";
     console.log(`    ${sb.name}${def}`);

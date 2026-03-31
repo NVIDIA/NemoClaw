@@ -23,6 +23,8 @@ import {
   getSandboxStateFromOutputs,
   getStableGatewayImageRef,
   isGatewayHealthy,
+  classifyValidationFailure,
+  normalizeProviderBaseUrl,
   patchStagedDockerfile,
   printSandboxCreateRecoveryHints,
   shouldIncludeBuildContextPath,
@@ -121,6 +123,30 @@ describe("onboard helpers", () => {
         inferenceApi: "openai-completions",
         inferenceCompat: null,
       }
+    );
+  });
+
+  it("classifies model-related 404/405 responses as model retries before endpoint retries", () => {
+    expect(
+      classifyValidationFailure({
+        httpStatus: 404,
+        message: "HTTP 404: model not found",
+      })
+    ).toEqual({ kind: "model", retry: "model" });
+    expect(
+      classifyValidationFailure({
+        httpStatus: 405,
+        message: "HTTP 405: unsupported model",
+      })
+    ).toEqual({ kind: "model", retry: "model" });
+  });
+
+  it("normalizes anthropic-compatible base URLs with a trailing /v1", () => {
+    expect(normalizeProviderBaseUrl("https://proxy.example.com/v1", "anthropic")).toBe(
+      "https://proxy.example.com"
+    );
+    expect(normalizeProviderBaseUrl("https://proxy.example.com/v1/messages", "anthropic")).toBe(
+      "https://proxy.example.com"
     );
   });
 
@@ -428,9 +454,13 @@ describe("onboard helpers", () => {
   it("writes sandbox sync scripts to a temp file for stdin redirection", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-test-"));
     try {
-      const scriptFile = writeSandboxConfigSyncFile("echo test", tmpDir, 1234);
-      expect(scriptFile).toBe(path.join(tmpDir, "nemoclaw-sync-1234.sh"));
+      const scriptFile = writeSandboxConfigSyncFile("echo test", tmpDir);
+      expect(scriptFile).toMatch(/nemoclaw-sync-.*[/\\]sync\.sh$/);
       expect(fs.readFileSync(scriptFile, "utf8")).toBe("echo test\n");
+      if (process.platform !== "win32") {
+        const stat = fs.statSync(scriptFile);
+        expect(stat.mode & 0o777).toBe(0o600);
+      }
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -817,6 +847,213 @@ const { setupInference } = require(${onboardPath});
     assert.match(commands[3].command, /inference' 'set' '--no-verify'/);
   });
 
+  it("re-prompts for credentials when openshell inference set fails with authorization errors", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-apply-auth-retry-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-inference-auth-retry-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const credentials = require(${credentialsPath});
+
+const commands = [];
+const answers = ["retry", "sk-good"];
+let inferenceSetCalls = 0;
+
+credentials.prompt = async () => answers.shift() || "";
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  if (command.includes("'inference' 'set'")) {
+    inferenceSetCalls += 1;
+    if (inferenceSetCalls === 1) {
+      return { status: 1, stdout: "", stderr: "HTTP 403: forbidden" };
+    }
+  }
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  if (command.includes("inference") && command.includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: openai-api",
+      "  Model: gpt-5.4",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+
+process.env.OPENAI_API_KEY = "sk-bad";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference("test-box", "gpt-5.4", "openai-api", "https://api.openai.com/v1", "OPENAI_API_KEY");
+  console.log(JSON.stringify({ commands, key: process.env.OPENAI_API_KEY, inferenceSetCalls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.equal(payload.key, "sk-good");
+    assert.equal(payload.inferenceSetCalls, 2);
+    const providerEnvs = payload.commands
+      .filter((entry) => entry.command.includes("'provider'"))
+      .map((entry) => entry.env && entry.env.OPENAI_API_KEY)
+      .filter(Boolean);
+    assert.deepEqual(providerEnvs, ["sk-bad", "sk-good"]);
+  });
+
+  it("returns control to provider selection when inference apply recovery chooses back", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-apply-back-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-inference-apply-back-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const credentials = require(${credentialsPath});
+
+const commands = [];
+credentials.prompt = async () => "back";
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  if (command.includes("'inference' 'set'")) {
+    return { status: 1, stdout: "", stderr: "HTTP 404: model not found" };
+  }
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = () => "";
+registry.updateSandbox = () => true;
+
+process.env.OPENAI_API_KEY = "sk-secret-value";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  const result = await setupInference("test-box", "gpt-5.4", "openai-api", "https://api.openai.com/v1", "OPENAI_API_KEY");
+  console.log(JSON.stringify({ result, commands }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.deepEqual(payload.result, { retry: "selection" });
+    assert.equal(
+      payload.commands.filter((entry) => entry.command.includes("'inference' 'set'")).length,
+      1
+    );
+  });
+
+  it("uses split curl timeout args and does not mislabel curl usage errors as timeouts", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
+      "utf-8"
+    );
+
+    assert.match(source, /return \["--connect-timeout", "10", "--max-time", "60"\];/);
+    assert.match(source, /failure\.curlStatus === 2/);
+    assert.match(source, /local curl invocation error/);
+  });
+
+  it("suppresses expected provider-create AlreadyExists noise when update succeeds", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
+      "utf-8"
+    );
+
+    assert.match(source, /stdio: \["ignore", "pipe", "pipe"\]/);
+    assert.match(source, /console\.log\(`✓ Created provider \$\{name\}`\)/);
+    assert.match(source, /console\.log\(`✓ Updated provider \$\{name\}`\)/);
+  });
+
+  it("starts the sandbox step before prompting for the sandbox name", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
+      "utf-8"
+    );
+
+    assert.match(
+      source,
+      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*sandboxName = await createSandbox\(gpu, model, provider, preferredInferenceApi, sandboxName\);/
+    );
+  });
+
+  it("prints numbered step headers even when onboarding skips resumed steps", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
+      "utf-8"
+    );
+
+    assert.match(source, /const ONBOARD_STEP_INDEX = \{/);
+    assert.match(source, /function skippedStepMessage\(stepName, detail, reason = "resume"\)/);
+    assert.match(source, /step\(stepInfo\.number, 7, stepInfo\.title\);/);
+    assert.match(source, /skippedStepMessage\("openclaw", sandboxName\)/);
+    assert.match(source, /skippedStepMessage\("policies", \(recordedPolicyPresets \|\| \[\]\)\.join\(", "\)\)/);
+  });
+
+  it("surfaces sandbox-create phases and silence heartbeats during long image operations", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
+      "utf-8"
+    );
+
+    assert.match(source, /function setPhase\(nextPhase\)/);
+    assert.match(source, /Building sandbox image\.\.\./);
+    assert.match(source, /Uploading image into OpenShell gateway\.\.\./);
+    assert.match(source, /Creating sandbox in gateway\.\.\./);
+    assert.match(source, /Still building sandbox image\.\.\. \(\$\{elapsed\}s elapsed\)/);
+    assert.match(source, /Still uploading image into OpenShell gateway\.\.\. \(\$\{elapsed\}s elapsed\)/);
+  });
+
   it("hydrates stored provider credentials when setupInference runs without process env set", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-cred-"));
@@ -966,6 +1203,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  if (command.includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -1066,6 +1304,7 @@ runner.runCapture = (command) => {
     sandboxListCalls += 1;
     return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
   }
+  if (command.includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
   return "";
 };
 registry.registerSandbox = () => true;

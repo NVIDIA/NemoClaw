@@ -21,10 +21,11 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-info() { echo -e "${GREEN}[brev]${NC} $1"; }
-warn() { echo -e "${YELLOW}[brev]${NC} $1"; }
+_ts() { date '+%H:%M:%S'; }
+info() { echo -e "${GREEN}[$(_ts) brev]${NC} $1"; }
+warn() { echo -e "${YELLOW}[$(_ts) brev]${NC} $1"; }
 fail() {
-  echo -e "${RED}[brev]${NC} $1"
+  echo -e "${RED}[$(_ts) brev]${NC} $1"
   exit 1
 }
 
@@ -39,7 +40,23 @@ export DEBIAN_FRONTEND=noninteractive
 # --- 0. Node.js (needed for services) ---
 if ! command -v node >/dev/null 2>&1; then
   info "Installing Node.js..."
-  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - >/dev/null 2>&1
+  NODESOURCE_URL="https://deb.nodesource.com/setup_22.x"
+  NODESOURCE_SHA256="575583bbac2fccc0b5edd0dbc03e222d9f9dc8d724da996d22754d6411104fd1"
+  (
+    tmpdir="$(mktemp -d)"
+    trap 'rm -rf "$tmpdir"' EXIT
+    curl -fsSL "$NODESOURCE_URL" -o "$tmpdir/setup_node.sh"
+    if command -v sha256sum >/dev/null 2>&1; then
+      echo "$NODESOURCE_SHA256  $tmpdir/setup_node.sh" | sha256sum -c - >/dev/null \
+        || fail "NodeSource installer checksum mismatch — expected $NODESOURCE_SHA256"
+    elif command -v shasum >/dev/null 2>&1; then
+      echo "$NODESOURCE_SHA256  $tmpdir/setup_node.sh" | shasum -a 256 -c - >/dev/null \
+        || fail "NodeSource installer checksum mismatch — expected $NODESOURCE_SHA256"
+    else
+      fail "No SHA-256 verification tool found (need sha256sum or shasum)"
+    fi
+    sudo -E bash "$tmpdir/setup_node.sh" >/dev/null 2>&1
+  )
   sudo apt-get install -y -qq nodejs >/dev/null 2>&1
   info "Node.js $(node --version) installed"
 else
@@ -120,7 +137,9 @@ fi
 
 # --- 4. vLLM (local inference, if GPU present) ---
 VLLM_MODEL="nvidia/nemotron-3-nano-30b-a3b"
-if command -v nvidia-smi >/dev/null 2>&1; then
+if [ "${SKIP_VLLM:-}" = "1" ]; then
+  info "Skipping vLLM install (SKIP_VLLM=1)"
+elif command -v nvidia-smi >/dev/null 2>&1; then
   if ! python3 -c "import vllm" 2>/dev/null; then
     info "Installing vLLM..."
     if ! command -v pip3 >/dev/null 2>&1; then

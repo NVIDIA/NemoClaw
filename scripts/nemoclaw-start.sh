@@ -73,13 +73,13 @@ OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 verify_config_integrity() {
   local hash_file="/sandbox/.openclaw/.config-hash"
   if [ ! -f "$hash_file" ]; then
-    echo "[SECURITY] Config hash file missing — refusing to start without integrity verification"
+    echo "[SECURITY] Config hash file missing — refusing to start without integrity verification" >&2
     return 1
   fi
   if ! (cd /sandbox/.openclaw && sha256sum -c "$hash_file" --status 2>/dev/null); then
-    echo "[SECURITY] openclaw.json integrity check FAILED — config may have been tampered with"
-    echo "[SECURITY] Expected hash: $(cat "$hash_file")"
-    echo "[SECURITY] Actual hash:   $(sha256sum /sandbox/.openclaw/openclaw.json)"
+    echo "[SECURITY] openclaw.json integrity check FAILED — config may have been tampered with" >&2
+    echo "[SECURITY] Expected hash: $(cat "$hash_file")" >&2
+    echo "[SECURITY] Actual hash:   $(sha256sum /sandbox/.openclaw/openclaw.json)" >&2
     return 1
   fi
 }
@@ -131,8 +131,8 @@ PYTOKEN
     remote_url="${remote_url}#token=${token}"
   fi
 
-  echo "[gateway] Local UI: ${local_url}"
-  echo "[gateway] Remote UI: ${remote_url}"
+  echo "[gateway] Local UI: ${local_url}" >&2
+  echo "[gateway] Remote UI: ${remote_url}" >&2
 }
 
 start_auto_pair() {
@@ -202,7 +202,7 @@ while time.time() < DEADLINE:
 else:
     print(f'[auto-pair] watcher timed out approvals={APPROVED}')
 PYAUTOPAIR
-  echo "[gateway] auto-pair watcher launched (pid $!)"
+  echo "[gateway] auto-pair watcher launched (pid $!)" >&2
 }
 
 # ── Proxy environment ────────────────────────────────────────────
@@ -283,7 +283,7 @@ fi
 
 # ── Main ─────────────────────────────────────────────────────────
 
-echo 'Setting up NemoClaw...'
+echo 'Setting up NemoClaw...' >&2
 [ -f .env ] && chmod 600 .env
 
 # ── Non-root fallback ──────────────────────────────────────────
@@ -292,10 +292,11 @@ echo 'Setting up NemoClaw...'
 # separation and run everything as the current user (sandbox).
 # Gateway process isolation is not available in this mode.
 if [ "$(id -u)" -ne 0 ]; then
-  echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled"
+  echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled" >&2
   export HOME=/sandbox
   if ! verify_config_integrity; then
-    echo "[SECURITY WARNING] Config integrity check failed — proceeding anyway (non-root mode)"
+    echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
+    exit 1
   fi
   write_auth_profile
 
@@ -315,7 +316,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # Start gateway in background, auto-pair, then wait
   nohup "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
-  echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)"
+  echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
   start_auto_pair
   print_dashboard_urls
   wait "$GATEWAY_PID"
@@ -353,7 +354,7 @@ for entry in /sandbox/.openclaw/*; do
   target="$(readlink -f "$entry" 2>/dev/null || true)"
   expected="/sandbox/.openclaw-data/$name"
   if [ "$target" != "$expected" ]; then
-    echo "[SECURITY] Symlink $entry points to unexpected target: $target (expected $expected)"
+    echo "[SECURITY] Symlink $entry points to unexpected target: $target (expected $expected)" >&2
     exit 1
   fi
 done
@@ -364,7 +365,7 @@ done
 # the agent cannot restart the gateway with a tampered config.
 nohup gosu gateway "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
 GATEWAY_PID=$!
-echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)"
+echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
 
 start_auto_pair
 print_dashboard_urls
