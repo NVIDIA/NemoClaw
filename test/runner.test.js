@@ -293,5 +293,68 @@ describe("regression guards", () => {
         expect(line.includes("NVIDIA_API_KEY")).toBe(false);
       }
     });
+
+    it("install-openshell.sh verifies OpenShell binary checksum after download", () => {
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh"), "utf-8");
+      expect(src).toContain("openshell-checksums-sha256.txt");
+      expect(src).toContain("shasum -a 256 -c");
+    });
+  });
+
+  describe("curl-pipe-to-shell guards (#574, #583)", () => {
+    // Strip comment lines, then join line continuations so multiline
+    // curl ... |\n  bash patterns are caught by the single-line regex.
+    const stripComments = (src, commentPrefix) =>
+      src.split("\n").filter((l) => !l.trim().startsWith(commentPrefix)).join("\n");
+
+    const joinContinuations = (src) =>
+      src.replace(/\\\n\s*/g, " ");
+
+    const collapseMultilinePipes = (src) =>
+      src.replace(/\|\s*\n\s*/g, "| ");
+
+    const normalize = (src, commentPrefix) =>
+      collapseMultilinePipes(joinContinuations(stripComments(src, commentPrefix)));
+
+    const shellViolationRe = /curl\s[^|]*\|\s*(sh|bash|sudo\s+(-\S+\s+)*(sh|bash))\b/;
+    const jsViolationRe = /curl.*\|\s*(sh|bash|sudo\s+(-\S+\s+)*(sh|bash))\b/;
+
+    const findShellViolations = (src) => {
+      const normalized = normalize(src, "#");
+      return normalized.split("\n").filter((line) => {
+        const t = line.trim();
+        if (t.startsWith("printf") || t.startsWith("echo")) return false;
+        return shellViolationRe.test(t);
+      });
+    };
+
+    const findJsViolations = (src) => {
+      const normalized = normalize(src, "//");
+      return normalized.split("\n").filter((line) => {
+        const t = line.trim();
+        if (t.startsWith("*")) return false;
+        return jsViolationRe.test(t);
+      });
+    };
+
+    it("install.sh does not pipe curl to shell", () => {
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "install.sh"), "utf-8");
+      expect(findShellViolations(src)).toEqual([]);
+    });
+
+    it("scripts/install.sh does not pipe curl to shell", () => {
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "scripts", "install.sh"), "utf-8");
+      expect(findShellViolations(src)).toEqual([]);
+    });
+
+    it("scripts/brev-setup.sh does not pipe curl to shell", () => {
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "scripts", "brev-setup.sh"), "utf-8");
+      expect(findShellViolations(src)).toEqual([]);
+    });
+
+    it("bin/nemoclaw.js does not pipe curl to shell", () => {
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"), "utf-8");
+      expect(findJsViolations(src)).toEqual([]);
+    });
   });
 });

@@ -264,6 +264,7 @@ Troubleshooting <reference/troubleshooting>
 :caption: Resources
 :hidden:
 
+Report Vulnerabilities <https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md>
 resources/license
 Discord <https://discord.gg/XFpfPv9Uvx>
 ```

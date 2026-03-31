@@ -485,14 +485,28 @@ install_or_upgrade_ollama() {
       info "Ollama v${current} meets minimum requirement (>= v${OLLAMA_MIN_VERSION})"
     else
       info "Ollama v${current:-unknown} is below v${OLLAMA_MIN_VERSION} — upgrading…"
-      curl -fsSL https://ollama.com/install.sh | sh
+      # Upstream URL is a rolling release so SHA-256 pinning isn't practical,
+      # but download-then-execute allows inspection and prevents partial-download execution.
+      (
+        tmpdir="$(mktemp -d)"
+        trap 'rm -rf "$tmpdir"' EXIT
+        curl -fsSL https://ollama.com/install.sh -o "$tmpdir/install_ollama.sh"
+        sh "$tmpdir/install_ollama.sh"
+      )
       info "Ollama upgraded to $(get_ollama_version)"
     fi
   else
     # No ollama — only install if a GPU is present
     if detect_gpu; then
       info "GPU detected — installing Ollama…"
-      curl -fsSL https://ollama.com/install.sh | sh
+      # Upstream URL is a rolling release so SHA-256 pinning isn't practical,
+      # but download-then-execute allows inspection and prevents partial-download execution.
+      (
+        tmpdir="$(mktemp -d)"
+        trap 'rm -rf "$tmpdir"' EXIT
+        curl -fsSL https://ollama.com/install.sh -o "$tmpdir/install_ollama.sh"
+        sh "$tmpdir/install_ollama.sh"
+      )
       info "Ollama installed: v$(get_ollama_version)"
     else
       warn "No GPU detected — skipping Ollama installation."

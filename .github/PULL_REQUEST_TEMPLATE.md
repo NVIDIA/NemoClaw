@@ -2,8 +2,6 @@
 ## Summary
 <!-- 1-3 sentences: what this PR does and why. -->
 
-Signed-off-by: Your Name <your-email@example.com>
-
 ## Related Issue
 <!-- Link to the issue: Fixes #NNN or Closes #NNN. Remove this section if none. -->
 
@@ -42,3 +40,7 @@ Signed-off-by: Your Name <your-email@example.com>
 - [ ] Follows the [style guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md). Try running the `update-docs` agent skill to draft changes while complying with the style guide. For example, prompt your agent with "`/update-docs` catch up the docs for the new changes I made in this PR."
 - [ ] New pages include SPDX license header and frontmatter, if creating a new page.
 - [ ] Cross-references and links verified.
+
+---
+<!-- DCO sign-off (required by CI). Replace with your real name and email. -->
+Signed-off-by: Your Name <your-email@example.com>
