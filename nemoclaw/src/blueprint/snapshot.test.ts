@@ -126,7 +126,9 @@ describe("snapshot", () => {
       const result = createSnapshot();
 
       expect(result).not.toBeNull();
-      expect(result!.startsWith(SNAPSHOTS_DIR)).toBe(true);
+      if (!result) throw new Error("createSnapshot returned null");
+      
+      expect(result.startsWith(SNAPSHOTS_DIR)).toBe(true);
 
       // Manifest was written
       const manifestPath = `${result}/snapshot.json`;

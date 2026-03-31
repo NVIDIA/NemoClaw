@@ -38,15 +38,21 @@ describe("uninstall CLI flags", () => {
   });
 
   it("--yes skips the confirmation prompt and completes successfully", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-yes-"));
+    const tmp = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-uninstall-yes-"),
+    );
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
 
     try {
       for (const cmd of ["npm", "openshell", "docker", "ollama", "pgrep"]) {
-        fs.writeFileSync(path.join(fakeBin, cmd), "#!/usr/bin/env bash\nexit 0\n", {
-          mode: 0o755,
-        });
+        fs.writeFileSync(
+          path.join(fakeBin, cmd),
+          "#!/usr/bin/env bash\nexit 0\n",
+          {
+            mode: 0o755,
+          },
+        );
       }
 
       const result = spawnSync("bash", [UNINSTALL_SCRIPT, "--yes"], {
@@ -74,11 +80,14 @@ describe("uninstall helpers", () => {
   it("returns the expected gateway volume candidate", () => {
     const result = spawnSync(
       "bash",
-      ["-c", `source "${UNINSTALL_SCRIPT}"; gateway_volume_candidates nemoclaw`],
+      [
+        "-c",
+        `source "${UNINSTALL_SCRIPT}"; gateway_volume_candidates nemoclaw`,
+      ],
       {
         cwd: path.join(import.meta.dirname, ".."),
         encoding: "utf-8",
-      }
+      },
     );
 
     expect(result.status).toBe(0);
@@ -86,7 +95,9 @@ describe("uninstall helpers", () => {
   });
 
   it("removes the user-local nemoclaw shim", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-shim-"));
+    const tmp = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-uninstall-shim-"),
+    );
     const shimDir = path.join(tmp, ".local", "bin");
     const shimPath = path.join(shimDir, "nemoclaw");
     const targetPath = path.join(tmp, "prefix", "bin", "nemoclaw");
@@ -103,7 +114,7 @@ describe("uninstall helpers", () => {
         cwd: path.join(import.meta.dirname, ".."),
         encoding: "utf-8",
         env: createFakeNpmEnv(tmp),
-      }
+      },
     );
 
     expect(result.status).toBe(0);
@@ -111,7 +122,9 @@ describe("uninstall helpers", () => {
   });
 
   it("preserves a user-managed nemoclaw file in the shim directory", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-"));
+    const tmp = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-"),
+    );
     const shimDir = path.join(tmp, ".local", "bin");
     const shimPath = path.join(shimDir, "nemoclaw");
 
@@ -125,16 +138,20 @@ describe("uninstall helpers", () => {
         cwd: path.join(import.meta.dirname, ".."),
         encoding: "utf-8",
         env: createFakeNpmEnv(tmp),
-      }
+      },
     );
 
     expect(result.status).toBe(0);
     expect(fs.existsSync(shimPath)).toBe(true);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/not an installer-managed shim/);
+    expect(`${result.stdout}${result.stderr}`).toMatch(
+      /not an installer-managed shim/,
+    );
   });
 
   it("removes the onboard session file as part of NemoClaw state cleanup", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-session-"));
+    const tmp = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-uninstall-session-"),
+    );
     const stateDir = path.join(tmp, ".nemoclaw");
     const sessionPath = path.join(stateDir, "onboard-session.json");
 
@@ -148,7 +165,7 @@ describe("uninstall helpers", () => {
         cwd: path.join(import.meta.dirname, ".."),
         encoding: "utf-8",
         env: { ...process.env, HOME: tmp },
-      }
+      },
     );
 
     expect(result.status).toBe(0);
