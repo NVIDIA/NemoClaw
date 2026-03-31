@@ -7,7 +7,7 @@
 #   - NemoClaw helper services
 #   - All OpenShell sandboxes plus the NemoClaw gateway/providers
 #   - NemoClaw/OpenShell/OpenClaw Docker images built or pulled for the sandbox flow
-#   - ~/.nemoclaw plus ~/.config/{openshell,nemoclaw} state
+#   - ~/.nemoclaw plus ~/.config/{openshell,nemoclaw} state, including onboard-session.json
 #   - Global nemoclaw npm install/link
 #   - OpenShell binary if it was installed to the standard installer path
 #
@@ -15,14 +15,101 @@
 
 set -euo pipefail
 
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
+# ---------------------------------------------------------------------------
+# Color / style — disabled when NO_COLOR is set or stdout is not a TTY.
+# Uses exact NVIDIA green #76B900 on truecolor terminals; 256-color otherwise.
+# ---------------------------------------------------------------------------
+if [[ -z "${NO_COLOR:-}" && -t 1 ]]; then
+  if [[ "${COLORTERM:-}" == "truecolor" || "${COLORTERM:-}" == "24bit" ]]; then
+    C_GREEN=$'\033[38;2;118;185;0m' # #76B900 — exact NVIDIA green
+  else
+    C_GREEN=$'\033[38;5;148m' # closest 256-color on dark backgrounds
+  fi
+  C_BOLD=$'\033[1m'
+  C_DIM=$'\033[2m'
+  C_RED=$'\033[1;31m'
+  C_YELLOW=$'\033[1;33m'
+  C_RESET=$'\033[0m'
+else
+  C_GREEN='' C_BOLD='' C_DIM='' C_RED='' C_YELLOW='' C_RESET=''
+fi
 
-info() { echo -e "${GREEN}[uninstall]${NC} $1"; }
-warn() { echo -e "${YELLOW}[uninstall]${NC} $1"; }
-fail() { echo -e "${RED}[uninstall]${NC} $1"; exit 1; }
+info() { printf "${C_GREEN}[uninstall]${C_RESET} %s\n" "$*"; }
+warn() { printf "${C_YELLOW}[uninstall]${C_RESET} %s\n" "$*"; }
+fail() {
+  printf "${C_RED}[uninstall]${C_RESET} %s\n" "$*" >&2
+  exit 1
+}
+ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
+
+# spin "label" cmd [args...]  — spinner wrapper, same as installer.
+spin() {
+  local msg="$1"
+  shift
+
+  if [[ ! -t 1 ]]; then
+    info "$msg"
+    "$@"
+    return
+  fi
+
+  local log
+  log=$(mktemp)
+  "$@" >"$log" 2>&1 &
+  local pid=$! i=0
+  local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+
+  while kill -0 "$pid" 2>/dev/null; do
+    printf "\r  ${C_GREEN}%s${C_RESET}  %s" "${frames[$((i++ % 10))]}" "$msg"
+    sleep 0.08
+  done
+
+  wait "$pid"
+  local status=$?
+  if [[ $status -eq 0 ]]; then
+    printf "\r  ${C_GREEN}✓${C_RESET}  %s\n" "$msg"
+  else
+    printf "\r  ${C_RED}✗${C_RESET}  %s\n\n" "$msg"
+    cat "$log" >&2
+    printf "\n"
+  fi
+  rm -f "$log"
+  return $status
+}
+
+UNINSTALL_TOTAL_STEPS=6
+
+# step N "Description"
+step() {
+  local n=$1 msg=$2
+  printf "\n${C_GREEN}[%s/%s]${C_RESET} ${C_BOLD}%s${C_RESET}\n" \
+    "$n" "$UNINSTALL_TOTAL_STEPS" "$msg"
+  printf "  ${C_DIM}──────────────────────────────────────────────────${C_RESET}\n"
+}
+
+print_banner() {
+  printf "\n"
+  printf "  ${C_GREEN}${C_BOLD} ███╗   ██╗███████╗███╗   ███╗ ██████╗  ██████╗██╗      █████╗ ██╗    ██╗${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ████╗  ██║██╔════╝████╗ ████║██╔═══██╗██╔════╝██║     ██╔══██╗██║    ██║${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ██╔██╗ ██║█████╗  ██╔████╔██║██║   ██║██║     ██║     ███████║██║ █╗ ██║${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ██║╚██╗██║██╔══╝  ██║╚██╔╝██║██║   ██║██║     ██║     ██╔══██║██║███╗██║${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ██║ ╚████║███████╗██║ ╚═╝ ██║╚██████╔╝╚██████╗███████╗██║  ██║╚███╔███╔╝${C_RESET}\n"
+  printf "  ${C_GREEN}${C_BOLD} ╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝ ╚═════╝  ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝${C_RESET}\n"
+  printf "\n"
+  printf "  ${C_DIM}Uninstaller — This will remove all NemoClaw resources.${C_RESET}\n"
+  printf "  ${C_DIM}Docker, Node.js, Ollama, and npm are preserved.${C_RESET}\n"
+  printf "\n"
+}
+
+print_bye() {
+  printf "\n"
+  printf "  ${C_GREEN}${C_BOLD}NemoClaw${C_RESET}\n"
+  printf "\n"
+  printf "  ${C_GREEN}${C_BOLD}Claws retracted.${C_RESET}  ${C_DIM}Until next time.${C_RESET}\n"
+  printf "\n"
+  printf "  ${C_DIM}https://www.nvidia.com/nemoclaw${C_RESET}\n"
+  printf "\n"
+}
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NEMOCLAW_STATE_DIR="${HOME}/.nemoclaw"
@@ -40,15 +127,16 @@ KEEP_OPEN_SHELL=false
 DELETE_MODELS=false
 
 usage() {
-  cat <<'EOF'
-Usage: ./uninstall.sh [--yes] [--keep-openshell] [--delete-models]
-
-Options:
-  --yes             Skip the confirmation prompt
-  --keep-openshell  Leave the openshell binary installed
-  --delete-models   Remove NemoClaw-pulled Ollama models
-  -h, --help        Show this help
-EOF
+  printf "\n"
+  printf "  ${C_BOLD}NemoClaw Uninstaller${C_RESET}\n\n"
+  printf "  ${C_DIM}Usage:${C_RESET}\n"
+  printf "    ./uninstall.sh [--yes] [--keep-openshell] [--delete-models]\n\n"
+  printf "  ${C_GREEN}Options:${C_RESET}\n"
+  printf "    --yes             Skip the confirmation prompt\n"
+  printf "    --keep-openshell  Leave the openshell binary installed\n"
+  printf "    --delete-models   Remove NemoClaw-pulled Ollama models\n"
+  printf "    -h, --help        Show this help\n"
+  printf "\n"
 }
 
 while [ $# -gt 0 ]; do
@@ -65,7 +153,7 @@ while [ $# -gt 0 ]; do
       DELETE_MODELS=true
       shift
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -80,26 +168,40 @@ confirm() {
     return 0
   fi
 
-  echo ""
-  warn "This will remove all OpenShell sandboxes, NemoClaw-managed gateway/providers,"
-  warn "related Docker images, and local state under ~/.nemoclaw, ~/.config/openshell,"
-  warn "and ~/.config/nemoclaw."
-  warn "It will not uninstall Docker, Ollama, npm, Node.js, or other shared tooling."
-  if [ "$DELETE_MODELS" = false ]; then
-    warn "Ollama models are preserved by default. Re-run with --delete-models to remove them."
+  printf "\n"
+  printf "  ${C_YELLOW}What will be removed:${C_RESET}\n"
+  printf "  ${C_DIM}  · All OpenShell sandboxes, gateway, and NemoClaw providers${C_RESET}\n"
+  printf "  ${C_DIM}  · Related Docker containers, images, and volumes${C_RESET}\n"
+  printf "  ${C_DIM}  · ~/.nemoclaw  ~/.config/openshell  ~/.config/nemoclaw${C_RESET}\n"
+  printf "  ${C_DIM}  · Global nemoclaw npm package${C_RESET}\n"
+  if [ "$DELETE_MODELS" = true ]; then
+    printf "  ${C_DIM}  · Ollama models: %s${C_RESET}\n" "${OLLAMA_MODELS[*]}"
+  else
+    printf "  ${C_DIM}  · Ollama models: ${C_RESET}${C_GREEN}kept${C_RESET}${C_DIM} (pass --delete-models to remove)${C_RESET}\n"
   fi
-  printf "Continue? [y/N] "
-  read -r reply
+  printf "\n"
+  printf "  ${C_DIM}Docker, Node.js, npm, and Ollama are not touched.${C_RESET}\n"
+  printf "\n"
+  printf "  ${C_BOLD}Continue?${C_RESET} [y/N] "
+  local reply=""
+  if [ -t 2 ] && read -r reply 0</dev/tty 2>/dev/null; then
+    :
+  else
+    read -r reply || true
+  fi
   case "$reply" in
-    y|Y|yes|YES) ;;
-    *) info "Aborted."; exit 0 ;;
+    y | Y | yes | YES) ;;
+    *)
+      info "Aborted."
+      exit 0
+      ;;
   esac
 }
 
 run_optional() {
   local description="$1"
   shift
-  if "$@" > /dev/null 2>&1; then
+  if "$@" >/dev/null 2>&1; then
     info "$description"
   else
     warn "$description skipped"
@@ -130,7 +232,7 @@ remove_file_with_optional_sudo() {
     return 0
   fi
 
-  if [ -w "$path" ] || [ -w "$(dirname "$path")" ]; then
+  if [ -w "$(dirname "$path")" ]; then
     rm -f "$path"
   elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
     warn "Skipping privileged removal of $path in non-interactive mode."
@@ -150,7 +252,7 @@ stop_helper_services() {
 }
 
 stop_openshell_forward_processes() {
-  if ! command -v pgrep > /dev/null 2>&1; then
+  if ! command -v pgrep >/dev/null 2>&1; then
     warn "pgrep not found; skipping local OpenShell forward process cleanup."
     return 0
   fi
@@ -168,7 +270,7 @@ stop_openshell_forward_processes() {
   fi
 
   for pid in "${pids[@]}"; do
-    if kill "$pid" > /dev/null 2>&1 || kill -9 "$pid" > /dev/null 2>&1; then
+    if kill "$pid" >/dev/null 2>&1 || kill -9 "$pid" >/dev/null 2>&1; then
       info "Stopped OpenShell forward process $pid"
     else
       warn "Failed to stop OpenShell forward process $pid"
@@ -177,7 +279,7 @@ stop_openshell_forward_processes() {
 }
 
 remove_openshell_resources() {
-  if ! command -v openshell > /dev/null 2>&1; then
+  if ! command -v openshell >/dev/null 2>&1; then
     warn "openshell not found; skipping gateway/provider/sandbox cleanup."
     return 0
   fi
@@ -192,9 +294,9 @@ remove_openshell_resources() {
 }
 
 remove_nemoclaw_cli() {
-  if command -v npm > /dev/null 2>&1; then
-    npm unlink -g nemoclaw > /dev/null 2>&1 || true
-    if npm uninstall -g nemoclaw > /dev/null 2>&1; then
+  if command -v npm >/dev/null 2>&1; then
+    npm unlink -g nemoclaw >/dev/null 2>&1 || true
+    if npm uninstall -g --loglevel=error nemoclaw >/dev/null 2>&1; then
       info "Removed global nemoclaw npm package"
     else
       warn "Global nemoclaw npm package not found or already removed"
@@ -203,9 +305,17 @@ remove_nemoclaw_cli() {
     warn "npm not found; skipping nemoclaw npm uninstall."
   fi
 
-  if [ -L "${NEMOCLAW_SHIM_DIR}/nemoclaw" ] || [ -f "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
+  if [ -L "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
     remove_path "${NEMOCLAW_SHIM_DIR}/nemoclaw"
+  elif [ -f "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
+    warn "Leaving ${NEMOCLAW_SHIM_DIR}/nemoclaw in place because it is not an installer-managed shim."
   fi
+}
+
+remove_docker_resources() {
+  remove_related_docker_containers
+  remove_related_docker_images
+  remove_related_docker_volumes
 }
 
 remove_nemoclaw_state() {
@@ -215,12 +325,12 @@ remove_nemoclaw_state() {
 }
 
 remove_related_docker_containers() {
-  if ! command -v docker > /dev/null 2>&1; then
+  if ! command -v docker >/dev/null 2>&1; then
     warn "docker not found; skipping Docker container cleanup."
     return 0
   fi
 
-  if ! docker info > /dev/null 2>&1; then
+  if ! docker info >/dev/null 2>&1; then
     warn "docker is not running; skipping Docker container cleanup."
     return 0
   fi
@@ -252,7 +362,7 @@ remove_related_docker_containers() {
   local removed_any=false
   local container_id
   for container_id in "${container_ids[@]}"; do
-    if docker rm -f "$container_id" > /dev/null 2>&1; then
+    if docker rm -f "$container_id" >/dev/null 2>&1; then
       info "Removed Docker container $container_id"
       removed_any=true
     else
@@ -266,12 +376,12 @@ remove_related_docker_containers() {
 }
 
 remove_related_docker_images() {
-  if ! command -v docker > /dev/null 2>&1; then
+  if ! command -v docker >/dev/null 2>&1; then
     warn "docker not found; skipping Docker image cleanup."
     return 0
   fi
 
-  if ! docker info > /dev/null 2>&1; then
+  if ! docker info >/dev/null 2>&1; then
     warn "docker is not running; skipping Docker image cleanup."
     return 0
   fi
@@ -303,7 +413,7 @@ remove_related_docker_images() {
   local removed_any=false
   local image_id
   for image_id in "${image_ids[@]}"; do
-    if docker rmi -f "$image_id" > /dev/null 2>&1; then
+    if docker rmi -f "$image_id" >/dev/null 2>&1; then
       info "Removed Docker image $image_id"
       removed_any=true
     else
@@ -323,12 +433,12 @@ gateway_volume_candidates() {
 }
 
 remove_related_docker_volumes() {
-  if ! command -v docker > /dev/null 2>&1; then
+  if ! command -v docker >/dev/null 2>&1; then
     warn "docker not found; skipping Docker volume cleanup."
     return 0
   fi
 
-  if ! docker info > /dev/null 2>&1; then
+  if ! docker info >/dev/null 2>&1; then
     warn "docker is not running; skipping Docker volume cleanup."
     return 0
   fi
@@ -347,8 +457,8 @@ remove_related_docker_volumes() {
 
   local removed_any=false
   for volume_name in "${volume_names[@]}"; do
-    if docker volume inspect "$volume_name" > /dev/null 2>&1; then
-      if docker volume rm -f "$volume_name" > /dev/null 2>&1; then
+    if docker volume inspect "$volume_name" >/dev/null 2>&1; then
+      if docker volume rm -f "$volume_name" >/dev/null 2>&1; then
         info "Removed Docker volume $volume_name"
         removed_any=true
       else
@@ -368,19 +478,59 @@ remove_optional_ollama_models() {
     return 0
   fi
 
-  if ! command -v ollama > /dev/null 2>&1; then
+  if ! command -v ollama >/dev/null 2>&1; then
     warn "ollama not found; skipping model cleanup."
     return 0
   fi
 
   local model
   for model in "${OLLAMA_MODELS[@]}"; do
-    if ollama rm "$model" > /dev/null 2>&1; then
+    if ollama rm "$model" >/dev/null 2>&1; then
       info "Removed Ollama model '$model'"
     else
       warn "Ollama model '$model' not found or already removed"
     fi
   done
+}
+
+remove_nemoclaw_swap() {
+  if [ ! -f /swapfile ]; then
+    info "No /swapfile found; skipping swap cleanup."
+    return 0
+  fi
+
+  if [ ! -f "$NEMOCLAW_STATE_DIR/managed_swap" ]; then
+    warn "No NemoClaw-managed swap marker found, skipping swap cleanup."
+    return 0
+  fi
+
+  local swap_file
+  swap_file=$(cat "$NEMOCLAW_STATE_DIR/managed_swap" 2>/dev/null || echo "")
+  if [ "$swap_file" != "/swapfile" ]; then
+    warn "Marker file does not point to /swapfile, skipping swap cleanup."
+    return 0
+  fi
+
+  if [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
+    warn "Skipping swap cleanup in non-interactive mode (requires sudo)."
+    return 0
+  fi
+
+  info "Deactivating and removing /swapfile..."
+  sudo swapoff /swapfile 2>/dev/null || true
+  sudo rm -f /swapfile
+
+  if [ -f /swapfile ]; then
+    warn "Failed to remove /swapfile. Please remove it manually."
+    return 1
+  fi
+
+  # Clean fstab entry
+  if grep -q '/swapfile' /etc/fstab 2>/dev/null; then
+    sudo sed -i '\|^/swapfile[[:space:]]|d' /etc/fstab
+    info "Removed /swapfile entry from /etc/fstab"
+  fi
+  info "Swap file removed"
 }
 
 remove_runtime_temp_artifacts() {
@@ -396,7 +546,7 @@ remove_openshell_binary() {
 
   local removed=false
   local current_path=""
-  if command -v openshell > /dev/null 2>&1; then
+  if command -v openshell >/dev/null 2>&1; then
     current_path="$(command -v openshell)"
   fi
 
@@ -415,45 +565,37 @@ remove_openshell_binary() {
 }
 
 main() {
+  print_banner
   confirm
 
-  info "Stopping NemoClaw helper services..."
+  step 1 "Stopping services"
   stop_helper_services
-
-  info "Stopping local OpenShell forward processes..."
   stop_openshell_forward_processes
 
-  info "Removing OpenShell resources created for NemoClaw..."
+  step 2 "OpenShell resources"
   remove_openshell_resources
 
-  info "Removing global nemoclaw install..."
-  remove_nemoclaw_cli
+  step 3 "NemoClaw CLI"
+  spin "Removing NemoClaw CLI..." remove_nemoclaw_cli
 
-  info "Removing NemoClaw state..."
-  remove_nemoclaw_state
+  step 4 "Docker resources"
+  spin "Removing Docker resources..." remove_docker_resources
 
-  info "Removing related Docker containers..."
-  remove_related_docker_containers
-
-  info "Removing related Docker images..."
-  remove_related_docker_images
-
-  info "Removing related Docker volumes..."
-  remove_related_docker_volumes
-
-  info "Removing optional Ollama models..."
+  step 5 "Ollama models"
   remove_optional_ollama_models
+
+  step 6 "State and binaries"
+  info "Removing NemoClaw-managed swap file..."
+  remove_nemoclaw_swap
 
   info "Removing runtime temp artifacts..."
   remove_runtime_temp_artifacts
-
-  info "Removing openshell binary..."
   remove_openshell_binary
+  remove_nemoclaw_state
 
-  echo ""
-  info "Uninstall complete."
+  print_bye
 }
 
-if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+if [ "${BASH_SOURCE[0]-}" = "$0" ] || { [ -z "${BASH_SOURCE[0]-}" ] && { [ "$0" = "bash" ] || [ "$0" = "-bash" ]; }; }; then
   main "$@"
 fi

@@ -2,7 +2,7 @@
 title:
   page: "NemoClaw CLI Commands Reference"
   nav: "Commands"
-description: "Full CLI reference for plugin and standalone NemoClaw commands."
+description: "Full CLI reference for slash commands and standalone NemoClaw commands."
 keywords: ["nemoclaw cli commands", "nemoclaw command reference"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "nemoclaw", "cli"]
@@ -20,89 +20,39 @@ status: published
 
 # Commands
 
-NemoClaw provides two command interfaces.
-The plugin commands run under the `openclaw nemoclaw` namespace inside the OpenClaw CLI.
-The standalone `nemoclaw` binary handles host-side setup, deployment, and service management.
-Both interfaces are installed when you run `npm install -g nemoclaw`.
+The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes. It is installed when you run `npm install -g nemoclaw`.
 
-## Plugin Commands
-
-### `openclaw nemoclaw launch`
-
-Bootstrap OpenClaw inside an OpenShell sandbox.
-If NemoClaw detects an existing host installation, `launch` stops unless you pass `--force`.
-
-```console
-$ openclaw nemoclaw launch [--force] [--profile <profile>]
-```
-
-`--force`
-: Skip the ergonomics warning and force plugin-driven bootstrap. Without this flag,
-  NemoClaw recommends using `openshell sandbox create` directly for new installs.
-
-`--profile <profile>`
-: Blueprint profile to use. Default: `default`.
-
-### `nemoclaw <name> connect`
-
-Open an interactive shell inside the OpenClaw sandbox.
-Use this after launch to connect and chat with the agent through the TUI or CLI.
-
-```console
-$ nemoclaw my-assistant connect
-```
-
-If the TUI view is not a good fit for very long responses, use the CLI form instead:
-
-```console
-$ openclaw agent --agent main --local -m "<prompt>" --session-id <id>
-```
-
-This is the recommended workaround when you need the full response printed directly in the terminal.
-
-### `openclaw nemoclaw status`
-
-Display sandbox health, blueprint run state, and inference configuration.
-
-```console
-$ openclaw nemoclaw status [--json]
-```
-
-`--json`
-: Output as JSON for programmatic consumption.
-
-When running inside an active OpenShell sandbox, the status command detects the sandbox context and reports "active (inside sandbox)" instead of false negatives.
-Host-side sandbox state and inference configuration are not inspectable from inside the sandbox.
-Run `openshell sandbox list` on the host to check the underlying sandbox state.
-
-### `openclaw nemoclaw logs`
-
-Stream blueprint execution and sandbox logs.
-
-```console
-$ openclaw nemoclaw logs [-f] [-n <count>] [--run-id <id>]
-```
-
-`-f, --follow`
-: Follow log output, similar to `tail -f`.
-
-`-n, --lines <count>`
-: Number of lines to show. Default: `50`.
-
-`--run-id <id>`
-: Show logs for a specific blueprint run instead of the latest.
-
-### `/nemoclaw` Slash Command
+## `/nemoclaw` Slash Command
 
 The `/nemoclaw` slash command is available inside the OpenClaw chat interface for quick actions:
 
 | Subcommand | Description |
 |---|---|
+| `/nemoclaw` | Show slash-command help and host CLI pointers |
 | `/nemoclaw status` | Show sandbox and inference state |
+| `/nemoclaw onboard` | Show onboarding status and reconfiguration guidance |
+| `/nemoclaw eject` | Show rollback instructions for returning to the host installation |
 
 ## Standalone Host Commands
 
 The `nemoclaw` binary handles host-side operations that run outside the OpenClaw plugin context.
+
+### `nemoclaw help`, `nemoclaw --help`, `nemoclaw -h`
+
+Show the top-level usage summary and command groups.
+Running `nemoclaw` with no arguments shows the same help output.
+
+```console
+$ nemoclaw help
+```
+
+### `nemoclaw --version`, `nemoclaw -v`
+
+Print the installed NemoClaw CLI version.
+
+```console
+$ nemoclaw --version
+```
 
 ### `nemoclaw onboard`
 
@@ -114,7 +64,9 @@ Use this command for new installs and for recreating a sandbox after changes to 
 $ nemoclaw onboard
 ```
 
-The first run prompts for your NVIDIA API key and saves it to `~/.nemoclaw/credentials.json`.
+The wizard prompts for a provider first, then collects the provider credential if needed.
+Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
+Credentials are stored in `~/.nemoclaw/credentials.json`.
 
 The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
@@ -173,6 +125,12 @@ $ nemoclaw my-assistant logs [--follow]
 
 Stop the NIM container and delete the sandbox.
 This removes the sandbox from the registry.
+
+:::{warning}
+Destroying a sandbox permanently deletes all files inside it, including
+[workspace files](../workspace/workspace-files.md) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes).
+Back up your workspace first by following the instructions at [Back Up and Restore](../workspace/backup-restore.md).
+:::
 
 ```console
 $ nemoclaw my-assistant destroy
@@ -241,4 +199,45 @@ After the fixes complete, the script prompts you to run `nemoclaw onboard` to co
 
 ```console
 $ sudo nemoclaw setup-spark
+```
+
+### `nemoclaw debug`
+
+Collect diagnostics for bug reports.
+Gathers system info, Docker state, gateway logs, and sandbox status into a summary or tarball.
+Use `--sandbox <name>` to target a specific sandbox, `--quick` for a smaller snapshot, or `--output <path>` to save a tarball that you can attach to an issue.
+
+```console
+$ nemoclaw debug [--quick] [--sandbox NAME] [--output PATH]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--quick` | Collect minimal diagnostics only |
+| `--sandbox NAME` | Target a specific sandbox (default: auto-detect) |
+| `--output PATH` | Write diagnostics tarball to the given path |
+
+### `nemoclaw uninstall`
+
+Run `uninstall.sh` to remove NemoClaw sandboxes, gateway resources, related images and containers, and local state.
+The CLI uses the local `uninstall.sh` first and falls back to the hosted script if the local file is unavailable.
+
+| Flag | Effect |
+|---|---|
+| `--yes` | Skip the confirmation prompt |
+| `--keep-openshell` | Leave the `openshell` binary installed |
+| `--delete-models` | Also remove NemoClaw-pulled Ollama models |
+
+```console
+$ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
+```
+
+### `nemoclaw setup` (deprecated)
+
+Run the legacy setup workflow for backwards compatibility.
+NemoClaw prints a deprecation warning, then runs the older `setup.sh` path.
+Prefer `nemoclaw onboard` for new installs and reconfiguration.
+
+```console
+$ nemoclaw setup
 ```

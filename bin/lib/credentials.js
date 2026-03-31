@@ -4,7 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const readline = require("readline");
-const { execSync } = require("child_process");
+const { execFileSync } = require("child_process");
 
 const CREDS_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
 const CREDS_FILE = path.join(CREDS_DIR, "credentials.json");
@@ -14,27 +14,131 @@ function loadCredentials() {
     if (fs.existsSync(CREDS_FILE)) {
       return JSON.parse(fs.readFileSync(CREDS_FILE, "utf-8"));
     }
-  } catch {}
+  } catch { /* ignored */ }
   return {};
+}
+
+function normalizeCredentialValue(value) {
+  if (typeof value !== "string") return "";
+  return value.replace(/\r/g, "").trim();
 }
 
 function saveCredential(key, value) {
   fs.mkdirSync(CREDS_DIR, { recursive: true, mode: 0o700 });
   const creds = loadCredentials();
-  creds[key] = value;
+  creds[key] = normalizeCredentialValue(value);
   fs.writeFileSync(CREDS_FILE, JSON.stringify(creds, null, 2), { mode: 0o600 });
 }
 
 function getCredential(key) {
-  if (process.env[key]) return process.env[key];
+  if (process.env[key]) return normalizeCredentialValue(process.env[key]);
   const creds = loadCredentials();
-  return creds[key] || null;
+  const value = normalizeCredentialValue(creds[key]);
+  return value || null;
 }
 
-function prompt(question) {
-  return new Promise((resolve) => {
+function promptSecret(question) {
+  return new Promise((resolve, reject) => {
+    const input = process.stdin;
+    const output = process.stderr;
+    let answer = "";
+    let rawModeEnabled = false;
+    let finished = false;
+
+    function cleanup() {
+      input.removeListener("data", onData);
+      if (rawModeEnabled && typeof input.setRawMode === "function") {
+        input.setRawMode(false);
+      }
+      if (typeof input.pause === "function") {
+        input.pause();
+      }
+    }
+
+    function finish(fn, value) {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      output.write("\n");
+      fn(value);
+    }
+
+    function onData(chunk) {
+      const text = chunk.toString("utf8");
+      for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+
+        if (ch === "\u0003") {
+          finish(reject, Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
+          return;
+        }
+
+        if (ch === "\r" || ch === "\n") {
+          finish(resolve, answer.trim());
+          return;
+        }
+
+        if (ch === "\u0008" || ch === "\u007f") {
+          if (answer.length > 0) {
+            answer = answer.slice(0, -1);
+            output.write("\b \b");
+          }
+          continue;
+        }
+
+        if (ch === "\u001b") {
+          // Ignore terminal escape/control sequences such as Delete, arrows,
+          // Home/End, etc. while leaving the buffered secret untouched.
+          const rest = text.slice(i);
+          // eslint-disable-next-line no-control-regex
+          const match = rest.match(/^\u001b(?:\[[0-9;?]*[~A-Za-z]|\][^\u0007]*\u0007|.)/);
+          if (match) {
+            i += match[0].length - 1;
+          }
+          continue;
+        }
+
+        if (ch >= " ") {
+          answer += ch;
+          output.write("*");
+        }
+      }
+    }
+
+    output.write(question);
+    input.setEncoding("utf8");
+    if (typeof input.resume === "function") {
+      input.resume();
+    }
+    if (typeof input.setRawMode === "function") {
+      input.setRawMode(true);
+      rawModeEnabled = true;
+    }
+    input.on("data", onData);
+  });
+}
+
+function prompt(question, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const silent = opts.secret === true && process.stdin.isTTY && process.stderr.isTTY;
+    if (silent) {
+      promptSecret(question)
+        .then(resolve)
+        .catch((err) => {
+          if (err && err.code === "SIGINT") {
+            reject(err);
+            process.kill(process.pid, "SIGINT");
+            return;
+          }
+          reject(err);
+        });
+      return;
+    }
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    rl.question(question, (answer) => {
+    let finished = false;
+    function finish(fn, value) {
+      if (finished) return;
+      finished = true;
       rl.close();
       if (!process.stdin.isTTY) {
         if (typeof process.stdin.pause === "function") {
@@ -44,7 +148,15 @@ function prompt(question) {
           process.stdin.unref();
         }
       }
-      resolve(answer.trim());
+      fn(value);
+    }
+    rl.on("SIGINT", () => {
+      const err = Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
+      finish(reject, err);
+      process.kill(process.pid, "SIGINT");
+    });
+    rl.question(question, (answer) => {
+      finish(resolve, answer.trim());
     });
   });
 }
@@ -67,11 +179,20 @@ async function ensureApiKey() {
   console.log("  └─────────────────────────────────────────────────────────────────┘");
   console.log("");
 
-  key = await prompt("  NVIDIA API Key: ");
+  while (true) {
+    key = normalizeCredentialValue(await prompt("  NVIDIA API Key: ", { secret: true }));
 
-  if (!key || !key.startsWith("nvapi-")) {
-    console.error("  Invalid key. Must start with nvapi-");
-    process.exit(1);
+    if (!key) {
+      console.error("  NVIDIA API Key is required.");
+      continue;
+    }
+
+    if (!key.startsWith("nvapi-")) {
+      console.error("  Invalid key. Must start with nvapi-");
+      continue;
+    }
+
+    break;
   }
 
   saveCredential("NVIDIA_API_KEY", key);
@@ -83,7 +204,10 @@ async function ensureApiKey() {
 
 function isRepoPrivate(repo) {
   try {
-    const json = execSync(`gh api repos/${repo} --jq .private 2>/dev/null`, { encoding: "utf-8" }).trim();
+    const json = execFileSync("gh", ["api", `repos/${repo}`, "--jq", ".private"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
     return json === "true";
   } catch {
     return false;
@@ -98,12 +222,15 @@ async function ensureGithubToken() {
   }
 
   try {
-    token = execSync("gh auth token 2>/dev/null", { encoding: "utf-8" }).trim();
+    token = execFileSync("gh", ["auth", "token"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
     if (token) {
       process.env.GITHUB_TOKEN = token;
       return;
     }
-  } catch {}
+  } catch { /* ignored */ }
 
   console.log("");
   console.log("  ┌──────────────────────────────────────────────────┐");
@@ -114,7 +241,7 @@ async function ensureGithubToken() {
   console.log("  └──────────────────────────────────────────────────┘");
   console.log("");
 
-  token = await prompt("  GitHub Token: ");
+  token = await prompt("  GitHub Token: ", { secret: true });
 
   if (!token) {
     console.error("  Token required for deploy (repo is private).");
@@ -132,6 +259,7 @@ module.exports = {
   CREDS_DIR,
   CREDS_FILE,
   loadCredentials,
+  normalizeCredentialValue,
   saveCredential,
   getCredential,
   prompt,

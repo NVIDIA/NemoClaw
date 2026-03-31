@@ -28,9 +28,10 @@ NC='\033[0m'
 
 info() { echo -e "${GREEN}>>>${NC} $1"; }
 warn() { echo -e "${YELLOW}>>>${NC} $1"; }
-fail() { echo -e "${RED}>>>${NC} $1"; exit 1; }
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+fail() {
+  echo -e "${RED}>>>${NC} $1"
+  exit 1
+}
 
 # ── Pre-flight checks ─────────────────────────────────────────────
 
@@ -48,7 +49,7 @@ if [ -z "$REAL_USER" ]; then
   warn "Could not detect non-root user. Docker group will not be configured."
 fi
 
-command -v docker > /dev/null || fail "Docker not found. DGX Spark should have Docker pre-installed."
+command -v docker >/dev/null || fail "Docker not found. DGX Spark should have Docker pre-installed."
 
 # ── 1. Docker group ───────────────────────────────────────────────
 
@@ -112,7 +113,7 @@ with open('$DAEMON_JSON', 'w') as f:
 else
   info "Creating Docker daemon config with cgroupns=host..."
   mkdir -p "$(dirname "$DAEMON_JSON")"
-  echo '{ "default-cgroupns-mode": "host" }' > "$DAEMON_JSON"
+  echo '{ "default-cgroupns-mode": "host" }' >"$DAEMON_JSON"
   NEEDS_RESTART=true
 fi
 
@@ -123,7 +124,7 @@ if [ "$NEEDS_RESTART" = true ]; then
   systemctl restart docker
   # Wait for Docker to be ready
   for i in 1 2 3 4 5 6 7 8 9 10; do
-    if docker info > /dev/null 2>&1; then
+    if docker info >/dev/null 2>&1; then
       break
     fi
     [ "$i" -eq 10 ] && fail "Docker didn't come back after restart. Check 'systemctl status docker'."

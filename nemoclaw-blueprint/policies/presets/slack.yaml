@@ -3,7 +3,7 @@
 
 preset:
   name: slack
-  description: "Slack API and webhooks access"
+  description: "Slack API, Socket Mode, and webhooks access"
 
 network_policies:
   slack:
@@ -33,3 +33,13 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+      # Socket Mode WebSocket — requires CONNECT tunnel to avoid
+      # HTTP idle timeout killing the persistent connection. See #409.
+      - host: wss-primary.slack.com
+        port: 443
+        access: full
+      - host: wss-backup.slack.com
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/local/bin/node }

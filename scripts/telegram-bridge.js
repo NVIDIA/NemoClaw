@@ -17,8 +17,9 @@
  */
 
 const https = require("https");
-const { execSync, spawn } = require("child_process");
+const { execFileSync, spawn } = require("child_process");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
+const { shellQuote, validateName } = require("../bin/lib/runner");
 
 const OPENSHELL = resolveOpenshell();
 if (!OPENSHELL) {
@@ -29,6 +30,7 @@ if (!OPENSHELL) {
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API_KEY = process.env.NVIDIA_API_KEY;
 const SANDBOX = process.env.SANDBOX_NAME || "nemoclaw";
+try { validateName(SANDBOX, "SANDBOX_NAME"); } catch (e) { console.error(e.message); process.exit(1); }
 const ALLOWED_CHATS = process.env.ALLOWED_CHAT_IDS
   ? process.env.ALLOWED_CHAT_IDS.split(",").map((s) => s.trim())
   : null;
@@ -38,6 +40,10 @@ if (!API_KEY) { console.error("NVIDIA_API_KEY required"); process.exit(1); }
 
 let offset = 0;
 const activeSessions = new Map(); // chatId → message history
+
+const COOLDOWN_MS = 5000;
+const lastMessageTime = new Map();
+const busyChats = new Set();
 
 // ── Telegram API helpers ──────────────────────────────────────────
 
@@ -92,14 +98,18 @@ async function sendTyping(chatId) {
 
 function runAgentInSandbox(message, sessionId) {
   return new Promise((resolve) => {
-    const sshConfig = execSync(`"${OPENSHELL}" sandbox ssh-config "${SANDBOX}"`, { encoding: "utf-8" });
+    const sshConfig = execFileSync(OPENSHELL, ["sandbox", "ssh-config", SANDBOX], { encoding: "utf-8" });
 
-    // Write temp ssh config
-    const confPath = `/tmp/nemoclaw-tg-ssh-${sessionId}.conf`;
-    require("fs").writeFileSync(confPath, sshConfig);
+    // Write temp ssh config with unpredictable name
+    const confDir = require("fs").mkdtempSync("/tmp/nemoclaw-tg-ssh-");
+    const confPath = `${confDir}/config`;
+    require("fs").writeFileSync(confPath, sshConfig, { mode: 0o600 });
 
-    const escaped = message.replace(/'/g, "'\\''");
-    const cmd = `export NVIDIA_API_KEY='${API_KEY}' && nemoclaw-start openclaw agent --agent main --local -m '${escaped}' --session-id 'tg-${sessionId}'`;
+    // Pass message and API key via stdin to avoid shell interpolation.
+    // The remote command reads them from environment/stdin rather than
+    // embedding user content in a shell string.
+    const safeSessionId = String(sessionId).replace(/[^a-zA-Z0-9-]/g, "");
+    const cmd = `export NVIDIA_API_KEY=${shellQuote(API_KEY)} && nemoclaw-start openclaw agent --agent main --local -m ${shellQuote(message)} --session-id ${shellQuote("tg-" + safeSessionId)}`;
 
     const proc = spawn("ssh", ["-T", "-F", confPath, `openshell-${SANDBOX}`, cmd], {
       timeout: 120000,
@@ -113,7 +123,7 @@ function runAgentInSandbox(message, sessionId) {
     proc.stderr.on("data", (d) => (stderr += d.toString()));
 
     proc.on("close", (code) => {
-      try { require("fs").unlinkSync(confPath); } catch {}
+      try { require("fs").unlinkSync(confPath); require("fs").rmdirSync(confDir); } catch { /* ignored */ }
 
       // Extract the actual agent response — skip setup lines
       const lines = stdout.split("\n");
@@ -192,6 +202,24 @@ async function poll() {
           continue;
         }
 
+        // Rate limiting: per-chat cooldown
+        const now = Date.now();
+        const lastTime = lastMessageTime.get(chatId) || 0;
+        if (now - lastTime < COOLDOWN_MS) {
+          const wait = Math.ceil((COOLDOWN_MS - (now - lastTime)) / 1000);
+          await sendMessage(chatId, `Please wait ${wait}s before sending another message.`, msg.message_id);
+          continue;
+        }
+
+        // Per-chat serialization: reject if this chat already has an active session
+        if (busyChats.has(chatId)) {
+          await sendMessage(chatId, "Still processing your previous message.", msg.message_id);
+          continue;
+        }
+
+        lastMessageTime.set(chatId, now);
+        busyChats.add(chatId);
+
         // Send typing indicator
         await sendTyping(chatId);
 
@@ -206,6 +234,8 @@ async function poll() {
         } catch (err) {
           clearInterval(typingInterval);
           await sendMessage(chatId, `Error: ${err.message}`, msg.message_id);
+        } finally {
+          busyChats.delete(chatId);
         }
       }
     }
@@ -213,8 +243,8 @@ async function poll() {
     console.error("Poll error:", err.message);
   }
 
-  // Continue polling
-  setTimeout(poll, 100);
+  // Continue polling (1s floor prevents tight-loop resource waste)
+  setTimeout(poll, 1000);
 }
 
 // ── Main ──────────────────────────────────────────────────────────

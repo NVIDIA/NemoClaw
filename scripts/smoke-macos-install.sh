@@ -14,7 +14,10 @@ NC='\033[0m'
 
 info() { echo -e "${GREEN}[smoke]${NC} $1"; }
 warn() { echo -e "${YELLOW}[smoke]${NC} $1"; }
-fail() { echo -e "${RED}[smoke]${NC} $1"; exit 1; }
+fail() {
+  echo -e "${RED}[smoke]${NC} $1"
+  exit 1
+}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -97,7 +100,7 @@ while [ $# -gt 0 ]; do
       DELETE_MODELS=true
       shift
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -151,7 +154,7 @@ ensure_clean_start() {
     fail "Existing NemoClaw/OpenShell state detected. Re-run with --allow-existing-state if you really want to test on this machine."
   fi
 
-  if command -v openshell > /dev/null 2>&1; then
+  if command -v openshell >/dev/null 2>&1; then
     if openshell sandbox list 2>/dev/null | grep -Eq '[[:alnum:]]'; then
       fail "Existing OpenShell sandboxes detected. Re-run with --allow-existing-state only if you are prepared for uninstall.sh to remove them."
     fi
@@ -173,12 +176,12 @@ feed_install_answers() {
     done
 
     printf 'n\n'
-  ) > "$answers_pipe"
+  ) >"$answers_pipe"
 }
 
 start_log_follow() {
   local logfile="$1"
-  : > "$logfile"
+  : >"$logfile"
   tail -n +1 -f "$logfile" &
   LOG_FOLLOW_PID=$!
 }
@@ -198,7 +201,7 @@ run_install() {
   ANSWER_WRITER_PID=$!
   start_log_follow "$INSTALL_LOG"
   set +e
-  bash "$REPO_DIR/install.sh" < "$answers_pipe" >> "$INSTALL_LOG" 2>&1
+  bash "$REPO_DIR/install.sh" <"$answers_pipe" >>"$INSTALL_LOG" 2>&1
   INSTALL_STATUS=$?
   set -e
   stop_log_follow
@@ -218,7 +221,7 @@ run_uninstall() {
   info "Running uninstall.sh for cleanup"
   start_log_follow "$UNINSTALL_LOG"
   set +e
-  bash "$REPO_DIR/uninstall.sh" "${args[@]}" >> "$UNINSTALL_LOG" 2>&1
+  bash "$REPO_DIR/uninstall.sh" "${args[@]}" >>"$UNINSTALL_LOG" 2>&1
   UNINSTALL_STATUS=$?
   set -e
   stop_log_follow
@@ -233,7 +236,7 @@ verify_cleanup() {
     leftovers=1
   fi
 
-  if command -v openshell > /dev/null 2>&1; then
+  if command -v openshell >/dev/null 2>&1; then
     local sandbox_output
     sandbox_output="$(openshell sandbox list 2>/dev/null || true)"
     if printf '%s' "$sandbox_output" | grep -Eq '[[:alnum:]]'; then
@@ -242,7 +245,7 @@ verify_cleanup() {
     fi
   fi
 
-  if command -v docker > /dev/null 2>&1 && docker info > /dev/null 2>&1; then
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     local related_containers
     related_containers="$(
       docker ps -a --format '{{.Image}} {{.Names}}' 2>/dev/null \
