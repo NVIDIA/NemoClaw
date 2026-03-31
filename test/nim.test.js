@@ -88,6 +88,79 @@ describe("nim", () => {
         expect(gpu.name).toBeTruthy();
       }
     });
+
+    it("detects GB10 unified-memory GPUs as Spark-capable NVIDIA devices", () => {
+      const runCapture = vi.fn((cmd) => {
+        if (cmd.includes("memory.total")) return "";
+        if (cmd.includes("query-gpu=name")) return "NVIDIA GB10";
+        if (cmd.includes("free -m")) return "131072";
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        expect(nimModule.detectGpu()).toMatchObject({
+          type: "nvidia",
+          name: "NVIDIA GB10",
+          count: 1,
+          totalMemoryMB: 131072,
+          perGpuMB: 131072,
+          nimCapable: true,
+          unifiedMemory: true,
+          spark: true,
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("detects Orin unified-memory GPUs without marking them as Spark", () => {
+      const runCapture = vi.fn((cmd) => {
+        if (cmd.includes("memory.total")) return "";
+        if (cmd.includes("query-gpu=name")) return "NVIDIA Jetson AGX Orin";
+        if (cmd.includes("free -m")) return "32768";
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        expect(nimModule.detectGpu()).toMatchObject({
+          type: "nvidia",
+          name: "NVIDIA Jetson AGX Orin",
+          count: 1,
+          totalMemoryMB: 32768,
+          perGpuMB: 32768,
+          nimCapable: true,
+          unifiedMemory: true,
+          spark: false,
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("marks low-memory unified-memory NVIDIA devices as not NIM-capable", () => {
+      const runCapture = vi.fn((cmd) => {
+        if (cmd.includes("memory.total")) return "";
+        if (cmd.includes("query-gpu=name")) return "NVIDIA Xavier";
+        if (cmd.includes("free -m")) return "4096";
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        expect(nimModule.detectGpu()).toMatchObject({
+          type: "nvidia",
+          name: "NVIDIA Xavier",
+          totalMemoryMB: 4096,
+          nimCapable: false,
+          unifiedMemory: true,
+          spark: false,
+        });
+      } finally {
+        restore();
+      }
+    });
   });
 
   describe("nimStatus", () => {
