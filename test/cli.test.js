@@ -104,7 +104,7 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("nemoclaw debug")).toBeTruthy();
   });
 
-  it("passes --follow through to openshell logs", () => {
+  it("maps --follow to openshell --tail", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-follow-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -144,7 +144,107 @@ describe("CLI dispatch", () => {
     });
 
     expect(r.code).toBe(0);
-    expect(fs.readFileSync(markerFile, "utf8")).toContain("logs alpha --follow");
+    expect(fs.readFileSync(markerFile, "utf8")).toContain("logs alpha --tail");
+  });
+
+  it("passes plain logs through without the tail flag", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-plain-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const markerFile = path.join(home, "logs-args");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        "if [ \"$1\" = \"--version\" ]; then",
+        "  echo 'openshell 0.0.16'",
+        "  exit 0",
+        "fi",
+        "printf '%s ' \"$@\" > \"$marker_file\"",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const r = runWithEnv("alpha logs", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(fs.readFileSync(markerFile, "utf8")).toContain("logs alpha");
+    expect(fs.readFileSync(markerFile, "utf8")).not.toContain("--tail");
+  });
+
+  it("prints upgrade guidance when openshell is too old for nemoclaw logs", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-old-openshell-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        "if [ \"$1\" = \"--version\" ]; then",
+        "  echo 'openshell 0.0.4'",
+        "  exit 0",
+        "fi",
+        "echo \"error: unrecognized subcommand 'logs'\" >&2",
+        "exit 2",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const r = runWithEnv("alpha logs --follow", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out.includes("too old or incompatible with `nemoclaw logs`")).toBeTruthy();
+    expect(r.out.includes("Upgrade OpenShell by rerunning `nemoclaw onboard`")).toBeTruthy();
+  });
+
+  it("help mentions reconnect command", () => {
+    const r = run("help");
+    expect(r.code).toBe(0);
+    expect(r.out.includes("nemoclaw reconnect")).toBeTruthy();
   });
 
   it("connect does not pre-start a duplicate port forward", () => {
@@ -249,6 +349,315 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Removed stale local registry entry")).toBeTruthy();
     const saved = JSON.parse(fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"));
     expect(saved.sandboxes.alpha).toBeUndefined();
+  });
+
+  it("recovers a missing registry entry from the last onboard session during list", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-session-recover-"));
+    const localBin = path.join(home, "bin");
+    const nemoclawDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(nemoclawDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(nemoclawDir, "onboard-session.json"),
+      JSON.stringify({
+        version: 1,
+        sessionId: "session-1",
+        resumable: true,
+        status: "complete",
+        mode: "interactive",
+        startedAt: "2026-03-31T00:00:00.000Z",
+        updatedAt: "2026-03-31T00:00:00.000Z",
+        lastStepStarted: "policies",
+        lastCompletedStep: "policies",
+        failure: null,
+        sandboxName: "alpha",
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        nimContainer: null,
+        policyPresets: null,
+        metadata: { gatewayName: "nemoclaw" },
+        steps: {
+          preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
+          gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
+          sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+          provider_selection: { status: "complete", startedAt: null, completedAt: null, error: null },
+          inference: { status: "complete", startedAt: null, completedAt: null, error: null },
+          openclaw: { status: "complete", startedAt: null, completedAt: null, error: null },
+          policies: { status: "complete", startedAt: null, completedAt: null, error: null },
+        },
+      }, null, 2),
+      { mode: 0o600 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        "if [ \"$1\" = \"status\" ]; then",
+        "  echo 'Server Status'",
+        "  echo",
+        "  echo '  Gateway: nemoclaw'",
+        "  echo '  Status: Connected'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"info\" ]; then",
+        "  echo 'Gateway Info'",
+        "  echo",
+        "  echo '  Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"list\" ]; then",
+        "  echo 'No sandboxes found.'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"inference\" ] && [ \"$2\" = \"get\" ]; then",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"--version\" ]; then",
+        "  echo 'openshell 0.0.16'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const r = runWithEnv("list", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out.includes("Recovered sandbox inventory from the last onboard session.")).toBeTruthy();
+    expect(r.out.includes("alpha")).toBeTruthy();
+    const saved = JSON.parse(fs.readFileSync(path.join(nemoclawDir, "sandboxes.json"), "utf8"));
+    expect(saved.sandboxes.alpha).toBeTruthy();
+    expect(saved.defaultSandbox).toBe("alpha");
+  });
+
+  it("imports additional live sandboxes into the registry during list recovery", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-live-recover-"));
+    const localBin = path.join(home, "bin");
+    const nemoclawDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(nemoclawDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(nemoclawDir, "onboard-session.json"),
+      JSON.stringify({
+        version: 1,
+        sessionId: "session-1",
+        resumable: true,
+        status: "complete",
+        mode: "interactive",
+        startedAt: "2026-03-31T00:00:00.000Z",
+        updatedAt: "2026-03-31T00:00:00.000Z",
+        lastStepStarted: "policies",
+        lastCompletedStep: "policies",
+        failure: null,
+        sandboxName: "alpha",
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        nimContainer: null,
+        policyPresets: null,
+        metadata: { gatewayName: "nemoclaw" },
+        steps: {
+          preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
+          gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
+          sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+          provider_selection: { status: "complete", startedAt: null, completedAt: null, error: null },
+          inference: { status: "complete", startedAt: null, completedAt: null, error: null },
+          openclaw: { status: "complete", startedAt: null, completedAt: null, error: null },
+          policies: { status: "complete", startedAt: null, completedAt: null, error: null },
+        },
+      }, null, 2),
+      { mode: 0o600 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        "if [ \"$1\" = \"status\" ]; then",
+        "  echo 'Server Status'",
+        "  echo",
+        "  echo '  Gateway: nemoclaw'",
+        "  echo '  Status: Connected'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"info\" ]; then",
+        "  echo 'Gateway Info'",
+        "  echo",
+        "  echo '  Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"list\" ]; then",
+        "  echo 'NAME        PHASE'",
+        "  echo 'alpha       Ready'",
+        "  echo 'beta        Ready'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"inference\" ] && [ \"$2\" = \"get\" ]; then",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"--version\" ]; then",
+        "  echo 'openshell 0.0.16'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const r = runWithEnv("list", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out.includes("Recovered sandbox inventory from the last onboard session.")).toBeTruthy();
+    expect(r.out.includes("Recovered 1 sandbox entry from the live OpenShell gateway.")).toBeTruthy();
+    expect(r.out.includes("alpha")).toBeTruthy();
+    expect(r.out.includes("beta")).toBeTruthy();
+    const saved = JSON.parse(fs.readFileSync(path.join(nemoclawDir, "sandboxes.json"), "utf8"));
+    expect(saved.sandboxes.alpha).toBeTruthy();
+    expect(saved.sandboxes.beta).toBeTruthy();
+  });
+
+  it("reconnect uses the last onboard session when the registry is empty", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-reconnect-session-"));
+    const localBin = path.join(home, "bin");
+    const nemoclawDir = path.join(home, ".nemoclaw");
+    const markerFile = path.join(home, "reconnect-args");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(nemoclawDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(nemoclawDir, "onboard-session.json"),
+      JSON.stringify({
+        version: 1,
+        sessionId: "session-1",
+        resumable: true,
+        status: "complete",
+        mode: "interactive",
+        startedAt: "2026-03-31T00:00:00.000Z",
+        updatedAt: "2026-03-31T00:00:00.000Z",
+        lastStepStarted: "policies",
+        lastCompletedStep: "policies",
+        failure: null,
+        sandboxName: "alpha",
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        nimContainer: null,
+        policyPresets: null,
+        metadata: { gatewayName: "nemoclaw" },
+        steps: {
+          preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
+          gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
+          sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+          provider_selection: { status: "complete", startedAt: null, completedAt: null, error: null },
+          inference: { status: "complete", startedAt: null, completedAt: null, error: null },
+          openclaw: { status: "complete", startedAt: null, completedAt: null, error: null },
+          policies: { status: "complete", startedAt: null, completedAt: null, error: null },
+        },
+      }, null, 2),
+      { mode: 0o600 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        "printf '%s\\n' \"$*\" >> \"$marker_file\"",
+        "if [ \"$1\" = \"status\" ]; then",
+        "  echo 'Server Status'",
+        "  echo",
+        "  echo '  Gateway: nemoclaw'",
+        "  echo '  Status: Connected'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"info\" ]; then",
+        "  echo 'Gateway Info'",
+        "  echo",
+        "  echo '  Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"list\" ]; then",
+        "  echo 'No sandboxes found.'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        "  echo 'Sandbox:'",
+        "  echo",
+        "  echo '  Id: abc'",
+        "  echo '  Name: alpha'",
+        "  echo '  Namespace: openshell'",
+        "  echo '  Phase: Ready'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"connect\" ] && [ \"$3\" = \"alpha\" ]; then",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"--version\" ]; then",
+        "  echo 'openshell 0.0.16'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const r = runWithEnv("reconnect", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out.includes("Reconnecting to sandbox 'alpha'")).toBeTruthy();
+    const log = fs.readFileSync(markerFile, "utf8");
+    expect(log.includes("sandbox get alpha")).toBeTruthy();
+    expect(log.includes("sandbox connect alpha")).toBeTruthy();
+  });
+
+  it("reconnect rejects too many sandbox arguments", () => {
+    const r = run("reconnect alpha beta");
+    expect(r.code).toBe(1);
+    expect(r.out.includes("Too many positional arguments for `reconnect`.")).toBeTruthy();
+    expect(r.out.includes("Usage: `nemoclaw reconnect [sandbox-name]`.")).toBeTruthy();
+  });
+
+  it("reconnect rejects an explicit unknown sandbox name", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-reconnect-unknown-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        "if [ \"$1\" = \"--version\" ]; then",
+        "  echo 'openshell 0.0.16'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const r = runWithEnv("reconnect beta", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out.includes("Unknown sandbox 'beta'.")).toBeTruthy();
+    expect(r.out.includes("Use `nemoclaw list` to view registered sandboxes.")).toBeTruthy();
   });
 
   it("keeps registry entries when status hits a gateway-level transport error", () => {
