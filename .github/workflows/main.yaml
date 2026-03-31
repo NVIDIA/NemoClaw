@@ -22,7 +22,14 @@ concurrency:
 
 jobs:
   checks:
-    uses: ./.github/workflows/basic-checks.yaml
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run basic checks
+        uses: ./.github/actions/basic-checks
 
   build-sandbox-images:
     runs-on: ubuntu-latest
