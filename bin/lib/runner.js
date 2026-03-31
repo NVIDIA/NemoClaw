@@ -79,7 +79,7 @@ function validateName(name, label = "name") {
   }
   if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
     throw new Error(
-      `Invalid ${label}: '${name}'. Must be lowercase alphanumeric with optional internal hyphens.`
+      `Invalid ${label}: '${name}'. Must be lowercase alphanumeric with optional internal hyphens.`,
     );
   }
   return name;

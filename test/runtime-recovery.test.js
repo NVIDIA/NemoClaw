@@ -19,9 +19,9 @@ describe("runtime recovery helpers", () => {
             "NAME              NAMESPACE  CREATED              PHASE",
             "alpha             openshell  2026-03-24 10:00:00  Ready",
             "beta              openshell  2026-03-24 10:01:00  Provisioning",
-          ].join("\n")
-        )
-      )
+          ].join("\n"),
+        ),
+      ),
     ).toEqual(["alpha", "beta"]);
   });
 
@@ -30,17 +30,23 @@ describe("runtime recovery helpers", () => {
   });
 
   it("classifies missing sandbox lookups", () => {
-    expect(classifySandboxLookup('Error:   × status: NotFound, message: "sandbox not found"').state).toBe("missing");
+    expect(
+      classifySandboxLookup('Error:   × status: NotFound, message: "sandbox not found"').state,
+    ).toBe("missing");
     expect(classifySandboxLookup("").state).toBe("missing");
   });
 
   it("classifies transport and gateway failures as unavailable", () => {
-    expect(classifySandboxLookup("Error:   × transport error\n  ╰─▶ Connection reset by peer (os error 104)").state).toBe(
-      "unavailable"
-    );
-    expect(classifySandboxLookup("Error:   × client error (Connect)\n  ╰─▶ Connection refused (os error 111)").state).toBe(
-      "unavailable"
-    );
+    expect(
+      classifySandboxLookup(
+        "Error:   × transport error\n  ╰─▶ Connection reset by peer (os error 104)",
+      ).state,
+    ).toBe("unavailable");
+    expect(
+      classifySandboxLookup(
+        "Error:   × client error (Connect)\n  ╰─▶ Connection refused (os error 111)",
+      ).state,
+    ).toBe("unavailable");
   });
 
   it("classifies successful sandbox lookups as present", () => {
@@ -53,8 +59,8 @@ describe("runtime recovery helpers", () => {
           "  Name: my-assistant",
           "  Namespace: openshell",
           "  Phase: Ready",
-        ].join("\n")
-      ).state
+        ].join("\n"),
+      ).state,
     ).toBe("present");
   });
 
@@ -65,10 +71,20 @@ describe("runtime recovery helpers", () => {
   });
 
   it("only attempts gateway recovery when sandbox access is unavailable and gateway is down", () => {
-    expect(shouldAttemptGatewayRecovery({ sandboxState: "unavailable", gatewayState: "unavailable" })).toBe(true);
-    expect(shouldAttemptGatewayRecovery({ sandboxState: "unavailable", gatewayState: "inactive" })).toBe(true);
-    expect(shouldAttemptGatewayRecovery({ sandboxState: "present", gatewayState: "unavailable" })).toBe(false);
-    expect(shouldAttemptGatewayRecovery({ sandboxState: "missing", gatewayState: "inactive" })).toBe(false);
-    expect(shouldAttemptGatewayRecovery({ sandboxState: "unavailable", gatewayState: "connected" })).toBe(false);
+    expect(
+      shouldAttemptGatewayRecovery({ sandboxState: "unavailable", gatewayState: "unavailable" }),
+    ).toBe(true);
+    expect(
+      shouldAttemptGatewayRecovery({ sandboxState: "unavailable", gatewayState: "inactive" }),
+    ).toBe(true);
+    expect(
+      shouldAttemptGatewayRecovery({ sandboxState: "present", gatewayState: "unavailable" }),
+    ).toBe(false);
+    expect(
+      shouldAttemptGatewayRecovery({ sandboxState: "missing", gatewayState: "inactive" }),
+    ).toBe(false);
+    expect(
+      shouldAttemptGatewayRecovery({ sandboxState: "unavailable", gatewayState: "connected" }),
+    ).toBe(false);
   });
 });
