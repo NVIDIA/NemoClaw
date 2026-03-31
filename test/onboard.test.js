@@ -1062,7 +1062,7 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*sandboxName = await createSandbox\(gpu, model, provider, preferredInferenceApi, sandboxName\);/
+      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*insecureLocalUi =\s*typeof insecureLocalUi === "boolean"\s*\?\s*insecureLocalUi\s*:\s*resolveInsecureLocalUiPreference\(session\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*\{\s*insecureLocalUi\s*\},\s*\);/
     );
   });
 

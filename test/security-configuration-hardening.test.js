@@ -26,11 +26,14 @@ describe("security configuration hardening", () => {
 
   it("hardens the Kubernetes sample manifest with safer defaults", () => {
     const manifest = fs.readFileSync(K8S_MANIFEST, "utf8");
+    const workspaceMatch = manifest.match(/- name: workspace[\s\S]*?(?=\n\s*-\s*name: |\n\s*initContainers:|\n\s*volumes:|$)/);
+    expect(workspaceMatch).not.toBeNull();
+    const workspaceSection = workspaceMatch[0];
     expect(manifest).toMatch(/automountServiceAccountToken:\s*false/);
     expect(manifest).toMatch(/enableServiceLinks:\s*false/);
-    expect(manifest).toMatch(/- name: workspace[\s\S]*allowPrivilegeEscalation:\s*false/);
-    expect(manifest).toMatch(/- name: workspace[\s\S]*capabilities:\s*[\r\n]+\s*drop:\s*[\r\n]+\s*-\s*ALL/);
-    expect(manifest).toMatch(/- name: workspace[\s\S]*seccompProfile:\s*[\r\n]+\s*type:\s*RuntimeDefault/);
+    expect(workspaceSection).toMatch(/allowPrivilegeEscalation:\s*false/);
+    expect(workspaceSection).toMatch(/capabilities:\s*[\r\n]+\s*drop:\s*[\r\n]+\s*-\s*ALL/);
+    expect(workspaceSection).toMatch(/seccompProfile:\s*[\r\n]+\s*type:\s*RuntimeDefault/);
     expect(manifest).toMatch(/- name: NEMOCLAW_POLICY_MODE[\s\S]*value:\s*"suggested"/);
     expect(manifest).toContain('export COMPATIBLE_API_KEY="${COMPATIBLE_API_KEY:-dummy}"');
     expect(manifest).toMatch(/- name: COMPATIBLE_API_KEY[\s\S]*secretKeyRef:[\s\S]*name:\s*nemoclaw-compatible-api-key/);

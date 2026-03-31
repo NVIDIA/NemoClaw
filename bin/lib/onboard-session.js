@@ -34,8 +34,13 @@ function defaultSteps() {
   };
 }
 
+function optionalBoolean(value) {
+  return typeof value === "boolean" ? value : null;
+}
+
 function createSession(overrides = {}) {
   const now = new Date().toISOString();
+  const insecureLocalUi = optionalBoolean(overrides.insecureLocalUi);
   return {
     version: SESSION_VERSION,
     sessionId: overrides.sessionId || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
@@ -54,6 +59,7 @@ function createSession(overrides = {}) {
     credentialEnv: overrides.credentialEnv || null,
     preferredInferenceApi: overrides.preferredInferenceApi || null,
     nimContainer: overrides.nimContainer || null,
+    insecureLocalUi,
     policyPresets: Array.isArray(overrides.policyPresets) ? overrides.policyPresets.filter((value) => typeof value === "string") : null,
     metadata: {
       gatewayName: overrides.metadata?.gatewayName || "nemoclaw",
@@ -129,6 +135,7 @@ function normalizeSession(data) {
     credentialEnv: typeof data.credentialEnv === "string" ? data.credentialEnv : null,
     preferredInferenceApi: typeof data.preferredInferenceApi === "string" ? data.preferredInferenceApi : null,
     nimContainer: typeof data.nimContainer === "string" ? data.nimContainer : null,
+    insecureLocalUi: optionalBoolean(data.insecureLocalUi),
     policyPresets: Array.isArray(data.policyPresets) ? data.policyPresets.filter((value) => typeof value === "string") : null,
     lastStepStarted: typeof data.lastStepStarted === "string" ? data.lastStepStarted : null,
     lastCompletedStep: typeof data.lastCompletedStep === "string" ? data.lastCompletedStep : null,
@@ -360,6 +367,7 @@ function filterSafeUpdates(updates) {
   if (typeof updates.credentialEnv === "string") safe.credentialEnv = updates.credentialEnv;
   if (typeof updates.preferredInferenceApi === "string") safe.preferredInferenceApi = updates.preferredInferenceApi;
   if (typeof updates.nimContainer === "string") safe.nimContainer = updates.nimContainer;
+  if (typeof updates.insecureLocalUi === "boolean") safe.insecureLocalUi = updates.insecureLocalUi;
   if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
   }
@@ -388,6 +396,7 @@ function summarizeForDebug(session = loadSession()) {
     credentialEnv: session.credentialEnv,
     preferredInferenceApi: session.preferredInferenceApi,
     nimContainer: session.nimContainer,
+    insecureLocalUi: session.insecureLocalUi,
     policyPresets: session.policyPresets,
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,

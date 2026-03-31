@@ -24,6 +24,17 @@ Run [NemoClaw](https://github.com/NVIDIA/NemoClaw) on Kubernetes with GPU infere
 
 ### 1. Deploy NemoClaw
 
+If your compatible endpoint requires an API key, create the optional
+`nemoclaw-compatible-api-key` Secret after creating the namespace and before
+running `kubectl apply`. The same Secret-backed flow is described again in the
+configuration section below.
+
+```bash
+kubectl create secret generic nemoclaw-compatible-api-key \
+  -n nemoclaw \
+  --from-literal=api-key='<your-api-key>'
+```
+
 ```bash
 kubectl create namespace nemoclaw
 kubectl apply -f https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/k8s/nemoclaw-k8s.yaml
@@ -63,7 +74,7 @@ Edit the environment variables in `nemoclaw-k8s.yaml` before deploying:
 ### Optional: Store a Real API Key in a Secret
 
 If your compatible endpoint requires authentication, create the Secret before
-you apply the manifest:
+you apply the manifest in Step 1:
 
 ```bash
 kubectl create secret generic nemoclaw-compatible-api-key \

@@ -1019,6 +1019,22 @@ function patchStagedDockerfile(
   fs.writeFileSync(dockerfilePath, dockerfile);
 }
 
+function isInsecureLocalUiRequested(value = process.env.NEMOCLAW_INSECURE_LOCAL_UI || "") {
+  return /^(1|true|yes|on)$/i.test(value);
+}
+
+function resolveInsecureLocalUiPreference(session) {
+  if (typeof session?.insecureLocalUi === "boolean") {
+    return session.insecureLocalUi;
+  }
+  const insecureLocalUi = isInsecureLocalUiRequested();
+  onboardSession.updateSession((current) => {
+    current.insecureLocalUi = insecureLocalUi;
+    return current;
+  });
+  return insecureLocalUi;
+}
+
 function summarizeProbeError(body, status) {
   if (!body) return `HTTP ${status} with no response body`;
   try {
@@ -2120,7 +2136,14 @@ async function promptValidatedSandboxName() {
 // ── Step 5: Sandbox ──────────────────────────────────────────────
 
 // eslint-disable-next-line complexity
-async function createSandbox(gpu, model, provider, preferredInferenceApi = null, sandboxNameOverride = null) {
+async function createSandbox(
+  gpu,
+  model,
+  provider,
+  preferredInferenceApi = null,
+  sandboxNameOverride = null,
+  options = {},
+) {
   step(5, 7, "Creating sandbox");
 
   const sandboxName = sandboxNameOverride || (await promptValidatedSandboxName());
@@ -2171,7 +2194,10 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const chatUiUrl = process.env.CHAT_UI_URL || "http://127.0.0.1:18789";
-  const insecureLocalUiEnabled = /^(1|true|yes|on)$/i.test(process.env.NEMOCLAW_INSECURE_LOCAL_UI || "");
+  const insecureLocalUiEnabled =
+    typeof options.insecureLocalUi === "boolean"
+      ? options.insecureLocalUi
+      : isInsecureLocalUiRequested();
   patchStagedDockerfile(
     stagedDockerfile,
     model,
@@ -3482,6 +3508,8 @@ async function onboard(opts = {}) {
     let credentialEnv = session?.credentialEnv || null;
     let preferredInferenceApi = session?.preferredInferenceApi || null;
     let nimContainer = session?.nimContainer || null;
+    let insecureLocalUi =
+      typeof session?.insecureLocalUi === "boolean" ? session.insecureLocalUi : null;
     let forceProviderSelection = false;
     while (true) {
       const resumeProviderSelection =
@@ -3560,8 +3588,25 @@ async function onboard(opts = {}) {
         }
       }
       startRecordedStep("sandbox", { sandboxName, provider, model });
-      sandboxName = await createSandbox(gpu, model, provider, preferredInferenceApi, sandboxName);
-      onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
+      insecureLocalUi =
+        typeof insecureLocalUi === "boolean"
+          ? insecureLocalUi
+          : resolveInsecureLocalUiPreference(session);
+      sandboxName = await createSandbox(
+        gpu,
+        model,
+        provider,
+        preferredInferenceApi,
+        sandboxName,
+        { insecureLocalUi },
+      );
+      onboardSession.markStepComplete("sandbox", {
+        sandboxName,
+        provider,
+        model,
+        nimContainer,
+        insecureLocalUi,
+      });
     }
 
     const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
@@ -3647,6 +3692,7 @@ module.exports = {
   onboardSession,
   printSandboxCreateRecoveryHints,
   pruneStaleSandboxEntry,
+  resolveInsecureLocalUiPreference,
   repairRecordedSandbox,
   recoverGatewayRuntime,
   startGatewayForRecovery,

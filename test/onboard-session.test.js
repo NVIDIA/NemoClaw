@@ -93,6 +93,7 @@ describe("onboard session", () => {
       credentialEnv: "NVIDIA_API_KEY",
       preferredInferenceApi: "openai-completions",
       nimContainer: "nim-123",
+      insecureLocalUi: true,
       policyPresets: ["pypi", "npm"],
       apiKey: "nvapi-secret",
       metadata: {
@@ -109,6 +110,7 @@ describe("onboard session", () => {
     expect(loaded.credentialEnv).toBe("NVIDIA_API_KEY");
     expect(loaded.preferredInferenceApi).toBe("openai-completions");
     expect(loaded.nimContainer).toBe("nim-123");
+    expect(loaded.insecureLocalUi).toBe(true);
     expect(loaded.policyPresets).toEqual(["pypi", "npm"]);
     expect(loaded.apiKey).toBeUndefined();
     expect(loaded.metadata.gatewayName).toBe("nemoclaw");
@@ -198,13 +200,14 @@ describe("onboard session", () => {
   });
 
   it("summarizes the session for debug output", () => {
-    session.saveSession(session.createSession({ sandboxName: "my-assistant" }));
+    session.saveSession(session.createSession({ sandboxName: "my-assistant", insecureLocalUi: true }));
     session.markStepStarted("preflight");
     session.markStepComplete("preflight");
     session.completeSession();
     const summary = session.summarizeForDebug();
 
     expect(summary.sandboxName).toBe("my-assistant");
+    expect(summary.insecureLocalUi).toBe(true);
     expect(summary.steps.preflight.status).toBe("complete");
     expect(summary.steps.preflight.startedAt).toBeTruthy();
     expect(summary.steps.preflight.completedAt).toBeTruthy();
