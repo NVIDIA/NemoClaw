@@ -40,7 +40,7 @@ const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
 
 const GLOBAL_COMMANDS = new Set([
   "onboard", "list", "deploy", "setup", "setup-spark",
-  "start", "stop", "status", "reconnect", "debug", "uninstall",
+  "start", "stop", "status", "debug", "uninstall",
   "help", "--help", "-h", "--version", "-v",
 ]);
 
@@ -715,7 +715,7 @@ async function listSandboxes() {
     const session = onboardSession.loadSession();
     if (session?.sandboxName) {
       console.log(`  No sandboxes registered locally, but the last onboarded sandbox was '${session.sandboxName}'.`);
-      console.log("  Retry `nemoclaw reconnect` or `nemoclaw <name> status` once the gateway/runtime is healthy.");
+      console.log("  Retry `nemoclaw <name> connect` or `nemoclaw <name> status` once the gateway/runtime is healthy.");
     } else {
       console.log("  No sandboxes registered. Run `nemoclaw onboard` to get started.");
     }
@@ -750,26 +750,6 @@ async function listSandboxes() {
   console.log("");
   console.log("  * = default sandbox");
   console.log("");
-}
-
-function resolveReconnectSandboxName(requestedName) {
-  const sandboxName = requestedName || registry.getDefault() || onboardSession.loadSession()?.sandboxName || null;
-  if (!sandboxName) {
-    console.error("  No sandbox registered. Run `nemoclaw onboard` to create one first.");
-    process.exit(1);
-  }
-  validateName(sandboxName, "sandbox name");
-
-  if (requestedName) {
-    const existingSandbox = registry.getSandbox(sandboxName);
-    const sessionSandbox = onboardSession.loadSession()?.sandboxName || null;
-    if (!existingSandbox && sessionSandbox !== sandboxName) {
-      console.error(`  Unknown sandbox '${sandboxName}'.`);
-      console.error("  Use `nemoclaw list` to view registered sandboxes.");
-      process.exit(1);
-    }
-  }
-  return sandboxName;
 }
 
 // ── Sandbox-scoped actions ───────────────────────────────────────
@@ -895,19 +875,6 @@ function sandboxLogs(sandboxName, follow) {
   exitWithSpawnResult(result);
 }
 
-async function reconnect(args = []) {
-  if (args.length > 1) {
-    console.error("  Too many positional arguments for `reconnect`.");
-    console.error("  Usage: `nemoclaw reconnect [sandbox-name]`.");
-    process.exit(1);
-  }
-  const requestedName = args[0] || null;
-  await recoverRegistryEntries({ requestedSandboxName: requestedName });
-  const sandboxName = resolveReconnectSandboxName(requestedName);
-  console.log(`  Reconnecting to sandbox '${sandboxName}'...`);
-  await sandboxConnect(sandboxName);
-}
-
 async function sandboxPolicyAdd(sandboxName) {
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
@@ -982,7 +949,6 @@ function help() {
 
   ${G}Sandbox Management:${R}
     ${B}nemoclaw list${R}                    List all sandboxes
-    nemoclaw reconnect ${D}[name]${R}        Recover the default or named sandbox after a reboot
     nemoclaw <name> connect          Shell into a running sandbox
     nemoclaw <name> status           Sandbox health + NIM status
     nemoclaw <name> logs ${D}[--follow]${R}  Stream sandbox logs
@@ -1040,7 +1006,6 @@ const [cmd, ...args] = process.argv.slice(2);
       case "start":       await start(); break;
       case "stop":        stop(); break;
       case "status":      showStatus(); break;
-      case "reconnect":   await reconnect(args); break;
       case "debug":       debug(args); break;
       case "uninstall":   uninstall(args); break;
       case "list":        await listSandboxes(); break;
@@ -1075,6 +1040,15 @@ const [cmd, ...args] = process.argv.slice(2);
         process.exit(1);
     }
     return;
+  }
+
+  if (args[0] === "connect") {
+    validateName(cmd, "sandbox name");
+    await recoverRegistryEntries({ requestedSandboxName: cmd });
+    if (registry.getSandbox(cmd)) {
+      await sandboxConnect(cmd);
+      return;
+    }
   }
 
   // Unknown command — suggest

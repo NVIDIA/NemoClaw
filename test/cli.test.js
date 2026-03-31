@@ -242,12 +242,6 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Upgrade OpenShell by rerunning `nemoclaw onboard`")).toBeTruthy();
   });
 
-  it("help mentions reconnect command", () => {
-    const r = run("help");
-    expect(r.code).toBe(0);
-    expect(r.out.includes("nemoclaw reconnect")).toBeTruthy();
-  });
-
   it("connect does not pre-start a duplicate port forward", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-forward-"));
     const localBin = path.join(home, "bin");
@@ -567,11 +561,11 @@ describe("CLI dispatch", () => {
     expect(saved.defaultSandbox).toBe("gamma");
   });
 
-  it("reconnect uses the last onboard session when the registry is empty", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-reconnect-session-"));
+  it("connect recovers a named sandbox from the last onboard session when the registry is empty", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-recover-session-"));
     const localBin = path.join(home, "bin");
     const nemoclawDir = path.join(home, ".nemoclaw");
-    const markerFile = path.join(home, "reconnect-args");
+    const markerFile = path.join(home, "connect-args");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(nemoclawDir, { recursive: true });
     fs.writeFileSync(
@@ -652,35 +646,79 @@ describe("CLI dispatch", () => {
       { mode: 0o755 }
     );
 
-    const r = runWithEnv("reconnect", {
+    const r = runWithEnv("alpha connect", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
     expect(r.code).toBe(0);
-    expect(r.out.includes("Reconnecting to sandbox 'alpha'")).toBeTruthy();
     const log = fs.readFileSync(markerFile, "utf8");
+    expect(log.includes("sandbox list")).toBeTruthy();
     expect(log.includes("sandbox get alpha")).toBeTruthy();
     expect(log.includes("sandbox connect alpha")).toBeTruthy();
   });
 
-  it("reconnect rejects too many sandbox arguments", () => {
-    const r = run("reconnect alpha beta");
-    expect(r.code).toBe(1);
-    expect(r.out.includes("Too many positional arguments for `reconnect`.")).toBeTruthy();
-    expect(r.out.includes("Usage: `nemoclaw reconnect [sandbox-name]`.")).toBeTruthy();
-  });
-
-  it("reconnect rejects an explicit unknown sandbox name", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-reconnect-unknown-"));
+  it("connect keeps the unknown command path when recovery cannot find the requested sandbox", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-unknown-after-recovery-"));
     const localBin = path.join(home, "bin");
-    const registryDir = path.join(home, ".nemoclaw");
+    const nemoclawDir = path.join(home, ".nemoclaw");
     fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(registryDir, { recursive: true });
+    fs.mkdirSync(nemoclawDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(nemoclawDir, "onboard-session.json"),
+      JSON.stringify({
+        version: 1,
+        sessionId: "session-1",
+        resumable: true,
+        status: "complete",
+        mode: "interactive",
+        startedAt: "2026-03-31T00:00:00.000Z",
+        updatedAt: "2026-03-31T00:00:00.000Z",
+        lastStepStarted: "policies",
+        lastCompletedStep: "policies",
+        failure: null,
+        sandboxName: "alpha",
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        nimContainer: null,
+        policyPresets: null,
+        metadata: { gatewayName: "nemoclaw" },
+        steps: {
+          preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
+          gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
+          sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+          provider_selection: { status: "complete", startedAt: null, completedAt: null, error: null },
+          inference: { status: "complete", startedAt: null, completedAt: null, error: null },
+          openclaw: { status: "complete", startedAt: null, completedAt: null, error: null },
+          policies: { status: "complete", startedAt: null, completedAt: null, error: null },
+        },
+      }, null, 2),
+      { mode: 0o600 }
+    );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        "if [ \"$1\" = \"status\" ]; then",
+        "  echo 'Server Status'",
+        "  echo",
+        "  echo '  Gateway: nemoclaw'",
+        "  echo '  Status: Connected'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"gateway\" ] && [ \"$2\" = \"info\" ]; then",
+        "  echo 'Gateway Info'",
+        "  echo",
+        "  echo '  Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"list\" ]; then",
+        "  echo 'No sandboxes found.'",
+        "  exit 0",
+        "fi",
         "if [ \"$1\" = \"--version\" ]; then",
         "  echo 'openshell 0.0.16'",
         "  exit 0",
@@ -690,14 +728,14 @@ describe("CLI dispatch", () => {
       { mode: 0o755 }
     );
 
-    const r = runWithEnv("reconnect beta", {
+    const r = runWithEnv("beta connect", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
     expect(r.code).toBe(1);
-    expect(r.out.includes("Unknown sandbox 'beta'.")).toBeTruthy();
-    expect(r.out.includes("Use `nemoclaw list` to view registered sandboxes.")).toBeTruthy();
+    expect(r.out.includes("Unknown command: beta")).toBeTruthy();
+    expect(r.out.includes("Try: nemoclaw <sandbox-name> connect")).toBeTruthy();
   });
 
   it("preserves SIGINT exit semantics for logs --follow", () => {
