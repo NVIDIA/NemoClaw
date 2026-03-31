@@ -978,7 +978,7 @@ function patchStagedDockerfile(
     inferenceApi,
     inferenceCompat,
   } = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
-  const insecureLocalUiValue = options.insecureLocalUi ? "1" : "0";
+  const insecureLocalUiValue = options.insecureLocalUi === true ? "1" : "0";
   let dockerfile = fs.readFileSync(dockerfilePath, "utf8");
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_MODEL=.*$/m,

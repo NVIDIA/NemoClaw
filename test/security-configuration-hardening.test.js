@@ -36,12 +36,18 @@ describe("security configuration hardening", () => {
     expect(workspaceSection).toMatch(/seccompProfile:\s*[\r\n]+\s*type:\s*RuntimeDefault/);
     expect(manifest).toMatch(/- name: NEMOCLAW_POLICY_MODE[\s\S]*value:\s*"suggested"/);
     expect(manifest).toContain('export COMPATIBLE_API_KEY="${COMPATIBLE_API_KEY:-dummy}"');
-    expect(manifest).toMatch(/- name: COMPATIBLE_API_KEY[\s\S]*secretKeyRef:[\s\S]*name:\s*nemoclaw-compatible-api-key/);
-    expect(manifest).toMatch(/- name: COMPATIBLE_API_KEY[\s\S]*optional:\s*true/);
+    const compatibleApiKeySection = manifest.match(
+      /- name: COMPATIBLE_API_KEY[\s\S]*?(?=\n\s*-\s*name: |\n\s*volumeMounts:|\n\s*command:|$)/
+    )?.[0];
+    expect(compatibleApiKeySection).toBeTruthy();
+    expect(compatibleApiKeySection).toMatch(
+      /secretKeyRef:[\s\S]*name:\s*nemoclaw-compatible-api-key/
+    );
+    expect(compatibleApiKeySection).toMatch(/optional:\s*true/);
     expect(manifest).toContain("curl --proto '=https' --tlsv1.2 --fail --show-error --silent");
     expect(manifest).toContain("--output /tmp/nemoclaw-install.sh");
     expect(manifest).toContain("chmod 700 /tmp/nemoclaw-install.sh");
     expect(manifest).toContain("bash /tmp/nemoclaw-install.sh");
-    expect(manifest).not.toContain("curl -fsSL https://nvidia.com/nemoclaw.sh | bash");
+    expect(manifest).not.toMatch(/curl\b[^\n|]*\|\s*(?:ba|z|k)?sh\b/i);
   });
 });
