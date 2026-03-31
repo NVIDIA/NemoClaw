@@ -930,6 +930,69 @@ const { setupInference } = require(${onboardPath});
     assert.deepEqual(providerEnvs, ["sk-bad", "sk-good"]);
   });
 
+  it("returns control to provider selection when inference apply recovery chooses back", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-apply-back-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-inference-apply-back-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const credentials = require(${credentialsPath});
+
+const commands = [];
+credentials.prompt = async () => "back";
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  if (command.includes("'inference' 'set'")) {
+    return { status: 1, stdout: "", stderr: "HTTP 404: model not found" };
+  }
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = () => "";
+registry.updateSandbox = () => true;
+
+process.env.OPENAI_API_KEY = "sk-secret-value";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  const result = await setupInference("test-box", "gpt-5.4", "openai-api", "https://api.openai.com/v1", "OPENAI_API_KEY");
+  console.log(JSON.stringify({ result, commands }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.deepEqual(payload.result, { retry: "selection" });
+    assert.equal(
+      payload.commands.filter((entry) => entry.command.includes("'inference' 'set'")).length,
+      1
+    );
+  });
+
   it("uses split curl timeout args and does not mislabel curl usage errors as timeouts", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),

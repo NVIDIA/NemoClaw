@@ -2388,7 +2388,11 @@ async function setupNim(gpu) {
         endpointUrl = normalizeProviderBaseUrl(endpointInput, "openai");
         if (!endpointUrl) {
           console.error("  Endpoint URL is required for Other OpenAI-compatible endpoint.");
-          process.exit(1);
+          if (isNonInteractive()) {
+            process.exit(1);
+          }
+          console.log("");
+          continue selectionLoop;
         }
       } else if (selected.key === "anthropicCompatible") {
         const endpointInput = isNonInteractive()
@@ -2406,7 +2410,11 @@ async function setupNim(gpu) {
         endpointUrl = normalizeProviderBaseUrl(endpointInput, "anthropic");
         if (!endpointUrl) {
           console.error("  Endpoint URL is required for Other Anthropic-compatible endpoint.");
-          process.exit(1);
+          if (isNonInteractive()) {
+            process.exit(1);
+          }
+          console.log("");
+          continue selectionLoop;
         }
       }
 
@@ -2795,8 +2803,11 @@ async function setupInference(sandboxName, model, provider, endpointUrl = null, 
           process.exit(providerResult.status || 1);
         }
         const retry = await promptValidationRecovery(config.label, classifyApplyFailure(providerResult.message), resolvedCredentialEnv, config.helpUrl);
-        if (retry === "credential" || retry === "retry" || retry === "selection" || retry === "model") {
+        if (retry === "credential" || retry === "retry") {
           continue;
+        }
+        if (retry === "selection" || retry === "model") {
+          return { retry: "selection" };
         }
         process.exit(providerResult.status || 1);
       }
@@ -2817,8 +2828,11 @@ async function setupInference(sandboxName, model, provider, endpointUrl = null, 
         process.exit(applyResult.status || 1);
       }
       const retry = await promptValidationRecovery(config.label, classifyApplyFailure(message), resolvedCredentialEnv, config.helpUrl);
-      if (retry === "credential" || retry === "retry" || retry === "selection" || retry === "model") {
+      if (retry === "credential" || retry === "retry") {
         continue;
+      }
+      if (retry === "selection" || retry === "model") {
+        return { retry: "selection" };
       }
       process.exit(applyResult.status || 1);
     }
@@ -2865,6 +2879,7 @@ async function setupInference(sandboxName, model, provider, endpointUrl = null, 
   verifyInferenceRoute(provider, model);
   registry.updateSandbox(sandboxName, { model, provider });
   console.log(`  ✓ Inference route set: ${provider} / ${model}`);
+  return { ok: true };
 }
 
 // ── Step 6: OpenClaw ─────────────────────────────────────────────
@@ -3445,54 +3460,65 @@ async function onboard(opts = {}) {
     let credentialEnv = session?.credentialEnv || null;
     let preferredInferenceApi = session?.preferredInferenceApi || null;
     let nimContainer = session?.nimContainer || null;
-    const resumeProviderSelection =
-      resume &&
-      session?.steps?.provider_selection?.status === "complete" &&
-      typeof provider === "string" &&
-      typeof model === "string";
-    if (resumeProviderSelection) {
-      skippedStepMessage("provider_selection", `${provider} / ${model}`);
-      hydrateCredentialEnv(credentialEnv);
-    } else {
-      startRecordedStep("provider_selection", { sandboxName });
-      const selection = await setupNim(gpu);
-      model = selection.model;
-      provider = selection.provider;
-      endpointUrl = selection.endpointUrl;
-      credentialEnv = selection.credentialEnv;
-      preferredInferenceApi = selection.preferredInferenceApi;
-      nimContainer = selection.nimContainer;
-      onboardSession.markStepComplete("provider_selection", {
-        sandboxName,
-        provider,
-        model,
-        endpointUrl,
-        credentialEnv,
-        preferredInferenceApi,
-        nimContainer,
-      });
-    }
+    let forceProviderSelection = false;
+    while (true) {
+      const resumeProviderSelection =
+        !forceProviderSelection &&
+        resume &&
+        session?.steps?.provider_selection?.status === "complete" &&
+        typeof provider === "string" &&
+        typeof model === "string";
+      if (resumeProviderSelection) {
+        skippedStepMessage("provider_selection", `${provider} / ${model}`);
+        hydrateCredentialEnv(credentialEnv);
+      } else {
+        startRecordedStep("provider_selection", { sandboxName });
+        const selection = await setupNim(gpu);
+        model = selection.model;
+        provider = selection.provider;
+        endpointUrl = selection.endpointUrl;
+        credentialEnv = selection.credentialEnv;
+        preferredInferenceApi = selection.preferredInferenceApi;
+        nimContainer = selection.nimContainer;
+        onboardSession.markStepComplete("provider_selection", {
+          sandboxName,
+          provider,
+          model,
+          endpointUrl,
+          credentialEnv,
+          preferredInferenceApi,
+          nimContainer,
+        });
+      }
 
-    process.env.NEMOCLAW_OPENSHELL_BIN = getOpenshellBinary();
-    const resumeInference =
-      resume &&
-      typeof provider === "string" &&
-      typeof model === "string" &&
-      isInferenceRouteReady(provider, model);
-    if (resumeInference) {
-      skippedStepMessage("inference", `${provider} / ${model}`);
-      if (nimContainer) {
-        registry.updateSandbox(sandboxName, { nimContainer });
+      process.env.NEMOCLAW_OPENSHELL_BIN = getOpenshellBinary();
+      const resumeInference =
+        !forceProviderSelection &&
+        resume &&
+        typeof provider === "string" &&
+        typeof model === "string" &&
+        isInferenceRouteReady(provider, model);
+      if (resumeInference) {
+        skippedStepMessage("inference", `${provider} / ${model}`);
+        if (nimContainer) {
+          registry.updateSandbox(sandboxName, { nimContainer });
+        }
+        onboardSession.markStepComplete("inference", { sandboxName, provider, model, nimContainer });
+        break;
       }
-      onboardSession.markStepComplete("inference", { sandboxName, provider, model, nimContainer });
-    } else {
+
       startRecordedStep("inference", { sandboxName, provider, model });
-      await setupInference(GATEWAY_NAME, model, provider, endpointUrl, credentialEnv);
+      const inferenceResult = await setupInference(GATEWAY_NAME, model, provider, endpointUrl, credentialEnv);
       delete process.env.NVIDIA_API_KEY;
+      if (inferenceResult?.retry === "selection") {
+        forceProviderSelection = true;
+        continue;
+      }
       if (nimContainer) {
         registry.updateSandbox(sandboxName, { nimContainer });
       }
       onboardSession.markStepComplete("inference", { sandboxName, provider, model, nimContainer });
+      break;
     }
 
     const sandboxReuseState = getSandboxReuseState(sandboxName);
