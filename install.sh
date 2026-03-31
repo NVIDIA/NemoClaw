@@ -91,6 +91,25 @@ error() {
 }
 ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
 
+verify_downloaded_script() {
+  local file="$1" label="${2:-script}"
+  if [ ! -s "$file" ]; then
+    error "$label installer download is empty or missing"
+  fi
+  if ! head -1 "$file" | grep -qE '^#!.*(sh|bash)'; then
+    error "$label installer does not start with a shell shebang — possible download corruption"
+  fi
+  local hash
+  if command -v sha256sum >/dev/null 2>&1; then
+    hash="$(sha256sum "$file" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    hash="$(shasum -a 256 "$file" | awk '{print $1}')"
+  fi
+  if [ -n "${hash:-}" ]; then
+    info "$label installer SHA-256: $hash"
+  fi
+}
+
 resolve_default_sandbox_name() {
   local registry_file="${HOME}/.nemoclaw/sandboxes.json"
   local sandbox_name="${NEMOCLAW_SANDBOX_NAME:-}"
@@ -485,14 +504,26 @@ install_or_upgrade_ollama() {
       info "Ollama v${current} meets minimum requirement (>= v${OLLAMA_MIN_VERSION})"
     else
       info "Ollama v${current:-unknown} is below v${OLLAMA_MIN_VERSION} — upgrading…"
-      curl -fsSL https://ollama.com/install.sh | sh
+      (
+        tmpdir="$(mktemp -d)"
+        trap 'rm -rf "$tmpdir"' EXIT
+        curl -fsSL https://ollama.com/install.sh -o "$tmpdir/install_ollama.sh"
+        verify_downloaded_script "$tmpdir/install_ollama.sh" "Ollama"
+        sh "$tmpdir/install_ollama.sh"
+      )
       info "Ollama upgraded to $(get_ollama_version)"
     fi
   else
     # No ollama — only install if a GPU is present
     if detect_gpu; then
       info "GPU detected — installing Ollama…"
-      curl -fsSL https://ollama.com/install.sh | sh
+      (
+        tmpdir="$(mktemp -d)"
+        trap 'rm -rf "$tmpdir"' EXIT
+        curl -fsSL https://ollama.com/install.sh -o "$tmpdir/install_ollama.sh"
+        verify_downloaded_script "$tmpdir/install_ollama.sh" "Ollama"
+        sh "$tmpdir/install_ollama.sh"
+      )
       info "Ollama installed: v$(get_ollama_version)"
     else
       warn "No GPU detected — skipping Ollama installation."

@@ -64,6 +64,12 @@ $ nvm use 22
 
 Then re-run the installer.
 
+### Image push fails with out-of-memory errors
+
+The sandbox image is approximately 2.4 GB compressed. During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline, which buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer.
+
+If you cannot add memory, configure at least 8 GB of swap to work around the issue at the cost of slower performance.
+
 ### Docker is not running
 
 The installer and onboard wizard require Docker to be running.
@@ -74,6 +80,15 @@ $ sudo systemctl start docker
 ```
 
 On macOS with Docker Desktop, open the Docker Desktop application and wait for it to finish starting before retrying.
+
+### macOS first-run failures
+
+The two most common first-run failures on macOS are missing developer tools and Docker connection errors.
+
+To avoid these issues, install the prerequisites in the following order before running the NemoClaw installer:
+
+1. Install Xcode Command Line Tools (`xcode-select --install`). These are needed by the installer and Node.js toolchain.
+2. Install and start a supported container runtime (Docker Desktop or Colima). Without a running runtime, the installer cannot connect to Docker.
 
 ### npm install fails with permission errors
 

@@ -36,6 +36,19 @@ By combining powerful open source models with built-in safety measures, NemoClaw
 | Route inference         | Configures OpenShell inference routing so agent traffic flows through cloud-hosted Nemotron 3 Super 120B via [build.nvidia.com](https://build.nvidia.com). |
 | Manage the lifecycle    | Handles blueprint versioning, digest verification, and sandbox setup.                                                                                |
 
+## Key Features
+
+NemoClaw provides the following capabilities on top of the OpenShell runtime.
+
+| Feature | Description |
+|---------|-------------|
+| Guided onboarding | Validates credentials, selects providers, and creates a working sandbox in one command. |
+| Hardened blueprint | A security-first Dockerfile with capability drops, least-privilege network rules, and declarative policy. |
+| State management | Safe migration of agent state across machines with credential stripping and integrity verification. |
+| Messaging bridges | Host-side processes that connect Telegram, Discord, and Slack to the sandboxed agent. |
+| Routed inference | Provider-routed model calls through the OpenShell gateway, transparent to the agent. Supports NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and local Ollama. |
+| Layered protection | Network, filesystem, process, and inference controls that can be hot-reloaded or locked at creation. |
+
 ## Challenge
 
 Autonomous AI agents like OpenClaw can make arbitrary network requests, access the host filesystem, and call any inference endpoint. Without guardrails, this creates security, cost, and compliance risks that grow as agents run unattended.

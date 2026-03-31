@@ -502,16 +502,31 @@ function uninstall(args) {
     exitWithSpawnResult(result);
   }
 
+  // Download to file before execution — prevents partial-download execution.
+  // Upstream URL is a rolling release so SHA-256 pinning isn't practical.
   console.log(`  Local uninstall script not found; falling back to ${REMOTE_UNINSTALL_URL}`);
-  const forwardedArgs = args.map(shellQuote).join(" ");
-  const command = forwardedArgs.length > 0
-    ? `curl -fsSL ${shellQuote(REMOTE_UNINSTALL_URL)} | bash -s -- ${forwardedArgs}`
-    : `curl -fsSL ${shellQuote(REMOTE_UNINSTALL_URL)} | bash`;
-  const result = spawnSync("bash", ["-c", command], {
-    stdio: "inherit",
-    cwd: ROOT,
-    env: process.env,
-  });
+  const uninstallDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-"));
+  const uninstallScript = path.join(uninstallDir, "uninstall.sh");
+  let result;
+  let downloadFailed = false;
+  try {
+    try {
+      execFileSync("curl", ["-fsSL", REMOTE_UNINSTALL_URL, "-o", uninstallScript], { stdio: "inherit" });
+    } catch {
+      console.error(`  Failed to download uninstall script from ${REMOTE_UNINSTALL_URL}`);
+      downloadFailed = true;
+    }
+    if (!downloadFailed) {
+      result = spawnSync("bash", [uninstallScript, ...args], {
+        stdio: "inherit",
+        cwd: ROOT,
+        env: process.env,
+      });
+    }
+  } finally {
+    fs.rmSync(uninstallDir, { recursive: true, force: true });
+  }
+  if (downloadFailed) process.exit(1);
   exitWithSpawnResult(result);
 }
 
