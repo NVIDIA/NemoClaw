@@ -13,7 +13,8 @@ async function importCredentialsModule(home) {
   vi.doUnmock("child_process");
   vi.doUnmock("readline");
   vi.stubEnv("HOME", home);
-  return import("../bin/lib/credentials.js");
+  const module = await import("../bin/lib/credentials.js");
+  return module.default ?? module;
 }
 
 afterEach(() => {
@@ -109,7 +110,7 @@ describe("credential prompts", () => {
   });
 
   it("normalizes credential values and keeps prompting on invalid NVIDIA API key prefixes", async () => {
-    const credentials = await import("../bin/lib/credentials.js");
+    const credentials = await importCredentialsModule("/tmp");
     expect(credentials.normalizeCredentialValue("  nvapi-good-key\r\n")).toBe("nvapi-good-key");
 
     const source = fs.readFileSync(
