@@ -19,7 +19,7 @@
 #   5  — Shell / TS formatters (shfmt, prettier)
 #   6  — Fixes that should follow formatters (ruff check --fix, eslint --fix)
 #  10  — Linters and read-only checks
-#  20  — Project-level checks (vitest)
+#  20  — Project-level checks (vitest, coverage, ratchet)
 
 exclude: ^(nemoclaw/dist/|nemoclaw/node_modules/|docs/_build/|\.venv/|uv\.lock$)
 
@@ -216,12 +216,21 @@ repos:
         stages: [pre-push]
         priority: 10
 
-      - id: vitest-root
-        name: Vitest (unit tests)
-        entry: npx vitest run --project cli
+      - id: vitest-cli-coverage
+        name: Vitest (CLI coverage)
+        entry: bash -c 'npx vitest run --project cli --coverage --coverage.reporter=text --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/cli --coverage.include="bin/**/*.js" --coverage.exclude="test/**/*.js" --coverage.exclude="test/**/*.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"'
         language: system
         pass_filenames: false
-        files: ^(bin|test|scripts)/
+        always_run: true
+        stages: [pre-push]
+        priority: 20
+
+      - id: vitest-plugin-coverage
+        name: Vitest (plugin coverage)
+        entry: bash -c 'npx vitest run --project plugin --coverage --coverage.reporter=text --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/plugin --coverage.include="nemoclaw/src/**/*.ts" --coverage.exclude="**/*.test.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"'
+        language: system
+        pass_filenames: false
+        always_run: true
         stages: [pre-push]
         priority: 20
 
