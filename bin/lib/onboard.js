@@ -970,6 +970,9 @@ function patchStagedDockerfile(dockerfilePath, model, chatUiUrl, buildId = Strin
     inferenceApi,
     inferenceCompat,
   } = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
+  const insecureLocalUiValue = /^(1|true|yes|on)$/i.test(process.env.NEMOCLAW_INSECURE_LOCAL_UI || "")
+    ? "1"
+    : "0";
   let dockerfile = fs.readFileSync(dockerfilePath, "utf8");
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_MODEL=.*$/m,
@@ -986,6 +989,10 @@ function patchStagedDockerfile(dockerfilePath, model, chatUiUrl, buildId = Strin
   dockerfile = dockerfile.replace(
     /^ARG CHAT_UI_URL=.*$/m,
     `ARG CHAT_UI_URL=${chatUiUrl}`
+  );
+  dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_INSECURE_LOCAL_UI=.*$/m,
+    `ARG NEMOCLAW_INSECURE_LOCAL_UI=${insecureLocalUiValue}`
   );
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_INFERENCE_BASE_URL=.*$/m,

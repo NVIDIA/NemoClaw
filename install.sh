@@ -217,6 +217,7 @@ usage() {
   printf "    NEMOCLAW_POLICY_PRESETS       Comma-separated policy presets\n"
   printf "    NEMOCLAW_EXPERIMENTAL=1       Show experimental/local options\n"
   printf "    CHAT_UI_URL                   Chat UI URL to open after setup\n"
+  printf "    NEMOCLAW_INSECURE_LOCAL_UI=1  Allow token-only local UI auth for loopback origins\n"
   printf "    DISCORD_BOT_TOKEN             Auto-enable Discord policy support\n"
   printf "    SLACK_BOT_TOKEN               Auto-enable Slack policy support\n"
   printf "    TELEGRAM_BOT_TOKEN            Auto-enable Telegram policy support\n"

@@ -75,6 +75,9 @@ The script installs Node.js if it is not already present, then runs the guided o
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
+For the safer default, NemoClaw keeps OpenClaw device auth enabled for the Control UI.
+If you explicitly want token-only auth for a loopback-only local dashboard, set `NEMOCLAW_INSECURE_LOCAL_UI=1` before onboarding.
+
 If you use nvm or fnm to manage Node.js, the installer may not update your current shell's PATH.
 If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
 

@@ -95,20 +95,29 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INSECURE_LOCAL_UI=0",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n")
     );
 
+    const originalInsecureLocalUi = process.env.NEMOCLAW_INSECURE_LOCAL_UI;
     try {
+      process.env.NEMOCLAW_INSECURE_LOCAL_UI = "1";
       patchStagedDockerfile(dockerfilePath, "gpt-5.4", "http://127.0.0.1:19999", "build-123", "openai-api");
       const patched = fs.readFileSync(dockerfilePath, "utf8");
       assert.match(patched, /^ARG NEMOCLAW_MODEL=gpt-5\.4$/m);
       assert.match(patched, /^ARG NEMOCLAW_PROVIDER_KEY=openai$/m);
       assert.match(patched, /^ARG NEMOCLAW_PRIMARY_MODEL_REF=openai\/gpt-5\.4$/m);
       assert.match(patched, /^ARG CHAT_UI_URL=http:\/\/127\.0\.0\.1:19999$/m);
+      assert.match(patched, /^ARG NEMOCLAW_INSECURE_LOCAL_UI=1$/m);
       assert.match(patched, /^ARG NEMOCLAW_BUILD_ID=build-123$/m);
     } finally {
+      if (originalInsecureLocalUi === undefined) {
+        delete process.env.NEMOCLAW_INSECURE_LOCAL_UI;
+      } else {
+        process.env.NEMOCLAW_INSECURE_LOCAL_UI = originalInsecureLocalUi;
+      }
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });

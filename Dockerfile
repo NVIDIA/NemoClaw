@@ -51,6 +51,7 @@ ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
 ARG NEMOCLAW_PROVIDER_KEY=nvidia
 ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b
 ARG CHAT_UI_URL=http://127.0.0.1:18789
+ARG NEMOCLAW_INSECURE_LOCAL_UI=0
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
 ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
@@ -65,6 +66,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_PROVIDER_KEY=${NEMOCLAW_PROVIDER_KEY} \
     NEMOCLAW_PRIMARY_MODEL_REF=${NEMOCLAW_PRIMARY_MODEL_REF} \
     CHAT_UI_URL=${CHAT_UI_URL} \
+    NEMOCLAW_INSECURE_LOCAL_UI=${NEMOCLAW_INSECURE_LOCAL_UI} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
     NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64}
@@ -87,10 +89,15 @@ primary_model_ref = os.environ['NEMOCLAW_PRIMARY_MODEL_REF']; \
 inference_base_url = os.environ['NEMOCLAW_INFERENCE_BASE_URL']; \
 inference_api = os.environ['NEMOCLAW_INFERENCE_API']; \
 inference_compat = json.loads(base64.b64decode(os.environ['NEMOCLAW_INFERENCE_COMPAT_B64']).decode('utf-8')); \
+insecure_local_ui = os.environ.get('NEMOCLAW_INSECURE_LOCAL_UI', '0').strip().lower() in ('1', 'true', 'yes', 'on'); \
 parsed = urlparse(chat_ui_url); \
 chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \
 origins = ['http://127.0.0.1:18789']; \
 origins = list(dict.fromkeys(origins + [chat_origin])); \
+loopback_hosts = {'127.0.0.1', 'localhost', '::1'}; \
+origin_hosts = {urlparse(origin).hostname for origin in origins}; \
+loopback_only_origins = bool(origin_hosts) and all(host in loopback_hosts for host in origin_hosts if host); \
+enable_insecure_local_ui = insecure_local_ui and loopback_only_origins; \
 providers = { \
     provider_key: { \
         'baseUrl': inference_base_url, \
@@ -106,8 +113,8 @@ config = { \
     'gateway': { \
         'mode': 'local', \
         'controlUi': { \
-            'allowInsecureAuth': True, \
-            'dangerouslyDisableDeviceAuth': True, \
+            'allowInsecureAuth': enable_insecure_local_ui, \
+            'dangerouslyDisableDeviceAuth': enable_insecure_local_ui, \
             'allowedOrigins': origins, \
         }, \
         'trustedProxies': ['127.0.0.1', '::1'], \

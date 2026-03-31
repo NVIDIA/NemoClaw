@@ -2,6 +2,12 @@
 
 > **⚠️ Experimental**: This deployment method is intended for **trying out NemoClaw on Kubernetes**, not for production use. It requires a **privileged pod** running **Docker-in-Docker (DinD)** to create isolated sandbox environments. Operational requirements (storage, runtime, security policies) vary by cluster configuration.
 
+The sample manifest now uses a few safer defaults out of the box:
+- disables Kubernetes service account token automounting
+- disables service-link environment injection
+- runs the workspace container with `allowPrivilegeEscalation: false` and `RuntimeDefault` seccomp
+- applies NemoClaw's suggested policy presets instead of skipping policy setup
+
 Run [NemoClaw](https://github.com/NVIDIA/NemoClaw) on Kubernetes with GPU inference powered by [Dynamo](https://github.com/ai-dynamo/dynamo) or any OpenAI-compatible endpoint.
 
 ---
@@ -48,9 +54,10 @@ Edit the environment variables in `nemoclaw-k8s.yaml` before deploying:
 |----------|----------|-------------|
 | `DYNAMO_HOST` | Yes | Inference endpoint for socat proxy (e.g., `vllm-frontend.dynamo.svc:8000`) |
 | `NEMOCLAW_ENDPOINT_URL` | Yes | URL the sandbox uses (usually `http://host.openshell.internal:8000/v1`) |
-| `COMPATIBLE_API_KEY` | Yes | API key (use `dummy` for Dynamo/vLLM) |
+| `COMPATIBLE_API_KEY` | Yes | API key (use `dummy` for Dynamo/vLLM; use a Kubernetes `Secret` for real credentials) |
 | `NEMOCLAW_MODEL` | Yes | Model name (e.g., `meta-llama/Llama-3.1-8B-Instruct`) |
 | `NEMOCLAW_SANDBOX_NAME` | No | Sandbox name (default: `my-assistant`) |
+| `NEMOCLAW_POLICY_MODE` | No | Policy preset mode for non-interactive onboarding (default: `suggested`) |
 
 ### Example: Custom Endpoint
 

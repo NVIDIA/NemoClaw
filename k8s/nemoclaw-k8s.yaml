@@ -9,6 +9,8 @@ metadata:
   labels:
     app: nemoclaw
 spec:
+  automountServiceAccountToken: false
+  enableServiceLinks: false
   containers:
     # Docker daemon (DinD)
     - name: dind
@@ -34,6 +36,10 @@ spec:
     # Workspace - runs official NemoClaw installer
     - name: workspace
       image: node:22
+      securityContext:
+        allowPrivilegeEscalation: false
+        seccompProfile:
+          type: RuntimeDefault
       command:
         - bash
         - -c
@@ -63,7 +69,9 @@ spec:
 
           # Run official NemoClaw installer
           echo "[4/4] Running NemoClaw installer..."
-          curl -fsSL https://nvidia.com/nemoclaw.sh | bash
+          curl -fsSLo /tmp/nemoclaw-install.sh https://www.nvidia.com/nemoclaw.sh
+          bash /tmp/nemoclaw-install.sh
+          rm -f /tmp/nemoclaw-install.sh
 
           # Keep running after onboard
           echo "Onboard complete. Container staying alive."
@@ -88,7 +96,7 @@ spec:
         - name: NEMOCLAW_SANDBOX_NAME
           value: "my-assistant"
         - name: NEMOCLAW_POLICY_MODE
-          value: "skip"
+          value: "suggested"
       volumeMounts:
         - name: docker-socket
           mountPath: /var/run
