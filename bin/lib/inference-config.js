@@ -107,17 +107,6 @@ function getProviderSelectionConfig(provider, model) {
         provider,
         providerLabel: "Local Ollama",
       };
-    case "bedrock":
-      return {
-        endpointType: "custom",
-        endpointUrl: INFERENCE_ROUTE_URL,
-        ncpPartner: null,
-        model: model || "nvidia.nemotron-super-3-120b",
-        profile: DEFAULT_ROUTE_PROFILE,
-        credentialEnv: "BEDROCK_API_KEY",
-        provider,
-        providerLabel: "Amazon Bedrock (OpenAI-compatible)",
-      };
     default:
       return null;
   }
