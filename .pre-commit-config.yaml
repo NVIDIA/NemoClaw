@@ -20,6 +20,7 @@
 #   6  — Fixes that should follow formatters (ruff check --fix, eslint --fix)
 #  10  — Linters and read-only checks
 #  20  — Project-level checks (vitest)
+#  21  — Coverage ratchet
 
 exclude: ^(nemoclaw/dist/|nemoclaw/node_modules/|docs/_build/|\.venv/|uv\.lock$)
 
@@ -216,14 +217,23 @@ repos:
         stages: [pre-push]
         priority: 10
 
-      - id: vitest-root
-        name: Vitest (unit tests)
-        entry: npx vitest run --project cli
+      - id: vitest-unit
+        name: Vitest (CLI + plugin with coverage)
+        entry: npx vitest run --project cli --project plugin --coverage
         language: system
         pass_filenames: false
-        files: ^(bin|test|scripts)/
+        always_run: true
         stages: [pre-push]
         priority: 20
+
+      - id: coverage-ratchet
+        name: Coverage ratchet
+        entry: npx tsx scripts/check-coverage-ratchet.ts
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+        priority: 21
 
 default_language_version:
   python: python3
