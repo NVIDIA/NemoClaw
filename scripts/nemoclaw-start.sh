@@ -439,14 +439,27 @@ if [ "$(id -u)" -ne 0 ]; then
         current_target="$(readlink -f "${openclaw_dir}/identity" 2>/dev/null || true)"
         expected_target="$(readlink -f "${data_dir}/identity" 2>/dev/null || true)"
         if [ "$current_target" != "$expected_target" ]; then
-          ln -snf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null || true
-          echo "[setup] repaired identity symlink"
+          if ln -snf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null; then
+            echo "[setup] repaired identity symlink"
+          else
+            echo "[setup] could not repair identity symlink" >&2
+          fi
         fi
       elif [ ! -e "${openclaw_dir}/identity" ]; then
-        ln -snf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null || true
-        echo "[setup] created identity symlink"
+        if ln -snf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null; then
+          echo "[setup] created identity symlink"
+        else
+          echo "[setup] could not create identity symlink" >&2
+        fi
       else
-        echo "[setup] ${openclaw_dir}/identity exists and is not a symlink; leaving as-is" >&2
+        local backup
+        backup="${openclaw_dir}/identity.bak.$(date +%s)"
+        if mv "${openclaw_dir}/identity" "$backup" 2>/dev/null \
+          && ln -snf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null; then
+          echo "[setup] replaced non-symlink identity path (backup: ${backup})"
+        else
+          echo "[setup] could not replace ${openclaw_dir}/identity; writes may fail" >&2
+        fi
       fi
     fi
   }
