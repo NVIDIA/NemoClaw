@@ -9,7 +9,7 @@ const ROOT = path.join(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const K8S_MANIFEST = path.join(ROOT, "k8s", "nemoclaw-k8s.yaml");
 
-describe("security config quick wins", () => {
+describe("security configuration hardening", () => {
   it("gates insecure Control UI auth behind explicit opt-in and loopback-only origins", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf8");
     expect(dockerfile).toMatch(/^ARG NEMOCLAW_INSECURE_LOCAL_UI=0$/m);
