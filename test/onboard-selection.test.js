@@ -8,6 +8,79 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+function writeOpenAiStyleAuthRetryCurl(fakeBin, goodToken, models = ["gpt-5.4"]) {
+  fs.writeFileSync(
+    path.join(fakeBin, "curl"),
+    `#!/usr/bin/env bash
+body='{"error":{"message":"forbidden"}}'
+status="403"
+outfile=""
+auth=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -H)
+      if echo "$2" | grep -q '^Authorization: Bearer '; then
+        auth="$2"
+      fi
+      shift 2
+      ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if echo "$url" | grep -q '/models$'; then
+  body='{"data":[${models.map((model) => `{"id":"${model}"}`).join(",")}]}'
+  status="200"
+elif echo "$auth" | grep -q '${goodToken}' && echo "$url" | grep -q '/responses$'; then
+  body='{"id":"resp_123"}'
+  status="200"
+elif echo "$auth" | grep -q '${goodToken}' && echo "$url" | grep -q '/chat/completions$'; then
+  body='{"id":"chatcmpl-123"}'
+  status="200"
+fi
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+    { mode: 0o755 }
+  );
+}
+
+function writeAnthropicStyleAuthRetryCurl(fakeBin, goodToken, models = ["claude-sonnet-4-6"]) {
+  fs.writeFileSync(
+    path.join(fakeBin, "curl"),
+    `#!/usr/bin/env bash
+body='{"error":{"message":"forbidden"}}'
+status="403"
+outfile=""
+auth=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -H)
+      if echo "$2" | grep -q '^x-api-key: '; then
+        auth="$2"
+      fi
+      shift 2
+      ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if echo "$url" | grep -q '/v1/models$'; then
+  body='{"data":[${models.map((model) => `{"id":"${model}"}`).join(",")}]}'
+  status="200"
+elif echo "$auth" | grep -q '${goodToken}' && echo "$url" | grep -q '/v1/messages$'; then
+  body='{"id":"msg_123","content":[{"type":"text","text":"OK"}]}'
+  status="200"
+fi
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+    { mode: 0o755 }
+  );
+}
+
 describe("onboard provider selection UX", () => {
   it("prompts explicitly instead of silently auto-selecting detected Ollama", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -1403,6 +1476,365 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length, 1);
     assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\]/.test(message)));
     assert.ok(payload.messages.some((message) => /NVIDIA Endpoints API key: /.test(message)));
+  });
+
+  it("lets users re-enter an OpenAI API key after authorization failure", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-openai-auth-retry-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "openai-auth-retry-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeOpenAiStyleAuthRetryCurl(fakeBin, "sk-good", ["gpt-5.4"]);
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["2", "", "y", "sk-good", ""];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENAI_API_KEY = "sk-bad";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines, key: process.env.OPENAI_API_KEY }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "openai-api");
+    assert.equal(payload.result.model, "gpt-5.4");
+    assert.equal(payload.result.preferredInferenceApi, "openai-responses");
+    assert.equal(payload.key, "sk-good");
+    assert.ok(payload.lines.some((line) => line.includes("OpenAI authorization failed")));
+    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /OpenAI API key: /.test(message)));
+    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+    assert.equal(payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length, 2);
+  });
+
+  it("lets users re-enter an Anthropic API key after authorization failure", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-anthropic-auth-retry-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "anthropic-auth-retry-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeAnthropicStyleAuthRetryCurl(fakeBin, "anthropic-good", ["claude-sonnet-4-6"]);
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["4", "", "y", "anthropic-good", ""];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  process.env.ANTHROPIC_API_KEY = "anthropic-bad";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines, key: process.env.ANTHROPIC_API_KEY }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "anthropic-prod");
+    assert.equal(payload.result.model, "claude-sonnet-4-6");
+    assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
+    assert.equal(payload.key, "anthropic-good");
+    assert.ok(payload.lines.some((line) => line.includes("Anthropic authorization failed")));
+    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /Anthropic API key: /.test(message)));
+    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+    assert.equal(payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length, 2);
+  });
+
+  it("lets users re-enter a Gemini API key after authorization failure", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-gemini-auth-retry-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "gemini-auth-retry-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeOpenAiStyleAuthRetryCurl(fakeBin, "gemini-good", ["gemini-2.5-flash"]);
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["6", "", "y", "gemini-good", ""];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  process.env.GEMINI_API_KEY = "gemini-bad";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines, key: process.env.GEMINI_API_KEY }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "gemini-api");
+    assert.equal(payload.result.model, "gemini-2.5-flash");
+    assert.equal(payload.result.preferredInferenceApi, "openai-responses");
+    assert.equal(payload.key, "gemini-good");
+    assert.ok(payload.lines.some((line) => line.includes("Google Gemini authorization failed")));
+    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /Google Gemini API key: /.test(message)));
+    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+    assert.equal(payload.messages.filter((message) => /Choose model \[5\]/.test(message)).length, 2);
+  });
+
+  it("lets users re-enter a custom OpenAI-compatible API key without re-entering the endpoint URL", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-custom-openai-auth-retry-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "custom-openai-auth-retry-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeOpenAiStyleAuthRetryCurl(fakeBin, "proxy-good", ["custom-model"]);
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["3", "https://proxy.example.com/v1", "custom-model", "y", "proxy-good", "custom-model"];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  process.env.COMPATIBLE_API_KEY = "proxy-bad";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines, key: process.env.COMPATIBLE_API_KEY }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "compatible-endpoint");
+    assert.equal(payload.result.model, "custom-model");
+    assert.equal(payload.result.endpointUrl, "https://proxy.example.com/v1");
+    assert.equal(payload.result.preferredInferenceApi, "openai-responses");
+    assert.equal(payload.key, "proxy-good");
+    assert.ok(payload.lines.some((line) => line.includes("Other OpenAI-compatible endpoint authorization failed")));
+    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /Other OpenAI-compatible endpoint API key: /.test(message)));
+    assert.equal(payload.messages.filter((message) => /OpenAI-compatible base URL/.test(message)).length, 1);
+    assert.equal(payload.messages.filter((message) => /Other OpenAI-compatible endpoint model/.test(message)).length, 2);
+    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+  });
+
+  it("lets users re-enter a custom Anthropic-compatible API key without re-entering the endpoint URL", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-custom-anthropic-auth-retry-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "custom-anthropic-auth-retry-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeAnthropicStyleAuthRetryCurl(fakeBin, "anthropic-proxy-good", ["claude-proxy"]);
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["5", "https://proxy.example.com", "claude-proxy", "y", "anthropic-proxy-good", "claude-proxy"];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  process.env.COMPATIBLE_ANTHROPIC_API_KEY = "anthropic-proxy-bad";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines, key: process.env.COMPATIBLE_ANTHROPIC_API_KEY }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "compatible-anthropic-endpoint");
+    assert.equal(payload.result.model, "claude-proxy");
+    assert.equal(payload.result.endpointUrl, "https://proxy.example.com");
+    assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
+    assert.equal(payload.key, "anthropic-proxy-good");
+    assert.ok(payload.lines.some((line) => line.includes("Other Anthropic-compatible endpoint authorization failed")));
+    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /Other Anthropic-compatible endpoint API key: /.test(message)));
+    assert.equal(payload.messages.filter((message) => /Anthropic-compatible base URL/.test(message)).length, 1);
+    assert.equal(payload.messages.filter((message) => /Other Anthropic-compatible endpoint model/.test(message)).length, 2);
+    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
   });
 
   it("forces openai-completions for vLLM even when probe detects openai-responses", () => {
