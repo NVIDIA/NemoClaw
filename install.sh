@@ -381,8 +381,65 @@ ensure_nemoclaw_shim() {
   mkdir -p "$NEMOCLAW_SHIM_DIR"
   ln -sfn "$npm_bin/nemoclaw" "$shim_path"
   refresh_path
+  ensure_local_bin_in_profile
   info "Created user-local shim at $shim_path"
   return 0
+}
+
+# Add ~/.local/bin (and for fish, the nvm node bin) to the user's shell
+# profile PATH so that nemoclaw, openshell, and any future tools installed
+# there are discoverable in new terminal sessions.
+# Idempotent — skips if the marker comment is already present.
+ensure_local_bin_in_profile() {
+  local profile
+  profile="$(detect_shell_profile)"
+  [[ -n "$profile" ]] || return 0
+
+  # Already present — nothing to do.
+  if [[ -f "$profile" ]] && grep -qF '# NemoClaw PATH setup' "$profile" 2>/dev/null; then
+    return 0
+  fi
+
+  local shell_name
+  shell_name="$(basename "${SHELL:-bash}")"
+
+  local local_bin="$NEMOCLAW_SHIM_DIR"
+
+  case "$shell_name" in
+    fish)
+      # fish needs both ~/.local/bin and the nvm node bin (nvm doesn't support fish).
+      local node_bin=""
+      node_bin="$(command -v node 2>/dev/null)" || true
+      if [[ -n "$node_bin" ]]; then
+        node_bin="$(dirname "$node_bin")"
+      fi
+      {
+        printf '\n# NemoClaw PATH setup\n'
+        printf 'fish_add_path --path --append "%s"\n' "$local_bin"
+        if [[ -n "$node_bin" ]]; then
+          printf 'fish_add_path --path --append "%s"\n' "$node_bin"
+        fi
+        printf '# end NemoClaw PATH setup\n'
+      } >>"$profile"
+      ;;
+    tcsh | csh)
+      {
+        printf '\n# NemoClaw PATH setup\n'
+        # shellcheck disable=SC2016
+        printf 'setenv PATH "%s:${PATH}"\n' "$local_bin"
+        printf '# end NemoClaw PATH setup\n'
+      } >>"$profile"
+      ;;
+    *)
+      # bash, zsh, and others — nvm already handles node PATH for these shells.
+      {
+        printf '\n# NemoClaw PATH setup\n'
+        # shellcheck disable=SC2016
+        printf 'export PATH="%s:$PATH"\n' "$local_bin"
+        printf '# end NemoClaw PATH setup\n'
+      } >>"$profile"
+      ;;
+  esac
 }
 
 version_major() {
