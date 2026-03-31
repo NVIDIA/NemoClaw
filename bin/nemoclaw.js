@@ -766,19 +766,19 @@ async function deploy(instanceName) {
   );
 }
 
-async function start() {
+function registrySandboxArg() {
   const { defaultSandbox } = registry.listSandboxes();
-  const safeName =
-    defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
-  const sandboxEnv = safeName ? `SANDBOX_NAME=${shellQuote(safeName)}` : "";
-  run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh"`);
+  const safe = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
+  return safe ? ` --sandbox ${shellQuote(safe)}` : "";
+}
+
+async function start() {
+  await ensureApiKey();
+  run(`bash "${SCRIPTS}/start-services.sh"${registrySandboxArg()}`);
 }
 
 function stop() {
-  const { defaultSandbox } = registry.listSandboxes();
-  const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
-  const sandboxEnv = safeName ? `SANDBOX_NAME=${shellQuote(safeName)}` : "";
-  run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh" --stop`);
+  run(`bash "${SCRIPTS}/start-services.sh" --stop${registrySandboxArg()}`);
 }
 
 function debug(args) {
@@ -852,10 +852,8 @@ function showStatus() {
     console.log("");
   }
 
-  // Show service status — pass sandbox name so PID lookup uses the correct directory
-  const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
-  const sandboxEnv = safeName ? `SANDBOX_NAME=${shellQuote(safeName)}` : "";
-  run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh" --status`);
+  // Show service status — pass --sandbox so PID lookup uses the correct directory
+  run(`bash "${SCRIPTS}/start-services.sh" --status${registrySandboxArg()}`);
 }
 
 async function listSandboxes() {
