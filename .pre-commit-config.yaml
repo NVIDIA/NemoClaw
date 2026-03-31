@@ -83,8 +83,8 @@ repos:
 
   - repo: local
     hooks:
-      - id: nemoclaw-prettier
-        name: Prettier (nemoclaw TypeScript)
+      - id: prettier-plugin
+        name: Prettier (plugin)
         entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root/nemoclaw" && files=() && for f in "$@"; do files+=("${f#nemoclaw/}"); done && npx prettier --write "${files[@]}"' --
         language: system
         files: ^nemoclaw/.*\.ts$
@@ -102,8 +102,8 @@ repos:
   # ── Priority 6: auto-fix after formatting ─────────────────────────────────
   - repo: local
     hooks:
-      - id: nemoclaw-eslint
-        name: ESLint (nemoclaw TypeScript)
+      - id: eslint-plugin
+        name: ESLint (plugin)
         entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root/nemoclaw" && files=() && for f in "$@"; do files+=("${f#nemoclaw/}"); done && npx eslint --fix "${files[@]}"' --
         language: system
         files: ^nemoclaw/.*\.ts$
@@ -112,8 +112,8 @@ repos:
 
   - repo: local
     hooks:
-      - id: eslint-js
-        name: ESLint (JavaScript)
+      - id: eslint-cli
+        name: ESLint (CLI)
         entry: npx eslint --fix
         language: system
         files: ^(bin|test|scripts|docs/_ext)/.*\.js$
@@ -173,17 +173,6 @@ repos:
       - id: markdownlint-cli2
         priority: 10
 
-  # ── Priority 20: project-level checks (pre-commit) ─────────────────────────
-  - repo: local
-    hooks:
-      - id: vitest-plugin
-        name: Vitest (plugin project)
-        entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root" && exec ./node_modules/.bin/vitest run --project plugin'
-        language: system
-        pass_filenames: false
-        files: ^nemoclaw/
-        priority: 20
-
   # ── commit-msg hooks ────────────────────────────────────────────────────────
   - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
     rev: v9.24.0
@@ -196,17 +185,17 @@ repos:
   # ── pre-push hooks ─────────────────────────────────────────────────────────
   - repo: local
     hooks:
-      - id: tsc-check
-        name: TypeScript type check (tsc --noEmit)
+      - id: tsc-plugin
+        name: TypeScript (plugin)
         entry: bash -c 'cd nemoclaw && npx tsc --noEmit --incremental'
         language: system
         pass_filenames: false
-        always_run: true
+        files: ^nemoclaw/
         stages: [pre-push]
         priority: 10
 
-      - id: tsc-check-js
-        name: TypeScript type check (JavaScript)
+      - id: tsc-js
+        name: TypeScript (JS config)
         entry: npx tsc -p jsconfig.json
         language: system
         pass_filenames: false
@@ -214,8 +203,8 @@ repos:
         stages: [pre-push]
         priority: 10
 
-      - id: tsc-check-cli
-        name: TypeScript type check (CLI)
+      - id: tsc-cli
+        name: TypeScript (CLI)
         entry: npx tsc -p tsconfig.cli.json
         language: system
         pass_filenames: false
@@ -224,22 +213,23 @@ repos:
         stages: [pre-push]
         priority: 10
 
-      - id: vitest-cli-coverage
-        name: Vitest (CLI coverage)
+  # ── Priority 20: project-level checks (coverage + ratchet) ─────────────────
+  - repo: local
+    hooks:
+      - id: test-cli
+        name: Test (CLI)
         entry: bash -c 'npx vitest run --project cli --coverage --coverage.reporter=text --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/cli --coverage.include="bin/**/*.js" --coverage.exclude="test/**/*.js" --coverage.exclude="test/**/*.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"'
         language: system
         pass_filenames: false
         files: ^(bin/|test/)
-        stages: [pre-push]
         priority: 20
 
-      - id: vitest-plugin-coverage
-        name: Vitest (plugin coverage)
+      - id: test-plugin
+        name: Test (plugin)
         entry: bash -c 'npx vitest run --project plugin --coverage --coverage.reporter=text --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/plugin --coverage.include="nemoclaw/src/**/*.ts" --coverage.exclude="**/*.test.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"'
         language: system
         pass_filenames: false
         files: ^nemoclaw/
-        stages: [pre-push]
         priority: 20
 
 default_language_version:
