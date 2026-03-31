@@ -553,7 +553,7 @@ function normalizeProviderBaseUrl(value, flavor) {
     url.search = "";
     url.hash = "";
     const suffixes = flavor === "anthropic"
-      ? ["/v1/messages", "/v1/models", "/messages", "/models"]
+      ? ["/v1/messages", "/v1/models", "/v1", "/messages", "/models"]
       : ["/responses", "/chat/completions", "/completions", "/models"];
     let pathname = stripEndpointSuffix(url.pathname.replace(/\/+$/, ""), suffixes);
     pathname = pathname.replace(/\/+$/, "");
@@ -633,14 +633,14 @@ function classifyValidationFailure({ httpStatus = 0, curlStatus = 0, message = "
   if (httpStatus === 400) {
     return { kind: "model", retry: "model" };
   }
+  if (/model.+not found|unknown model|unsupported model|bad model/i.test(normalized)) {
+    return { kind: "model", retry: "model" };
+  }
   if (httpStatus === 404 || httpStatus === 405) {
     return { kind: "endpoint", retry: "selection" };
   }
   if (/unauthorized|forbidden|invalid api key|invalid_auth|permission/i.test(normalized)) {
     return { kind: "credential", retry: "credential" };
-  }
-  if (/model.+not found|unknown model|unsupported model|bad model/i.test(normalized)) {
-    return { kind: "model", retry: "model" };
   }
   return { kind: "unknown", retry: "selection" };
 }
@@ -689,6 +689,20 @@ function runCurlProbe(argv) {
       },
     });
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
+    if (result.error) {
+      const errorCode = result.error.code || result.error.errno || 1;
+      const errorMessage = compactText(
+        `${result.error.message || String(result.error)} ${String(result.stderr || "")}`
+      );
+      return {
+        ok: false,
+        httpStatus: 0,
+        curlStatus: errorCode,
+        body,
+        stderr: errorMessage,
+        message: summarizeProbeFailure(body, 0, errorCode, errorMessage),
+      };
+    }
     const status = Number(String(result.stdout || "").trim());
     return {
       ok: result.status === 0 && status >= 200 && status < 300,
@@ -712,7 +726,17 @@ function runCurlProbe(argv) {
   }
 }
 
-async function replaceNamedCredential(envName, label, helpUrl = null) {
+function validateNvidiaApiKeyValue(key) {
+  if (!key) {
+    return "  NVIDIA API Key is required.";
+  }
+  if (!key.startsWith("nvapi-")) {
+    return "  Invalid key. Must start with nvapi-";
+  }
+  return null;
+}
+
+async function replaceNamedCredential(envName, label, helpUrl = null, validator = null) {
   if (helpUrl) {
     console.log("");
     console.log(`  Get your ${label} from: ${helpUrl}`);
@@ -723,6 +747,11 @@ async function replaceNamedCredential(envName, label, helpUrl = null) {
     const key = normalizeCredentialValue(await prompt(`  ${label}: `, { secret: true }));
     if (!key) {
       console.error(`  ${label} is required.`);
+      continue;
+    }
+    const validationError = typeof validator === "function" ? validator(key) : null;
+    if (validationError) {
+      console.error(validationError);
       continue;
     }
     saveCredential(envName, key);
@@ -751,7 +780,8 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
       exitOnboardFromPrompt();
     }
     if (choice === "" || choice === "retry") {
-      await replaceNamedCredential(credentialEnv, `${label} API key`, helpUrl);
+      const validator = credentialEnv === "NVIDIA_API_KEY" ? validateNvidiaApiKeyValue : null;
+      await replaceNamedCredential(credentialEnv, `${label} API key`, helpUrl, validator);
       return "credential";
     }
     console.log("  Please choose a provider/model again.");
@@ -2576,6 +2606,9 @@ async function setupNim(gpu) {
             model,
             credentialEnv
           );
+          if (validation.retry === "selection" || validation.retry === "back" || validation.retry === "model") {
+            continue selectionLoop;
+          }
           if (!validation.ok) {
             continue selectionLoop;
           }
@@ -2627,6 +2660,9 @@ async function setupNim(gpu) {
           null,
           "Choose a different Ollama model or select Other."
         );
+        if (validation.retry === "selection" || validation.retry === "back") {
+          continue selectionLoop;
+        }
         if (!validation.ok) {
           continue;
         }
@@ -2669,6 +2705,9 @@ async function setupNim(gpu) {
           null,
           "Choose a different Ollama model or select Other."
         );
+        if (validation.retry === "selection" || validation.retry === "back") {
+          continue selectionLoop;
+        }
         if (!validation.ok) {
           continue;
         }
@@ -2706,6 +2745,9 @@ async function setupNim(gpu) {
         model,
         credentialEnv
       );
+      if (validation.retry === "selection" || validation.retry === "back" || validation.retry === "model") {
+        continue selectionLoop;
+      }
       if (!validation.ok) {
         continue selectionLoop;
       }
@@ -2750,7 +2792,7 @@ async function setupInference(sandboxName, model, provider, endpointUrl = null, 
           process.exit(providerResult.status || 1);
         }
         const retry = await promptValidationRecovery(config.label, classifyApplyFailure(providerResult.message), resolvedCredentialEnv, config.helpUrl);
-        if (retry === "credential" || retry === "retry") {
+        if (retry === "credential" || retry === "retry" || retry === "selection" || retry === "back" || retry === "model") {
           continue;
         }
         process.exit(providerResult.status || 1);
@@ -2772,7 +2814,7 @@ async function setupInference(sandboxName, model, provider, endpointUrl = null, 
         process.exit(applyResult.status || 1);
       }
       const retry = await promptValidationRecovery(config.label, classifyApplyFailure(message), resolvedCredentialEnv, config.helpUrl);
-      if (retry === "credential" || retry === "retry") {
+      if (retry === "credential" || retry === "retry" || retry === "selection" || retry === "back" || retry === "model") {
         continue;
       }
       process.exit(applyResult.status || 1);
@@ -3547,7 +3589,9 @@ module.exports = {
   getResumeSandboxConflict,
   getSandboxReuseState,
   getSandboxStateFromOutputs,
+  classifyValidationFailure,
   isSandboxReady,
+  normalizeProviderBaseUrl,
   onboard,
   onboardSession,
   printSandboxCreateRecoveryHints,

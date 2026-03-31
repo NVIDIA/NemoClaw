@@ -23,6 +23,8 @@ import {
   getSandboxStateFromOutputs,
   getStableGatewayImageRef,
   isGatewayHealthy,
+  classifyValidationFailure,
+  normalizeProviderBaseUrl,
   patchStagedDockerfile,
   printSandboxCreateRecoveryHints,
   shouldIncludeBuildContextPath,
@@ -121,6 +123,30 @@ describe("onboard helpers", () => {
         inferenceApi: "openai-completions",
         inferenceCompat: null,
       }
+    );
+  });
+
+  it("classifies model-related 404/405 responses as model retries before endpoint retries", () => {
+    expect(
+      classifyValidationFailure({
+        httpStatus: 404,
+        message: "HTTP 404: model not found",
+      })
+    ).toEqual({ kind: "model", retry: "model" });
+    expect(
+      classifyValidationFailure({
+        httpStatus: 405,
+        message: "HTTP 405: unsupported model",
+      })
+    ).toEqual({ kind: "model", retry: "model" });
+  });
+
+  it("normalizes anthropic-compatible base URLs with a trailing /v1", () => {
+    expect(normalizeProviderBaseUrl("https://proxy.example.com/v1", "anthropic")).toBe(
+      "https://proxy.example.com"
+    );
+    expect(normalizeProviderBaseUrl("https://proxy.example.com/v1/messages", "anthropic")).toBe(
+      "https://proxy.example.com"
     );
   });
 
