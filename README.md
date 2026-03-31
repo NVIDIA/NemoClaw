@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # 🦞 NVIDIA NemoClaw: Reference Stack for Running OpenClaw in OpenShell
 
 <!-- start-badges -->
@@ -92,6 +95,37 @@ Logs:        nemoclaw my-assistant logs --follow
 
 [INFO]  === Installation complete ===
 ```
+
+### Quick Hint: Stop a Running OpenClaw Before Installing NemoClaw
+
+If you already have a standalone OpenClaw instance running, it will occupy port 18789 and conflict with NemoClaw onboarding.
+It is safe to stop the standalone OpenClaw gateway before proceeding — NemoClaw creates its own OpenClaw instance inside a sandboxed environment.
+
+**Linux (systemd):**
+
+```bash
+systemctl --user stop openclaw-gateway.service
+```
+
+**macOS (launchctl):**
+
+```bash
+# Step 1 — Confirm OpenClaw is loaded (PID | ExitStatus | Label)
+launchctl list | grep -i claw
+# Example output:  55814   0   ai.openclaw.gateway
+#                  ─────   ─   ─────────────────────
+#                  PID     OK  service label
+
+# Step 2 — Unload the launch agent to free the port
+launchctl unload ~/Library/LaunchAgents/ai.openclaw.gateway.plist
+
+# Alternative (modern macOS 10.10+ syntax):
+# launchctl bootout gui/$(id -u)/ai.openclaw.gateway
+```
+
+> **Tip:** If `launchctl list` shows a **`-`** instead of a PID, the agent is loaded but not currently running and is not blocking the port.
+
+After stopping the existing service, run `nemoclaw onboard` to continue the installation.
 
 ### Chat with the Agent
 

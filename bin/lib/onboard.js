@@ -53,6 +53,7 @@ const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN = null;
 const GATEWAY_NAME = "nemoclaw";
 const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
+const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
 
 const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
@@ -1875,8 +1876,15 @@ async function preflight() {
         } else {
           console.error(`       sudo lsof -i :${port} -sTCP:LISTEN -P -n`);
         }
-        console.error("       # or, if it's a systemd service:");
-        console.error("       systemctl --user stop openclaw-gateway.service");
+        if (process.platform === "darwin") {
+          console.error("       # or, if it's a launchctl service (macOS):");
+          console.error("       launchctl list | grep -i claw   # columns: PID | ExitStatus | Label");
+          console.error(`       launchctl unload ${OPENCLAW_LAUNCH_AGENT_PLIST}`);
+          console.error(`       # or: launchctl bootout gui/$(id -u)/ai.openclaw.gateway`);
+        } else {
+          console.error("       # or, if it's a systemd service:");
+          console.error("       systemctl --user stop openclaw-gateway.service");
+        }
       } else {
         console.error(`     Could not identify the process using port ${port}.`);
         console.error(`     Run: sudo lsof -i :${port} -sTCP:LISTEN`);
