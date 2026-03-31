@@ -36,28 +36,12 @@ resolve_installer_version() {
 NEMOCLAW_VERSION="$(resolve_installer_version)"
 
 # Resolve which Git ref to install from.
-# Priority: NEMOCLAW_INSTALL_TAG env var > GitHub releases API > "main" fallback.
+# Priority: NEMOCLAW_INSTALL_TAG env var > "latest" tag.
 resolve_release_tag() {
   # Allow explicit override (for CI, pinning, or testing).
-  if [[ -n "${NEMOCLAW_INSTALL_TAG:-}" ]]; then
-    printf "%s" "$NEMOCLAW_INSTALL_TAG"
-    return 0
-  fi
-
-  # Query the GitHub releases API for the latest published release.
-  local response tag
-  response="$(curl -fsSL --max-time 10 \
-    https://api.github.com/repos/NVIDIA/NemoClaw/releases/latest 2>/dev/null)" || true
-  tag="$(printf '%s' "$response" \
-    | grep '"tag_name"' \
-    | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/' \
-    | head -1 || true)"
-
-  if [[ -n "$tag" && "$tag" =~ ^v[0-9] ]]; then
-    printf "%s" "$tag"
-  else
-    printf "main"
-  fi
+  # Otherwise default to the "latest" tag, which we maintain to point at
+  # the commit we want everybody to install.
+  printf "%s" "${NEMOCLAW_INSTALL_TAG:-latest}"
 }
 
 # ---------------------------------------------------------------------------
