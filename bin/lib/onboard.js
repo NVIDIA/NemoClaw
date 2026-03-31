@@ -2278,6 +2278,33 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   run(`bash "${path.join(SCRIPTS, "setup-dns-proxy.sh")}" ${GATEWAY_NAME} "${sandboxName}" 2>&1 || true`, { ignoreError: true });
 
   console.log(`  ✓ Sandbox '${sandboxName}' created`);
+
+  try {
+    if (process.platform === "darwin") {
+      const vmKernel = runCapture("docker info --format '{{.KernelVersion}}'", { ignoreError: true }).trim();
+      if (vmKernel) {
+        const parts = vmKernel.split(".");
+        const major = parseInt(parts[0], 10);
+        const minor = parseInt(parts[1], 10);
+        if (!isNaN(major) && !isNaN(minor) && (major < 5 || (major === 5 && minor < 13))) {
+          console.warn(`  ⚠ Landlock: Docker VM kernel ${vmKernel} does not support Landlock (requires ≥5.13).`);
+          console.warn("    Sandbox filesystem restrictions will silently degrade (best_effort mode).");
+        }
+      }
+    } else if (process.platform === "linux") {
+      const uname = runCapture("uname -r", { ignoreError: true }).trim();
+      if (uname) {
+        const parts = uname.split(".");
+        const major = parseInt(parts[0], 10);
+        const minor = parseInt(parts[1], 10);
+        if (!isNaN(major) && !isNaN(minor) && (major < 5 || (major === 5 && minor < 13))) {
+          console.warn(`  ⚠ Landlock: Kernel ${uname} does not support Landlock (requires ≥5.13).`);
+          console.warn("    Sandbox filesystem restrictions will silently degrade (best_effort mode).");
+        }
+      }
+    }
+  } catch {}
+
   return sandboxName;
 }
 
