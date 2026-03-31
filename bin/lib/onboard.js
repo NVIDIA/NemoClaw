@@ -3250,7 +3250,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   return interactiveChoice;
 }
 
-  // ── Dashboard ────────────────────────────────────────────────────
+// ── Dashboard ────────────────────────────────────────────────────
 
 const CONTROL_UI_PORT = 18789;
 const CONTROL_UI_PATH = "/";
