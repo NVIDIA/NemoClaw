@@ -18,17 +18,23 @@ function loadCredentials() {
   return {};
 }
 
+function normalizeCredentialValue(value) {
+  if (typeof value !== "string") return "";
+  return value.replace(/\r/g, "").trim();
+}
+
 function saveCredential(key, value) {
   fs.mkdirSync(CREDS_DIR, { recursive: true, mode: 0o700 });
   const creds = loadCredentials();
-  creds[key] = value;
+  creds[key] = normalizeCredentialValue(value);
   fs.writeFileSync(CREDS_FILE, JSON.stringify(creds, null, 2), { mode: 0o600 });
 }
 
 function getCredential(key) {
-  if (process.env[key]) return process.env[key];
+  if (process.env[key]) return normalizeCredentialValue(process.env[key]);
   const creds = loadCredentials();
-  return creds[key] || null;
+  const value = normalizeCredentialValue(creds[key]);
+  return value || null;
 }
 
 function promptSecret(question) {
@@ -158,11 +164,20 @@ async function ensureApiKey() {
   console.log("  └─────────────────────────────────────────────────────────────────┘");
   console.log("");
 
-  key = await prompt("  NVIDIA API Key: ", { secret: true });
+  while (true) {
+    key = normalizeCredentialValue(await prompt("  NVIDIA API Key: ", { secret: true }));
 
-  if (!key || !key.startsWith("nvapi-")) {
-    console.error("  Invalid key. Must start with nvapi-");
-    process.exit(1);
+    if (!key) {
+      console.error("  NVIDIA API Key is required.");
+      continue;
+    }
+
+    if (!key.startsWith("nvapi-")) {
+      console.error("  Invalid key. Must start with nvapi-");
+      continue;
+    }
+
+    break;
   }
 
   saveCredential("NVIDIA_API_KEY", key);
@@ -229,6 +244,7 @@ module.exports = {
   CREDS_DIR,
   CREDS_FILE,
   loadCredentials,
+  normalizeCredentialValue,
   saveCredential,
   getCredential,
   prompt,

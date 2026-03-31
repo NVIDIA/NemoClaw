@@ -1304,6 +1304,107 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 2);
   });
 
+  it("lets users re-enter an NVIDIA API key after authorization failure without restarting selection", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-build-auth-retry-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "build-auth-retry-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"error":{"message":"forbidden"}}'
+status="403"
+outfile=""
+auth=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -H)
+      if echo "$2" | grep -q '^Authorization: Bearer '; then
+        auth="$2"
+      fi
+      shift 2
+      ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/responses$'; then
+  body='{"id":"resp_123"}'
+  status="200"
+elif echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/chat/completions$'; then
+  body='{"id":"chatcmpl-123"}'
+  status="200"
+fi
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 }
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["", "", "y", "nvapi-good"];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  process.env.NVIDIA_API_KEY = "nvapi-bad";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines, key: process.env.NVIDIA_API_KEY }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "nvidia-prod");
+    assert.equal(payload.result.preferredInferenceApi, "openai-responses");
+    assert.equal(payload.key, "nvapi-good");
+    assert.ok(payload.lines.some((line) => line.includes("NVIDIA Endpoints authorization failed")));
+    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+    assert.equal(payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length, 1);
+    assert.ok(payload.messages.some((message) => /Re-enter API key now\? \[Y\/n\]/.test(message)));
+    assert.ok(payload.messages.some((message) => /NVIDIA Endpoints API key: /.test(message)));
+  });
+
   it("forces openai-completions for vLLM even when probe detects openai-responses", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-override-"));

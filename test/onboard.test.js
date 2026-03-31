@@ -821,6 +821,89 @@ const { setupInference } = require(${onboardPath});
     assert.match(commands[3].command, /inference' 'set' '--no-verify'/);
   });
 
+  it("re-prompts for credentials when openshell inference set fails with authorization errors", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-apply-auth-retry-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-inference-auth-retry-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const credentials = require(${credentialsPath});
+
+const commands = [];
+const answers = ["y", "sk-good"];
+let inferenceSetCalls = 0;
+
+credentials.prompt = async () => answers.shift() || "";
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  if (command.includes("'inference' 'set'")) {
+    inferenceSetCalls += 1;
+    if (inferenceSetCalls === 1) {
+      return { status: 1, stdout: "", stderr: "HTTP 403: forbidden" };
+    }
+  }
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  if (command.includes("inference") && command.includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: openai-api",
+      "  Model: gpt-5.4",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+
+process.env.OPENAI_API_KEY = "sk-bad";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference("test-box", "gpt-5.4", "openai-api", "https://api.openai.com/v1", "OPENAI_API_KEY");
+  console.log(JSON.stringify({ commands, key: process.env.OPENAI_API_KEY, inferenceSetCalls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.equal(payload.key, "sk-good");
+    assert.equal(payload.inferenceSetCalls, 2);
+    const providerEnvs = payload.commands
+      .filter((entry) => entry.command.includes("'provider'"))
+      .map((entry) => entry.env && entry.env.OPENAI_API_KEY)
+      .filter(Boolean);
+    assert.deepEqual(providerEnvs, ["sk-bad", "sk-good"]);
+  });
+
   it("hydrates stored provider credentials when setupInference runs without process env set", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-cred-"));

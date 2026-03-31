@@ -40,4 +40,17 @@ describe("credential prompts", () => {
     expect(source).toMatch(/reject\(err\);\s*process\.kill\(process\.pid, "SIGINT"\);/);
     expect(source).toMatch(/reject\(err\);\s*\}\);/);
   });
+
+  it("normalizes credential values and keeps prompting on invalid NVIDIA API key prefixes", async () => {
+    const credentials = await import("../bin/lib/credentials.js");
+    expect(credentials.normalizeCredentialValue("  nvapi-good-key\r\n")).toBe("nvapi-good-key");
+
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "credentials.js"),
+      "utf-8"
+    );
+    expect(source).toMatch(/while \(true\) \{/);
+    expect(source).toMatch(/Invalid key\. Must start with nvapi-/);
+    expect(source).toMatch(/continue;/);
+  });
 });
