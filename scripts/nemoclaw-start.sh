@@ -427,7 +427,7 @@ if [ "$(id -u)" -ne 0 ]; then
     done
     if find "$data_dir" ! -uid "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
       if chown -R "$(id -u):$(id -g)" "$data_dir" 2>/dev/null; then
-        echo "[setup] fixed ownership on ${data_dir}"
+        echo "[setup] fixed ownership on ${data_dir}" >&2
       else
         echo "[setup] could not fix ownership on ${data_dir}; writes may fail" >&2
       fi
@@ -440,14 +440,14 @@ if [ "$(id -u)" -ne 0 ]; then
         expected_target="$(readlink -f "${data_dir}/identity" 2>/dev/null || true)"
         if [ "$current_target" != "$expected_target" ]; then
           if ln -snf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null; then
-            echo "[setup] repaired identity symlink"
+            echo "[setup] repaired identity symlink" >&2
           else
             echo "[setup] could not repair identity symlink" >&2
           fi
         fi
       elif [ ! -e "${openclaw_dir}/identity" ]; then
         if ln -snf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null; then
-          echo "[setup] created identity symlink"
+          echo "[setup] created identity symlink" >&2
         else
           echo "[setup] could not create identity symlink" >&2
         fi
@@ -456,7 +456,7 @@ if [ "$(id -u)" -ne 0 ]; then
         backup="${openclaw_dir}/identity.bak.$(date +%s)"
         if mv "${openclaw_dir}/identity" "$backup" 2>/dev/null \
           && ln -snf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null; then
-          echo "[setup] replaced non-symlink identity path (backup: ${backup})"
+          echo "[setup] replaced non-symlink identity path (backup: ${backup})" >&2
         else
           echo "[setup] could not replace ${openclaw_dir}/identity; writes may fail" >&2
         fi
