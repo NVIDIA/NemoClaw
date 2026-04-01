@@ -126,14 +126,16 @@ do_stop() {
 _has_api_key() {
   [ "${NEMOCLAW_HAS_API_KEY:-0}" = "1" ] && return 0
 
-  if command -v node >/dev/null 2>&1; then
-    node -e "
-      const keys = require('$REPO_DIR/bin/lib/credentials.js').SUPPORTED_API_KEYS;
-      process.exit(keys.some(k => process.env[k]) ? 0 : 1);
-    " 2>/dev/null && return 0
-  fi
+  # Fallback: parse supported keys from credentials.js if script is run directly
+  local keys
+  keys=$(sed -n '/const SUPPORTED_API_KEYS = \[/,/\];/p' "$REPO_DIR/bin/lib/credentials.js" 2>/dev/null | grep -oE '"[A-Z_]+_API_KEY"' | tr -d '"')
 
-  [ -n "${NVIDIA_API_KEY:-}" ] && return 0
+  for k in $keys; do
+    if [ -n "${!k:-}" ]; then
+      return 0
+    fi
+  done
+
   return 1
 }
 
