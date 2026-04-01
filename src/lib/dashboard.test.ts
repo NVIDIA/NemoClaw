@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { resolveDashboardForwardTarget, buildControlUiUrls } from "./dashboard";
+// Import from compiled dist/ so coverage is attributed correctly.
+import { resolveDashboardForwardTarget, buildControlUiUrls } from "../../dist/lib/dashboard";
 
 describe("resolveDashboardForwardTarget", () => {
   it("returns port-only for localhost URL", () => {
@@ -31,12 +32,25 @@ describe("resolveDashboardForwardTarget", () => {
     expect(resolveDashboardForwardTarget("remote-host:18789")).toBe("0.0.0.0:18789");
   });
 
-  it("handles invalid URL with localhost", () => {
+  it("handles invalid URL containing localhost in catch path", () => {
+    // This triggers the catch branch since ://localhost is not a valid URL
     expect(resolveDashboardForwardTarget("://localhost:bad")).toBe("18789");
   });
 
-  it("handles invalid URL with non-localhost", () => {
-    expect(resolveDashboardForwardTarget("://remote:bad")).toBe("0.0.0.0:18789");
+  it("handles invalid URL containing 127.0.0.1 in catch path", () => {
+    expect(resolveDashboardForwardTarget("://127.0.0.1:bad")).toBe("18789");
+  });
+
+  it("handles invalid URL containing ::1 in catch path", () => {
+    expect(resolveDashboardForwardTarget("://::1:bad")).toBe("18789");
+  });
+
+  it("handles invalid URL with non-loopback in catch path", () => {
+    expect(resolveDashboardForwardTarget("://remote-host:bad")).toBe("0.0.0.0:18789");
+  });
+
+  it("handles IPv6 loopback URL", () => {
+    expect(resolveDashboardForwardTarget("http://[::1]:18789")).toBe("18789");
   });
 });
 
@@ -75,6 +89,18 @@ describe("buildControlUiUrls", () => {
   it("deduplicates when CHAT_UI_URL matches local", () => {
     process.env.CHAT_UI_URL = "http://127.0.0.1:18789";
     const urls = buildControlUiUrls(null);
+    expect(urls).toHaveLength(1);
+  });
+
+  it("ignores non-http CHAT_UI_URL", () => {
+    process.env.CHAT_UI_URL = "ftp://example.com";
+    const urls = buildControlUiUrls("tok");
+    expect(urls).toHaveLength(1);
+  });
+
+  it("ignores empty CHAT_UI_URL", () => {
+    process.env.CHAT_UI_URL = "  ";
+    const urls = buildControlUiUrls("tok");
     expect(urls).toHaveLength(1);
   });
 });

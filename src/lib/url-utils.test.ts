@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
+// Import from compiled dist/ so coverage is attributed correctly.
 import {
   compactText,
   stripEndpointSuffix,
@@ -9,7 +10,7 @@ import {
   isLoopbackHostname,
   formatEnvAssignment,
   parsePolicyPresetEnv,
-} from "./url-utils";
+} from "../../dist/lib/url-utils";
 
 describe("compactText", () => {
   it("collapses whitespace", () => {
