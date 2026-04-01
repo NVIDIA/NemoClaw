@@ -9,7 +9,9 @@ const DEFAULT_NOTICE_CONFIG_PATH = path.join(__dirname, "..", "config", "onboard
 
 function getOnboardNoticeStatePath() {
   const home = process.env.HOME || os.homedir() || "/tmp";
-  return process.env.NEMOCLAW_ONBOARD_NOTICE_STATE || path.join(home, ".nemoclaw", "onboard-notice.json");
+  return (
+    process.env.NEMOCLAW_ONBOARD_NOTICE_STATE || path.join(home, ".nemoclaw", "onboard-notice.json")
+  );
 }
 
 function getOnboardNoticeConfigPath() {
@@ -119,7 +121,14 @@ async function showOnboardNoticeIfNeeded(options = {}) {
     await promptFn(`  ${config.prompt}`);
   }
 
-  saveOnboardNoticeState(config.version, statePath);
+  try {
+    saveOnboardNoticeState(config.version, statePath);
+  } catch (error) {
+    writeLine(
+      `  Warning: could not persist usage notice state at ${statePath}: ${error?.message || String(error)}`,
+    );
+  }
+
   return { shown: true, version: config.version };
 }
 
