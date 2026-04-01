@@ -144,7 +144,7 @@ run_cli_check() {
   log "[cli] excluded: openshell, /nemoclaw slash, deprecated nemoclaw setup (not in --help)"
 
   log "[cli] phase 1/2: extract normalized usage lines from --help"
-  NO_COLOR=1 "$NODE" "$CLI_JS" --help 2>&1 | perl -CS -ne '
+  NO_COLOR=1 "$NODE" "$CLI_JS" --help 2>&1 | LC_ALL=C perl -CS -ne '
     s/\e\[[0-9;]*m//g;
     next unless /^\s*nemoclaw\s+/;
     if (/^\s*nemoclaw\s+(.+)/) {
@@ -168,7 +168,7 @@ run_cli_check() {
   # log text: backticks are documentation markers, not command substitution
   log '[cli] phase 2/2: extract ### `nemoclaw …` headings from commands reference'
   # Allow optional MyST suffix on the same line, e.g. ### `nemoclaw onboard` {#anchor}
-  grep -E '^### `nemoclaw ' "$COMMANDS_MD" | perl -CS -ne '
+  grep -E '^### `nemoclaw ' "$COMMANDS_MD" | LC_ALL=C perl -CS -ne '
     if (/^### `([^`]+)`\s*(?:\{[^}]+\})?\s*$/) { print "$1\n"; }
   ' | LC_ALL=C sort -u >"$_tmp/doc.txt"
 
@@ -221,16 +221,30 @@ collect_default_docs() {
 }
 
 extract_targets() {
-  perl -CS -ne '
-    if (/^\s*```/) { $in = !$in; next; }
+  LC_ALL=C perl -CS -ne '
+    if (/^\s*(`{3,}|~{3,})(.*)$/) {
+      my $fence = $1;
+      my $rest = $2;
+      my $char = substr($fence, 0, 1);
+      my $length = length($fence);
+      if (!$in) {
+        ($in, $fch, $flen) = (1, $char, $length);
+        next;
+      }
+      if ($char eq $fch && $length >= $flen && $rest =~ /^\s*$/) {
+        ($in, $fch, $flen) = (0, "", 0);
+        next;
+      }
+    }
     next if $in;
-    while (/\!?\[[^\]]*\]\(([^)\s]+)(?:\s+["'"'"'][^)"'"'"']*["'"'"'])?\)/g) { print "$1\n"; }
-    while (/<(https?:[^>\s]+)>/g) { print "$1\n"; }
+    my $line = $.;
+    while (/\!?\[[^\]]*\]\(([^)\s]+)(?:\s+["'"'"'][^)"'"'"']*["'"'"'])?\)/g) { print $line . "\t" . $1 . "\n"; }
+    while (/<(https?:[^>\s]+)>/g) { print $line . "\t" . $1 . "\n"; }
   ' -- "$1"
 }
 
 check_local_ref() {
-  local md_path="$1" target="$2"
+  local md_path="$1" line_no="$2" target="$3"
   local stripped
 
   stripped="${target%%\#*}"
@@ -251,7 +265,7 @@ check_local_ref() {
   if (cd "$(dirname "$md_path")" && [[ -e "$stripped" ]]); then
     return 0
   fi
-  echo "check-docs: [links] broken local link in $md_path -> $target" >&2
+  echo "check-docs: [links] broken local link in $md_path:$line_no -> $target" >&2
   return 1
 }
 
@@ -367,11 +381,11 @@ run_links_check() {
       failures=1
       continue
     fi
-    local target rc
-    while IFS= read -r target || [[ -n "$target" ]]; do
+    local line_no target rc
+    while IFS=$'\t' read -r line_no target || [[ -n "${target:-}" ]]; do
       [[ -z "$target" ]] && continue
       set +e
-      check_local_ref "$md" "$target"
+      check_local_ref "$md" "$line_no" "$target"
       rc=$?
       set -e
       if [[ "$rc" -eq 0 ]]; then
