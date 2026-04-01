@@ -610,12 +610,11 @@ describe("CLI dispatch", () => {
     expect(saved.sandboxes.alpha).toBeUndefined();
   });
 
-  it("recovers a missing registry entry from the last onboard session during list", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-session-recover-"));
-    const localBin = path.join(home, "bin");
+  it("list is read-only and does not recover from session or gateway", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-no-recover-"));
     const nemoclawDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(nemoclawDir, { recursive: true });
+    // Registry has only gamma — session references alpha, but list should NOT import it.
     fs.writeFileSync(
       path.join(nemoclawDir, "sandboxes.json"),
       JSON.stringify({
@@ -634,333 +633,26 @@ describe("CLI dispatch", () => {
     );
     fs.writeFileSync(
       path.join(nemoclawDir, "onboard-session.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          sessionId: "session-1",
-          resumable: true,
-          status: "complete",
-          mode: "interactive",
-          startedAt: "2026-03-31T00:00:00.000Z",
-          updatedAt: "2026-03-31T00:00:00.000Z",
-          lastStepStarted: "policies",
-          lastCompletedStep: "policies",
-          failure: null,
-          sandboxName: "alpha",
-          provider: "nvidia-prod",
-          model: "nvidia/nemotron-3-super-120b-a12b",
-          endpointUrl: null,
-          credentialEnv: null,
-          preferredInferenceApi: null,
-          nimContainer: null,
-          policyPresets: ["pypi"],
-          metadata: { gatewayName: "nemoclaw" },
-          steps: {
-            preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
-            gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
-            sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
-            provider_selection: {
-              status: "complete",
-              startedAt: null,
-              completedAt: null,
-              error: null,
-            },
-            inference: { status: "complete", startedAt: null, completedAt: null, error: null },
-            openclaw: { status: "complete", startedAt: null, completedAt: null, error: null },
-            policies: { status: "complete", startedAt: null, completedAt: null, error: null },
-          },
-        },
-        null,
-        2,
-      ),
+      JSON.stringify({
+        version: 1,
+        sessionId: "session-1",
+        resumable: true,
+        status: "complete",
+        sandboxName: "alpha",
+      }),
       { mode: 0o600 },
     );
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        'if [ "$1" = "status" ]; then',
-        "  echo 'Server Status'",
-        "  echo",
-        "  echo '  Gateway: nemoclaw'",
-        "  echo '  Status: Connected'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
-        "  echo 'Gateway Info'",
-        "  echo",
-        "  echo '  Gateway: nemoclaw'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-        "  echo 'No sandboxes found.'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "--version" ]; then',
-        "  echo 'openshell 0.0.16'",
-        "  exit 0",
-        "fi",
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
 
-    const r = runWithEnv("list", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
+    const r = runWithEnv("list", { HOME: home });
 
     expect(r.code).toBe(0);
-    expect(
-      r.out.includes("Recovered sandbox inventory from the last onboard session."),
-    ).toBeTruthy();
-    expect(r.out.includes("alpha")).toBeTruthy();
+    // Only gamma (from registry) should appear — not alpha (from session).
     expect(r.out.includes("gamma")).toBeTruthy();
+    expect(r.out.includes("alpha")).toBeFalsy();
+    expect(r.out).not.toMatch(/Recovered/);
+    // Registry must not have been mutated.
     const saved = JSON.parse(fs.readFileSync(path.join(nemoclawDir, "sandboxes.json"), "utf8"));
-    expect(saved.sandboxes.alpha).toBeTruthy();
-    expect(saved.sandboxes.alpha.policies).toEqual(["pypi"]);
-    expect(saved.sandboxes.gamma).toBeTruthy();
-    expect(saved.defaultSandbox).toBe("gamma");
-  });
-
-  it("imports additional live sandboxes into the registry during list recovery", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-live-recover-"));
-    const localBin = path.join(home, "bin");
-    const nemoclawDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(nemoclawDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(nemoclawDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          gamma: {
-            name: "gamma",
-            model: "existing-model",
-            provider: "existing-provider",
-            gpuEnabled: false,
-            policies: ["npm"],
-          },
-        },
-        defaultSandbox: "gamma",
-      }),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      path.join(nemoclawDir, "onboard-session.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          sessionId: "session-1",
-          resumable: true,
-          status: "complete",
-          mode: "interactive",
-          startedAt: "2026-03-31T00:00:00.000Z",
-          updatedAt: "2026-03-31T00:00:00.000Z",
-          lastStepStarted: "policies",
-          lastCompletedStep: "policies",
-          failure: null,
-          sandboxName: "alpha",
-          provider: "nvidia-prod",
-          model: "nvidia/nemotron-3-super-120b-a12b",
-          endpointUrl: null,
-          credentialEnv: null,
-          preferredInferenceApi: null,
-          nimContainer: null,
-          policyPresets: ["pypi"],
-          metadata: { gatewayName: "nemoclaw" },
-          steps: {
-            preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
-            gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
-            sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
-            provider_selection: {
-              status: "complete",
-              startedAt: null,
-              completedAt: null,
-              error: null,
-            },
-            inference: { status: "complete", startedAt: null, completedAt: null, error: null },
-            openclaw: { status: "complete", startedAt: null, completedAt: null, error: null },
-            policies: { status: "complete", startedAt: null, completedAt: null, error: null },
-          },
-        },
-        null,
-        2,
-      ),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        'if [ "$1" = "status" ]; then',
-        "  echo 'Server Status'",
-        "  echo",
-        "  echo '  Gateway: nemoclaw'",
-        "  echo '  Status: Connected'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
-        "  echo 'Gateway Info'",
-        "  echo",
-        "  echo '  Gateway: nemoclaw'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-        "  echo 'NAME        PHASE'",
-        "  echo 'alpha       Ready'",
-        "  echo 'beta        Ready'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "--version" ]; then',
-        "  echo 'openshell 0.0.16'",
-        "  exit 0",
-        "fi",
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-
-    const r = runWithEnv("list", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
-
-    expect(r.code).toBe(0);
-    expect(
-      r.out.includes("Recovered sandbox inventory from the last onboard session."),
-    ).toBeTruthy();
-    expect(
-      r.out.includes("Recovered 1 sandbox entry from the live OpenShell gateway."),
-    ).toBeTruthy();
-    expect(r.out.includes("alpha")).toBeTruthy();
-    expect(r.out.includes("beta")).toBeTruthy();
-    expect(r.out.includes("gamma")).toBeTruthy();
-    const saved = JSON.parse(fs.readFileSync(path.join(nemoclawDir, "sandboxes.json"), "utf8"));
-    expect(saved.sandboxes.alpha).toBeTruthy();
-    expect(saved.sandboxes.alpha.policies).toEqual(["pypi"]);
-    expect(saved.sandboxes.beta).toBeTruthy();
-    expect(saved.sandboxes.gamma).toBeTruthy();
-    expect(saved.defaultSandbox).toBe("gamma");
-  });
-
-  it("skips invalid recovered sandbox names during list recovery", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-invalid-recover-"));
-    const localBin = path.join(home, "bin");
-    const nemoclawDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(nemoclawDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(nemoclawDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          gamma: {
-            name: "gamma",
-            model: "existing-model",
-            provider: "existing-provider",
-            gpuEnabled: false,
-            policies: ["npm"],
-          },
-        },
-        defaultSandbox: "gamma",
-      }),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      path.join(nemoclawDir, "onboard-session.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          sessionId: "session-1",
-          resumable: true,
-          status: "complete",
-          mode: "interactive",
-          startedAt: "2026-03-31T00:00:00.000Z",
-          updatedAt: "2026-03-31T00:00:00.000Z",
-          lastStepStarted: "policies",
-          lastCompletedStep: "policies",
-          failure: null,
-          sandboxName: "Alpha",
-          provider: "nvidia-prod",
-          model: "nvidia/nemotron-3-super-120b-a12b",
-          endpointUrl: null,
-          credentialEnv: null,
-          preferredInferenceApi: null,
-          nimContainer: null,
-          policyPresets: ["pypi"],
-          metadata: { gatewayName: "nemoclaw" },
-          steps: {
-            preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
-            gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
-            sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
-            provider_selection: {
-              status: "complete",
-              startedAt: null,
-              completedAt: null,
-              error: null,
-            },
-            inference: { status: "complete", startedAt: null, completedAt: null, error: null },
-            openclaw: { status: "complete", startedAt: null, completedAt: null, error: null },
-            policies: { status: "complete", startedAt: null, completedAt: null, error: null },
-          },
-        },
-        null,
-        2,
-      ),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        'if [ "$1" = "status" ]; then',
-        "  echo 'Server Status'",
-        "  echo",
-        "  echo '  Gateway: nemoclaw'",
-        "  echo '  Status: Connected'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
-        "  echo 'Gateway Info'",
-        "  echo",
-        "  echo '  Gateway: nemoclaw'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-        "  echo 'NAME        PHASE'",
-        "  echo 'alpha       Ready'",
-        "  echo 'Bad_Name    Ready'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "--version" ]; then',
-        "  echo 'openshell 0.0.16'",
-        "  exit 0",
-        "fi",
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-
-    const r = runWithEnv("list", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
-
-    expect(r.code).toBe(0);
-    expect(r.out.includes("alpha")).toBeTruthy();
-    expect(r.out.includes("Bad_Name")).toBeFalsy();
-    const saved = JSON.parse(fs.readFileSync(path.join(nemoclawDir, "sandboxes.json"), "utf8"));
-    expect(saved.sandboxes.alpha).toBeTruthy();
-    expect(saved.sandboxes.Bad_Name).toBeUndefined();
-    expect(saved.sandboxes.Alpha).toBeUndefined();
+    expect(saved.sandboxes.alpha).toBeUndefined();
     expect(saved.sandboxes.gamma).toBeTruthy();
   });
 

@@ -850,8 +850,9 @@ function showStatus() {
 }
 
 async function listSandboxes() {
-  const recovery = await recoverRegistryEntries();
-  const { sandboxes, defaultSandbox } = recovery;
+  // list is read-only — just show what the registry has, no recovery or
+  // gateway restarts.  Use `nemoclaw <name> connect` to trigger recovery.
+  const { sandboxes, defaultSandbox } = registry.listSandboxes();
   if (sandboxes.length === 0) {
     console.log("");
     const session = onboardSession.loadSession();
@@ -875,16 +876,6 @@ async function listSandboxes() {
   );
 
   console.log("");
-  if (recovery.recoveredFromSession) {
-    console.log("  Recovered sandbox inventory from the last onboard session.");
-    console.log("");
-  }
-  if (recovery.recoveredFromGateway > 0) {
-    console.log(
-      `  Recovered ${recovery.recoveredFromGateway} sandbox entr${recovery.recoveredFromGateway === 1 ? "y" : "ies"} from the live OpenShell gateway.`,
-    );
-    console.log("");
-  }
   console.log("  Sandboxes:");
   for (const sb of sandboxes) {
     const def = sb.name === defaultSandbox ? " *" : "";
