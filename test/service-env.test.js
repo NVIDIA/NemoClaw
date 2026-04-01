@@ -3,64 +3,118 @@
 
 import { describe, it, expect } from "vitest";
 import { execSync, execFileSync } from "node:child_process";
-import { writeFileSync, unlinkSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, unlinkSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveOpenshell } from "../bin/lib/resolve-openshell";
 
 describe("service environment", () => {
+  describe("start-services behavior", () => {
+    const scriptPath = join(import.meta.dirname, "../scripts/start-services.sh");
+
+    it("starts local-only services without NVIDIA_API_KEY", () => {
+      const workspace = mkdtempSync(join(tmpdir(), "nemoclaw-services-no-key-"));
+      const result = execFileSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          NVIDIA_API_KEY: "",
+          TELEGRAM_BOT_TOKEN: "",
+          SANDBOX_NAME: "test-box",
+          TMPDIR: workspace,
+        },
+      });
+
+      expect(result).not.toContain("NVIDIA_API_KEY required");
+      expect(result).toContain("TELEGRAM_BOT_TOKEN not set");
+      expect(result).toContain("Telegram:    not started (no token)");
+    });
+
+    it("warns and skips Telegram bridge when token is set without NVIDIA_API_KEY", () => {
+      const workspace = mkdtempSync(join(tmpdir(), "nemoclaw-services-missing-key-"));
+      const result = execFileSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          NVIDIA_API_KEY: "",
+          TELEGRAM_BOT_TOKEN: "test-token",
+          SANDBOX_NAME: "test-box",
+          TMPDIR: workspace,
+        },
+      });
+
+      expect(result).not.toContain("NVIDIA_API_KEY required");
+      expect(result).toContain("NVIDIA_API_KEY not set");
+      expect(result).toContain("Telegram:    not started (no token)");
+    });
+  });
+
   describe("resolveOpenshell logic", () => {
     it("returns command -v result when absolute path", () => {
       expect(resolveOpenshell({ commandVResult: "/usr/bin/openshell" })).toBe("/usr/bin/openshell");
     });
 
     it("rejects non-absolute command -v result (alias)", () => {
-      expect(
-        resolveOpenshell({ commandVResult: "openshell", checkExecutable: () => false })
-      ).toBe(null);
+      expect(resolveOpenshell({ commandVResult: "openshell", checkExecutable: () => false })).toBe(
+        null,
+      );
     });
 
     it("rejects alias definition from command -v", () => {
       expect(
-        resolveOpenshell({ commandVResult: "alias openshell='echo pwned'", checkExecutable: () => false })
+        resolveOpenshell({
+          commandVResult: "alias openshell='echo pwned'",
+          checkExecutable: () => false,
+        }),
       ).toBe(null);
     });
 
     it("falls back to ~/.local/bin when command -v fails", () => {
-      expect(resolveOpenshell({
-        commandVResult: null,
-        checkExecutable: (p) => p === "/fakehome/.local/bin/openshell",
-        home: "/fakehome",
-      })).toBe("/fakehome/.local/bin/openshell");
+      expect(
+        resolveOpenshell({
+          commandVResult: null,
+          checkExecutable: (p) => p === "/fakehome/.local/bin/openshell",
+          home: "/fakehome",
+        }),
+      ).toBe("/fakehome/.local/bin/openshell");
     });
 
     it("falls back to /usr/local/bin", () => {
-      expect(resolveOpenshell({
-        commandVResult: null,
-        checkExecutable: (p) => p === "/usr/local/bin/openshell",
-      })).toBe("/usr/local/bin/openshell");
+      expect(
+        resolveOpenshell({
+          commandVResult: null,
+          checkExecutable: (p) => p === "/usr/local/bin/openshell",
+        }),
+      ).toBe("/usr/local/bin/openshell");
     });
 
     it("falls back to /usr/bin", () => {
-      expect(resolveOpenshell({
-        commandVResult: null,
-        checkExecutable: (p) => p === "/usr/bin/openshell",
-      })).toBe("/usr/bin/openshell");
+      expect(
+        resolveOpenshell({
+          commandVResult: null,
+          checkExecutable: (p) => p === "/usr/bin/openshell",
+        }),
+      ).toBe("/usr/bin/openshell");
     });
 
     it("prefers ~/.local/bin over /usr/local/bin", () => {
-      expect(resolveOpenshell({
-        commandVResult: null,
-        checkExecutable: (p) => p === "/fakehome/.local/bin/openshell" || p === "/usr/local/bin/openshell",
-        home: "/fakehome",
-      })).toBe("/fakehome/.local/bin/openshell");
+      expect(
+        resolveOpenshell({
+          commandVResult: null,
+          checkExecutable: (p) =>
+            p === "/fakehome/.local/bin/openshell" || p === "/usr/local/bin/openshell",
+          home: "/fakehome",
+        }),
+      ).toBe("/fakehome/.local/bin/openshell");
     });
 
     it("returns null when openshell not found anywhere", () => {
-      expect(resolveOpenshell({
-        commandVResult: null,
-        checkExecutable: () => false,
-      })).toBe(null);
+      expect(
+        resolveOpenshell({
+          commandVResult: null,
+          checkExecutable: () => false,
+        }),
+      ).toBe(null);
     });
   });
 
@@ -71,7 +125,7 @@ describe("service environment", () => {
         {
           encoding: "utf-8",
           env: { ...process.env, NEMOCLAW_SANDBOX: "", SANDBOX_NAME: "my-box" },
-        }
+        },
       ).trim();
       expect(result).toBe("my-box");
     });
@@ -82,7 +136,7 @@ describe("service environment", () => {
         {
           encoding: "utf-8",
           env: { ...process.env, NEMOCLAW_SANDBOX: "from-env", SANDBOX_NAME: "old" },
-        }
+        },
       ).trim();
       expect(result).toBe("from-env");
     });
@@ -93,7 +147,7 @@ describe("service environment", () => {
         {
           encoding: "utf-8",
           env: { ...process.env, NEMOCLAW_SANDBOX: "", SANDBOX_NAME: "" },
-        }
+        },
       ).trim();
       expect(result).toBe("default");
     });
@@ -105,12 +159,12 @@ describe("service environment", () => {
       const proxyBlock = execFileSync(
         "sed",
         ["-n", "/^PROXY_HOST=/,/^export no_proxy=/p", scriptPath],
-        { encoding: "utf-8" }
+        { encoding: "utf-8" },
       );
       if (!proxyBlock.trim()) {
         throw new Error(
           "Failed to extract proxy configuration from scripts/nemoclaw-start.sh — " +
-          "the PROXY_HOST..no_proxy block may have been moved or renamed"
+            "the PROXY_HOST..no_proxy block may have been moved or renamed",
         );
       }
       const wrapper = [
@@ -130,12 +184,18 @@ describe("service environment", () => {
           encoding: "utf-8",
           env: { ...process.env, ...env },
         }).trim();
-        return Object.fromEntries(out.split("\n").map((l) => {
-          const idx = l.indexOf("=");
-          return [l.slice(0, idx), l.slice(idx + 1)];
-        }));
+        return Object.fromEntries(
+          out.split("\n").map((l) => {
+            const idx = l.indexOf("=");
+            return [l.slice(0, idx), l.slice(idx + 1)];
+          }),
+        );
       } finally {
-        try { unlinkSync(tmpFile); } catch { /* ignore */ }
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
       }
     }
 
@@ -193,7 +253,7 @@ describe("service environment", () => {
         const persistBlock = execFileSync(
           "sed",
           ["-n", "/^_PROXY_URL=/,/^# ── Main/{ /^# ── Main/d; p; }", scriptPath],
-          { encoding: "utf-8" }
+          { encoding: "utf-8" },
         );
         const wrapper = [
           "#!/usr/bin/env bash",
@@ -217,8 +277,16 @@ describe("service environment", () => {
         const profile = readFileSync(join(fakeHome, ".profile"), "utf-8");
         expect(profile).not.toContain("inference.local");
       } finally {
-        try { unlinkSync(tmpFile); } catch { /* ignore */ }
-        try { execFileSync("rm", ["-rf", fakeHome]); } catch { /* ignore */ }
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          execFileSync("rm", ["-rf", fakeHome]);
+        } catch {
+          /* ignore */
+        }
       }
     });
 
@@ -231,7 +299,7 @@ describe("service environment", () => {
         const persistBlock = execFileSync(
           "sed",
           ["-n", "/^_PROXY_URL=/,/^# ── Main/{ /^# ── Main/d; p; }", scriptPath],
-          { encoding: "utf-8" }
+          { encoding: "utf-8" },
         );
         const wrapper = [
           "#!/usr/bin/env bash",
@@ -240,7 +308,10 @@ describe("service environment", () => {
           persistBlock.trimEnd(),
         ].join("\n");
         writeFileSync(tmpFile, wrapper, { mode: 0o700 });
-        const runOpts = { encoding: /** @type {const} */ ("utf-8"), env: { ...process.env, HOME: fakeHome } };
+        const runOpts = {
+          encoding: /** @type {const} */ ("utf-8"),
+          env: { ...process.env, HOME: fakeHome },
+        };
         execFileSync("bash", [tmpFile], runOpts);
         execFileSync("bash", [tmpFile], runOpts);
         execFileSync("bash", [tmpFile], runOpts);
@@ -251,8 +322,16 @@ describe("service environment", () => {
         expect(beginCount).toBe(1);
         expect(endCount).toBe(1);
       } finally {
-        try { unlinkSync(tmpFile); } catch { /* ignore */ }
-        try { execFileSync("rm", ["-rf", fakeHome]); } catch { /* ignore */ }
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          execFileSync("rm", ["-rf", fakeHome]);
+        } catch {
+          /* ignore */
+        }
       }
     });
 
@@ -265,14 +344,15 @@ describe("service environment", () => {
         const persistBlock = execFileSync(
           "sed",
           ["-n", "/^_PROXY_URL=/,/^# ── Main/{ /^# ── Main/d; p; }", scriptPath],
-          { encoding: "utf-8" }
+          { encoding: "utf-8" },
         );
-        const makeWrapper = (host) => [
-          "#!/usr/bin/env bash",
-          `PROXY_HOST="${host}"`,
-          'PROXY_PORT="3128"',
-          persistBlock.trimEnd(),
-        ].join("\n");
+        const makeWrapper = (host) =>
+          [
+            "#!/usr/bin/env bash",
+            `PROXY_HOST="${host}"`,
+            'PROXY_PORT="3128"',
+            persistBlock.trimEnd(),
+          ].join("\n");
 
         writeFileSync(tmpFile, makeWrapper("10.200.0.1"), { mode: 0o700 });
         execFileSync("bash", [tmpFile], {
@@ -293,8 +373,16 @@ describe("service environment", () => {
         const beginCount = (bashrc.match(/nemoclaw-proxy-config begin/g) || []).length;
         expect(beginCount).toBe(1);
       } finally {
-        try { unlinkSync(tmpFile); } catch { /* ignore */ }
-        try { execFileSync("rm", ["-rf", fakeHome]); } catch { /* ignore */ }
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          execFileSync("rm", ["-rf", fakeHome]);
+        } catch {
+          /* ignore */
+        }
       }
     });
 
@@ -314,19 +402,31 @@ describe("service environment", () => {
         ].join("\n");
         writeFileSync(join(fakeHome, ".bashrc"), bashrcContent);
 
-        const out = execFileSync("bash", ["--norc", "-c", [
-          `export HOME=${JSON.stringify(fakeHome)}`,
-          'export NO_PROXY="127.0.0.1,localhost,::1"',
-          'export no_proxy="127.0.0.1,localhost,::1"',
-          `source ${JSON.stringify(join(fakeHome, ".bashrc"))}`,
-          'echo "NO_PROXY=$NO_PROXY"',
-          'echo "no_proxy=$no_proxy"',
-        ].join("; ")], { encoding: "utf-8" }).trim();
+        const out = execFileSync(
+          "bash",
+          [
+            "--norc",
+            "-c",
+            [
+              `export HOME=${JSON.stringify(fakeHome)}`,
+              'export NO_PROXY="127.0.0.1,localhost,::1"',
+              'export no_proxy="127.0.0.1,localhost,::1"',
+              `source ${JSON.stringify(join(fakeHome, ".bashrc"))}`,
+              'echo "NO_PROXY=$NO_PROXY"',
+              'echo "no_proxy=$no_proxy"',
+            ].join("; "),
+          ],
+          { encoding: "utf-8" },
+        ).trim();
 
         expect(out).toContain("NO_PROXY=localhost,127.0.0.1,::1,10.200.0.1");
         expect(out).toContain("no_proxy=localhost,127.0.0.1,::1,10.200.0.1");
       } finally {
-        try { execFileSync("rm", ["-rf", fakeHome]); } catch { /* ignore */ }
+        try {
+          execFileSync("rm", ["-rf", fakeHome]);
+        } catch {
+          /* ignore */
+        }
       }
     });
   });

@@ -13,11 +13,7 @@ function createFakeNpmEnv(tmp) {
   const fakeBin = path.join(tmp, "bin");
   const npmPath = path.join(fakeBin, "npm");
   fs.mkdirSync(fakeBin, { recursive: true });
-  fs.writeFileSync(
-    npmPath,
-    "#!/usr/bin/env bash\nexit 0\n",
-    { mode: 0o755 }
-  );
+  fs.writeFileSync(npmPath, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
   return {
     ...process.env,
     PATH: `${fakeBin}:${process.env.PATH || "/usr/bin:/bin"}`,
