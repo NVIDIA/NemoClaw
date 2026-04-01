@@ -117,6 +117,27 @@ describe("onboard session", () => {
     expect(loaded.metadata.token).toBeUndefined();
   });
 
+  it("preserves false insecureLocalUi values across persisted and debug session state", () => {
+    session.saveSession(
+      session.createSession({
+        sandboxName: "my-assistant",
+        insecureLocalUi: false,
+      }),
+    );
+    session.markStepComplete("provider_selection", {
+      sandboxName: "my-assistant",
+      provider: "nvidia-nim",
+      model: "nvidia/test-model",
+      insecureLocalUi: false,
+    });
+
+    const loaded = session.loadSession();
+    expect(loaded.insecureLocalUi).toBe(false);
+
+    const summary = session.summarizeForDebug(loaded);
+    expect(summary.insecureLocalUi).toBe(false);
+  });
+
   it("does not clear existing metadata when updates omit whitelisted metadata fields", () => {
     session.saveSession(session.createSession({ metadata: { gatewayName: "nemoclaw" } }));
     session.markStepComplete("provider_selection", {

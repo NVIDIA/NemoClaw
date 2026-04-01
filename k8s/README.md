@@ -30,13 +30,10 @@ running `kubectl apply`. The same Secret-backed flow is described again in the
 configuration section below.
 
 ```bash
+kubectl create namespace nemoclaw
 kubectl create secret generic nemoclaw-compatible-api-key \
   -n nemoclaw \
   --from-literal=api-key='<your-api-key>'
-```
-
-```bash
-kubectl create namespace nemoclaw
 kubectl apply -f https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/k8s/nemoclaw-k8s.yaml
 ```
 

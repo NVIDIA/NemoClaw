@@ -1147,7 +1147,11 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*insecureLocalUi =\s*typeof insecureLocalUi === "boolean"\s*\?\s*insecureLocalUi\s*:\s*resolveInsecureLocalUiPreference\(session\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*\{\s*insecureLocalUi\s*\},\s*\);/,
+      /async function ensureOnboardSandbox\(\{[\s\S]*startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);[\s\S]*const resolvedInsecureLocalUi =[\s\S]*resolveInsecureLocalUiPreference\(session\);[\s\S]*const createdSandboxName = await createSandbox\(/,
+    );
+    assert.match(
+      source,
+      /\(\{ sandboxName, insecureLocalUi \} = await ensureOnboardSandbox\(\{[\s\S]*gpu,[\s\S]*preferredInferenceApi,[\s\S]*session,[\s\S]*\}\)\);/,
     );
   });
 

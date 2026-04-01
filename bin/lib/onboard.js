@@ -3689,6 +3689,64 @@ function startRecordedStep(stepName, updates = {}) {
   }
 }
 
+async function ensureOnboardSandbox({
+  gpu,
+  model,
+  provider,
+  preferredInferenceApi,
+  sandboxName,
+  nimContainer,
+  insecureLocalUi,
+  resume,
+  session,
+}) {
+  const sandboxReuseState = getSandboxReuseState(sandboxName);
+  const resumeSandbox =
+    resume && session?.steps?.sandbox?.status === "complete" && sandboxReuseState === "ready";
+  if (resumeSandbox) {
+    skippedStepMessage("sandbox", sandboxName);
+    return { sandboxName, insecureLocalUi };
+  }
+
+  if (resume && session?.steps?.sandbox?.status === "complete") {
+    if (sandboxReuseState === "not_ready") {
+      note(`  [resume] Recorded sandbox '${sandboxName}' exists but is not ready; recreating it.`);
+      repairRecordedSandbox(sandboxName);
+    } else {
+      note("  [resume] Recorded sandbox state is unavailable; recreating it.");
+      if (sandboxName) {
+        registry.removeSandbox(sandboxName);
+      }
+    }
+  }
+
+  startRecordedStep("sandbox", { sandboxName, provider, model });
+  const resolvedInsecureLocalUi =
+    typeof insecureLocalUi === "boolean"
+      ? insecureLocalUi
+      : resolveInsecureLocalUiPreference(session);
+  const createdSandboxName = await createSandbox(
+    gpu,
+    model,
+    provider,
+    preferredInferenceApi,
+    sandboxName,
+    { insecureLocalUi: resolvedInsecureLocalUi },
+  );
+  onboardSession.markStepComplete("sandbox", {
+    sandboxName: createdSandboxName,
+    provider,
+    model,
+    nimContainer,
+    insecureLocalUi: resolvedInsecureLocalUi,
+  });
+
+  return {
+    sandboxName: createdSandboxName,
+    insecureLocalUi: resolvedInsecureLocalUi,
+  };
+}
+
 const ONBOARD_STEP_INDEX = {
   preflight: { number: 1, title: "Preflight checks" },
   gateway: { number: 2, title: "Starting OpenShell gateway" },
@@ -3923,41 +3981,17 @@ async function onboard(opts = {}) {
       break;
     }
 
-    const sandboxReuseState = getSandboxReuseState(sandboxName);
-    const resumeSandbox =
-      resume && session?.steps?.sandbox?.status === "complete" && sandboxReuseState === "ready";
-    if (resumeSandbox) {
-      skippedStepMessage("sandbox", sandboxName);
-    } else {
-      if (resume && session?.steps?.sandbox?.status === "complete") {
-        if (sandboxReuseState === "not_ready") {
-          note(
-            `  [resume] Recorded sandbox '${sandboxName}' exists but is not ready; recreating it.`,
-          );
-          repairRecordedSandbox(sandboxName);
-        } else {
-          note("  [resume] Recorded sandbox state is unavailable; recreating it.");
-          if (sandboxName) {
-            registry.removeSandbox(sandboxName);
-          }
-        }
-      }
-      startRecordedStep("sandbox", { sandboxName, provider, model });
-      insecureLocalUi =
-        typeof insecureLocalUi === "boolean"
-          ? insecureLocalUi
-          : resolveInsecureLocalUiPreference(session);
-      sandboxName = await createSandbox(gpu, model, provider, preferredInferenceApi, sandboxName, {
-        insecureLocalUi,
-      });
-      onboardSession.markStepComplete("sandbox", {
-        sandboxName,
-        provider,
-        model,
-        nimContainer,
-        insecureLocalUi,
-      });
-    }
+    ({ sandboxName, insecureLocalUi } = await ensureOnboardSandbox({
+      gpu,
+      model,
+      provider,
+      preferredInferenceApi,
+      sandboxName,
+      nimContainer,
+      insecureLocalUi,
+      resume,
+      session,
+    }));
 
     const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
     if (resumeOpenclaw) {
