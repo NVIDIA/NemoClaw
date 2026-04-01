@@ -25,6 +25,7 @@ describe("policies", () => {
         .map((p) => p.name)
         .sort();
       const expected = [
+        "brew",
         "discord",
         "docker",
         "huggingface",
