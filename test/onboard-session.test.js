@@ -56,7 +56,7 @@ describe("onboard session", () => {
 
     const loaded = session.loadSession();
     expect(loaded.endpointUrl).toBe(
-      "https://example.com/v1/models?token=%3CREDACTED%3E&sig=%3CREDACTED%3E&X-Amz-Signature=%3CREDACTED%3E&keep=yes"
+      "https://example.com/v1/models?token=%3CREDACTED%3E&sig=%3CREDACTED%3E&X-Amz-Signature=%3CREDACTED%3E&keep=yes",
     );
     expect(session.summarizeForDebug().endpointUrl).toBe(loaded.endpointUrl);
   });
@@ -153,8 +153,12 @@ describe("onboard session", () => {
     fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
     fs.writeFileSync(
       session.LOCK_FILE,
-      JSON.stringify({ pid: 999999, startedAt: "2026-03-25T00:00:00.000Z", command: "nemoclaw onboard" }),
-      { mode: 0o600 }
+      JSON.stringify({
+        pid: 999999,
+        startedAt: "2026-03-25T00:00:00.000Z",
+        command: "nemoclaw onboard",
+      }),
+      { mode: 0o600 },
     );
 
     const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
@@ -186,7 +190,7 @@ describe("onboard session", () => {
     session.saveSession(session.createSession());
     session.markStepFailed(
       "inference",
-      "provider auth failed with NVIDIA_API_KEY=nvapi-secret Bearer topsecret sk-secret-value ghp_1234567890123456789012345"
+      "provider auth failed with NVIDIA_API_KEY=nvapi-secret Bearer topsecret sk-secret-value ghp_1234567890123456789012345",
     );
 
     const loaded = session.loadSession();
@@ -200,7 +204,9 @@ describe("onboard session", () => {
   });
 
   it("summarizes the session for debug output", () => {
-    session.saveSession(session.createSession({ sandboxName: "my-assistant", insecureLocalUi: true }));
+    session.saveSession(
+      session.createSession({ sandboxName: "my-assistant", insecureLocalUi: true }),
+    );
     session.markStepStarted("preflight");
     session.markStepComplete("preflight");
     session.completeSession();

@@ -42,9 +42,7 @@ describe("inference selection config", () => {
   });
 
   it("maps nvidia-nim to the sandbox inference route", () => {
-    expect(
-      getProviderSelectionConfig("nvidia-nim", "nvidia/nemotron-3-super-120b-a12b")
-    ).toEqual({
+    expect(getProviderSelectionConfig("nvidia-nim", "nvidia/nemotron-3-super-120b-a12b")).toEqual({
       endpointType: "custom",
       endpointUrl: INFERENCE_ROUTE_URL,
       ncpPartner: null,
@@ -57,16 +55,19 @@ describe("inference selection config", () => {
   });
 
   it("maps compatible-anthropic-endpoint to the sandbox inference route", () => {
-    assert.deepEqual(getProviderSelectionConfig("compatible-anthropic-endpoint", "claude-sonnet-proxy"), {
-      endpointType: "custom",
-      endpointUrl: INFERENCE_ROUTE_URL,
-      ncpPartner: null,
-      model: "claude-sonnet-proxy",
-      profile: DEFAULT_ROUTE_PROFILE,
-      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-      provider: "compatible-anthropic-endpoint",
-      providerLabel: "Other Anthropic-compatible endpoint",
-    });
+    assert.deepEqual(
+      getProviderSelectionConfig("compatible-anthropic-endpoint", "claude-sonnet-proxy"),
+      {
+        endpointType: "custom",
+        endpointUrl: INFERENCE_ROUTE_URL,
+        ncpPartner: null,
+        model: "claude-sonnet-proxy",
+        profile: DEFAULT_ROUTE_PROFILE,
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        provider: "compatible-anthropic-endpoint",
+        providerLabel: "Other Anthropic-compatible endpoint",
+      },
+    );
   });
 
   it("maps the remaining hosted providers to the sandbox inference route", () => {
@@ -130,8 +131,62 @@ describe("inference selection config", () => {
     expect(getProviderSelectionConfig("bogus-provider")).toBe(null);
   });
 
+  // Guard: the provider list is intentionally closed. CSP-specific wrappers
+  // (Bedrock, Vertex, Azure OpenAI, etc.) are already reachable through the
+  // "compatible-endpoint" or "compatible-anthropic-endpoint" options.
+  // Adding a new first-class provider key requires explicit approval.
+  it("does not grow beyond the approved provider set", () => {
+    const APPROVED_PROVIDERS = [
+      "nvidia-prod",
+      "nvidia-nim",
+      "openai-api",
+      "anthropic-prod",
+      "compatible-anthropic-endpoint",
+      "gemini-api",
+      "compatible-endpoint",
+      "vllm-local",
+      "ollama-local",
+    ];
+
+    // Every approved provider must still be recognised.
+    for (const key of APPROVED_PROVIDERS) {
+      expect(getProviderSelectionConfig(key)).not.toBe(null);
+    }
+
+    // Probe a broad set of plausible names; none outside the approved list
+    // should resolve. If this fails you are adding a new provider — use
+    // "compatible-endpoint" or "compatible-anthropic-endpoint" instead.
+    const CANDIDATES = [
+      "bedrock",
+      "vertex",
+      "azure",
+      "azure-openai",
+      "deepseek",
+      "mistral",
+      "cohere",
+      "fireworks",
+      "together",
+      "groq",
+      "lambda",
+      "replicate",
+      "perplexity",
+      "sambanova",
+    ];
+    for (const key of CANDIDATES) {
+      expect(
+        getProviderSelectionConfig(key),
+        `"${key}" resolved as a provider — the provider list is closed. ` +
+          "CSP-specific endpoints should use the compatible-endpoint or " +
+          "compatible-anthropic-endpoint options instead. " +
+          "See https://github.com/NVIDIA/NemoClaw/pull/963 for rationale.",
+      ).toBe(null);
+    }
+  });
+
   it("builds a qualified OpenClaw primary model for ollama-local", () => {
-    expect(getOpenClawPrimaryModel("ollama-local", "nemotron-3-nano:30b")).toBe(`${MANAGED_PROVIDER_ID}/nemotron-3-nano:30b`);
+    expect(getOpenClawPrimaryModel("ollama-local", "nemotron-3-nano:30b")).toBe(
+      `${MANAGED_PROVIDER_ID}/nemotron-3-nano:30b`,
+    );
   });
 
   it("falls back to provider defaults when model is omitted", () => {
@@ -139,12 +194,19 @@ describe("inference selection config", () => {
     expect(getProviderSelectionConfig("anthropic-prod").model).toBe("claude-sonnet-4-6");
     expect(getProviderSelectionConfig("gemini-api").model).toBe("gemini-2.5-flash");
     expect(getProviderSelectionConfig("compatible-endpoint").model).toBe("custom-model");
-    expect(getProviderSelectionConfig("compatible-anthropic-endpoint").model).toBe("custom-anthropic-model");
+    expect(getProviderSelectionConfig("compatible-anthropic-endpoint").model).toBe(
+      "custom-anthropic-model",
+    );
     expect(getProviderSelectionConfig("vllm-local").model).toBe("vllm-local");
   });
 
   it("builds a default OpenClaw primary model for non-ollama providers", () => {
-    expect(getOpenClawPrimaryModel("nvidia-prod")).toBe(`${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`);
+    expect(getOpenClawPrimaryModel("nvidia-prod")).toBe(
+      `${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`,
+    );
+    expect(getOpenClawPrimaryModel("ollama-local")).toBe(
+      `${MANAGED_PROVIDER_ID}/${DEFAULT_OLLAMA_MODEL}`,
+    );
   });
 });
 

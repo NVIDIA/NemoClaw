@@ -489,7 +489,9 @@ fi`,
     });
 
     expect(result.status).toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/Found an interrupted onboarding session — resuming it\./);
+    expect(`${result.stdout}${result.stderr}`).toMatch(
+      /Found an interrupted onboarding session — resuming it\./,
+    );
     expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(/^onboard --resume --non-interactive$/m);
   });
 
@@ -786,87 +788,31 @@ describe("installer release-tag resolution", () => {
    * `fakeBin` must contain a `curl` stub (and optionally `node`).
    */
   function callResolveReleaseTag(fakeBin, env = {}) {
-    return spawnSync(
-      "bash",
-      [
-        "-c",
-        `source "${INSTALLER}" 2>/dev/null; resolve_release_tag`,
-      ],
-      {
-        cwd: path.join(import.meta.dirname, ".."),
-        encoding: "utf-8",
-        env: {
-          HOME: os.tmpdir(),
-          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-          ...env,
-        },
+    return spawnSync("bash", ["-c", `source "${INSTALLER}" 2>/dev/null; resolve_release_tag`], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        HOME: os.tmpdir(),
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        ...env,
       },
-    );
+    });
   }
 
-  it("returns the tag_name from the GitHub releases API", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-ok-"));
+  it("defaults to 'latest' with no env override", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-default-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
 
-    // curl stub that returns a realistic GitHub releases/latest JSON snippet
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-cat <<'EOF'
-{
-  "tag_name": "v0.3.0",
-  "name": "NemoClaw v0.3.0"
-}
-EOF`,
-    );
     writeExecutable(path.join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 1");
 
     const result = callResolveReleaseTag(fakeBin);
 
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("v0.3.0");
+    expect(result.stdout.trim()).toBe("latest");
   });
 
-  it("falls back to 'main' when curl fails (network error)", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-neterr-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
-
-    // curl stub that fails
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-exit 1`,
-    );
-    writeExecutable(path.join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 1");
-
-    const result = callResolveReleaseTag(fakeBin);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("main");
-  });
-
-  it("falls back to 'main' when API returns garbage JSON", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-garbage-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
-
-    // curl stub that returns nonsense
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-echo "502 Bad Gateway"`,
-    );
-    writeExecutable(path.join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 1");
-
-    const result = callResolveReleaseTag(fakeBin);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("main");
-  });
-
-  it("uses NEMOCLAW_INSTALL_TAG override without calling curl", () => {
+  it("uses NEMOCLAW_INSTALL_TAG override", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-override-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -886,60 +832,6 @@ exit 99`,
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe("v0.2.0");
-  });
-
-  it("falls back to 'main' when tag_name has no 'v' prefix (e.g. 'release-1.0')", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-noprefix-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
-
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-echo '{"tag_name":"release-1.0","name":"NemoClaw release-1.0"}'`,
-    );
-    writeExecutable(path.join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 1");
-
-    const result = callResolveReleaseTag(fakeBin);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("main");
-  });
-
-  it("accepts partial semver tags like 'v1' or 'v1.2'", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-partial-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
-
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-echo '{"tag_name":"v1.2","name":"NemoClaw v1.2"}'`,
-    );
-    writeExecutable(path.join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 1");
-
-    const result = callResolveReleaseTag(fakeBin);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("v1.2");
-  });
-
-  it("falls back to 'main' when API returns empty JSON object", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-empty-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
-
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-echo '{}'`,
-    );
-    writeExecutable(path.join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 1");
-
-    const result = callResolveReleaseTag(fakeBin);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("main");
   });
 
   it("source-checkout path does NOT call resolve_release_tag / git clone", () => {
@@ -984,7 +876,11 @@ exit 0`,
     // Write package.json that triggers source-checkout path
     fs.writeFileSync(
       path.join(tmp, "package.json"),
-      JSON.stringify({ name: "nemoclaw", version: "0.1.0", dependencies: { openclaw: "2026.3.11" } }, null, 2),
+      JSON.stringify(
+        { name: "nemoclaw", version: "0.1.0", dependencies: { openclaw: "2026.3.11" } },
+        null,
+        2,
+      ),
     );
     fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
     fs.writeFileSync(
@@ -1022,17 +918,9 @@ exit 0`,
 
     writeNodeStub(fakeBin);
 
-    // curl stub: returns a release tag for the API URL, passes through otherwise
     writeExecutable(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
-for arg in "$@"; do
-  if [[ "$arg" == *"api.github.com/repos/NVIDIA/NemoClaw/releases/latest"* ]]; then
-    echo '{"tag_name":"v0.5.0","name":"NemoClaw v0.5.0"}'
-    exit 0
-  fi
-done
-# Fall through to real curl for anything else (e.g. nvm)
 /usr/bin/curl "$@"`,
     );
 
@@ -1080,7 +968,7 @@ fi`,
 
     expect(result.status).toBe(0);
     const gitCalls = fs.readFileSync(gitLog, "utf-8");
-    expect(gitCalls).toMatch(/--branch v0\.5\.0/);
+    expect(gitCalls).toMatch(/--branch latest/);
   });
 });
 
@@ -1093,19 +981,15 @@ describe("installer pure helpers", () => {
    * Helper: source install.sh and call a function, returning stdout.
    */
   function callInstallerFn(fnCall, env = {}) {
-    return spawnSync(
-      "bash",
-      ["-c", `source "${INSTALLER}" 2>/dev/null; ${fnCall}`],
-      {
-        cwd: path.join(import.meta.dirname, ".."),
-        encoding: "utf-8",
-        env: {
-          HOME: os.tmpdir(),
-          PATH: TEST_SYSTEM_PATH,
-          ...env,
-        },
+    return spawnSync("bash", ["-c", `source "${INSTALLER}" 2>/dev/null; ${fnCall}`], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        HOME: os.tmpdir(),
+        PATH: TEST_SYSTEM_PATH,
+        ...env,
       },
-    );
+    });
   }
 
   // -- version_gte --
@@ -1446,16 +1330,10 @@ exit 0`,
     return { fakeBin, prefix, gitLog };
   }
 
-  it("git clone receives --branch with the resolved release tag", () => {
+  it("git clone receives --branch latest by default", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-pipe-tag-e2e-"));
     const { fakeBin, prefix, gitLog } = buildCurlPipeEnv(tmp, {
       curlStub: `#!/usr/bin/env bash
-for arg in "$@"; do
-  if [[ "$arg" == *"api.github.com/repos/NVIDIA/NemoClaw/releases/latest"* ]]; then
-    echo '{"tag_name":"v0.5.0","name":"NemoClaw v0.5.0"}'
-    exit 0
-  fi
-done
 /usr/bin/curl "$@"`,
       gitStub: `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
@@ -1484,47 +1362,7 @@ exit 0`,
 
     expect(result.status).toBe(0);
     const gitCalls = fs.readFileSync(gitLog, "utf-8");
-    expect(gitCalls).toMatch(/--branch v0\.5\.0/);
-  });
-
-  it("falls back to 'main' when the GitHub API is unreachable", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-pipe-tag-fail-"));
-    const { fakeBin, prefix, gitLog } = buildCurlPipeEnv(tmp, {
-      curlStub: `#!/usr/bin/env bash
-for arg in "$@"; do
-  if [[ "$arg" == *"api.github.com"* ]]; then
-    exit 1
-  fi
-done
-/usr/bin/curl "$@"`,
-      gitStub: `#!/usr/bin/env bash
-printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
-if [ "$1" = "clone" ]; then
-  target="\${@: -1}"
-  mkdir -p "$target/nemoclaw"
-  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
-  echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
-  exit 0
-fi
-exit 0`,
-    });
-
-    const result = spawnSync("bash", [CURL_PIPE_INSTALLER], {
-      cwd: tmp,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NPM_PREFIX: prefix,
-        GIT_LOG_PATH: gitLog,
-      },
-    });
-
-    expect(result.status).toBe(0);
-    const gitCalls = fs.readFileSync(gitLog, "utf-8");
-    expect(gitCalls).toMatch(/--branch main/);
+    expect(gitCalls).toMatch(/--branch latest/);
   });
 
   it("uses NEMOCLAW_INSTALL_TAG override without calling the API", () => {

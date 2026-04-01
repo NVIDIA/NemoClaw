@@ -60,7 +60,9 @@ function createSession(overrides = {}) {
     preferredInferenceApi: overrides.preferredInferenceApi || null,
     nimContainer: overrides.nimContainer || null,
     insecureLocalUi,
-    policyPresets: Array.isArray(overrides.policyPresets) ? overrides.policyPresets.filter((value) => typeof value === "string") : null,
+    policyPresets: Array.isArray(overrides.policyPresets)
+      ? overrides.policyPresets.filter((value) => typeof value === "string")
+      : null,
     metadata: {
       gatewayName: overrides.metadata?.gatewayName || "nemoclaw",
     },
@@ -78,7 +80,10 @@ function isObject(value) {
 function redactSensitiveText(value) {
   if (typeof value !== "string") return null;
   return value
-    .replace(/(NVIDIA_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|COMPATIBLE_API_KEY|COMPATIBLE_ANTHROPIC_API_KEY)=\S+/gi, "$1=<REDACTED>")
+    .replace(
+      /(NVIDIA_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|COMPATIBLE_API_KEY|COMPATIBLE_ANTHROPIC_API_KEY)=\S+/gi,
+      "$1=<REDACTED>",
+    )
     .replace(/Bearer\s+\S+/gi, "Bearer <REDACTED>")
     .replace(/nvapi-[A-Za-z0-9_-]{10,}/g, "<REDACTED>")
     .replace(/ghp_[A-Za-z0-9]{20,}/g, "<REDACTED>")
@@ -90,7 +95,8 @@ function sanitizeFailure(input) {
   if (!input) return null;
   const step = typeof input.step === "string" ? input.step : null;
   const message = redactSensitiveText(input.message);
-  const recordedAt = typeof input.recordedAt === "string" ? input.recordedAt : new Date().toISOString();
+  const recordedAt =
+    typeof input.recordedAt === "string" ? input.recordedAt : new Date().toISOString();
   return step || message ? { step, message, recordedAt } : null;
 }
 
@@ -133,10 +139,13 @@ function normalizeSession(data) {
     model: typeof data.model === "string" ? data.model : null,
     endpointUrl: typeof data.endpointUrl === "string" ? redactUrl(data.endpointUrl) : null,
     credentialEnv: typeof data.credentialEnv === "string" ? data.credentialEnv : null,
-    preferredInferenceApi: typeof data.preferredInferenceApi === "string" ? data.preferredInferenceApi : null,
+    preferredInferenceApi:
+      typeof data.preferredInferenceApi === "string" ? data.preferredInferenceApi : null,
     nimContainer: typeof data.nimContainer === "string" ? data.nimContainer : null,
     insecureLocalUi: optionalBoolean(data.insecureLocalUi),
-    policyPresets: Array.isArray(data.policyPresets) ? data.policyPresets.filter((value) => typeof value === "string") : null,
+    policyPresets: Array.isArray(data.policyPresets)
+      ? data.policyPresets.filter((value) => typeof value === "string")
+      : null,
     lastStepStarted: typeof data.lastStepStarted === "string" ? data.lastStepStarted : null,
     lastCompletedStep: typeof data.lastCompletedStep === "string" ? data.lastCompletedStep : null,
     failure: sanitizeFailure(data.failure),
@@ -179,7 +188,7 @@ function saveSession(session) {
   ensureSessionDir();
   const tmpFile = path.join(
     SESSION_DIR,
-    `.onboard-session.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`
+    `.onboard-session.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`,
   );
   fs.writeFileSync(tmpFile, JSON.stringify(normalized, null, 2), { mode: 0o600 });
   fs.renameSync(tmpFile, SESSION_FILE);
@@ -229,7 +238,7 @@ function acquireOnboardLock(command = null) {
       command: typeof command === "string" ? command : null,
     },
     null,
-    2
+    2,
   );
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -365,7 +374,8 @@ function filterSafeUpdates(updates) {
   if (typeof updates.model === "string") safe.model = updates.model;
   if (typeof updates.endpointUrl === "string") safe.endpointUrl = redactUrl(updates.endpointUrl);
   if (typeof updates.credentialEnv === "string") safe.credentialEnv = updates.credentialEnv;
-  if (typeof updates.preferredInferenceApi === "string") safe.preferredInferenceApi = updates.preferredInferenceApi;
+  if (typeof updates.preferredInferenceApi === "string")
+    safe.preferredInferenceApi = updates.preferredInferenceApi;
   if (typeof updates.nimContainer === "string") safe.nimContainer = updates.nimContainer;
   if (typeof updates.insecureLocalUi === "boolean") safe.insecureLocalUi = updates.insecureLocalUi;
   if (Array.isArray(updates.policyPresets)) {
@@ -410,7 +420,7 @@ function summarizeForDebug(session = loadSession()) {
           completedAt: step.completedAt,
           error: step.error,
         },
-      ])
+      ]),
     ),
   };
 }
