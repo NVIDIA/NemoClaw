@@ -766,8 +766,7 @@ async function deploy(instanceName) {
   );
 }
 
-function registrySandboxArg() {
-  const { defaultSandbox } = registry.listSandboxes();
+function registrySandboxArg(defaultSandbox = registry.listSandboxes().defaultSandbox) {
   const safe = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
   return safe ? ` --sandbox ${shellQuote(safe)}` : "";
 }
@@ -853,7 +852,7 @@ function showStatus() {
   }
 
   // Show service status — pass --sandbox so PID lookup uses the correct directory
-  run(`bash "${SCRIPTS}/start-services.sh" --status${registrySandboxArg()}`);
+  run(`bash "${SCRIPTS}/start-services.sh" --status${registrySandboxArg(defaultSandbox)}`);
 }
 
 async function listSandboxes() {
