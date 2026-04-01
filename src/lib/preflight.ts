@@ -20,19 +20,13 @@ const { runCapture } = require("../../bin/lib/runner");
 
 // ── Types ────────────────────────────────────────────────────────
 
-export interface PortProbeOk {
-  ok: true;
+export interface PortProbeResult {
+  ok: boolean;
   warning?: string;
+  process?: string;
+  pid?: number | null;
+  reason?: string;
 }
-
-export interface PortProbeConflict {
-  ok: false;
-  process: string;
-  pid: number | null;
-  reason: string;
-}
-
-export type PortProbeResult = PortProbeOk | PortProbeConflict;
 
 export interface CheckPortOpts {
   /** Inject fake lsof output (skips shell). */
@@ -56,19 +50,12 @@ export interface GetMemoryInfoOpts {
   platform?: NodeJS.Platform;
 }
 
-export interface SwapResultOk {
-  ok: true;
-  totalMB: number;
-  swapCreated: boolean;
+export interface SwapResult {
+  ok: boolean;
+  totalMB?: number;
+  swapCreated?: boolean;
   reason?: string;
 }
-
-export interface SwapResultFail {
-  ok: false;
-  reason: string;
-}
-
-export type SwapResult = SwapResultOk | SwapResultFail;
 
 export interface EnsureSwapOpts {
   /** Override process.platform. */
@@ -128,7 +115,7 @@ export async function probePortAvailability(
   });
 }
 
-function parseLsofLines(output: string): PortProbeConflict | null {
+function parseLsofLines(output: string): PortProbeResult | null {
   const lines = output.split("\n").filter((l) => l.trim());
   const dataLines = lines.filter((l) => !l.startsWith("COMMAND"));
   if (dataLines.length === 0) return null;
@@ -293,7 +280,7 @@ function getExistingSwapResult(mem: MemoryInfo): SwapResult | null {
   }
 }
 
-function checkSwapDiskSpace(): SwapResultFail | null {
+function checkSwapDiskSpace(): SwapResult | null {
   try {
     const dfOut = runCapture("df / --output=avail -k 2>/dev/null | tail -1", {
       ignoreError: true,

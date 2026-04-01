@@ -9,7 +9,6 @@ import {
   checkPortAvailable,
   getMemoryInfo,
   ensureSwap,
-  type PortProbeResult,
 } from "../../dist/lib/preflight";
 
 describe("checkPortAvailable", () => {
@@ -30,7 +29,7 @@ describe("checkPortAvailable", () => {
   it("probe catches occupied port even when lsof returns empty", async () => {
     const result = await checkPortAvailable(18789, {
       lsofOutput: "",
-      probeImpl: async (): Promise<PortProbeResult> => ({
+      probeImpl: async () => ({
         ok: false,
         process: "unknown",
         pid: null,
@@ -39,10 +38,8 @@ describe("checkPortAvailable", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.process).toBe("unknown");
-      expect(result.reason).toContain("EADDRINUSE");
-    }
+    expect(result.process).toBe("unknown");
+    expect(result.reason).toContain("EADDRINUSE");
   });
 
   it("parses process and PID from lsof output", async () => {
@@ -53,11 +50,9 @@ describe("checkPortAvailable", () => {
     const result = await checkPortAvailable(18789, { lsofOutput });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.process).toBe("openclaw");
-      expect(result.pid).toBe(12345);
-      expect(result.reason).toContain("openclaw");
-    }
+    expect(result.process).toBe("openclaw");
+    expect(result.pid).toBe(12345);
+    expect(result.reason).toContain("openclaw");
   });
 
   it("picks first listener when lsof shows multiple", async () => {
@@ -69,10 +64,8 @@ describe("checkPortAvailable", () => {
     const result = await checkPortAvailable(18789, { lsofOutput });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.process).toBe("gateway");
-      expect(result.pid).toBe(111);
-    }
+    expect(result.process).toBe("gateway");
+    expect(result.pid).toBe(111);
   });
 
   it("returns ok for a free port probe", async () => {
@@ -87,7 +80,7 @@ describe("checkPortAvailable", () => {
   it("returns occupied for EADDRINUSE probe results", async () => {
     const result = await checkPortAvailable(8080, {
       skipLsof: true,
-      probeImpl: async (): Promise<PortProbeResult> => ({
+      probeImpl: async () => ({
         ok: false,
         process: "unknown",
         pid: null,
@@ -96,10 +89,8 @@ describe("checkPortAvailable", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.process).toBe("unknown");
-      expect(result.reason).toContain("EADDRINUSE");
-    }
+    expect(result.process).toBe("unknown");
+    expect(result.reason).toContain("EADDRINUSE");
   });
 
   it("treats restricted probe environments as inconclusive instead of occupied", async () => {
@@ -112,9 +103,7 @@ describe("checkPortAvailable", () => {
     });
 
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.warning).toContain("EPERM");
-    }
+    expect(result.warning).toContain("EPERM");
   });
 
   it("defaults to port 18789 when no port is given", async () => {
@@ -152,9 +141,7 @@ describe("probePortAvailability", () => {
     try {
       const result = await probePortAvailability(port, {});
       expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.reason).toContain("EADDRINUSE");
-      }
+      expect(result.reason).toContain("EADDRINUSE");
     } finally {
       await new Promise<void>((resolve) => srv.close(resolve));
     }
@@ -282,10 +269,8 @@ describe("ensureSwap", () => {
       memoryInfo: { totalRamMB: 8000, totalSwapMB: 0, totalMB: 8000 },
     });
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.swapCreated).toBe(false);
-      expect(result.totalMB).toBe(8000);
-    }
+    expect(result.swapCreated).toBe(false);
+    expect(result.totalMB).toBe(8000);
   });
 
   it("reports swap would be created in dry-run mode when below threshold", () => {
@@ -296,9 +281,7 @@ describe("ensureSwap", () => {
       swapfileExists: false,
     });
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.swapCreated).toBe(true);
-    }
+    expect(result.swapCreated).toBe(true);
   });
 
   it("skips swap creation when /swapfile already exists (dry-run)", () => {
@@ -309,10 +292,8 @@ describe("ensureSwap", () => {
       swapfileExists: true,
     });
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.swapCreated).toBe(false);
-      expect(result.reason).toMatch(/swapfile already exists/);
-    }
+    expect(result.swapCreated).toBe(false);
+    expect(result.reason).toMatch(/swapfile already exists/);
   });
 
   it("skips on non-Linux platforms", () => {
@@ -321,9 +302,7 @@ describe("ensureSwap", () => {
       memoryInfo: { totalRamMB: 4000, totalSwapMB: 0, totalMB: 4000 },
     });
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.swapCreated).toBe(false);
-    }
+    expect(result.swapCreated).toBe(false);
   });
 
   it("returns error when memory info is unavailable", () => {
@@ -333,9 +312,7 @@ describe("ensureSwap", () => {
       getMemoryInfoImpl: () => null,
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.reason).toMatch(/could not read memory info/);
-    }
+    expect(result.reason).toMatch(/could not read memory info/);
   });
 
   it("uses default 12000 MB threshold when minTotalMB is undefined", () => {
@@ -344,10 +321,8 @@ describe("ensureSwap", () => {
       memoryInfo: { totalRamMB: 16000, totalSwapMB: 0, totalMB: 16000 },
     });
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.swapCreated).toBe(false);
-      expect(result.totalMB).toBe(16000);
-    }
+    expect(result.swapCreated).toBe(false);
+    expect(result.totalMB).toBe(16000);
   });
 
   it("uses getMemoryInfoImpl when memoryInfo is not provided", () => {
