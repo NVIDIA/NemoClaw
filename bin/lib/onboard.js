@@ -54,6 +54,13 @@ const nim = require("./nim");
 const onboardSession = require("./onboard-session");
 const policies = require("./policies");
 const { checkPortAvailable, ensureSwap, getMemoryInfo } = require("./preflight");
+
+/**
+ * Create a temp file inside a directory with a cryptographically random name.
+ * Uses fs.mkdtempSync (OS-level mkdtemp) to avoid predictable filenames that
+ * could be exploited via symlink attacks on shared /tmp.
+ * Ref: https://github.com/NVIDIA/NemoClaw/issues/1093
+ */
 function secureTempFile(prefix, ext = "") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));
   return path.join(dir, `${prefix}${ext}`);
@@ -952,9 +959,8 @@ function isOpenclawReady(sandboxName) {
   return Boolean(fetchGatewayAuthTokenFromSandbox(sandboxName));
 }
 
-function writeSandboxConfigSyncFile(script, tmpDir = os.tmpdir()) {
-  const dir = fs.mkdtempSync(path.join(tmpDir, "nemoclaw-sync-"));
-  const scriptFile = path.join(dir, "sync.sh");
+function writeSandboxConfigSyncFile(script) {
+  const scriptFile = secureTempFile("nemoclaw-sync", ".sh");
   fs.writeFileSync(scriptFile, `${script}\n`, { mode: 0o600 });
   return scriptFile;
 }
