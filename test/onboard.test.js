@@ -499,6 +499,7 @@ describe("onboard helpers", () => {
         expect(stat.mode & 0o777).toBe(0o600);
       }
     } finally {
+      // mirrors cleanupTempDir() — inline guard to safely remove mkdtemp directory
       const parentDir = path.dirname(scriptFile);
       if (parentDir !== os.tmpdir() && path.basename(parentDir).startsWith("nemoclaw-sync-")) {
         fs.rmSync(parentDir, { recursive: true, force: true });
