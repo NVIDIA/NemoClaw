@@ -57,11 +57,17 @@ network_policies:
           - allow: { method: POST, path: "/**" }
       - host: statsig.anthropic.com
         port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
       - host: sentry.io
         port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }

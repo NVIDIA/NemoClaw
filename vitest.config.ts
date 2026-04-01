@@ -9,7 +9,7 @@ export default defineConfig({
       {
         test: {
           name: "cli",
-          include: ["test/**/*.test.{js,ts}"],
+          include: ["test/**/*.test.{js,ts}", "src/**/*.test.ts"],
           exclude: ["**/node_modules/**", "**/.claude/**", "test/e2e/**"],
         },
       },
