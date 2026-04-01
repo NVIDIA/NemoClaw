@@ -129,7 +129,7 @@ function hasNoLiveSandboxes() {
 }
 
 function isMissingSandboxDeleteResult(output = "") {
-  return /NotFound|sandbox not found|sandbox .* not found|sandbox .* not present|sandbox does not exist|no such sandbox/i.test(
+  return /\bNotFound\b|\bNot Found\b|sandbox not found|sandbox .* not found|sandbox .* not present|sandbox does not exist|no such sandbox/i.test(
     stripAnsi(output),
   );
 }
@@ -390,7 +390,7 @@ function getSandboxGatewayState(sandboxName) {
   if (result.status === 0) {
     return { state: "present", output };
   }
-  if (/NotFound|sandbox not found/i.test(output)) {
+  if (/\bNotFound\b|\bNot Found\b|sandbox not found/i.test(output)) {
     return { state: "missing", output };
   }
   if (
