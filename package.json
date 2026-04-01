@@ -20,7 +20,8 @@
   },
   "dependencies": {
     "openclaw": "2026.3.11",
-    "p-retry": "^4.6.2"
+    "p-retry": "^4.6.2",
+    "yaml": "^2.8.3"
   },
   "bundleDependencies": [
     "p-retry"
