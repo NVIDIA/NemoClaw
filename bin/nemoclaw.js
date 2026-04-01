@@ -620,16 +620,11 @@ async function onboard(args) {
   await runOnboard({ nonInteractive, resume });
 }
 
-async function setup() {
+async function setup(args = []) {
   console.log("");
   console.log("  ⚠  `nemoclaw setup` is deprecated. Use `nemoclaw onboard` instead.");
-  console.log("     Running legacy setup.sh for backwards compatibility...");
   console.log("");
-  await ensureApiKey();
-  const { defaultSandbox } = registry.listSandboxes();
-  const safeName =
-    defaultSandbox && /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(defaultSandbox) ? defaultSandbox : "";
-  run(`bash "${SCRIPTS}/setup.sh" ${shellQuote(safeName)}`);
+  await onboard(args);
 }
 
 async function setupSpark() {
@@ -1188,7 +1183,7 @@ const [cmd, ...args] = process.argv.slice(2);
         await onboard(args);
         break;
       case "setup":
-        await setup();
+        await setup(args);
         break;
       case "setup-spark":
         await setupSpark();

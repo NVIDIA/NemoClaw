@@ -110,61 +110,111 @@ function buildPolicyGetCommand(sandboxName) {
 }
 
 /**
- * Merge preset entries into existing policy YAML. Handles versionless policies
- * by ensuring the merged result has a version header when the current policy
- * has content but no version field. Pure function for testing.
+ * Text-based fallback for merging preset entries into policy YAML.
+ * Used when preset entries cannot be parsed as structured YAML.
+ */
+function textBasedMerge(currentPolicy, presetEntries) {
+  if (!currentPolicy) {
+    return "version: 1\n\nnetwork_policies:\n" + presetEntries;
+  }
+  let merged;
+  if (/^network_policies\s*:/m.test(currentPolicy)) {
+    const lines = currentPolicy.split("\n");
+    const result = [];
+    let inNp = false;
+    let inserted = false;
+    for (const line of lines) {
+      if (/^network_policies\s*:/.test(line)) {
+        inNp = true;
+        result.push(line);
+        continue;
+      }
+      if (inNp && /^\S.*:/.test(line) && !inserted) {
+        result.push(presetEntries);
+        inserted = true;
+        inNp = false;
+      }
+      result.push(line);
+    }
+    if (inNp && !inserted) result.push(presetEntries);
+    merged = result.join("\n");
+  } else {
+    merged = currentPolicy.trimEnd() + "\n\nnetwork_policies:\n" + presetEntries;
+  }
+  if (!merged.trimStart().startsWith("version:")) merged = "version: 1\n\n" + merged;
+  return merged;
+}
+
+/**
+ * Merge preset entries into existing policy YAML using structured YAML
+ * parsing. Replaces the previous text-based manipulation which could
+ * produce invalid YAML when indentation or ordering varied.
  *
- * @param {string} currentPolicy - Existing policy YAML (may be versionless)
+ * Behavior:
+ *   - Parses both current policy and preset entries as YAML
+ *   - Merges network_policies by name (preset overrides on collision)
+ *   - Preserves all non-network sections (filesystem_policy, process, etc.)
+ *   - Ensures version: 1 exists
+ *
+ * @param {string} currentPolicy - Existing policy YAML (may be empty/versionless)
  * @param {string} presetEntries - Indented network_policies entries from preset
- * @returns {string} Merged YAML with version header when missing
+ * @returns {string} Merged YAML
  */
 function mergePresetIntoPolicy(currentPolicy, presetEntries) {
   const normalizedCurrentPolicy = parseCurrentPolicy(currentPolicy);
   if (!presetEntries) {
     return normalizedCurrentPolicy || "version: 1\n\nnetwork_policies:\n";
   }
+
+  // Parse preset entries. They come as indented content under network_policies:,
+  // so we wrap them to make valid YAML for parsing.
+  let presetPolicies;
+  try {
+    const wrapped = "network_policies:\n" + presetEntries;
+    const parsed = YAML.parse(wrapped);
+    presetPolicies = parsed?.network_policies;
+  } catch {
+    presetPolicies = null;
+  }
+
+  // If YAML parsing failed or entries are not a mergeable object,
+  // fall back to the text-based approach for backward compatibility.
+  if (!presetPolicies || typeof presetPolicies !== "object" || Array.isArray(presetPolicies)) {
+    return textBasedMerge(normalizedCurrentPolicy, presetEntries);
+  }
+
   if (!normalizedCurrentPolicy) {
-    return "version: 1\n\nnetwork_policies:\n" + presetEntries;
+    return YAML.stringify({ version: 1, network_policies: presetPolicies });
   }
 
-  let merged;
-  if (/^network_policies\s*:/m.test(normalizedCurrentPolicy)) {
-    const lines = normalizedCurrentPolicy.split("\n");
-    const result = [];
-    let inNetworkPolicies = false;
-    let inserted = false;
+  // Parse the current policy as structured YAML
+  let current;
+  try {
+    current = YAML.parse(normalizedCurrentPolicy);
+  } catch {
+    return textBasedMerge(normalizedCurrentPolicy, presetEntries);
+  }
 
-    for (const line of lines) {
-      const isTopLevel = /^\S.*:/.test(line);
+  if (!current || typeof current !== "object") current = {};
 
-      if (/^network_policies\s*:/.test(line)) {
-        inNetworkPolicies = true;
-        result.push(line);
-        continue;
-      }
-
-      if (inNetworkPolicies && isTopLevel && !inserted) {
-        result.push(presetEntries);
-        inserted = true;
-        inNetworkPolicies = false;
-      }
-
-      result.push(line);
-    }
-
-    if (inNetworkPolicies && !inserted) {
-      result.push(presetEntries);
-    }
-
-    merged = result.join("\n");
+  // Structured merge: preset entries override existing on name collision.
+  // Guard: network_policies may be an array in legacy policies — only
+  // object-merge when both sides are plain objects.
+  const existingNp = current.network_policies;
+  let mergedNp;
+  if (existingNp && typeof existingNp === "object" && !Array.isArray(existingNp)) {
+    mergedNp = { ...existingNp, ...presetPolicies };
   } else {
-    merged = normalizedCurrentPolicy.trimEnd() + "\n\nnetwork_policies:\n" + presetEntries;
+    mergedNp = presetPolicies;
   }
 
-  if (!merged.trimStart().startsWith("version:")) {
-    merged = "version: 1\n\n" + merged;
+  const output = { version: current.version || 1 };
+  for (const [key, val] of Object.entries(current)) {
+    if (key !== "version" && key !== "network_policies") output[key] = val;
   }
-  return merged;
+  output.network_policies = mergedNp;
+
+  return YAML.stringify(output);
 }
 function applyPreset(sandboxName, presetName) {
   // Guard against truncated sandbox names — WSL can truncate hyphenated

@@ -39,9 +39,4 @@ describe("gateway cleanup: Docker volumes removed on failure (#17)", () => {
     expect(content.includes("docker volume") && content.includes("openshell-cluster")).toBe(true);
     expect(content.includes("remove_related_docker_volumes")).toBe(true);
   });
-
-  it("setup.sh: includes Docker volume cleanup on failure", () => {
-    const content = fs.readFileSync(path.join(ROOT, "scripts/setup.sh"), "utf-8");
-    expect(content.includes("docker volume") && content.includes("openshell-cluster")).toBe(true);
-  });
 });
