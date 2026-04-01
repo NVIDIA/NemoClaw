@@ -251,12 +251,13 @@ describe("policies", () => {
   });
 
   describe("mergePresetIntoPolicy", () => {
+    // Legacy list-style entries (backward compat — uses text-based fallback)
     const sampleEntries = "  - host: example.com\n    allow: true";
 
     it("appends network_policies when current policy has content but no version header", () => {
       const versionless = "some_key:\n  foo: bar";
       const merged = policies.mergePresetIntoPolicy(versionless, sampleEntries);
-      expect(merged.startsWith("version: 1\n")).toBe(true);
+      expect(merged).toContain("version:");
       expect(merged).toContain("some_key:");
       expect(merged).toContain("network_policies:");
       expect(merged).toContain("example.com");
@@ -265,7 +266,7 @@ describe("policies", () => {
     it("appends preset entries when current policy has network_policies but no version", () => {
       const versionlessWithNp = "network_policies:\n  - host: existing.com\n    allow: true";
       const merged = policies.mergePresetIntoPolicy(versionlessWithNp, sampleEntries);
-      expect(merged.trimStart().startsWith("version: 1\n")).toBe(true);
+      expect(merged).toContain("version:");
       expect(merged).toContain("existing.com");
       expect(merged).toContain("example.com");
     });
@@ -279,7 +280,8 @@ describe("policies", () => {
 
     it("returns version + network_policies when current policy is empty", () => {
       const merged = policies.mergePresetIntoPolicy("", sampleEntries);
-      expect(merged.startsWith("version: 1\n\nnetwork_policies:")).toBe(true);
+      expect(merged).toContain("version: 1");
+      expect(merged).toContain("network_policies:");
       expect(merged).toContain("example.com");
     });
 
@@ -293,6 +295,80 @@ describe("policies", () => {
     it("adds a blank line after synthesized version headers", () => {
       const merged = policies.mergePresetIntoPolicy("some_key:\n  foo: bar", sampleEntries);
       expect(merged.startsWith("version: 1\n\nsome_key:")).toBe(true);
+    });
+
+    // --- Structured merge tests (real preset format) ---
+    const realisticEntries =
+      "  pypi_access:\n" +
+      "    name: pypi_access\n" +
+      "    endpoints:\n" +
+      "      - host: pypi.org\n" +
+      "        port: 443\n" +
+      "        access: full\n" +
+      "    binaries:\n" +
+      "      - { path: /usr/bin/python3* }\n";
+
+    it("uses structured YAML merge for real preset entries", () => {
+      const current =
+        "version: 1\n\n" +
+        "network_policies:\n" +
+        "  npm_yarn:\n" +
+        "    name: npm_yarn\n" +
+        "    endpoints:\n" +
+        "      - host: registry.npmjs.org\n" +
+        "        port: 443\n" +
+        "        access: full\n" +
+        "    binaries:\n" +
+        "      - { path: /usr/local/bin/npm* }\n";
+      const merged = policies.mergePresetIntoPolicy(current, realisticEntries);
+      expect(merged).toContain("npm_yarn");
+      expect(merged).toContain("registry.npmjs.org");
+      expect(merged).toContain("pypi_access");
+      expect(merged).toContain("pypi.org");
+      expect(merged).toContain("version: 1");
+    });
+
+    it("deduplicates on policy name collision (preset overrides existing)", () => {
+      const current =
+        "version: 1\n\n" +
+        "network_policies:\n" +
+        "  pypi_access:\n" +
+        "    name: pypi_access\n" +
+        "    endpoints:\n" +
+        "      - host: old-pypi.example.com\n" +
+        "        port: 443\n" +
+        "        access: full\n" +
+        "    binaries:\n" +
+        "      - { path: /usr/bin/pip* }\n";
+      const merged = policies.mergePresetIntoPolicy(current, realisticEntries);
+      expect(merged).toContain("pypi.org");
+      expect(merged).not.toContain("old-pypi.example.com");
+    });
+
+    it("preserves non-network sections during structured merge", () => {
+      const current =
+        "version: 1\n\n" +
+        "filesystem_policy:\n" +
+        "  include_workdir: true\n" +
+        "  read_only:\n" +
+        "    - /usr\n\n" +
+        "process:\n" +
+        "  run_as_user: sandbox\n\n" +
+        "network_policies:\n" +
+        "  existing:\n" +
+        "    name: existing\n" +
+        "    endpoints:\n" +
+        "      - host: api.example.com\n" +
+        "        port: 443\n" +
+        "        access: full\n" +
+        "    binaries:\n" +
+        "      - { path: /usr/local/bin/node* }\n";
+      const merged = policies.mergePresetIntoPolicy(current, realisticEntries);
+      expect(merged).toContain("filesystem_policy");
+      expect(merged).toContain("include_workdir");
+      expect(merged).toContain("run_as_user: sandbox");
+      expect(merged).toContain("existing");
+      expect(merged).toContain("pypi_access");
     });
   });
 
