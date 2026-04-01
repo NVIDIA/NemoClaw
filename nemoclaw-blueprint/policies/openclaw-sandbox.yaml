@@ -106,14 +106,14 @@ network_policies:
 
   # ── OpenClaw "phone home" ────────────────────────────────────────────
   # Minimum viable set for OpenClaw to authenticate, discover plugins,
-  # and reach ClawHub. Binary-restricted to openclaw only.
+  # and reach ClawHub. Restricted to openclaw and node (skill flows run on Node).
   # Docs access is read-only (GET). ClawHub and openclaw.ai are
   # restricted to GET+POST (auth flows, plugin discovery).
 
   clawhub:
     name: clawhub
     endpoints:
-      - host: clawhub.com
+      - host: clawhub.ai
         port: 443
         protocol: rest
         enforcement: enforce
@@ -123,6 +123,7 @@ network_policies:
           - allow: { method: POST, path: "/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
 
   openclaw_api:
     name: openclaw_api
@@ -137,6 +138,7 @@ network_policies:
           - allow: { method: POST, path: "/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
 
   openclaw_docs:
     name: openclaw_docs
