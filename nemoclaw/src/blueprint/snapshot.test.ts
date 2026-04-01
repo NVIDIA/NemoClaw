@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type fs from "node:fs";
 const SNAP = "/snap/20260323";
 
 // ── In-memory filesystem ────────────────────────────────────────
@@ -23,13 +24,12 @@ function addDir(p: string): void {
 
 const FAKE_HOME = "/fakehome";
 
-
 vi.mock("node:os", () => ({
   homedir: () => FAKE_HOME,
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
-  const original = await importOriginal<typeof import("node:fs")>();
+  const original = await importOriginal<typeof fs>();
   return {
     ...original,
     existsSync: (p: string) => store.has(p),
@@ -127,7 +127,7 @@ describe("snapshot", () => {
 
       expect(result).not.toBeNull();
       if (!result) throw new Error("createSnapshot returned null");
-      
+
       expect(result.startsWith(SNAPSHOTS_DIR)).toBe(true);
 
       // Manifest was written

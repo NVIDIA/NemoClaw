@@ -18,7 +18,13 @@ function runWithEnv(args, env = {}, timeout = 10000) {
     const out = execSync(`node "${CLI}" ${args}`, {
       encoding: "utf-8",
       timeout,
-      env: { ...process.env, HOME: "/tmp/nemoclaw-cli-test-" + Date.now(), ...env },
+      env: {
+        ...process.env,
+        HOME: "/tmp/nemoclaw-cli-test-" + Date.now(),
+        NEMOCLAW_HEALTH_POLL_COUNT: "1",
+        NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+        ...env,
+      },
     });
     return { code: 0, out };
   } catch (err) {
@@ -1402,7 +1408,7 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      25000,
+      10000,
     );
 
     expect(r.code).toBe(0);
@@ -1410,7 +1416,7 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("gateway identity drift after restart")).toBeTruthy();
     const saved = JSON.parse(fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"));
     expect(saved.sandboxes.alpha).toBeTruthy();
-  }, 25000);
+  }, 10000);
 
   it("recovers status after gateway runtime is reattached", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-recover-status-"));
@@ -1542,14 +1548,14 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      25000,
+      10000,
     );
 
     expect(r.code).toBe(0);
     expect(r.out.includes("Recovered NemoClaw gateway runtime")).toBeFalsy();
     expect(r.out.includes("Could not verify sandbox 'alpha'")).toBeTruthy();
     expect(r.out.includes("verify the active gateway")).toBeTruthy();
-  }, 25000);
+  }, 10000);
 
   it("matches ANSI-decorated gateway transport errors when printing lifecycle hints", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-ansi-transport-hint-"));
@@ -1606,12 +1612,12 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      25000,
+      10000,
     );
 
     expect(r.code).toBe(0);
     expect(r.out.includes("current gateway/runtime is not reachable")).toBeTruthy();
-  }, 25000);
+  }, 10000);
 
   it("matches ANSI-decorated gateway auth errors when printing lifecycle hints", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-ansi-auth-hint-"));
@@ -1668,14 +1674,14 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      25000,
+      10000,
     );
 
     expect(r.code).toBe(0);
     expect(
       r.out.includes("Verify the active gateway and retry after re-establishing the runtime."),
     ).toBeTruthy();
-  }, 25000);
+  }, 10000);
 
   it("explains unrecoverable gateway trust rotation after restart", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-identity-drift-"));
@@ -1731,7 +1737,7 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      25000,
+      10000,
     );
     expect(statusResult.code).toBe(0);
     expect(statusResult.out.includes("gateway trust material rotated after restart")).toBeTruthy();
@@ -1808,7 +1814,7 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      25000,
+      10000,
     );
     expect(statusResult.code).toBe(0);
     expect(
@@ -1827,7 +1833,7 @@ describe("CLI dispatch", () => {
       connectResult.out.includes("gateway is still refusing connections after restart"),
     ).toBeTruthy();
     expect(connectResult.out.includes("If the gateway never becomes healthy")).toBeTruthy();
-  }, 25000);
+  }, 10000);
 
   it("explains when the named gateway is no longer configured after restart or rebuild", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-gateway-missing-"));
@@ -1885,14 +1891,14 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      25000,
+      10000,
     );
     expect(statusResult.code).toBe(0);
     expect(
       statusResult.out.includes("gateway is no longer configured after restart/rebuild"),
     ).toBeTruthy();
     expect(statusResult.out.includes("Start the gateway again")).toBeTruthy();
-  }, 25000);
+  }, 10000);
 });
 
 describe("list shows live gateway inference", () => {
