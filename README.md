@@ -83,6 +83,12 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 If you use nvm or fnm to manage Node.js, the installer may not update your current shell's PATH.
 If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
 
+> **Version compatibility**
+>
+> Treat the OpenShell version installed or reused by the NemoClaw installer as part of the NemoClaw release.
+> Do not run `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly on a NemoClaw-managed deployment.
+> If you suspect the installed OpenShell version is incompatible, back up your workspace and rerun `nemoclaw onboard` so NemoClaw can reinstall and reconfigure the expected runtime.
+
 When the install completes, a summary confirms the running environment:
 
 ```text

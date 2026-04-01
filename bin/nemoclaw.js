@@ -734,7 +734,10 @@ function printOldLogsCompatibilityGuidance(installedVersion = null) {
   );
   console.error(`  NemoClaw expects \`openshell logs <name>\` and live streaming via \`--tail\`.`);
   console.error(
-    "  Upgrade OpenShell by rerunning `nemoclaw onboard`, or reinstall the OpenShell CLI and try again.",
+    "  Rerun `nemoclaw onboard` to reinstall the pinned OpenShell version for this NemoClaw setup.",
+  );
+  console.error(
+    "  Do not run `openshell self-update` or recreate NemoClaw-managed sandboxes directly with `openshell` commands.",
   );
 }
 

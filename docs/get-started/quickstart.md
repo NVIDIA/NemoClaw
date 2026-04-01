@@ -92,6 +92,12 @@ This is a build-time setting baked into the sandbox image, not a runtime knob.
 If you export `NEMOCLAW_DISABLE_DEVICE_AUTH` after onboarding finishes, it has no effect on an existing sandbox.
 :::
 
+:::{warning} OpenShell version compatibility
+Treat the OpenShell version installed or reused by NemoClaw as part of the NemoClaw release you installed.
+Do not run `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly for a NemoClaw-managed deployment.
+If you suspect an incompatible OpenShell upgrade, [back up your workspace](../workspace/backup-restore.md) and rerun `nemoclaw onboard` so NemoClaw can reinstall the expected runtime and rebuild the managed resources.
+:::
+
 When the install completes, a summary confirms the running environment:
 
 ```text

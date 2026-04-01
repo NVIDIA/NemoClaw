@@ -105,6 +105,19 @@ $ export PATH=~/.npm-global/bin:$PATH
 
 Add the `export` line to your `~/.bashrc` or `~/.zshrc` to make it permanent, then re-run the installer.
 
+### OpenShell was upgraded independently
+
+NemoClaw manages an OpenShell-based runtime and expects the OpenShell version that was installed or reused during `nemoclaw onboard`.
+If you run `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly, the recreated gateway or sandbox can drift away from the layout and behavior that NemoClaw configured.
+
+To recover:
+
+1. Back up your workspace files by following [Back Up and Restore](../workspace/backup-restore.md).
+2. Re-run `nemoclaw onboard` so NemoClaw can reinstall the expected OpenShell runtime and rebuild its managed resources.
+3. Restore workspace files if the sandbox had to be recreated.
+
+Avoid running standalone `openshell` lifecycle commands on a NemoClaw-managed deployment unless the NemoClaw documentation explicitly tells you to do so.
+
 ### Port already in use
 
 The NemoClaw gateway uses port `18789` by default.

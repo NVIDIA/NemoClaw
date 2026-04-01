@@ -649,7 +649,8 @@ describe("CLI dispatch", () => {
 
     expect(r.code).toBe(1);
     expect(r.out.includes("too old or incompatible with `nemoclaw logs`")).toBeTruthy();
-    expect(r.out.includes("Upgrade OpenShell by rerunning `nemoclaw onboard`")).toBeTruthy();
+    expect(r.out.includes("reinstall the pinned OpenShell version")).toBeTruthy();
+    expect(r.out.includes("Do not run `openshell self-update`")).toBeTruthy();
   });
 
   it("connect does not pre-start a duplicate port forward", () => {
