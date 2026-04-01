@@ -45,27 +45,11 @@ const policies = require("./lib/policies");
 const { parseGatewayInference } = require("./lib/inference-config");
 const onboardSession = require("./lib/onboard-session");
 const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
+const { RESERVED_SANDBOX_NAMES, SANDBOX_ACTIONS } = require("./lib/sandbox-names");
 
 // ── Global commands ──────────────────────────────────────────────
 
-const GLOBAL_COMMANDS = new Set([
-  "onboard",
-  "list",
-  "deploy",
-  "setup",
-  "setup-spark",
-  "start",
-  "telegram",
-  "stop",
-  "status",
-  "debug",
-  "uninstall",
-  "help",
-  "--help",
-  "-h",
-  "--version",
-  "-v",
-]);
+const GLOBAL_COMMANDS = new Set([...RESERVED_SANDBOX_NAMES, "--help", "-h", "--version", "-v"]);
 
 const REMOTE_UNINSTALL_URL =
   "https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh";
@@ -721,8 +705,9 @@ async function deploy(instanceName) {
   if (ghToken) envLines.push(`GITHUB_TOKEN=${shellQuote(ghToken)}`);
   const tgToken = getCredential("TELEGRAM_BOT_TOKEN");
   if (tgToken) envLines.push(`TELEGRAM_BOT_TOKEN=${shellQuote(tgToken)}`);
-  const allowedChatIds = getCredential("ALLOWED_CHAT_IDS");
-  if (allowedChatIds) envLines.push(`ALLOWED_CHAT_IDS=${shellQuote(allowedChatIds)}`);
+  const { allowedChatIds, discoveryFlag } = getTelegramServiceEnv();
+  envLines.push(`ALLOWED_CHAT_IDS=${shellQuote(allowedChatIds)}`);
+  envLines.push(`NEMOCLAW_TELEGRAM_DISCOVERY=${discoveryFlag}`);
   const discordToken = getCredential("DISCORD_BOT_TOKEN");
   if (discordToken) envLines.push(`DISCORD_BOT_TOKEN=${shellQuote(discordToken)}`);
   const slackToken = getCredential("SLACK_BOT_TOKEN");
@@ -786,6 +771,25 @@ function normalizeTelegramChatIds(rawValue) {
   return [...new Set(chatIds)].join(",");
 }
 
+function getTelegramServiceEnv(discoveryMode = false) {
+  return {
+    allowedChatIds: getCredential("ALLOWED_CHAT_IDS") || "",
+    discoveryFlag: discoveryMode ? "1" : "0",
+  };
+}
+
+function rejectUnexpectedTelegramOperands(action, rest = []) {
+  if (rest.length === 0) return;
+  console.error(`  Unknown telegram ${action} option(s): ${rest.join(", ")}`);
+  process.exit(1);
+}
+
+function printReservedSandboxHint(name, args = []) {
+  const suffix = args.length > 0 ? ` ${args.join(" ")}` : "";
+  console.error(`  Sandbox '${name}' conflicts with a global command.`);
+  console.error(`  Use 'nemoclaw -- ${name}${suffix}' to target the sandbox explicitly.`);
+}
+
 async function start(args = []) {
   const supportedFlags = new Set(["--discover-chat-id"]);
   const unknown = args.filter((arg) => !supportedFlags.has(arg));
@@ -800,9 +804,9 @@ async function start(args = []) {
     defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
   const envAssignments = [];
   if (safeName) envAssignments.push(`SANDBOX_NAME=${shellQuote(safeName)}`);
-  const allowedChatIds = getCredential("ALLOWED_CHAT_IDS");
-  if (allowedChatIds) envAssignments.push(`ALLOWED_CHAT_IDS=${shellQuote(allowedChatIds)}`);
-  if (discoveryMode) envAssignments.push("NEMOCLAW_TELEGRAM_DISCOVERY=1");
+  const { allowedChatIds, discoveryFlag } = getTelegramServiceEnv(discoveryMode);
+  envAssignments.push(`ALLOWED_CHAT_IDS=${shellQuote(allowedChatIds)}`);
+  envAssignments.push(`NEMOCLAW_TELEGRAM_DISCOVERY=${discoveryFlag}`);
   const envPrefix = envAssignments.length > 0 ? `${envAssignments.join(" ")} ` : "";
   run(`${envPrefix}bash "${SCRIPTS}/start-services.sh"`);
 }
@@ -847,6 +851,7 @@ async function telegramCommand(args = []) {
       return;
     }
     case "show": {
+      rejectUnexpectedTelegramOperands("show", rest);
       const allowlist = getCredential("ALLOWED_CHAT_IDS");
       if (!allowlist) {
         console.log("  No Telegram allowlist configured.");
@@ -856,10 +861,12 @@ async function telegramCommand(args = []) {
       return;
     }
     case "clear":
+      rejectUnexpectedTelegramOperands("clear", rest);
       saveCredential("ALLOWED_CHAT_IDS", "");
       console.log("  Cleared Telegram allowlist.");
       return;
     case "discover":
+      rejectUnexpectedTelegramOperands("discover", rest);
       await start(["--discover-chat-id"]);
       return;
     default:
@@ -1229,6 +1236,7 @@ function help() {
     nemoclaw <name> status           Sandbox health + NIM status
     nemoclaw <name> logs ${D}[--follow]${R}  Stream sandbox logs
     nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
+    nemoclaw -- <name> <action>      Target a sandbox whose name matches a global command
 
   ${G}Policy Presets:${R}
     nemoclaw <name> policy-add       Add a network or filesystem policy preset
@@ -1241,7 +1249,7 @@ function help() {
     nemoclaw start ${D}[--discover-chat-id]${R} Start auxiliary services ${D}(Telegram, tunnel)${R}
     nemoclaw stop                    Stop all services
     nemoclaw status                  Show sandbox list and service status
-    nemoclaw telegram allow <id>     Save allowed Telegram chat IDs
+    nemoclaw telegram [help]         Manage Telegram allowlist + discovery mode
 
   Troubleshooting:
     nemoclaw debug [--quick]         Collect diagnostics for bug reports
@@ -1263,7 +1271,9 @@ function help() {
 
 // ── Dispatch ─────────────────────────────────────────────────────
 
-const [cmd, ...args] = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+const forceSandboxDispatch = rawArgs[0] === "--";
+const [cmd, ...args] = forceSandboxDispatch ? rawArgs.slice(1) : rawArgs;
 
 // eslint-disable-next-line complexity
 (async () => {
@@ -1274,7 +1284,18 @@ const [cmd, ...args] = process.argv.slice(2);
   }
 
   // Global commands
-  if (GLOBAL_COMMANDS.has(cmd)) {
+  if (
+    !forceSandboxDispatch &&
+    GLOBAL_COMMANDS.has(cmd) &&
+    registry.getSandbox(cmd) &&
+    args[0] &&
+    SANDBOX_ACTIONS.has(args[0])
+  ) {
+    printReservedSandboxHint(cmd, args);
+    process.exit(1);
+  }
+
+  if (!forceSandboxDispatch && GLOBAL_COMMANDS.has(cmd)) {
     switch (cmd) {
       case "onboard":
         await onboard(args);

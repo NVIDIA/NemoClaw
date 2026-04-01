@@ -46,6 +46,7 @@ const nim = require("./nim");
 const onboardSession = require("./onboard-session");
 const policies = require("./policies");
 const { checkPortAvailable, ensureSwap, getMemoryInfo } = require("./preflight");
+const { validateSandboxName } = require("./sandbox-names");
 function secureTempFile(prefix, ext = "") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));
   return path.join(dir, `${prefix}${ext}`);
@@ -2266,15 +2267,17 @@ async function promptValidatedSandboxName() {
     );
     const sandboxName = (nameAnswer || "my-assistant").trim().toLowerCase();
 
-    // Validate: RFC 1123 subdomain — lowercase alphanumeric and hyphens,
-    // must start and end with alphanumeric (required by Kubernetes/OpenShell)
-    if (/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName)) {
-      return sandboxName;
+    try {
+      return validateSandboxName(sandboxName);
+    } catch (err) {
+      console.error(`  ${err.message}`);
+      if (/reserved by the CLI/.test(err.message)) {
+        console.error("  Choose a different name to avoid colliding with top-level commands.");
+      } else {
+        console.error("  Names must be lowercase, contain only letters, numbers, and hyphens,");
+        console.error("  and must start and end with a letter or number.");
+      }
     }
-
-    console.error(`  Invalid sandbox name: '${sandboxName}'`);
-    console.error("  Names must be lowercase, contain only letters, numbers, and hyphens,");
-    console.error("  and must start and end with a letter or number.");
 
     // Non-interactive runs cannot re-prompt — abort so the caller can fix the
     // NEMOCLAW_SANDBOX_NAME env var and retry.
@@ -2298,7 +2301,9 @@ async function createSandbox(
 ) {
   step(5, 7, "Creating sandbox");
 
-  const sandboxName = sandboxNameOverride || (await promptValidatedSandboxName());
+  const sandboxName = sandboxNameOverride
+    ? validateSandboxName(String(sandboxNameOverride).trim().toLowerCase())
+    : await promptValidatedSandboxName();
   const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
 
   // Reconcile local registry state with the live OpenShell gateway state.

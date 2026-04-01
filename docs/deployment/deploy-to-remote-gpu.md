@@ -63,7 +63,8 @@ The deploy script performs the following steps on the VM:
 3. Runs `nemoclaw onboard` (the setup wizard) to create the gateway, register providers, and launch the sandbox.
 4. Starts auxiliary services, such as the Telegram bridge and cloudflared tunnel.
 
-If you configured a Telegram bot token but not an allowlist yet, the bridge stays disabled until you either save `ALLOWED_CHAT_IDS` with `nemoclaw telegram allow <chat-id>` or run discovery mode with `nemoclaw start --discover-chat-id`.
+If you configured a Telegram bot token but not an allowlist yet, the bridge stays disabled.
+Save `ALLOWED_CHAT_IDS` with `nemoclaw telegram allow <chat-id>` or run discovery mode with `nemoclaw start --discover-chat-id` to enable it.
 
 ## Connect to the Remote Sandbox
 

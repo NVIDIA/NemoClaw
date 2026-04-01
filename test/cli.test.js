@@ -26,6 +26,26 @@ function runWithEnv(args, env = {}, timeout = 10000) {
   }
 }
 
+function writeBashCaptureStub(localBin, markerFile) {
+  fs.writeFileSync(
+    path.join(localBin, "bash"),
+    [
+      "#!/bin/sh",
+      `marker_file=${JSON.stringify(markerFile)}`,
+      'if [ "${NEMOCLAW_BASH_STUB_CHILD:-}" = "1" ]; then',
+      '  printf \'SANDBOX_NAME=%s\\nALLOWED_CHAT_IDS=%s\\nNEMOCLAW_TELEGRAM_DISCOVERY=%s\\nARGS=%s\\n\' "$SANDBOX_NAME" "$ALLOWED_CHAT_IDS" "$NEMOCLAW_TELEGRAM_DISCOVERY" "$*" > "$marker_file"',
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "-c" ]; then',
+      '  NEMOCLAW_BASH_STUB_CHILD=1 eval "$2"',
+      "  exit $?",
+      "fi",
+      "exit 0",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+}
+
 describe("CLI dispatch", () => {
   it("help exits 0 and shows sections", () => {
     const r = run("help");
@@ -33,6 +53,8 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Getting Started")).toBeTruthy();
     expect(r.out.includes("Sandbox Management")).toBeTruthy();
     expect(r.out.includes("Policy Presets")).toBeTruthy();
+    expect(r.out.includes("nemoclaw telegram [help]")).toBeTruthy();
+    expect(r.out.includes("nemoclaw -- <name> <action>")).toBeTruthy();
   });
 
   it("--help exits 0", () => {
@@ -85,16 +107,7 @@ describe("CLI dispatch", () => {
       }),
       { mode: 0o600 },
     );
-    fs.writeFileSync(
-      path.join(localBin, "bash"),
-      [
-        "#!/bin/sh",
-        `marker_file=${JSON.stringify(markerFile)}`,
-        'printf \'%s\\n\' "$@" > "$marker_file"',
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+    writeBashCaptureStub(localBin, markerFile);
 
     const r = runWithEnv("start", {
       HOME: home,
@@ -131,16 +144,7 @@ describe("CLI dispatch", () => {
       }),
       { mode: 0o600 },
     );
-    fs.writeFileSync(
-      path.join(localBin, "bash"),
-      [
-        "#!/bin/sh",
-        `marker_file=${JSON.stringify(markerFile)}`,
-        'printf \'SANDBOX_NAME=%s\\nALLOWED_CHAT_IDS=%s\\nNEMOCLAW_TELEGRAM_DISCOVERY=%s\\nARGS=%s\\n\' "$SANDBOX_NAME" "$ALLOWED_CHAT_IDS" "$NEMOCLAW_TELEGRAM_DISCOVERY" "$*" > "$marker_file"',
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+    writeBashCaptureStub(localBin, markerFile);
 
     expect(runWithEnv("telegram allow 12345,67890", { HOME: home }).code).toBe(0);
 
@@ -151,9 +155,47 @@ describe("CLI dispatch", () => {
 
     expect(r.code).toBe(0);
     const marker = fs.readFileSync(markerFile, "utf8");
-    expect(marker).toContain("SANDBOX_NAME='alpha'");
-    expect(marker).toContain("ALLOWED_CHAT_IDS='12345,67890'");
+    expect(marker).toContain("SANDBOX_NAME=alpha");
+    expect(marker).toContain("ALLOWED_CHAT_IDS=12345,67890");
+    expect(marker).toContain("NEMOCLAW_TELEGRAM_DISCOVERY=0");
     expect(marker).toContain("ARGS=");
+    expect(marker).toContain("start-services.sh");
+  });
+
+  it("start clears Telegram allowlist and discovery mode when unset", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-start-default-env-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const markerFile = path.join(home, "start-env");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    writeBashCaptureStub(localBin, markerFile);
+
+    const r = runWithEnv("start", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    const marker = fs.readFileSync(markerFile, "utf8");
+    expect(marker).toContain("ALLOWED_CHAT_IDS=");
+    expect(marker).toContain("NEMOCLAW_TELEGRAM_DISCOVERY=0");
     expect(marker).toContain("start-services.sh");
   });
 
@@ -162,16 +204,7 @@ describe("CLI dispatch", () => {
     const localBin = path.join(home, "bin");
     const markerFile = path.join(home, "start-env");
     fs.mkdirSync(localBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(localBin, "bash"),
-      [
-        "#!/bin/sh",
-        `marker_file=${JSON.stringify(markerFile)}`,
-        'printf \'NEMOCLAW_TELEGRAM_DISCOVERY=%s\\nARGS=%s\\n\' "$NEMOCLAW_TELEGRAM_DISCOVERY" "$*" > "$marker_file"',
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+    writeBashCaptureStub(localBin, markerFile);
 
     const r = runWithEnv("start --discover-chat-id", {
       HOME: home,
@@ -188,6 +221,60 @@ describe("CLI dispatch", () => {
     const r = run("telegram allow not-a-chat-id");
     expect(r.code).toBe(1);
     expect(r.out).toContain("Invalid Telegram chat ID");
+  });
+
+  for (const action of ["show", "clear", "discover"]) {
+    it(`telegram ${action} rejects extra operands`, () => {
+      const r = run(`telegram ${action} unexpected`);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain(`Unknown telegram ${action} option(s): unexpected`);
+    });
+  }
+
+  it("supports sandbox escape hatch for names that collide with global commands", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-reserved-sandbox-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const markerFile = path.join(home, "openshell-args");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          telegram: {
+            name: "telegram",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "telegram",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        'printf \'%s\\n\' "$@" > "$marker_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("-- telegram connect", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    const marker = fs.readFileSync(markerFile, "utf8");
+    expect(marker).toContain("sandbox");
+    expect(marker).toContain("connect");
+    expect(marker).toContain("telegram");
   });
 
   it("unknown onboard option exits 1", () => {
