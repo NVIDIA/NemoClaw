@@ -196,7 +196,7 @@ repos:
 
       - id: tsc-js
         name: TypeScript (JS config)
-        entry: npx tsc -p jsconfig.json
+        entry: bash -c 'npm run build:cli && npx tsc -p jsconfig.json'
         language: system
         pass_filenames: false
         files: ^(bin|test|scripts)/.*\.js$
@@ -227,10 +227,10 @@ repos:
     hooks:
       - id: test-cli
         name: Test (CLI)
-        entry: bash -c 'npx vitest run --project cli --coverage --coverage.reporter=text --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/cli --coverage.include="bin/**/*.js" --coverage.exclude="test/**/*.js" --coverage.exclude="test/**/*.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"'
+        entry: bash -c 'npm run build:cli && npx vitest run --project cli --coverage --coverage.reporter=text --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/cli --coverage.include="bin/**/*.js" --coverage.include="dist/lib/**/*.js" --coverage.exclude="test/**/*.js" --coverage.exclude="test/**/*.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"'
         language: system
         pass_filenames: false
-        files: ^(bin/|test/)
+        files: ^(bin/|src/|test/)
         priority: 20
 
       - id: test-plugin

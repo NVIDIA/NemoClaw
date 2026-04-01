@@ -55,6 +55,13 @@ const onboardSession = require("./onboard-session");
 const policies = require("./policies");
 const { checkPortAvailable, ensureSwap, getMemoryInfo } = require("./preflight");
 
+// Typed modules (compiled from src/lib/*.ts → dist/lib/*.js)
+const gatewayState = require("../../dist/lib/gateway-state");
+const validation = require("../../dist/lib/validation");
+const urlUtils = require("../../dist/lib/url-utils");
+const buildContext = require("../../dist/lib/build-context");
+const dashboard = require("../../dist/lib/dashboard");
+
 /**
  * Create a temp file inside a directory with a cryptographically random name.
  * Uses fs.mkdtempSync (OS-level mkdtemp) to avoid predictable filenames that
@@ -197,98 +204,15 @@ async function promptOrDefault(question, envVar, defaultValue) {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-/**
- * Check if a sandbox is in Ready state from `openshell sandbox list` output.
- * Strips ANSI codes and exact-matches the sandbox name in the first column.
- */
-function isSandboxReady(output, sandboxName) {
-  // eslint-disable-next-line no-control-regex
-  const clean = output.replace(/\x1b\[[0-9;]*m/g, "");
-  return clean.split("\n").some((l) => {
-    const cols = l.trim().split(/\s+/);
-    return cols[0] === sandboxName && cols.includes("Ready") && !cols.includes("NotReady");
-  });
-}
-
-/**
- * Determine whether stale NemoClaw gateway output indicates a previous
- * session that should be cleaned up before the port preflight check.
- * @param {string} gwInfoOutput - Raw output from `openshell gateway info -g nemoclaw`.
- * @returns {boolean}
- */
-function hasStaleGateway(gwInfoOutput) {
-  const cleanOutput =
-    typeof gwInfoOutput === "string"
-      ? // eslint-disable-next-line no-control-regex
-        gwInfoOutput.replace(/\x1b\[[0-9;]*m/g, "")
-      : "";
-  return (
-    cleanOutput.length > 0 &&
-    cleanOutput.includes(`Gateway: ${GATEWAY_NAME}`) &&
-    !cleanOutput.includes("No gateway metadata found")
-  );
-}
-
-function getReportedGatewayName(output = "") {
-  if (typeof output !== "string") return null;
-  // eslint-disable-next-line no-control-regex
-  const cleanOutput = output.replace(/\x1b\[[0-9;]*m/g, "");
-  const match = cleanOutput.match(/^\s*Gateway:\s+([^\s]+)/m);
-  return match ? match[1] : null;
-}
-
-function isGatewayConnected(statusOutput = "") {
-  return typeof statusOutput === "string" && statusOutput.includes("Connected");
-}
-
-function hasActiveGatewayInfo(activeGatewayInfoOutput = "") {
-  return (
-    typeof activeGatewayInfoOutput === "string" &&
-    activeGatewayInfoOutput.includes("Gateway endpoint:") &&
-    !activeGatewayInfoOutput.includes("No gateway metadata found")
-  );
-}
-
-function isSelectedGateway(statusOutput = "", gatewayName = GATEWAY_NAME) {
-  return getReportedGatewayName(statusOutput) === gatewayName;
-}
-
-function isGatewayHealthy(statusOutput = "", gwInfoOutput = "", activeGatewayInfoOutput = "") {
-  const namedGatewayKnown = hasStaleGateway(gwInfoOutput);
-  if (!namedGatewayKnown || !isGatewayConnected(statusOutput)) return false;
-
-  const activeGatewayName =
-    getReportedGatewayName(statusOutput) || getReportedGatewayName(activeGatewayInfoOutput);
-  return activeGatewayName === GATEWAY_NAME;
-}
-
-function getGatewayReuseState(statusOutput = "", gwInfoOutput = "", activeGatewayInfoOutput = "") {
-  if (isGatewayHealthy(statusOutput, gwInfoOutput, activeGatewayInfoOutput)) {
-    return "healthy";
-  }
-  const connected = isGatewayConnected(statusOutput);
-  const activeGatewayName =
-    getReportedGatewayName(statusOutput) || getReportedGatewayName(activeGatewayInfoOutput);
-  if (connected && activeGatewayName === GATEWAY_NAME) {
-    return "active-unnamed";
-  }
-  if (connected && activeGatewayName && activeGatewayName !== GATEWAY_NAME) {
-    return "foreign-active";
-  }
-  if (hasStaleGateway(gwInfoOutput)) {
-    return "stale";
-  }
-  if (hasActiveGatewayInfo(activeGatewayInfoOutput)) {
-    return "active-unnamed";
-  }
-  return "missing";
-}
-
-function getSandboxStateFromOutputs(sandboxName, getOutput = "", listOutput = "") {
-  if (!sandboxName) return "missing";
-  if (!getOutput) return "missing";
-  return isSandboxReady(listOutput, sandboxName) ? "ready" : "not_ready";
-}
+// Gateway state functions — delegated to src/lib/gateway-state.ts
+const {
+  isSandboxReady,
+  hasStaleGateway,
+  isSelectedGateway,
+  isGatewayHealthy,
+  getGatewayReuseState,
+  getSandboxStateFromOutputs,
+} = gatewayState;
 
 function getSandboxReuseState(sandboxName) {
   if (!sandboxName) return "missing";
@@ -543,9 +467,14 @@ function runCaptureOpenshell(args, opts = {}) {
   return runCapture(openshellShellCommand(args), opts);
 }
 
-function formatEnvAssignment(name, value) {
-  return `${name}=${value}`;
-}
+// URL/string utilities — delegated to src/lib/url-utils.ts
+const {
+  compactText,
+  normalizeProviderBaseUrl,
+  isLoopbackHostname,
+  formatEnvAssignment,
+  parsePolicyPresetEnv,
+} = urlUtils;
 
 function hydrateCredentialEnv(envName) {
   if (!envName) return null;
@@ -558,41 +487,6 @@ function hydrateCredentialEnv(envName) {
 
 function getCurlTimingArgs() {
   return ["--connect-timeout", "10", "--max-time", "60"];
-}
-
-function compactText(value = "") {
-  return String(value).replace(/\s+/g, " ").trim();
-}
-
-function stripEndpointSuffix(pathname = "", suffixes = []) {
-  for (const suffix of suffixes) {
-    if (pathname === suffix) return "";
-    if (pathname.endsWith(suffix)) {
-      return pathname.slice(0, -suffix.length);
-    }
-  }
-  return pathname;
-}
-
-function normalizeProviderBaseUrl(value, flavor) {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-
-  try {
-    const url = new URL(raw);
-    url.search = "";
-    url.hash = "";
-    const suffixes =
-      flavor === "anthropic"
-        ? ["/v1/messages", "/v1/models", "/v1", "/messages", "/models"]
-        : ["/responses", "/chat/completions", "/completions", "/models"];
-    let pathname = stripEndpointSuffix(url.pathname.replace(/\/+$/, ""), suffixes);
-    pathname = pathname.replace(/\/+$/, "");
-    url.pathname = pathname || "/";
-    return url.pathname === "/" ? url.origin : `${url.origin}${url.pathname}`;
-  } catch {
-    return raw.replace(/[?#].*$/, "").replace(/\/+$/, "");
-  }
 }
 
 function summarizeCurlFailure(curlStatus = 0, stderr = "", body = "") {
@@ -652,35 +546,14 @@ function getTransportRecoveryMessage(failure = {}) {
   return "  Validation hit a network or transport error.";
 }
 
-function classifyValidationFailure({ httpStatus = 0, curlStatus = 0, message = "" } = {}) {
-  const normalized = compactText(message).toLowerCase();
-  if (curlStatus) {
-    return { kind: "transport", retry: "retry" };
-  }
-  if (httpStatus === 429 || (httpStatus >= 500 && httpStatus < 600)) {
-    return { kind: "transport", retry: "retry" };
-  }
-  if (httpStatus === 401 || httpStatus === 403) {
-    return { kind: "credential", retry: "credential" };
-  }
-  if (httpStatus === 400) {
-    return { kind: "model", retry: "model" };
-  }
-  if (/model.+not found|unknown model|unsupported model|bad model/i.test(normalized)) {
-    return { kind: "model", retry: "model" };
-  }
-  if (httpStatus === 404 || httpStatus === 405) {
-    return { kind: "endpoint", retry: "selection" };
-  }
-  if (/unauthorized|forbidden|invalid api key|invalid_auth|permission/i.test(normalized)) {
-    return { kind: "credential", retry: "credential" };
-  }
-  return { kind: "unknown", retry: "selection" };
-}
-
-function classifyApplyFailure(message = "") {
-  return classifyValidationFailure({ message });
-}
+// Validation functions — delegated to src/lib/validation.ts
+const {
+  classifyValidationFailure,
+  classifyApplyFailure,
+  classifySandboxCreateFailure,
+  validateNvidiaApiKeyValue,
+  isSafeModelId,
+} = validation;
 
 function getProbeRecovery(probe, options = {}) {
   const allowModelRetry = options.allowModelRetry === true;
@@ -772,15 +645,7 @@ function runCurlProbe(argv) {
   }
 }
 
-function validateNvidiaApiKeyValue(key) {
-  if (!key) {
-    return "  NVIDIA API Key is required.";
-  }
-  if (!key.startsWith("nvapi-")) {
-    return "  Invalid key. Must start with nvapi-";
-  }
-  return null;
-}
+// validateNvidiaApiKeyValue — see validation import above
 
 async function replaceNamedCredential(envName, label, helpUrl = null, validator = null) {
   if (helpUrl) {
@@ -1450,102 +1315,10 @@ async function promptManualModelId(promptLabel, errorLabel, validator = null) {
     return trimmed;
   }
 }
-function shouldIncludeBuildContextPath(sourceRoot, candidatePath) {
-  const relative = path.relative(sourceRoot, candidatePath);
-  if (!relative || relative === "") return true;
-
-  const segments = relative.split(path.sep);
-  const basename = path.basename(candidatePath);
-  const excludedSegments = new Set([
-    ".venv",
-    ".ruff_cache",
-    ".pytest_cache",
-    ".mypy_cache",
-    "__pycache__",
-    "node_modules",
-    ".git",
-  ]);
-
-  if (basename === ".DS_Store" || basename.startsWith("._")) {
-    return false;
-  }
-
-  return !segments.some((segment) => excludedSegments.has(segment));
-}
-
-function copyBuildContextDir(sourceDir, destinationDir) {
-  fs.cpSync(sourceDir, destinationDir, {
-    recursive: true,
-    filter: (candidatePath) => shouldIncludeBuildContextPath(sourceDir, candidatePath),
-  });
-}
-
-function classifySandboxCreateFailure(output = "") {
-  const text = String(output || "");
-  const uploadedToGateway =
-    /\[progress\]\s+Uploaded to gateway/i.test(text) ||
-    /Image .*available in the gateway/i.test(text);
-
-  if (/failed to read image export stream|Timeout error/i.test(text)) {
-    return {
-      kind: "image_transfer_timeout",
-      uploadedToGateway,
-    };
-  }
-
-  if (/Connection reset by peer/i.test(text)) {
-    return {
-      kind: "image_transfer_reset",
-      uploadedToGateway,
-    };
-  }
-
-  if (/Created sandbox:/i.test(text)) {
-    return {
-      kind: "sandbox_create_incomplete",
-      uploadedToGateway: true,
-    };
-  }
-
-  return {
-    kind: "unknown",
-    uploadedToGateway,
-  };
-}
-
-function printSandboxCreateRecoveryHints(output = "") {
-  const failure = classifySandboxCreateFailure(output);
-  if (failure.kind === "image_transfer_timeout") {
-    console.error("  Hint: image upload into the OpenShell gateway timed out.");
-    console.error("  Recovery: nemoclaw onboard --resume");
-    if (failure.uploadedToGateway) {
-      console.error(
-        "  Progress reached the gateway upload stage, so resume may be able to reuse existing gateway state.",
-      );
-    }
-    console.error("  If this repeats, check Docker memory and retry on a host with more RAM.");
-    return;
-  }
-  if (failure.kind === "image_transfer_reset") {
-    console.error("  Hint: the image push/import stream was interrupted.");
-    console.error("  Recovery: nemoclaw onboard --resume");
-    if (failure.uploadedToGateway) {
-      console.error("  The image appears to have reached the gateway before the stream failed.");
-    }
-    console.error("  If this repeats, restart Docker or the gateway and retry.");
-    return;
-  }
-  if (failure.kind === "sandbox_create_incomplete") {
-    console.error("  Hint: sandbox creation started but the create stream did not finish cleanly.");
-    console.error("  Recovery: nemoclaw onboard --resume");
-    console.error(
-      "  Check: openshell sandbox list        # verify whether the sandbox became ready",
-    );
-    return;
-  }
-  console.error("  Recovery: nemoclaw onboard --resume");
-  console.error("  Or:      nemoclaw onboard");
-}
+// Build context helpers — delegated to src/lib/build-context.ts
+const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRecoveryHints } =
+  buildContext;
+// classifySandboxCreateFailure — see validation import above
 
 async function promptCloudModel() {
   console.log("");
@@ -1892,16 +1665,8 @@ function waitForSandboxReady(sandboxName, attempts = 10, delaySeconds = 2) {
   return false;
 }
 
-function parsePolicyPresetEnv(value) {
-  return (value || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-function isSafeModelId(value) {
-  return /^[A-Za-z0-9._:/-]+$/.test(value);
-}
+// parsePolicyPresetEnv — see urlUtils import above
+// isSafeModelId — see validation import above
 
 function getNonInteractiveProvider() {
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
@@ -3526,32 +3291,10 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
 // ── Dashboard ────────────────────────────────────────────────────
 
 const CONTROL_UI_PORT = 18789;
-const CONTROL_UI_PATH = "/";
 
-function isLoopbackHostname(hostname = "") {
-  const normalized = String(hostname || "")
-    .trim()
-    .toLowerCase()
-    .replace(/^\[|\]$/g, "");
-  return (
-    normalized === "localhost" || normalized === "::1" || /^127(?:\.\d{1,3}){3}$/.test(normalized)
-  );
-}
-
-function resolveDashboardForwardTarget(chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
-  const raw = String(chatUiUrl || "").trim();
-  if (!raw) return String(CONTROL_UI_PORT);
-  try {
-    const parsed = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : `http://${raw}`);
-    return isLoopbackHostname(parsed.hostname)
-      ? String(CONTROL_UI_PORT)
-      : `0.0.0.0:${CONTROL_UI_PORT}`;
-  } catch {
-    return /localhost|::1|127(?:\.\d{1,3}){3}/i.test(raw)
-      ? String(CONTROL_UI_PORT)
-      : `0.0.0.0:${CONTROL_UI_PORT}`;
-  }
-}
+// Dashboard helpers — delegated to src/lib/dashboard.ts
+// isLoopbackHostname — see urlUtils import above
+const { resolveDashboardForwardTarget, buildControlUiUrls } = dashboard;
 
 function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
   const forwardTarget = resolveDashboardForwardTarget(chatUiUrl);
@@ -3605,16 +3348,7 @@ function fetchGatewayAuthTokenFromSandbox(sandboxName) {
   }
 }
 
-function buildControlUiUrls(token) {
-  const hash = token ? `#token=${token}` : "";
-  const baseUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`;
-  const urls = [`${baseUrl}${CONTROL_UI_PATH}${hash}`];
-  const chatUi = (process.env.CHAT_UI_URL || "").trim().replace(/\/$/, "");
-  if (chatUi && /^https?:\/\//i.test(chatUi) && chatUi !== baseUrl) {
-    urls.push(`${chatUi}${CONTROL_UI_PATH}${hash}`);
-  }
-  return [...new Set(urls)];
-}
+// buildControlUiUrls — see dashboard import above
 
 function printDashboard(sandboxName, model, provider, nimContainer = null) {
   const nimStat = nimContainer ? nim.nimStatusByName(nimContainer) : nim.nimStatus(sandboxName);

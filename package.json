@@ -13,6 +13,7 @@
     "format": "prettier --write 'bin/**/*.js' 'test/**/*.js'",
     "format:check": "prettier --check 'bin/**/*.js' 'test/**/*.js'",
     "typecheck": "tsc -p jsconfig.json",
+    "build:cli": "tsc -p tsconfig.src.json",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
     "prepare": "npm install --omit=dev --ignore-scripts 2>/dev/null || true && if [ -d .git ]; then if command -v prek >/dev/null 2>&1; then prek install; elif [ -d node_modules/@j178/prek ]; then echo \"ERROR: prek package found but binary not in PATH\" && exit 1; else echo \"Skipping git hook setup (prek not installed)\"; fi; fi",
     "prepublishOnly": "cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
