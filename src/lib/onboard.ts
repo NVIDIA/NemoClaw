@@ -3412,6 +3412,10 @@ async function createSandbox(
 
   // Stage build context — use the custom Dockerfile path when provided,
   // otherwise use the optimised default that only sends what the build needs.
+  // The build context contains source code, scripts, and potentially API keys
+  // in env args, so it must not persist in /tmp after a failed sandbox create.
+  // run() calls process.exit() on failure (bypassing normal control flow), so
+  // we register a process 'exit' handler to guarantee cleanup in all cases.
   let buildCtx, stagedDockerfile;
   if (fromDockerfile) {
     const fromResolved = path.resolve(fromDockerfile);
@@ -3456,6 +3460,19 @@ async function createSandbox(
   } else {
     ({ buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(ROOT));
   }
+  // Returns true if the build context was fully removed, false otherwise.
+  // The caller uses this to decide whether the process 'exit' safety net
+  // can be deregistered — if inline cleanup fails, we leave the handler
+  // armed so the temp dir is still removed on process exit.
+  const cleanupBuildCtx = (): boolean => {
+    try {
+      fs.rmSync(buildCtx, { recursive: true, force: true });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  process.on("exit", cleanupBuildCtx);
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
@@ -3668,8 +3685,14 @@ async function createSandbox(
     },
   });
 
-  // Clean up build context regardless of outcome
-  run(["rm", "-rf", buildCtx], { ignoreError: true });
+  // Clean up build context regardless of outcome.
+  // Use fs.rmSync instead of run() to avoid spawning a shell process.
+  // Only deregister the 'exit' safety net when inline cleanup succeeded;
+  // otherwise leave it armed so a later process.exit() still removes the
+  // temp dir (which may hold source and env-arg API keys).
+  if (cleanupBuildCtx()) {
+    process.removeListener("exit", cleanupBuildCtx);
+  }
 
   if (createResult.status !== 0) {
     const failure = classifySandboxCreateFailure(createResult.output);
