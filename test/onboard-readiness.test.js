@@ -3,7 +3,17 @@
 
 import { describe, it, expect } from "vitest";
 import { applyPreset, buildPolicySetCommand, buildPolicyGetCommand } from "../bin/lib/policies";
-import { hasStaleGateway, isSandboxReady } from "../bin/lib/onboard";
+import {
+  countListedSandboxes,
+  getGatewayClusterContainerName,
+  getGatewayReuseState,
+  getReportedGatewayEndpoint,
+  getReportedGatewayName,
+  hasLocalGatewayContainer,
+  hasStaleGateway,
+  isSandboxReady,
+  listLocalGatewayNames,
+} from "../bin/lib/onboard";
 
 describe("sandbox readiness parsing", () => {
   it("detects Ready sandbox", () => {
@@ -165,5 +175,83 @@ describe("stale gateway detection", () => {
       "  Gateway endpoint: https://127.0.0.1:8080",
     ].join("\n");
     expect(!hasStaleGateway(output)).toBeTruthy();
+  });
+
+  it("parses the reported active gateway name from status output", () => {
+    const statusOutput = [
+      "Server Status",
+      "",
+      "  Gateway: openshell",
+      "  Server: https://127.0.0.1:8080",
+      "  Status: Connected",
+    ].join("\n");
+    expect(getReportedGatewayName(statusOutput)).toBe("openshell");
+  });
+
+  it("parses the gateway endpoint from info output", () => {
+    const infoOutput = [
+      "Gateway Info",
+      "",
+      "  Gateway: openshell",
+      "  Gateway endpoint: https://127.0.0.1:8080",
+    ].join("\n");
+    expect(getReportedGatewayEndpoint(infoOutput)).toBe("https://127.0.0.1:8080");
+  });
+
+  it("classifies a connected foreign gateway as foreign-active", () => {
+    const statusOutput = [
+      "Server Status",
+      "",
+      "  Gateway: openshell",
+      "  Server: https://127.0.0.1:8080",
+      "  Status: Connected",
+    ].join("\n");
+    const activeGatewayInfo = [
+      "Gateway Info",
+      "",
+      "  Gateway: openshell",
+      "  Gateway endpoint: https://127.0.0.1:8080",
+    ].join("\n");
+    expect(getGatewayReuseState(statusOutput, "", activeGatewayInfo)).toBe("foreign-active");
+  });
+
+  it("does not treat a foreign active gateway as a healthy nemoclaw gateway", () => {
+    const statusOutput = [
+      "Server Status",
+      "",
+      "  Gateway: openshell",
+      "  Server: https://127.0.0.1:8080",
+      "  Status: Connected",
+    ].join("\n");
+    const nemoclawInfo = [
+      "Gateway Info",
+      "",
+      "  Gateway: nemoclaw",
+      "  Gateway endpoint: https://127.0.0.1:8080",
+    ].join("\n");
+    expect(getGatewayReuseState(statusOutput, nemoclawInfo, "")).not.toBe("healthy");
+  });
+
+  it("counts listed sandboxes while ignoring headers and empty-state output", () => {
+    expect(countListedSandboxes("No sandboxes found.")).toBe(0);
+    const listed = [
+      "NAME           STATUS     AGE",
+      "dev-box        Ready      2m",
+      "my-assistant   Ready      1m",
+    ].join("\n");
+    expect(countListedSandboxes(listed)).toBe(2);
+  });
+
+  it("derives local gateway names from Docker container names", () => {
+    const dockerPsOutput = [
+      "openshell-cluster-openshell",
+      "openshell-cluster-nemoclaw",
+      "some-other-container",
+    ].join("\n");
+    expect(listLocalGatewayNames(dockerPsOutput)).toEqual(["openshell", "nemoclaw"]);
+    expect(hasLocalGatewayContainer("nemoclaw", dockerPsOutput)).toBeTruthy();
+    expect(hasLocalGatewayContainer("openshell", dockerPsOutput)).toBeTruthy();
+    expect(hasLocalGatewayContainer("missing", dockerPsOutput)).toBeFalsy();
+    expect(getGatewayClusterContainerName("nemoclaw")).toBe("openshell-cluster-nemoclaw");
   });
 });

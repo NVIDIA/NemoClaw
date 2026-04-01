@@ -65,6 +65,10 @@ NEMOCLAW_CMD=("$@")
 CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:18789}"
 PUBLIC_PORT=18789
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
+IMMUTABLE_CONFIG_PATH="/sandbox/.openclaw/openclaw.json"
+RUNTIME_CONFIG_DIR="/tmp/nemoclaw"
+RUNTIME_CONFIG_PATH="${RUNTIME_CONFIG_DIR}/openclaw.json"
+export PERSISTENT_AGENTS_PATH="/sandbox/.nemoclaw/agents-overlay.json"
 
 # ── Config integrity check ──────────────────────────────────────
 # The config hash was pinned at build time. If it doesn't match,
@@ -82,6 +86,155 @@ verify_config_integrity() {
     echo "[SECURITY] Actual hash:   $(sha256sum /sandbox/.openclaw/openclaw.json)"
     return 1
   fi
+}
+
+get_active_config_path() {
+  printf '%s\n' "${OPENCLAW_CONFIG_PATH:-$IMMUTABLE_CONFIG_PATH}"
+}
+
+prepare_runtime_config() {
+  mkdir -p "$RUNTIME_CONFIG_DIR"
+  chmod 755 "$RUNTIME_CONFIG_DIR"
+
+  python3 - <<'PYRUNTIME'
+import json
+import os
+import re
+import shutil
+
+base_path = '/sandbox/.openclaw/openclaw.json'
+selection_path = '/sandbox/.nemoclaw/config.json'
+runtime_path = '/tmp/nemoclaw/openclaw.json'
+overlay_path = '/sandbox/.nemoclaw/agents-overlay.json'
+
+
+def normalize_string(value):
+  if not isinstance(value, str):
+    return None
+  value = value.strip()
+  return value or None
+
+
+def normalize_path(value):
+  value = normalize_string(value)
+  if not value or not value.startswith('/sandbox/'):
+    return None
+  return value
+
+
+def sanitize_identity(identity):
+  if not isinstance(identity, dict):
+    return None
+  sanitized = {}
+  for key in ('name', 'theme', 'emoji', 'avatar'):
+    value = normalize_string(identity.get(key))
+    if value:
+      sanitized[key] = value
+  return sanitized or None
+
+
+def sanitize_agent_entry(agent):
+  if not isinstance(agent, dict):
+    return None
+
+  agent_id = normalize_string(agent.get('id'))
+  if not agent_id or not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', agent_id):
+    return None
+
+  workspace = normalize_path(agent.get('workspace'))
+  agent_dir = normalize_path(agent.get('agentDir'))
+  if not workspace and not agent_dir:
+    return None
+
+  sanitized = {'id': agent_id}
+  for key in ('name', 'model'):
+    value = normalize_string(agent.get(key))
+    if value:
+      sanitized[key] = value
+
+  if workspace:
+    sanitized['workspace'] = workspace
+  if agent_dir:
+    sanitized['agentDir'] = agent_dir
+  if isinstance(agent.get('default'), bool):
+    sanitized['default'] = agent['default']
+
+  identity = sanitize_identity(agent.get('identity'))
+  if identity:
+    sanitized['identity'] = identity
+
+  return sanitized
+
+
+def merge_agent_lists(base_agents, overlay_agents):
+  merged = []
+  positions = {}
+
+  for source in (base_agents, overlay_agents):
+    for raw_agent in source:
+      agent = sanitize_agent_entry(raw_agent)
+      if not agent:
+        continue
+      agent_id = agent['id']
+      if agent_id in positions:
+        merged[positions[agent_id]] = agent
+        continue
+      positions[agent_id] = len(merged)
+      merged.append(agent)
+
+  return merged
+
+os.makedirs(os.path.dirname(runtime_path), exist_ok=True)
+shutil.copyfile(base_path, runtime_path)
+
+with open(runtime_path) as f:
+  cfg = json.load(f)
+
+if os.path.exists(selection_path):
+    with open(selection_path) as f:
+        selection = json.load(f)
+
+    model = str(selection.get('model') or '').strip()
+    endpoint_url = str(selection.get('endpointUrl') or '').strip()
+    context_window = selection.get('contextWindow')
+    max_tokens = selection.get('maxTokens')
+
+    if model and endpoint_url:
+        providers_cfg = cfg.setdefault('models', {}).setdefault('providers', {})
+        cfg.setdefault('models', {}).setdefault('mode', 'merge')
+        cfg.setdefault('agents', {}).setdefault('defaults', {}).setdefault('model', {})['primary'] = f'inference/{model}'
+        providers_cfg['inference'] = {
+            'baseUrl': endpoint_url,
+            'apiKey': 'unused',
+            'api': 'openai-completions',
+            'models': [{
+                'id': model,
+                'name': model,
+                'reasoning': False,
+                'input': ['text'],
+                'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0},
+                'contextWindow': context_window if isinstance(context_window, int) and context_window > 0 else 131072,
+                'maxTokens': max_tokens if isinstance(max_tokens, int) and max_tokens > 0 else 4096,
+            }],
+        }
+
+        if os.path.exists(overlay_path):
+          with open(overlay_path) as f:
+            overlay = json.load(f)
+          overlay_agents = []
+          if isinstance(overlay, dict):
+            overlay_agents = ((overlay.get('agents') or {}).get('list') or [])
+          cfg_agents = cfg.setdefault('agents', {})
+          existing_agents = cfg_agents.get('list') or []
+          cfg_agents['list'] = merge_agent_lists(existing_agents, overlay_agents)
+
+        with open(runtime_path, 'w') as f:
+          json.dump(cfg, f, indent=2)
+
+os.chmod(runtime_path, 0o644)
+PYRUNTIME
+
+  export OPENCLAW_CONFIG_PATH="$RUNTIME_CONFIG_PATH"
 }
 
 write_auth_profile() {
@@ -108,12 +261,15 @@ PYAUTH
 
 print_dashboard_urls() {
   local token chat_ui_base local_url remote_url
+  local config_path
+  config_path="$(get_active_config_path)"
+  export config_path
 
   token="$(
     python3 - <<'PYTOKEN'
 import json
 import os
-path = '/sandbox/.openclaw/openclaw.json'
+path = os.environ.get('OPENCLAW_CONFIG_PATH', '/sandbox/.openclaw/openclaw.json')
 try:
     cfg = json.load(open(path))
 except Exception:
@@ -210,7 +366,7 @@ ensure_agent_dirs() {
 import json
 import os
 
-config_path = os.path.join(os.environ.get('HOME', '/sandbox'), '.openclaw', 'openclaw.json')
+config_path = os.environ.get('OPENCLAW_CONFIG_PATH') or os.path.join(os.environ.get('HOME', '/sandbox'), '.openclaw', 'openclaw.json')
 if not os.path.exists(config_path):
     exit(0)
 
@@ -236,7 +392,7 @@ import os
 import uuid
 
 home = os.environ.get('HOME', '/sandbox')
-config_path = os.path.join(home, '.openclaw', 'openclaw.json')
+config_path = os.environ.get('OPENCLAW_CONFIG_PATH') or os.path.join(home, '.openclaw', 'openclaw.json')
 if not os.path.exists(config_path):
     exit(0)
 
@@ -272,6 +428,13 @@ for agent in agent_list:
 PYSESSIONS
 }
 
+# Legacy hook: some onboarding paths still call fix_openclaw_config before
+# starting the gateway. Keep this as a safe no-op so startup does not abort
+# when the image uses immutable /sandbox/.openclaw/openclaw.json.
+fix_openclaw_config() {
+  return 0
+}
+
 # NO_PROXY is limited to 127.0.0.1,localhost,::1 — missing the gateway IP.
 # The gateway IP itself must bypass the proxy to avoid proxy loops.
 #
@@ -294,13 +457,14 @@ export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 
 echo 'Setting up NemoClaw...'
-openclaw doctor --fix > /dev/null 2>&1 || true
+openclaw doctor --fix >/dev/null 2>&1 || true
 write_auth_profile
 export CHAT_UI_URL PUBLIC_PORT
+prepare_runtime_config
 fix_openclaw_config
 ensure_agent_dirs
 ensure_agent_webchat_sessions
-openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true
+openclaw plugins install /opt/nemoclaw >/dev/null 2>&1 || true
 
 # OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
 # time a user connects via `openshell sandbox connect`.  The connect path spawns
@@ -436,7 +600,7 @@ done
 # SECURITY: The sandbox user cannot kill this process because it runs
 # under a different UID. The fake-HOME attack no longer works because
 # the agent cannot restart the gateway with a tampered config.
-nohup gosu gateway "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
+nohup gosu gateway env OPENCLAW_CONFIG_PATH="$OPENCLAW_CONFIG_PATH" "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
 GATEWAY_PID=$!
 echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)"
 

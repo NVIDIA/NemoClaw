@@ -53,6 +53,7 @@ describe("sandbox destroy safeguards", () => {
     const printed = logSpy.mock.calls.map((args) => args.join(" ")).join("\n");
     expect(printed).toContain("permanently deletes workspace files");
     expect(printed).toContain("IDENTITY.md");
+    expect(printed).toContain("nemoclaw the-crucible backup");
     expect(printed).toContain("Cancelled.");
   });
 

@@ -46,6 +46,7 @@ function registerSandbox(entry) {
     model: entry.model || null,
     nimContainer: entry.nimContainer || null,
     provider: entry.provider || null,
+    providerBaseUrl: entry.providerBaseUrl || null,
     gpuEnabled: entry.gpuEnabled || false,
     policies: entry.policies || [],
   };

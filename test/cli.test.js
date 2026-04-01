@@ -4,8 +4,8 @@
 import { describe, it, expect } from "vitest";
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
+import _fs from "node:fs";
+import _os from "node:os";
 import path from "node:path";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
@@ -117,6 +117,13 @@ describe("CLI dispatch", () => {
     assert.equal(r.code, 0);
     assert.ok(r.out.includes("dashboard"), "help should mention dashboard command");
     assert.ok(r.out.includes("Show dashboard access URL"), "help should describe dashboard command");
+  });
+
+  it("help mentions backup and restore commands", () => {
+    const r = run("help");
+    assert.equal(r.code, 0);
+    assert.ok(r.out.includes("backup"), "help should mention backup command");
+    assert.ok(r.out.includes("restore"), "help should mention restore command");
   });
 
   it("unknown sandbox action mentions dashboard in valid actions", () => {

@@ -23,6 +23,7 @@ const {
   buildControlUiConfigSyncScript,
   buildSandboxConfigSyncScript,
   classifySandboxCreateFailure,
+  getOllamaProbeOutcome,
   getControlUiAllowedOrigins,
   getDashboardForwardPort,
   getDashboardForwardStartCommand,
@@ -64,6 +65,20 @@ describe("onboard helpers", () => {
       kind: "sandbox_create_incomplete",
       uploadedToGateway: true,
     });
+  });
+
+  it("treats Ollama warm-up probe failures as warnings during restore", () => {
+    const result = getOllamaProbeOutcome(
+      "qwen3.5:9b-64k",
+      {
+        ok: false,
+        message: "Selected Ollama model 'qwen3.5:9b-64k' did not answer the local probe in time.",
+      },
+      { allowWarmupFailure: true },
+    );
+
+    assert.equal(result.fatal, false);
+    assert.match(result.message, /Continuing because the inference route is configured and the model may still be loading\./);
   });
 
   it("builds a sandbox sync script that only writes nemoclaw config", () => {
@@ -368,9 +383,12 @@ describe("onboard helpers", () => {
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
+const childProcess = require('node:child_process');
+const { EventEmitter } = require('node:events');
 
 const prompts = [];
 const commands = [];
+const spawnCommands = [];
 
 registry.registerSandbox({ name: "my-assistant" });
 
@@ -380,14 +398,28 @@ credentials.prompt = async (message) => {
 };
 
 runner.runCapture = (command) => {
-  if (command.includes('openshell sandbox get "my-assistant"')) return "";
-  if (command.includes("openshell sandbox list")) return "my-assistant   Ready   2m ago";
+  if (command.includes("sandbox") && command.includes("get") && command.includes("my-assistant")) return "";
+  if (command.includes("sandbox") && command.includes("list")) return "my-assistant   Ready   2m ago";
   return "";
 };
 
 runner.run = (command) => {
   commands.push(command);
   return { status: 0 };
+};
+
+childProcess.spawn = (command, args) => {
+  spawnCommands.push([command, ...(args || [])].join(' '));
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.unref = () => {};
+  setImmediate(() => {
+    child.stdout.emit('data', "  Building image openshell/sandbox-from:123 from /tmp/build/Dockerfile\n");
+    child.stdout.emit('data', "Created sandbox: my-assistant\n");
+    child.emit('close', 0);
+  });
+  return child;
 };
 
 const { createSandbox } = require(${onboardPath});
@@ -402,6 +434,7 @@ const { createSandbox } = require(${onboardPath});
     result,
     prompts,
     commands,
+    spawnCommands,
     lines,
     sandbox: registry.getSandbox("my-assistant"),
   }));
@@ -426,8 +459,8 @@ const { createSandbox } = require(${onboardPath});
     const payload = JSON.parse(output);
     assert.equal(payload.result, "my-assistant");
     assert.equal(payload.prompts.length, 1);
-    assert.ok(!payload.prompts[0].includes("Recreate?"));
-    assert.ok(payload.commands.some((command) => command.includes("openshell sandbox create")));
+    assert.ok(payload.spawnCommands.some((command) => command.includes("bash -lc openshell sandbox create")));
+    assert.ok(payload.commands.some((command) => command.includes("openshell forward start --background")));
     assert.ok(payload.lines.some((line) => line.includes("Detected stale local sandbox entry")));
     assert.ok(payload.lines.some((line) => line.includes("OpenShell does not have this sandbox")));
     assert.ok(payload.sandbox);
@@ -445,23 +478,31 @@ const { createSandbox } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
+const childProcess = require('node:child_process');
 
 const prompts = [];
 const commands = [];
+const spawnCommands = [];
 
 credentials.prompt = async (message) => {
   prompts.push(message);
-  return prompts.length === 1 ? "" : "n";
+  return "";
 };
 
 runner.runCapture = (command) => {
-  if (command.includes('openshell sandbox get "my-assistant"')) return "Name: my-assistant";
+  if (command.includes("sandbox") && command.includes("get") && command.includes("my-assistant")) return "Name: my-assistant";
+  if (command.includes("sandbox") && command.includes("list")) return "my-assistant   Ready   2m ago";
   return "";
 };
 
 runner.run = (command) => {
   commands.push(command);
   return { status: 0 };
+};
+
+childProcess.spawn = (...args) => {
+  spawnCommands.push(args.join(' '));
+  throw new Error('spawn should not be called when reusing a ready sandbox');
 };
 
 const { createSandbox } = require(${onboardPath});
@@ -476,6 +517,7 @@ const { createSandbox } = require(${onboardPath});
     result,
     prompts,
     commands,
+    spawnCommands,
     lines,
     sandbox: registry.getSandbox("my-assistant"),
   }));
@@ -499,14 +541,14 @@ const { createSandbox } = require(${onboardPath});
     const output = result.stdout.trim().split("\n").at(-1);
     const payload = JSON.parse(output);
     assert.equal(payload.result, "my-assistant");
-    assert.equal(payload.prompts.length, 2);
-    assert.ok(payload.prompts[1].includes("Recreate?"));
-    const expectedForward = isWslEnvironment()
-      ? "openshell forward start --background 0.0.0.0:18789 \"my-assistant\""
-      : "openshell forward start --background 18789 \"my-assistant\"";
-    assert.ok(payload.commands.some((command) => command.includes(expectedForward)));
+    assert.equal(payload.prompts.length, 1);
+    assert.equal(payload.spawnCommands.length, 0);
+    assert.equal(payload.commands.length, 0);
     assert.ok(payload.lines.some((line) => line.includes("Found existing OpenShell sandbox 'my-assistant'.")));
     assert.ok(payload.lines.some((line) => line.includes("Syncing local NemoClaw state before continuing.")));
+    assert.ok(payload.lines.some((line) => line.includes("Found existing OpenShell sandbox 'my-assistant'.")));
+    assert.ok(payload.lines.some((line) => line.includes("Sandbox 'my-assistant' already exists and is ready.")));
+    assert.ok(payload.lines.some((line) => line.includes("Reusing existing sandbox.")));
     assert.equal(payload.sandbox.name, "my-assistant");
   });
 });

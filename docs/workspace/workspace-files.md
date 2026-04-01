@@ -81,5 +81,6 @@ You can edit them in two ways:
 
 ## Next Steps
 
+- [Create Sub-Agents](create-sub-agents.md)
 - [Back Up and Restore workspace files](backup-restore.md)
 - [Commands reference](../reference/commands.md)

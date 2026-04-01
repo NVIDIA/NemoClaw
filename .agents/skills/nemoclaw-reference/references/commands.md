@@ -62,6 +62,44 @@ Connect to a sandbox by name.
 $ nemoclaw my-assistant connect
 ```
 
+### `nemoclaw <name> backup`
+
+Create a full sandbox backup.
+The command captures the `/sandbox` filesystem into a tarball under `~/.nemoclaw/backups/<name>/` and writes a manifest with the sandbox registry metadata needed for restore.
+
+```console
+$ nemoclaw my-assistant backup
+```
+
+Use `--label` to assign a stable backup name instead of a timestamp:
+
+```console
+$ nemoclaw my-assistant backup --label pre-upgrade
+```
+
+Use `--list` to show available backups for the sandbox:
+
+```console
+$ nemoclaw my-assistant backup --list
+```
+
+### `nemoclaw <name> restore [backup-id]`
+
+Restore a sandbox backup.
+If the sandbox does not exist, NemoClaw starts or reuses the OpenShell gateway, recreates the sandbox, restores the backup archive, and reapplies the saved provider and policy metadata from the backup manifest.
+
+```console
+$ nemoclaw my-assistant restore
+```
+
+Restore a specific backup by label or timestamp:
+
+```console
+$ nemoclaw my-assistant restore pre-upgrade
+```
+
+When restoring into a live sandbox, NemoClaw prompts for confirmation before overwriting files inside `/sandbox`.
+
 ### `nemoclaw <name> status`
 
 Show sandbox status, health, and inference configuration.
@@ -86,7 +124,7 @@ This removes the sandbox from the registry.
 
 > **Warning:** Destroying a sandbox permanently deletes all files inside it, including
 > workspace files (see the `nemoclaw-workspace` skill) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes).
-> Back up your workspace first by following the instructions at Back Up and Restore (see the `nemoclaw-workspace` skill).
+> Create a backup first with `nemoclaw <name> backup`, then follow the instructions at Back Up and Restore (see the `nemoclaw-workspace` skill) if you need manual restore steps.
 
 ```console
 $ nemoclaw my-assistant destroy

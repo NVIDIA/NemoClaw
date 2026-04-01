@@ -15,4 +15,23 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(src).toMatch(/touch \/tmp\/gateway\.log/);
     expect(src).toMatch(/nohup "\$OPENCLAW" gateway run >\/tmp\/gateway\.log 2>&1 &/);
   });
+
+  it("generates a runtime config and launches the gateway with OPENCLAW_CONFIG_PATH", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+    expect(src).toMatch(/RUNTIME_CONFIG_DIR="\/tmp\/nemoclaw"/);
+    expect(src).toMatch(/RUNTIME_CONFIG_PATH="\$\{RUNTIME_CONFIG_DIR\}\/openclaw\.json"/);
+    expect(src).toMatch(/prepare_runtime_config/);
+    expect(src).toMatch(/export OPENCLAW_CONFIG_PATH="\$RUNTIME_CONFIG_PATH"/);
+    expect(src).toMatch(/gosu gateway env OPENCLAW_CONFIG_PATH="\$OPENCLAW_CONFIG_PATH" "\$OPENCLAW" gateway run/);
+  });
+
+  it("merges persisted agent overlays into the runtime config", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+    expect(src).toMatch(/PERSISTENT_AGENTS_PATH="\/sandbox\/\.nemoclaw\/agents-overlay\.json"/);
+    expect(src).toMatch(/overlay_path = '\/sandbox\/\.nemoclaw\/agents-overlay\.json'/);
+    expect(src).toMatch(/def merge_agent_lists\(base_agents, overlay_agents\):/);
+    expect(src).toMatch(/cfg_agents\['list'\] = merge_agent_lists\(existing_agents, overlay_agents\)/);
+  });
 });

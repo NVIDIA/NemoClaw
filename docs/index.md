@@ -246,6 +246,7 @@ Monitor Sandbox Activity <monitoring/monitor-sandbox-activity>
 :hidden:
 
 Workspace Files <workspace/workspace-files>
+Create Sub-Agents <workspace/create-sub-agents>
 Back Up and Restore <workspace/backup-restore>
 ```
 

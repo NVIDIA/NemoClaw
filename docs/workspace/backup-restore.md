@@ -25,6 +25,18 @@ They persist across sandbox restarts but are **permanently deleted** when you ru
 
 This guide covers manual backup with CLI commands and an automated script.
 
+## Recommended Commands
+
+Use the built-in NemoClaw commands for full sandbox backups:
+
+```console
+$ nemoclaw my-assistant backup
+$ nemoclaw my-assistant restore
+```
+
+Use `nemoclaw my-assistant backup --label pre-upgrade` to create a named snapshot, or `nemoclaw my-assistant backup --list` to inspect saved backups.
+If the sandbox is missing during restore, NemoClaw recreates it before restoring the archive and reapplies the saved provider and model configuration.
+
 ## Prerequisites
 
 - A running NemoClaw sandbox (for backup) or a freshly created sandbox (for restore).

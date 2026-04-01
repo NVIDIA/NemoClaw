@@ -12,7 +12,7 @@ const { spawn, spawnSync } = require("child_process");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
 const {
   getDefaultOllamaModel,
-  getBootstrapOllamaModelOptions,
+  _getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
   getOllamaModelMetadata,
   resolveOllamaContainerRoute,
@@ -20,13 +20,17 @@ const {
   validateOllamaModel,
   validateOllamaOpenClawCompatibility,
   validateLocalProvider,
+  DEFAULT_OLLAMA_MODEL,
 } = require("./local-inference");
+// Terminal color helpers for notes
+const DIM = "\x1b[2m";
+const RESET = "\x1b[0m";
 const {
   CLOUD_MODEL_OPTIONS,
   DEFAULT_CLOUD_MODEL,
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
-  parseGatewayInference,
+  _parseGatewayInference,
 } = require("./inference-config");
 const {
   inferContainerRuntime,
@@ -37,7 +41,7 @@ const { resolveOpenshell } = require("./resolve-openshell");
 const { prompt, ensureApiKey, getCredential, saveCredential } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
-const onboardSession = require("./onboard-session");
+const _onboardSession = require("./onboard-session");
 const policies = require("./policies");
 const { checkPortAvailable } = require("./preflight");
 const { getInferenceRuntimeStatus } = require("./inference-status");
@@ -84,6 +88,22 @@ function getManagedModelLimits(providerType, selectionConfig = {}) {
     contextWindow: DEFAULT_MANAGED_CONTEXT_WINDOW,
     maxTokens: DEFAULT_MANAGED_MAX_TOKENS,
   };
+}
+
+function getOllamaProbeOutcome(model, probe, opts = {}) {
+  if (probe?.ok) {
+    return { fatal: false, message: null };
+  }
+
+  const message = probe?.message || `Selected Ollama model '${model}' failed the local probe.`;
+  if (opts.allowWarmupFailure) {
+    return {
+      fatal: false,
+      message: `${message} Continuing because the inference route is configured and the model may still be loading.`,
+    };
+  }
+
+  return { fatal: true, message };
 }
 
 // Non-interactive mode: set by --non-interactive flag or env var.
@@ -164,6 +184,14 @@ function hasActiveGatewayInfo(activeGatewayInfoOutput = "") {
   );
 }
 
+function getReportedGatewayEndpoint(output = "") {
+  if (typeof output !== "string") return null;
+  // eslint-disable-next-line no-control-regex
+  const cleanOutput = output.replace(/\x1b\[[0-9;]*m/g, "");
+  const match = cleanOutput.match(/^\s*Gateway endpoint:\s+([^\s]+)/m);
+  return match ? match[1] : null;
+}
+
 function isSelectedGateway(statusOutput = "", gatewayName = GATEWAY_NAME) {
   return getReportedGatewayName(statusOutput) === gatewayName;
 }
@@ -197,6 +225,51 @@ function getGatewayReuseState(statusOutput = "", gwInfoOutput = "", activeGatewa
   return "missing";
 }
 
+function countListedSandboxes(listOutput = "") {
+  if (typeof listOutput !== "string" || !listOutput.trim()) return 0;
+  // eslint-disable-next-line no-control-regex
+  const cleanOutput = listOutput.replace(/\x1b\[[0-9;]*m/g, "");
+  if (/No sandboxes found\./i.test(cleanOutput)) return 0;
+  return cleanOutput
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !/^NAME\s+/i.test(line) && /^[a-z0-9]([a-z0-9-]*[a-z0-9])?\s+/.test(line))
+    .length;
+}
+
+function getGatewayClusterContainerName(gatewayName = GATEWAY_NAME) {
+  return `openshell-cluster-${gatewayName}`;
+}
+
+function listLocalGatewayNames(dockerPsOutput = "") {
+  if (typeof dockerPsOutput !== "string" || !dockerPsOutput.trim()) return [];
+  return dockerPsOutput
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("openshell-cluster-"))
+    .map((line) => line.slice("openshell-cluster-".length))
+    .filter(Boolean);
+}
+
+function hasLocalGatewayContainer(gatewayName = GATEWAY_NAME, dockerPsOutput = "") {
+  return listLocalGatewayNames(dockerPsOutput).includes(gatewayName);
+}
+
+async function promptForExistingGatewayAction(gatewayName, sandboxCount = 0) {
+  const sandboxHint = sandboxCount > 0 ? ` with ${sandboxCount} sandbox${sandboxCount === 1 ? "" : "es"}` : "";
+  const promptText = `  Found existing OpenShell gateway '${gatewayName}' on port 8080${sandboxHint}. NemoClaw must recreate this local gateway as '${GATEWAY_NAME}' before sandbox image upload can work. Recreate it now or abort? [recreate/abort]: `;
+
+  while (true) {
+    const answer = String(await promptOrDefault(promptText, "NEMOCLAW_EXISTING_GATEWAY_ACTION", "recreate")).trim().toLowerCase();
+    if (answer === "recreate" || answer === "r" || answer === "replace") return "recreate";
+    if (answer === "abort" || answer === "a" || answer === "cancel") return "abort";
+    console.log("  Please answer 'recreate' or 'abort'.");
+    if (isNonInteractive()) {
+      process.exit(1);
+    }
+  }
+}
+
 function getSandboxStateFromOutputs(sandboxName, getOutput = "", listOutput = "") {
   if (!sandboxName) return "missing";
   if (!getOutput) return "missing";
@@ -210,7 +283,7 @@ function getSandboxReuseState(sandboxName) {
   return getSandboxStateFromOutputs(sandboxName, getOutput, listOutput);
 }
 
-function repairRecordedSandbox(sandboxName) {
+function _repairRecordedSandbox(sandboxName) {
   if (!sandboxName) return;
   note(`  [resume] Cleaning up recorded sandbox '${sandboxName}' before recreating it.`);
   runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
@@ -621,6 +694,7 @@ function buildSandboxConfigSyncScript(selectionConfig, options = {}) {
   const modelLimits = getManagedModelLimits(providerType, selectionConfig);
   const primaryModel = getOpenClawPrimaryModel(providerType, selectionConfig.model);
   const providerKey = "inference";
+  const runtimeConfigPath = "/tmp/nemoclaw/openclaw.json";
   const controlUiAllowedOrigins = Array.isArray(options.controlUiAllowedOrigins)
     ? options.controlUiAllowedOrigins.filter((value) => typeof value === "string" && value.trim().length > 0)
     : [];
@@ -641,7 +715,7 @@ function buildSandboxConfigSyncScript(selectionConfig, options = {}) {
     ],
   };
   return `
-set -euo pipefail
+set -eu
 mkdir -p ~/.nemoclaw
 cat > ~/.nemoclaw/config.json <<'EOF_NEMOCLAW_CFG'
 ${JSON.stringify(selectionConfig, null, 2)}
@@ -650,11 +724,14 @@ python3 - <<'PYCFG'
 import json
 import os
 
-cfg_path = os.path.expanduser('~/.openclaw/openclaw.json')
-state_dir = os.path.dirname(cfg_path)
+runtime_cfg_path = ${JSON.stringify(runtimeConfigPath)}
+default_cfg_path = os.path.expanduser('~/.openclaw/openclaw.json')
+cfg_path = runtime_cfg_path if os.path.exists(runtime_cfg_path) else default_cfg_path
+source_cfg_path = cfg_path if os.path.exists(cfg_path) else default_cfg_path
+state_dir = os.path.dirname(default_cfg_path)
 cfg = {}
-if os.path.exists(cfg_path):
-    with open(cfg_path) as f:
+if os.path.exists(source_cfg_path):
+  with open(source_cfg_path) as f:
         cfg = json.load(f)
 
 cfg.setdefault('agents', {}).setdefault('defaults', {}).setdefault('model', {})['primary'] = ${JSON.stringify(primaryModel)}
@@ -671,10 +748,15 @@ if control_ui_allowed_origins:
     if isinstance(origin, str) and origin and origin not in existing_origins:
       existing_origins.append(origin)
 
-with open(cfg_path, 'w') as f:
+wrote_cfg = False
+try:
+  os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
+  with open(cfg_path, 'w') as f:
     json.dump(cfg, f, indent=2)
-
-os.chmod(cfg_path, 0o600)
+  os.chmod(cfg_path, 0o600)
+  wrote_cfg = True
+except OSError as err:
+  print(f"[nemoclaw] Warning: cannot update {cfg_path}: {err}")
 
 for agent in cfg.get('agents', {}).get('list', []):
     if not isinstance(agent, dict):
@@ -706,7 +788,7 @@ for agent in cfg.get('agents', {}).get('list', []):
         entry['origin'] = {'provider': 'webchat', 'surface': 'webchat', 'chatType': 'direct'}
         store[skey] = entry
         with open(store_path, 'w') as f:
-            json.dump(store, f)
+          json.dump(store, f)
         os.chmod(store_path, 0o600)
 PYCFG
 openclaw models set ${shellQuote(primaryModel)} > /dev/null 2>&1 || true
@@ -780,7 +862,7 @@ function destroyGateway() {
   run(`docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs docker volume rm || true`, { ignoreError: true });
 }
 
-async function ensureNamedCredential(envName, label, helpUrl = null) {
+async function _ensureNamedCredential(envName, label, helpUrl = null) {
   let key = getCredential(envName);
   if (key) {
     process.env[envName] = key;
@@ -967,6 +1049,13 @@ function runCaptureOpenshell(args, opts = {}) {
   return runCapture(openshellShellCommand(args), opts);
 }
 
+function getInstalledOpenshellVersion() {
+  const output = runCaptureOpenshell(["--version"], { ignoreError: true });
+  if (!output) return null;
+  const match = output.trim().match(/(\d+\.\d+\.\d+\S*)/);
+  return match ? match[1] : null;
+}
+
 // ── Step 1: Preflight ────────────────────────────────────────────
 
 // eslint-disable-next-line complexity
@@ -1011,22 +1100,63 @@ async function preflight() {
 
   // Gateway cleanup/reuse logic
   const gwInfo = runCapture("openshell gateway info -g nemoclaw 2>/dev/null", { ignoreError: true });
+  const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
+  const dockerGatewayContainers = runCapture("docker ps -a --format '{{.Names}}' 2>/dev/null", { ignoreError: true });
   let reusingGateway = false;
 
   if (hasStaleGateway(gwInfo)) {
     // Check if the existing gateway is actually running (owning port 8080)
     // If it is, we prefer to reuse it to preserve sandboxes.
     const port8080 = await checkPortAvailable(8080);
-    if (!port8080.ok) {
-      // Port 8080 is in use. We assume it's the 'nemoclaw' gateway since gwInfo confirms existence.
+    if (!port8080.ok && hasLocalGatewayContainer(GATEWAY_NAME, dockerGatewayContainers)) {
+      // Port 8080 is in use by the expected local NemoClaw gateway container.
       console.log("  Found active NemoClaw gateway. Reusing existing session to preserve sandboxes.");
       reusingGateway = true;
+    } else if (!port8080.ok) {
+      // Metadata exists but the expected local container does not. This usually
+      // means a foreign local gateway was aliased as 'nemoclaw', which cannot
+      // be reused for image upload because OpenShell still expects the local
+      // Docker container name to match the gateway name.
+      const sandboxList = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+      const localGatewayNames = listLocalGatewayNames(dockerGatewayContainers);
+      const foreignGatewayName = localGatewayNames.find((name) => name !== GATEWAY_NAME) || getReportedGatewayName(gatewayStatus) || "existing";
+      console.log(`  Found NemoClaw gateway metadata, but local container '${getGatewayClusterContainerName(GATEWAY_NAME)}' does not exist.`);
+      const action = await promptForExistingGatewayAction(foreignGatewayName, countListedSandboxes(sandboxList));
+      if (action === "abort") {
+        console.log("  Cancelled.");
+        process.exit(1);
+      }
+      console.log(`  Recreating existing gateway '${foreignGatewayName}' for NemoClaw...`);
+      run("openshell forward stop 18789 2>/dev/null || true", { ignoreError: true });
+      if (foreignGatewayName && foreignGatewayName !== GATEWAY_NAME) {
+        runOpenshell(["gateway", "destroy", "-g", foreignGatewayName], { ignoreError: true });
+      }
+      runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+      console.log(`  ✓ Removed stale gateway metadata and existing gateway '${foreignGatewayName}'`);
     } else {
       // Gateway exists in config but port 8080 is free, so it's stopped or broken.
       console.log("  Cleaning up stopped/stale NemoClaw session...");
       run("openshell forward stop 18789 2>/dev/null || true", { ignoreError: true });
       run("openshell gateway destroy -g nemoclaw 2>/dev/null || true", { ignoreError: true });
       console.log("  ✓ Previous session cleaned up");
+    }
+  }
+
+  const activeGatewayName = getReportedGatewayName(gatewayStatus);
+  if (!reusingGateway && activeGatewayName && activeGatewayName !== GATEWAY_NAME) {
+    const activeGatewayInfo = runCaptureOpenshell(["gateway", "info", "-g", activeGatewayName], { ignoreError: true });
+    const port8080 = await checkPortAvailable(8080);
+    if (!port8080.ok && hasActiveGatewayInfo(activeGatewayInfo)) {
+      const sandboxList = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+      const action = await promptForExistingGatewayAction(activeGatewayName, countListedSandboxes(sandboxList));
+      if (action === "abort") {
+        console.log("  Cancelled.");
+        process.exit(1);
+      }
+      console.log(`  Recreating existing gateway '${activeGatewayName}' for NemoClaw...`);
+      run("openshell forward stop 18789 2>/dev/null || true", { ignoreError: true });
+      runOpenshell(["gateway", "destroy", "-g", activeGatewayName], { ignoreError: true });
+      console.log(`  ✓ Removed existing gateway '${activeGatewayName}'`);
     }
   }
 
@@ -1044,7 +1174,7 @@ async function preflight() {
 
     const portCheck = await checkPortAvailable(port);
     if (!portCheck.ok) {
-      if ((port === 8080 || port === 18789) && gatewayReuseState === "healthy") {
+      if ((port === 8080 || port === 18789) && reusingGateway) {
         console.log(`  ✓ Port ${port} already owned by healthy NemoClaw runtime (${label})`);
         continue;
       }
@@ -1160,11 +1290,11 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
 
-async function startGateway(_gpu) {
+async function startGateway(_gpu, _reusingGateway = false) {
   return startGatewayWithOptions(_gpu, { exitOnFailure: true });
 }
 
-async function startGatewayForRecovery(_gpu) {
+async function _startGatewayForRecovery(_gpu, _reusingGateway = false) {
   return startGatewayWithOptions(_gpu, { exitOnFailure: false });
 }
 
@@ -1181,7 +1311,7 @@ function getGatewayStartEnv() {
   return gatewayEnv;
 }
 
-async function recoverGatewayRuntime() {
+async function _recoverGatewayRuntime() {
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
   let status = runCaptureOpenshell(["status"], { ignoreError: true });
   if (status.includes("Connected") && isSelectedGateway(status)) {
@@ -1250,6 +1380,7 @@ function pruneStaleSandboxEntry(sandboxName) {
   const existing = registry.getSandbox(sandboxName);
   const liveExists = sandboxExistsInGateway(sandboxName);
   if (existing && !liveExists) {
+    console.log(`  Detected stale local sandbox entry for '${sandboxName}'. OpenShell does not have this sandbox, so NemoClaw will recreate it.`);
     registry.removeSandbox(sandboxName);
   }
   return liveExists;
@@ -1276,7 +1407,7 @@ async function promptValidatedSandboxName() {
   return sandboxName;
 }
 
-async function createSandbox(gpu, model, provider, preferredInferenceApi = null, sandboxNameOverride = null) {
+async function createSandbox(gpu, model, provider, _preferredInferenceApi = null, sandboxNameOverride = null) {
   step(5, 7, "Creating sandbox");
 
   const sandboxName = sandboxNameOverride || (await promptValidatedSandboxName());
@@ -1285,6 +1416,14 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   const liveExists = pruneStaleSandboxEntry(sandboxName);
 
   if (liveExists) {
+    if (!registry.getSandbox(sandboxName)) {
+      console.log(`  Found existing OpenShell sandbox '${sandboxName}'. Syncing local NemoClaw state before continuing.`);
+      registry.registerSandbox({
+        name: sandboxName,
+        gpuEnabled: !!gpu,
+      });
+    }
+
     const existingSandboxState = getSandboxReuseState(sandboxName);
     if (existingSandboxState === "ready" && process.env.NEMOCLAW_RECREATE_SANDBOX !== "1") {
       if (isNonInteractive()) {
@@ -1315,6 +1454,22 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   copyBuildContextDir(path.join(ROOT, "nemoclaw-blueprint"), path.join(buildCtx, "nemoclaw-blueprint"));
   copyBuildContextDir(path.join(ROOT, "scripts"), path.join(buildCtx, "scripts"));
 
+  const controlUiOrigins = getControlUiAllowedOrigins();
+  const wslControlUiOrigin = controlUiOrigins.find(
+    (origin) => origin !== "http://127.0.0.1:18789" && origin !== "http://localhost:18789",
+  );
+  const chatUiUrl = process.env.CHAT_UI_URL || wslControlUiOrigin || "http://127.0.0.1:18789";
+
+  // openclaw.json is generated at image build-time from Dockerfile ARGs.
+  // Update CHAT_UI_URL in the staged Dockerfile so allowedOrigins includes
+  // the Win11-reachable WSL host origin when onboarding under WSL.
+  const stagedDockerfileText = fs.readFileSync(stagedDockerfile, "utf-8");
+  const patchedDockerfileText = stagedDockerfileText.replace(
+    /^ARG CHAT_UI_URL=.*$/m,
+    `ARG CHAT_UI_URL=${chatUiUrl}`,
+  );
+  fs.writeFileSync(stagedDockerfile, patchedDockerfileText, "utf-8");
+
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
   const basePolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
@@ -1326,8 +1481,6 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   // --gpu is intentionally omitted. See comment in startGateway().
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
-  const chatUiUrl = process.env.CHAT_UI_URL || "http://127.0.0.1:18789";
-  const envArgs = ["CHAT_UI_URL"];
   const sandboxEnv = { ...process.env };
   sandboxEnv.CHAT_UI_URL = chatUiUrl;
 
@@ -1335,7 +1488,11 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
   // lets the real exit code flow through to run().
-  const createCommand = `openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1`;
+  // Launch nemoclaw-start in the background and return immediately so
+  // `openshell sandbox create` can finish once the sandbox is ready.
+  // Passing a foreground gateway command here causes the create stream to hang.
+  const backgroundStart = shellQuote(`nohup /usr/local/bin/nemoclaw-start >/tmp/gateway.log 2>&1 &`);
+  const createCommand = `openshell sandbox create ${createArgs.join(" ")} -- env CHAT_UI_URL=${shellQuote(chatUiUrl)} bash -lc ${backgroundStart} 2>&1`;
   const createResult = await streamSandboxCreate(createCommand, sandboxEnv, { ignoreError: true });
   // Clean up build context regardless of outcome
   run(`rm -rf "${buildCtx}"`, { ignoreError: true });
@@ -1402,6 +1559,7 @@ async function createSandbox(gpu, model, provider, preferredInferenceApi = null,
 
 // ── Step 4: NIM ──────────────────────────────────────────────────
 
+// eslint-disable-next-line complexity
 async function setupNim(sandboxName, _gpu) {
   step(4, 7, "Configuring inference (NIM)");
 
@@ -1771,11 +1929,13 @@ async function setupNim(sandboxName, _gpu) {
     if (selected.key === "ollama-local") {
       provider = "ollama-local";
       preferredInferenceApi = "openai-responses";
-      endpointUrl = "http://localhost:11434/v1";
+      ollamaEndpoint = resolveOllamaEndpoint(runCapture) || ollamaEndpoint;
+      const ollamaHostBase = ollamaEndpoint?.hostUrl || "http://localhost:11434";
+      endpointUrl = ollamaEndpoint?.openaiBaseUrl || `${ollamaHostBase}/v1`;
 
       let ollamaModels;
       try {
-        const tagsRaw = runCapture("curl -sf http://localhost:11434/api/tags 2>/dev/null", { ignoreError: true });
+        const tagsRaw = runCapture(`curl -sf ${shellQuote(`${ollamaHostBase}/api/tags`)} 2>/dev/null`, { ignoreError: true });
         const tags = tagsRaw ? JSON.parse(tagsRaw) : { models: [] };
         ollamaModels = Array.isArray(tags.models) ? tags.models.map((entry) => entry && entry.name).filter(Boolean) : [];
       } catch {
@@ -1814,7 +1974,7 @@ async function setupNim(sandboxName, _gpu) {
         model = ollamaModels[modelIndex] || ollamaModels[0] || getDefaultOllamaModel(runCapture, { endpoint: ollamaEndpoint });
       }
       console.log(`  Loading Ollama model: ${model}`);
-      run(`curl -sS ${getCurlTimingArgs().join(" ")} -X POST http://localhost:11434/api/generate -H 'Content-Type: application/json' -d '${JSON.stringify({ model, prompt: "hello", stream: false })}' > /dev/null 2>&1`, { ignoreError: true });
+      run(`curl -sS ${getCurlTimingArgs().join(" ")} -X POST ${shellQuote(`${ollamaHostBase}/api/generate`)} -H 'Content-Type: application/json' -d '${JSON.stringify({ model, prompt: "hello", stream: false })}' > /dev/null 2>&1`, { ignoreError: true });
       providerBaseUrl = endpointUrl;
       break;
     }
@@ -1849,7 +2009,7 @@ async function setupInference(sandboxName, model, provider, opts = {}) {
   let modelMetadata = opts.modelMetadata || null;
 
   const upsertProvider = (name, type, credentialEnv, configArg) => {
-    const providerArgs = [
+    const createArgs = [
       "openshell",
       "provider",
       "create",
@@ -1857,12 +2017,20 @@ async function setupInference(sandboxName, model, provider, opts = {}) {
       name,
       "--type",
       type,
-      "--credential", credentialEnv,
-      "--config",
-      configArg,
     ];
-    const createCommand = providerArgs.map((arg) => shellQuote(arg)).join(" ");
-    const updateCommand = createCommand.replace("'create'", "'update'");
+    if (credentialEnv) {
+      createArgs.push("--credential", credentialEnv);
+    }
+    createArgs.push("--config", configArg);
+
+    const updateArgs = ["openshell", "provider", "update", "--config", configArg];
+    if (credentialEnv) {
+      updateArgs.push("--credential", credentialEnv);
+    }
+    updateArgs.push(name);
+
+    const createCommand = createArgs.map((arg) => shellQuote(arg)).join(" ");
+    const updateCommand = updateArgs.map((arg) => shellQuote(arg)).join(" ");
     run(`${createCommand} 2>&1 || ${updateCommand} 2>&1 || true`, { ignoreError: true });
   };
 
@@ -1879,7 +2047,7 @@ async function setupInference(sandboxName, model, provider, opts = {}) {
       process.exit(1);
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
-    upsertProvider("vllm-local", "openai", "OPENAI_API_KEY", `OPENAI_BASE_URL=${baseUrl}`);
+    upsertProvider("vllm-local", "openai", "OPENAI_API_KEY=unused", `OPENAI_BASE_URL=${baseUrl}`);
     run(
       `openshell inference set --no-verify --provider vllm-local --model ${model} 2>/dev/null || true`,
       { ignoreError: true }
@@ -1896,21 +2064,25 @@ async function setupInference(sandboxName, model, provider, opts = {}) {
     }
     const runtimeEndpoint = validation.endpoint || resolveOllamaContainerRoute(opts.ollamaEndpoint, runCapture) || opts.ollamaEndpoint;
     const baseUrl = getLocalProviderBaseUrl(provider, { endpoint: runtimeEndpoint, runCapture });
-    upsertProvider("ollama-local", "openai", "OPENAI_API_KEY", `OPENAI_BASE_URL=${baseUrl}`);
+    upsertProvider("ollama-local", "openai", "OPENAI_API_KEY=unused", `OPENAI_BASE_URL=${baseUrl}`);
     run(
       `openshell inference set --no-verify --provider ollama-local --model ${model} 2>/dev/null || true`,
       { ignoreError: true }
     );
-    console.log(`  Priming Ollama model: ${model}`);
-    const probe = validateOllamaModel(model, runCapture, { endpoint: opts.ollamaEndpoint });
-    if (!probe.ok) {
-      console.error(`  ${probe.message}`);
-      process.exit(1);
-    }
     modelMetadata = getOllamaModelMetadata(runCapture, model, { endpoint: opts.ollamaEndpoint });
     const compatibility = validateOllamaOpenClawCompatibility(model, modelMetadata);
     if (!compatibility.ok) {
       console.error(`  ${compatibility.message}`);
+      process.exit(1);
+    }
+    console.log(`  Priming Ollama model: ${model}`);
+    const probe = validateOllamaModel(model, runCapture, { endpoint: opts.ollamaEndpoint });
+    const probeOutcome = getOllamaProbeOutcome(model, probe, opts);
+    if (probeOutcome.message) {
+      const log = probeOutcome.fatal ? console.error : console.warn;
+      log(`  ${probeOutcome.message}`);
+    }
+    if (probeOutcome.fatal) {
       process.exit(1);
     }
   }
@@ -1928,25 +2100,31 @@ async function setupInference(sandboxName, model, provider, opts = {}) {
   return { modelMetadata };
 }
 
+async function syncSandboxInferenceConfig(sandboxName, model, provider, opts = {}) {
+  const selectionConfig = getProviderSelectionConfig(provider, model);
+  if (!selectionConfig) {
+    return false;
+  }
+
+  const sandboxConfig = {
+    ...selectionConfig,
+    ...(opts.modelMetadata || {}),
+    onboardedAt: new Date().toISOString(),
+  };
+  const script = buildSandboxConfigSyncScript(sandboxConfig, {
+    controlUiAllowedOrigins: getControlUiAllowedOrigins(),
+  });
+  run(`cat <<'EOF_NEMOCLAW_SYNC' | openshell sandbox connect "${sandboxName}"
+${script}
+EOF_NEMOCLAW_SYNC`);
+  return true;
+}
+
 // ── Step 6: OpenClaw ─────────────────────────────────────────────
 
 async function setupOpenclaw(sandboxName, model, provider, opts = {}) {
   step(6, 7, "Setting up OpenClaw inside sandbox");
-
-  const selectionConfig = getProviderSelectionConfig(provider, model);
-  if (selectionConfig) {
-    const sandboxConfig = {
-      ...selectionConfig,
-      ...(opts.modelMetadata || {}),
-      onboardedAt: new Date().toISOString(),
-    };
-    const script = buildSandboxConfigSyncScript(sandboxConfig, {
-      controlUiAllowedOrigins: getControlUiAllowedOrigins(),
-    });
-    run(`cat <<'EOF_NEMOCLAW_SYNC' | openshell sandbox connect "${sandboxName}"
-${script}
-EOF_NEMOCLAW_SYNC`, { stdio: ["ignore", "ignore", "inherit"] });
-  }
+  await syncSandboxInferenceConfig(sandboxName, model, provider, opts);
 
   console.log("  ✓ OpenClaw gateway launched inside sandbox");
 }
@@ -2091,7 +2269,7 @@ async function _setupPolicies(sandboxName) {
   console.log("  ✓ Policies applied");
 }
 
-function arePolicyPresetsApplied(sandboxName, selectedPresets = []) {
+function _arePolicyPresetsApplied(sandboxName, selectedPresets = []) {
   if (!Array.isArray(selectedPresets) || selectedPresets.length === 0) return false;
   const applied = new Set(policies.getAppliedPresets(sandboxName));
   return selectedPresets.every((preset) => applied.has(preset));
@@ -2232,8 +2410,21 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
 // ── Dashboard ────────────────────────────────────────────────────
 
 function printDashboard(sandboxName, model, provider) {
+  // Refresh the dashboard forward before printing URLs so links are live.
+  runOpenshell(["forward", "stop", "18789", sandboxName], { ignoreError: true });
+  run(getDashboardForwardStartCommand(sandboxName), { ignoreError: true });
+
   const sandbox = registry.getSandbox(sandboxName) || { name: sandboxName, provider };
-  const runtimeLines = getInferenceRuntimeStatus(sandbox, (name) => nim.nimStatus(name));
+  const runtimeLines = getInferenceRuntimeStatus(
+    sandbox,
+    (name) => {
+      const status = nim.nimStatus(name) || {};
+      return {
+        running: Boolean(status['running']),
+        healthy: typeof status['healthy'] === "boolean" ? status['healthy'] : false,
+      };
+    }
+  ) || [];
   const dashboardAccess = getDashboardAccessInfo(sandboxName);
   const dashboardGuidance = getDashboardGuidanceLines(dashboardAccess);
 
@@ -2247,8 +2438,6 @@ function printDashboard(sandboxName, model, provider) {
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
 
-  const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
-
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
   for (const access of dashboardAccess) {
@@ -2260,29 +2449,14 @@ function printDashboard(sandboxName, model, provider) {
   console.log(`  Sandbox      ${sandboxName} (Landlock + seccomp + netns)`);
   console.log(`  Model        ${model} (${providerLabel})`);
   for (const line of runtimeLines) {
-    console.log(`  ${line.label.padEnd(12)}${line.value}`);
+    if (line && typeof line.label === "string" && typeof line.value !== "undefined") {
+      console.log(`  ${line.label.padEnd(12)}${line.value}`);
+    }
   }
   console.log(`  ${"─".repeat(50)}`);
   console.log(`  Run:         nemoclaw ${sandboxName} connect`);
   console.log(`  Status:      nemoclaw ${sandboxName} status`);
   console.log(`  Logs:        nemoclaw ${sandboxName} logs --follow`);
-  console.log("");
-  if (token) {
-    console.log("  OpenClaw UI (tokenized URL; treat it like a password)");
-    console.log(`  Port ${CONTROL_UI_PORT} must be forwarded before opening this URL.`);
-    for (const url of buildControlUiUrls(token)) {
-      console.log(`  ${url}`);
-    }
-  } else {
-    note("  Could not read gateway token from the sandbox (download failed).");
-    console.log("  OpenClaw UI");
-    console.log(`  Port ${CONTROL_UI_PORT} must be forwarded before opening this URL.`);
-    for (const url of buildControlUiUrls()) {
-      console.log(`  ${url}`);
-    }
-    console.log(`  Token:       nemoclaw ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`);
-    console.log(`               append  #token=<token>  to the URL, or see /tmp/gateway.log inside the sandbox.`);
-  }
   console.log(`  ${"─".repeat(50)}`);
   console.log("");
 }
@@ -2304,7 +2478,7 @@ async function onboard(opts = {}) {
   const { modelMetadata } = await setupInference(sandboxName, model, provider, { ollamaEndpoint, providerBaseUrl });
   delete process.env.NVIDIA_API_KEY;
   await setupOpenclaw(sandboxName, model, provider, { modelMetadata });
-  await setupPolicies(sandboxName);
+  await setupPoliciesWithSelection(sandboxName);
   printDashboard(sandboxName, model, provider);
 }
 
@@ -2313,17 +2487,28 @@ module.exports = {
   buildControlUiConfigSyncScript,
   buildSandboxConfigSyncScript,
   classifySandboxCreateFailure,
+  countListedSandboxes,
   createSandbox,
   getControlUiAllowedOrigins,
   getDashboardForwardPort,
   getDashboardForwardStartCommand,
   getDashboardAccessInfo,
   getDashboardGuidanceLines,
+  getGatewayClusterContainerName,
+  getGatewayReuseState,
+  getReportedGatewayEndpoint,
+  getReportedGatewayName,
   getSandboxState,
+  hasLocalGatewayContainer,
   hasStaleGateway,
   isSandboxReady,
   isWslEnvironment,
+  listLocalGatewayNames,
   onboard,
+  promptForExistingGatewayAction,
+  getOllamaProbeOutcome,
+  setupInference,
   setupNim,
+  syncSandboxInferenceConfig,
   syncSandboxControlUiConfig,
 };

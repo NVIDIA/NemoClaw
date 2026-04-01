@@ -17,12 +17,16 @@ const {
 const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
+const backupStore = require("./lib/sandbox-backup");
 const { getInferenceRuntimeStatus } = require("./lib/inference-status");
 const { runTelegramProbe } = require("./lib/telegram-diagnostics");
 const {
+  createSandbox,
   getDashboardForwardStartCommand,
   getDashboardAccessInfo,
   getDashboardGuidanceLines,
+  setupInference,
+  syncSandboxInferenceConfig,
   syncSandboxControlUiConfig,
 } = require("./lib/onboard");
 
@@ -38,7 +42,7 @@ const B = _useColor ? "\x1b[1m" : "";
 const D = _useColor ? "\x1b[2m" : "";
 const R = _useColor ? "\x1b[0m" : "";
 const _RD = _useColor ? "\x1b[1;31m" : "";
-const YW = _useColor ? "\x1b[1;33m" : "";
+// const YW = _useColor ? "\x1b[1;33m" : "";
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -84,9 +88,9 @@ function isOpenShellSandboxAvailable(name, runCaptureFn = runCapture) {
   return String(output || "").trim().length > 0;
 }
 
-function getStatusSandboxes(options = {}) {
-  const listSandboxesFn = options.listSandboxes || (() => registry.listSandboxes());
-  const runCaptureFn = options.runCapture || runCapture;
+function getStatusSandboxes(_options = {}) {
+  const listSandboxesFn = _options.listSandboxes || (() => registry.listSandboxes());
+  const runCaptureFn = _options.runCapture || runCapture;
   const { sandboxes, defaultSandbox } = listSandboxesFn();
   return {
     defaultSandbox,
@@ -105,8 +109,8 @@ function getStaleSandboxWarningLines() {
   ];
 }
 
-function printStaleSandboxWarning(sandboxName, action, options = {}) {
-  const errorFn = options.error || console.error;
+function printStaleSandboxWarning(sandboxName, action, _options = {}) {
+  const errorFn = _options.error || console.error;
   const lines = [
     `  Sandbox '${sandboxName}' is stale; OpenShell cannot ${action} it.`,
     ...getStaleSandboxWarningLines().map((line) => `  ${line}`),
@@ -116,10 +120,10 @@ function printStaleSandboxWarning(sandboxName, action, options = {}) {
   }
 }
 
-function ensureLiveSandboxForAction(sandboxName, action, options = {}) {
-  const isAvailable = options.isAvailable ?? isOpenShellSandboxAvailable(sandboxName, options.runCapture || runCapture);
+function ensureLiveSandboxForAction(sandboxName, action, _options = {}) {
+  const isAvailable = _options.isAvailable ?? isOpenShellSandboxAvailable(sandboxName, _options.runCapture || runCapture);
   if (isAvailable) return true;
-  printStaleSandboxWarning(sandboxName, action, options);
+  printStaleSandboxWarning(sandboxName, action, _options);
   return false;
 }
 
@@ -221,6 +225,262 @@ function ensureSandboxGatewayReachable() {
   process.exit(1);
 }
 
+function ensureSandboxGatewayForRestore(options = {}) {
+  const errorFn = options.error || console.error;
+  const status = runCapture("openshell status 2>&1", { ignoreError: true });
+  if (isGatewayConnected(status)) {
+    return true;
+  }
+
+  if (hasGatewayConnectFailure(status) && resumeStoppedGateway()) {
+    console.log(`  ✓ Resumed OpenShell gateway '${GATEWAY_NAME}'`);
+    return true;
+  }
+
+  const startResult = run(`openshell gateway start --name ${GATEWAY_NAME} 2>&1`, {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+  });
+  if (startResult.status === 0 && waitForGatewayConnection()) {
+    console.log(`  ✓ Started OpenShell gateway '${GATEWAY_NAME}'`);
+    return true;
+  }
+
+  const output = [status, startResult.stdout, startResult.stderr].filter(Boolean).join("\n").trim();
+  errorFn(`  Could not start OpenShell gateway '${GATEWAY_NAME}' for restore.`);
+  if (output) {
+    errorFn(output.split("\n").map((line) => `    ${line}`).join("\n"));
+  }
+  throw new Error(`OpenShell gateway '${GATEWAY_NAME}' is not reachable.`);
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function parseBackupActionArgs(args) {
+  const parsed = { label: null, list: false };
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--list") {
+      parsed.list = true;
+      continue;
+    }
+    if (arg === "--label") {
+      const label = args[i + 1];
+      if (!label) {
+        throw new Error("Missing value for --label.");
+      }
+      parsed.label = label;
+      i += 1;
+      continue;
+    }
+    throw new Error(`Unknown backup option: ${arg}`);
+  }
+  return parsed;
+}
+
+function parseRestoreActionArgs(args) {
+  if (args.length > 1) {
+    throw new Error("Usage: nemoclaw <name> restore [backup-id]");
+  }
+  if (args[0] && args[0].startsWith("-")) {
+    throw new Error(`Unknown restore option: ${args[0]}`);
+  }
+  return { backupId: args[0] || null };
+}
+
+function hydrateRestoreCredentialEnv(provider) {
+  const credentialMap = {
+    "nvidia-nim": "NVIDIA_API_KEY",
+    "nvidia-prod": "NVIDIA_API_KEY",
+  };
+  const credentialName = credentialMap[provider];
+  if (!credentialName) return;
+  const credentialValue = getCredential(credentialName);
+  if (credentialValue) {
+    process.env[credentialName] = credentialValue;
+  }
+}
+
+
+async function configureSandboxFromBackupManifest(sandboxName, manifest, _options = {}) {
+  const currentEntry = registry.getSandbox(sandboxName) || {};
+  const manifestEntry = (manifest && manifest.registry) || {};
+  const registryEntry = {
+    ...currentEntry,
+    ...manifestEntry,
+    model: manifestEntry.model || currentEntry.model || null,
+    provider: manifestEntry.provider || currentEntry.provider || null,
+    providerBaseUrl: manifestEntry.providerBaseUrl || currentEntry.providerBaseUrl || null,
+  };
+  if (!registryEntry.provider && !registryEntry.model && !(registryEntry.policies || []).length) return;
+
+  await configureSandboxProviderAndModel(sandboxName, registryEntry);
+  configureSandboxPolicies(sandboxName, registryEntry);
+  updateOrRegisterSandbox(sandboxName, registryEntry);
+}
+
+async function configureSandboxProviderAndModel(sandboxName, registryEntry) {
+  if (registryEntry.provider && registryEntry.model) {
+    hydrateRestoreCredentialEnv(registryEntry.provider);
+    const { modelMetadata } = await setupInference(sandboxName, registryEntry.model, registryEntry.provider, {
+      allowWarmupFailure: true,
+      providerBaseUrl: registryEntry.providerBaseUrl || null,
+    });
+    await syncSandboxInferenceConfig(sandboxName, registryEntry.model, registryEntry.provider, {
+      modelMetadata,
+      providerBaseUrl: registryEntry.providerBaseUrl || null,
+    });
+  }
+}
+
+function configureSandboxPolicies(sandboxName, registryEntry) {
+  for (const presetName of registryEntry.policies || []) {
+    policies.applyPreset(sandboxName, presetName);
+  }
+}
+
+function updateOrRegisterSandbox(sandboxName, registryEntry) {
+  const updatedEntry = registry.getSandbox(sandboxName);
+  const mergedEntry = {
+    ...(updatedEntry || {}),
+    ...(registryEntry || {}),
+    name: sandboxName,
+    createdAt: (updatedEntry && updatedEntry.createdAt) || registryEntry.createdAt,
+  };
+  if (updatedEntry) {
+    registry.updateSandbox(sandboxName, mergedEntry);
+  } else {
+    registry.registerSandbox(mergedEntry);
+  }
+}
+
+function printSandboxBackups(sandboxName, listBackupsFn = backupStore.listBackups) {
+  const backups = listBackupsFn(sandboxName);
+  console.log("");
+  if (backups.length === 0) {
+    console.log(`  No backups found for sandbox '${sandboxName}'.`);
+    console.log("");
+    return backups;
+  }
+
+  console.log(`  Backups for sandbox '${sandboxName}':`);
+  for (const backup of backups) {
+    const date = backup.createdAt ? backup.createdAt.replace("T", " ").replace(/\.\d+Z$/, "Z") : "unknown";
+    console.log(`    ${backup.id.padEnd(24)}${date}  ${formatBytes(backup.sizeBytes)}`);
+  }
+  console.log("");
+  return backups;
+}
+
+function sandboxBackup(sandboxName, actionArgs = [], options = {}) {
+  const errorFn = options.error || console.error;
+  const exitFn = options.exit === undefined ? process.exit : options.exit;
+  const createBackupFn = options.createBackup || backupStore.createBackup;
+  const listBackupsFn = options.listBackups || backupStore.listBackups;
+
+  try {
+    const parsed = parseBackupActionArgs(actionArgs);
+    if (parsed.list) {
+      return printSandboxBackups(sandboxName, listBackupsFn);
+    }
+
+    if (!ensureLiveSandboxForAction(sandboxName, "back up", options)) {
+      if (exitFn) {
+        exitFn(1);
+      }
+      return false;
+    }
+
+    console.log("");
+    console.log(`  Creating backup for sandbox '${sandboxName}'...`);
+    const result = createBackupFn(sandboxName, { label: parsed.label });
+    console.log(`  ✓ Backup saved to ${result.backupDir}`);
+    console.log(`  Archive: ${path.basename(result.archivePath)} (${formatBytes(result.sizeBytes)})`);
+    console.log("");
+    return result;
+  } catch (error) {
+    errorFn(`  ${error.message}`);
+    if (exitFn) {
+      exitFn(1);
+    }
+    return false;
+  }
+}
+
+
+async function sandboxRestore(sandboxName, actionArgs = [], _options = {}) {
+  const errorFn = _options.error || console.error;
+  const exitFn = _options.exit === undefined ? process.exit : _options.exit;
+  const promptFn = _options.prompt || require("./lib/credentials").prompt;
+  const resolveBackupFn = _options.resolveBackup || backupStore.resolveBackup;
+  const restoreBackupFn = _options.restoreBackup || backupStore.restoreBackup;
+  const createSandboxFn = _options.createSandbox || createSandbox;
+  const configureSandboxFn = _options.configureSandbox || configureSandboxFromBackupManifest;
+  const ensureGatewayFn = _options.ensureGateway || ensureSandboxGatewayForRestore;
+
+  try {
+    const parsed = parseRestoreActionArgs(actionArgs);
+    const selectedBackup = resolveBackupFn(sandboxName, parsed.backupId);
+    const manifest = selectedBackup.manifest || backupStore.readManifest(selectedBackup.path);
+    const isLive = _options.isAvailable ?? isOpenShellSandboxAvailable(sandboxName, _options.runCapture || runCapture);
+
+    if (isLive) {
+      if (!(await confirmRestoreOverwrite(promptFn, sandboxName, selectedBackup.id))) {
+        return false;
+      }
+    } else {
+      await _restoreCreateSandbox(ensureGatewayFn, createSandboxFn, manifest, sandboxName, selectedBackup.id);
+    }
+
+    await _restoreBackupAndConfigure(restoreBackupFn, configureSandboxFn, sandboxName, selectedBackup, manifest);
+    return { sandboxName, backupId: selectedBackup.id, recreated: !isLive };
+  } catch (error) {
+    errorFn(`  ${error.message}`);
+    if (exitFn) {
+      exitFn(1);
+    }
+    return false;
+  }
+}
+
+async function _restoreCreateSandbox(ensureGatewayFn, createSandboxFn, manifest, sandboxName, backupId) {
+  ensureGatewayFn();
+  console.log("");
+  console.log(`  Recreating sandbox '${sandboxName}' from backup '${backupId}'...`);
+  await createSandboxFn(Boolean(manifest && manifest.registry && manifest.registry.gpuEnabled), null, null, null, sandboxName);
+}
+
+async function _restoreBackupAndConfigure(restoreBackupFn, configureSandboxFn, sandboxName, selectedBackup, manifest) {
+  console.log(`  Restoring backup '${selectedBackup.id}' into sandbox '${sandboxName}'...`);
+  restoreBackupFn(sandboxName, selectedBackup.path);
+  await configureSandboxFn(sandboxName, manifest || {}, { backupDir: selectedBackup.path });
+  console.log(`  ✓ Restored backup '${selectedBackup.id}' into sandbox '${sandboxName}'`);
+  console.log("");
+}
+
+async function confirmRestoreOverwrite(promptFn, sandboxName, backupId) {
+  console.log("");
+  console.log(`  Restore will overwrite files inside sandbox '${sandboxName}'.`);
+  const confirm = await promptFn(`  Type RESTORE to continue restoring '${backupId}': `);
+  if (confirm !== "RESTORE") {
+    console.log("  Cancelled.");
+    console.log("");
+    return false;
+  }
+  return true;
+}
+
 function explainSandboxConnectFailure(sandboxName, result) {
   const recentLogs = runCapture(`openshell logs "${sandboxName}" 2>&1 | tail -n 80`, { ignoreError: true });
 
@@ -271,7 +531,7 @@ async function setupSpark() {
   run(`sudo -E bash "${SCRIPTS}/setup-spark.sh"`);
 }
 
-// eslint-disable-next-line complexity
+
 async function deploy(instanceName) {
   if (!instanceName) {
     console.error("  Usage: nemoclaw deploy <instance-name>");
@@ -421,10 +681,10 @@ function uninstall(args) {
   exitWithSpawnResult(result);
 }
 
-function showStatus(options = {}) {
-  const runFn = options.run || run;
+function showStatus(_options = {}) {
+  const runFn = _options.run || run;
   // Show sandbox registry
-  const { sandboxes, defaultSandbox } = getStatusSandboxes(options);
+  const { sandboxes, defaultSandbox } = getStatusSandboxes(_options);
   if (sandboxes.length > 0) {
     console.log("");
     console.log("  Sandboxes:");
@@ -489,86 +749,57 @@ async function getReconciledSandboxGatewayState(sandboxName) {
   const openshellPath = resolveOpenshell() || "openshell";
   const getResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
   const getOutput = getResult.stdout || getResult.stderr || "";
-  
+
   if (getResult.status === 0) {
     return { state: "present", output: getOutput.trim() };
   }
 
-  // Command failed, check what the error is
   if (!getOutput.trim()) {
     return { state: "unknown", output: "Command produced no output" };
   }
 
-  // Try to detect the reason for failure
-  if (/No active gateway/i.test(getOutput)) {
-    // Gateway not running, try to recover by starting it
+  // Split out recovery logic for complexity
+  async function _recoverGateway(openshellPath, sandboxName, recoveryType) {
     run(`${openshellPath} gateway select ${GATEWAY_NAME} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
     const selectResult = run(`${openshellPath} status 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
     const selectOutput = (selectResult.stdout || selectResult.stderr || "").toString();
-    
     if (selectResult.status === 0 && isGatewayConnected(selectOutput)) {
-      // Gateway is connected after select, try again
       const retryResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
       const retryOutput = (retryResult.stdout || retryResult.stderr || "").toString();
       if (retryResult.status === 0) {
-        return { state: "present", output: retryOutput.trim(), recoveredGateway: true, recoveryVia: "select" };
+        return { state: "present", output: retryOutput.trim(), recoveredGateway: true, recoveryVia: recoveryType };
       }
     }
-    
-    // Need to start the gateway
     run(`${openshellPath} gateway start --name ${GATEWAY_NAME} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
     run(`${openshellPath} gateway select ${GATEWAY_NAME} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
-    
-    // Wait a bit and retry
     await new Promise(resolve => setTimeout(resolve, 500));
-    
     const retryResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
     const retryOutput = (retryResult.stdout || retryResult.stderr || "").toString();
     if (retryResult.status === 0) {
       return { state: "present", output: retryOutput.trim(), recoveredGateway: true, recoveryVia: "start" };
     }
+    return null;
+  }
+
+  if (/No active gateway/i.test(getOutput)) {
+    const recovered = await _recoverGateway(openshellPath, sandboxName, "select");
+    if (recovered) return recovered;
   }
 
   if (/transport error|tcp connect error|Connection refused|Connection reset by peer/i.test(getOutput)) {
-    // Gateway is not accepting connections, try to recover
-    run(`${openshellPath} gateway select ${GATEWAY_NAME} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
-    const selectResult = run(`${openshellPath} status 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
-    const selectOutput = (selectResult.stdout || selectResult.stderr || "").toString();
-    
-    if (selectResult.status === 0 && isGatewayConnected(selectOutput)) {
-      // Gateway is connected after select, try again
-      const retryResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
-      const retryOutput = (retryResult.stdout || retryResult.stderr || "").toString();
-      if (retryResult.status === 0) {
-        return { state: "present", output: retryOutput.trim(), recoveredGateway: true, recoveryVia: "select" };
-      }
-    }
-    
-    // Need to start the gateway
-    run(`${openshellPath} gateway start --name ${GATEWAY_NAME} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
-    run(`${openshellPath} gateway select ${GATEWAY_NAME} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
-    
-    // Wait a bit and retry
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    const retryResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
-    const retryOutput = (retryResult.stdout || retryResult.stderr || "").toString();
-    if (retryResult.status === 0) {
-      return { state: "present", output: retryOutput.trim(), recoveredGateway: true, recoveryVia: "start" };
-    }
-    
+    const recovered = await _recoverGateway(openshellPath, sandboxName, "select");
+    if (recovered) return recovered;
     return { state: "gateway_unreachable_after_restart", output: getOutput.trim() };
   }
 
   if (/not found|does not exist/i.test(getOutput)) {
-    // Sandbox doesn't exist
     return { state: "missing", output: getOutput.trim() };
   }
 
   return { state: "unknown", output: getOutput.trim() };
 }
 
-function printGatewayLifecycleHint(output, sandboxName, logFn) {
+function printGatewayLifecycleHint(output, _sandboxName, logFn) {
   // Print helpful hints based on error messages
   if (/Connection refused|Connection reset|transport error/i.test(output)) {
     logFn("  Hint: The gateway may need to be restarted or is unhealthy.");
@@ -727,6 +958,10 @@ function sandboxDashboard(sandboxName) {
   if (!ensureLiveSandboxForAction(sandboxName, "open the dashboard for")) {
     process.exit(1);
   }
+  // Ensure dashboard forward is alive before printing links.
+  run(`openshell forward stop 18789 "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
+  run(`${getDashboardForwardStartCommand(sandboxName)} 2>/dev/null || true`, { ignoreError: true });
+
   const dashboardAccess = getDashboardAccessInfo(sandboxName);
   const dashboardGuidance = getDashboardGuidanceLines(dashboardAccess);
   console.log("");
@@ -768,7 +1003,7 @@ async function sandboxDestroy(sandboxName, options = {}) {
 
   console.log(`  Warning: destroying sandbox '${sandboxName}' permanently deletes workspace files.`);
   console.log("  This includes SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes.");
-  console.log("  Back up the workspace before continuing if you need to keep those customizations.");
+  console.log(`  Run 'nemoclaw ${sandboxName} backup' before continuing if you need to keep those customizations.`);
   const confirm = await promptFn(`  Type DESTROY to permanently delete sandbox '${sandboxName}': `);
   if (confirm !== "DESTROY") {
     console.log("  Cancelled.");
@@ -803,6 +1038,8 @@ function help() {
   Sandbox Management:
     nemoclaw list                    List all sandboxes
     nemoclaw <name> connect          Connect to a sandbox
+    nemoclaw <name> backup           Create a full sandbox backup
+    nemoclaw <name> restore [id]     Restore a backup into a sandbox
     nemoclaw <name> dashboard        Show dashboard access URL(s)
     nemoclaw <name> status           Show sandbox status and health
     nemoclaw <name> logs [--follow]  View sandbox logs
@@ -843,72 +1080,88 @@ function help() {
 
 async function main() {
   const [cmd, ...args] = process.argv.slice(2);
-  // No command → help
-  if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
+  if (shouldShowHelp(cmd)) {
     help();
     return;
   }
-
-  // Global commands
   if (GLOBAL_COMMANDS.has(cmd)) {
-    switch (cmd) {
-      case "onboard":     await onboard(args); break;
-      case "setup":       await setup(); break;
-      case "setup-spark": await setupSpark(); break;
-      case "deploy":      await deploy(args[0]); break;
-      case "start":       await start(); break;
-      case "stop":        stop(); break;
-      case "status":      showStatus(); break;
-      case "debug":       debug(args); break;
-      case "uninstall":   uninstall(args); break;
-      case "list":        listSandboxes(); break;
-      case "--version":
-      case "-v": {
-        const pkg = require(path.join(__dirname, "..", "package.json"));
-        console.log(`nemoclaw v${pkg.version}`);
-        break;
-      }
-      default:            help(); break;
-    }
+    await handleGlobalCommand(cmd, args);
     return;
   }
+  await handleSandboxCommand(cmd, args);
+}
 
-  // Sandbox-scoped commands: nemoclaw <name> <action>
+function shouldShowHelp(cmd) {
+  return !cmd || cmd === "help" || cmd === "--help" || cmd === "-h";
+}
+
+async function handleGlobalCommand(cmd, args) {
+  switch (cmd) {
+    case "onboard":     await onboard(args); break;
+    case "setup":       await setup(); break;
+    case "setup-spark": await setupSpark(); break;
+    case "deploy":      await deploy(args[0]); break;
+    case "start":       await start(); break;
+    case "stop":        stop(); break;
+    case "status":      showStatus(); break;
+    case "debug":       debug(args); break;
+    case "uninstall":   uninstall(args); break;
+    case "list":        listSandboxes(); break;
+    case "--version":
+    case "-v": {
+      const pkg = require(path.join(__dirname, "..", "package.json"));
+      console.log(`nemoclaw v${pkg.version}`);
+      break;
+    }
+    default:            help(); break;
+  }
+}
+
+async function handleSandboxCommand(cmd, args) {
   const sandbox = registry.getSandbox(cmd);
-  if (sandbox) {
+  const isLiveSandbox = isOpenShellSandboxAvailable(cmd);
+  const hasBackups = backupStore.hasSandboxBackups(cmd);
+  if (sandbox || isLiveSandbox || hasBackups) {
     validateName(cmd, "sandbox name");
+    if (!sandbox && isLiveSandbox) {
+      registry.registerSandbox({ name: cmd, gpuEnabled: false });
+    }
     const action = args[0] || "connect";
     const actionArgs = args.slice(1);
-
-    switch (action) {
-      case "connect":     sandboxConnect(cmd); break;
-      case "dashboard":   sandboxDashboard(cmd); break;
-      case "status":      sandboxStatus(cmd); break;
-      case "logs":        sandboxLogs(cmd, actionArgs.includes("--follow")); break;
-      case "telegram-probe": sandboxTelegramProbe(cmd); break;
-      case "policy-add":  await sandboxPolicyAdd(cmd); break;
-      case "policy-list": sandboxPolicyList(cmd); break;
-      case "destroy":     await sandboxDestroy(cmd); break;
-      default:
-        console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, dashboard, status, logs, telegram-probe, policy-add, policy-list, destroy`);
-        process.exit(1);
-    }
+    await dispatchSandboxAction(cmd, action, actionArgs);
     return;
   }
+  suggestUnknownCommand(cmd);
+}
 
-  // Unknown command — suggest
+async function dispatchSandboxAction(cmd, action, actionArgs) {
+  switch (action) {
+    case "connect":     sandboxConnect(cmd); break;
+    case "backup":      sandboxBackup(cmd, actionArgs); break;
+    case "restore":     await sandboxRestore(cmd, actionArgs); break;
+    case "dashboard":   sandboxDashboard(cmd); break;
+    case "status":      sandboxStatus(cmd); break;
+    case "logs":        sandboxLogs(cmd, actionArgs.includes("--follow")); break;
+    case "telegram-probe": sandboxTelegramProbe(cmd); break;
+    case "policy-add":  await sandboxPolicyAdd(cmd); break;
+    case "policy-list": sandboxPolicyList(cmd); break;
+    case "destroy":     await sandboxDestroy(cmd); break;
+    default:
+      console.error(`  Unknown action: ${action}`);
+      console.error(`  Valid actions: connect, backup, restore, dashboard, status, logs, telegram-probe, policy-add, policy-list, destroy`);
+      process.exit(1);
+  }
+}
+
+function suggestUnknownCommand(cmd) {
   console.error(`  Unknown command: ${cmd}`);
   console.error("");
-
-  // Check if it looks like a sandbox name with missing action
   const allNames = registry.listSandboxes().sandboxes.map((s) => s.name);
   if (allNames.length > 0) {
     console.error(`  Registered sandboxes: ${allNames.join(", ")}`);
     console.error(`  Try: nemoclaw <sandbox-name> connect`);
     console.error("");
   }
-
   console.error(`  Run 'nemoclaw help' for usage.`);
   process.exit(1);
 }
@@ -919,6 +1172,7 @@ if (require.main === module) {
 
 module.exports = {
   ensureLiveSandboxForAction,
+  configureSandboxFromBackupManifest,
   getServiceSandboxEnv,
   getGatewayClusterContainerName,
   getStaleSandboxWarningLines,
@@ -929,6 +1183,9 @@ module.exports = {
   isGatewayConnected,
   main,
   printStaleSandboxWarning,
+  printSandboxBackups,
+  sandboxBackup,
   sandboxDestroy,
+  sandboxRestore,
   showStatus,
 };
