@@ -336,6 +336,10 @@ describe("CLI dispatch", () => {
       [
         "#!/usr/bin/env bash",
         `marker_file=${JSON.stringify(markerFile)}`,
+        'if [ "$1" = "--version" ]; then',
+        "  echo 'openshell 0.0.16'",
+        "  exit 0",
+        "fi",
         "printf '%s ' \"$@\" > \"$marker_file\"",
         "exit 0",
       ].join("\n"),

@@ -1470,9 +1470,7 @@ async function sandboxStatus(sandboxName) {
 }
 
 function sandboxLogs(sandboxName, follow) {
-  const args = ["sandbox", "connect", sandboxName, "--", "tail", "-n", "200"];
-  if (follow) args.push("-f");
-  args.push("/tmp/gateway.log");
+  const args = buildSandboxLogsArgs(sandboxName, follow);
 
   const result = runOpenshell(args, {
     stdio: "inherit",
@@ -1482,6 +1480,15 @@ function sandboxLogs(sandboxName, follow) {
     console.error(`  Command failed (exit ${result.status}): openshell ${args.join(" ")}`);
   }
   exitWithSpawnResult(result);
+}
+
+function buildSandboxLogsArgs(sandboxName, follow) {
+  const args = ["sandbox", "connect", sandboxName, "--", "tail", "-n", "200"];
+  if (follow) {
+    args.push("-f");
+  }
+  args.push("/tmp/gateway.log");
+  return args;
 }
 
 async function sandboxPolicyAdd(sandboxName, args = []) {
