@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import { runCapture } from "../bin/lib/runner";
 
 const runnerPath = path.join(import.meta.dirname, "..", "bin", "lib", "runner");
+const sandboxNamesPath = path.join(import.meta.dirname, "..", "bin", "lib", "sandbox-names");
 
 describe("runner helpers", () => {
   it("does not let child commands consume installer stdin", () => {
@@ -264,6 +265,23 @@ describe("redact", () => {
     expect(redact(null)).toBe(null);
     expect(redact(undefined)).toBe(undefined);
     expect(redact(42)).toBe(42);
+  });
+});
+
+describe("validateSandboxName", () => {
+  it("rejects names reserved by the CLI", () => {
+    const { validateSandboxName } = require(sandboxNamesPath);
+    expect(() => validateSandboxName("telegram")).toThrow(/reserved by the CLI/);
+  });
+
+  it("accepts sandbox names that do not collide with commands", () => {
+    const { validateSandboxName } = require(sandboxNamesPath);
+    expect(validateSandboxName("my-sandbox")).toBe("my-sandbox");
+  });
+
+  it("rejects names that do not start with a letter", () => {
+    const { validateSandboxName } = require(sandboxNamesPath);
+    expect(() => validateSandboxName("1sandbox")).toThrow(/Must start with a letter/);
   });
 });
 

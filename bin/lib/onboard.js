@@ -56,6 +56,7 @@ const {
   getMemoryInfo,
   planHostRemediation,
 } = require("./preflight");
+const { validateSandboxName } = require("./sandbox-names");
 
 // Typed modules (compiled from src/lib/*.ts → dist/lib/*.js)
 const gatewayState = require("../../dist/lib/gateway-state");
@@ -2403,20 +2404,19 @@ async function promptValidatedSandboxName() {
     );
     const sandboxName = (nameAnswer || "my-assistant").trim().toLowerCase();
 
-    // Validate: RFC 1123 subdomain — lowercase alphanumeric and hyphens,
-    // must start with a letter (not a digit) to satisfy Kubernetes naming.
-    if (/^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName)) {
-      return sandboxName;
+    try {
+      return validateSandboxName(sandboxName);
+    } catch (err) {
+      console.error(`  ${err.message}`);
+      if (/reserved by the CLI/.test(err.message)) {
+        console.error("  Choose a different name to avoid colliding with top-level commands.");
+      } else if (/^[0-9]/.test(sandboxName)) {
+        console.error("  Names must start with a letter, not a digit.");
+      } else {
+        console.error("  Names must be lowercase, contain only letters, numbers, and hyphens,");
+        console.error("  must start with a letter, and end with a letter or number.");
+      }
     }
-
-    console.error(`  Invalid sandbox name: '${sandboxName}'`);
-    if (/^[0-9]/.test(sandboxName)) {
-      console.error("  Names must start with a letter, not a digit.");
-    } else {
-      console.error("  Names must be lowercase, contain only letters, numbers, and hyphens,");
-      console.error("  must start with a letter, and end with a letter or number.");
-    }
-
     // Non-interactive runs cannot re-prompt — abort so the caller can fix the
     // NEMOCLAW_SANDBOX_NAME env var and retry.
     if (isNonInteractive()) {
@@ -2445,7 +2445,9 @@ async function createSandbox(
 ) {
   step(5, 7, "Creating sandbox");
 
-  const sandboxName = sandboxNameOverride || (await promptValidatedSandboxName());
+  const sandboxName = sandboxNameOverride
+    ? validateSandboxName(String(sandboxNameOverride).trim().toLowerCase())
+    : await promptValidatedSandboxName();
   const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
 
   // Reconcile local registry state with the live OpenShell gateway state.

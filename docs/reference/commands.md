@@ -214,6 +214,13 @@ The Telegram bridge requires `TELEGRAM_BOT_TOKEN`, `NVIDIA_API_KEY`, and an `ALL
 
 Manage the Telegram bridge allowlist.
 
+| Subcommand | Description |
+|------------|-------------|
+| `allow <id>` | Save one or more Telegram chat IDs in the allowlist |
+| `show` | Display the current Telegram allowlist |
+| `clear` | Remove all saved Telegram chat IDs |
+| `discover` | Start the bridge in discovery-only mode to reveal your chat ID |
+
 ```console
 $ nemoclaw telegram allow 123456789
 $ nemoclaw telegram show
