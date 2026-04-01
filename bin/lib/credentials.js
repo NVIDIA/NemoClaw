@@ -23,7 +23,25 @@ function normalizeCredentialValue(value) {
   return value.replace(/\r/g, "").trim();
 }
 
+let _credWarningShown = false;
+
+function warnPlaintextStorage() {
+  if (_credWarningShown) return;
+  if (process.env.NEMOCLAW_SUPPRESS_CREDENTIAL_WARNING === "1") return;
+  _credWarningShown = true;
+  console.warn(
+    "  \u26a0 Credentials stored as plaintext JSON at " + CREDS_FILE + " (mode 0600).\n" +
+    "    For sensitive deployments, set credentials via environment variables instead.\n" +
+    "    Suppress this warning: NEMOCLAW_SUPPRESS_CREDENTIAL_WARNING=1"
+  );
+}
+
+function getCredentialBackend() {
+  return "file";
+}
+
 function saveCredential(key, value) {
+  warnPlaintextStorage();
   fs.mkdirSync(CREDS_DIR, { recursive: true, mode: 0o700 });
   const creds = loadCredentials();
   creds[key] = normalizeCredentialValue(value);
@@ -262,6 +280,7 @@ module.exports = {
   normalizeCredentialValue,
   saveCredential,
   getCredential,
+  getCredentialBackend,
   prompt,
   ensureApiKey,
   ensureGithubToken,
