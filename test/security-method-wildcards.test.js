@@ -5,10 +5,16 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
-const BASELINE = path.join(import.meta.dirname, "..", "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
+const BASELINE = path.join(
+  import.meta.dirname,
+  "..",
+  "nemoclaw-blueprint",
+  "policies",
+  "openclaw-sandbox.yaml",
+);
 
 describe("method wildcards: baseline policy", () => {
-  it("no endpoint uses method: \"*\" wildcard", () => {
+  it('no endpoint uses method: "*" wildcard', () => {
     // method: "*" permits DELETE, PUT, PATCH which inference APIs do not
     // require. All endpoints should use explicit method rules (GET, POST).
     const yaml = fs.readFileSync(BASELINE, "utf-8");

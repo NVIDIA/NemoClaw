@@ -66,7 +66,7 @@ describe("setup-dns-proxy.sh", () => {
 
   it("uses grep -F for fixed-string sandbox name matching", () => {
     const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
-    expect(content).toContain('grep -F');
+    expect(content).toContain("grep -F");
   });
 
   it("discovers CoreDNS pod IP via kube-dns endpoints", () => {

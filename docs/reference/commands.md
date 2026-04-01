@@ -56,7 +56,7 @@ $ nemoclaw --version
 
 ### `nemoclaw onboard`
 
-Run the interactive setup wizard.
+Run the interactive setup wizard (recommended for new installs).
 The wizard creates an OpenShell gateway, registers inference providers, builds the sandbox image, and creates the sandbox.
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
@@ -67,6 +67,7 @@ $ nemoclaw onboard
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
 Credentials are stored in `~/.nemoclaw/credentials.json`.
+The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
 
 The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
@@ -90,7 +91,7 @@ The `nemoclaw deploy` command is experimental and may not work as expected.
 :::
 
 Deploy NemoClaw to a remote GPU instance through [Brev](https://brev.nvidia.com).
-The deploy script installs Docker, NVIDIA Container Toolkit if a GPU is present, and OpenShell on the VM, then runs the nemoclaw setup and connects to the sandbox.
+The deploy script installs Docker, NVIDIA Container Toolkit if a GPU is present, and OpenShell on the VM, then runs `nemoclaw onboard` and connects to the sandbox.
 
 ```console
 $ nemoclaw deploy <instance-name>
@@ -232,11 +233,10 @@ The CLI uses the local `uninstall.sh` first and falls back to the hosted script 
 $ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
 ```
 
-### `nemoclaw setup` (deprecated)
+### Legacy `nemoclaw setup`
 
-Run the legacy setup workflow for backwards compatibility.
-NemoClaw prints a deprecation warning, then runs the older `setup.sh` path.
-Prefer `nemoclaw onboard` for new installs and reconfiguration.
+Deprecated. Use `nemoclaw onboard` instead.
+The legacy setup command runs the old setup script for backwards compatibility only.
 
 ```console
 $ nemoclaw setup

@@ -63,7 +63,7 @@ describe("runner env merging", () => {
     const originalGateway = process.env.OPENSHELL_GATEWAY;
     process.env.OPENSHELL_GATEWAY = "nemoclaw";
     try {
-      const output = runCapture("printf '%s %s' \"$OPENSHELL_GATEWAY\" \"$OPENAI_API_KEY\"", {
+      const output = runCapture('printf \'%s %s\' "$OPENSHELL_GATEWAY" "$OPENAI_API_KEY"', {
         env: { OPENAI_API_KEY: "sk-test-secret" },
       });
       expect(output).toBe("nemoclaw sk-test-secret");
@@ -90,7 +90,9 @@ describe("runner env merging", () => {
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
       process.env.PATH = "/usr/local/bin:/usr/bin";
-      run("echo test", { env: { OPENSHELL_CLUSTER_IMAGE: "ghcr.io/nvidia/openshell/cluster:0.0.12" } });
+      run("echo test", {
+        env: { OPENSHELL_CLUSTER_IMAGE: "ghcr.io/nvidia/openshell/cluster:0.0.12" },
+      });
     } finally {
       if (originalPath === undefined) {
         delete process.env.PATH;
@@ -170,7 +172,10 @@ describe("validateName", () => {
 
 describe("regression guards", () => {
   it("nemoclaw.js does not use execSync", () => {
-    const src = fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"), "utf-8");
+    const src = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
+      "utf-8",
+    );
     const lines = src.split("\n");
     for (let i = 0; i < lines.length; i += 1) {
       if (lines[i].includes("execSync") && !lines[i].includes("execFileSync")) {
@@ -205,15 +210,19 @@ describe("regression guards", () => {
     const canaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-canary-"));
     const canary = path.join(canaryDir, "executed");
     try {
-      const result = spawnSync("node", [
-        path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
-        `test; touch ${canary}`,
-        "connect",
-      ], {
-        encoding: "utf-8",
-        timeout: 10000,
-        cwd: path.join(import.meta.dirname, ".."),
-      });
+      const result = spawnSync(
+        "node",
+        [
+          path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
+          `test; touch ${canary}`,
+          "connect",
+        ],
+        {
+          encoding: "utf-8",
+          timeout: 10000,
+          cwd: path.join(import.meta.dirname, ".."),
+        },
+      );
       expect(result.status).not.toBe(0);
       expect(fs.existsSync(canary)).toBe(false);
     } finally {
@@ -222,7 +231,10 @@ describe("regression guards", () => {
   });
 
   it("telegram bridge validates SANDBOX_NAME on startup", () => {
-    const src = fs.readFileSync(path.join(import.meta.dirname, "..", "scripts", "telegram-bridge.js"), "utf-8");
+    const src = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "scripts", "telegram-bridge.js"),
+      "utf-8",
+    );
     expect(src.includes("validateName(SANDBOX")).toBeTruthy();
     expect(src.includes("execSync")).toBeFalsy();
   });
@@ -230,7 +242,10 @@ describe("regression guards", () => {
   describe("credential exposure guards (#429)", () => {
     it("onboard createSandbox does not pass NVIDIA_API_KEY to sandbox env", () => {
       const fs = require("fs");
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"), "utf-8");
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
+        "utf-8",
+      );
       // Find the envArgs block in createSandbox — it should not contain NVIDIA_API_KEY
       const envArgsMatch = src.match(/const envArgs = \[[\s\S]*?\];/);
       expect(envArgsMatch).toBeTruthy();
@@ -239,13 +254,19 @@ describe("regression guards", () => {
 
     it("onboard clears NVIDIA_API_KEY from process.env after setupInference", () => {
       const fs = require("fs");
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"), "utf-8");
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
+        "utf-8",
+      );
       expect(src.includes("delete process.env.NVIDIA_API_KEY")).toBeTruthy();
     });
 
     it("setup.sh uses env-name-only form for nvidia-nim credential", () => {
       const fs = require("fs");
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "scripts", "setup.sh"), "utf-8");
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "scripts", "setup.sh"),
+        "utf-8",
+      );
       // Should use "NVIDIA_API_KEY" (name only), not "NVIDIA_API_KEY=$NVIDIA_API_KEY" (value)
       const lines = src.split("\n");
       for (const line of lines) {
@@ -261,7 +282,10 @@ describe("regression guards", () => {
 
     it("setup.sh does not pass NVIDIA_API_KEY in sandbox create env args", () => {
       const fs = require("fs");
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "scripts", "setup.sh"), "utf-8");
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "scripts", "setup.sh"),
+        "utf-8",
+      );
       // Find sandbox create command — should not have env NVIDIA_API_KEY
       const createLines = src.split("\n").filter((l) => l.includes("sandbox create"));
       for (const line of createLines) {
@@ -271,11 +295,14 @@ describe("regression guards", () => {
 
     it("setupSpark does not pass NVIDIA_API_KEY to sudo", () => {
       const fs = require("fs");
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"), "utf-8");
-      // Find the run() call inside setupSpark — it should not contain the key
-      const sparkLines = src.split("\n").filter(
-        (l) => l.includes("setup-spark") && l.includes("run(")
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
+        "utf-8",
       );
+      // Find the run() call inside setupSpark — it should not contain the key
+      const sparkLines = src
+        .split("\n")
+        .filter((l) => l.includes("setup-spark") && l.includes("run("));
       for (const line of sparkLines) {
         expect(line.includes("NVIDIA_API_KEY")).toBe(false);
       }
@@ -283,19 +310,29 @@ describe("regression guards", () => {
 
     it("walkthrough.sh does not embed NVIDIA_API_KEY in tmux or sandbox commands", () => {
       const fs = require("fs");
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "scripts", "walkthrough.sh"), "utf-8");
-      // Check only executable lines (tmux spawn, openshell connect) — not comments/docs
-      const cmdLines = src.split("\n").filter(
-        (l) => !l.trim().startsWith("#") && !l.trim().startsWith("echo") &&
-               (l.includes("tmux") || l.includes("openshell sandbox connect"))
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "scripts", "walkthrough.sh"),
+        "utf-8",
       );
+      // Check only executable lines (tmux spawn, openshell connect) — not comments/docs
+      const cmdLines = src
+        .split("\n")
+        .filter(
+          (l) =>
+            !l.trim().startsWith("#") &&
+            !l.trim().startsWith("echo") &&
+            (l.includes("tmux") || l.includes("openshell sandbox connect")),
+        );
       for (const line of cmdLines) {
         expect(line.includes("NVIDIA_API_KEY")).toBe(false);
       }
     });
 
     it("install-openshell.sh verifies OpenShell binary checksum after download", () => {
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh"), "utf-8");
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh"),
+        "utf-8",
+      );
       expect(src).toContain("openshell-checksums-sha256.txt");
       expect(src).toContain("shasum -a 256 -c");
     });
@@ -305,13 +342,14 @@ describe("regression guards", () => {
     // Strip comment lines, then join line continuations so multiline
     // curl ... |\n  bash patterns are caught by the single-line regex.
     const stripComments = (src, commentPrefix) =>
-      src.split("\n").filter((l) => !l.trim().startsWith(commentPrefix)).join("\n");
+      src
+        .split("\n")
+        .filter((l) => !l.trim().startsWith(commentPrefix))
+        .join("\n");
 
-    const joinContinuations = (src) =>
-      src.replace(/\\\n\s*/g, " ");
+    const joinContinuations = (src) => src.replace(/\\\n\s*/g, " ");
 
-    const collapseMultilinePipes = (src) =>
-      src.replace(/\|\s*\n\s*/g, "| ");
+    const collapseMultilinePipes = (src) => src.replace(/\|\s*\n\s*/g, "| ");
 
     const normalize = (src, commentPrefix) =>
       collapseMultilinePipes(joinContinuations(stripComments(src, commentPrefix)));
@@ -343,17 +381,26 @@ describe("regression guards", () => {
     });
 
     it("scripts/install.sh does not pipe curl to shell", () => {
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "scripts", "install.sh"), "utf-8");
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "scripts", "install.sh"),
+        "utf-8",
+      );
       expect(findShellViolations(src)).toEqual([]);
     });
 
     it("scripts/brev-setup.sh does not pipe curl to shell", () => {
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "scripts", "brev-setup.sh"), "utf-8");
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "scripts", "brev-setup.sh"),
+        "utf-8",
+      );
       expect(findShellViolations(src)).toEqual([]);
     });
 
     it("bin/nemoclaw.js does not pipe curl to shell", () => {
-      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"), "utf-8");
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
+        "utf-8",
+      );
       expect(findJsViolations(src)).toEqual([]);
     });
   });

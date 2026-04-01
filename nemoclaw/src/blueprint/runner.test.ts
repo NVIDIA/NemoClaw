@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type fs from "node:fs";
 import YAML from "yaml";
 
 // ── In-memory filesystem ────────────────────────────────────────
@@ -32,7 +33,7 @@ vi.mock("node:crypto", () => ({
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
-  const original = await importOriginal();
+  const original = await importOriginal<typeof fs>();
   return {
     ...original,
     existsSync: (p: string) => store.has(p),

@@ -149,7 +149,9 @@ describe("atomic writes", () => {
     // Stub renameSync so writeFileSync succeeds (temp file is created)
     // but the rename step throws — exercising the cleanup branch.
     const original = fs.renameSync;
-    fs.renameSync = () => { throw Object.assign(new Error("EACCES"), { code: "EACCES" }); };
+    fs.renameSync = () => {
+      throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+    };
     try {
       expect(() => registry.save({ sandboxes: {}, defaultSandbox: null })).toThrow("EACCES");
     } finally {
@@ -247,7 +249,9 @@ describe("advisory file locking", () => {
 
   it("concurrent writers do not corrupt the registry", () => {
     const { spawnSync } = require("child_process");
-    const registryPath = path.resolve(path.join(import.meta.dirname, "..", "bin", "lib", "registry.js"));
+    const registryPath = path.resolve(
+      path.join(import.meta.dirname, "..", "bin", "lib", "registry.js"),
+    );
     const homeDir = path.dirname(path.dirname(regFile));
     // Script that spawns 4 workers in parallel, each writing 5 sandboxes
     const orchestrator = `

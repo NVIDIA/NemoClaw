@@ -70,7 +70,8 @@ function validateLocalProvider(provider, runCapture) {
       case "ollama-local":
         return {
           ok: false,
-          message: "Local Ollama was selected, but nothing is responding on http://localhost:11434.",
+          message:
+            "Local Ollama was selected, but nothing is responding on http://localhost:11434.",
         };
       default:
         return { ok: false, message: "The selected local inference provider is unavailable." };
@@ -101,7 +102,10 @@ function validateLocalProvider(provider, runCapture) {
           "Local Ollama is responding on localhost, but containers cannot reach http://host.openshell.internal:11434. Ensure Ollama listens on 0.0.0.0:11434 instead of 127.0.0.1 so sandboxes can reach it.",
       };
     default:
-      return { ok: false, message: "The selected local inference provider is unavailable from containers." };
+      return {
+        ok: false,
+        message: "The selected local inference provider is unavailable from containers.",
+      };
   }
 }
 
@@ -127,7 +131,9 @@ function parseOllamaTags(output) {
 }
 
 function getOllamaModelOptions(runCapture) {
-  const tagsOutput = runCapture("curl -sf http://localhost:11434/api/tags 2>/dev/null", { ignoreError: true });
+  const tagsOutput = runCapture("curl -sf http://localhost:11434/api/tags 2>/dev/null", {
+    ignoreError: true,
+  });
   const tagsParsed = parseOllamaTags(tagsOutput);
   if (tagsParsed.length > 0) {
     return tagsParsed;
@@ -193,7 +199,9 @@ function validateOllamaModel(model, runCapture) {
         message: `Selected Ollama model '${model}' failed the local probe: ${parsed.error.trim()}`,
       };
     }
-  } catch { /* ignored */ }
+  } catch {
+    /* ignored */
+  }
 
   return { ok: true };
 }
