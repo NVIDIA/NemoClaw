@@ -62,10 +62,7 @@ function buildSnapshotDir(parentDir, manifest) {
     path.join(snapshotDir, "config", "openclaw.json"),
     JSON.stringify({ model: "attacker-model" }),
   );
-  fs.writeFileSync(
-    path.join(snapshotDir, "snapshot.json"),
-    JSON.stringify(manifest, null, 2),
-  );
+  fs.writeFileSync(path.join(snapshotDir, "snapshot.json"), JSON.stringify(manifest, null, 2));
   return snapshotDir;
 }
 
@@ -74,9 +71,7 @@ function buildSnapshotDir(parentDir, manifest) {
  * Returns { result, errors, written }.
  */
 function restoreVulnerable(snapshotDir) {
-  const manifest = JSON.parse(
-    fs.readFileSync(path.join(snapshotDir, "snapshot.json"), "utf-8"),
-  );
+  const manifest = JSON.parse(fs.readFileSync(path.join(snapshotDir, "snapshot.json"), "utf-8"));
   const snapshotStateDir = path.join(snapshotDir, "openclaw");
   const errors = [];
   let written = false;
@@ -107,9 +102,7 @@ function restoreVulnerable(snapshotDir) {
  * @param {string} [trustedRoot] - trusted host root (defaults to os.homedir())
  */
 function restoreFixed(snapshotDir, trustedRoot) {
-  const manifest = JSON.parse(
-    fs.readFileSync(path.join(snapshotDir, "snapshot.json"), "utf-8"),
-  );
+  const manifest = JSON.parse(fs.readFileSync(path.join(snapshotDir, "snapshot.json"), "utf-8"));
   const snapshotStateDir = path.join(snapshotDir, "openclaw");
   const errors = [];
   let written = false;
@@ -200,7 +193,9 @@ describe("C-4 PoC: vulnerable restoreSnapshotToHost allows path traversal", () =
       expect(result).toBeTruthy();
       expect(written).toBeTruthy();
       expect(fs.existsSync(path.join(traversalTarget, "sentinel.txt"))).toBeTruthy();
-      expect(fs.readFileSync(path.join(traversalTarget, "sentinel.txt"), "utf-8")).toBe("attacker-controlled-content");
+      expect(fs.readFileSync(path.join(traversalTarget, "sentinel.txt"), "utf-8")).toBe(
+        "attacker-controlled-content",
+      );
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -443,7 +438,9 @@ describe("C-4 regression: migration-state.ts contains path validation", () => {
 
   it("restoreSnapshotToHost fails closed when hasExternalConfig is true with missing configPath", () => {
     const fnBody = getRestoreFnBody();
-    expect(/manifest\.hasExternalConfig\b/.test(fnBody) &&
-      /typeof\s+manifest\.configPath\s*!==\s*["']string["']/.test(fnBody)).toBeTruthy();
+    expect(
+      /manifest\.hasExternalConfig\b/.test(fnBody) &&
+        /typeof\s+manifest\.configPath\s*!==\s*["']string["']/.test(fnBody),
+    ).toBeTruthy();
   });
 });
