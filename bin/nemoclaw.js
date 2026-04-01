@@ -771,8 +771,7 @@ function registrySandboxArg(defaultSandbox = registry.listSandboxes().defaultSan
   return safe ? ` --sandbox ${shellQuote(safe)}` : "";
 }
 
-async function start() {
-  await ensureApiKey();
+function start() {
   run(`bash "${SCRIPTS}/start-services.sh"${registrySandboxArg()}`);
 }
 
