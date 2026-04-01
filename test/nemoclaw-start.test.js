@@ -59,3 +59,32 @@ describe("nemoclaw-start non-root fallback", () => {
     }
   });
 });
+
+describe("nemoclaw-start auto-pair hardening", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("defines auto-pair allowlists for expected dashboard clients", () => {
+    expect(src).toMatch(/ALLOWED_CLIENTS\s*=\s*\{[^}]*'openclaw-control-ui'[^}]*\}/);
+    expect(src).toMatch(/ALLOWED_MODES\s*=\s*\{[^}]*'webchat'[^}]*\}/);
+  });
+
+  it("validates pending devices before field access", () => {
+    expect(src).toMatch(/if not isinstance\(device, dict\):/);
+    expect(src).not.toMatch(/\(device or \{\}\)\.get\('requestId'\)/);
+  });
+
+  it("rejects unknown clients instead of approving every pending request", () => {
+    expect(src).toMatch(/client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES/);
+    expect(src).toMatch(/\[auto-pair\] rejected unknown client=/);
+  });
+
+  it("tracks handled requests to avoid reprocessing rejected or approved devices", () => {
+    expect(src).toMatch(/HANDLED\s*=\s*set\(\)/);
+    expect(src).toMatch(/request_id in HANDLED/);
+    expect(src.match(/HANDLED\.add\(request_id\)/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("includes the approved client identity in the audit log", () => {
+    expect(src).toMatch(/\[auto-pair\] approved request=\{request_id\} client=\{client_id\}/);
+  });
+});

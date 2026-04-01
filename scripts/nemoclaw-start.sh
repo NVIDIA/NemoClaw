@@ -153,6 +153,9 @@ OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 DEADLINE = time.time() + 600
 QUIET_POLLS = 0
 APPROVED = 0
+HANDLED = set()
+ALLOWED_CLIENTS = {'openclaw-control-ui'}
+ALLOWED_MODES = {'webchat'}
 
 def run(*args):
     proc = subprocess.run(args, capture_output=True, text=True)
@@ -176,13 +179,22 @@ while time.time() < DEADLINE:
     if pending:
         QUIET_POLLS = 0
         for device in pending:
-            request_id = (device or {}).get('requestId')
-            if not request_id:
+            if not isinstance(device, dict):
+                continue
+            request_id = device.get('requestId')
+            if not request_id or request_id in HANDLED:
+                continue
+            client_id = device.get('clientId', '')
+            client_mode = device.get('clientMode', '')
+            if client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES:
+                HANDLED.add(request_id)
+                print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
                 continue
             arc, aout, aerr = run(OPENCLAW, 'devices', 'approve', request_id, '--json')
+            HANDLED.add(request_id)
             if arc == 0:
                 APPROVED += 1
-                print(f'[auto-pair] approved request={request_id}')
+                print(f'[auto-pair] approved request={request_id} client={client_id}')
             elif aout or aerr:
                 print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
         time.sleep(1)
