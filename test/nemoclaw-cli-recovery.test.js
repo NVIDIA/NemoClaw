@@ -35,7 +35,7 @@ describe("nemoclaw CLI runtime recovery", () => {
           },
         },
       }),
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
     fs.writeFileSync(stateFile, JSON.stringify({ statusCalls: 0, sandboxGetCalls: 0 }));
     fs.writeFileSync(
@@ -85,18 +85,22 @@ if (args[0] === "logs") {
 
 process.exit(0);
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
-    const result = spawnSync(process.execPath, [path.join(repoRoot, "bin", "nemoclaw.js"), "my-assistant", "status"], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: "/usr/bin:/bin",
+    const result = spawnSync(
+      process.execPath,
+      [path.join(repoRoot, "bin", "nemoclaw.js"), "my-assistant", "status"],
+      {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: "/usr/bin:/bin",
+        },
       },
-    });
+    );
 
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Recovered NemoClaw gateway runtime via (start|select)/);

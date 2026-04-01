@@ -6,11 +6,11 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const YAML = require("yaml");
 const { ROOT, run, runCapture, shellQuote } = require("./runner");
 const registry = require("./registry");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
-
 function getOpenshellCommand() {
   const binary = process.env.NEMOCLAW_OPENSHELL_BIN;
   if (!binary) return "openshell";
@@ -63,6 +63,7 @@ function getPresetEndpoints(content) {
  * `preset:` metadata header.
  */
 function extractPresetEntries(presetContent) {
+  if (!presetContent) return null;
   const npMatch = presetContent.match(/^network_policies:\n([\s\S]*)$/m);
   if (!npMatch) return null;
   return npMatch[1].trimEnd();
@@ -75,8 +76,23 @@ function extractPresetEntries(presetContent) {
 function parseCurrentPolicy(raw) {
   if (!raw) return "";
   const sep = raw.indexOf("---");
-  if (sep === -1) return raw;
-  return raw.slice(sep + 3).trim();
+  const candidate = (sep === -1 ? raw : raw.slice(sep + 3)).trim();
+  if (!candidate) return "";
+  if (/^(error|failed|invalid|warning|status)\b/i.test(candidate)) {
+    return "";
+  }
+  if (!/^[a-z_][a-z0-9_]*\s*:/m.test(candidate)) {
+    return "";
+  }
+  try {
+    const parsed = YAML.parse(candidate);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return "";
+    }
+  } catch {
+    return "";
+  }
+  return candidate;
 }
 
 /**
@@ -103,16 +119,17 @@ function buildPolicyGetCommand(sandboxName) {
  * @returns {string} Merged YAML with version header when missing
  */
 function mergePresetIntoPolicy(currentPolicy, presetEntries) {
+  const normalizedCurrentPolicy = parseCurrentPolicy(currentPolicy);
   if (!presetEntries) {
-    return currentPolicy || "version: 1\n\nnetwork_policies:\n";
+    return normalizedCurrentPolicy || "version: 1\n\nnetwork_policies:\n";
   }
-  if (!currentPolicy) {
+  if (!normalizedCurrentPolicy) {
     return "version: 1\n\nnetwork_policies:\n" + presetEntries;
   }
 
   let merged;
-  if (/^network_policies\s*:/m.test(currentPolicy)) {
-    const lines = currentPolicy.split("\n");
+  if (/^network_policies\s*:/m.test(normalizedCurrentPolicy)) {
+    const lines = normalizedCurrentPolicy.split("\n");
     const result = [];
     let inNetworkPolicies = false;
     let inserted = false;
@@ -141,11 +158,11 @@ function mergePresetIntoPolicy(currentPolicy, presetEntries) {
 
     merged = result.join("\n");
   } else {
-    merged = currentPolicy.trimEnd() + "\n\nnetwork_policies:\n" + presetEntries;
+    merged = normalizedCurrentPolicy.trimEnd() + "\n\nnetwork_policies:\n" + presetEntries;
   }
 
   if (!merged.trimStart().startsWith("version:")) {
-    merged = "version: 1\n" + merged;
+    merged = "version: 1\n\n" + merged;
   }
   return merged;
 }
@@ -156,7 +173,7 @@ function applyPreset(sandboxName, presetName) {
   if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
     throw new Error(
       `Invalid or truncated sandbox name: '${sandboxName}'. ` +
-      `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`
+        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
     );
   }
 
@@ -175,11 +192,10 @@ function applyPreset(sandboxName, presetName) {
   // Get current policy YAML from sandbox
   let rawPolicy = "";
   try {
-    rawPolicy = runCapture(
-      buildPolicyGetCommand(sandboxName),
-      { ignoreError: true }
-    );
-  } catch { /* ignored */ }
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+  } catch {
+    /* ignored */
+  }
 
   const currentPolicy = parseCurrentPolicy(rawPolicy);
   const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
@@ -193,8 +209,16 @@ function applyPreset(sandboxName, presetName) {
 
     console.log(`  Applied preset: ${presetName}`);
   } finally {
-    try { fs.unlinkSync(tmpFile); } catch { /* ignored */ }
-    try { fs.rmdirSync(tmpDir); } catch { /* ignored */ }
+    try {
+      fs.unlinkSync(tmpFile);
+    } catch {
+      /* ignored */
+    }
+    try {
+      fs.rmdirSync(tmpDir);
+    } catch {
+      /* ignored */
+    }
   }
 
   const sandbox = registry.getSandbox(sandboxName);

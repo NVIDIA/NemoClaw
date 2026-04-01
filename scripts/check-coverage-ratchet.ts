@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Compares Vitest coverage output against ci/coverage-threshold.json.
+// Compares a Vitest coverage summary against a threshold file.
 // Exits non-zero if any metric drops more than 1% below its threshold.
 
 import { readFileSync } from "node:fs";
@@ -29,10 +29,14 @@ function loadJSON<T>(repoRelative: string): T {
 }
 
 function main(): void {
-  const summary = loadJSON<{ total: Record<string, { pct: number }> }>(
-    "coverage/coverage-summary.json",
-  );
-  const thresholds = loadJSON<Thresholds>("ci/coverage-threshold.json");
+  const [summaryPath, thresholdPath, label = "coverage"] = process.argv.slice(2);
+  if (!summaryPath || !thresholdPath) {
+    throw new Error(
+      "Usage: check-coverage-ratchet.ts <coverage-summary.json> <coverage-threshold.json> [label]"
+    );
+  }
+  const summary = loadJSON<{ total: Record<string, { pct: number }> }>(summaryPath);
+  const thresholds = loadJSON<Thresholds>(thresholdPath);
 
   const failures = METRICS.map((metric) => ({
     metric,
@@ -42,7 +46,7 @@ function main(): void {
 
   if (failures.length === 0) return;
 
-  console.error("Coverage ratchet failed:\n");
+  console.error(`${label} ratchet failed:\n`);
   for (const { metric, actual, threshold } of failures) {
     console.error(`  ${metric}: ${actual}% < ${threshold}% (tolerance ±${TOLERANCE}%)`);
   }

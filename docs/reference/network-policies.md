@@ -72,13 +72,13 @@ The following endpoint groups are allowed by default:
   - GET, POST, PATCH, PUT, DELETE
 
 * - `clawhub`
-  - `clawhub.com:443`
-  - `/usr/local/bin/openclaw`
+  - `clawhub.ai:443`
+  - `/usr/local/bin/openclaw`, `/usr/local/bin/node`
   - GET, POST
 
 * - `openclaw_api`
   - `openclaw.ai:443`
-  - `/usr/local/bin/openclaw`
+  - `/usr/local/bin/openclaw`, `/usr/local/bin/node`
   - GET, POST
 
 * - `openclaw_docs`

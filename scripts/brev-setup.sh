@@ -40,12 +40,21 @@ export DEBIAN_FRONTEND=noninteractive
 # --- 0. Node.js (needed for services) ---
 if ! command -v node >/dev/null 2>&1; then
   info "Installing Node.js..."
-  # Upstream URL is a rolling release so SHA-256 pinning isn't practical,
-  # but download-then-execute allows inspection and prevents partial-download execution.
+  NODESOURCE_URL="https://deb.nodesource.com/setup_22.x"
+  NODESOURCE_SHA256="575583bbac2fccc0b5edd0dbc03e222d9f9dc8d724da996d22754d6411104fd1"
   (
     tmpdir="$(mktemp -d)"
     trap 'rm -rf "$tmpdir"' EXIT
-    curl -fsSL https://deb.nodesource.com/setup_22.x -o "$tmpdir/setup_node.sh"
+    curl -fsSL "$NODESOURCE_URL" -o "$tmpdir/setup_node.sh"
+    if command -v sha256sum >/dev/null 2>&1; then
+      echo "$NODESOURCE_SHA256  $tmpdir/setup_node.sh" | sha256sum -c - >/dev/null \
+        || fail "NodeSource installer checksum mismatch — expected $NODESOURCE_SHA256"
+    elif command -v shasum >/dev/null 2>&1; then
+      echo "$NODESOURCE_SHA256  $tmpdir/setup_node.sh" | shasum -a 256 -c - >/dev/null \
+        || fail "NodeSource installer checksum mismatch — expected $NODESOURCE_SHA256"
+    else
+      fail "No SHA-256 verification tool found (need sha256sum or shasum)"
+    fi
     sudo -E bash "$tmpdir/setup_node.sh" >/dev/null 2>&1
   )
   sudo apt-get install -y -qq nodejs >/dev/null 2>&1

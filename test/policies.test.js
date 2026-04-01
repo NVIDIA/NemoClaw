@@ -83,28 +83,17 @@ describe("policies", () => {
 
   describe("buildPolicySetCommand", () => {
     it("shell-quotes sandbox name to prevent injection", () => {
-      const cmd = policies.buildPolicySetCommand(
-        "/tmp/policy.yaml",
-        "my-assistant",
-      );
-      expect(cmd).toBe(
-        "openshell policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'",
-      );
+      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
+      expect(cmd).toBe("openshell policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'");
     });
 
     it("escapes shell metacharacters in sandbox name", () => {
-      const cmd = policies.buildPolicySetCommand(
-        "/tmp/policy.yaml",
-        "test; whoami",
-      );
+      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test; whoami");
       expect(cmd.includes("'test; whoami'")).toBeTruthy();
     });
 
     it("places --wait before the sandbox name", () => {
-      const cmd = policies.buildPolicySetCommand(
-        "/tmp/policy.yaml",
-        "test-box",
-      );
+      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test-box");
       const waitIdx = cmd.indexOf("--wait");
       const nameIdx = cmd.indexOf("'test-box'");
       expect(waitIdx < nameIdx).toBeTruthy();
@@ -113,10 +102,7 @@ describe("policies", () => {
     it("uses the resolved openshell binary when provided by the installer path", () => {
       process.env.NEMOCLAW_OPENSHELL_BIN = "/tmp/fake path/openshell";
       try {
-        const cmd = policies.buildPolicySetCommand(
-          "/tmp/policy.yaml",
-          "my-assistant",
-        );
+        const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
         assert.equal(
           cmd,
           "'/tmp/fake path/openshell' policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'",
@@ -130,9 +116,137 @@ describe("policies", () => {
   describe("buildPolicyGetCommand", () => {
     it("shell-quotes sandbox name", () => {
       const cmd = policies.buildPolicyGetCommand("my-assistant");
-      expect(cmd).toBe(
-        "openshell policy get --full 'my-assistant' 2>/dev/null",
-      );
+      expect(cmd).toBe("openshell policy get --full 'my-assistant' 2>/dev/null");
+    });
+  });
+
+  describe("extractPresetEntries", () => {
+    it("returns null for null input", () => {
+      expect(policies.extractPresetEntries(null)).toBe(null);
+    });
+
+    it("returns null for undefined input", () => {
+      expect(policies.extractPresetEntries(undefined)).toBe(null);
+    });
+
+    it("returns null for empty string", () => {
+      expect(policies.extractPresetEntries("")).toBe(null);
+    });
+
+    it("returns null when no network_policies section exists", () => {
+      const content = "preset:\n  name: test\n  description: test preset";
+      expect(policies.extractPresetEntries(content)).toBe(null);
+    });
+
+    it("extracts indented entries from network_policies section", () => {
+      const content = [
+        "preset:",
+        "  name: test",
+        "",
+        "network_policies:",
+        "  test_rule:",
+        "    name: test_rule",
+        "    endpoints:",
+        "      - host: example.com",
+        "        port: 443",
+      ].join("\n");
+      const entries = policies.extractPresetEntries(content);
+      expect(entries).toContain("test_rule:");
+      expect(entries).toContain("host: example.com");
+      expect(entries).toContain("port: 443");
+    });
+
+    it("strips trailing whitespace from extracted entries", () => {
+      const content = "network_policies:\n  rule:\n    name: rule\n\n\n";
+      const entries = policies.extractPresetEntries(content);
+      expect(entries).not.toMatch(/\n$/);
+    });
+
+    it("works on every real preset file", () => {
+      for (const p of policies.listPresets()) {
+        const content = policies.loadPreset(p.name);
+        const entries = policies.extractPresetEntries(content);
+        expect(entries).toBeTruthy();
+        expect(entries).toContain("endpoints:");
+      }
+    });
+
+    it("does not include preset metadata header", () => {
+      const content = [
+        "preset:",
+        "  name: test",
+        "  description: desc",
+        "",
+        "network_policies:",
+        "  rule:",
+        "    name: rule",
+      ].join("\n");
+      const entries = policies.extractPresetEntries(content);
+      expect(entries).not.toContain("preset:");
+      expect(entries).not.toContain("description:");
+    });
+  });
+
+  describe("parseCurrentPolicy", () => {
+    it("returns empty string for null input", () => {
+      expect(policies.parseCurrentPolicy(null)).toBe("");
+    });
+
+    it("returns empty string for undefined input", () => {
+      expect(policies.parseCurrentPolicy(undefined)).toBe("");
+    });
+
+    it("returns empty string for empty string input", () => {
+      expect(policies.parseCurrentPolicy("")).toBe("");
+    });
+
+    it("strips metadata header before --- separator", () => {
+      const raw = [
+        "Version: 3",
+        "Hash: abc123",
+        "Updated: 2026-03-26",
+        "---",
+        "version: 1",
+        "",
+        "network_policies:",
+        "  rule: {}",
+      ].join("\n");
+      const result = policies.parseCurrentPolicy(raw);
+      expect(result).toBe("version: 1\n\nnetwork_policies:\n  rule: {}");
+      expect(result).not.toContain("Hash:");
+      expect(result).not.toContain("Updated:");
+    });
+
+    it("returns raw content when no --- separator exists", () => {
+      const raw = "version: 1\nnetwork_policies:\n  rule: {}";
+      expect(policies.parseCurrentPolicy(raw)).toBe(raw);
+    });
+
+    it("trims whitespace around extracted YAML", () => {
+      const raw = "Header: value\n---\n  \nversion: 1\n  ";
+      const result = policies.parseCurrentPolicy(raw);
+      expect(result).toBe("version: 1");
+    });
+
+    it("handles --- appearing as first line", () => {
+      const raw = "---\nversion: 1\nnetwork_policies: {}";
+      const result = policies.parseCurrentPolicy(raw);
+      expect(result).toBe("version: 1\nnetwork_policies: {}");
+    });
+
+    it("drops metadata-only or truncated policy reads", () => {
+      const raw = "Version: 3\nHash: abc123";
+      expect(policies.parseCurrentPolicy(raw)).toBe("");
+    });
+
+    it("drops non-policy error output instead of treating it as YAML", () => {
+      const raw = "Error: failed to parse sandbox policy YAML";
+      expect(policies.parseCurrentPolicy(raw)).toBe("");
+    });
+
+    it("drops syntactically invalid or truncated YAML bodies", () => {
+      const raw = "Version: 3\n---\nversion: 1\nnetwork_policies";
+      expect(policies.parseCurrentPolicy(raw)).toBe("");
     });
   });
 
@@ -149,8 +263,7 @@ describe("policies", () => {
     });
 
     it("appends preset entries when current policy has network_policies but no version", () => {
-      const versionlessWithNp =
-        "network_policies:\n  - host: existing.com\n    allow: true";
+      const versionlessWithNp = "network_policies:\n  - host: existing.com\n    allow: true";
       const merged = policies.mergePresetIntoPolicy(versionlessWithNp, sampleEntries);
       expect(merged.trimStart().startsWith("version: 1\n")).toBe(true);
       expect(merged).toContain("existing.com");
@@ -168,6 +281,18 @@ describe("policies", () => {
       const merged = policies.mergePresetIntoPolicy("", sampleEntries);
       expect(merged.startsWith("version: 1\n\nnetwork_policies:")).toBe(true);
       expect(merged).toContain("example.com");
+    });
+
+    it("rebuilds from a clean scaffold when current policy read is truncated", () => {
+      const merged = policies.mergePresetIntoPolicy("Version: 3\nHash: abc123", sampleEntries);
+      expect(merged).toBe(
+        "version: 1\n\nnetwork_policies:\n  - host: example.com\n    allow: true",
+      );
+    });
+
+    it("adds a blank line after synthesized version headers", () => {
+      const merged = policies.mergePresetIntoPolicy("some_key:\n  foo: bar", sampleEntries);
+      expect(merged.startsWith("version: 1\n\nsome_key:")).toBe(true);
     });
   });
 
