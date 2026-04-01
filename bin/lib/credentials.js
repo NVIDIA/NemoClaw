@@ -323,6 +323,7 @@ async function ensureGithubToken() {
 }
 
 const exports_ = {
+  SUPPORTED_API_KEYS,
   loadCredentials,
   normalizeCredentialValue,
   saveCredential,

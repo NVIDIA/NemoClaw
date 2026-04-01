@@ -21,6 +21,7 @@ const fs = require("fs");
 const { execFileSync, spawn } = require("child_process");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 const { shellQuote, validateName } = require("../bin/lib/runner");
+const { SUPPORTED_API_KEYS } = require("../bin/lib/credentials");
 
 const OPENSHELL = resolveOpenshell();
 if (!OPENSHELL) {
@@ -30,12 +31,13 @@ if (!OPENSHELL) {
 
 const APP_TOKEN = process.env.SLACK_APP_TOKEN;
 const BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
-const API_KEY = process.env.NVIDIA_API_KEY;
 const SANDBOX = process.env.SANDBOX_NAME || "nemoclaw";
 try { validateName(SANDBOX, "SANDBOX_NAME"); } catch (e) { console.error(e.message); process.exit(1); }
 
 if (!APP_TOKEN || !BOT_TOKEN) { console.error("SLACK_APP_TOKEN and SLACK_BOT_TOKEN required"); process.exit(1); }
-if (!API_KEY) { console.error("NVIDIA_API_KEY required"); process.exit(1); }
+
+const hasApiKey = SUPPORTED_API_KEYS.some(k => process.env[k]);
+if (!hasApiKey) { console.error("An API key (NVIDIA, OpenAI, Anthropic, etc.) is required"); process.exit(1); }
 
 const COOLDOWN_MS = 5000;
 const lastMessageTime = new Map();
@@ -111,7 +113,8 @@ function runAgentInSandbox(message, sessionId) {
     fs.writeFileSync(confPath, sshConfig, { mode: 0o600 });
 
     const safeSessionId = String(sessionId).replace(/[^a-zA-Z0-9-]/g, "");
-    const cmd = `export NVIDIA_API_KEY=${shellQuote(API_KEY)} && nemoclaw-start openclaw agent --agent main --local -m ${shellQuote(message)} --session-id ${shellQuote("slack-" + safeSessionId)}`;
+    const envExports = SUPPORTED_API_KEYS.filter(k => process.env[k]).map(k => `export ${k}=${shellQuote(process.env[k])}`).join(" && ");
+    const cmd = `${envExports} && nemoclaw-start openclaw agent --agent main --local -m ${shellQuote(message)} --session-id ${shellQuote("slack-" + safeSessionId)}`;
 
     const proc = spawn("ssh", ["-T", "-F", confPath, `openshell-${SANDBOX}`, cmd], {
       stdio: ["ignore", "pipe", "pipe"],

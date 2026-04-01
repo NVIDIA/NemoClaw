@@ -37,6 +37,7 @@ const {
   ensureGithubToken,
   getCredential,
   isRepoPrivate,
+  SUPPORTED_API_KEYS,
 } = require("./lib/credentials");
 const registry = require("./lib/registry");
 const nim = require("./lib/nim");
@@ -710,7 +711,17 @@ async function deploy(instanceName) {
     `rsync -az --delete --exclude node_modules --exclude .git --exclude src -e "ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR" "${ROOT}/scripts" "${ROOT}/Dockerfile" "${ROOT}/nemoclaw" "${ROOT}/nemoclaw-blueprint" "${ROOT}/bin" "${ROOT}/package.json" ${qname}:/home/ubuntu/nemoclaw/`,
   );
 
-  const envLines = [`NVIDIA_API_KEY=${shellQuote(process.env.NVIDIA_API_KEY || "")}`];
+  const envLines = [];
+  let hasKey = false;
+  for (const k of SUPPORTED_API_KEYS) {
+    const val = process.env[k] || getCredential(k);
+    if (val) {
+      envLines.push(`${k}=${shellQuote(val)}`);
+      hasKey = true;
+    }
+  }
+  if (hasKey) envLines.push("NEMOCLAW_HAS_API_KEY=1");
+
   const ghToken = process.env.GITHUB_TOKEN;
   if (ghToken) envLines.push(`GITHUB_TOKEN=${shellQuote(ghToken)}`);
   const tgToken = getCredential("TELEGRAM_BOT_TOKEN");
@@ -766,6 +777,10 @@ async function start() {
   const creds = require("./lib/credentials").loadCredentials();
   for (const [k, v] of Object.entries(creds)) {
     if (!process.env[k]) process.env[k] = v;
+  }
+
+  if (SUPPORTED_API_KEYS.some((k) => process.env[k])) {
+    process.env.NEMOCLAW_HAS_API_KEY = "1";
   }
 
   const { defaultSandbox } = registry.listSandboxes();
@@ -838,6 +853,10 @@ function uninstall(args) {
 }
 
 function showStatus() {
+  if (SUPPORTED_API_KEYS.some((k) => process.env[k] || getCredential(k))) {
+    process.env.NEMOCLAW_HAS_API_KEY = "1";
+  }
+
   // Show sandbox registry
   const { sandboxes, defaultSandbox } = registry.listSandboxes();
   if (sandboxes.length > 0) {

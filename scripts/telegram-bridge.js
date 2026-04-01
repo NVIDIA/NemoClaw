@@ -20,6 +20,7 @@ const https = require("https");
 const { execFileSync, spawn } = require("child_process");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 const { shellQuote, validateName } = require("../bin/lib/runner");
+const { SUPPORTED_API_KEYS } = require("../bin/lib/credentials");
 
 const OPENSHELL = resolveOpenshell();
 if (!OPENSHELL) {
@@ -28,7 +29,6 @@ if (!OPENSHELL) {
 }
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const API_KEY = process.env.NVIDIA_API_KEY;
 const SANDBOX = process.env.SANDBOX_NAME || "nemoclaw";
 try { validateName(SANDBOX, "SANDBOX_NAME"); } catch (e) { console.error(e.message); process.exit(1); }
 const ALLOWED_CHATS = process.env.ALLOWED_CHAT_IDS
@@ -36,7 +36,9 @@ const ALLOWED_CHATS = process.env.ALLOWED_CHAT_IDS
   : null;
 
 if (!TOKEN) { console.error("TELEGRAM_BOT_TOKEN required"); process.exit(1); }
-if (!API_KEY) { console.error("NVIDIA_API_KEY required"); process.exit(1); }
+
+const hasApiKey = SUPPORTED_API_KEYS.some(k => process.env[k]);
+if (!hasApiKey) { console.error("An API key (NVIDIA, OpenAI, Anthropic, etc.) is required"); process.exit(1); }
 
 let offset = 0;
 const activeSessions = new Map(); // chatId → message history
@@ -105,11 +107,12 @@ function runAgentInSandbox(message, sessionId) {
     const confPath = `${confDir}/config`;
     require("fs").writeFileSync(confPath, sshConfig, { mode: 0o600 });
 
-    // Pass message and API key via stdin to avoid shell interpolation.
+    // Pass message and API keys via stdin to avoid shell interpolation.
     // The remote command reads them from environment/stdin rather than
     // embedding user content in a shell string.
     const safeSessionId = String(sessionId).replace(/[^a-zA-Z0-9-]/g, "");
-    const cmd = `export NVIDIA_API_KEY=${shellQuote(API_KEY)} && nemoclaw-start openclaw agent --agent main --local -m ${shellQuote(message)} --session-id ${shellQuote("tg-" + safeSessionId)}`;
+    const envExports = SUPPORTED_API_KEYS.filter(k => process.env[k]).map(k => `export ${k}=${shellQuote(process.env[k])}`).join(" && ");
+    const cmd = `${envExports} && nemoclaw-start openclaw agent --agent main --local -m ${shellQuote(message)} --session-id ${shellQuote("tg-" + safeSessionId)}`;
 
     const proc = spawn("ssh", ["-T", "-F", confPath, `openshell-${SANDBOX}`, cmd], {
       timeout: 120000,
