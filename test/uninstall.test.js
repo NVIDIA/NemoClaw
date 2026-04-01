@@ -14,7 +14,6 @@ function createFakeNpmEnv(tmp) {
   const npmPath = path.join(fakeBin, "npm");
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.writeFileSync(npmPath, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
-
   return {
     ...process.env,
     HOME: tmp,

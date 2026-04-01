@@ -76,7 +76,11 @@ describe("C-2 PoC: vulnerable pattern (ARG interpolation into python3 -c)", () =
       expect(fs.existsSync(canary)).toBeTruthy();
       expect(fs.readFileSync(canary, "utf-8")).toBe("PWNED");
     } finally {
-      try { fs.unlinkSync(canary); } catch { /* cleanup */ }
+      try {
+        fs.unlinkSync(canary);
+      } catch {
+        /* cleanup */
+      }
     }
   });
 });
@@ -106,7 +110,11 @@ describe("C-2 fix: env var pattern (os.environ) is safe", () => {
       expect(result.status).toBe(0);
       expect(fs.existsSync(canary)).toBe(false);
     } finally {
-      try { fs.unlinkSync(canary); } catch { /* cleanup */ }
+      try {
+        fs.unlinkSync(canary);
+      } catch {
+        /* cleanup */
+      }
     }
   });
 
@@ -138,8 +146,8 @@ describe("C-2 regression: Dockerfile must not interpolate build-args into Python
       if (inPythonRunBlock && vulnerablePattern.test(line)) {
         expect.unreachable(
           `Dockerfile:${i + 1} interpolates CHAT_UI_URL into a Python string literal.\n` +
-          `  Line: ${line.trim()}\n` +
-          `  Fix: use os.environ['CHAT_UI_URL'] instead.`
+            `  Line: ${line.trim()}\n` +
+            `  Fix: use os.environ['CHAT_UI_URL'] instead.`,
         );
       }
       if (inPythonRunBlock && !/\\\s*$/.test(line)) {
@@ -161,8 +169,8 @@ describe("C-2 regression: Dockerfile must not interpolate build-args into Python
       if (inPythonRunBlock && vulnerablePattern.test(line)) {
         expect.unreachable(
           `Dockerfile:${i + 1} interpolates NEMOCLAW_MODEL into a Python string literal.\n` +
-          `  Line: ${line.trim()}\n` +
-          `  Fix: use os.environ['NEMOCLAW_MODEL'] instead.`
+            `  Line: ${line.trim()}\n` +
+            `  Fix: use os.environ['NEMOCLAW_MODEL'] instead.`,
         );
       }
       if (inPythonRunBlock && !/\\\s*$/.test(line)) {

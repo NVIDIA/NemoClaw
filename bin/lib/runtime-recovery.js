@@ -34,7 +34,7 @@ function classifySandboxLookup(output = "") {
   }
   if (
     /transport error|client error|Connection reset by peer|Connection refused|No active gateway|Gateway: .*Error/i.test(
-      clean
+      clean,
     )
   ) {
     return { state: "unavailable", reason: "gateway_unavailable" };
@@ -52,7 +52,7 @@ function classifyGatewayStatus(output = "") {
   }
   if (
     /No active gateway|transport error|client error|Connection reset by peer|Connection refused|Gateway: .*Error/i.test(
-      clean
+      clean,
     )
   ) {
     return { state: "unavailable", reason: "gateway_unavailable" };
@@ -60,7 +60,10 @@ function classifyGatewayStatus(output = "") {
   return { state: "inactive", reason: "not_connected" };
 }
 
-function shouldAttemptGatewayRecovery({ sandboxState = "missing", gatewayState = "inactive" } = {}) {
+function shouldAttemptGatewayRecovery({
+  sandboxState = "missing",
+  gatewayState = "inactive",
+} = {}) {
   return sandboxState === "unavailable" && gatewayState !== "connected";
 }
 

@@ -16,9 +16,7 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 describe("gateway cleanup: Docker volumes removed on failure (#17)", () => {
   it("onboard.js: destroyGateway() removes Docker volumes", () => {
     const content = fs.readFileSync(path.join(ROOT, "bin/lib/onboard.js"), "utf-8");
-    expect(
-      content.includes("docker volume") && content.includes("openshell-cluster"),
-    ).toBe(true);
+    expect(content.includes("docker volume") && content.includes("openshell-cluster")).toBe(true);
   });
 
   it("onboard.js: volume cleanup runs on gateway start failure", () => {
@@ -29,23 +27,21 @@ describe("gateway cleanup: Docker volumes removed on failure (#17)", () => {
     // Current behavior:
     // 1. stale gateway metadata is destroyed directly before start, if present
     // 2. destroyGateway() runs inside the retry loop on each failed attempt
-    expect(startGwBlock[0].includes('if (hasStaleGateway(gwInfo))')).toBe(true);
-    expect(startGwBlock[0].includes('runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME]')).toBe(true);
+    expect(startGwBlock[0].includes("if (hasStaleGateway(gwInfo))")).toBe(true);
+    expect(
+      startGwBlock[0].includes('runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME]'),
+    ).toBe(true);
     expect(startGwBlock[0]).toContain("destroyGateway()");
   });
 
   it("uninstall.sh: includes Docker volume cleanup", () => {
     const content = fs.readFileSync(path.join(ROOT, "uninstall.sh"), "utf-8");
-    expect(
-      content.includes("docker volume") && content.includes("openshell-cluster"),
-    ).toBe(true);
+    expect(content.includes("docker volume") && content.includes("openshell-cluster")).toBe(true);
     expect(content.includes("remove_related_docker_volumes")).toBe(true);
   });
 
   it("setup.sh: includes Docker volume cleanup on failure", () => {
     const content = fs.readFileSync(path.join(ROOT, "scripts/setup.sh"), "utf-8");
-    expect(
-      content.includes("docker volume") && content.includes("openshell-cluster"),
-    ).toBe(true);
+    expect(content.includes("docker volume") && content.includes("openshell-cluster")).toBe(true);
   });
 });
