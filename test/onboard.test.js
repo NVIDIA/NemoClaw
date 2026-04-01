@@ -14,6 +14,7 @@ import {
   getGatewayReuseState,
   getPortConflictServiceHints,
   getFutureShellPathHint,
+  getOpenshellCompatibilityNotice,
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
   getRequestedModelHint,
@@ -252,6 +253,17 @@ describe("onboard helpers", () => {
       "ghcr.io/nvidia/openshell/cluster:0.0.13",
     );
     expect(getStableGatewayImageRef("bogus")).toBe(null);
+  });
+
+  it("prints a compatibility note when the gateway version is pinned", () => {
+    expect(getOpenshellCompatibilityNotice("0.0.7")).toEqual([
+      "  OpenShell compatibility: NemoClaw derives the gateway image from the installed openshell CLI (0.0.7).",
+      "  Use `nemoclaw onboard` to recreate NemoClaw-managed sandboxes, and avoid `openshell self-update`, `openshell gateway start --recreate`, or `openshell sandbox create` directly.",
+    ]);
+    expect(getOpenshellCompatibilityNotice()).toEqual([
+      "  OpenShell compatibility: NemoClaw derives the gateway image from the installed openshell CLI.",
+      "  Use `nemoclaw onboard` to recreate NemoClaw-managed sandboxes, and avoid `openshell self-update`, `openshell gateway start --recreate`, or `openshell sandbox create` directly.",
+    ]);
   });
 
   it("treats the gateway as healthy only when nemoclaw is running and connected", () => {

@@ -64,6 +64,11 @@ Use this command for new installs and for recreating a sandbox after changes to 
 $ nemoclaw onboard
 ```
 
+:::{warning}
+For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
+NemoClaw derives the gateway image from the installed `openshell` CLI version, so `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` can replace the runtime with a different OpenShell release than NemoClaw 0.1.0 was validated against.
+:::
+
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
 Credentials are stored in `~/.nemoclaw/credentials.json`.

@@ -519,6 +519,14 @@ function getStableGatewayImageRef(versionOutput = null) {
   return `ghcr.io/nvidia/openshell/cluster:${version}`;
 }
 
+function getOpenshellCompatibilityNotice(version = null) {
+  const suffix = version ? ` (${version})` : "";
+  return [
+    `  OpenShell compatibility: NemoClaw derives the gateway image from the installed openshell CLI${suffix}.`,
+    "  Use `nemoclaw onboard` to recreate NemoClaw-managed sandboxes, and avoid `openshell self-update`, `openshell gateway start --recreate`, or `openshell sandbox create` directly.",
+  ];
+}
+
 function getOpenshellBinary() {
   if (OPENSHELL_BIN) return OPENSHELL_BIN;
   const resolved = resolveOpenshell();
@@ -2147,6 +2155,9 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   const gatewayEnv = getGatewayStartEnv();
   if (gatewayEnv.OPENSHELL_CLUSTER_IMAGE) {
     console.log(`  Using pinned OpenShell gateway image: ${gatewayEnv.OPENSHELL_CLUSTER_IMAGE}`);
+  }
+  for (const line of getOpenshellCompatibilityNotice(gatewayEnv.IMAGE_TAG || null)) {
+    console.log(line);
   }
 
   // Retry gateway start with exponential backoff. On some hosts (Horde VMs,
@@ -4006,6 +4017,7 @@ module.exports = {
   getGatewayStartEnv,
   getGatewayReuseState,
   getSandboxInferenceConfig,
+  getOpenshellCompatibilityNotice,
   getInstalledOpenshellVersion,
   getRequestedModelHint,
   getRequestedProviderHint,
