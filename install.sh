@@ -25,6 +25,27 @@ DEFAULT_NEMOCLAW_VERSION="0.1.0"
 TOTAL_STEPS=3
 
 resolve_installer_version() {
+  # Prefer git tags (works in dev clones and CI)
+  if command -v git &>/dev/null && [[ -d "${SCRIPT_DIR}/.git" ]]; then
+    local git_ver=""
+    if git_ver="$(git -C "$SCRIPT_DIR" describe --tags --match 'v*' 2>/dev/null)"; then
+      git_ver="${git_ver#v}"
+      if [[ -n "$git_ver" ]]; then
+        printf "%s" "$git_ver"
+        return
+      fi
+    fi
+  fi
+  # Fall back to .version file (stamped during install)
+  if [[ -f "${SCRIPT_DIR}/.version" ]]; then
+    local file_ver
+    file_ver="$(cat "${SCRIPT_DIR}/.version")"
+    if [[ -n "$file_ver" ]]; then
+      printf "%s" "$file_ver"
+      return
+    fi
+  fi
+  # Last resort: package.json
   local package_json="${SCRIPT_DIR}/package.json"
   local version=""
   if [[ -f "$package_json" ]]; then
@@ -693,6 +714,14 @@ install_nemoclaw() {
     rm -rf "$nemoclaw_src"
     mkdir -p "$(dirname "$nemoclaw_src")"
     spin "Cloning NemoClaw source" git clone --depth 1 --branch "$release_ref" https://github.com/NVIDIA/NemoClaw.git "$nemoclaw_src"
+    # Fetch version tags into the shallow clone so `git describe --tags
+    # --match "v*"` works at runtime (the shallow clone only has the
+    # single ref we asked for).
+    git -C "$nemoclaw_src" fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*' 2>/dev/null || true
+    # Also stamp .version as a fallback for environments where git is
+    # unavailable or tags are pruned later.
+    git -C "$nemoclaw_src" describe --tags --match 'v*' 2>/dev/null \
+      | sed 's/^v//' >"$nemoclaw_src/.version" || true
     spin "Preparing OpenClaw package" bash -c "$(declare -f info warn pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
       || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
     spin "Installing NemoClaw dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"

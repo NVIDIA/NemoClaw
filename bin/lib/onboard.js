@@ -10,6 +10,14 @@ const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const pRetry = require("p-retry");
+
+/** Parse a numeric env var, returning `fallback` when unset or non-finite. */
+function envInt(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : fallback;
+}
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
 const {
   getDefaultOllamaModel,
@@ -2146,7 +2154,9 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
       () => {
         runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: true, env: gatewayEnv });
 
-        for (let i = 0; i < 5; i++) {
+        const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 5);
+        const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
+        for (let i = 0; i < healthPollCount; i++) {
           const status = runCaptureOpenshell(["status"], { ignoreError: true });
           const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
             ignoreError: true,
@@ -2155,7 +2165,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
           if (isGatewayHealthy(status, namedInfo, currentInfo)) {
             return; // success
           }
-          if (i < 4) sleep(2);
+          if (i < healthPollCount - 1) sleep(healthPollInterval);
         }
 
         throw new Error("Gateway failed to start");
@@ -2237,7 +2247,9 @@ async function recoverGatewayRuntime() {
   });
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
 
-  for (let i = 0; i < 10; i++) {
+  const recoveryPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 10);
+  const recoveryPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
+  for (let i = 0; i < recoveryPollCount; i++) {
     status = runCaptureOpenshell(["status"], { ignoreError: true });
     if (status.includes("Connected") && isSelectedGateway(status)) {
       process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
@@ -2249,7 +2261,7 @@ async function recoverGatewayRuntime() {
       }
       return true;
     }
-    sleep(2);
+    if (i < recoveryPollCount - 1) sleep(recoveryPollInterval);
   }
 
   return false;
