@@ -129,7 +129,7 @@ function hasNoLiveSandboxes() {
 }
 
 function isMissingSandboxDeleteResult(output = "") {
-  return /sandbox .* not found|sandbox .* not present|sandbox does not exist|no such sandbox/i.test(
+  return /NotFound|sandbox not found|sandbox .* not found|sandbox .* not present|sandbox does not exist|no such sandbox/i.test(
     stripAnsi(output),
   );
 }

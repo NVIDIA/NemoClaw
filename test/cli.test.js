@@ -499,7 +499,7 @@ describe("CLI dispatch", () => {
         `log_file=${JSON.stringify(openshellLog)}`,
         'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
         '  printf \'%s\\n\' "$*" >> "$log_file"',
-        '  echo "sandbox alpha not found" >&2',
+        '  echo "Error: status: NotFound, message: \\"sandbox not found\\"" >&2',
         "  exit 1",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
