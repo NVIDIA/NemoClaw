@@ -86,6 +86,7 @@ const REMOTE_PROVIDER_CONFIG = {
     helpUrl: "https://build.nvidia.com/settings/api-keys",
     modelMode: "catalog",
     defaultModel: DEFAULT_CLOUD_MODEL,
+    skipVerify: true,
   },
   openai: {
     label: "OpenAI",
