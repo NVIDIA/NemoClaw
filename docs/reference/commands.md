@@ -75,6 +75,8 @@ Uppercase letters are automatically lowercased.
 
 Before creating the gateway, the wizard runs preflight checks.
 On systems with cgroup v2 (Ubuntu 24.04, DGX Spark, WSL2), it verifies that Docker is configured with `"default-cgroupns-mode": "host"` and provides fix instructions if the setting is missing.
+On first-run onboarding, NemoClaw also shows a usage notice before provisioning starts.
+Set `NEMOCLAW_ONBOARD_NOTICE_CONFIG` to override the bundled JSON notice without changing the CLI code.
 
 ### `nemoclaw list`
 

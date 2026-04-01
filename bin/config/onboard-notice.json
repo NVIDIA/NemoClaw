@@ -1,0 +1,8 @@
+{
+  "version": "2026-04-01",
+  "title": "Usage Notice",
+  "summary": "NemoClaw can provision local or cloud resources and retrieve external materials that may be governed by separate terms, conditions, and licenses.",
+  "details": "Review the full usage notice and disclaimer before continuing:",
+  "url": "https://docs.nvidia.com/nemoclaw/latest/reference/usage-notice.html",
+  "prompt": "Press Enter to continue onboarding: "
+}

@@ -280,6 +280,7 @@ Commands <reference/commands>
 Inference Profiles <reference/inference-profiles>
 Network Policies <reference/network-policies>
 Troubleshooting <reference/troubleshooting>
+Usage Notice <reference/usage-notice>
 ```
 
 ```{toctree}

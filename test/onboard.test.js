@@ -1823,4 +1823,15 @@ const { setupInference } = require(${onboardPath});
     assert.match(fnBody, /isNonInteractive\(\)/);
     assert.match(fnBody, /process\.exit\(1\)/);
   });
+
+  it("shows the onboarding notice after preflight completes", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
+      "utf-8",
+    );
+    assert.match(
+      source,
+      /onboardSession\.markStepComplete\("preflight"\);[\s\S]*?showOnboardNoticeIfNeeded\(\{/,
+    );
+  });
 });

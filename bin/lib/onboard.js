@@ -43,6 +43,7 @@ const {
 } = require("./credentials");
 const registry = require("./registry");
 const nim = require("./nim");
+const { showOnboardNoticeIfNeeded } = require("./onboard-notice");
 const onboardSession = require("./onboard-session");
 const policies = require("./policies");
 const { checkPortAvailable, ensureSwap, getMemoryInfo } = require("./preflight");
@@ -3783,6 +3784,11 @@ async function onboard(opts = {}) {
       gpu = await preflight();
       onboardSession.markStepComplete("preflight");
     }
+
+    await showOnboardNoticeIfNeeded({
+      nonInteractive: isNonInteractive(),
+      promptFn: prompt,
+    });
 
     const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
     const gatewayInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
