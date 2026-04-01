@@ -124,12 +124,17 @@ do_stop() {
 }
 
 _has_api_key() {
-  [ -n "${NVIDIA_API_KEY:-}" ] \
-    || [ -n "${ANTHROPIC_API_KEY:-}" ] \
-    || [ -n "${OPENAI_API_KEY:-}" ] \
-    || [ -n "${GEMINI_API_KEY:-}" ] \
-    || [ -n "${COMPATIBLE_API_KEY:-}" ] \
-    || [ -n "${COMPATIBLE_ANTHROPIC_API_KEY:-}" ]
+  [ "${NEMOCLAW_HAS_API_KEY:-0}" = "1" ] && return 0
+
+  if command -v node >/dev/null 2>&1; then
+    node -e "
+      const keys = require('$REPO_DIR/bin/lib/credentials.js').SUPPORTED_API_KEYS;
+      process.exit(keys.some(k => process.env[k]) ? 0 : 1);
+    " 2>/dev/null && return 0
+  fi
+
+  [ -n "${NVIDIA_API_KEY:-}" ] && return 0
+  return 1
 }
 
 do_start() {
