@@ -32,7 +32,7 @@ vi.mock("node:crypto", () => ({
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
-  const original = await importOriginal();
+  const original = await importOriginal() as typeof import("node:fs");
   return {
     ...original,
     existsSync: (p: string) => store.has(p),
