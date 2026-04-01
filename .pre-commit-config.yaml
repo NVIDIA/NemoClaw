@@ -213,6 +213,15 @@ repos:
         stages: [pre-push]
         priority: 10
 
+      - id: version-tag-sync
+        name: package.json ↔ git tag version sync
+        entry: bash scripts/check-version-tag-sync.sh
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]
+        priority: 10
+
   # ── Priority 20: project-level checks (coverage + ratchet) ─────────────────
   - repo: local
     hooks:
