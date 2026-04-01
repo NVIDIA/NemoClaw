@@ -25,6 +25,27 @@ DEFAULT_NEMOCLAW_VERSION="0.1.0"
 TOTAL_STEPS=3
 
 resolve_installer_version() {
+  # Prefer git tags (works in dev clones and CI)
+  if command -v git &>/dev/null && [[ -d "${SCRIPT_DIR}/.git" ]]; then
+    local git_ver=""
+    if git_ver="$(git -C "$SCRIPT_DIR" describe --tags --match 'v*' 2>/dev/null)"; then
+      git_ver="${git_ver#v}"
+      if [[ -n "$git_ver" ]]; then
+        printf "%s" "$git_ver"
+        return
+      fi
+    fi
+  fi
+  # Fall back to .version file (stamped during install)
+  if [[ -f "${SCRIPT_DIR}/.version" ]]; then
+    local file_ver
+    file_ver="$(cat "${SCRIPT_DIR}/.version")"
+    if [[ -n "$file_ver" ]]; then
+      printf "%s" "$file_ver"
+      return
+    fi
+  fi
+  # Last resort: package.json
   local package_json="${SCRIPT_DIR}/package.json"
   local version=""
   if [[ -f "$package_json" ]]; then
@@ -36,28 +57,12 @@ resolve_installer_version() {
 NEMOCLAW_VERSION="$(resolve_installer_version)"
 
 # Resolve which Git ref to install from.
-# Priority: NEMOCLAW_INSTALL_TAG env var > GitHub releases API > "main" fallback.
+# Priority: NEMOCLAW_INSTALL_TAG env var > "latest" tag.
 resolve_release_tag() {
   # Allow explicit override (for CI, pinning, or testing).
-  if [[ -n "${NEMOCLAW_INSTALL_TAG:-}" ]]; then
-    printf "%s" "$NEMOCLAW_INSTALL_TAG"
-    return 0
-  fi
-
-  # Query the GitHub releases API for the latest published release.
-  local response tag
-  response="$(curl -fsSL --max-time 10 \
-    https://api.github.com/repos/NVIDIA/NemoClaw/releases/latest 2>/dev/null)" || true
-  tag="$(printf '%s' "$response" \
-    | grep '"tag_name"' \
-    | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/' \
-    | head -1 || true)"
-
-  if [[ -n "$tag" && "$tag" =~ ^v[0-9] ]]; then
-    printf "%s" "$tag"
-  else
-    printf "main"
-  fi
+  # Otherwise default to the "latest" tag, which we maintain to point at
+  # the commit we want everybody to install.
+  printf "%s" "${NEMOCLAW_INSTALL_TAG:-latest}"
 }
 
 # ---------------------------------------------------------------------------
@@ -381,8 +386,65 @@ ensure_nemoclaw_shim() {
   mkdir -p "$NEMOCLAW_SHIM_DIR"
   ln -sfn "$npm_bin/nemoclaw" "$shim_path"
   refresh_path
+  ensure_local_bin_in_profile
   info "Created user-local shim at $shim_path"
   return 0
+}
+
+# Add ~/.local/bin (and for fish, the nvm node bin) to the user's shell
+# profile PATH so that nemoclaw, openshell, and any future tools installed
+# there are discoverable in new terminal sessions.
+# Idempotent — skips if the marker comment is already present.
+ensure_local_bin_in_profile() {
+  local profile
+  profile="$(detect_shell_profile)"
+  [[ -n "$profile" ]] || return 0
+
+  # Already present — nothing to do.
+  if [[ -f "$profile" ]] && grep -qF '# NemoClaw PATH setup' "$profile" 2>/dev/null; then
+    return 0
+  fi
+
+  local shell_name
+  shell_name="$(basename "${SHELL:-bash}")"
+
+  local local_bin="$NEMOCLAW_SHIM_DIR"
+
+  case "$shell_name" in
+    fish)
+      # fish needs both ~/.local/bin and the nvm node bin (nvm doesn't support fish).
+      local node_bin=""
+      node_bin="$(command -v node 2>/dev/null)" || true
+      if [[ -n "$node_bin" ]]; then
+        node_bin="$(dirname "$node_bin")"
+      fi
+      {
+        printf '\n# NemoClaw PATH setup\n'
+        printf 'fish_add_path --path --append "%s"\n' "$local_bin"
+        if [[ -n "$node_bin" ]]; then
+          printf 'fish_add_path --path --append "%s"\n' "$node_bin"
+        fi
+        printf '# end NemoClaw PATH setup\n'
+      } >>"$profile"
+      ;;
+    tcsh | csh)
+      {
+        printf '\n# NemoClaw PATH setup\n'
+        # shellcheck disable=SC2016
+        printf 'setenv PATH "%s:${PATH}"\n' "$local_bin"
+        printf '# end NemoClaw PATH setup\n'
+      } >>"$profile"
+      ;;
+    *)
+      # bash, zsh, and others — nvm already handles node PATH for these shells.
+      {
+        printf '\n# NemoClaw PATH setup\n'
+        # shellcheck disable=SC2016
+        printf 'export PATH="%s:$PATH"\n' "$local_bin"
+        printf '# end NemoClaw PATH setup\n'
+      } >>"$profile"
+      ;;
+  esac
 }
 
 version_major() {
@@ -652,6 +714,14 @@ install_nemoclaw() {
     rm -rf "$nemoclaw_src"
     mkdir -p "$(dirname "$nemoclaw_src")"
     spin "Cloning NemoClaw source" git clone --depth 1 --branch "$release_ref" https://github.com/NVIDIA/NemoClaw.git "$nemoclaw_src"
+    # Fetch version tags into the shallow clone so `git describe --tags
+    # --match "v*"` works at runtime (the shallow clone only has the
+    # single ref we asked for).
+    git -C "$nemoclaw_src" fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*' 2>/dev/null || true
+    # Also stamp .version as a fallback for environments where git is
+    # unavailable or tags are pruned later.
+    git -C "$nemoclaw_src" describe --tags --match 'v*' 2>/dev/null \
+      | sed 's/^v//' >"$nemoclaw_src/.version" || true
     spin "Preparing OpenClaw package" bash -c "$(declare -f info warn pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
       || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
     spin "Installing NemoClaw dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"

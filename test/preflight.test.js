@@ -153,7 +153,10 @@ describe("getMemoryInfo", () => {
   });
 
   it("handles malformed /proc/meminfo gracefully", () => {
-    const result = getMemoryInfo({ meminfoContent: "garbage data\nno fields here", platform: "linux" });
+    const result = getMemoryInfo({
+      meminfoContent: "garbage data\nno fields here",
+      platform: "linux",
+    });
     assert.equal(result.totalRamMB, 0);
     assert.equal(result.totalSwapMB, 0);
     assert.equal(result.totalMB, 0);

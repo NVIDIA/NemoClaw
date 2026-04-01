@@ -359,6 +359,19 @@ for entry in /sandbox/.openclaw/*; do
   fi
 done
 
+# Lock .openclaw directory after symlink validation: set the immutable flag
+# so symlinks cannot be swapped at runtime even if DAC or Landlock are
+# bypassed. chattr requires cap_linux_immutable which the entrypoint has
+# as root; the sandbox user cannot remove the flag.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/1019
+if command -v chattr >/dev/null 2>&1; then
+  chattr +i /sandbox/.openclaw 2>/dev/null || true
+  for entry in /sandbox/.openclaw/*; do
+    [ -L "$entry" ] || continue
+    chattr +i "$entry" 2>/dev/null || true
+  done
+fi
+
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs
 # under a different UID. The fake-HOME attack no longer works because

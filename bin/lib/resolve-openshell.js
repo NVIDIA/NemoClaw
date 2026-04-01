@@ -24,15 +24,24 @@ function resolveOpenshell(opts = {}) {
     try {
       const found = execSync("command -v openshell", { encoding: "utf-8" }).trim();
       if (found.startsWith("/")) return found;
-    } catch { /* ignored */ }
+    } catch {
+      /* ignored */
+    }
   } else if (opts.commandVResult && opts.commandVResult.startsWith("/")) {
     return opts.commandVResult;
   }
 
   // Step 2: fallback candidates
-  const checkExecutable = opts.checkExecutable || ((p) => {
-    try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; }
-  });
+  const checkExecutable =
+    opts.checkExecutable ||
+    ((p) => {
+      try {
+        fs.accessSync(p, fs.constants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    });
 
   const candidates = [
     ...(home && home.startsWith("/") ? [`${home}/.local/bin/openshell`] : []),
