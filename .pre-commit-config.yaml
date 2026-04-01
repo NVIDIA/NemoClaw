@@ -196,7 +196,7 @@ repos:
 
       - id: tsc-js
         name: TypeScript (JS config)
-        entry: npx tsc -p jsconfig.json
+        entry: bash -c 'npm run build:cli && npx tsc -p jsconfig.json'
         language: system
         pass_filenames: false
         files: ^(bin|test|scripts)/.*\.js$
