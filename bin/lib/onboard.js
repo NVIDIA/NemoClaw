@@ -2261,7 +2261,7 @@ async function recoverGatewayRuntime() {
       }
       return true;
     }
-    sleep(recoveryPollInterval);
+    if (i < recoveryPollCount - 1) sleep(recoveryPollInterval);
   }
 
   return false;
