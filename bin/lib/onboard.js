@@ -12,7 +12,6 @@ const { spawn, spawnSync } = require("child_process");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
 const {
   getDefaultOllamaModel,
-  _getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
   getOllamaModelMetadata,
   resolveOllamaContainerRoute,
@@ -30,7 +29,6 @@ const {
   DEFAULT_CLOUD_MODEL,
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
-  _parseGatewayInference,
 } = require("./inference-config");
 const {
   inferContainerRuntime,

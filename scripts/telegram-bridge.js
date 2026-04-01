@@ -17,7 +17,7 @@
  */
 
 const https = require("https");
-const { execFileSync, spawn, spawnSync } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 const { shellQuote, validateName } = require("../bin/lib/runner");
 
@@ -155,12 +155,12 @@ function runCommandInSandbox(command, sessionId, timeoutMs = 120000) {
     });
 
     proc.on("close", (code) => {
-      try { require("fs").unlinkSync(confPath); } catch {}
+      try { require("fs").unlinkSync(confPath); } catch (_e) { /* ignore unlink errors */ }
       resolve({ code, stdout, stderr });
     });
 
     proc.on("error", (err) => {
-      try { require("fs").unlinkSync(confPath); } catch {}
+      try { require("fs").unlinkSync(confPath); } catch (_e) { /* ignore unlink errors */ }
       resolve({ code: 1, stdout, stderr: err.message });
     });
   });

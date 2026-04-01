@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import assert from "node:assert/strict";
 import { execSync, execFileSync } from "node:child_process";
-import { writeFileSync, readFileSync } from "node:fs";
+import { writeFileSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
