@@ -9,20 +9,25 @@ import { createRequire } from "node:module";
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-session-"));
 const require = createRequire(import.meta.url);
-const modulePath = require.resolve("../bin/lib/onboard-session");
+// Clear both the shim and the dist module so HOME changes take effect.
+const shimPath = require.resolve("../../bin/lib/onboard-session");
+const distPath = require.resolve("../../dist/lib/onboard-session");
 const originalHome = process.env.HOME;
-let session;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let session: any;
 
 beforeEach(() => {
   process.env.HOME = tmpDir;
-  delete require.cache[modulePath];
-  session = require("../bin/lib/onboard-session");
+  delete require.cache[shimPath];
+  delete require.cache[distPath];
+  session = require("../../dist/lib/onboard-session");
   session.clearSession();
   session.releaseOnboardLock();
 });
 
 afterEach(() => {
-  delete require.cache[modulePath];
+  delete require.cache[shimPath];
+  delete require.cache[distPath];
   if (originalHome === undefined) {
     delete process.env.HOME;
   } else {
