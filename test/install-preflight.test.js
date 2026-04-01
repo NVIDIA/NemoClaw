@@ -902,8 +902,14 @@ exit 0`,
     });
 
     expect(result.status).toBe(0);
-    // git should NOT have been called at all in the source-checkout path
-    expect(fs.existsSync(gitLog)).toBe(false);
+    // git clone / git fetch should NOT have been called in the source-checkout path.
+    // git may be called for version resolution (git describe), so we check
+    // that no clone or fetch was attempted rather than no git calls at all.
+    if (fs.existsSync(gitLog)) {
+      const gitCalls = fs.readFileSync(gitLog, "utf-8");
+      expect(gitCalls).not.toMatch(/clone/);
+      expect(gitCalls).not.toMatch(/fetch/);
+    }
     // And curl for the releases API should NOT have been called
     expect(`${result.stdout}${result.stderr}`).not.toMatch(/curl should not be called/);
   });
@@ -1043,18 +1049,43 @@ describe("installer pure helpers", () => {
 
   // -- resolve_installer_version --
 
-  it("resolve_installer_version: reads version from package.json", () => {
+  it("resolve_installer_version: reads version from git or package.json", () => {
     const r = callInstallerFn("resolve_installer_version");
-    // Should read from the repo's actual package.json
-    expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
+    // May return clean semver ("0.0.2") or git describe format ("0.0.2-3-gabcdef1")
+    expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+(-.+)?$/);
+  });
+
+  it("resolve_installer_version: falls back to package.json when git tags are unavailable", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-ver-pkg-"));
+    fs.mkdirSync(path.join(tmp, ".git"));
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      `${JSON.stringify({ version: "0.5.0" }, null, 2)}\n`,
+    );
+    // source overwrites SCRIPT_DIR, so we re-set it after sourcing.
+    // The temp dir advertises git metadata but has no usable tags,
+    // so the function should fall back to package.json instead of exiting.
+    const r = spawnSync(
+      "bash",
+      ["-c", `source "${INSTALLER}" 2>/dev/null; SCRIPT_DIR="${tmp}"; resolve_installer_version`],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: { HOME: tmp, PATH: TEST_SYSTEM_PATH },
+      },
+    );
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe("0.5.0");
   });
 
   it("resolve_installer_version: falls back to DEFAULT when no package.json", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-ver-"));
-    // source from a directory with no package.json — SCRIPT_DIR will be wrong
+    // source overwrites SCRIPT_DIR, so we re-set it after sourcing.
+    // The temp dir has no .git, no .version, and no package.json,
+    // so the function should fall back to DEFAULT_NEMOCLAW_VERSION.
     const r = spawnSync(
       "bash",
-      ["-c", `SCRIPT_DIR="${tmp}"; source "${INSTALLER}" 2>/dev/null; resolve_installer_version`],
+      ["-c", `source "${INSTALLER}" 2>/dev/null; SCRIPT_DIR="${tmp}"; resolve_installer_version`],
       {
         cwd: tmp,
         encoding: "utf-8",
