@@ -35,10 +35,12 @@ function isUnsupportedMacosRuntime(runtime, opts = {}) {
   return platform === "darwin" && runtime === "podman";
 }
 
-function shouldPatchCoredns(runtime) {
-  // k3s-inside-Docker has broken DNS forwarding on all platforms
-  // (systemd-resolved, Docker Desktop DNS, Colima DNS).
-  // Always patch CoreDNS to use a non-loopback upstream.
+function shouldPatchCoredns(runtime, opts = {}) {
+  // k3s CoreDNS defaults to a loopback DNS that pods can't reach.
+  // Patch it to use a real upstream on most Docker-based runtimes.
+  // On WSL2, the host DNS is not routable from k3s pods - skip the
+  // patch and let setup-dns-proxy.sh handle resolution instead.
+  if (isWsl(opts)) return false;
   return runtime !== "unknown";
 }
 

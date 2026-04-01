@@ -46,16 +46,15 @@ on:
           - credential-sanitization
           - telegram-injection
           - all
-      use_launchable:
-        description: "Use NemoClaw launchable (true) or bare brev-setup.sh (false)"
-        required: false
-        type: boolean
-        default: true
       keep_alive:
         description: "Keep Brev instance alive after tests (for SSH debugging)"
         required: false
         type: boolean
         default: true
+      brev_token:
+        description: "Brev refresh token (overrides BREV_API_TOKEN secret if provided)"
+        required: false
+        default: ""
   workflow_call:
     inputs:
       branch:
@@ -69,10 +68,6 @@ on:
         required: false
         type: string
         default: "full"
-      use_launchable:
-        required: false
-        type: boolean
-        default: true
       keep_alive:
         required: false
         type: boolean
@@ -127,8 +122,8 @@ jobs:
 
       - name: Install Brev CLI
         run: |
-          # Pin to v0.6.310 — v0.6.322 removed --cpu flag and defaults to GPU instances
-          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.310/brev-cli_0.6.310_linux_amd64.tar.gz"
+          # Use latest Brev CLI (v0.6.322+) — CPU instances require `brev search cpu | brev create`
+          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.322/brev-cli_0.6.322_linux_amd64.tar.gz"
           tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
           chmod +x /usr/local/bin/brev
 
@@ -137,12 +132,11 @@ jobs:
 
       - name: Run ephemeral Brev E2E
         env:
-          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
+          BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           INSTANCE_NAME: e2e-pr-${{ inputs.pr_number || github.run_id }}
           TEST_SUITE: ${{ inputs.test_suite }}
-          USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
           KEEP_ALIVE: ${{ inputs.keep_alive }}
         run: npx vitest run --project e2e-brev --reporter=verbose
 

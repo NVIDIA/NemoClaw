@@ -20,9 +20,7 @@ describe("nemoclaw-start non-root fallback", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
     // Non-root block must call verify_config_integrity and exit 1 on failure
-    expect(src).toMatch(
-      /if ! verify_config_integrity; then\s+.*exit 1/s,
-    );
+    expect(src).toMatch(/if ! verify_config_integrity; then\s+.*exit 1/s);
     // Must not contain the old "proceeding anyway" fallback
     expect(src).not.toMatch(/proceeding anyway/i);
   });
