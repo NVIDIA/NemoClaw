@@ -915,6 +915,12 @@ function patchStagedDockerfile(
     /^ARG NEMOCLAW_BUILD_ID=.*$/m,
     `ARG NEMOCLAW_BUILD_ID=${buildId}`,
   );
+  // Onboard flow expects immediate dashboard access without device pairing,
+  // so disable device auth for images built during onboard (see #1217).
+  dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_DISABLE_DEVICE_AUTH=.*$/m,
+    `ARG NEMOCLAW_DISABLE_DEVICE_AUTH=1`,
+  );
   fs.writeFileSync(dockerfilePath, dockerfile);
 }
 
