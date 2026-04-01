@@ -42,6 +42,7 @@ const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
 const { parseGatewayInference } = require("./lib/inference-config");
+const { getVersion } = require("./lib/version");
 const onboardSession = require("./lib/onboard-session");
 const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
 
@@ -1123,9 +1124,8 @@ async function sandboxDestroy(sandboxName, args = []) {
 // ── Help ─────────────────────────────────────────────────────────
 
 function help() {
-  const pkg = require(path.join(__dirname, "..", "package.json"));
   console.log(`
-  ${B}${G}NemoClaw${R}  ${D}v${pkg.version}${R}
+  ${B}${G}NemoClaw${R}  ${D}v${getVersion()}${R}
   ${D}Deploy more secure, always-on AI assistants with a single command.${R}
 
   ${G}Getting Started:${R}
@@ -1216,8 +1216,7 @@ const [cmd, ...args] = process.argv.slice(2);
         break;
       case "--version":
       case "-v": {
-        const pkg = require(path.join(__dirname, "..", "package.json"));
-        console.log(`nemoclaw v${pkg.version}`);
+        console.log(`nemoclaw v${getVersion()}`);
         break;
       }
       default:

@@ -101,7 +101,7 @@ async function checkPortAvailable(port, opts) {
       // through to the net probe (which can only detect EADDRINUSE but not
       // the owning process).
       if (dataLines.length === 0 && !o.lsofOutput) {
-        const sudoOut = runCapture(`sudo lsof -i :${p} -sTCP:LISTEN -P -n 2>/dev/null`, {
+        const sudoOut = runCapture(`sudo -n lsof -i :${p} -sTCP:LISTEN -P -n 2>/dev/null`, {
           ignoreError: true,
         });
         if (typeof sudoOut === "string") {
