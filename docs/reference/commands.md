@@ -202,7 +202,24 @@ Start auxiliary services, such as the Telegram bridge and cloudflared tunnel.
 $ nemoclaw start
 ```
 
-Requires `TELEGRAM_BOT_TOKEN` for the Telegram bridge.
+Use discovery-only mode to have the bot reply with your Telegram chat ID without forwarding messages to the agent:
+
+```console
+$ nemoclaw start --discover-chat-id
+```
+
+The Telegram bridge requires `TELEGRAM_BOT_TOKEN`, `NVIDIA_API_KEY`, and an `ALLOWED_CHAT_IDS` allowlist for normal operation.
+
+### `nemoclaw telegram`
+
+Manage the Telegram bridge allowlist.
+
+```console
+$ nemoclaw telegram allow 123456789
+$ nemoclaw telegram show
+$ nemoclaw telegram clear
+$ nemoclaw telegram discover
+```
 
 ### `nemoclaw stop`
 

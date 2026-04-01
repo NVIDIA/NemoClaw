@@ -69,6 +69,8 @@ The legacy compatibility flow performs the following steps on the VM:
 
 By default, the compatibility wrapper asks Brev to provision on `gcp`. Override this with `NEMOCLAW_BREV_PROVIDER` if you need a different Brev cloud provider.
 
+If you configured a Telegram bot token but not an allowlist yet, the bridge stays disabled until you either save `ALLOWED_CHAT_IDS` with `nemoclaw telegram allow <chat-id>` or run discovery mode with `nemoclaw start --discover-chat-id`.
+
 ## Connect to the Remote Sandbox
 
 After deployment finishes, the deploy command opens an interactive shell inside the remote sandbox.

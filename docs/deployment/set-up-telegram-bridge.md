@@ -56,7 +56,19 @@ The `start` command launches the following services:
 - The Telegram bridge forwards messages between Telegram and the agent.
 - The cloudflared tunnel provides external access to the sandbox.
 
-The Telegram bridge starts only when the `TELEGRAM_BOT_TOKEN` environment variable is set.
+The Telegram bridge starts only when the following are configured:
+
+- `TELEGRAM_BOT_TOKEN`
+- `NVIDIA_API_KEY`
+- `ALLOWED_CHAT_IDS`
+
+If you do not know your Telegram chat ID yet, start the bridge in discovery-only mode:
+
+```console
+$ nemoclaw start --discover-chat-id
+```
+
+Then send any message to the bot. The bridge replies with your chat ID and does not forward the message to the agent.
 
 ## Verify the Services
 
@@ -73,13 +85,20 @@ The output shows the status of all auxiliary services.
 Open Telegram, find your bot, and send a message.
 The bridge forwards the message to the OpenClaw agent inside the sandbox and returns the agent response.
 
-## Restrict Access by Chat ID
+## Allow Telegram Chats by Chat ID
 
-To restrict which Telegram chats can interact with the agent, set the `ALLOWED_CHAT_IDS` environment variable to a comma-separated list of Telegram chat IDs:
+Save the Telegram chat IDs allowed to interact with the agent:
 
 ```console
-$ export ALLOWED_CHAT_IDS="123456789,987654321"
+$ nemoclaw telegram allow 123456789,987654321
 $ nemoclaw start
+```
+
+To inspect or clear the saved allowlist:
+
+```console
+$ nemoclaw telegram show
+$ nemoclaw telegram clear
 ```
 
 ## Stop the Services

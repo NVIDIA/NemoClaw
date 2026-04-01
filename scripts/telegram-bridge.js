@@ -13,7 +13,8 @@
  *   TELEGRAM_BOT_TOKEN  — from @BotFather
  *   NVIDIA_API_KEY      — for inference
  *   SANDBOX_NAME        — sandbox name (default: nemoclaw)
- *   ALLOWED_CHAT_IDS    — comma-separated Telegram chat IDs to accept (optional, accepts all if unset)
+ *   ALLOWED_CHAT_IDS    — comma-separated Telegram chat IDs to accept
+ *   NEMOCLAW_TELEGRAM_DISCOVERY=1 — reply with the sender chat ID instead of forwarding
  */
 
 const https = require("https");
@@ -31,11 +32,28 @@ if (!OPENSHELL) {
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API_KEY = process.env.NVIDIA_API_KEY;
 const SANDBOX = process.env.SANDBOX_NAME || "nemoclaw";
-try { validateName(SANDBOX, "SANDBOX_NAME"); } catch (e) { console.error(e.message); process.exit(1); }
+try {
+  validateName(SANDBOX, "SANDBOX_NAME");
+} catch (e) {
+  console.error(e.message);
+  process.exit(1);
+}
+const DISCOVERY_MODE = process.env.NEMOCLAW_TELEGRAM_DISCOVERY === "1";
 const ALLOWED_CHATS = parseAllowedChatIds(process.env.ALLOWED_CHAT_IDS);
+const DISCOVERY_ONLY = DISCOVERY_MODE && ALLOWED_CHATS.length === 0;
 
-if (!TOKEN) { console.error("TELEGRAM_BOT_TOKEN required"); process.exit(1); }
-if (!API_KEY) { console.error("NVIDIA_API_KEY required"); process.exit(1); }
+if (!TOKEN) {
+  console.error("TELEGRAM_BOT_TOKEN required");
+  process.exit(1);
+}
+if (!API_KEY) {
+  console.error("NVIDIA_API_KEY required");
+  process.exit(1);
+}
+if (!DISCOVERY_ONLY && ALLOWED_CHATS.length === 0) {
+  console.error("ALLOWED_CHAT_IDS required unless NEMOCLAW_TELEGRAM_DISCOVERY=1");
+  process.exit(1);
+}
 
 let offset = 0;
 const activeSessions = new Map(); // chatId → message history
@@ -60,7 +78,11 @@ function tgApi(method, body) {
         let buf = "";
         res.on("data", (c) => (buf += c));
         res.on("end", () => {
-          try { resolve(JSON.parse(buf)); } catch { resolve({ ok: false, error: buf }); }
+          try {
+            resolve(JSON.parse(buf));
+          } catch {
+            resolve({ ok: false, error: buf });
+          }
         });
       },
     );
@@ -97,7 +119,9 @@ async function sendTyping(chatId) {
 
 function runAgentInSandbox(message, sessionId) {
   return new Promise((resolve) => {
-    const sshConfig = execFileSync(OPENSHELL, ["sandbox", "ssh-config", SANDBOX], { encoding: "utf-8" });
+    const sshConfig = execFileSync(OPENSHELL, ["sandbox", "ssh-config", SANDBOX], {
+      encoding: "utf-8",
+    });
 
     // Write temp ssh config with unpredictable name
     const confDir = require("fs").mkdtempSync("/tmp/nemoclaw-tg-ssh-");
@@ -122,7 +146,12 @@ function runAgentInSandbox(message, sessionId) {
     proc.stderr.on("data", (d) => (stderr += d.toString()));
 
     proc.on("close", (code) => {
-      try { require("fs").unlinkSync(confPath); require("fs").rmdirSync(confDir); } catch { /* ignored */ }
+      try {
+        require("fs").unlinkSync(confPath);
+        require("fs").rmdirSync(confDir);
+      } catch {
+        /* ignored */
+      }
 
       // Extract the actual agent response — skip setup lines
       const lines = stdout.split("\n");
@@ -173,13 +202,27 @@ async function poll() {
         const chatId = String(msg.chat.id);
 
         // Access control
-        if (!isChatAllowed(ALLOWED_CHATS, chatId)) {
+        if (!DISCOVERY_ONLY && !isChatAllowed(ALLOWED_CHATS, chatId)) {
           console.log(`[ignored] chat ${chatId} not in allowed list`);
+          await sendMessage(
+            chatId,
+            `This chat is not authorized.\n\nYour Telegram chat ID is \`${chatId}\`.\nAsk the operator to run \`nemoclaw telegram allow ${chatId}\`.`,
+            msg.message_id,
+          );
           continue;
         }
 
         const userName = msg.from?.first_name || "someone";
         console.log(`[${chatId}] ${userName}: ${msg.text}`);
+
+        if (DISCOVERY_ONLY) {
+          await sendMessage(
+            chatId,
+            `Discovery mode is enabled.\n\nYour Telegram chat ID is \`${chatId}\`.\nRun \`nemoclaw telegram allow ${chatId}\`, then restart the bridge with \`nemoclaw start\`.`,
+            msg.message_id,
+          );
+          continue;
+        }
 
         // Handle /start
         if (msg.text === "/start") {
@@ -206,7 +249,11 @@ async function poll() {
         const lastTime = lastMessageTime.get(chatId) || 0;
         if (now - lastTime < COOLDOWN_MS) {
           const wait = Math.ceil((COOLDOWN_MS - (now - lastTime)) / 1000);
-          await sendMessage(chatId, `Please wait ${wait}s before sending another message.`, msg.message_id);
+          await sendMessage(
+            chatId,
+            `Please wait ${wait}s before sending another message.`,
+            msg.message_id,
+          );
           continue;
         }
 
@@ -263,9 +310,15 @@ async function main() {
   console.log("  │  Sandbox:  " + (SANDBOX + "                              ").slice(0, 40) + "│");
   console.log("  │  Model:    nvidia/nemotron-3-super-120b-a12b       │");
   console.log("  │                                                     │");
-  console.log("  │  Messages are forwarded to the OpenClaw agent      │");
-  console.log("  │  inside the sandbox. Run 'openshell term' in       │");
-  console.log("  │  another terminal to monitor + approve egress.     │");
+  if (DISCOVERY_ONLY) {
+    console.log("  │  Discovery mode: incoming messages return chat ID  │");
+    console.log("  │  only. Agent forwarding stays disabled until       │");
+    console.log("  │  ALLOWED_CHAT_IDS is configured.                   │");
+  } else {
+    console.log("  │  Messages are forwarded to the OpenClaw agent      │");
+    console.log("  │  inside the sandbox. Run 'openshell term' in       │");
+    console.log("  │  another terminal to monitor + approve egress.     │");
+  }
   console.log("  └─────────────────────────────────────────────────────┘");
   console.log("");
 
