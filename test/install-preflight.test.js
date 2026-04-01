@@ -1055,6 +1055,29 @@ describe("installer pure helpers", () => {
     expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+(-.+)?$/);
   });
 
+  it("resolve_installer_version: falls back to package.json when git tags are unavailable", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-ver-pkg-"));
+    fs.mkdirSync(path.join(tmp, ".git"));
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      `${JSON.stringify({ version: "0.5.0" }, null, 2)}\n`,
+    );
+    // source overwrites SCRIPT_DIR, so we re-set it after sourcing.
+    // The temp dir advertises git metadata but has no usable tags,
+    // so the function should fall back to package.json instead of exiting.
+    const r = spawnSync(
+      "bash",
+      ["-c", `source "${INSTALLER}" 2>/dev/null; SCRIPT_DIR="${tmp}"; resolve_installer_version`],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: { HOME: tmp, PATH: TEST_SYSTEM_PATH },
+      },
+    );
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe("0.5.0");
+  });
+
   it("resolve_installer_version: falls back to DEFAULT when no package.json", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-ver-"));
     // source overwrites SCRIPT_DIR, so we re-set it after sourcing.

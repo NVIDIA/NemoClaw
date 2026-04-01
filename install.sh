@@ -27,11 +27,13 @@ TOTAL_STEPS=3
 resolve_installer_version() {
   # Prefer git tags (works in dev clones and CI)
   if command -v git &>/dev/null && [[ -d "${SCRIPT_DIR}/.git" ]]; then
-    local git_ver
-    git_ver="$(git -C "$SCRIPT_DIR" describe --tags --match 'v*' 2>/dev/null | sed 's/^v//')"
-    if [[ -n "$git_ver" ]]; then
-      printf "%s" "$git_ver"
-      return
+    local git_ver=""
+    if git_ver="$(git -C "$SCRIPT_DIR" describe --tags --match 'v*' 2>/dev/null)"; then
+      git_ver="${git_ver#v}"
+      if [[ -n "$git_ver" ]]; then
+        printf "%s" "$git_ver"
+        return
+      fi
     fi
   fi
   # Fall back to .version file (stamped during install)
