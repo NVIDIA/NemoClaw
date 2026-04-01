@@ -103,6 +103,7 @@ config = { \
     'agents': {'defaults': {'model': {'primary': primary_model_ref}}}, \
     'models': {'mode': 'merge', 'providers': providers}, \
     'channels': {'defaults': {'configWrites': False}}, \
+    'update': {'checkOnStart': False}, \
     'gateway': { \
         'mode': 'local', \
         'controlUi': { \
