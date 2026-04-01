@@ -59,3 +59,64 @@ describe("nemoclaw-start non-root fallback", () => {
     }
   });
 });
+
+describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("defines ALLOWED_CLIENTS whitelist containing openclaw-control-ui", () => {
+    expect(src).toMatch(/ALLOWED_CLIENTS\s*=\s*\{.*'openclaw-control-ui'.*\}/);
+  });
+
+  it("defines ALLOWED_MODES whitelist containing webchat", () => {
+    expect(src).toMatch(/ALLOWED_MODES\s*=\s*\{.*'webchat'.*\}/);
+  });
+
+  it("rejects devices not in the whitelist", () => {
+    expect(src).toMatch(/client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES/);
+    expect(src).toMatch(/\[auto-pair\] rejected unknown client=/);
+  });
+
+  it("validates device is a dict before accessing fields", () => {
+    expect(src).toMatch(/if not isinstance\(device, dict\)/);
+  });
+
+  it("logs client identity on approval", () => {
+    expect(src).toMatch(/\[auto-pair\] approved request=\{request_id\} client=\{client_id\}/);
+  });
+
+  it("does not unconditionally approve all pending devices", () => {
+    // The old pattern: `(device or {}).get('requestId')` — approve everything
+    // Must NOT be present in the auto-pair block
+    expect(src).not.toMatch(/\(device or \{\}\)\.get\('requestId'\)/);
+  });
+
+  it("tracks handled requests to avoid reprocessing rejected devices", () => {
+    expect(src).toMatch(/HANDLED\s*=\s*set\(\)/);
+    expect(src).toMatch(/request_id in HANDLED/);
+    expect(src).toMatch(/HANDLED\.add\(request_id\)/);
+  });
+
+  it("documents NEMOCLAW_DISABLE_DEVICE_AUTH as a build-time setting in the script header", () => {
+    // Must mention it's build-time only — setting at runtime has no effect
+    // because openclaw.json is baked and immutable
+    const header = src.split("set -euo pipefail")[0];
+    expect(header).toMatch(/NEMOCLAW_DISABLE_DEVICE_AUTH/);
+    expect(header).toMatch(/build[- ]time/i);
+  });
+
+  it("defines ALLOWED_CLIENTS and ALLOWED_MODES outside the poll loop", () => {
+    // These are constants — they should be defined once alongside HANDLED,
+    // not reconstructed inside the `if pending:` block every poll cycle
+    const autoPairBlock = src.match(/PYAUTOPAIR[\s\S]*?PYAUTOPAIR/);
+    expect(autoPairBlock).toBeTruthy();
+    const pyCode = autoPairBlock[0];
+
+    // ALLOWED_CLIENTS/ALLOWED_MODES should appear BEFORE the `while` loop,
+    // at the same level as HANDLED, APPROVED, etc.
+    const allowedClientsPos = pyCode.indexOf("ALLOWED_CLIENTS");
+    const whilePos = pyCode.indexOf("while time.time()");
+    expect(allowedClientsPos).toBeGreaterThan(-1);
+    expect(whilePos).toBeGreaterThan(-1);
+    expect(allowedClientsPos).toBeLessThan(whilePos);
+  });
+});
