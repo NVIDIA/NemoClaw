@@ -763,8 +763,6 @@ async function deploy(instanceName) {
 }
 
 async function start() {
-  await ensureApiKey();
-
   const creds = require("./lib/credentials").loadCredentials();
   for (const [k, v] of Object.entries(creds)) {
     if (!process.env[k]) process.env[k] = v;
@@ -779,7 +777,8 @@ async function start() {
 
 function stop() {
   const { defaultSandbox } = registry.listSandboxes();
-  const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
+  const safeName =
+    defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
   const sandboxEnv = safeName ? `SANDBOX_NAME=${shellQuote(safeName)}` : "";
   run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh" --stop`);
 }

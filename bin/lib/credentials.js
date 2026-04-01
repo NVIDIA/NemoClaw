@@ -214,11 +214,22 @@ function prompt(question, opts = {}) {
   });
 }
 
+const SUPPORTED_API_KEYS = [
+  "NVIDIA_API_KEY",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "COMPATIBLE_API_KEY",
+  "COMPATIBLE_ANTHROPIC_API_KEY",
+];
+
 async function ensureApiKey() {
-  let key = getCredential("NVIDIA_API_KEY");
-  if (key) {
-    process.env.NVIDIA_API_KEY = key;
-    return;
+  for (const envKey of SUPPORTED_API_KEYS) {
+    const val = getCredential(envKey);
+    if (val) {
+      process.env[envKey] = val;
+      return;
+    }
   }
 
   console.log("");
@@ -232,6 +243,7 @@ async function ensureApiKey() {
   console.log("  └─────────────────────────────────────────────────────────────────┘");
   console.log("");
 
+  let key;
   while (true) {
     key = normalizeCredentialValue(await prompt("  NVIDIA API Key: ", { secret: true }));
 

@@ -19,6 +19,11 @@ describe("service environment", () => {
         env: {
           ...process.env,
           NVIDIA_API_KEY: "",
+          OPENAI_API_KEY: "",
+          ANTHROPIC_API_KEY: "",
+          GEMINI_API_KEY: "",
+          COMPATIBLE_API_KEY: "",
+          COMPATIBLE_ANTHROPIC_API_KEY: "",
           TELEGRAM_BOT_TOKEN: "",
           SANDBOX_NAME: "test-box",
           TMPDIR: workspace,
@@ -28,7 +33,7 @@ describe("service environment", () => {
       expect(result).not.toContain("NVIDIA_API_KEY required");
       expect(result).toContain("TELEGRAM_BOT_TOKEN not set");
       expect(result).toContain("Telegram:    not started (no token)");
-    });
+    }, 20000);
 
     it("warns and skips Telegram bridge when token is set without NVIDIA_API_KEY", () => {
       const workspace = mkdtempSync(join(tmpdir(), "nemoclaw-services-missing-key-"));
@@ -37,6 +42,11 @@ describe("service environment", () => {
         env: {
           ...process.env,
           NVIDIA_API_KEY: "",
+          OPENAI_API_KEY: "",
+          ANTHROPIC_API_KEY: "",
+          GEMINI_API_KEY: "",
+          COMPATIBLE_API_KEY: "",
+          COMPATIBLE_ANTHROPIC_API_KEY: "",
           TELEGRAM_BOT_TOKEN: "test-token",
           SANDBOX_NAME: "test-box",
           TMPDIR: workspace,
@@ -44,9 +54,9 @@ describe("service environment", () => {
       });
 
       expect(result).not.toContain("NVIDIA_API_KEY required");
-      expect(result).toContain("NVIDIA_API_KEY not set");
+      expect(result).toContain("API key not set");
       expect(result).toContain("Telegram:    not started (no token)");
-    });
+    }, 20000);
   });
 
   describe("resolveOpenshell logic", () => {

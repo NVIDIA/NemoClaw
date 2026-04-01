@@ -2172,10 +2172,6 @@ async function createSandbox(
   if (slackAppToken) {
     sandboxEnv.SLACK_APP_TOKEN = slackAppToken;
   }
-  const slackGateway = getCredential("NEMOCLAW_OPENCLAW_SLACK_GATEWAY") || process.env.NEMOCLAW_OPENCLAW_SLACK_GATEWAY;
-  if (slackGateway) {
-    sandboxEnv.NEMOCLAW_OPENCLAW_SLACK_GATEWAY = slackGateway;
-  }
   // Run without piping through awk — the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe

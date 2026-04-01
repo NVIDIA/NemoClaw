@@ -106,6 +106,11 @@ describe("CLI dispatch", () => {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
       NVIDIA_API_KEY: "",
+      OPENAI_API_KEY: "",
+      ANTHROPIC_API_KEY: "",
+      GEMINI_API_KEY: "",
+      COMPATIBLE_API_KEY: "",
+      COMPATIBLE_ANTHROPIC_API_KEY: "",
       TELEGRAM_BOT_TOKEN: "",
     });
 

@@ -123,13 +123,22 @@ do_stop() {
   info "All services stopped."
 }
 
+_has_api_key() {
+  [ -n "${NVIDIA_API_KEY:-}" ] \
+    || [ -n "${ANTHROPIC_API_KEY:-}" ] \
+    || [ -n "${OPENAI_API_KEY:-}" ] \
+    || [ -n "${GEMINI_API_KEY:-}" ] \
+    || [ -n "${COMPATIBLE_API_KEY:-}" ] \
+    || [ -n "${COMPATIBLE_ANTHROPIC_API_KEY:-}" ]
+}
+
 do_start() {
   if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
     warn "TELEGRAM_BOT_TOKEN not set — Telegram bridge will not start."
     warn "Create a bot via @BotFather on Telegram and set the token."
-  elif [ -z "${NVIDIA_API_KEY:-}" ]; then
-    warn "NVIDIA_API_KEY not set — Telegram bridge will not start."
-    warn "Set NVIDIA_API_KEY if you want Telegram requests to reach inference."
+  elif ! _has_api_key; then
+    warn "API key not set — Telegram bridge will not start."
+    warn "Set an API key if you want Telegram requests to reach inference."
   fi
 
   command -v node >/dev/null || fail "node not found. Install Node.js first."
