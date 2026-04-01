@@ -121,6 +121,7 @@ describe("CLI dispatch", () => {
       PATH: `${localBin}:${process.env.PATH || ""}`,
       NVIDIA_API_KEY: "",
       TELEGRAM_BOT_TOKEN: "",
+      ALLOWED_CHAT_IDS: "",
     });
 
     expect(r.code).toBe(0);
@@ -159,6 +160,8 @@ describe("CLI dispatch", () => {
     const r = runWithEnv("start", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
+      TELEGRAM_BOT_TOKEN: "",
+      ALLOWED_CHAT_IDS: "",
     });
 
     expect(r.code).toBe(0);
@@ -198,6 +201,8 @@ describe("CLI dispatch", () => {
     const r = runWithEnv("start", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
+      TELEGRAM_BOT_TOKEN: "",
+      ALLOWED_CHAT_IDS: "",
     });
 
     expect(r.code).toBe(0);
@@ -217,6 +222,8 @@ describe("CLI dispatch", () => {
     const r = runWithEnv("start --discover-chat-id", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
+      TELEGRAM_BOT_TOKEN: "",
+      ALLOWED_CHAT_IDS: "",
     });
 
     expect(r.code).toBe(0);
