@@ -36,6 +36,7 @@ const {
   ensureApiKey,
   ensureGithubToken,
   getCredential,
+  saveCredential,
   isRepoPrivate,
 } = require("./lib/credentials");
 const registry = require("./lib/registry");
@@ -54,6 +55,7 @@ const GLOBAL_COMMANDS = new Set([
   "setup",
   "setup-spark",
   "start",
+  "telegram",
   "stop",
   "status",
   "debug",
@@ -719,6 +721,8 @@ async function deploy(instanceName) {
   if (ghToken) envLines.push(`GITHUB_TOKEN=${shellQuote(ghToken)}`);
   const tgToken = getCredential("TELEGRAM_BOT_TOKEN");
   if (tgToken) envLines.push(`TELEGRAM_BOT_TOKEN=${shellQuote(tgToken)}`);
+  const allowedChatIds = getCredential("ALLOWED_CHAT_IDS");
+  if (allowedChatIds) envLines.push(`ALLOWED_CHAT_IDS=${shellQuote(allowedChatIds)}`);
   const discordToken = getCredential("DISCORD_BOT_TOKEN");
   if (discordToken) envLines.push(`DISCORD_BOT_TOKEN=${shellQuote(discordToken)}`);
   const slackToken = getCredential("SLACK_BOT_TOKEN");
@@ -766,16 +770,103 @@ async function deploy(instanceName) {
   );
 }
 
-async function start() {
+function normalizeTelegramChatIds(rawValue) {
+  const chatIds = String(rawValue || "")
+    .split(/[,\s]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (chatIds.length === 0) {
+    throw new Error("At least one Telegram chat ID is required.");
+  }
+  for (const chatId of chatIds) {
+    if (!/^-?\d+$/.test(chatId)) {
+      throw new Error(`Invalid Telegram chat ID: ${chatId}`);
+    }
+  }
+  return [...new Set(chatIds)].join(",");
+}
+
+async function start(args = []) {
+  const supportedFlags = new Set(["--discover-chat-id"]);
+  const unknown = args.filter((arg) => !supportedFlags.has(arg));
+  if (unknown.length > 0) {
+    console.error(`  Unknown start option(s): ${unknown.join(", ")}`);
+    process.exit(1);
+  }
+
+  const discoveryMode = args.includes("--discover-chat-id");
   const { defaultSandbox } = registry.listSandboxes();
   const safeName =
     defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
-  const sandboxEnv = safeName ? `SANDBOX_NAME=${shellQuote(safeName)}` : "";
-  run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh"`);
+  const envAssignments = [];
+  if (safeName) envAssignments.push(`SANDBOX_NAME=${shellQuote(safeName)}`);
+  const allowedChatIds = getCredential("ALLOWED_CHAT_IDS");
+  if (allowedChatIds) envAssignments.push(`ALLOWED_CHAT_IDS=${shellQuote(allowedChatIds)}`);
+  if (discoveryMode) envAssignments.push("NEMOCLAW_TELEGRAM_DISCOVERY=1");
+  const envPrefix = envAssignments.length > 0 ? `${envAssignments.join(" ")} ` : "";
+  run(`${envPrefix}bash "${SCRIPTS}/start-services.sh"`);
 }
 
 function stop() {
   run(`bash "${SCRIPTS}/start-services.sh" --stop`);
+}
+
+function telegramHelp() {
+  console.log(`
+  ${G}Telegram:${R}
+    nemoclaw telegram allow <chat-id[,chat-id...]>   Save allowed Telegram chat IDs
+    nemoclaw telegram show                           Show saved Telegram chat IDs
+    nemoclaw telegram clear                          Remove the saved Telegram allowlist
+    nemoclaw telegram discover                       Start services in discovery-only mode
+
+  ${D}Tip:${R} use ${B}nemoclaw start --discover-chat-id${R}${D} to reply with your chat ID
+  without forwarding messages to the agent.${R}
+`);
+}
+
+async function telegramCommand(args = []) {
+  const [action, ...rest] = args;
+  switch (action) {
+    case undefined:
+    case "help":
+    case "--help":
+    case "-h":
+      telegramHelp();
+      return;
+    case "allow": {
+      let allowlist;
+      try {
+        allowlist = normalizeTelegramChatIds(rest.join(","));
+      } catch (err) {
+        console.error(`  ${err.message}`);
+        process.exit(1);
+      }
+      saveCredential("ALLOWED_CHAT_IDS", allowlist);
+      console.log(`  Saved Telegram allowlist: ${allowlist}`);
+      console.log("  Stored in ~/.nemoclaw/credentials.json (mode 600)");
+      return;
+    }
+    case "show": {
+      const allowlist = getCredential("ALLOWED_CHAT_IDS");
+      if (!allowlist) {
+        console.log("  No Telegram allowlist configured.");
+        return;
+      }
+      console.log(`  Telegram allowlist: ${allowlist}`);
+      return;
+    }
+    case "clear":
+      saveCredential("ALLOWED_CHAT_IDS", "");
+      console.log("  Cleared Telegram allowlist.");
+      return;
+    case "discover":
+      await start(["--discover-chat-id"]);
+      return;
+    default:
+      console.error(`  Unknown telegram action: ${action}`);
+      console.error("  Valid actions: allow, show, clear, discover");
+      process.exit(1);
+  }
 }
 
 function debug(args) {
@@ -1147,9 +1238,10 @@ function help() {
     nemoclaw deploy <instance>       Deploy to a Brev VM and start services
 
   ${G}Services:${R}
-    nemoclaw start                   Start auxiliary services ${D}(Telegram, tunnel)${R}
+    nemoclaw start ${D}[--discover-chat-id]${R} Start auxiliary services ${D}(Telegram, tunnel)${R}
     nemoclaw stop                    Stop all services
     nemoclaw status                  Show sandbox list and service status
+    nemoclaw telegram allow <id>     Save allowed Telegram chat IDs
 
   Troubleshooting:
     nemoclaw debug [--quick]         Collect diagnostics for bug reports
@@ -1197,7 +1289,10 @@ const [cmd, ...args] = process.argv.slice(2);
         await deploy(args[0]);
         break;
       case "start":
-        await start();
+        await start(args);
+        break;
+      case "telegram":
+        await telegramCommand(args);
         break;
       case "stop":
         stop();

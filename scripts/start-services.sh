@@ -123,12 +123,24 @@ do_stop() {
 }
 
 do_start() {
+  local telegram_status="not started (no token)"
+
   if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
     warn "TELEGRAM_BOT_TOKEN not set — Telegram bridge will not start."
     warn "Create a bot via @BotFather on Telegram and set the token."
+    telegram_status="not started (no token)"
   elif [ -z "${NVIDIA_API_KEY:-}" ]; then
     warn "NVIDIA_API_KEY not set — Telegram bridge will not start."
     warn "Set NVIDIA_API_KEY if you want Telegram requests to reach inference."
+    telegram_status="not started (missing NVIDIA_API_KEY)"
+  elif [ -z "${ALLOWED_CHAT_IDS:-}" ] && [ "${NEMOCLAW_TELEGRAM_DISCOVERY:-0}" != "1" ]; then
+    warn "ALLOWED_CHAT_IDS not set — Telegram bridge will not start."
+    warn "Run 'nemoclaw start --discover-chat-id' to return your Telegram chat ID safely."
+    warn "Then run 'nemoclaw telegram allow <chat-id>' and start services again."
+    telegram_status="not started (allowlist required)"
+  elif [ "${NEMOCLAW_TELEGRAM_DISCOVERY:-0}" = "1" ] && [ -z "${ALLOWED_CHAT_IDS:-}" ]; then
+    info "Telegram discovery mode enabled — messages will return their chat ID only."
+    telegram_status="discovery only"
   fi
 
   command -v node >/dev/null || fail "node not found. Install Node.js first."
@@ -152,9 +164,14 @@ do_start() {
   mkdir -p "$PIDDIR"
 
   # Telegram bridge (only if token provided)
-  if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
+  if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ] && { [ -n "${ALLOWED_CHAT_IDS:-}" ] || [ "${NEMOCLAW_TELEGRAM_DISCOVERY:-0}" = "1" ]; }; then
     SANDBOX_NAME="$SANDBOX_NAME" start_service telegram-bridge \
       node "$REPO_DIR/scripts/telegram-bridge.js"
+    if [ "${NEMOCLAW_TELEGRAM_DISCOVERY:-0}" = "1" ] && [ -z "${ALLOWED_CHAT_IDS:-}" ]; then
+      telegram_status="discovery only"
+    else
+      telegram_status="bridge running"
+    fi
   fi
 
   # 3. cloudflared tunnel
@@ -194,9 +211,23 @@ do_start() {
   fi
 
   if is_running telegram-bridge; then
-    echo "  │  Telegram:    bridge running                        │"
+    if [ "${NEMOCLAW_TELEGRAM_DISCOVERY:-0}" = "1" ] && [ -z "${ALLOWED_CHAT_IDS:-}" ]; then
+      echo "  │  Telegram:    discovery only                       │"
+    else
+      echo "  │  Telegram:    bridge running                        │"
+    fi
   else
-    echo "  │  Telegram:    not started (no token)                │"
+    case "$telegram_status" in
+      "not started (missing NVIDIA_API_KEY)")
+        echo "  │  Telegram:    not started (missing API key)         │"
+        ;;
+      "not started (allowlist required)")
+        echo "  │  Telegram:    not started (allowlist required)      │"
+        ;;
+      *)
+        echo "  │  Telegram:    not started (no token)                │"
+        ;;
+    esac
   fi
 
   echo "  │                                                     │"

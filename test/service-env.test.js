@@ -45,7 +45,26 @@ describe("service environment", () => {
 
       expect(result).not.toContain("NVIDIA_API_KEY required");
       expect(result).toContain("NVIDIA_API_KEY not set");
-      expect(result).toContain("Telegram:    not started (no token)");
+      expect(result).toContain("Telegram:    not started (missing API key)");
+    });
+
+    it("warns and skips Telegram bridge when allowlist is missing", () => {
+      const workspace = mkdtempSync(join(tmpdir(), "nemoclaw-services-missing-allowlist-"));
+      const result = execFileSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          NVIDIA_API_KEY: "nvapi-test",
+          TELEGRAM_BOT_TOKEN: "test-token",
+          ALLOWED_CHAT_IDS: "",
+          SANDBOX_NAME: "test-box",
+          TMPDIR: workspace,
+        },
+      });
+
+      expect(result).toContain("ALLOWED_CHAT_IDS not set");
+      expect(result).toContain("discover-chat-id");
+      expect(result).toContain("Telegram:    not started (allowlist required)");
     });
   });
 

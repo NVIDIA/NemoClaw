@@ -185,7 +185,7 @@ The following environment variables configure optional services and local access
 | Variable | Purpose |
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Bot token for the Telegram bridge. |
-| `ALLOWED_CHAT_IDS` | Comma-separated list of Telegram chat IDs allowed to message the agent. |
+| `ALLOWED_CHAT_IDS` | Comma-separated list of Telegram chat IDs allowed to message the agent. Required for normal Telegram bridge forwarding. |
 | `CHAT_UI_URL` | URL for the optional chat UI endpoint. |
 
 For normal setup and reconfiguration, prefer `nemoclaw onboard` over editing these files by hand.

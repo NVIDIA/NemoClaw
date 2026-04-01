@@ -108,6 +108,88 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(markerFile, "utf8")).toContain("start-services.sh");
   });
 
+  it("start forwards stored Telegram allowlist to start-services", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-start-allowlist-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const markerFile = path.join(home, "start-env");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "bash"),
+      [
+        "#!/bin/sh",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        'printf \'SANDBOX_NAME=%s\\nALLOWED_CHAT_IDS=%s\\nNEMOCLAW_TELEGRAM_DISCOVERY=%s\\nARGS=%s\\n\' "$SANDBOX_NAME" "$ALLOWED_CHAT_IDS" "$NEMOCLAW_TELEGRAM_DISCOVERY" "$*" > "$marker_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    expect(runWithEnv("telegram allow 12345,67890", { HOME: home }).code).toBe(0);
+
+    const r = runWithEnv("start", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    const marker = fs.readFileSync(markerFile, "utf8");
+    expect(marker).toContain("SANDBOX_NAME='alpha'");
+    expect(marker).toContain("ALLOWED_CHAT_IDS='12345,67890'");
+    expect(marker).toContain("ARGS=");
+    expect(marker).toContain("start-services.sh");
+  });
+
+  it("start --discover-chat-id enables discovery mode", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-start-discovery-"));
+    const localBin = path.join(home, "bin");
+    const markerFile = path.join(home, "start-env");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "bash"),
+      [
+        "#!/bin/sh",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        'printf \'NEMOCLAW_TELEGRAM_DISCOVERY=%s\\nARGS=%s\\n\' "$NEMOCLAW_TELEGRAM_DISCOVERY" "$*" > "$marker_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("start --discover-chat-id", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    const marker = fs.readFileSync(markerFile, "utf8");
+    expect(marker).toContain("NEMOCLAW_TELEGRAM_DISCOVERY=1");
+    expect(marker).toContain("start-services.sh");
+  });
+
+  it("telegram allow rejects invalid chat ids", () => {
+    const r = run("telegram allow not-a-chat-id");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Invalid Telegram chat ID");
+  });
+
   it("unknown onboard option exits 1", () => {
     const r = run("onboard --non-interactiv");
     expect(r.code).toBe(1);
