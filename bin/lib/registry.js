@@ -239,7 +239,9 @@ function setDefault(name) {
 
 /** Reset the registry to an empty state, removing all sandboxes and the default selection. */
 function clearAll() {
-  save({ sandboxes: {}, defaultSandbox: null });
+  withLock(() => {
+    save({ sandboxes: {}, defaultSandbox: null });
+  });
 }
 
 module.exports = {
