@@ -1,6 +1,6 @@
 ---
 title:
-  page: "Injection Scanner — Detect Prompt Injection in Agent Tool Calls"
+  page: "NemoClaw Injection Scanner — Detect Prompt Injection in Agent Tool Calls"
   nav: "Injection Scanner"
 description: "Reference for the prompt injection scanner module that detects role overrides, instruction injection, tool manipulation, and data exfiltration patterns."
 keywords: ["nemoclaw injection scanner", "prompt injection detection", "agent security"]
@@ -18,7 +18,7 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# Injection Scanner
+# NemoClaw Injection Scanner — Detect Prompt Injection in Agent Tool Calls
 
 The injection scanner detects prompt injection patterns in agent tool inputs and outputs.
 It applies text normalization and pattern matching to identify attempts to override system prompts, inject instructions, manipulate tools, or exfiltrate data.
