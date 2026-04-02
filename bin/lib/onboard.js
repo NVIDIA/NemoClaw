@@ -1926,9 +1926,11 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   }
 
   // Retry gateway start with exponential backoff. On some hosts (Horde VMs,
-  // first-run environments) the embedded k3s needs more time than OpenShell's
-  // internal health-check window allows. Retrying after a clean destroy lets
-  // the second attempt benefit from cached images and cleaner cgroup state.
+  // first-run environments, Colima on macOS) the embedded k3s needs more time
+  // than OpenShell's internal health-check window allows.
+  //
+  // The first retry keeps the existing gateway (to preserve cached images and
+  // k3s state); only subsequent retries destroy and recreate.
   // See: https://github.com/NVIDIA/OpenShell/issues/433
   const retries = exitOnFailure ? 2 : 0;
   try {
@@ -1936,8 +1938,8 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
       () => {
         runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: true, env: gatewayEnv });
 
-        const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 5);
-        const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
+        const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 30);
+        const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 5);
         for (let i = 0; i < healthPollCount; i++) {
           const status = runCaptureOpenshell(["status"], { ignoreError: true });
           const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
@@ -1947,7 +1949,12 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
           if (isGatewayHealthy(status, namedInfo, currentInfo)) {
             return; // success
           }
-          if (i < healthPollCount - 1) sleep(healthPollInterval);
+          if (i < healthPollCount - 1) {
+            if (i === 0) {
+              console.log("  Waiting for gateway to become healthy...");
+            }
+            sleep(healthPollInterval);
+          }
         }
 
         throw new Error("Gateway failed to start");
@@ -1960,7 +1967,10 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
           console.log(
             `  Gateway start attempt ${err.attemptNumber} failed. ${err.retriesLeft} retries left...`,
           );
-          if (err.retriesLeft > 0 && exitOnFailure) {
+          // First retry: keep the gateway to preserve cached images and k3s
+          // cluster state. Only destroy on subsequent retries when a cold
+          // restart is genuinely needed.
+          if (err.retriesLeft > 0 && exitOnFailure && err.attemptNumber > 1) {
             destroyGateway();
           }
         },
