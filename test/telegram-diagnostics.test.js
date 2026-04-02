@@ -1,12 +1,12 @@
+
+
+// ...existing code...
+
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it } from "vitest";
-import assert from "node:assert/strict";
-import { createRequire } from "node:module";
-
-const require = createRequire(import.meta.url);
-
+const { describe, it } = require("vitest");
+const assert = require("node:assert/strict");
 const {
   buildTelegramProbeCommand,
   buildTelegramProbeScript,
