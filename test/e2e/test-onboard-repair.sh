@@ -126,6 +126,7 @@ info "Running onboard with an invalid policy mode to create resumable state..."
 
 FIRST_LOG="$(mktemp)"
 NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_RECREATE_SANDBOX=1 \
   NEMOCLAW_POLICY_MODE=invalid \
@@ -178,6 +179,7 @@ fi
 REPAIR_LOG="$(mktemp)"
 env -u NVIDIA_API_KEY \
   NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_POLICY_MODE=skip \
   node "$REPO/bin/nemoclaw.js" onboard --resume --non-interactive >"$REPAIR_LOG" 2>&1
@@ -232,6 +234,7 @@ info "Attempting resume with a different sandbox name..."
 SANDBOX_CONFLICT_LOG="$(mktemp)"
 env -u NVIDIA_API_KEY \
   NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$OTHER_SANDBOX_NAME" \
   NEMOCLAW_POLICY_MODE=skip \
   node "$REPO/bin/nemoclaw.js" onboard --resume --non-interactive >"$SANDBOX_CONFLICT_LOG" 2>&1
@@ -260,6 +263,7 @@ info "Attempting resume with conflicting provider/model inputs..."
 PROVIDER_CONFLICT_LOG="$(mktemp)"
 env -u NVIDIA_API_KEY \
   NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_PROVIDER=openai \
   NEMOCLAW_MODEL=gpt-5.4 \

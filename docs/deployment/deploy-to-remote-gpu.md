@@ -60,7 +60,7 @@ The deploy script performs the following steps on the VM:
 
 1. Installs Docker and the NVIDIA Container Toolkit if a GPU is present.
 2. Installs the OpenShell CLI.
-3. Runs the nemoclaw setup to create the gateway, register providers, and launch the sandbox.
+3. Runs `nemoclaw onboard` (the setup wizard) to create the gateway, register providers, and launch the sandbox.
 4. Starts auxiliary services, such as the Telegram bridge and cloudflared tunnel.
 
 ## Connect to the Remote Sandbox

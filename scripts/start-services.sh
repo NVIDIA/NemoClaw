@@ -123,11 +123,12 @@ do_stop() {
 }
 
 do_start() {
-  [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY required"
-
   if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
     warn "TELEGRAM_BOT_TOKEN not set — Telegram bridge will not start."
     warn "Create a bot via @BotFather on Telegram and set the token."
+  elif [ -z "${NVIDIA_API_KEY:-}" ]; then
+    warn "NVIDIA_API_KEY not set — Telegram bridge will not start."
+    warn "Set NVIDIA_API_KEY if you want Telegram requests to reach inference."
   fi
 
   command -v node >/dev/null || fail "node not found. Install Node.js first."
@@ -151,7 +152,7 @@ do_start() {
   mkdir -p "$PIDDIR"
 
   # Telegram bridge (only if token provided)
-  if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+  if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
     SANDBOX_NAME="$SANDBOX_NAME" start_service telegram-bridge \
       node "$REPO_DIR/scripts/telegram-bridge.js"
   fi
