@@ -9,17 +9,18 @@
 #   - Linux (DGX Spark or similar); other OS exits immediately (fail)
 #   - Docker running
 #   - sudo (for scripts/setup-spark.sh) unless NEMOCLAW_E2E_SPARK_SKIP_SETUP=1
-#   - Same env your non-interactive install needs (e.g. NEMOCLAW_NON_INTERACTIVE=1, API keys, …)
+#   - Same env your non-interactive install needs (e.g. NEMOCLAW_NON_INTERACTIVE=1, NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1, API keys, …)
 #
 # Environment:
-#   NEMOCLAW_NON_INTERACTIVE=1     — required (matches full-e2e install phase)
-#   NEMOCLAW_E2E_SPARK_SKIP_SETUP=1 — skip sudo setup-spark (host already configured)
-#   NEMOCLAW_E2E_PUBLIC_INSTALL=1  — use curl|bash instead of repo install.sh
-#   NEMOCLAW_INSTALL_SCRIPT_URL    — URL when using public install (default: nemoclaw.sh)
-#   INSTALL_LOG                    — log file (default: /tmp/nemoclaw-e2e-spark-install.log)
+#   NEMOCLAW_NON_INTERACTIVE=1             — required (matches full-e2e install phase)
+#   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required for non-interactive install/onboard
+#   NEMOCLAW_E2E_SPARK_SKIP_SETUP=1        — skip sudo setup-spark (host already configured)
+#   NEMOCLAW_E2E_PUBLIC_INSTALL=1          — use curl|bash instead of repo install.sh
+#   NEMOCLAW_INSTALL_SCRIPT_URL            — URL when using public install (default: nemoclaw.sh)
+#   INSTALL_LOG                            — log file (default: /tmp/nemoclaw-e2e-spark-install.log)
 #
 # Usage:
-#   NEMOCLAW_NON_INTERACTIVE=1 bash test/e2e/test-spark-install.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash test/e2e/test-spark-install.sh
 #
 # See: spark-install.md
 
@@ -87,6 +88,13 @@ else
   exit 1
 fi
 
+if [ "${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
+  pass "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1"
+else
+  fail "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is required for non-interactive install"
+  exit 1
+fi
+
 section "Phase 2: Spark Docker setup (sudo)"
 cd "$REPO" || {
   fail "cd to repo: $REPO"
@@ -111,10 +119,10 @@ info "Log: $INSTALL_LOG"
 if [ "${NEMOCLAW_E2E_PUBLIC_INSTALL:-0}" = "1" ]; then
   url="${NEMOCLAW_INSTALL_SCRIPT_URL:-https://www.nvidia.com/nemoclaw.sh}"
   info "Running: curl -fsSL ... | bash (url=$url)"
-  curl -fsSL "$url" | bash >"$INSTALL_LOG" 2>&1 &
+  curl -fsSL "$url" | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash >"$INSTALL_LOG" 2>&1 &
 else
   info "Running: bash install.sh --non-interactive"
-  bash install.sh --non-interactive >"$INSTALL_LOG" 2>&1 &
+  NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash install.sh --non-interactive >"$INSTALL_LOG" 2>&1 &
 fi
 install_pid=$!
 tail -f "$INSTALL_LOG" --pid=$install_pid 2>/dev/null &

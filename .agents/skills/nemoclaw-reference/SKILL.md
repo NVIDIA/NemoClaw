@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-reference
-description: Learns how NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox. Also covers fulls CLI reference for plugin and standalone NemoClaw commands; configurations reference for NemoClaw routed inference providers. Use when blueprints, cli, inference routing, llms, nemoclaw, nemoclaw architecture, nemoclaw architecture plugin blueprint, nemoclaw cli commands.
+description: Learns how NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox. Also covers fulls CLI reference for slash commands and standalone NemoClaw commands; configurations reference for NemoClaw routed inference providers. Use when blueprints, cli, inference routing, llms, nemoclaw, nemoclaw architecture, nemoclaw architecture plugin blueprint, nemoclaw cli commands.
 ---
 
 # Nemoclaw Reference

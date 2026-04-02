@@ -17,6 +17,17 @@ This page explains the key concepts about NemoClaw at a high level.
 The `nemoclaw` CLI is the primary entrypoint for setting up and managing sandboxed OpenClaw agents.
 It delegates heavy lifting to a versioned blueprint, a Python artifact that orchestrates sandbox creation, policy application, and inference provider setup through the OpenShell CLI.
 
+NemoClaw adds the following layers on top of OpenShell.
+
+| Layer | What it provides |
+|-------|------------------|
+| Onboarding | Guided setup that validates credentials, selects providers, and creates a working sandbox in one command. |
+| Blueprint | A hardened Dockerfile with security policies, capability drops, and least-privilege network rules. |
+| State management | Safe migration of agent state across machines with credential stripping and integrity verification. |
+| Messaging bridges | Host-side processes that connect Telegram, Discord, and Slack to the sandboxed agent. |
+
+OpenShell handles *how* to sandbox an agent securely. NemoClaw handles *what* goes in the sandbox and makes the setup accessible. For the full system diagram, see Architecture (see the `nemoclaw-reference` skill).
+
 ```mermaid
 flowchart TB
     subgraph Host
@@ -58,23 +69,7 @@ flowchart TB
 
 ## Design Principles
 
-NemoClaw architecture follows the following principles.
-
-Thin plugin, versioned blueprint
-: The plugin stays small and stable. Orchestration logic lives in the blueprint and evolves on its own release cadence.
-
-Respect CLI boundaries
-: The `nemoclaw` CLI is the primary interface for sandbox management.
-
-Supply chain safety
-: Blueprint artifacts are immutable, versioned, and digest-verified before execution.
-
 *Full details in `references/how-it-works.md`.*
-
-> **Alpha software:** NemoClaw is in alpha, available as an early preview since March 16, 2026.
-> APIs, configuration schemas, and runtime behavior are subject to breaking changes between releases.
-> Do not use this software in production environments.
-> File issues and feedback through the GitHub repository as the project continues to stabilize.
 
 NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants.
 It incorporates policy-based privacy and security guardrails, giving users control over their agents’ behavior and data handling.
@@ -88,6 +83,19 @@ By combining powerful open source models with built-in safety measures, NemoClaw
 | Sandbox OpenClaw        | Creates an OpenShell sandbox pre-configured for OpenClaw, with filesystem and network policies applied from the first boot.                   |
 | Route inference         | Configures OpenShell inference routing so agent traffic flows through cloud-hosted Nemotron 3 Super 120B via [build.nvidia.com](https://build.nvidia.com). |
 | Manage the lifecycle    | Handles blueprint versioning, digest verification, and sandbox setup.                                                                                |
+
+## Key Features
+
+NemoClaw provides the following capabilities on top of the OpenShell runtime.
+
+| Feature | Description |
+|---------|-------------|
+| Guided onboarding | Validates credentials, selects providers, and creates a working sandbox in one command. |
+| Hardened blueprint | A security-first Dockerfile with capability drops, least-privilege network rules, and declarative policy. |
+| State management | Safe migration of agent state across machines with credential stripping and integrity verification. |
+| Messaging bridges | Host-side processes that connect Telegram, Discord, and Slack to the sandboxed agent. |
+| Routed inference | Provider-routed model calls through the OpenShell gateway, transparent to the agent. Supports NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and local Ollama. |
+| Layered protection | Network, filesystem, process, and inference controls that can be hot-reloaded or locked at creation. |
 
 ## Challenge
 
@@ -115,6 +123,8 @@ You can use NemoClaw for various use cases including the following.
 | Sandboxed testing         | Test agent behavior in a locked-down environment before granting broader permissions.         |
 | Remote GPU deployment     | Deploy a sandboxed agent to a remote GPU instance for persistent operation.                   |
 
+*Full details in `references/overview.md`.*
+
 ## Reference
 
 - [NemoClaw Release Notes](references/release-notes.md)
@@ -124,5 +134,3 @@ You can use NemoClaw for various use cases including the following.
 - `nemoclaw-get-started` — Quickstart to install NemoClaw and run your first agent
 - `nemoclaw-configure-inference` — Switch Inference Providers to configure the inference provider
 - `nemoclaw-manage-policy` — Approve or Deny Network Requests to manage egress approvals
-- `nemoclaw-deploy-remote` — Deploy to a Remote GPU Instance for persistent operation
-- `nemoclaw-monitor-sandbox` — Monitor Sandbox Activity to observe agent behavior

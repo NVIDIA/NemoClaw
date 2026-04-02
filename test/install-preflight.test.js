@@ -27,12 +27,11 @@ function writeNodeStub(fakeBin) {
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
 if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.16.0"; exit 0; fi
+if [ -n "\${1:-}" ] && [ -f "$1" ]; then
+  exec ${JSON.stringify(process.execPath)} "$@"
+fi
 if [ "$1" = "-e" ]; then
-  if [[ "$2" == *"dependencies.openclaw"* ]]; then
-    echo "2026.3.11"
-    exit 0
-  fi
-  exit 0
+  exec ${JSON.stringify(process.execPath)} "$@"
 fi
 exit 99`,
   );
@@ -128,6 +127,9 @@ if [ "$1" = "--version" ]; then
   echo "v22.16.0"
   exit 0
 fi
+if [ -n "\${1:-}" ] && [ -f "$1" ]; then
+  exec ${JSON.stringify(process.execPath)} "$@"
+fi
 if [ "$1" = "-e" ]; then
   exit 1
 fi
@@ -200,6 +202,7 @@ exit 98
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NPM_PREFIX: prefix,
         GIT_LOG_PATH: gitLog,
       },
@@ -282,6 +285,7 @@ exit 98
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NPM_PREFIX: prefix,
       },
     });
@@ -415,6 +419,7 @@ fi`,
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NPM_PREFIX: prefix,
         NPM_LOG_PATH: npmLog,
       },
@@ -483,6 +488,7 @@ fi`,
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NPM_PREFIX: prefix,
         NEMOCLAW_ONBOARD_LOG: onboardLog,
       },
@@ -492,7 +498,108 @@ fi`,
     expect(`${result.stdout}${result.stderr}`).toMatch(
       /Found an interrupted onboarding session — resuming it\./,
     );
-    expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(/^onboard --resume --non-interactive$/m);
+    expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(
+      /^onboard --resume --non-interactive --yes-i-accept-third-party-software$/m,
+    );
+  });
+
+  it("requires explicit terms acceptance in non-interactive install mode", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-terms-required-"));
+    const fakeBin = path.join(tmp, "bin");
+    const prefix = path.join(tmp, "prefix");
+    const onboardLog = path.join(tmp, "onboard.log");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+
+    writeNodeStub(fakeBin);
+    writeNpmStub(
+      fakeBin,
+      `if [ "$1" = "pack" ]; then
+  tmpdir="$4"
+  mkdir -p "$tmpdir/package"
+  tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
+  exit 0
+fi
+if [ "$1" = "install" ]; then exit 0; fi
+if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$NEMOCLAW_ONBOARD_LOG"
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi`,
+    );
+
+    const result = spawnSync("bash", [INSTALLER, "--non-interactive"], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        NPM_PREFIX: prefix,
+        NEMOCLAW_ONBOARD_LOG: onboardLog,
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/--yes-i-accept-third-party-software/);
+    expect(fs.existsSync(onboardLog)).toBe(false);
+  });
+
+  it("passes the acceptance flag through to non-interactive onboard", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-terms-accept-"));
+    const fakeBin = path.join(tmp, "bin");
+    const prefix = path.join(tmp, "prefix");
+    const onboardLog = path.join(tmp, "onboard.log");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+
+    writeNodeStub(fakeBin);
+    writeNpmStub(
+      fakeBin,
+      `if [ "$1" = "pack" ]; then
+  tmpdir="$4"
+  mkdir -p "$tmpdir/package"
+  tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
+  exit 0
+fi
+if [ "$1" = "install" ]; then exit 0; fi
+if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$NEMOCLAW_ONBOARD_LOG"
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi`,
+    );
+
+    const result = spawnSync(
+      "bash",
+      [INSTALLER, "--non-interactive", "--yes-i-accept-third-party-software"],
+      {
+        cwd: path.join(import.meta.dirname, ".."),
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmp,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          NPM_PREFIX: prefix,
+          NEMOCLAW_ONBOARD_LOG: onboardLog,
+        },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(
+      /^onboard --non-interactive --yes-i-accept-third-party-software$/m,
+    );
   });
 
   it("spin() non-TTY: dumps wrapped-command output and exits non-zero on failure", () => {
@@ -536,6 +643,7 @@ fi`,
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NPM_PREFIX: prefix,
       },
     });
@@ -558,6 +666,9 @@ fi`,
 if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
   echo "v22.16.0"
   exit 0
+fi
+if [ -n "\${1:-}" ] && [ -f "$1" ]; then
+  exec ${JSON.stringify(process.execPath)} "$@"
 fi
 if [ "$1" = "-e" ]; then
   exit 1
@@ -650,6 +761,7 @@ exit 0
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NPM_PREFIX: prefix,
       },
     });
@@ -660,13 +772,14 @@ exit 0
     expect(`${result.stdout}${result.stderr}`).toMatch(/Created user-local shim/);
   });
 
-  it("does not print PATH recovery instructions when nemoclaw is already usable in this shell", () => {
+  it("shows source hint even when bin dir is already in PATH (stale hash protection)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-ready-shell-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
+    const prefixBin = path.join(prefix, "bin");
     const nvmDir = path.join(tmp, ".nvm");
     fs.mkdirSync(fakeBin);
-    fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+    fs.mkdirSync(prefixBin, { recursive: true });
     fs.mkdirSync(nvmDir, { recursive: true });
     fs.writeFileSync(path.join(nvmDir, "nvm.sh"), "# stub nvm\n");
 
@@ -676,6 +789,9 @@ exit 0
 if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
   echo "v22.16.0"
   exit 0
+fi
+if [ -n "\${1:-}" ] && [ -f "$1" ]; then
+  exec ${JSON.stringify(process.execPath)} "$@"
 fi
 if [ "$1" = "-e" ]; then
   exit 1
@@ -762,8 +878,9 @@ exit 0
       env: {
         ...process.env,
         HOME: tmp,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        PATH: `${fakeBin}:${prefixBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NPM_PREFIX: prefix,
         NVM_DIR: nvmDir,
       },
@@ -772,7 +889,69 @@ exit 0
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).toBe(0);
     expect(output).not.toMatch(/current shell cannot resolve 'nemoclaw'/);
-    expect(output).not.toMatch(/source .*\.bashrc|source .*\.zshrc|source .*\.profile/);
+    // Always show source hint — the parent shell may have stale hash-table
+    // entries after an upgrade/reinstall even when the dir is in PATH.
+    expect(output).toMatch(/\$ source /);
+  });
+
+  it("shows shell reload hint when PATH was extended by the installer", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-reload-hint-"));
+    const fakeBin = path.join(tmp, "bin");
+    const prefix = path.join(tmp, "prefix");
+    const nvmDir = path.join(tmp, ".nvm");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+    fs.mkdirSync(nvmDir, { recursive: true });
+    fs.writeFileSync(path.join(nvmDir, "nvm.sh"), "# stub nvm\n");
+
+    writeNodeStub(fakeBin);
+    writeNpmStub(
+      fakeBin,
+      `if [ "$1" = "pack" ]; then exit 1; fi
+if [ "$1" = "install" ] || [ "$1" = "run" ]; then exit 0; fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+if [ "$1" = "onboard" ] || [ "$1" = "--version" ]; then exit 0; fi
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi`,
+    );
+
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+    );
+    fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, "nemoclaw", "package.json"),
+      JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
+    );
+
+    const result = spawnSync("bash", [INSTALLER], {
+      cwd: tmp,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NPM_PREFIX: prefix,
+        NVM_DIR: nvmDir,
+      },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).toBe(0);
+    expect(output).toMatch(/\$ source /);
+    expect(output).not.toContain("Onboarding has not run yet.");
+    expect(output).not.toContain(
+      "Onboarding did not run because this shell cannot resolve 'nemoclaw' yet.",
+    );
+    expect(output).toMatch(/\$ nemoclaw my-assistant connect/);
   });
 });
 
@@ -896,6 +1075,7 @@ exit 0`,
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NPM_PREFIX: prefix,
         GIT_LOG_PATH: gitLog,
       },
@@ -967,6 +1147,7 @@ fi`,
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NPM_PREFIX: prefix,
         GIT_LOG_PATH: gitLog,
       },
@@ -1053,6 +1234,11 @@ describe("installer pure helpers", () => {
     const r = callInstallerFn("resolve_installer_version");
     // May return clean semver ("0.0.2") or git describe format ("0.0.2-3-gabcdef1")
     expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+(-.+)?$/);
+  });
+
+  it("resolve_openclaw_version: falls back to Dockerfile.base when package.json omits it", () => {
+    const r = callInstallerFn('resolve_openclaw_version "$PWD"');
+    expect(r.stdout.trim()).toBe("2026.3.11");
   });
 
   it("resolve_installer_version: falls back to package.json when git tags are unavailable", () => {
@@ -1316,6 +1502,9 @@ describe("curl-pipe installer release-tag resolution", () => {
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.16.0"; exit 0; fi
+if [ -n "\${1:-}" ] && [ -f "$1" ]; then
+  exec ${JSON.stringify(process.execPath)} "$@"
+fi
 if [ "$1" = "-e" ]; then exit 1; fi
 exit 99`,
     );
@@ -1386,6 +1575,7 @@ exit 0`,
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NPM_PREFIX: prefix,
         GIT_LOG_PATH: gitLog,
       },
@@ -1427,6 +1617,7 @@ exit 0`,
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NPM_PREFIX: prefix,
         GIT_LOG_PATH: gitLog,
         NEMOCLAW_INSTALL_TAG: "v0.2.0",

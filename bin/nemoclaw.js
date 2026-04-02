@@ -45,6 +45,7 @@ const { parseGatewayInference } = require("./lib/inference-config");
 const { getVersion } = require("./lib/version");
 const onboardSession = require("./lib/onboard-session");
 const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
+const { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } = require("./lib/usage-notice");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -622,16 +623,20 @@ function exitWithSpawnResult(result) {
 
 async function onboard(args) {
   const { onboard: runOnboard } = require("./lib/onboard");
-  const allowedArgs = new Set(["--non-interactive", "--resume"]);
+  const allowedArgs = new Set(["--non-interactive", "--resume", NOTICE_ACCEPT_FLAG]);
   const unknownArgs = args.filter((arg) => !allowedArgs.has(arg));
   if (unknownArgs.length > 0) {
     console.error(`  Unknown onboard option(s): ${unknownArgs.join(", ")}`);
-    console.error("  Usage: nemoclaw onboard [--non-interactive] [--resume]");
+    console.error(
+      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [${NOTICE_ACCEPT_FLAG}]`,
+    );
     process.exit(1);
   }
   const nonInteractive = args.includes("--non-interactive");
   const resume = args.includes("--resume");
-  await runOnboard({ nonInteractive, resume });
+  const acceptThirdPartySoftware =
+    args.includes(NOTICE_ACCEPT_FLAG) || String(process.env[NOTICE_ACCEPT_ENV] || "") === "1";
+  await runOnboard({ nonInteractive, resume, acceptThirdPartySoftware });
 }
 
 async function setup(args = []) {
@@ -777,27 +782,64 @@ async function deploy(instanceName) {
 }
 
 async function start() {
+  const { startAll } = require("./lib/services");
   const { defaultSandbox } = registry.listSandboxes();
   const safeName =
     defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
-  const sandboxEnv = safeName ? `SANDBOX_NAME=${shellQuote(safeName)}` : "";
-  run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh"`);
+  await startAll({ sandboxName: safeName || undefined });
 }
 
 function stop() {
-  run(`bash "${SCRIPTS}/start-services.sh" --stop`);
+  const { stopAll } = require("./lib/services");
+  const { defaultSandbox } = registry.listSandboxes();
+  const safeName =
+    defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
+  stopAll({ sandboxName: safeName || undefined });
 }
 
 function debug(args) {
-  const result = spawnSync("bash", [path.join(SCRIPTS, "debug.sh"), ...args], {
-    stdio: "inherit",
-    cwd: ROOT,
-    env: {
-      ...process.env,
-      SANDBOX_NAME: registry.listSandboxes().defaultSandbox || "",
-    },
-  });
-  exitWithSpawnResult(result);
+  const { runDebug } = require("./lib/debug");
+  const opts = {};
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case "--help":
+      case "-h":
+        console.log("Collect NemoClaw diagnostic information\n");
+        console.log("Usage: nemoclaw debug [--quick] [--output FILE] [--sandbox NAME]\n");
+        console.log("Options:");
+        console.log("  --quick, -q        Only collect minimal diagnostics");
+        console.log("  --output, -o FILE  Write a tarball to FILE");
+        console.log("  --sandbox NAME     Target sandbox name");
+        process.exit(0);
+        break;
+      case "--quick":
+      case "-q":
+        opts.quick = true;
+        break;
+      case "--output":
+      case "-o":
+        if (!args[i + 1] || args[i + 1].startsWith("-")) {
+          console.error("Error: --output requires a file path argument");
+          process.exit(1);
+        }
+        opts.output = args[++i];
+        break;
+      case "--sandbox":
+        if (!args[i + 1] || args[i + 1].startsWith("-")) {
+          console.error("Error: --sandbox requires a name argument");
+          process.exit(1);
+        }
+        opts.sandboxName = args[++i];
+        break;
+      default:
+        console.error(`Unknown option: ${args[i]}`);
+        process.exit(1);
+    }
+  }
+  if (!opts.sandboxName) {
+    opts.sandboxName = registry.listSandboxes().defaultSandbox || undefined;
+  }
+  runDebug(opts);
 }
 
 function uninstall(args) {
@@ -860,7 +902,8 @@ function showStatus() {
   }
 
   // Show service status
-  run(`bash "${SCRIPTS}/start-services.sh" --status`);
+  const { showStatus: showServiceStatus } = require("./lib/services");
+  showServiceStatus({ sandboxName: defaultSandbox || undefined });
 }
 
 async function listSandboxes() {
@@ -1154,6 +1197,7 @@ function help() {
 
   ${G}Getting Started:${R}
     ${B}nemoclaw onboard${R}                 Configure inference endpoint and credentials
+                                    ${D}(non-interactive: ${NOTICE_ACCEPT_FLAG} or ${NOTICE_ACCEPT_ENV}=1)${R}
     nemoclaw setup-spark             Set up on DGX Spark ${D}(fixes cgroup v2 + Docker)${R}
 
   ${G}Sandbox Management:${R}
