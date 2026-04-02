@@ -145,7 +145,11 @@ export class SessionStore {
     }
 
     if (this.onTrifecta && !wasTrifecta && isTrifecta(sess.capabilities)) {
-      this.onTrifecta(sessionId);
+      try {
+        this.onTrifecta(sessionId);
+      } catch {
+        // Swallow callback errors so a broken handler never disrupts recording.
+      }
     }
   }
 

@@ -1,6 +1,6 @@
 ---
 title:
-  page: "Session Tracker — Detect Multi-Step Exfiltration Attacks"
+  page: "NemoClaw Session Tracker — Detect Multi-Step Exfiltration Attacks"
   nav: "Session Tracker"
 description: "Reference for the behavioral session tracker that detects multi-step exfiltration attacks by tracking three capability classes per agent session."
 keywords: ["nemoclaw session tracker", "trifecta detection", "behavioral tracking", "exfiltration detection"]
@@ -18,7 +18,7 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# Session Tracker — Detect Multi-Step Exfiltration Attacks
+# NemoClaw Session Tracker — Detect Multi-Step Exfiltration Attacks
 
 The session tracker module detects multi-step exfiltration attacks by tracking three capability classes per agent session.
 
@@ -179,5 +179,5 @@ type RiskLevel = "clean" | "elevated" | "critical";
 
 ## Next Steps
 
-- Review the injection scanner in {doc}`/reference/injection-scanner` to understand how NemoClaw detects prompt injection in agent tool calls (pending PR #870).
-- See the audit chain in {doc}`/reference/audit-chain` for tamper-evident logging of all policy decisions (pending PR #892).
+- Review the injection scanner (`nemoclaw/src/security/injection-scanner.ts`, pending PR #870) to understand how NemoClaw detects prompt injection in agent tool calls.
+- See the audit chain (`nemoclaw/src/security/audit-chain.ts`, pending PR #892) for tamper-evident logging of all policy decisions.

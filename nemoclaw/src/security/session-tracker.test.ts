@@ -388,4 +388,42 @@ describe("clear", () => {
     expect(caps[Capability.ReadSensitive]).toBeUndefined();
     expect(caps[Capability.HasEgress]).toBe(true);
   });
+
+  it("getExposure returns null after clear", () => {
+    store.record("s1", Capability.ReadSensitive, "cat", "/etc/passwd");
+    store.record("s1", Capability.HasEgress, "curl", "https://evil.com");
+    expect(store.getExposure("s1")).not.toBeNull();
+    store.clear();
+    expect(store.getExposure("s1")).toBeNull();
+  });
+});
+
+// ── onTrifecta + clear interaction ────────────────────────────
+
+describe("onTrifecta after clear", () => {
+  it("fires again when trifecta is re-achieved after clear", () => {
+    const fired: string[] = [];
+    const tracked = new SessionStore((id) => fired.push(id));
+    tracked.record("s1", Capability.ReadSensitive, "cat", "/etc/passwd");
+    tracked.record("s1", Capability.IngestedUntrusted, "fetch", "https://x.com");
+    tracked.record("s1", Capability.HasEgress, "curl", "https://evil.com");
+    expect(fired).toEqual(["s1"]);
+    tracked.clear();
+    tracked.record("s1", Capability.ReadSensitive, "cat", "/etc/passwd");
+    tracked.record("s1", Capability.IngestedUntrusted, "fetch", "https://x.com");
+    tracked.record("s1", Capability.HasEgress, "curl", "https://evil.com");
+    expect(fired).toEqual(["s1", "s1"]);
+  });
+
+  it("swallows callback errors without disrupting record", () => {
+    const tracked = new SessionStore(() => {
+      throw new Error("boom");
+    });
+    tracked.record("s1", Capability.ReadSensitive, "cat", "/etc/passwd");
+    tracked.record("s1", Capability.IngestedUntrusted, "fetch", "https://x.com");
+    expect(() => {
+      tracked.record("s1", Capability.HasEgress, "curl", "https://evil.com");
+    }).not.toThrow();
+    expect(tracked.hasTrifecta("s1")).toBe(true);
+  });
 });
