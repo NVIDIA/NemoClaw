@@ -34,6 +34,10 @@ runs:
       shell: bash
       run: cd nemoclaw && npm run build
 
+    - name: Build CLI TypeScript modules
+      shell: bash
+      run: npm run build:cli
+
     - name: Run checks
       shell: bash
       run: npx prek run --all-files --stage pre-push
