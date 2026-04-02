@@ -58,7 +58,9 @@ describe("shell runtime helpers", () => {
   });
 
   it("classifies a Docker Desktop DOCKER_HOST correctly", () => {
-    const result = runShell(`source "${RUNTIME_SH}"; docker_host_runtime "unix:///Users/test/.docker/run/docker.sock"`);
+    const result = runShell(
+      `source "${RUNTIME_SH}"; docker_host_runtime "unix:///Users/test/.docker/run/docker.sock"`,
+    );
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe("docker-desktop");
@@ -98,7 +100,9 @@ describe("shell runtime helpers", () => {
   });
 
   it("detects podman from docker info output", () => {
-    const result = runShell(`source "${RUNTIME_SH}"; infer_container_runtime_from_info "podman version 5.4.1"`);
+    const result = runShell(
+      `source "${RUNTIME_SH}"; infer_container_runtime_from_info "podman version 5.4.1"`,
+    );
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe("podman");
   });

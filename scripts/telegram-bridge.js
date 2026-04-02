@@ -20,6 +20,7 @@ const https = require("https");
 const { execFileSync, spawn } = require("child_process");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 const { shellQuote, validateName } = require("../bin/lib/runner");
+const { parseAllowedChatIds, isChatAllowed } = require("../bin/lib/chat-filter");
 
 const OPENSHELL = resolveOpenshell();
 if (!OPENSHELL) {
@@ -31,9 +32,7 @@ const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const API_KEY = process.env.NVIDIA_API_KEY;
 const SANDBOX = process.env.SANDBOX_NAME || "nemoclaw";
 try { validateName(SANDBOX, "SANDBOX_NAME"); } catch (e) { console.error(e.message); process.exit(1); }
-const ALLOWED_CHATS = process.env.ALLOWED_CHAT_IDS
-  ? process.env.ALLOWED_CHAT_IDS.split(",").map((s) => s.trim())
-  : null;
+const ALLOWED_CHATS = parseAllowedChatIds(process.env.ALLOWED_CHAT_IDS);
 
 if (!TOKEN) { console.error("TELEGRAM_BOT_TOKEN required"); process.exit(1); }
 if (!API_KEY) { console.error("NVIDIA_API_KEY required"); process.exit(1); }
@@ -174,7 +173,7 @@ async function poll() {
         const chatId = String(msg.chat.id);
 
         // Access control
-        if (ALLOWED_CHATS && !ALLOWED_CHATS.includes(chatId)) {
+        if (!isChatAllowed(ALLOWED_CHATS, chatId)) {
           console.log(`[ignored] chat ${chatId} not in allowed list`);
           continue;
         }

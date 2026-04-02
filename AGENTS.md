@@ -82,8 +82,8 @@ Security-sensitive code paths require extra test coverage.
 
 **Updating docs:**
 
-- Edit under `docs/` (never `.agents/skills/docs/`)
-- Regenerate skills: `python scripts/docs-to-skills.py docs/ .agents/skills/docs/ --prefix nemoclaw`
+- Edit under `docs/` (never `.agents/skills/nemoclaw-*/*.md`)
+- Regenerate skills: `python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw`
 - Preview: `make docs-live`
 
 ### Gotchas
@@ -91,5 +91,5 @@ Security-sensitive code paths require extra test coverage.
 - `npm install` at root triggers `prek install` which sets up git hooks. If hooks fail, check that `core.hooksPath` is unset: `git config --unset core.hooksPath`
 - The `nemoclaw/` subdirectory has its own `package.json`, `node_modules/`, and ESLint config — it's a separate npm project
 - SPDX headers are auto-inserted by pre-commit hooks; don't worry about adding them manually
-- Coverage thresholds are ratcheted in `ci/coverage-threshold.json` — new code should not decrease coverage
+- Coverage thresholds are ratcheted in `ci/coverage-threshold-*.json` — new code should not decrease CLI or plugin coverage
 - The `.claude/skills` symlink points to `.agents/skills` — both paths resolve to the same content

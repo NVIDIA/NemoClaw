@@ -9,20 +9,25 @@ import { createRequire } from "node:module";
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-session-"));
 const require = createRequire(import.meta.url);
-const modulePath = require.resolve("../bin/lib/onboard-session");
+// Clear both the shim and the dist module so HOME changes take effect.
+const shimPath = require.resolve("../../bin/lib/onboard-session");
+const distPath = require.resolve("../../dist/lib/onboard-session");
 const originalHome = process.env.HOME;
-let session;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let session: any;
 
 beforeEach(() => {
   process.env.HOME = tmpDir;
-  delete require.cache[modulePath];
-  session = require("../bin/lib/onboard-session");
+  delete require.cache[shimPath];
+  delete require.cache[distPath];
+  session = require("../../dist/lib/onboard-session");
   session.clearSession();
   session.releaseOnboardLock();
 });
 
 afterEach(() => {
-  delete require.cache[modulePath];
+  delete require.cache[shimPath];
+  delete require.cache[distPath];
   if (originalHome === undefined) {
     delete process.env.HOME;
   } else {
@@ -56,7 +61,7 @@ describe("onboard session", () => {
 
     const loaded = session.loadSession();
     expect(loaded.endpointUrl).toBe(
-      "https://example.com/v1/models?token=%3CREDACTED%3E&sig=%3CREDACTED%3E&X-Amz-Signature=%3CREDACTED%3E&keep=yes"
+      "https://example.com/v1/models?token=%3CREDACTED%3E&sig=%3CREDACTED%3E&X-Amz-Signature=%3CREDACTED%3E&keep=yes",
     );
     expect(session.summarizeForDebug().endpointUrl).toBe(loaded.endpointUrl);
   });
@@ -151,8 +156,12 @@ describe("onboard session", () => {
     fs.mkdirSync(path.dirname(session.LOCK_FILE), { recursive: true });
     fs.writeFileSync(
       session.LOCK_FILE,
-      JSON.stringify({ pid: 999999, startedAt: "2026-03-25T00:00:00.000Z", command: "nemoclaw onboard" }),
-      { mode: 0o600 }
+      JSON.stringify({
+        pid: 999999,
+        startedAt: "2026-03-25T00:00:00.000Z",
+        command: "nemoclaw onboard",
+      }),
+      { mode: 0o600 },
     );
 
     const acquired = session.acquireOnboardLock("nemoclaw onboard --resume");
@@ -184,7 +193,7 @@ describe("onboard session", () => {
     session.saveSession(session.createSession());
     session.markStepFailed(
       "inference",
-      "provider auth failed with NVIDIA_API_KEY=nvapi-secret Bearer topsecret sk-secret-value ghp_1234567890123456789012345"
+      "provider auth failed with NVIDIA_API_KEY=nvapi-secret Bearer topsecret sk-secret-value ghp_1234567890123456789012345",
     );
 
     const loaded = session.loadSession();

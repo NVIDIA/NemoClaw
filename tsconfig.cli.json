@@ -15,6 +15,6 @@
     "moduleDetection": "force",
     "types": ["node"]
   },
-  "include": ["bin/**/*.ts", "scripts/**/*.ts"],
+  "include": ["bin/**/*.ts", "scripts/**/*.ts", "src/**/*.ts"],
   "exclude": ["node_modules", "nemoclaw"]
 }
