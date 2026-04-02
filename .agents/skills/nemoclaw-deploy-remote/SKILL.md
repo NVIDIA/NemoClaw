@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-deploy-remote
-description: Provisions a remote GPU VM with NemoClaw using Brev deployment. Also covers forwards messages between Telegram and the sandboxed OpenClaw agent. Use when deploy nemoclaw remote gpu, deployment, gpu, nemoclaw, nemoclaw brev cloud deployment, nemoclaw telegram bridge, openclaw, openshell.
+description: Provisions a remote GPU VM with NemoClaw using Brev deployment. Also covers securities hardening measures applied to the NemoClaw sandbox container image; forwards messages between Telegram and the sandboxed OpenClaw agent. Use when container security, deploy nemoclaw remote gpu, deployment, docker capabilities, gpu, nemoclaw, nemoclaw brev cloud deployment, nemoclaw sandbox hardening.
 ---
 
 # Nemoclaw Deploy Remote
@@ -18,7 +18,20 @@ Provision a remote GPU VM with NemoClaw using Brev deployment.
 Run NemoClaw on a remote GPU instance through [Brev](https://brev.nvidia.com).
 The deploy command provisions the VM, installs dependencies, and connects you to a running sandbox.
 
-## Step 1: Deploy the Instance
+## Step 1: Quick Start
+
+If your Brev instance is already up and you want to try NemoClaw immediately, start with the sandbox chat flow:
+
+```console
+$ nemoclaw my-assistant connect
+$ openclaw tui
+```
+
+This gets you into the sandbox shell first and opens the OpenClaw chat UI right away.
+
+If you are connecting from your local machine and still need to provision the remote VM, use `nemoclaw deploy <instance-name>` as described below.
+
+## Step 2: Deploy the Instance
 
 > **Warning:** The `nemoclaw deploy` command is experimental and may not work as expected.
 
@@ -34,10 +47,10 @@ The deploy script performs the following steps on the VM:
 
 1. Installs Docker and the NVIDIA Container Toolkit if a GPU is present.
 2. Installs the OpenShell CLI.
-3. Runs the nemoclaw setup to create the gateway, register providers, and launch the sandbox.
+3. Runs `nemoclaw onboard` (the setup wizard) to create the gateway, register providers, and launch the sandbox.
 4. Starts auxiliary services, such as the Telegram bridge and cloudflared tunnel.
 
-## Step 2: Connect to the Remote Sandbox
+## Step 3: Connect to the Remote Sandbox
 
 After deployment finishes, the deploy command opens an interactive shell inside the remote sandbox.
 To reconnect after closing the session, run the deploy command again:
@@ -46,7 +59,7 @@ To reconnect after closing the session, run the deploy command again:
 $ nemoclaw deploy <instance-name>
 ```
 
-## Step 3: Monitor the Remote Sandbox
+## Step 4: Monitor the Remote Sandbox
 
 SSH to the instance and run the OpenShell TUI to monitor activity and approve network requests:
 
@@ -54,7 +67,7 @@ SSH to the instance and run the OpenShell TUI to monitor activity and approve ne
 $ ssh <instance-name> 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell term'
 ```
 
-## Step 4: Verify Inference
+## Step 5: Verify Inference
 
 Run a test agent prompt inside the remote sandbox:
 
@@ -62,7 +75,7 @@ Run a test agent prompt inside the remote sandbox:
 $ openclaw agent --agent main --local -m "Hello from the remote sandbox" --session-id test
 ```
 
-## Step 5: GPU Configuration
+## Step 6: GPU Configuration
 
 The deploy script uses the `NEMOCLAW_GPU` environment variable to select the GPU type.
 The default value is `a2-highgpu-1g:nvidia-tesla-a100:1`.
@@ -78,12 +91,12 @@ $ nemoclaw deploy <instance-name>
 Forward messages between a Telegram bot and the OpenClaw agent running inside the sandbox.
 The Telegram bridge is an auxiliary service managed by `nemoclaw start`.
 
-## Step 6: Create a Telegram Bot
+## Step 7: Create a Telegram Bot
 
 Open Telegram and send `/newbot` to [@BotFather](https://t.me/BotFather).
 Follow the prompts to create a bot and receive a bot token.
 
-## Step 7: Set the Environment Variable
+## Step 8: Set the Environment Variable
 
 Export the bot token as an environment variable:
 
@@ -91,7 +104,7 @@ Export the bot token as an environment variable:
 $ export TELEGRAM_BOT_TOKEN=<your-bot-token>
 ```
 
-## Step 8: Start Auxiliary Services
+## Step 9: Start Auxiliary Services
 
 Start the Telegram bridge and other auxiliary services:
 
@@ -106,7 +119,7 @@ The `start` command launches the following services:
 
 The Telegram bridge starts only when the `TELEGRAM_BOT_TOKEN` environment variable is set.
 
-## Step 9: Verify the Services
+## Step 10: Verify the Services
 
 Check that the Telegram bridge is running:
 
@@ -116,12 +129,12 @@ $ nemoclaw status
 
 The output shows the status of all auxiliary services.
 
-## Step 10: Send a Message
+## Step 11: Send a Message
 
 Open Telegram, find your bot, and send a message.
 The bridge forwards the message to the OpenClaw agent inside the sandbox and returns the agent response.
 
-## Step 11: Restrict Access by Chat ID
+## Step 12: Restrict Access by Chat ID
 
 To restrict which Telegram chats can interact with the agent, set the `ALLOWED_CHAT_IDS` environment variable to a comma-separated list of Telegram chat IDs:
 
@@ -130,13 +143,17 @@ $ export ALLOWED_CHAT_IDS="123456789,987654321"
 $ nemoclaw start
 ```
 
-## Step 12: Stop the Services
+## Step 13: Stop the Services
 
 To stop the Telegram bridge and all other auxiliary services:
 
 ```console
 $ nemoclaw stop
 ```
+
+## Reference
+
+- [Sandbox Image Hardening](references/sandbox-hardening.md)
 
 ## Related Skills
 
