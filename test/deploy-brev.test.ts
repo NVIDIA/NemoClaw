@@ -36,7 +36,7 @@ function readBrevCalls(markerFile: string) {
   return fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
 }
 
-function setupDeployStubs() {
+function setupDeployStubs({ brevLsOutput = "" }: { brevLsOutput?: string } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-deploy-brev-"));
   const localBin = path.join(home, "bin");
   const markerFile = path.join(home, "brev-args");
@@ -48,6 +48,7 @@ function setupDeployStubs() {
     `marker_file=${JSON.stringify(markerFile)}`,
     'printf \'%s\\n\' "$*" >> "$marker_file"',
     'if [ "$1" = "ls" ]; then',
+    `  printf '%s' ${JSON.stringify(brevLsOutput)}`,
     "  exit 0",
     "fi",
     "exit 0",
@@ -112,5 +113,57 @@ describe("deploy brev compatibility", () => {
     const calls = readBrevCalls(markerFile);
     expect(calls).toContain("create pr-1377-defaults --type a2-highgpu-1g --gpu-name A100");
     expect(calls.join("\n")).not.toContain("--gpu ");
+  });
+
+  it("treats whitespace-only overrides as unset and normalizes generic nvidia GPU names", () => {
+    const { home, localBin, markerFile } = setupDeployStubs();
+
+    const result = runWithEnv("deploy pr-1377-l40s", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NVIDIA_API_KEY: "nvapi-test",
+      NEMOCLAW_GPU: "a3-highgpu-1g:nvidia-l40s:1",
+      NEMOCLAW_BREV_TYPE: "   ",
+      NEMOCLAW_BREV_GPU_NAME: "   ",
+    });
+
+    expect(result.code).toBe(0);
+    const calls = readBrevCalls(markerFile);
+    expect(calls).toContain("create pr-1377-l40s --type a3-highgpu-1g --gpu-name L40S");
+    expect(calls.join("\n")).not.toContain("--gpu ");
+  });
+
+  it("skips brev create when the instance already exists", () => {
+    const { home, localBin, markerFile } = setupDeployStubs({
+      brevLsOutput: "pr-1377-existing\n",
+    });
+
+    const result = runWithEnv("deploy pr-1377-existing", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NVIDIA_API_KEY: "nvapi-test",
+    });
+
+    expect(result.code).toBe(0);
+    const calls = readBrevCalls(markerFile);
+    expect(calls).toContain("ls");
+    expect(calls).toContain("refresh");
+    expect(calls.some((call) => call.startsWith("create "))).toBe(false);
+  });
+
+  it("falls back to the default GPU name when normalization produces an empty value", () => {
+    const { home, localBin, markerFile } = setupDeployStubs();
+
+    const result = runWithEnv("deploy pr-1377-empty-gpu-name", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NVIDIA_API_KEY: "nvapi-test",
+      NEMOCLAW_BREV_TYPE: "a3-highgpu-1g",
+      NEMOCLAW_BREV_GPU_NAME: "nvidia-",
+    });
+
+    expect(result.code).toBe(0);
+    const calls = readBrevCalls(markerFile);
+    expect(calls).toContain("create pr-1377-empty-gpu-name --type a3-highgpu-1g --gpu-name A100");
   });
 });
