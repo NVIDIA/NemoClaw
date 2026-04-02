@@ -664,9 +664,10 @@ exit 0
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-ready-shell-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
+    const prefixBin = path.join(prefix, "bin");
     const nvmDir = path.join(tmp, ".nvm");
     fs.mkdirSync(fakeBin);
-    fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+    fs.mkdirSync(prefixBin, { recursive: true });
     fs.mkdirSync(nvmDir, { recursive: true });
     fs.writeFileSync(path.join(nvmDir, "nvm.sh"), "# stub nvm\n");
 
@@ -762,7 +763,7 @@ exit 0
       env: {
         ...process.env,
         HOME: tmp,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        PATH: `${fakeBin}:${prefixBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NPM_PREFIX: prefix,
         NVM_DIR: nvmDir,
@@ -773,6 +774,65 @@ exit 0
     expect(result.status).toBe(0);
     expect(output).not.toMatch(/current shell cannot resolve 'nemoclaw'/);
     expect(output).not.toMatch(/source .*\.bashrc|source .*\.zshrc|source .*\.profile/);
+  });
+
+  it("shows shell reload hint when PATH was extended by the installer", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-reload-hint-"));
+    const fakeBin = path.join(tmp, "bin");
+    const prefix = path.join(tmp, "prefix");
+    const nvmDir = path.join(tmp, ".nvm");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+    fs.mkdirSync(nvmDir, { recursive: true });
+    fs.writeFileSync(path.join(nvmDir, "nvm.sh"), "# stub nvm\n");
+
+    writeNodeStub(fakeBin);
+    writeNpmStub(
+      fakeBin,
+      `if [ "$1" = "pack" ]; then exit 1; fi
+if [ "$1" = "install" ] || [ "$1" = "run" ]; then exit 0; fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+if [ "$1" = "onboard" ] || [ "$1" = "--version" ]; then exit 0; fi
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi`,
+    );
+
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+    );
+    fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, "nemoclaw", "package.json"),
+      JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
+    );
+
+    const result = spawnSync("bash", [INSTALLER], {
+      cwd: tmp,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NPM_PREFIX: prefix,
+        NVM_DIR: nvmDir,
+      },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).toBe(0);
+    expect(output).toMatch(/\$ source /);
+    expect(output).not.toContain("Onboarding has not run yet.");
+    expect(output).not.toContain(
+      "Onboarding did not run because this shell cannot resolve 'nemoclaw' yet.",
+    );
+    expect(output).toMatch(/\$ nemoclaw my-assistant connect/);
   });
 });
 
