@@ -35,6 +35,8 @@ import {
   writeSandboxConfigSyncFile,
 } from "../bin/lib/onboard";
 
+const ROOT = path.resolve(import.meta.dirname, "..");
+
 describe("onboard helpers", () => {
   it("classifies sandbox create timeout failures and tracks upload progress", () => {
     expect(
@@ -264,6 +266,26 @@ describe("onboard helpers", () => {
       "  OpenShell compatibility: NemoClaw derives the gateway image from the installed openshell CLI.",
       "  Use `nemoclaw onboard` to recreate NemoClaw-managed sandboxes, and avoid `openshell self-update`, `openshell gateway start --recreate`, or `openshell sandbox create` directly.",
     ]);
+  });
+
+  it("warns when the installed OpenShell version falls outside the supported baseline", () => {
+    expect(getOpenshellCompatibilityNotice("0.0.8")).toEqual([
+      "  OpenShell compatibility warning: NemoClaw 0.1.0 was validated with OpenShell 0.0.7, but found 0.0.8.",
+      "  Install OpenShell 0.0.7, then rerun `nemoclaw onboard` before creating or reusing NemoClaw-managed sandboxes.",
+      "  Avoid `openshell self-update`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you are also updating the NemoClaw compatibility baseline.",
+    ]);
+  });
+
+  it("prints the compatibility notice before the healthy gateway reuse early return", () => {
+    const content = fs.readFileSync(path.join(ROOT, "bin/lib/onboard.js"), "utf-8");
+    const startGwBlock = content.match(/async function startGatewayWithOptions[\s\S]*?^}/m);
+    expect(startGwBlock).toBeTruthy();
+
+    const noticeIndex = startGwBlock[0].indexOf("getOpenshellCompatibilityNotice(");
+    const healthyCheckIndex = startGwBlock[0].indexOf("if (isGatewayHealthy(");
+    expect(noticeIndex).toBeGreaterThanOrEqual(0);
+    expect(healthyCheckIndex).toBeGreaterThanOrEqual(0);
+    expect(noticeIndex).toBeLessThan(healthyCheckIndex);
   });
 
   it("treats the gateway as healthy only when nemoclaw is running and connected", () => {

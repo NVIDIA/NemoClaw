@@ -10,6 +10,7 @@ const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const pRetry = require("p-retry");
+const { version: NEMOCLAW_VERSION } = require("../../package.json");
 
 /** Parse a numeric env var, returning `fallback` when unset or non-finite. */
 function envInt(name, fallback) {
@@ -85,6 +86,46 @@ function cleanupTempDir(filePath, expectedPrefix) {
 }
 
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
+const OPENSHELL_COMPATIBILITY = Object.freeze({
+  "0.1.0": Object.freeze(["0.0.7"]),
+});
+
+function parseSemver(version) {
+  const match = String(version || "")
+    .trim()
+    .match(/^(\d+)\.(\d+)\.(\d+)$/);
+  if (!match) return null;
+  return match.slice(1).map((part) => Number(part));
+}
+
+function isExactSemverMatch(version, supportedVersion) {
+  const actual = parseSemver(version);
+  const supported = parseSemver(supportedVersion);
+  return (
+    Array.isArray(actual) &&
+    Array.isArray(supported) &&
+    actual[0] === supported[0] &&
+    actual[1] === supported[1] &&
+    actual[2] === supported[2]
+  );
+}
+
+function getSupportedOpenshellVersions(nemoclawVersion = NEMOCLAW_VERSION) {
+  return OPENSHELL_COMPATIBILITY[nemoclawVersion] || [];
+}
+
+function isSupportedOpenshellVersion(version, supportedVersions = getSupportedOpenshellVersions()) {
+  if (!version || supportedVersions.length === 0) return false;
+  return supportedVersions.some((supportedVersion) =>
+    isExactSemverMatch(version, supportedVersion),
+  );
+}
+
+function formatSupportedOpenshellVersions(supportedVersions) {
+  if (supportedVersions.length === 0) return null;
+  if (supportedVersions.length === 1) return supportedVersions[0];
+  return `${supportedVersions.slice(0, -1).join(", ")}, or ${supportedVersions.at(-1)}`;
+}
 const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const DIM = USE_COLOR ? "\x1b[2m" : "";
 const RESET = USE_COLOR ? "\x1b[0m" : "";
@@ -444,6 +485,15 @@ function getStableGatewayImageRef(versionOutput = null) {
 }
 
 function getOpenshellCompatibilityNotice(version = null) {
+  const supportedVersions = getSupportedOpenshellVersions();
+  const supportedLabel = formatSupportedOpenshellVersions(supportedVersions);
+  if (version && supportedLabel && !isSupportedOpenshellVersion(version, supportedVersions)) {
+    return [
+      `  OpenShell compatibility warning: NemoClaw ${NEMOCLAW_VERSION} was validated with OpenShell ${supportedLabel}, but found ${version}.`,
+      `  Install OpenShell ${supportedLabel}, then rerun \`nemoclaw onboard\` before creating or reusing NemoClaw-managed sandboxes.`,
+      "  Avoid `openshell self-update`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you are also updating the NemoClaw compatibility baseline.",
+    ];
+  }
   const suffix = version ? ` (${version})` : "";
   return [
     `  OpenShell compatibility: NemoClaw derives the gateway image from the installed openshell CLI${suffix}.`,
@@ -1900,6 +1950,10 @@ async function preflight() {
 
 async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   step(2, 7, "Starting OpenShell gateway");
+  const gatewayEnv = getGatewayStartEnv();
+  for (const line of getOpenshellCompatibilityNotice(gatewayEnv.IMAGE_TAG || null)) {
+    console.log(line);
+  }
 
   const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
@@ -1923,12 +1977,8 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   // sandbox itself does not need direct GPU access. Passing --gpu causes
   // FailedPrecondition errors when the gateway's k3s device plugin cannot
   // allocate GPUs. See: https://build.nvidia.com/spark/nemoclaw/instructions
-  const gatewayEnv = getGatewayStartEnv();
   if (gatewayEnv.OPENSHELL_CLUSTER_IMAGE) {
     console.log(`  Using pinned OpenShell gateway image: ${gatewayEnv.OPENSHELL_CLUSTER_IMAGE}`);
-  }
-  for (const line of getOpenshellCompatibilityNotice(gatewayEnv.IMAGE_TAG || null)) {
-    console.log(line);
   }
 
   // Retry gateway start with exponential backoff. On some hosts (Horde VMs,
