@@ -17,6 +17,8 @@
 # Environment:
 #   CHECK_DOC_LINKS_REMOTE   If 0, skip http(s) probes for links check.
 #   CHECK_DOC_LINKS_VERBOSE  If 1, log each URL during curl (same as --verbose).
+#   CHECK_DOC_LINKS_IGNORE_EXTRA  Comma-separated extra http(s) URLs to skip curling (exact match, #fragment ignored).
+#   CHECK_DOC_LINKS_IGNORE_URL_REGEX  If set, skip curl when the whole URL matches this ERE (bash [[ =~ ]]).
 #   NODE                     Node for CLI check (default: node).
 #   CURL                     curl binary (default: curl).
 
@@ -51,7 +53,8 @@ Options:
   --verbose        Log each URL while curling (link check).
   -h, --help       Show this help.
 
-Environment: CHECK_DOC_LINKS_REMOTE, CHECK_DOC_LINKS_VERBOSE, NODE, CURL.
+Environment: CHECK_DOC_LINKS_REMOTE, CHECK_DOC_LINKS_VERBOSE, CHECK_DOC_LINKS_IGNORE_EXTRA,
+  CHECK_DOC_LINKS_IGNORE_URL_REGEX, NODE, CURL.
 EOF
 }
 
@@ -268,6 +271,54 @@ check_remote_url() {
   return 0
 }
 
+# Normalized form: strip #fragment and trailing slash for ignore-list comparison.
+normalize_url_for_ignore_match() {
+  local u="$1"
+  u="${u%%\#*}"
+  u="${u%/}"
+  printf '%s' "$u"
+}
+
+# Built-in skip list: pages that often fail in CI (bot wall, redirects, or flaky) but are non-critical for doc correctness.
+check_docs_default_ignored_urls() {
+  printf '%s\n' \
+    'https://github.com/NVIDIA/NemoClaw/commits/main' \
+    'https://github.com/NVIDIA/NemoClaw/pulls?q=is%3Apr+is%3Amerged' \
+    'https://github.com/NVIDIA/NemoClaw/pulls?q=is:pr+is:merged' \
+    'https://github.com/openclaw/openclaw/issues/49950'
+}
+
+url_should_skip_remote_probe() {
+  local url="$1"
+  local nu ign _re
+  nu="$(normalize_url_for_ignore_match "$url")"
+
+  while IFS= read -r ign || [[ -n "${ign:-}" ]]; do
+    [[ -z "${ign:-}" ]] && continue
+    [[ "$(normalize_url_for_ignore_match "$ign")" == "$nu" ]] && return 0
+  done < <(check_docs_default_ignored_urls)
+
+  if [[ -n "${CHECK_DOC_LINKS_IGNORE_EXTRA:-}" ]]; then
+    local -a _extra_parts=()
+    local IFS=','
+    read -ra _extra_parts <<<"${CHECK_DOC_LINKS_IGNORE_EXTRA}"
+    unset IFS
+    for ign in "${_extra_parts[@]}"; do
+      ign="${ign#"${ign%%[![:space:]]*}"}"
+      ign="${ign%"${ign##*[![:space:]]}"}"
+      [[ -z "$ign" ]] && continue
+      [[ "$(normalize_url_for_ignore_match "$ign")" == "$nu" ]] && return 0
+    done
+  fi
+
+  if [[ -n "${CHECK_DOC_LINKS_IGNORE_URL_REGEX:-}" ]]; then
+    _re="${CHECK_DOC_LINKS_IGNORE_URL_REGEX}"
+    [[ "$url" =~ $_re ]] && return 0
+  fi
+
+  return 1
+}
+
 run_links_check() {
   local -a DOC_FILES
   if [[ ${#EXTRA_FILES[@]} -gt 0 ]]; then
@@ -293,6 +344,7 @@ run_links_check() {
   fi
   if [[ "$CHECK_DOC_LINKS_REMOTE" != 0 ]]; then
     log "[links] remote: curl unique http(s) targets (disable: CHECK_DOC_LINKS_REMOTE=0 or --local-only)"
+    log "[links] remote: built-in skip list for flaky/GitHub pages (override: CHECK_DOC_LINKS_IGNORE_EXTRA, CHECK_DOC_LINKS_IGNORE_URL_REGEX)"
   else
     log "[links] remote: skipped (local paths only)"
   fi
@@ -356,18 +408,33 @@ run_links_check() {
 
   if [[ "$CHECK_DOC_LINKS_REMOTE" != 0 ]]; then
     if [[ -n "$_deduped" ]]; then
-      log "[links] phase 2/2: curl ${_unique} URL(s) (GET, -L, fail 4xx/5xx)"
+      local _probe_list="" _skip_count=0 _probe_n=0
+      while IFS= read -r url || [[ -n "${url:-}" ]]; do
+        [[ -z "${url:-}" ]] && continue
+        if url_should_skip_remote_probe "$url"; then
+          log "[links]   skipped (ignore list): ${url}"
+          _skip_count=$((_skip_count + 1))
+        else
+          _probe_list+="${url}"$'\n'
+        fi
+      done <<<"$_deduped"
+      _probe_n="$(printf '%s\n' "$_probe_list" | grep -c . || true)"
+      if [[ "$_skip_count" -gt 0 ]]; then
+        log "[links] phase 2/2: curl ${_probe_n} URL(s), ${_skip_count} skipped (GET, -L, fail 4xx/5xx)"
+      else
+        log "[links] phase 2/2: curl ${_probe_n} URL(s) (GET, -L, fail 4xx/5xx)"
+      fi
       _i=0
-      while IFS= read -r url || [[ -n "$url" ]]; do
-        [[ -z "$url" ]] && continue
+      while IFS= read -r url || [[ -n "${url:-}" ]]; do
+        [[ -z "${url:-}" ]] && continue
         _i=$((_i + 1))
         if [[ "$VERBOSE" -eq 1 ]]; then
-          log "[links]   [${_i}/${_unique}] ${url}"
+          log "[links]   [${_i}/${_probe_n}] ${url}"
         fi
         if ! check_remote_url "$url"; then
           failures=1
         fi
-      done <<<"$_deduped"
+      done <<<"$_probe_list"
     else
       log "[links] phase 2/2: no http(s) links"
     fi
@@ -384,7 +451,7 @@ run_links_check() {
     return 1
   fi
   if [[ "$CHECK_DOC_LINKS_REMOTE" != 0 ]] && [[ ${_unique:-0} -gt 0 ]]; then
-    log "[links] phase 2 OK (${_unique} URL(s))"
+    log "[links] phase 2 OK (${_unique} unique http(s); probed those not in ignore list)"
   fi
   log "[links] summary: ${#DOC_FILES[@]} file(s), local OK$(
     [[ "$CHECK_DOC_LINKS_REMOTE" != 0 ]] && [[ ${_unique:-0} -gt 0 ]] && printf ', %s remote OK' "${_unique}"

@@ -3,6 +3,28 @@
 
 name: e2e-brev
 
+# Ephemeral Brev E2E: provisions a cloud instance, bootstraps NemoClaw,
+# runs test suites remotely, then tears down. Use workflow_dispatch to
+# trigger manually from the Actions tab, or workflow_call from other workflows.
+#
+# Test suites:
+#   full                     — Install → onboard → sandbox verify → live inference
+#                              against NVIDIA Endpoints → CLI operations. Tests the
+#                              complete user journey. (~10 min, destroys sandbox)
+#   credential-sanitization  — 24 tests validating PR #743: credential stripping from
+#                              migration snapshots, auth-profiles.json deletion, blueprint
+#                              digest verification, symlink traversal protection, and
+#                              runtime sandbox credential checks. Requires running sandbox.
+#   telegram-injection       — 18 tests validating PR #584: command injection prevention
+#                              through $(cmd), backticks, quote breakout, ${VAR} expansion,
+#                              process table leak checks, and SANDBOX_NAME validation.
+#                              Requires running sandbox.
+#   all                      — Runs credential-sanitization + telegram-injection (NOT full,
+#                              which destroys the sandbox the security tests need).
+#
+# Required secrets: BREV_API_TOKEN, NVIDIA_API_KEY
+# Instance cost: Brev CPU credits (~$0.10/run for 4x16 instance)
+
 on:
   workflow_dispatch:
     inputs:
@@ -15,19 +37,24 @@ on:
         required: false
         default: ""
       test_suite:
-        description: "Test suite to run"
+        description: "Test suite to run (see workflow header for descriptions)"
         required: true
         default: "full"
         type: choice
         options:
           - full
           - credential-sanitization
+          - telegram-injection
           - all
       keep_alive:
         description: "Keep Brev instance alive after tests (for SSH debugging)"
         required: false
         type: boolean
         default: true
+      brev_token:
+        description: "Brev refresh token (overrides BREV_API_TOKEN secret if provided)"
+        required: false
+        default: ""
   workflow_call:
     inputs:
       branch:
@@ -64,7 +91,7 @@ jobs:
   e2e-brev:
     if: github.repository == 'NVIDIA/NemoClaw'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - name: Checkout target branch
         uses: actions/checkout@v6
@@ -95,8 +122,8 @@ jobs:
 
       - name: Install Brev CLI
         run: |
-          # Pin to v0.6.310 — v0.6.322 removed --cpu flag and defaults to GPU instances
-          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.310/brev-cli_0.6.310_linux_amd64.tar.gz"
+          # Use latest Brev CLI (v0.6.322+) — CPU instances require `brev search cpu | brev create`
+          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.322/brev-cli_0.6.322_linux_amd64.tar.gz"
           tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
           chmod +x /usr/local/bin/brev
 
@@ -105,7 +132,7 @@ jobs:
 
       - name: Run ephemeral Brev E2E
         env:
-          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
+          BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           INSTANCE_NAME: e2e-pr-${{ inputs.pr_number || github.run_id }}

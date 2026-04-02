@@ -8,7 +8,7 @@
 #   1) openshell sandbox status <name> --json → .state == running (nemoclaw plugin status path)
 #   2) else openshell sandbox list → row for name contains Ready (bin/lib/onboard.js isSandboxReady)
 # Inference model: prefer openshell inference get --json .model; else plain inference get
-# (text) must contain nvidia-nim + CLOUD_EXPERIMENTAL_MODEL (same idea as 01-onboard-completion.sh).
+# (text) must contain CLOUD_EXPERIMENTAL_INFERENCE_PROVIDER + CLOUD_EXPERIMENTAL_MODEL (same idea as 01-onboard-completion.sh).
 # nemoclaw list model must match openshell model (JSON or CLOUD_EXPERIMENTAL_MODEL text path).
 #
 # Requires: node on PATH (for JSON + list parsing; same shell as post-install suite).
@@ -17,6 +17,7 @@ set -euo pipefail
 
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-experimental}}"
 CLOUD_EXPERIMENTAL_MODEL="${CLOUD_EXPERIMENTAL_MODEL:-${SCENARIO_A_MODEL:-${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-${NEMOCLAW_SCENARIO_A_MODEL:-moonshotai/kimi-k2.5}}}}"
+CLOUD_EXPERIMENTAL_INFERENCE_PROVIDER="${CLOUD_EXPERIMENTAL_INFERENCE_PROVIDER:-nvidia-nim}"
 export SANDBOX_NAME
 
 die() {
@@ -81,8 +82,8 @@ if [ -z "$os_model" ]; then
   inf_rc=$?
   set -e
   [ "$inf_rc" -eq 0 ] || die "openshell inference get failed (exit $inf_rc): ${inf_raw:0:240}"
-  echo "$inf_raw" | grep -qi "nvidia-nim" \
-    || die "openshell inference get (text) missing nvidia-nim. Output (first 500 chars): ${inf_raw:0:500}"
+  echo "$inf_raw" | grep -Fqi "$CLOUD_EXPERIMENTAL_INFERENCE_PROVIDER" \
+    || die "openshell inference get (text) missing provider '${CLOUD_EXPERIMENTAL_INFERENCE_PROVIDER}'. Output (first 500 chars): ${inf_raw:0:500}"
   if ! echo "$inf_raw" | grep -Fq "$CLOUD_EXPERIMENTAL_MODEL"; then
     die "inference model (text path): expected substring '${CLOUD_EXPERIMENTAL_MODEL}' in 'openshell inference get' (set NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL to match onboarded model). --- output (first 800 chars) --- ${inf_raw:0:800}"
   fi

@@ -123,14 +123,24 @@ do_stop() {
 }
 
 do_start() {
-  [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY required"
-
   if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
     warn "TELEGRAM_BOT_TOKEN not set — Telegram bridge will not start."
     warn "Create a bot via @BotFather on Telegram and set the token."
+  elif [ -z "${NVIDIA_API_KEY:-}" ]; then
+    warn "NVIDIA_API_KEY not set — Telegram bridge will not start."
+    warn "Set NVIDIA_API_KEY if you want Telegram requests to reach inference."
   fi
 
   command -v node >/dev/null || fail "node not found. Install Node.js first."
+
+  # WSL2 ships with broken IPv6 routing. Node.js resolves dual-stack DNS results
+  # and tries IPv6 first (ENETUNREACH) then IPv4 (ETIMEDOUT), causing bridge
+  # connections to api.telegram.org and gateway.discord.gg to fail from the host.
+  # Force IPv4-first DNS result ordering for all bridge Node.js processes.
+  if [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ] || grep -qi microsoft /proc/version 2>/dev/null; then
+    export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--dns-result-order=ipv4first"
+    info "WSL2 detected — setting --dns-result-order=ipv4first for Node.js bridge processes"
+  fi
 
   # Verify sandbox is running
   if command -v openshell >/dev/null 2>&1; then
@@ -142,7 +152,7 @@ do_start() {
   mkdir -p "$PIDDIR"
 
   # Telegram bridge (only if token provided)
-  if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+  if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
     SANDBOX_NAME="$SANDBOX_NAME" start_service telegram-bridge \
       node "$REPO_DIR/scripts/telegram-bridge.js"
   fi

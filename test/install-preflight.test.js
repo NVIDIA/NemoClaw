@@ -8,7 +8,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
-const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "..", "scripts", "install.sh");
+const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
+const LEGACY_INSTALLER_WRAPPER = path.join(import.meta.dirname, "..", "scripts", "install.sh");
 const GITHUB_INSTALL_URL = "git+https://github.com/NVIDIA/NemoClaw.git";
 const TEST_SYSTEM_PATH = "/usr/bin:/bin";
 
@@ -20,12 +21,12 @@ function writeExecutable(target, contents) {
 // Helpers shared across suites
 // ---------------------------------------------------------------------------
 
-/** Fake node that reports v22.14.0. */
+/** Fake node that reports v22.16.0. */
 function writeNodeStub(fakeBin) {
   writeExecutable(
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.14.0"; exit 0; fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.16.0"; exit 0; fi
 if [ "$1" = "-e" ]; then
   if [[ "$2" == *"dependencies.openclaw"* ]]; then
     echo "2026.3.11"
@@ -58,7 +59,7 @@ echo "unexpected npm invocation: $*" >&2; exit 98`,
 // ---------------------------------------------------------------------------
 
 describe("installer runtime preflight", () => {
-  it("fails fast with a clear message on unsupported Node.js and npm", () => {
+  it("attempts nvm upgrade when system Node.js is below minimum version", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-preflight-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -87,6 +88,14 @@ exit 98
 `,
     );
 
+    // Fake curl that fails — prevents real nvm download and keeps the test fast.
+    writeExecutable(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+exit 1
+`,
+    );
+
     const result = spawnSync("bash", [INSTALLER], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -99,10 +108,9 @@ exit 98
 
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).not.toBe(0);
-    expect(output).toMatch(/Unsupported runtime detected/);
-    expect(output).toMatch(/Node\.js >=20 and npm >=10/);
-    expect(output).toMatch(/v18\.19\.1/);
-    expect(output).toMatch(/9\.8\.1/);
+    expect(output).toMatch(/v18\.19\.1.*found but NemoClaw requires/);
+    expect(output).toMatch(/upgrading via nvm/);
+    expect(output).toMatch(/Failed to download nvm installer/);
   });
 
   it("uses the HTTPS GitHub fallback when not installing from a repo checkout", () => {
@@ -117,7 +125,7 @@ exit 98
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then
-  echo "v22.14.0"
+  echo "v22.16.0"
   exit 0
 fi
 if [ "$1" = "-e" ]; then
@@ -199,7 +207,7 @@ exit 98
 
     expect(result.status).toBe(0);
     expect(fs.readFileSync(gitLog, "utf-8")).toMatch(/clone.*NemoClaw\.git/);
-  });
+  }, 60_000);
 
   it("prints the HTTPS GitHub remediation when the binary is missing", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-remediation-"));
@@ -212,7 +220,7 @@ exit 98
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then
-  echo "v22.14.0"
+  echo "v22.16.0"
   exit 0
 fi
 if [ "$1" = "-e" ]; then
@@ -284,181 +292,22 @@ exit 98
     expect(output).not.toMatch(/npm install -g nemoclaw/);
   });
 
-  it("does not silently prefer Colima when both macOS runtimes are available", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-macos-runtime-choice-"));
-    const fakeBin = path.join(tmp, "bin");
-    const colimaSocket = path.join(tmp, ".colima/default/docker.sock");
-    const dockerDesktopSocket = path.join(tmp, ".docker/run/docker.sock");
-    fs.mkdirSync(fakeBin);
-
-    writeExecutable(
-      path.join(fakeBin, "node"),
-      `#!/usr/bin/env bash
-if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
-  echo "v22.14.0"
-  exit 0
-fi
-exit 99
-`,
-    );
-
-    writeExecutable(
-      path.join(fakeBin, "npm"),
-      `#!/usr/bin/env bash
-if [ "$1" = "--version" ]; then
-  echo "10.9.2"
-  exit 0
-fi
-echo "/tmp/npm-prefix"
-exit 0
-`,
-    );
-
-    writeExecutable(
-      path.join(fakeBin, "docker"),
-      `#!/usr/bin/env bash
-if [ "$1" = "info" ]; then
-  exit 1
-fi
-exit 0
-`,
-    );
-
-    writeExecutable(
-      path.join(fakeBin, "colima"),
-      `#!/usr/bin/env bash
-echo "colima should not be started" >&2
-exit 97
-`,
-    );
-
-    writeExecutable(
-      path.join(fakeBin, "uname"),
-      `#!/usr/bin/env bash
-if [ "$1" = "-s" ]; then
-  echo "Darwin"
-  exit 0
-fi
-if [ "$1" = "-m" ]; then
-  echo "arm64"
-  exit 0
-fi
-echo "Darwin"
-`,
-    );
-
-    const result = spawnSync("bash", [CURL_PIPE_INSTALLER], {
+  it("legacy scripts/install.sh delegates to the root installer from a repo checkout", () => {
+    const result = spawnSync("bash", [LEGACY_INSTALLER_WRAPPER, "--help"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-        NEMOCLAW_TEST_SOCKET_PATHS: `${colimaSocket}:${dockerDesktopSocket}`,
-      },
     });
 
     const output = `${result.stdout}${result.stderr}`;
-    expect(result.status).not.toBe(0);
-    expect(output).toMatch(/Both Colima and Docker Desktop are available/);
-    expect(output).not.toMatch(/colima should not be started/);
+    expect(result.status).toBe(0);
+    expect(output).toMatch(/deprecated compatibility wrapper/);
+    expect(output).toMatch(/https:\/\/www\.nvidia\.com\/nemoclaw\.sh/);
+    expect(output).toMatch(/NemoClaw Installer/);
   });
 
-  it("can run via stdin without a sibling runtime.sh file", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-pipe-installer-"));
-    const fakeBin = path.join(tmp, "bin");
-    const prefix = path.join(tmp, "prefix");
-    fs.mkdirSync(fakeBin);
-    fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
-
-    writeExecutable(
-      path.join(fakeBin, "node"),
-      `#!/usr/bin/env bash
-if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
-  echo "v22.14.0"
-  exit 0
-fi
-if [ "$1" = "-e" ]; then
-  exit 1
-fi
-exit 99
-`,
-    );
-
-    writeExecutable(
-      path.join(fakeBin, "git"),
-      `#!/usr/bin/env bash
-if [ "$1" = "clone" ]; then
-  target="\${@: -1}"
-  mkdir -p "$target/nemoclaw"
-  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
-  echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
-  exit 0
-fi
-exit 0
-`,
-    );
-
-    writeExecutable(
-      path.join(fakeBin, "npm"),
-      `#!/usr/bin/env bash
-set -euo pipefail
-if [ "$1" = "--version" ]; then
-  echo "10.9.2"
-  exit 0
-fi
-if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
-  echo "$NPM_PREFIX"
-  exit 0
-fi
-if [ "$1" = "pack" ]; then
-  exit 1
-fi
-if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
-  exit 0
-fi
-if [ "$1" = "run" ]; then
-  exit 0
-fi
-if [ "$1" = "link" ]; then
-  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
-#!/usr/bin/env bash
-if [ "$1" = "--version" ]; then
-  echo "v0.1.0-test"
-  exit 0
-fi
-exit 0
-EOS
-  chmod +x "$NPM_PREFIX/bin/nemoclaw"
-  exit 0
-fi
-echo "unexpected npm invocation: $*" >&2
-exit 98
-`,
-    );
-
-    writeExecutable(
-      path.join(fakeBin, "docker"),
-      `#!/usr/bin/env bash
-if [ "$1" = "info" ]; then
-  exit 0
-fi
-exit 0
-`,
-    );
-
-    writeExecutable(
-      path.join(fakeBin, "openshell"),
-      `#!/usr/bin/env bash
-if [ "$1" = "--version" ]; then
-  echo "openshell 0.0.9"
-  exit 0
-fi
-exit 0
-`,
-    );
-
-    const scriptContents = fs.readFileSync(CURL_PIPE_INSTALLER, "utf-8");
+  it("legacy scripts/install.sh fails clearly when run without the repo root installer", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-legacy-installer-stdin-"));
+    const scriptContents = fs.readFileSync(LEGACY_INSTALLER_WRAPPER, "utf-8");
     const result = spawnSync("bash", [], {
       cwd: tmp,
       input: scriptContents,
@@ -466,16 +315,16 @@ exit 0
       env: {
         ...process.env,
         HOME: tmp,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NPM_PREFIX: prefix,
+        PATH: TEST_SYSTEM_PATH,
       },
     });
 
     const output = `${result.stdout}${result.stderr}`;
-    expect(result.status).toBe(0);
-    expect(output).toMatch(/Installation complete!/);
-    expect(output).toMatch(/nemoclaw v0\.1\.0-test is ready/);
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(/deprecated compatibility wrapper/);
+    expect(output).toMatch(/supported installer/);
+    expect(output).toMatch(/https:\/\/www\.nvidia\.com\/nemoclaw\.sh/);
+    expect(output).toMatch(/only works from a NemoClaw repository checkout/);
   });
 
   it("--help exits 0 and shows install usage", () => {
@@ -534,7 +383,7 @@ if [ "$1" = "pack" ]; then
   exit 0
 fi
 if [ "$1" = "install" ]; then exit 0; fi
-if [ "$1" = "run" ] && [ "$2" = "build" ]; then exit 0; fi
+if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
@@ -578,6 +427,72 @@ fi`,
     expect(log).toMatch(/^link/m);
     // the GitHub URL must NOT appear — this is a local install
     expect(log).not.toMatch(new RegExp(GITHUB_INSTALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  });
+
+  it("auto-resumes an interrupted onboarding session during install", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-resume-"));
+    const fakeBin = path.join(tmp, "bin");
+    const prefix = path.join(tmp, "prefix");
+    const onboardLog = path.join(tmp, "onboard.log");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+    fs.mkdirSync(path.join(tmp, ".nemoclaw"), { recursive: true });
+
+    fs.writeFileSync(
+      path.join(tmp, ".nemoclaw", "onboard-session.json"),
+      JSON.stringify({ resumable: true, status: "in_progress" }, null, 2),
+    );
+
+    writeNodeStub(fakeBin);
+    writeNpmStub(
+      fakeBin,
+      `if [ "$1" = "pack" ]; then
+  tmpdir="$4"
+  mkdir -p "$tmpdir/package"
+  tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
+  exit 0
+fi
+if [ "$1" = "install" ]; then exit 0; fi
+if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$NEMOCLAW_ONBOARD_LOG"
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi`,
+    );
+
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+    );
+    fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, "nemoclaw", "package.json"),
+      JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
+    );
+
+    const result = spawnSync("bash", [INSTALLER], {
+      cwd: tmp,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NPM_PREFIX: prefix,
+        NEMOCLAW_ONBOARD_LOG: onboardLog,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toMatch(
+      /Found an interrupted onboarding session — resuming it\./,
+    );
+    expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(/^onboard --resume --non-interactive$/m);
   });
 
   it("spin() non-TTY: dumps wrapped-command output and exits non-zero on failure", () => {
@@ -641,7 +556,7 @@ fi`,
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
-  echo "v22.14.0"
+  echo "v22.16.0"
   exit 0
 fi
 if [ "$1" = "-e" ]; then
@@ -744,6 +659,181 @@ exit 0
     expect(fs.readlinkSync(shimPath)).toBe(path.join(prefix, "bin", "nemoclaw"));
     expect(`${result.stdout}${result.stderr}`).toMatch(/Created user-local shim/);
   });
+
+  it("does not print PATH recovery instructions when nemoclaw is already usable in this shell", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-ready-shell-"));
+    const fakeBin = path.join(tmp, "bin");
+    const prefix = path.join(tmp, "prefix");
+    const prefixBin = path.join(prefix, "bin");
+    const nvmDir = path.join(tmp, ".nvm");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(prefixBin, { recursive: true });
+    fs.mkdirSync(nvmDir, { recursive: true });
+    fs.writeFileSync(path.join(nvmDir, "nvm.sh"), "# stub nvm\n");
+
+    writeExecutable(
+      path.join(fakeBin, "node"),
+      `#!/usr/bin/env bash
+if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
+  echo "v22.16.0"
+  exit 0
+fi
+if [ "$1" = "-e" ]; then
+  exit 1
+fi
+exit 99
+`,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "git"),
+      `#!/usr/bin/env bash
+if [ "$1" = "clone" ]; then
+  target="\${@: -1}"
+  mkdir -p "$target/nemoclaw"
+  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
+  exit 0
+fi
+exit 0
+`,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "--version" ]; then
+  echo "10.9.2"
+  exit 0
+fi
+if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
+  echo "$NPM_PREFIX"
+  exit 0
+fi
+if [ "$1" = "pack" ]; then
+  exit 1
+fi
+if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  exit 0
+fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+if [ "$1" = "onboard" ] || [ "$1" = "--version" ]; then
+  exit 0
+fi
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi
+echo "unexpected npm invocation: $*" >&2
+exit 98
+`,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+if [ "$1" = "info" ]; then
+  exit 0
+fi
+exit 0
+`,
+    );
+
+    writeExecutable(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "openshell 0.0.9"
+  exit 0
+fi
+exit 0
+`,
+    );
+
+    const result = spawnSync("bash", [INSTALLER], {
+      cwd: tmp,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${prefixBin}:${TEST_SYSTEM_PATH}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NPM_PREFIX: prefix,
+        NVM_DIR: nvmDir,
+      },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).toBe(0);
+    expect(output).not.toMatch(/current shell cannot resolve 'nemoclaw'/);
+    expect(output).not.toMatch(/source .*\.bashrc|source .*\.zshrc|source .*\.profile/);
+  });
+
+  it("shows shell reload hint when PATH was extended by the installer", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-reload-hint-"));
+    const fakeBin = path.join(tmp, "bin");
+    const prefix = path.join(tmp, "prefix");
+    const nvmDir = path.join(tmp, ".nvm");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+    fs.mkdirSync(nvmDir, { recursive: true });
+    fs.writeFileSync(path.join(nvmDir, "nvm.sh"), "# stub nvm\n");
+
+    writeNodeStub(fakeBin);
+    writeNpmStub(
+      fakeBin,
+      `if [ "$1" = "pack" ]; then exit 1; fi
+if [ "$1" = "install" ] || [ "$1" = "run" ]; then exit 0; fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+if [ "$1" = "onboard" ] || [ "$1" = "--version" ]; then exit 0; fi
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi`,
+    );
+
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+    );
+    fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, "nemoclaw", "package.json"),
+      JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
+    );
+
+    const result = spawnSync("bash", [INSTALLER], {
+      cwd: tmp,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NPM_PREFIX: prefix,
+        NVM_DIR: nvmDir,
+      },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).toBe(0);
+    expect(output).toMatch(/\$ source /);
+    expect(output).not.toContain("Onboarding has not run yet.");
+    expect(output).not.toContain(
+      "Onboarding did not run because this shell cannot resolve 'nemoclaw' yet.",
+    );
+    expect(output).toMatch(/\$ nemoclaw my-assistant connect/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -758,87 +848,31 @@ describe("installer release-tag resolution", () => {
    * `fakeBin` must contain a `curl` stub (and optionally `node`).
    */
   function callResolveReleaseTag(fakeBin, env = {}) {
-    return spawnSync(
-      "bash",
-      [
-        "-c",
-        `source "${INSTALLER}" 2>/dev/null; resolve_release_tag`,
-      ],
-      {
-        cwd: path.join(import.meta.dirname, ".."),
-        encoding: "utf-8",
-        env: {
-          HOME: os.tmpdir(),
-          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-          ...env,
-        },
+    return spawnSync("bash", ["-c", `source "${INSTALLER}" 2>/dev/null; resolve_release_tag`], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        HOME: os.tmpdir(),
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        ...env,
       },
-    );
+    });
   }
 
-  it("returns the tag_name from the GitHub releases API", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-ok-"));
+  it("defaults to 'latest' with no env override", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-default-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
 
-    // curl stub that returns a realistic GitHub releases/latest JSON snippet
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-cat <<'EOF'
-{
-  "tag_name": "v0.3.0",
-  "name": "NemoClaw v0.3.0"
-}
-EOF`,
-    );
     writeExecutable(path.join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 1");
 
     const result = callResolveReleaseTag(fakeBin);
 
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("v0.3.0");
+    expect(result.stdout.trim()).toBe("latest");
   });
 
-  it("falls back to 'main' when curl fails (network error)", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-neterr-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
-
-    // curl stub that fails
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-exit 1`,
-    );
-    writeExecutable(path.join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 1");
-
-    const result = callResolveReleaseTag(fakeBin);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("main");
-  });
-
-  it("falls back to 'main' when API returns garbage JSON", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-garbage-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
-
-    // curl stub that returns nonsense
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-echo "502 Bad Gateway"`,
-    );
-    writeExecutable(path.join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 1");
-
-    const result = callResolveReleaseTag(fakeBin);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("main");
-  });
-
-  it("uses NEMOCLAW_INSTALL_TAG override without calling curl", () => {
+  it("uses NEMOCLAW_INSTALL_TAG override", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-override-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -858,60 +892,6 @@ exit 99`,
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe("v0.2.0");
-  });
-
-  it("falls back to 'main' when tag_name has no 'v' prefix (e.g. 'release-1.0')", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-noprefix-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
-
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-echo '{"tag_name":"release-1.0","name":"NemoClaw release-1.0"}'`,
-    );
-    writeExecutable(path.join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 1");
-
-    const result = callResolveReleaseTag(fakeBin);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("main");
-  });
-
-  it("accepts partial semver tags like 'v1' or 'v1.2'", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-partial-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
-
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-echo '{"tag_name":"v1.2","name":"NemoClaw v1.2"}'`,
-    );
-    writeExecutable(path.join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 1");
-
-    const result = callResolveReleaseTag(fakeBin);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("v1.2");
-  });
-
-  it("falls back to 'main' when API returns empty JSON object", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-empty-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
-
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-echo '{}'`,
-    );
-    writeExecutable(path.join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 1");
-
-    const result = callResolveReleaseTag(fakeBin);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("main");
   });
 
   it("source-checkout path does NOT call resolve_release_tag / git clone", () => {
@@ -956,7 +936,11 @@ exit 0`,
     // Write package.json that triggers source-checkout path
     fs.writeFileSync(
       path.join(tmp, "package.json"),
-      JSON.stringify({ name: "nemoclaw", version: "0.1.0", dependencies: { openclaw: "2026.3.11" } }, null, 2),
+      JSON.stringify(
+        { name: "nemoclaw", version: "0.1.0", dependencies: { openclaw: "2026.3.11" } },
+        null,
+        2,
+      ),
     );
     fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
     fs.writeFileSync(
@@ -978,8 +962,14 @@ exit 0`,
     });
 
     expect(result.status).toBe(0);
-    // git should NOT have been called at all in the source-checkout path
-    expect(fs.existsSync(gitLog)).toBe(false);
+    // git clone / git fetch should NOT have been called in the source-checkout path.
+    // git may be called for version resolution (git describe), so we check
+    // that no clone or fetch was attempted rather than no git calls at all.
+    if (fs.existsSync(gitLog)) {
+      const gitCalls = fs.readFileSync(gitLog, "utf-8");
+      expect(gitCalls).not.toMatch(/clone/);
+      expect(gitCalls).not.toMatch(/fetch/);
+    }
     // And curl for the releases API should NOT have been called
     expect(`${result.stdout}${result.stderr}`).not.toMatch(/curl should not be called/);
   });
@@ -994,17 +984,9 @@ exit 0`,
 
     writeNodeStub(fakeBin);
 
-    // curl stub: returns a release tag for the API URL, passes through otherwise
     writeExecutable(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
-for arg in "$@"; do
-  if [[ "$arg" == *"api.github.com/repos/NVIDIA/NemoClaw/releases/latest"* ]]; then
-    echo '{"tag_name":"v0.5.0","name":"NemoClaw v0.5.0"}'
-    exit 0
-  fi
-done
-# Fall through to real curl for anything else (e.g. nvm)
 /usr/bin/curl "$@"`,
     );
 
@@ -1052,7 +1034,7 @@ fi`,
 
     expect(result.status).toBe(0);
     const gitCalls = fs.readFileSync(gitLog, "utf-8");
-    expect(gitCalls).toMatch(/--branch v0\.5\.0/);
+    expect(gitCalls).toMatch(/--branch latest/);
   });
 });
 
@@ -1065,19 +1047,15 @@ describe("installer pure helpers", () => {
    * Helper: source install.sh and call a function, returning stdout.
    */
   function callInstallerFn(fnCall, env = {}) {
-    return spawnSync(
-      "bash",
-      ["-c", `source "${INSTALLER}" 2>/dev/null; ${fnCall}`],
-      {
-        cwd: path.join(import.meta.dirname, ".."),
-        encoding: "utf-8",
-        env: {
-          HOME: os.tmpdir(),
-          PATH: TEST_SYSTEM_PATH,
-          ...env,
-        },
+    return spawnSync("bash", ["-c", `source "${INSTALLER}" 2>/dev/null; ${fnCall}`], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        HOME: os.tmpdir(),
+        PATH: TEST_SYSTEM_PATH,
+        ...env,
       },
-    );
+    });
   }
 
   // -- version_gte --
@@ -1131,18 +1109,43 @@ describe("installer pure helpers", () => {
 
   // -- resolve_installer_version --
 
-  it("resolve_installer_version: reads version from package.json", () => {
+  it("resolve_installer_version: reads version from git or package.json", () => {
     const r = callInstallerFn("resolve_installer_version");
-    // Should read from the repo's actual package.json
-    expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
+    // May return clean semver ("0.0.2") or git describe format ("0.0.2-3-gabcdef1")
+    expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+(-.+)?$/);
+  });
+
+  it("resolve_installer_version: falls back to package.json when git tags are unavailable", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-ver-pkg-"));
+    fs.mkdirSync(path.join(tmp, ".git"));
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      `${JSON.stringify({ version: "0.5.0" }, null, 2)}\n`,
+    );
+    // source overwrites SCRIPT_DIR, so we re-set it after sourcing.
+    // The temp dir advertises git metadata but has no usable tags,
+    // so the function should fall back to package.json instead of exiting.
+    const r = spawnSync(
+      "bash",
+      ["-c", `source "${INSTALLER}" 2>/dev/null; SCRIPT_DIR="${tmp}"; resolve_installer_version`],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: { HOME: tmp, PATH: TEST_SYSTEM_PATH },
+      },
+    );
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe("0.5.0");
   });
 
   it("resolve_installer_version: falls back to DEFAULT when no package.json", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-ver-"));
-    // source from a directory with no package.json — SCRIPT_DIR will be wrong
+    // source overwrites SCRIPT_DIR, so we re-set it after sourcing.
+    // The temp dir has no .git, no .version, and no package.json,
+    // so the function should fall back to DEFAULT_NEMOCLAW_VERSION.
     const r = spawnSync(
       "bash",
-      ["-c", `SCRIPT_DIR="${tmp}"; source "${INSTALLER}" 2>/dev/null; resolve_installer_version`],
+      ["-c", `source "${INSTALLER}" 2>/dev/null; SCRIPT_DIR="${tmp}"; resolve_installer_version`],
       {
         cwd: tmp,
         encoding: "utf-8",
@@ -1277,7 +1280,7 @@ exit 0`,
     expect(`${result.stdout}${result.stderr}`).toMatch(/npm was not found on PATH/);
   });
 
-  it("succeeds with acceptable Node.js 20 and npm 10", () => {
+  it("succeeds with acceptable Node.js 22.16 and npm 10", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-ok-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -1285,7 +1288,7 @@ exit 0`,
     writeExecutable(
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
-if [ "$1" = "--version" ]; then echo "v20.0.0"; exit 0; fi
+if [ "$1" = "--version" ]; then echo "v22.16.0"; exit 0; fi
 exit 0`,
     );
     writeExecutable(
@@ -1299,6 +1302,32 @@ exit 0`,
 
     expect(result.status).toBe(0);
     expect(`${result.stdout}${result.stderr}`).toMatch(/Runtime OK/);
+  });
+
+  it("rejects Node.js 20 which is below the 22.16 minimum", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-node20-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+
+    writeExecutable(
+      path.join(fakeBin, "node"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "v20.18.0"; exit 0; fi
+exit 0`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "10.9.2"; exit 0; fi
+exit 0`,
+    );
+
+    const result = callEnsureSupportedRuntime(fakeBin);
+
+    expect(result.status).not.toBe(0);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/Unsupported runtime detected/);
+    expect(output).toMatch(/v20\.18\.0/);
   });
 
   it("rejects node that returns a non-numeric version", () => {
@@ -1346,7 +1375,7 @@ describe("curl-pipe installer release-tag resolution", () => {
     writeExecutable(
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
-if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.14.0"; exit 0; fi
+if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.16.0"; exit 0; fi
 if [ "$1" = "-e" ]; then exit 1; fi
 exit 99`,
     );
@@ -1392,16 +1421,10 @@ exit 0`,
     return { fakeBin, prefix, gitLog };
   }
 
-  it("git clone receives --branch with the resolved release tag", () => {
+  it("git clone receives --branch latest by default", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-pipe-tag-e2e-"));
     const { fakeBin, prefix, gitLog } = buildCurlPipeEnv(tmp, {
       curlStub: `#!/usr/bin/env bash
-for arg in "$@"; do
-  if [[ "$arg" == *"api.github.com/repos/NVIDIA/NemoClaw/releases/latest"* ]]; then
-    echo '{"tag_name":"v0.5.0","name":"NemoClaw v0.5.0"}'
-    exit 0
-  fi
-done
 /usr/bin/curl "$@"`,
       gitStub: `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
@@ -1430,47 +1453,7 @@ exit 0`,
 
     expect(result.status).toBe(0);
     const gitCalls = fs.readFileSync(gitLog, "utf-8");
-    expect(gitCalls).toMatch(/--branch v0\.5\.0/);
-  });
-
-  it("falls back to 'main' when the GitHub API is unreachable", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-pipe-tag-fail-"));
-    const { fakeBin, prefix, gitLog } = buildCurlPipeEnv(tmp, {
-      curlStub: `#!/usr/bin/env bash
-for arg in "$@"; do
-  if [[ "$arg" == *"api.github.com"* ]]; then
-    exit 1
-  fi
-done
-/usr/bin/curl "$@"`,
-      gitStub: `#!/usr/bin/env bash
-printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
-if [ "$1" = "clone" ]; then
-  target="\${@: -1}"
-  mkdir -p "$target/nemoclaw"
-  echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
-  echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
-  exit 0
-fi
-exit 0`,
-    });
-
-    const result = spawnSync("bash", [CURL_PIPE_INSTALLER], {
-      cwd: tmp,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NPM_PREFIX: prefix,
-        GIT_LOG_PATH: gitLog,
-      },
-    });
-
-    expect(result.status).toBe(0);
-    const gitCalls = fs.readFileSync(gitLog, "utf-8");
-    expect(gitCalls).toMatch(/--branch main/);
+    expect(gitCalls).toMatch(/--branch latest/);
   });
 
   it("uses NEMOCLAW_INSTALL_TAG override without calling the API", () => {

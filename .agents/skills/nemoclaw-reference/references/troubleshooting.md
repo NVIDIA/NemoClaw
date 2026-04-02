@@ -21,19 +21,19 @@ If you see an unsupported platform error, verify that you are running on a suppo
 
 ### Node.js version is too old
 
-NemoClaw requires Node.js 20 or later.
+NemoClaw requires Node.js 22.16 or later.
 If the installer exits with a Node.js version error, check your current version:
 
 ```console
 $ node --version
 ```
 
-If the version is below 20, install a supported release.
+If the version is below 22.16, install a supported release.
 If you use nvm, run:
 
 ```console
-$ nvm install 20
-$ nvm use 20
+$ nvm install 22
+$ nvm use 22
 ```
 
 Then re-run the installer.
@@ -69,7 +69,7 @@ If another process is already bound to this port, onboarding fails.
 Identify the conflicting process, verify it is safe to stop, and terminate it:
 
 ```console
-$ lsof -i :18789
+$ sudo lsof -i :18789
 $ kill <PID>
 ```
 

@@ -29,7 +29,7 @@
     "yaml": "^2.4.0"
   },
   "devDependencies": {
-    "@types/node": "^20.19.37",
+    "@types/node": "^22.0.0",
     "@typescript-eslint/eslint-plugin": "^8.57.0",
     "@typescript-eslint/parser": "^8.57.0",
     "eslint": "^9.39.4",
@@ -39,7 +39,7 @@
     "vitest": "^4.1.0"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.16.0"
   },
   "files": [
     "dist/",
