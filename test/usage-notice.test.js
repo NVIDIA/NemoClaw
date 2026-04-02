@@ -19,6 +19,7 @@ const {
 
 describe("usage notice", () => {
   const originalIsTTY = process.stdin.isTTY;
+  const originalHome = process.env.HOME;
   let testHome = null;
 
   beforeEach(() => {
@@ -40,6 +41,11 @@ describe("usage notice", () => {
       configurable: true,
       value: originalIsTTY,
     });
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
     if (testHome) {
       fs.rmSync(testHome, { force: true, recursive: true });
       testHome = null;
@@ -115,25 +121,27 @@ describe("usage notice", () => {
     const lines = [];
     const originalStdoutIsTTY = process.stdout.isTTY;
     const originalStderrIsTTY = process.stderr.isTTY;
-    Object.defineProperty(process.stdout, "isTTY", {
-      configurable: true,
-      value: true,
-    });
-    Object.defineProperty(process.stderr, "isTTY", {
-      configurable: true,
-      value: true,
-    });
+    try {
+      Object.defineProperty(process.stdout, "isTTY", {
+        configurable: true,
+        value: true,
+      });
+      Object.defineProperty(process.stderr, "isTTY", {
+        configurable: true,
+        value: true,
+      });
 
-    printUsageNotice(loadUsageNoticeConfig(), (line) => lines.push(line));
-
-    Object.defineProperty(process.stdout, "isTTY", {
-      configurable: true,
-      value: originalStdoutIsTTY,
-    });
-    Object.defineProperty(process.stderr, "isTTY", {
-      configurable: true,
-      value: originalStderrIsTTY,
-    });
+      printUsageNotice(loadUsageNoticeConfig(), (line) => lines.push(line));
+    } finally {
+      Object.defineProperty(process.stdout, "isTTY", {
+        configurable: true,
+        value: originalStdoutIsTTY,
+      });
+      Object.defineProperty(process.stderr, "isTTY", {
+        configurable: true,
+        value: originalStderrIsTTY,
+      });
+    }
 
     expect(lines.join("\n")).toContain(
       formatTerminalHyperlink(
