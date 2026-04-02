@@ -1,6 +1,6 @@
 ---
 title:
-  page: "Audit Chain — Tamper-Evident Hash-Chained Audit Log"
+  page: "NemoClaw Audit Chain — Tamper-Evident Hash-Chained Audit Log"
   nav: "Audit Chain"
 description: "Reference for the tamper-evident audit chain module that writes SHA-256 hash-chained JSONL entries and provides verify, export, and tail utilities."
 keywords: ["nemoclaw audit chain", "hash chain", "tamper detection", "audit log"]
@@ -18,7 +18,7 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# Audit Chain
+# NemoClaw Audit Chain — Tamper-Evident Hash-Chained Audit Log
 
 The audit chain module writes tamper-evident log entries in JSONL format.
 
