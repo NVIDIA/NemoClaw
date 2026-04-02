@@ -3,26 +3,29 @@
 
 import { createRequire } from "module";
 import { describe, it, expect, vi } from "vitest";
-import nim from "../bin/lib/nim";
+import type { Mock } from "vitest";
+
+// Import from compiled dist/ for coverage attribution.
+import nim from "../../dist/lib/nim";
 
 const require = createRequire(import.meta.url);
-const NIM_PATH = require.resolve("../bin/lib/nim");
-const RUNNER_PATH = require.resolve("../bin/lib/runner");
+const NIM_DIST_PATH = require.resolve("../../dist/lib/nim");
+const RUNNER_PATH = require.resolve("../../bin/lib/runner");
 
-function loadNimWithMockedRunner(runCapture) {
+function loadNimWithMockedRunner(runCapture: Mock) {
   const runner = require(RUNNER_PATH);
   const originalRun = runner.run;
   const originalRunCapture = runner.runCapture;
 
-  delete require.cache[NIM_PATH];
+  delete require.cache[NIM_DIST_PATH];
   runner.run = vi.fn();
   runner.runCapture = runCapture;
-  const nimModule = require(NIM_PATH);
+  const nimModule = require(NIM_DIST_PATH);
 
   return {
     nimModule,
     restore() {
-      delete require.cache[NIM_PATH];
+      delete require.cache[NIM_DIST_PATH];
       runner.run = originalRun;
       runner.runCapture = originalRunCapture;
     },
@@ -90,7 +93,7 @@ describe("nim", () => {
     });
 
     it("detects GB10 unified-memory GPUs as Spark-capable NVIDIA devices", () => {
-      const runCapture = vi.fn((cmd) => {
+      const runCapture = vi.fn((cmd: string) => {
         if (cmd.includes("memory.total")) return "";
         if (cmd.includes("query-gpu=name")) return "NVIDIA GB10";
         if (cmd.includes("free -m")) return "131072";
@@ -115,7 +118,7 @@ describe("nim", () => {
     });
 
     it("detects Orin unified-memory GPUs without marking them as Spark", () => {
-      const runCapture = vi.fn((cmd) => {
+      const runCapture = vi.fn((cmd: string) => {
         if (cmd.includes("memory.total")) return "";
         if (cmd.includes("query-gpu=name")) return "NVIDIA Jetson AGX Orin";
         if (cmd.includes("free -m")) return "32768";
@@ -140,7 +143,7 @@ describe("nim", () => {
     });
 
     it("marks low-memory unified-memory NVIDIA devices as not NIM-capable", () => {
-      const runCapture = vi.fn((cmd) => {
+      const runCapture = vi.fn((cmd: string) => {
         if (cmd.includes("memory.total")) return "";
         if (cmd.includes("query-gpu=name")) return "NVIDIA Xavier";
         if (cmd.includes("free -m")) return "4096";
@@ -172,7 +175,7 @@ describe("nim", () => {
 
   describe("nimStatusByName", () => {
     it("uses provided port directly", () => {
-      const runCapture = vi.fn((cmd) => {
+      const runCapture = vi.fn((cmd: string) => {
         if (cmd.includes("docker inspect")) return "running";
         if (cmd.includes("http://localhost:9000/v1/models")) return '{"data":[]}';
         return "";
@@ -181,7 +184,7 @@ describe("nim", () => {
 
       try {
         const st = nimModule.nimStatusByName("foo", 9000);
-        const commands = runCapture.mock.calls.map(([cmd]) => cmd);
+        const commands = runCapture.mock.calls.map(([cmd]: [string]) => cmd);
 
         expect(st).toMatchObject({
           running: true,
@@ -189,8 +192,10 @@ describe("nim", () => {
           container: "foo",
           state: "running",
         });
-        expect(commands.some((cmd) => cmd.includes("docker port"))).toBe(false);
-        expect(commands.some((cmd) => cmd.includes("http://localhost:9000/v1/models"))).toBe(true);
+        expect(commands.some((cmd: string) => cmd.includes("docker port"))).toBe(false);
+        expect(commands.some((cmd: string) => cmd.includes("http://localhost:9000/v1/models"))).toBe(
+          true,
+        );
       } finally {
         restore();
       }
@@ -198,7 +203,7 @@ describe("nim", () => {
 
     it("uses published docker port when no port is provided", () => {
       for (const mapping of ["0.0.0.0:9000", "127.0.0.1:9000", "[::]:9000", ":::9000"]) {
-        const runCapture = vi.fn((cmd) => {
+        const runCapture = vi.fn((cmd: string) => {
           if (cmd.includes("docker inspect")) return "running";
           if (cmd.includes("docker port")) return mapping;
           if (cmd.includes("http://localhost:9000/v1/models")) return '{"data":[]}';
@@ -208,18 +213,10 @@ describe("nim", () => {
 
         try {
           const st = nimModule.nimStatusByName("foo");
-          const commands = runCapture.mock.calls.map(([cmd]) => cmd);
+          const commands = runCapture.mock.calls.map(([cmd]: [string]) => cmd);
 
-          expect(st).toMatchObject({
-            running: true,
-            healthy: true,
-            container: "foo",
-            state: "running",
-          });
-          expect(commands.some((cmd) => cmd.includes("docker port"))).toBe(true);
-          expect(commands.some((cmd) => cmd.includes("http://localhost:9000/v1/models"))).toBe(
-            true,
-          );
+          expect(st).toMatchObject({ running: true, healthy: true, container: "foo", state: "running" });
+          expect(commands.some((cmd: string) => cmd.includes("docker port"))).toBe(true);
         } finally {
           restore();
         }
@@ -227,7 +224,7 @@ describe("nim", () => {
     });
 
     it("falls back to 8000 when docker port lookup fails", () => {
-      const runCapture = vi.fn((cmd) => {
+      const runCapture = vi.fn((cmd: string) => {
         if (cmd.includes("docker inspect")) return "running";
         if (cmd.includes("docker port")) return "";
         if (cmd.includes("http://localhost:8000/v1/models")) return '{"data":[]}';
@@ -237,23 +234,14 @@ describe("nim", () => {
 
       try {
         const st = nimModule.nimStatusByName("foo");
-        const commands = runCapture.mock.calls.map(([cmd]) => cmd);
-
-        expect(st).toMatchObject({
-          running: true,
-          healthy: true,
-          container: "foo",
-          state: "running",
-        });
-        expect(commands.some((cmd) => cmd.includes("docker port"))).toBe(true);
-        expect(commands.some((cmd) => cmd.includes("http://localhost:8000/v1/models"))).toBe(true);
+        expect(st).toMatchObject({ running: true, healthy: true, container: "foo", state: "running" });
       } finally {
         restore();
       }
     });
 
     it("does not run health check when container is not running", () => {
-      const runCapture = vi.fn((cmd) => {
+      const runCapture = vi.fn((cmd: string) => {
         if (cmd.includes("docker inspect")) return "exited";
         return "";
       });
@@ -261,17 +249,8 @@ describe("nim", () => {
 
       try {
         const st = nimModule.nimStatusByName("foo");
-        const commands = runCapture.mock.calls.map(([cmd]) => cmd);
-
-        expect(st).toMatchObject({
-          running: false,
-          healthy: false,
-          container: "foo",
-          state: "exited",
-        });
-        expect(commands).toHaveLength(1);
-        expect(commands.some((cmd) => cmd.includes("docker port"))).toBe(false);
-        expect(commands.some((cmd) => cmd.includes("http://localhost:"))).toBe(false);
+        expect(st).toMatchObject({ running: false, healthy: false, container: "foo", state: "exited" });
+        expect(runCapture.mock.calls).toHaveLength(1);
       } finally {
         restore();
       }

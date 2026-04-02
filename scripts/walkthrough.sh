@@ -13,7 +13,7 @@
 # the TUI prompts the operator to approve or deny the request.
 #
 # Prerequisites:
-#   - NemoClaw setup complete (./scripts/setup.sh)
+#   - NemoClaw setup complete (nemoclaw onboard)
 #   - NVIDIA_API_KEY in environment
 #
 # Suggested prompts that trigger the approval flow:

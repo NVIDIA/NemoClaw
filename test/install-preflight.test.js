@@ -383,7 +383,7 @@ if [ "$1" = "pack" ]; then
   exit 0
 fi
 if [ "$1" = "install" ]; then exit 0; fi
-if [ "$1" = "run" ] && [ "$2" = "build" ]; then exit 0; fi
+if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
@@ -453,7 +453,7 @@ fi`,
   exit 0
 fi
 if [ "$1" = "install" ]; then exit 0; fi
-if [ "$1" = "run" ] && [ "$2" = "build" ]; then exit 0; fi
+if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash

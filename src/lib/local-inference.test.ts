@@ -3,6 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 
+// Import from compiled dist/ for correct coverage attribution.
 import {
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
@@ -20,7 +21,7 @@ import {
   parseOllamaTags,
   validateOllamaModel,
   validateLocalProvider,
-} from "../bin/lib/local-inference";
+} from "../../dist/lib/local-inference";
 
 describe("local inference helpers", () => {
   it("returns the expected base URL for vllm-local", () => {
@@ -28,7 +29,9 @@ describe("local inference helpers", () => {
   });
 
   it("returns the expected base URL for ollama-local", () => {
-    expect(getLocalProviderBaseUrl("ollama-local")).toBe("http://host.openshell.internal:11434/v1");
+    expect(getLocalProviderBaseUrl("ollama-local")).toBe(
+      "http://host.openshell.internal:11434/v1",
+    );
   });
 
   it("returns null for unknown local provider URLs", () => {
@@ -111,6 +114,16 @@ describe("local inference helpers", () => {
     expect(validateLocalProvider("custom-provider", () => "")).toEqual({ ok: true });
   });
 
+  it("skips health check entirely for unknown providers", () => {
+    let callCount = 0;
+    const result = validateLocalProvider("custom-provider", () => {
+      callCount += 1;
+      return callCount <= 1 ? "ok" : "";
+    });
+    // custom-provider has no health check command, so it returns ok immediately
+    expect(result).toEqual({ ok: true });
+  });
+
   it("parses model names from ollama list output", () => {
     expect(
       parseOllamaList(
@@ -189,10 +202,9 @@ describe("local inference helpers", () => {
     expect(
       getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB - 1 }),
     ).toEqual(["qwen2.5:7b"]);
-    expect(getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB })).toEqual([
-      "qwen2.5:7b",
-      DEFAULT_OLLAMA_MODEL,
-    ]);
+    expect(
+      getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB }),
+    ).toEqual(["qwen2.5:7b", DEFAULT_OLLAMA_MODEL]);
     expect(getDefaultOllamaModel(() => "", { totalMemoryMB: 16384 })).toBe("qwen2.5:7b");
   });
 
