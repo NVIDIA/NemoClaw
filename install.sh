@@ -162,6 +162,9 @@ print_banner() {
 
 print_done() {
   local elapsed=$((SECONDS - _INSTALL_START))
+  local _needs_reload=false
+  needs_shell_reload && _needs_reload=true
+
   info "=== Installation complete ==="
   printf "\n"
   printf "  ${C_GREEN}${C_BOLD}NemoClaw${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$elapsed"
@@ -173,13 +176,19 @@ print_done() {
     printf "  ${C_DIM}Sandbox in, break things, and tell us what you find.${C_RESET}\n"
     printf "\n"
     printf "  ${C_GREEN}Next:${C_RESET}\n"
+    if [[ "$_needs_reload" == true ]]; then
+      printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$(detect_shell_profile)"
+    fi
     printf "  %s$%s nemoclaw %s connect\n" "$C_GREEN" "$C_RESET" "$sandbox_name"
     printf "  %ssandbox@%s$%s openclaw tui\n" "$C_GREEN" "$sandbox_name" "$C_RESET"
   elif [[ "$NEMOCLAW_READY_NOW" == true ]]; then
-    printf "  ${C_GREEN}NemoClaw CLI is ready in this shell.${C_RESET}\n"
+    printf "  ${C_GREEN}NemoClaw CLI is installed.${C_RESET}\n"
     printf "  ${C_DIM}Onboarding has not run yet.${C_RESET}\n"
     printf "\n"
     printf "  ${C_GREEN}Next:${C_RESET}\n"
+    if [[ "$_needs_reload" == true ]]; then
+      printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$(detect_shell_profile)"
+    fi
     printf "  %s$%s nemoclaw onboard\n" "$C_GREEN" "$C_RESET"
   else
     printf "  ${C_GREEN}NemoClaw CLI is installed.${C_RESET}\n"
@@ -388,6 +397,25 @@ ensure_nemoclaw_shim() {
   refresh_path
   ensure_local_bin_in_profile
   info "Created user-local shim at $shim_path"
+  return 0
+}
+
+# Detect whether the installer had to extend PATH beyond what the user's
+# original shell had.  When running via `curl | bash`, PATH changes made
+# inside the script do not survive the script's exit, so the parent shell
+# still cannot resolve `nemoclaw`.
+needs_shell_reload() {
+  [[ "$NEMOCLAW_READY_NOW" != true ]] && return 1
+
+  local npm_bin
+  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+
+  if [[ ":$ORIGINAL_PATH:" == *":$NEMOCLAW_SHIM_DIR:"* ]]; then
+    return 1
+  fi
+  if [[ -n "$npm_bin" && ":$ORIGINAL_PATH:" == *":$npm_bin:"* ]]; then
+    return 1
+  fi
   return 0
 }
 
