@@ -423,22 +423,15 @@ ensure_nemoclaw_shim() {
   return 0
 }
 
-# Detect whether the installer had to extend PATH beyond what the user's
-# original shell had.  When running via `curl | bash`, PATH changes made
-# inside the script do not survive the script's exit, so the parent shell
-# still cannot resolve `nemoclaw`.
+# Detect whether the parent shell likely needs a reload after install.
+# When running via `curl | bash`, the installer executes in a subprocess.
+# Even when the bin directory is already in PATH, the parent shell may have
+# stale bash hash-table entries pointing to a previously deleted binary
+# (e.g. upgrade/reinstall after `rm $(which nemoclaw)`).  Sourcing the
+# shell profile reassigns PATH which clears the hash table, so we always
+# recommend it when the installer verified nemoclaw in the subprocess.
 needs_shell_reload() {
   [[ "$NEMOCLAW_READY_NOW" != true ]] && return 1
-
-  local npm_bin
-  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
-
-  if [[ ":$ORIGINAL_PATH:" == *":$NEMOCLAW_SHIM_DIR:"* ]]; then
-    return 1
-  fi
-  if [[ -n "$npm_bin" && ":$ORIGINAL_PATH:" == *":$npm_bin:"* ]]; then
-    return 1
-  fi
   return 0
 }
 
