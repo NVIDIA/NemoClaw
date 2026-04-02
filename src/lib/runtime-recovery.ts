@@ -61,7 +61,7 @@ export function classifyGatewayStatus(output = ""): StateClassification {
   if (!clean) {
     return { state: "inactive", reason: "empty" };
   }
-  if (/\bConnected\b/i.test(clean) && !/\bDisconnected\b/i.test(clean)) {
+  if (/\bConnected\b/i.test(clean) && !/\bDisconnected\b/i.test(clean) && !/\bNot connected\b/i.test(clean)) {
     return { state: "connected", reason: "ok" };
   }
   if (

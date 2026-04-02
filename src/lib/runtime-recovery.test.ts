@@ -74,6 +74,9 @@ describe("runtime recovery helpers", () => {
     expect(classifyGatewayStatus("Gateway: nemoclaw\nStatus: Disconnected").state).toBe(
       "inactive",
     );
+    expect(classifyGatewayStatus("Gateway: nemoclaw\nStatus: Not connected").state).toBe(
+      "inactive",
+    );
   });
 
   it("only attempts gateway recovery when sandbox access is unavailable and gateway is down", () => {
