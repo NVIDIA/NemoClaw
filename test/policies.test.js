@@ -81,7 +81,7 @@ describe("policies", () => {
     });
 
     it("strips surrounding quotes from hostnames", () => {
-      const yaml = 'host: "example.com"\n  host: \'other.com\'';
+      const yaml = "host: \"example.com\"\n  host: 'other.com'";
       const hosts = policies.getPresetEndpoints(yaml);
       expect(hosts).toEqual(["example.com", "other.com"]);
     });
@@ -91,14 +91,20 @@ describe("policies", () => {
     it("logs egress endpoints before applying", () => {
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit"); });
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("exit");
+      });
 
       try {
         try {
           policies.applyPreset("test-sandbox", "npm");
-        } catch {}
+        } catch {
+          /* applyPreset may throw if sandbox not running — we only care about the log */
+        }
         const messages = logSpy.mock.calls.map((c) => c[0]);
-        expect(messages.some((m) => typeof m === "string" && m.includes("Widening sandbox egress"))).toBe(true);
+        expect(
+          messages.some((m) => typeof m === "string" && m.includes("Widening sandbox egress")),
+        ).toBe(true);
       } finally {
         logSpy.mockRestore();
         errSpy.mockRestore();
@@ -113,7 +119,9 @@ describe("policies", () => {
       try {
         policies.applyPreset("test-sandbox", "nonexistent");
         const messages = logSpy.mock.calls.map((c) => c[0]);
-        expect(messages.some((m) => typeof m === "string" && m.includes("Widening sandbox egress"))).toBe(false);
+        expect(
+          messages.some((m) => typeof m === "string" && m.includes("Widening sandbox egress")),
+        ).toBe(false);
       } finally {
         logSpy.mockRestore();
         errSpy.mockRestore();
