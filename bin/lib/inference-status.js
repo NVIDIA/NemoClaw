@@ -20,7 +20,7 @@ function getInferenceRuntimeStatus(sandbox = {}, nimStatusResolver = () => ({ ru
       const lines = [
         {
           label: "NIM",
-          value: nimStatus.running ? `running (${nimStatus.container})` : "not running",
+          value: nimStatus.running ? "running" : "not running",
         },
       ];
       if (nimStatus.running) {

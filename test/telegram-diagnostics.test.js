@@ -94,7 +94,9 @@ describe("telegram diagnostics", () => {
   });
 
   it("reuses the running bridge token when env and credentials are empty", () => {
+    const fs = require("fs");
     const fakeFs = {
+      ...fs,
       existsSync(filePath) {
         return filePath === "/tmp/nemoclaw-services-the-crucible/telegram-bridge.pid"
           || filePath === "/proc/4242/environ";
@@ -108,49 +110,6 @@ describe("telegram diagnostics", () => {
         }
         throw new Error(`unexpected path: ${filePath}`);
       },
-      // Add stubs for required fs methods to satisfy type checks
-      rename: () => {},
-      renameSync: () => {},
-      truncate: () => {},
-      truncateSync: () => {},
-      stat: () => {},
-      statSync: () => {},
-      lstat: () => {},
-      lstatSync: () => {},
-      unlink: () => {},
-      unlinkSync: () => {},
-      readdir: () => {},
-      readdirSync: () => {},
-      mkdir: () => {},
-      mkdirSync: () => {},
-      rmdir: () => {},
-      rmdirSync: () => {},
-      createReadStream: () => {},
-      createWriteStream: () => {},
-      ftruncate: () => {},
-      ftruncateSync: () => {},
-      chown: () => {},
-      chownSync: () => {},
-      chmod: () => {},
-      chmodSync: () => {},
-      lchown: () => {},
-      lchownSync: () => {},
-      lchmod: () => {},
-      lchmodSync: () => {},
-      utimes: () => {},
-      utimesSync: () => {},
-      futimes: () => {},
-      futimesSync: () => {},
-      link: () => {},
-      linkSync: () => {},
-      symlink: () => {},
-      symlinkSync: () => {},
-      readlink: () => {},
-      readlinkSync: () => {},
-      realpath: () => {},
-      realpathSync: () => {},
-      // ...existing code...
-      // ...add more as needed for compatibility
     };
 
     assert.equal(getTelegramBridgeToken("the-crucible", fakeFs), "from-bridge");
