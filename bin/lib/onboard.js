@@ -683,7 +683,7 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
     console.log(
       `  ${label} authorization failed. Re-enter the API key or choose a different provider/model.`,
     );
-    const choice = (await prompt("  Type 'retry', 'back', or 'exit' [retry]: "))
+    const choice = (await prompt("  Type 'retry', 'back', or 'exit' [retry]: ", { secret: true }))
       .trim()
       .toLowerCase();
     if (choice === "back") {
