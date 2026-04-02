@@ -1,30 +1,10 @@
----
-title:
-  page: "NemoClaw Security Best Practices — Controls, Risks, and Posture Profiles"
-  nav: "Security Best Practices"
-description: "A risk framework for every configurable security control in NemoClaw: defaults, what you can change, and what happens if you do."
-keywords: ["nemoclaw security best practices", "sandbox security controls risk framework"]
-topics: ["generative_ai", "ai_agents"]
-tags: ["openclaw", "openshell", "sandboxing", "security", "network_policy", "nemoclaw"]
-content:
-  type: concept
-  difficulty: intermediate
-  audience: ["developer", "engineer", "security_engineer"]
-status: published
----
-
-<!--
-  SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-  SPDX-License-Identifier: Apache-2.0
--->
-
 # Security Best Practices
 
 NemoClaw ships with deny-by-default security controls across four layers: network, filesystem, process, and inference.
 You can tune every control, but each change shifts the risk profile.
 This page documents every configurable knob, its default, what it protects, the concrete risk of relaxing it, and a recommendation for common use cases.
 
-For background on how the layers fit together, refer to [How It Works](../about/how-it-works.md).
+For background on how the layers fit together, refer to How It Works (see the `nemoclaw-overview` skill).
 
 <!-- TODO: uncomment after the OpenShell docs are published
 :::{seealso}
@@ -41,7 +21,7 @@ You can hot-reload others while the sandbox runs.
 
 The following diagram shows the default posture immediately after `nemoclaw onboard`, before you approve any endpoints or apply any presets.
 
-```{mermaid}
+```mermaid
 flowchart TB
     subgraph HOST["Your Machine — default posture after nemoclaw onboard"]
         direction TB
@@ -280,7 +260,7 @@ The entrypoint drops these capabilities: `cap_net_raw`, `cap_dac_override`, `cap
 The entrypoint keeps these because it needs them for privilege separation using gosu: `cap_chown`, `cap_setuid`, `cap_setgid`, `cap_fowner`, `cap_kill`.
 
 This is best-effort: if `capsh` is not available or `CAP_SETPCAP` is not in the bounding set, the entrypoint logs a warning and continues with the default capability set.
-For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose (see [Sandbox Hardening](../deployment/sandbox-hardening.md)).
+For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose (see Sandbox Hardening (see the `nemoclaw-deploy-remote` skill)).
 
 | Aspect | Detail |
 |---|---|
@@ -498,10 +478,10 @@ The following patterns weaken security without providing meaningful benefit.
 
 ## Related Topics
 
-- [Network Policies](../reference/network-policies.md) for the full baseline policy reference.
-- [Customize the Network Policy](../network-policy/customize-network-policy.md) for static and dynamic policy changes.
-- [Approve or Deny Network Requests](../network-policy/approve-network-requests.md) for the operator approval flow.
-- [Sandbox Hardening](../deployment/sandbox-hardening.md) for container-level security measures.
-- [Inference Profiles](../reference/inference-profiles.md) for provider configuration details.
-- [How It Works](../about/how-it-works.md) for the protection layer architecture.
+- Network Policies (see the `nemoclaw-reference` skill) for the full baseline policy reference.
+- Customize the Network Policy (see the `nemoclaw-manage-policy` skill) for static and dynamic policy changes.
+- Approve or Deny Network Requests (see the `nemoclaw-manage-policy` skill) for the operator approval flow.
+- Sandbox Hardening (see the `nemoclaw-deploy-remote` skill) for container-level security measures.
+- Inference Profiles (see the `nemoclaw-reference` skill) for provider configuration details.
+- How It Works (see the `nemoclaw-overview` skill) for the protection layer architecture.
 <!-- - OpenShell [Security Best Practices](https://docs.nvidia.com/openshell/latest/security/best-practices.html) for the platform-level controls reference, including network namespace isolation, seccomp filters, SSRF protection, TLS termination, and gateway authentication. -->
