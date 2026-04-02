@@ -25,7 +25,7 @@
 #   NVIDIA_API_KEY         — required
 #
 # Usage:
-#   NEMOCLAW_NON_INTERACTIVE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-credential-sanitization.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-credential-sanitization.sh
 #
 # See: https://github.com/NVIDIA/NemoClaw/pull/156
 
