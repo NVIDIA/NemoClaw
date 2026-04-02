@@ -128,6 +128,20 @@ function hasNoLiveSandboxes() {
   return parseLiveSandboxNames(liveList.output).size === 0;
 }
 
+function isMissingSandboxDeleteResult(output = "") {
+  return /\bNotFound\b|\bNot Found\b|sandbox not found|sandbox .* not found|sandbox .* not present|sandbox does not exist|no such sandbox/i.test(
+    stripAnsi(output),
+  );
+}
+
+function getSandboxDeleteOutcome(deleteResult) {
+  const output = `${deleteResult.stdout || ""}${deleteResult.stderr || ""}`.trim();
+  return {
+    output,
+    alreadyGone: deleteResult.status !== 0 && isMissingSandboxDeleteResult(output),
+  };
+}
+
 function parseVersionFromText(value = "") {
   const match = String(value || "").match(/([0-9]+\.[0-9]+\.[0-9]+)/);
   return match ? match[1] : null;
@@ -376,7 +390,7 @@ function getSandboxGatewayState(sandboxName) {
   if (result.status === 0) {
     return { state: "present", output };
   }
-  if (/NotFound|sandbox not found/i.test(output)) {
+  if (/\bNotFound\b|\bNot Found\b|sandbox not found/i.test(output)) {
     return { state: "missing", output };
   }
   if (
@@ -1102,16 +1116,31 @@ async function sandboxDestroy(sandboxName, args = []) {
   else nim.stopNimContainer(sandboxName);
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
-  const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
+  const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const { output: deleteOutput, alreadyGone } = getSandboxDeleteOutcome(deleteResult);
+
+  if (deleteResult.status !== 0 && !alreadyGone) {
+    if (deleteOutput) {
+      console.error(`  ${deleteOutput}`);
+    }
+    console.error(`  Failed to destroy sandbox '${sandboxName}'.`);
+    process.exit(deleteResult.status || 1);
+  }
 
   const removed = registry.removeSandbox(sandboxName);
   if (
-    deleteResult.status === 0 &&
+    (deleteResult.status === 0 || alreadyGone) &&
     removed &&
     registry.listSandboxes().sandboxes.length === 0 &&
     hasNoLiveSandboxes()
   ) {
     cleanupGatewayAfterLastSandbox();
+  }
+  if (alreadyGone) {
+    console.log(`  Sandbox '${sandboxName}' was already absent from the live gateway.`);
   }
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);
 }

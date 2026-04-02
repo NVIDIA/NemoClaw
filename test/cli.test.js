@@ -412,6 +412,136 @@ describe("CLI dispatch", () => {
     }
   });
 
+  it("fails destroy when openshell sandbox delete returns a real error", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-failure-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellLog = path.join(home, "openshell.log");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(openshellLog)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
+        '  echo "transport error: gateway unavailable" >&2',
+        "  exit 1",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha destroy --yes", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("transport error: gateway unavailable");
+    expect(r.out).toContain("Failed to destroy sandbox 'alpha'.");
+    expect(r.out).not.toContain("Sandbox 'alpha' destroyed");
+
+    const registryAfter = JSON.parse(
+      fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"),
+    );
+    expect(registryAfter.sandboxes.alpha).toBeTruthy();
+    expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
+  });
+
+  it("treats an already-missing sandbox as destroyed and clears the stale registry entry", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-missing-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellLog = path.join(home, "openshell.log");
+    const bashLog = path.join(home, "bash.log");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(openshellLog)}`,
+        'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
+        '  printf \'%s\\n\' "$*" >> "$log_file"',
+        '  echo "Error: status: Not Found, message: \\"sandbox not found\\"" >&2',
+        "  exit 1",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        '  printf "NAME STATUS\\n" >> "$log_file"',
+        '  printf "NAME STATUS\\n"',
+        "  exit 0",
+        "fi",
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "bash"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(bashLog)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha destroy --yes", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("already absent from the live gateway");
+    expect(r.out).toContain("Sandbox 'alpha' destroyed");
+
+    const registryAfter = JSON.parse(
+      fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"),
+    );
+    expect(registryAfter.sandboxes.alpha).toBeFalsy();
+    expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
+    expect(fs.readFileSync(openshellLog, "utf8")).toContain("forward stop 18789");
+    expect(fs.readFileSync(openshellLog, "utf8")).toContain("gateway destroy -g nemoclaw");
+    expect(fs.readFileSync(bashLog, "utf8")).toContain("docker volume ls -q --filter");
+  });
+
   it("passes plain logs through without the tail flag", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-plain-"));
     const localBin = path.join(home, "bin");
