@@ -255,7 +255,12 @@ function applyPreset(sandboxName, presetName) {
   fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
 
   try {
-    run(buildPolicySetCommand(tmpFile, sandboxName));
+    const result = run(buildPolicySetCommand(tmpFile, sandboxName), { ignoreError: true });
+    if (result.status !== 0) {
+      const stderr = (result.stderr || "").toString();
+      const errMsg = stderr || `exit code ${result.status}`;
+      throw new Error(errMsg);
+    }
 
     console.log(`  Applied preset: ${presetName}`);
   } finally {
