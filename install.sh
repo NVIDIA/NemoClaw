@@ -708,7 +708,7 @@ fix_npm_permissions() {
 pre_extract_openclaw() {
   local install_dir="$1"
   local openclaw_version
-  openclaw_version=$(node -e "const v = require('${install_dir}/package.json').dependencies?.openclaw; if (v) console.log(v)" 2>/dev/null || echo "")
+  openclaw_version="$(resolve_openclaw_version "$install_dir")"
 
   if [[ -z "$openclaw_version" ]]; then
     warn "Could not determine openclaw version — skipping pre-extraction"
@@ -741,6 +741,34 @@ pre_extract_openclaw() {
     return 1
   fi
   rm -rf "$tmpdir"
+}
+
+resolve_openclaw_version() {
+  local install_dir="$1"
+  local package_json dockerfile_base resolved_version
+
+  package_json="${install_dir}/package.json"
+  dockerfile_base="${install_dir}/Dockerfile.base"
+
+  if [[ -f "$package_json" ]]; then
+    resolved_version="$(
+      node -e "const v = require('${package_json}').dependencies?.openclaw; if (v) console.log(v)" \
+        2>/dev/null || true
+    )"
+    if [[ -n "$resolved_version" ]]; then
+      printf '%s\n' "$resolved_version"
+      return 0
+    fi
+  fi
+
+  if [[ -f "$dockerfile_base" ]]; then
+    awk '
+      match($0, /openclaw@[0-9][0-9.]+/) {
+        print substr($0, RSTART + 9, RLENGTH - 9)
+        exit
+      }
+    ' "$dockerfile_base"
+  fi
 }
 
 install_nemoclaw() {

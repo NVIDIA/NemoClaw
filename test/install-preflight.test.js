@@ -1234,6 +1234,11 @@ describe("installer pure helpers", () => {
     expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+(-.+)?$/);
   });
 
+  it("resolve_openclaw_version: falls back to Dockerfile.base when package.json omits it", () => {
+    const r = callInstallerFn('resolve_openclaw_version "$PWD"');
+    expect(r.stdout.trim()).toBe("2026.3.11");
+  });
+
   it("resolve_installer_version: falls back to package.json when git tags are unavailable", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-ver-pkg-"));
     fs.mkdirSync(path.join(tmp, ".git"));
