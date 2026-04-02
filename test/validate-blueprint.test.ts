@@ -122,4 +122,24 @@ describe("base sandbox policy", () => {
     }
     expect(violations).toEqual([]);
   });
+
+  it("allows NVIDIA embeddings on both NVIDIA inference hosts", () => {
+    const np = policy.network_policies as Record<string, Record<string, unknown>>;
+    const endpoints =
+      np.nvidia?.endpoints as
+        | Array<{ host?: string; rules?: Array<{ allow?: { method?: string; path?: string } }> }>
+        | undefined;
+    const missingHosts: string[] = [];
+    for (const host of ["integrate.api.nvidia.com", "inference-api.nvidia.com"]) {
+      const endpoint = endpoints?.find((entry) => entry.host === host);
+      const hasEmbeddingsRule = endpoint?.rules?.some(
+        (rule) =>
+          rule.allow?.method === "POST" && rule.allow?.path === "/v1/embeddings",
+      );
+      if (!hasEmbeddingsRule) {
+        missingHosts.push(host);
+      }
+    }
+    expect(missingHosts).toEqual([]);
+  });
 });
