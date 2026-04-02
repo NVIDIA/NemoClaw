@@ -78,8 +78,17 @@ function saveOnboardNoticeState(version, statePath = getOnboardNoticeStatePath()
     null,
     2,
   );
-  fs.writeFileSync(tmpPath, payload, { mode: 0o600 });
-  fs.renameSync(tmpPath, statePath);
+  try {
+    fs.writeFileSync(tmpPath, payload, { mode: 0o600 });
+    fs.renameSync(tmpPath, statePath);
+  } catch (error) {
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      // Best-effort cleanup; preserve the original write/rename error.
+    }
+    throw error;
+  }
 }
 
 function renderOnboardNoticeLines(config) {

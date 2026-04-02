@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   DEFAULT_NOTICE_CONFIG_PATH,
@@ -33,6 +33,23 @@ describe("onboard notice", () => {
     expect(loadOnboardNoticeState(statePath)).toMatchObject({
       lastSeenVersion: "2026-04-01",
     });
+  });
+
+  it("cleans up the temp state file when the atomic rename fails", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-notice-rename-"));
+    const statePath = path.join(tmpDir, "onboard-notice.json");
+    const renameError = new Error("rename failed");
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation(() => {
+      throw renameError;
+    });
+
+    try {
+      expect(() => saveOnboardNoticeState("2026-04-01", statePath)).toThrow(renameError);
+      expect(fs.existsSync(statePath)).toBe(false);
+      expect(fs.readdirSync(tmpDir)).toEqual([]);
+    } finally {
+      renameSpy.mockRestore();
+    }
   });
 
   it("shows the notice once in non-interactive mode and writes to stderr", async () => {
