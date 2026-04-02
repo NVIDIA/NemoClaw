@@ -1,19 +1,32 @@
 {
   "version": "2026-04-01b",
-  "title": "Third-Party Software Notice",
+  "title": "Third-Party Software Notice - NemoClaw Installer",
   "referenceUrl": "https://docs.openclaw.ai/gateway/security",
   "body": [
-    "NemoClaw deploys OpenClaw in an OpenShell sandbox.",
-    "It may also install or run other third-party software.",
-    "By continuing, you accept responsibility for:",
-    "- reviewing third-party terms, licenses, and security guidance",
-    "- complying with those requirements"
+    "NemoClaw is licensed under Apache 2.0 and automatically",
+    "retrieves, accesses or interacts with third-party software",
+    "and materials, including by deploying OpenClaw in an",
+    "OpenShell sandbox. Those retrieved materials are not",
+    "distributed with this software and are governed solely",
+    "by separate terms, conditions and licenses.",
+    "",
+    "You are solely responsible for finding, reviewing and",
+    "complying with all applicable terms, conditions, and",
+    "licenses, and for verifying the security, integrity and",
+    "suitability of any retrieved materials for your specific",
+    "use case.",
+    "",
+    "This software is provided \"AS IS\", without warranty of",
+    "any kind. The author makes no representations or",
+    "warranties regarding any third-party software, and",
+    "assumes no liability for any losses, damages, liabilities",
+    "or legal consequences from your use or inability to use",
+    "this software or any retrieved materials. Use this",
+    "software and the retrieved materials at your own risk.",
+    "",
+    "OpenClaw security guidance",
+    "https://docs.openclaw.ai/gateway/security"
   ],
-  "links": [
-    {
-      "label": "OpenClaw security guidance",
-      "url": "https://docs.openclaw.ai/gateway/security"
-    }
-  ],
-  "interactivePrompt": "Type 'yes' to accept this third-party software notice and continue [no]: "
+  "links": [],
+  "interactivePrompt": "Type 'yes' to accept the NemoClaw license and and third-party software notice and continue [no]: "
 }

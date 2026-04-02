@@ -79,7 +79,7 @@ describe("usage notice", () => {
     });
 
     expect(ok).toBe(false);
-    expect(lines.join("\n")).toContain("Installation cancelled.");
+    expect(lines.join("\n")).toContain("Installation cancelled");
   });
 
   it("records interactive acceptance when the user types yes", async () => {
@@ -137,7 +137,7 @@ describe("usage notice", () => {
 
     expect(lines.join("\n")).toContain(
       formatTerminalHyperlink(
-        "OpenClaw security guidance",
+        "https://docs.openclaw.ai/gateway/security",
         "https://docs.openclaw.ai/gateway/security",
       ),
     );
