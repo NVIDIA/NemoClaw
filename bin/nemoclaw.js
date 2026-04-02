@@ -782,27 +782,64 @@ async function deploy(instanceName) {
 }
 
 async function start() {
+  const { startAll } = require("./lib/services");
   const { defaultSandbox } = registry.listSandboxes();
   const safeName =
     defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
-  const sandboxEnv = safeName ? `SANDBOX_NAME=${shellQuote(safeName)}` : "";
-  run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh"`);
+  await startAll({ sandboxName: safeName || undefined });
 }
 
 function stop() {
-  run(`bash "${SCRIPTS}/start-services.sh" --stop`);
+  const { stopAll } = require("./lib/services");
+  const { defaultSandbox } = registry.listSandboxes();
+  const safeName =
+    defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
+  stopAll({ sandboxName: safeName || undefined });
 }
 
 function debug(args) {
-  const result = spawnSync("bash", [path.join(SCRIPTS, "debug.sh"), ...args], {
-    stdio: "inherit",
-    cwd: ROOT,
-    env: {
-      ...process.env,
-      SANDBOX_NAME: registry.listSandboxes().defaultSandbox || "",
-    },
-  });
-  exitWithSpawnResult(result);
+  const { runDebug } = require("./lib/debug");
+  const opts = {};
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case "--help":
+      case "-h":
+        console.log("Collect NemoClaw diagnostic information\n");
+        console.log("Usage: nemoclaw debug [--quick] [--output FILE] [--sandbox NAME]\n");
+        console.log("Options:");
+        console.log("  --quick, -q        Only collect minimal diagnostics");
+        console.log("  --output, -o FILE  Write a tarball to FILE");
+        console.log("  --sandbox NAME     Target sandbox name");
+        process.exit(0);
+        break;
+      case "--quick":
+      case "-q":
+        opts.quick = true;
+        break;
+      case "--output":
+      case "-o":
+        if (!args[i + 1] || args[i + 1].startsWith("-")) {
+          console.error("Error: --output requires a file path argument");
+          process.exit(1);
+        }
+        opts.output = args[++i];
+        break;
+      case "--sandbox":
+        if (!args[i + 1] || args[i + 1].startsWith("-")) {
+          console.error("Error: --sandbox requires a name argument");
+          process.exit(1);
+        }
+        opts.sandboxName = args[++i];
+        break;
+      default:
+        console.error(`Unknown option: ${args[i]}`);
+        process.exit(1);
+    }
+  }
+  if (!opts.sandboxName) {
+    opts.sandboxName = registry.listSandboxes().defaultSandbox || undefined;
+  }
+  runDebug(opts);
 }
 
 function uninstall(args) {
@@ -865,7 +902,8 @@ function showStatus() {
   }
 
   // Show service status
-  run(`bash "${SCRIPTS}/start-services.sh" --status`);
+  const { showStatus: showServiceStatus } = require("./lib/services");
+  showServiceStatus({ sandboxName: defaultSandbox || undefined });
 }
 
 async function listSandboxes() {

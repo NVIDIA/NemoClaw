@@ -708,7 +708,7 @@ fix_npm_permissions() {
 pre_extract_openclaw() {
   local install_dir="$1"
   local openclaw_version
-  openclaw_version=$(node -e "console.log(require('${install_dir}/package.json').dependencies.openclaw)" 2>/dev/null || echo "")
+  openclaw_version=$(node -e "const v = require('${install_dir}/package.json').dependencies?.openclaw; if (v) console.log(v)" 2>/dev/null || echo "")
 
   if [[ -z "$openclaw_version" ]]; then
     warn "Could not determine openclaw version — skipping pre-extraction"
