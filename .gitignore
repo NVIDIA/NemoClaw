@@ -1,4 +1,5 @@
 # Build artifacts and caches
+.version
 *.pyc
 *.tsbuildinfo
 .pytest_cache/
