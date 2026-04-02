@@ -53,6 +53,7 @@ const registry = require("./registry");
 const nim = require("./nim");
 const onboardSession = require("./onboard-session");
 const policies = require("./policies");
+const { ensureUsageNoticeConsent } = require("./usage-notice");
 const { checkPortAvailable, ensureSwap, getMemoryInfo } = require("./preflight");
 
 // Typed modules (compiled from src/lib/*.ts → dist/lib/*.js)
@@ -1905,8 +1906,12 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
     return;
   }
 
+  // When a stale gateway is detected (metadata exists but container is gone,
+  // e.g. after a Docker/Colima restart), skip the destroy — `gateway start`
+  // can recover the container without wiping metadata and mTLS certs.
+  // The retry loop below will destroy only if start genuinely fails.
   if (hasStaleGateway(gwInfo)) {
-    runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+    console.log("  Stale gateway detected — attempting restart without destroy...");
   }
 
   const gwArgs = ["--name", GATEWAY_NAME];
@@ -3446,6 +3451,14 @@ async function onboard(opts = {}) {
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   delete process.env.OPENSHELL_GATEWAY;
   const resume = opts.resume === true;
+  const noticeAccepted = await ensureUsageNoticeConsent({
+    nonInteractive: isNonInteractive(),
+    acceptedByFlag: opts.acceptThirdPartySoftware === true,
+    writeLine: console.error,
+  });
+  if (!noticeAccepted) {
+    process.exit(1);
+  }
   const lockResult = onboardSession.acquireOnboardLock(
     `nemoclaw onboard${resume ? " --resume" : ""}${isNonInteractive() ? " --non-interactive" : ""}`,
   );

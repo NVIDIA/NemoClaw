@@ -72,6 +72,7 @@ function sshEnv(cmd, { timeout = 600_000, stream = false } = {}) {
     `export NVIDIA_API_KEY='${shellEscape(process.env.NVIDIA_API_KEY)}'`,
     `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
     `export NEMOCLAW_NON_INTERACTIVE=1`,
+    `export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`,
     `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
   ].join(" && ");
 

@@ -69,6 +69,18 @@ Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, 
 Credentials are stored in `~/.nemoclaw/credentials.json`.
 The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
 
+For non-interactive onboarding, you must explicitly accept the third-party software notice:
+
+```console
+$ nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
+
+or:
+
+```console
+$ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 nemoclaw onboard --non-interactive
+```
+
 The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
 Uppercase letters are automatically lowercased.
