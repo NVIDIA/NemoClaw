@@ -122,7 +122,7 @@ if [ "${NEMOCLAW_E2E_PUBLIC_INSTALL:-0}" = "1" ]; then
   curl -fsSL "$url" | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash >"$INSTALL_LOG" 2>&1 &
 else
   info "Running: bash install.sh --non-interactive"
-  bash install.sh --non-interactive >"$INSTALL_LOG" 2>&1 &
+  NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash install.sh --non-interactive >"$INSTALL_LOG" 2>&1 &
 fi
 install_pid=$!
 tail -f "$INSTALL_LOG" --pid=$install_pid 2>/dev/null &
