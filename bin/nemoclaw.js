@@ -45,6 +45,7 @@ const { parseGatewayInference } = require("./lib/inference-config");
 const { getVersion } = require("./lib/version");
 const onboardSession = require("./lib/onboard-session");
 const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
+const { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } = require("./lib/usage-notice");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -622,16 +623,20 @@ function exitWithSpawnResult(result) {
 
 async function onboard(args) {
   const { onboard: runOnboard } = require("./lib/onboard");
-  const allowedArgs = new Set(["--non-interactive", "--resume"]);
+  const allowedArgs = new Set(["--non-interactive", "--resume", NOTICE_ACCEPT_FLAG]);
   const unknownArgs = args.filter((arg) => !allowedArgs.has(arg));
   if (unknownArgs.length > 0) {
     console.error(`  Unknown onboard option(s): ${unknownArgs.join(", ")}`);
-    console.error("  Usage: nemoclaw onboard [--non-interactive] [--resume]");
+    console.error(
+      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [${NOTICE_ACCEPT_FLAG}]`,
+    );
     process.exit(1);
   }
   const nonInteractive = args.includes("--non-interactive");
   const resume = args.includes("--resume");
-  await runOnboard({ nonInteractive, resume });
+  const acceptThirdPartySoftware =
+    args.includes(NOTICE_ACCEPT_FLAG) || String(process.env[NOTICE_ACCEPT_ENV] || "") === "1";
+  await runOnboard({ nonInteractive, resume, acceptThirdPartySoftware });
 }
 
 async function setup(args = []) {
@@ -1154,6 +1159,7 @@ function help() {
 
   ${G}Getting Started:${R}
     ${B}nemoclaw onboard${R}                 Configure inference endpoint and credentials
+                                    ${D}(non-interactive: ${NOTICE_ACCEPT_FLAG} or ${NOTICE_ACCEPT_ENV}=1)${R}
     nemoclaw setup-spark             Set up on DGX Spark ${D}(fixes cgroup v2 + Docker)${R}
 
   ${G}Sandbox Management:${R}
