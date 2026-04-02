@@ -231,10 +231,10 @@ describe("regression guards", () => {
     it("onboard createSandbox does not pass NVIDIA_API_KEY to sandbox env", () => {
       const fs = require("fs");
       const src = fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"), "utf-8");
-      // Find the envArgs block in createSandbox — it should not contain NVIDIA_API_KEY
-      const envArgsMatch = src.match(/const envArgs = \[[\s\S]*?\];/);
-      expect(envArgsMatch).toBeTruthy();
-      expect(envArgsMatch[0].includes("NVIDIA_API_KEY")).toBe(false);
+      // Find the sandbox create command block — it should not contain NVIDIA_API_KEY
+      const createCommandMatch = src.match(/const createCommand = `[\s\S]*?`;/);
+      expect(createCommandMatch).toBeTruthy();
+      expect(createCommandMatch[0].includes("NVIDIA_API_KEY")).toBe(false);
     });
 
     it("onboard clears NVIDIA_API_KEY from process.env after setupInference", () => {

@@ -456,16 +456,6 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 
-echo 'Setting up NemoClaw...'
-openclaw doctor --fix >/dev/null 2>&1 || true
-write_auth_profile
-export CHAT_UI_URL PUBLIC_PORT
-prepare_runtime_config
-fix_openclaw_config
-ensure_agent_dirs
-ensure_agent_webchat_sessions
-openclaw plugins install /opt/nemoclaw >/dev/null 2>&1 || true
-
 # OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
 # time a user connects via `openshell sandbox connect`.  The connect path spawns
 # `/bin/bash -i` (interactive, non-login), which sources ~/.bashrc — NOT
@@ -523,6 +513,13 @@ fi
 
 echo 'Setting up NemoClaw...'
 [ -f .env ] && chmod 600 .env
+openclaw doctor --fix >/dev/null 2>&1 || true
+export CHAT_UI_URL PUBLIC_PORT
+prepare_runtime_config
+fix_openclaw_config
+ensure_agent_dirs
+ensure_agent_webchat_sessions
+openclaw plugins install /opt/nemoclaw >/dev/null 2>&1 || true
 
 # ── Non-root fallback ──────────────────────────────────────────
 # OpenShell runs containers with --security-opt=no-new-privileges, which
