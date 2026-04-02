@@ -116,6 +116,106 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("NemoClaw Services");
   });
 
+  it("deploy uses the remote user's home directory instead of /home/ubuntu", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-deploy-home-"));
+    const localBin = path.join(home, "bin");
+    const sshLog = path.join(home, "ssh.log");
+    const rsyncLog = path.join(home, "rsync.log");
+    const scpLog = path.join(home, "scp.log");
+    fs.mkdirSync(localBin, { recursive: true });
+
+    const remoteHome = "/home/custombrevuser";
+
+    fs.writeFileSync(
+      path.join(localBin, "brev"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "ls" ] && [ "$2" = "--json" ]; then',
+        '  echo \'[{"name":"shade-box","status":"RUNNING","build_status":"COMPLETED","shell_status":"READY"}]\'',
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "ls" ]; then',
+        "  echo shade-box",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "ssh-keyscan"),
+      [
+        "#!/usr/bin/env bash",
+        "echo fake-ssh-host-key",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "ssh"),
+      [
+        "#!/usr/bin/env bash",
+        `log_file=${JSON.stringify(sshLog)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        'if [ "$1" = "-G" ]; then',
+        "  echo hostname shade-box.brev.test",
+        "  exit 0",
+        "fi",
+        "prev=",
+        "last=",
+        'for arg in "$@"; do prev=$last; last=$arg; done',
+        // Compare to literal argv "$HOME" (remote probe); do not expand shell $HOME on RHS.
+        "if [ \"$prev\" = \"echo\" ] && [ \"$last\" = '$HOME' ]; then",
+        `  echo '${remoteHome}'`,
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "rsync"),
+      [
+        "#!/usr/bin/env bash",
+        `log_file=${JSON.stringify(rsyncLog)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "scp"),
+      [
+        "#!/usr/bin/env bash",
+        `log_file=${JSON.stringify(scpLog)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("deploy shade-box", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NVIDIA_API_KEY: "nvapi-test-key-1234567890",
+      NEMOCLAW_DEPLOY_NO_CONNECT: "1",
+    });
+
+    expect(r.code).toBe(0);
+    const sshOut = fs.readFileSync(sshLog, "utf8");
+    expect(sshOut).toContain("mkdir -p");
+    expect(sshOut).toContain(`${remoteHome}/nemoclaw`);
+    expect(sshOut).not.toContain("/home/ubuntu/nemoclaw");
+
+    const rsyncOut = fs.readFileSync(rsyncLog, "utf8");
+    expect(rsyncOut).toContain(`shade-box:${remoteHome}/nemoclaw/`);
+    expect(rsyncOut).not.toContain("/home/ubuntu/nemoclaw");
+
+    const scpOut = fs.readFileSync(scpLog, "utf8");
+    expect(scpOut).toContain(`shade-box:${remoteHome}/nemoclaw/.env`);
+    expect(scpOut).not.toContain("/home/ubuntu/nemoclaw");
+  });
+
   it("unknown onboard option exits 1", () => {
     const r = run("onboard --non-interactiv");
     expect(r.code).toBe(1);

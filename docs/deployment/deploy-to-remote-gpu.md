@@ -83,7 +83,7 @@ $ nemoclaw deploy <instance-name>
 SSH to the instance and run the OpenShell TUI to monitor activity and approve network requests:
 
 ```console
-$ ssh <instance-name> 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell term'
+$ ssh <instance-name> 'cd ~/nemoclaw && set -a && . .env && set +a && openshell term'
 ```
 
 ## Verify Inference
