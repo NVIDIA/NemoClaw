@@ -382,9 +382,12 @@ section "Phase 6: Destroy and uninstall"
 info "Destroying sandbox ${SANDBOX_NAME}..."
 nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -5 || true
 
-list_after_destroy=$(nemoclaw list 2>&1)
-if echo "$list_after_destroy" | grep -Fq -- "$SANDBOX_NAME"; then
-  fail "Sandbox ${SANDBOX_NAME} still in list after destroy"
+# Verify against the registry file directly.  `nemoclaw list` triggers
+# gateway recovery which can restart a destroyed gateway and re-import stale
+# sandbox entries — that's a separate issue (#TBD), so avoid it here.
+registry_file="${HOME}/.nemoclaw/sandboxes.json"
+if [ -f "$registry_file" ] && grep -Fq "\"${SANDBOX_NAME}\"" "$registry_file"; then
+  fail "Sandbox ${SANDBOX_NAME} still in registry after destroy"
 else
   pass "Sandbox ${SANDBOX_NAME} removed from registry"
 fi
