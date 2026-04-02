@@ -111,7 +111,8 @@ describe("CLI dispatch", () => {
 
     expect(r.code).toBe(0);
     expect(r.out).not.toContain("NVIDIA API Key required");
-    expect(fs.readFileSync(markerFile, "utf8")).toContain("start-services.sh");
+    // Services module now runs in-process (no bash shelling)
+    expect(r.out).toContain("NemoClaw Services");
   });
 
   it("unknown onboard option exits 1", () => {
