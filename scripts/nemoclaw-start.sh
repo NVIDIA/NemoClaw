@@ -57,10 +57,38 @@ elif [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ]; then
   echo "[SECURITY WARNING] capsh not available — running with default capabilities" >&2
 fi
 
-# Filter out self-invocation: openshell sandbox create passes "nemoclaw-start"
-# as the command, but since this script is now the ENTRYPOINT, receiving our
-# own name as $1 would cause infinite recursion via the NEMOCLAW_CMD exec path.
-# Only strip from $1 — later args with this name are legitimate user arguments.
+# Normalize the sandbox-create bootstrap wrapper. Onboard launches the
+# container as `env CHAT_UI_URL=... nemoclaw-start`, but this script is already
+# the ENTRYPOINT. If we treat that wrapper as a real command, the root path will
+# try `gosu sandbox env ... nemoclaw-start`, which fails on Spark/arm64 when
+# no-new-privileges blocks gosu. Consume only the self-wrapper form and promote
+# the env assignments into the current process.
+if [ "${1:-}" = "env" ]; then
+  _raw_args=("$@")
+  _self_wrapper_index=""
+  for ((i = 1; i < ${#_raw_args[@]}; i += 1)); do
+    case "${_raw_args[$i]}" in
+      *=*) ;;
+      nemoclaw-start | /usr/local/bin/nemoclaw-start)
+        _self_wrapper_index="$i"
+        break
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  if [ -n "$_self_wrapper_index" ]; then
+    for ((i = 1; i < _self_wrapper_index; i += 1)); do
+      export "${_raw_args[$i]}"
+    done
+    set -- "${_raw_args[@]:$((_self_wrapper_index + 1))}"
+  fi
+fi
+
+# Filter out direct self-invocation too. Since this script is the ENTRYPOINT,
+# receiving our own name as $1 would otherwise recurse via the NEMOCLAW_CMD
+# exec path. Only strip from $1 — later args with this name are legitimate.
 case "${1:-}" in
   nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
 esac

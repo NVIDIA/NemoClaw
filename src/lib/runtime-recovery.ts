@@ -61,15 +61,15 @@ export function classifyGatewayStatus(output = ""): StateClassification {
   if (!clean) {
     return { state: "inactive", reason: "empty" };
   }
-  if (/\bConnected\b/i.test(clean) && !/\bDisconnected\b/i.test(clean)) {
-    return { state: "connected", reason: "ok" };
-  }
   if (
     /No active gateway|transport error|client error|Connection reset by peer|Connection refused|Gateway: .*Error/i.test(
       clean,
     )
   ) {
     return { state: "unavailable", reason: "gateway_unavailable" };
+  }
+  if (/^\s*(?:Status:\s*)?Connected\s*$/im.test(clean)) {
+    return { state: "connected", reason: "ok" };
   }
   return { state: "inactive", reason: "not_connected" };
 }
