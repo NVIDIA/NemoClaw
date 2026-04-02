@@ -708,7 +708,7 @@ fix_npm_permissions() {
 pre_extract_openclaw() {
   local install_dir="$1"
   local openclaw_version
-  openclaw_version=$(node -e "const v = require('${install_dir}/package.json').dependencies?.openclaw; if (v) console.log(v)" 2>/dev/null || echo "")
+  openclaw_version="$(resolve_openclaw_version "$install_dir")"
 
   if [[ -z "$openclaw_version" ]]; then
     warn "Could not determine openclaw version — skipping pre-extraction"
@@ -743,11 +743,39 @@ pre_extract_openclaw() {
   rm -rf "$tmpdir"
 }
 
+resolve_openclaw_version() {
+  local install_dir="$1"
+  local package_json dockerfile_base resolved_version
+
+  package_json="${install_dir}/package.json"
+  dockerfile_base="${install_dir}/Dockerfile.base"
+
+  if [[ -f "$package_json" ]]; then
+    resolved_version="$(
+      node -e "const v = require('${package_json}').dependencies?.openclaw; if (v) console.log(v)" \
+        2>/dev/null || true
+    )"
+    if [[ -n "$resolved_version" ]]; then
+      printf '%s\n' "$resolved_version"
+      return 0
+    fi
+  fi
+
+  if [[ -f "$dockerfile_base" ]]; then
+    awk '
+      match($0, /openclaw@[0-9][0-9.]+/) {
+        print substr($0, RSTART + 9, RLENGTH - 9)
+        exit
+      }
+    ' "$dockerfile_base"
+  fi
+}
+
 install_nemoclaw() {
   command_exists git || error "git was not found on PATH."
   if [[ -f "./package.json" ]] && grep -q '"name": "nemoclaw"' ./package.json 2>/dev/null; then
     info "NemoClaw package.json found in current directory — installing from source…"
-    spin "Preparing OpenClaw package" bash -c "$(declare -f info warn pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$(pwd)" \
+    spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$(pwd)" \
       || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
     spin "Installing NemoClaw dependencies" npm install --ignore-scripts
     spin "Building NemoClaw CLI modules" npm run --if-present build:cli
@@ -774,7 +802,7 @@ install_nemoclaw() {
     # unavailable or tags are pruned later.
     git -C "$nemoclaw_src" describe --tags --match 'v*' 2>/dev/null \
       | sed 's/^v//' >"$nemoclaw_src/.version" || true
-    spin "Preparing OpenClaw package" bash -c "$(declare -f info warn pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
+    spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
       || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
     spin "Installing NemoClaw dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"
     spin "Building NemoClaw CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
