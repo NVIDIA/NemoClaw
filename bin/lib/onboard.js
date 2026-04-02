@@ -1648,7 +1648,7 @@ async function ensureNamedCredential(envName, label, helpUrl = null) {
   return replaceNamedCredential(envName, label, helpUrl);
 }
 
-function waitForSandboxReady(sandboxName, attempts = 10, delaySeconds = 2) {
+function waitForSandboxReady(sandboxName, attempts = 15, delaySeconds = 4) {
   for (let i = 0; i < attempts; i += 1) {
     const podPhase = runCaptureOpenshell(
       [
@@ -3129,37 +3129,30 @@ async function _setupPolicies(sandboxName) {
       process.exit(1);
     }
 
-    if (answer.toLowerCase() === "list") {
-      // Let user pick
-      const picks = await prompt("  Enter preset names (comma-separated): ");
-      const selected = picks
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      for (const name of selected) {
+    const presetsToApply =
+      answer.toLowerCase() === "list"
+        ? (await prompt("  Enter preset names (comma-separated): "))
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : suggestions;
+
+    for (const name of presetsToApply) {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
           policies.applyPreset(sandboxName, name);
+          break;
         } catch (err) {
           const message = err && err.message ? err.message : String(err);
           if (message.includes("Unimplemented")) {
             console.error("  OpenShell policy updates are not supported by this gateway build.");
             console.error("  This is a known issue tracked in NemoClaw #536.");
+            throw err;
           }
-          throw err;
-        }
-      }
-    } else {
-      // Apply suggested
-      for (const name of suggestions) {
-        try {
-          policies.applyPreset(sandboxName, name);
-        } catch (err) {
-          const message = err && err.message ? err.message : String(err);
-          if (message.includes("Unimplemented")) {
-            console.error("  OpenShell policy updates are not supported by this gateway build.");
-            console.error("  This is a known issue tracked in NemoClaw #536.");
+          if (!message.includes("sandbox not found") || attempt === 2) {
+            throw err;
           }
-          throw err;
+          sleep(2);
         }
       }
     }
