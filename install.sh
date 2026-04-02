@@ -217,10 +217,12 @@ usage() {
   printf "    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- [options]\n\n"
   printf "  ${C_DIM}Options:${C_RESET}\n"
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
+  printf "    --yes-i-accept-third-party-software Accept the third-party software notice in non-interactive mode\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
   printf "    NVIDIA_API_KEY                API key (skips credential prompt)\n"
+  printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
@@ -235,6 +237,27 @@ usage() {
   printf "    SLACK_BOT_TOKEN               Auto-enable Slack policy support\n"
   printf "    TELEGRAM_BOT_TOKEN            Auto-enable Telegram policy support\n"
   printf "\n"
+}
+
+show_usage_notice() {
+  local -a notice_cmd=(node "${SCRIPT_DIR}/bin/lib/usage-notice.js")
+  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+    notice_cmd+=(--non-interactive)
+    if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
+      notice_cmd+=(--yes-i-accept-third-party-software)
+    fi
+    "${notice_cmd[@]}"
+  elif [ -t 0 ]; then
+    "${notice_cmd[@]}"
+  elif exec 3</dev/tty; then
+    info "Installer stdin is piped; attaching the usage notice to /dev/tty…"
+    local status=0
+    "${notice_cmd[@]}" <&3 || status=$?
+    exec 3<&-
+    return "$status"
+  else
+    error "Interactive third-party software acceptance requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
+  fi
 }
 
 # spin "label" cmd [args...]
@@ -685,7 +708,7 @@ fix_npm_permissions() {
 pre_extract_openclaw() {
   local install_dir="$1"
   local openclaw_version
-  openclaw_version=$(node -e "console.log(require('${install_dir}/package.json').dependencies.openclaw)" 2>/dev/null || echo "")
+  openclaw_version=$(node -e "const v = require('${install_dir}/package.json').dependencies?.openclaw; if (v) console.log(v)" 2>/dev/null || echo "")
 
   if [[ -z "$openclaw_version" ]]; then
     warn "Could not determine openclaw version — skipping pre-extraction"
@@ -806,6 +829,7 @@ verify_nemoclaw() {
 # 5. Onboard
 # ---------------------------------------------------------------------------
 run_onboard() {
+  show_usage_notice
   info "Running nemoclaw onboard…"
   local -a onboard_cmd=(onboard)
   if command_exists node && [[ -f "${HOME}/.nemoclaw/onboard-session.json" ]]; then
@@ -827,6 +851,9 @@ run_onboard() {
   fi
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     onboard_cmd+=(--non-interactive)
+    if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
+      onboard_cmd+=(--yes-i-accept-third-party-software)
+    fi
     nemoclaw "${onboard_cmd[@]}"
   elif [ -t 0 ]; then
     nemoclaw "${onboard_cmd[@]}"
@@ -837,7 +864,7 @@ run_onboard() {
     exec 3<&-
     return "$status"
   else
-    error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1."
+    error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
   fi
 }
 
@@ -880,9 +907,11 @@ post_install_message() {
 main() {
   # Parse flags
   NON_INTERACTIVE=""
+  ACCEPT_THIRD_PARTY_SOFTWARE=""
   for arg in "$@"; do
     case "$arg" in
       --non-interactive) NON_INTERACTIVE=1 ;;
+      --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
       --version | -v)
         printf "nemoclaw-installer v%s\n" "$NEMOCLAW_VERSION"
         exit 0
@@ -899,7 +928,9 @@ main() {
   done
   # Also honor env var
   NON_INTERACTIVE="${NON_INTERACTIVE:-${NEMOCLAW_NON_INTERACTIVE:-}}"
+  ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE:-${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}}"
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
+  export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
 
   _INSTALL_START=$SECONDS
   print_banner
