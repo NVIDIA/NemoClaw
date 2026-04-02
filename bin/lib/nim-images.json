@@ -2,7 +2,7 @@
   "models": [
     {
       "name": "nvidia/nemotron-3-super-120b-a12b",
-      "image": "nvcr.io/nim/nvidia/nemotron-3-super-120b-a12b:latest",
+      "image": "nvcr.io/nim/nvidia/nemotron-3-super-120b-a12b:latest@sha256:5bc19174d56df3efbdcc37b4fb0cb56aff66896c9a87667ceb2cb78053b3e743",
       "minGpuMemoryMB": 40960
     },
     {
@@ -12,12 +12,12 @@
     },
     {
       "name": "nvidia/llama-3.1-nemotron-70b-instruct",
-      "image": "nvcr.io/nim/nvidia/llama-3.1-nemotron-70b-instruct:latest",
+      "image": "nvcr.io/nim/nvidia/llama-3.1-nemotron-70b-instruct:latest@sha256:d0a77e5206ea97ac31d53ba689466cbaae0a668c6b06328d154360b61b486566",
       "minGpuMemoryMB": 81920
     },
     {
       "name": "nvidia/llama-3.3-nemotron-super-49b-v1",
-      "image": "nvcr.io/nim/nvidia/llama-3.3-nemotron-super-49b-v1:latest",
+      "image": "nvcr.io/nim/nvidia/llama-3.3-nemotron-super-49b-v1:latest@sha256:b5559886f370d2ec8dc6387ae36abdd95d69ce869c9872dd1f5897c560649801",
       "minGpuMemoryMB": 24576
     },
     {

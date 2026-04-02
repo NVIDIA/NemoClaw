@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Weekly check that the pinned Dockerfile base-image digest is still current.
-# Fails with an actionable message when a newer node:22-slim is available.
+# Weekly check that pinned container image digests are still current.
+# Fails with an actionable message when a newer image is available.
 
 name: docker-pin-check
 
@@ -28,3 +28,15 @@ jobs:
         run: |
           bash scripts/update-docker-pin.sh --check
           DOCKERFILE=Dockerfile.base bash scripts/update-docker-pin.sh --check
+
+      - name: Log in to nvcr.io
+        if: env.NVIDIA_API_KEY != ''
+        run: echo "$NVIDIA_API_KEY" | docker login nvcr.io --username '$oauthtoken' --password-stdin
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+
+      - name: Check NIM image pins
+        if: env.NVIDIA_API_KEY != ''
+        run: bash scripts/update-nim-pins.sh --check
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
