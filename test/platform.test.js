@@ -201,15 +201,26 @@ describe("platform helpers", () => {
   });
 
   describe("shouldPatchCoredns", () => {
-    it("patches CoreDNS for all known runtimes", () => {
-      expect(shouldPatchCoredns("colima")).toBe(true);
-      expect(shouldPatchCoredns("docker-desktop")).toBe(true);
-      expect(shouldPatchCoredns("docker")).toBe(true);
-      expect(shouldPatchCoredns("podman")).toBe(true);
+    it("patches on non-WSL runtimes", () => {
+      const nonWslOpts = { platform: "darwin", env: {} };
+      expect(shouldPatchCoredns("colima", nonWslOpts)).toBe(true);
+      expect(shouldPatchCoredns("docker-desktop", nonWslOpts)).toBe(true);
+      expect(shouldPatchCoredns("docker", nonWslOpts)).toBe(true);
+      expect(shouldPatchCoredns("podman", nonWslOpts)).toBe(true);
     });
 
     it("skips unknown runtimes", () => {
       expect(shouldPatchCoredns("unknown")).toBe(false);
+    });
+
+    it("skips on WSL", () => {
+      expect(
+        shouldPatchCoredns("docker-desktop", {
+          platform: "linux",
+          env: { WSL_DISTRO_NAME: "Ubuntu" },
+          release: "6.6.87.2-microsoft-standard-WSL2",
+        }),
+      ).toBe(false);
     });
   });
 });

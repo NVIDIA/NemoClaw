@@ -10,8 +10,11 @@
 # The config hash is verified at startup to detect tampering.
 #
 # Optional env:
-#   NVIDIA_API_KEY   API key for NVIDIA-hosted inference
-#   CHAT_UI_URL      Browser origin that will access the forwarded dashboard
+#   NVIDIA_API_KEY                API key for NVIDIA-hosted inference
+#   CHAT_UI_URL                   Browser origin that will access the forwarded dashboard
+#   NEMOCLAW_DISABLE_DEVICE_AUTH  Build-time only. Set to "1" to skip device-pairing auth
+#                                 (development/headless). Has no runtime effect — openclaw.json
+#                                 is baked at image build and verified by hash at startup.
 
 set -euo pipefail
 
@@ -54,10 +57,38 @@ elif [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ]; then
   echo "[SECURITY WARNING] capsh not available — running with default capabilities" >&2
 fi
 
-# Filter out self-invocation: openshell sandbox create passes "nemoclaw-start"
-# as the command, but since this script is now the ENTRYPOINT, receiving our
-# own name as $1 would cause infinite recursion via the NEMOCLAW_CMD exec path.
-# Only strip from $1 — later args with this name are legitimate user arguments.
+# Normalize the sandbox-create bootstrap wrapper. Onboard launches the
+# container as `env CHAT_UI_URL=... nemoclaw-start`, but this script is already
+# the ENTRYPOINT. If we treat that wrapper as a real command, the root path will
+# try `gosu sandbox env ... nemoclaw-start`, which fails on Spark/arm64 when
+# no-new-privileges blocks gosu. Consume only the self-wrapper form and promote
+# the env assignments into the current process.
+if [ "${1:-}" = "env" ]; then
+  _raw_args=("$@")
+  _self_wrapper_index=""
+  for ((i = 1; i < ${#_raw_args[@]}; i += 1)); do
+    case "${_raw_args[$i]}" in
+      *=*) ;;
+      nemoclaw-start | /usr/local/bin/nemoclaw-start)
+        _self_wrapper_index="$i"
+        break
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  if [ -n "$_self_wrapper_index" ]; then
+    for ((i = 1; i < _self_wrapper_index; i += 1)); do
+      export "${_raw_args[$i]}"
+    done
+    set -- "${_raw_args[@]:$((_self_wrapper_index + 1))}"
+  fi
+fi
+
+# Filter out direct self-invocation too. Since this script is the ENTRYPOINT,
+# receiving our own name as $1 would otherwise recurse via the NEMOCLAW_CMD
+# exec path. Only strip from $1 — later args with this name are legitimate.
 case "${1:-}" in
   nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
 esac
@@ -153,6 +184,13 @@ OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 DEADLINE = time.time() + 600
 QUIET_POLLS = 0
 APPROVED = 0
+HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
+# SECURITY NOTE: clientId/clientMode are client-supplied and spoofable
+# (the gateway stores connectParams.client.id verbatim). This allowlist
+# is defense-in-depth, not a trust boundary. PR #690 adds one-shot exit,
+# timeout reduction, and token cleanup for a more comprehensive fix.
+ALLOWED_CLIENTS = {'openclaw-control-ui'}
+ALLOWED_MODES = {'webchat'}
 
 def run(*args):
     proc = subprocess.run(args, capture_output=True, text=True)
@@ -176,13 +214,22 @@ while time.time() < DEADLINE:
     if pending:
         QUIET_POLLS = 0
         for device in pending:
-            request_id = (device or {}).get('requestId')
-            if not request_id:
+            if not isinstance(device, dict):
+                continue
+            request_id = device.get('requestId')
+            if not request_id or request_id in HANDLED:
+                continue
+            client_id = device.get('clientId', '')
+            client_mode = device.get('clientMode', '')
+            if client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES:
+                HANDLED.add(request_id)
+                print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
                 continue
             arc, aout, aerr = run(OPENCLAW, 'devices', 'approve', request_id, '--json')
+            HANDLED.add(request_id)
             if arc == 0:
                 APPROVED += 1
-                print(f'[auto-pair] approved request={request_id}')
+                print(f'[auto-pair] approved request={request_id} client={client_id}')
             elif aout or aerr:
                 print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
         time.sleep(1)
