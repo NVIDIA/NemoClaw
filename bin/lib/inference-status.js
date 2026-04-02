@@ -15,7 +15,7 @@ function getInferenceRuntimeStatus(sandbox = {}, nimStatusResolver = () => ({ ru
   }
 
   if (provider === "vllm-local") {
-    const nimStatus = nimStatusResolver(sandbox.name);
+    const nimStatus = nimStatusResolver();
     if (sandbox.nimContainer || nimStatus.running) {
       const lines = [
         {

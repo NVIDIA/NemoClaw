@@ -748,7 +748,7 @@ function listSandboxes() {
 async function getReconciledSandboxGatewayState(sandboxName) {
   const openshellPath = resolveOpenshell() || "openshell";
   const getResult = run(`${openshellPath} sandbox get ${shellQuote(sandboxName)} 2>&1`, { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
-  const getOutput = getResult.stdout || getResult.stderr || "";
+  const getOutput = (getResult.stdout || getResult.stderr || "").toString();
 
   if (getResult.status === 0) {
     return { state: "present", output: getOutput.trim() };
@@ -781,18 +781,18 @@ async function getReconciledSandboxGatewayState(sandboxName) {
     return null;
   }
 
-  if (/No active gateway/i.test(getOutput)) {
+  if (/No active gateway/i.test(getOutput.toString())) {
     const recovered = await _recoverGateway(openshellPath, sandboxName, "select");
     if (recovered) return recovered;
   }
 
-  if (/transport error|tcp connect error|Connection refused|Connection reset by peer/i.test(getOutput)) {
+  if (/transport error|tcp connect error|Connection refused|Connection reset by peer/i.test(getOutput.toString())) {
     const recovered = await _recoverGateway(openshellPath, sandboxName, "select");
     if (recovered) return recovered;
     return { state: "gateway_unreachable_after_restart", output: getOutput.trim() };
   }
 
-  if (/not found|does not exist/i.test(getOutput)) {
+  if (/not found|does not exist/i.test(getOutput.toString())) {
     return { state: "missing", output: getOutput.trim() };
   }
 
