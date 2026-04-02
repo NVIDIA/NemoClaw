@@ -222,24 +222,60 @@ collect_default_docs() {
 
 extract_targets() {
   LC_ALL=C perl -CS -ne '
-    if (/^\s*(`{3,}|~{3,})(.*)$/) {
+    if ($in_fence) {
+      if (/^\s*(`{3,}|~{3,})(.*)$/) {
+        my $fence = $1;
+        my $rest = $2;
+        my $char = substr($fence, 0, 1);
+        my $length = length($fence);
+        if ($char eq $fch && $length >= $flen && $rest =~ /^\s*$/) {
+          ($in_fence, $fch, $flen) = (0, "", 0);
+        }
+      }
+      next;
+    }
+
+    my $line = $.;
+    my $text = $_;
+    my $visible = "";
+
+    while (length $text) {
+      if ($in_comment) {
+        if ($text =~ s/^(.*?)-->//s) {
+          $in_comment = 0;
+          next;
+        }
+        $text = "";
+        next;
+      }
+
+      if ($text =~ s/^(.*?)<!--//s) {
+        $visible .= $1;
+        $in_comment = 1;
+        next;
+      }
+
+      if ($text =~ /-->/) {
+        die "malformed HTML comment\n";
+      }
+
+      $visible .= $text;
+      last;
+    }
+
+    if ($visible =~ /^\s*(`{3,}|~{3,})(.*)$/) {
       my $fence = $1;
-      my $rest = $2;
       my $char = substr($fence, 0, 1);
       my $length = length($fence);
-      if (!$in) {
-        ($in, $fch, $flen) = (1, $char, $length);
-        next;
-      }
-      if ($char eq $fch && $length >= $flen && $rest =~ /^\s*$/) {
-        ($in, $fch, $flen) = (0, "", 0);
-        next;
-      }
+      ($in_fence, $fch, $flen) = (1, $char, $length);
+      next;
     }
-    next if $in;
-    my $line = $.;
-    while (/\!?\[[^\]]*\]\(([^)\s]+)(?:\s+["'"'"'][^)"'"'"']*["'"'"'])?\)/g) { print $line . "\t" . $1 . "\n"; }
-    while (/<(https?:[^>\s]+)>/g) { print $line . "\t" . $1 . "\n"; }
+
+    while ($visible =~ /\!?\[[^\]]*\]\(([^)\s]+)(?:\s+["'"'"'][^)"'"'"']*["'"'"'])?\)/g) { print $line . "\t" . $1 . "\n"; }
+    while ($visible =~ /<(https?:[^>\s]+)>/g) { print $line . "\t" . $1 . "\n"; }
+    END {
+      die "malformed HTML comment\n" if $in_comment;
+    }
   ' -- "$1"
 }
 
@@ -381,7 +417,17 @@ run_links_check() {
       failures=1
       continue
     fi
-    local line_no target rc
+    local target rc
+    local _targets_output _targets_err
+    _targets_err="$(mktemp)"
+    if ! _targets_output="$(extract_targets "$md" 2>"$_targets_err")"; then
+      echo "check-docs: [links] malformed HTML comment in $md: $(tr '\n' ' ' <"$_targets_err" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')" >&2
+      rm -f "$_targets_err"
+      failures=1
+      continue
+    fi
+    rm -f "$_targets_err"
+    local line_no
     while IFS=$'\t' read -r line_no target || [[ -n "${target:-}" ]]; do
       [[ -z "$target" ]] && continue
       set +e
@@ -395,7 +441,7 @@ run_links_check() {
       else
         failures=1
       fi
-    done < <(extract_targets "$md")
+    done <<<"$_targets_output"
   done
 
   if [[ "$failures" -ne 0 ]]; then

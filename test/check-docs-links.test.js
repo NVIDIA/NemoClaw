@@ -37,7 +37,9 @@ describe("check-docs link validation", () => {
     const result = runCheckDocs(mdPath);
 
     expect(result.status).toBe(1);
-    expect(`${result.stdout}${result.stderr}`).toContain(`broken local link in ${mdPath}:4 -> ./missing.md`);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      `broken local link in ${mdPath}:4 -> ./missing.md`,
+    );
     expect(`${result.stdout}${result.stderr}`).not.toContain("inside-code-fence.md");
   });
 
@@ -46,14 +48,7 @@ describe("check-docs link validation", () => {
     const mdPath = path.join(tempDir, "guide.md");
     fs.writeFileSync(
       mdPath,
-      [
-        "# Guide",
-        "",
-        "```md",
-        "[example](./missing.md)",
-        "```",
-        "",
-      ].join("\n"),
+      ["# Guide", "", "```md", "[example](./missing.md)", "```", ""].join("\n"),
     );
 
     const result = runCheckDocs(mdPath);
@@ -66,14 +61,7 @@ describe("check-docs link validation", () => {
     const mdPath = path.join(tempDir, "guide.md");
     fs.writeFileSync(
       mdPath,
-      [
-        "# Guide",
-        "",
-        "~~~md",
-        "[example](./missing.md)",
-        "~~~",
-        "",
-      ].join("\n"),
+      ["# Guide", "", "~~~md", "[example](./missing.md)", "~~~", ""].join("\n"),
     );
 
     const result = runCheckDocs(mdPath);
@@ -125,5 +113,45 @@ describe("check-docs link validation", () => {
 
     expect(result.status).toBe(0);
     expect(`${result.stdout}${result.stderr}`).not.toContain("inside-code-fence.md");
+  });
+
+  it("ignores links inside HTML comments and preserves later line numbers", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-htmlcomment-"));
+    const mdPath = path.join(tempDir, "guide.md");
+    fs.writeFileSync(
+      mdPath,
+      [
+        "# Guide",
+        "<!--",
+        "[ignored](./inside-comment.md)",
+        "-->",
+        "",
+        "[broken](./missing.md)",
+        "",
+      ].join("\n"),
+    );
+
+    const result = runCheckDocs(mdPath);
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).not.toContain("inside-comment.md");
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      `broken local link in ${mdPath}:6 -> ./missing.md`,
+    );
+  });
+
+  it("fails on malformed HTML comments", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-badcomment-"));
+    const mdPath = path.join(tempDir, "guide.md");
+    fs.writeFileSync(
+      mdPath,
+      ["# Guide", "<!-- missing close", "[ignored](./inside-comment.md)", ""].join("\n"),
+    );
+
+    const result = runCheckDocs(mdPath);
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain(`malformed HTML comment in ${mdPath}`);
+    expect(`${result.stdout}${result.stderr}`).not.toContain("inside-comment.md");
   });
 });
