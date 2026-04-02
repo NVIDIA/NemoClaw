@@ -111,10 +111,11 @@ describe("telegram diagnostics", () => {
         throw new Error(`unexpected path: ${filePath}`);
       },
     };
+    const fakeFsModule = /** @type {any} */ (fakeFs);
 
-    assert.equal(getTelegramBridgeToken("the-crucible", fakeFs), "from-bridge");
+    assert.equal(getTelegramBridgeToken("the-crucible", fakeFsModule), "from-bridge");
     assert.equal(
-      getTelegramProbeToken({}, () => null, { sandboxName: "the-crucible", fsModule: fakeFs }),
+      getTelegramProbeToken({}, () => null, { sandboxName: "the-crucible", fsModule: fakeFsModule }),
       "from-bridge",
     );
   });
