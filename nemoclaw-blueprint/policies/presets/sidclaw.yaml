@@ -19,8 +19,8 @@ network_policies:
           - allow: { method: GET, path: "/api/v1/approvals/**" }
           - allow: { method: POST, path: "/api/v1/traces/*/outcome" }
           - allow: { method: GET, path: "/api/v1/agents/**" }
-    # Both runtimes needed: @sidclaw/sdk (TypeScript) and sidclaw (Python).
-    # If your agent uses only one, override with a narrower binaries list.
+    # Only the SidClaw-specific binaries — not generic interpreters.
+    # The MCP proxy (@sidclaw/sdk) and the Python CLI (sidclaw).
     binaries:
-      - { path: /usr/local/bin/node }
-      - { path: /usr/bin/python3 }
+      - { path: /usr/local/bin/sidclaw* }
+      - { path: /usr/local/bin/sidclaw-mcp-proxy }
