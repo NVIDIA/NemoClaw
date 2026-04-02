@@ -119,22 +119,16 @@ describe("risk classification", () => {
 // ── Event cap at 100 ─────────────────────────────────────────
 
 describe("event cap", () => {
-  it("stores exactly 100 events", () => {
-    for (let i = 0; i < 100; i++) {
-      store.record("s1", Capability.ReadSensitive, "cat", `/file-${String(i)}`);
-    }
-    const exposure = assertDefined(store.getExposure("s1"));
-    expect(exposure.events).toHaveLength(100);
-  });
-
-  it("drops the 101st event", () => {
+  it("stores exactly 100 events and drops the 101st", () => {
     for (let i = 0; i < 101; i++) {
       store.record("s1", Capability.ReadSensitive, "cat", `/file-${String(i)}`);
     }
     const exposure = assertDefined(store.getExposure("s1"));
     expect(exposure.events).toHaveLength(100);
-    const lastDetail = exposure.events[99].detail;
-    expect(lastDetail).toBe("/file-99");
+    expect(exposure.events[0].detail).toBe("/file-0");
+    expect(exposure.events[99].detail).toBe("/file-99");
+    const details = exposure.events.map((e) => e.detail);
+    expect(details).not.toContain("/file-100");
   });
 
   it("still records capability even when event log is full", () => {
@@ -324,26 +318,74 @@ describe("error paths", () => {
   });
 });
 
-// ── Boundary tests ───────────────────────────────────────────
+// ── onTrifecta callback ───────────────────────────────────────
 
-describe("boundary conditions", () => {
-  it("stores exactly 100 events at the boundary", () => {
-    for (let i = 0; i < 100; i++) {
-      store.record("s1", Capability.ReadSensitive, "cat", `/file-${String(i)}`);
-    }
-    const exposure = assertDefined(store.getExposure("s1"));
-    expect(exposure.events).toHaveLength(100);
-    expect(exposure.events[0].detail).toBe("/file-0");
-    expect(exposure.events[99].detail).toBe("/file-99");
+describe("onTrifecta callback", () => {
+  it("fires when all three capabilities are first recorded", () => {
+    const fired: string[] = [];
+    const tracked = new SessionStore((id) => fired.push(id));
+    tracked.record("s1", Capability.ReadSensitive, "cat", "/etc/passwd");
+    tracked.record("s1", Capability.IngestedUntrusted, "fetch", "https://x.com");
+    expect(fired).toHaveLength(0);
+    tracked.record("s1", Capability.HasEgress, "curl", "https://evil.com");
+    expect(fired).toEqual(["s1"]);
   });
 
-  it("the 101st event is not stored in the event log", () => {
-    for (let i = 0; i < 101; i++) {
-      store.record("s1", Capability.ReadSensitive, "cat", `/file-${String(i)}`);
+  it("fires only once per session even on repeated records", () => {
+    const fired: string[] = [];
+    const tracked = new SessionStore((id) => fired.push(id));
+    tracked.record("s1", Capability.ReadSensitive, "cat", "/etc/passwd");
+    tracked.record("s1", Capability.IngestedUntrusted, "fetch", "https://x.com");
+    tracked.record("s1", Capability.HasEgress, "curl", "https://evil.com");
+    tracked.record("s1", Capability.HasEgress, "curl", "https://evil.com/again");
+    expect(fired).toHaveLength(1);
+  });
+
+  it("does not fire for partial capabilities", () => {
+    const fired: string[] = [];
+    const tracked = new SessionStore((id) => fired.push(id));
+    tracked.record("s1", Capability.ReadSensitive, "cat", "/etc/passwd");
+    tracked.record("s1", Capability.HasEgress, "curl", "https://evil.com");
+    expect(fired).toHaveLength(0);
+  });
+
+  it("fires independently for different sessions", () => {
+    const fired: string[] = [];
+    const tracked = new SessionStore((id) => fired.push(id));
+    for (const id of ["a", "b"]) {
+      tracked.record(id, Capability.ReadSensitive, "cat", "/etc/passwd");
+      tracked.record(id, Capability.IngestedUntrusted, "fetch", "https://x.com");
+      tracked.record(id, Capability.HasEgress, "curl", "https://evil.com");
     }
-    const exposure = assertDefined(store.getExposure("s1"));
-    expect(exposure.events).toHaveLength(100);
-    const details = exposure.events.map((e) => e.detail);
-    expect(details).not.toContain("/file-100");
+    expect(fired.sort()).toEqual(["a", "b"]);
+  });
+});
+
+// ── clear ─────────────────────────────────────────────────────
+
+describe("clear", () => {
+  it("removes all sessions", () => {
+    store.record("s1", Capability.ReadSensitive, "cat", "/etc/passwd");
+    store.record("s2", Capability.HasEgress, "curl", "https://evil.com");
+    store.clear();
+    expect(store.listSessions()).toHaveLength(0);
+  });
+
+  it("hasTrifecta returns false after clear", () => {
+    store.record("s1", Capability.ReadSensitive, "cat", "/etc/passwd");
+    store.record("s1", Capability.IngestedUntrusted, "fetch", "https://x.com");
+    store.record("s1", Capability.HasEgress, "curl", "https://evil.com");
+    expect(store.hasTrifecta("s1")).toBe(true);
+    store.clear();
+    expect(store.hasTrifecta("s1")).toBe(false);
+  });
+
+  it("allows new sessions to be created after clear", () => {
+    store.record("s1", Capability.ReadSensitive, "cat", "/etc/passwd");
+    store.clear();
+    store.record("s1", Capability.HasEgress, "curl", "https://evil.com");
+    const caps = assertDefined(store.getCapabilities("s1"));
+    expect(caps[Capability.ReadSensitive]).toBeUndefined();
+    expect(caps[Capability.HasEgress]).toBe(true);
   });
 });

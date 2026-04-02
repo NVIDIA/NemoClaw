@@ -85,13 +85,7 @@ function classifyRisk(caps: Map<Capability, boolean>, trifecta: boolean): RiskLe
       count++;
     }
   }
-  if (count === 0) {
-    return "clean";
-  }
-  if (count <= 2) {
-    return "elevated";
-  }
-  return "critical";
+  return count === 0 ? "clean" : "elevated";
 }
 
 // ── SessionStore class ───────────────────────────────────────
@@ -102,17 +96,25 @@ function classifyRisk(caps: Map<Capability, boolean>, trifecta: boolean): RiskLe
  * Node.js is single-threaded, so no mutex is needed (unlike the Go
  * implementation). Create one instance and share it across the
  * request-handling code.
+ *
+ * @param onTrifecta - Optional callback invoked once per session the first time
+ *   all three capability classes are recorded. Use this to log a warning, emit a
+ *   metric, or terminate the session. The callback receives the session ID.
  */
 export class SessionStore {
   private readonly sessions = new Map<string, Session>();
 
+  constructor(private readonly onTrifecta?: (sessionId: string) => void) {}
+
   /**
    * Record a capability event against a session.
    *
-   * Empty `sessionId` values are silently ignored.
+   * The method silently ignores empty `sessionId` values.
    * Once a session reaches {@link MAX_EVENTS_PER_SESSION} events,
    * additional events still update the capability set but are not
    * appended to the event log.
+   * If all three capability classes are now present and the `onTrifecta`
+   * callback was provided, it fires once for this session.
    */
   record(sessionId: string, cap: Capability, tool: string, detail: string): void {
     if (!sessionId) {
@@ -129,6 +131,7 @@ export class SessionStore {
       this.sessions.set(sessionId, sess);
     }
 
+    const wasTrifecta = isTrifecta(sess.capabilities);
     sess.capabilities.set(cap, true);
     sess.updatedAt = new Date().toISOString();
 
@@ -140,6 +143,15 @@ export class SessionStore {
         time: sess.updatedAt,
       });
     }
+
+    if (this.onTrifecta && !wasTrifecta && isTrifecta(sess.capabilities)) {
+      this.onTrifecta(sessionId);
+    }
+  }
+
+  /** Remove all sessions, releasing all tracked state. */
+  clear(): void {
+    this.sessions.clear();
   }
 
   /**

@@ -37,7 +37,7 @@ The tracker monitors three capability classes.
 | Has egress | `has_egress` | The agent made or attempted an outbound network connection |
 
 When all three capabilities appear in a single session, the session has a "trifecta."
-A trifecta indicates a possible exfiltration chain: read a secret, get instructions from an attacker, and send the secret out.
+A trifecta indicates a possible exfiltration chain — read a secret, get instructions from an attacker, and send the secret out.
 
 ## Risk Levels
 
@@ -53,7 +53,12 @@ The tracker classifies each session into one of three risk levels.
 
 Each call to `record()` creates a `CapabilityEvent` with a capability, tool name, detail string, and timestamp.
 The tracker stores up to 100 events per session.
-Events beyond the 100th are dropped, but the capability set continues to update.
+The tracker drops events beyond the 100th, but continues to update the capability set.
+The cap is sized so that 100 events consume roughly 10 KB of memory per session (each event ~100 bytes), keeping per-session overhead predictable in long-running processes.
+
+The tracker holds sessions in memory only.
+All tracking state is lost when the host process restarts.
+This is an acceptable trade-off for ephemeral sandbox sessions, where the threat window is bounded by the container lifetime.
 
 ## API
 
@@ -66,15 +71,30 @@ Class that tracks capability events per agent session.
 ```typescript
 import { SessionStore, Capability } from "./security/session-tracker.js";
 
-const store = new SessionStore();
+// Optional: receive a callback when trifecta is first detected.
+const store = new SessionStore((sessionId) => {
+  console.warn(`[NemoClaw] trifecta detected for session ${sessionId}`);
+});
 store.record("session-1", Capability.ReadSensitive, "cat", "/etc/passwd");
 store.record("session-1", Capability.HasEgress, "curl", "https://example.com");
 ```
 
+#### `constructor(onTrifecta?: (sessionId: string) => void)`
+
+Create a store.
+Pass an optional `onTrifecta` callback to receive a notification the first time a session accumulates all three capability classes.
+Use the callback to log a warning, emit a metric, or terminate the session.
+
 #### `record(sessionId: string, cap: Capability, tool: string, detail: string): void`
 
 Record a capability event against a session.
-Empty `sessionId` values are silently ignored.
+The method silently ignores empty `sessionId` values.
+If the new event completes a trifecta and an `onTrifecta` callback was provided, the callback fires once for this session.
+
+#### `clear(): void`
+
+Remove all sessions and release all tracked state.
+Call this when the host session ends to prevent unbounded memory growth in long-running processes.
 
 #### `getCapabilities(sessionId: string): Record<string, boolean> | null`
 
@@ -99,7 +119,7 @@ The exposure object categorizes events into three lists.
 - `sensitiveFilesAccessed` contains deduplicated file paths from `read_sensitive` events.
 - `externalUrlsContacted` contains deduplicated URLs from `ingested_untrusted` events.
 - `egressAttempts` contains every `has_egress` event as `tool` when `detail` is empty, or `tool + " " + detail` otherwise.
-  Egress attempts are not deduplicated.
+  The tracker does not deduplicate egress attempts.
 
 ### `Capability`
 
@@ -159,5 +179,5 @@ type RiskLevel = "clean" | "elevated" | "critical";
 
 ## Next Steps
 
-- Review the injection scanner in {doc}`/reference/injection-scanner` to understand how NemoClaw detects prompt injection in agent tool calls.
-- See the audit chain in {doc}`/reference/audit-chain` for tamper-evident logging of all policy decisions.
+- Review the injection scanner in {doc}`/reference/injection-scanner` to understand how NemoClaw detects prompt injection in agent tool calls (pending PR #870).
+- See the audit chain in {doc}`/reference/audit-chain` for tamper-evident logging of all policy decisions (pending PR #892).
