@@ -169,50 +169,47 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
     });
     console.log(`[${elapsed()}] Bootstrap complete`);
 
-    // Install nemoclaw CLI — brev-setup.sh creates the sandbox but doesn't
-    // install the host-side CLI that the test scripts need for `nemoclaw <name> status`.
-    // The `bin` field is in the root package.json (not nemoclaw/), so we need to:
-    //   1. Build the TypeScript plugin (in nemoclaw/)
-    //   2. npm link from the repo root (where bin.nemoclaw is defined)
-    // Use npm_config_prefix so npm link writes to ~/.local/bin (no sudo needed),
-    // which is already on PATH in runRemoteTest.
-    console.log(`[${elapsed()}] Installing nemoclaw CLI...`);
+    // Verify the CLI installed by brev-setup.sh is visible to the non-login
+    // SSH sessions used by runRemoteTest.
+    console.log(`[${elapsed()}] Verifying nemoclaw CLI...`);
     ssh(
       [
         `export npm_config_prefix=$HOME/.local`,
         `export PATH=$HOME/.local/bin:$PATH`,
-        `cd ${remoteDir}/nemoclaw && npm install && npm run build`,
-        `cd ${remoteDir} && npm install --ignore-scripts && npm link`,
         `which nemoclaw && nemoclaw --version`,
       ].join(" && "),
       { timeout: 120_000 },
     );
-    console.log(`[${elapsed()}] nemoclaw CLI installed`);
+    console.log(`[${elapsed()}] nemoclaw CLI verified`);
 
-    // Register the sandbox in nemoclaw's local registry.
-    // setup.sh creates the sandbox via openshell directly but doesn't write
-    // ~/.nemoclaw/sandboxes.json, which `nemoclaw <name> status` needs.
-    console.log(`[${elapsed()}] Registering sandbox in nemoclaw registry...`);
-    ssh(
-      `mkdir -p ~/.nemoclaw && cat > ~/.nemoclaw/sandboxes.json << 'REGISTRY'
-{
-  "sandboxes": {
-    "e2e-test": {
-      "name": "e2e-test",
-      "createdAt": "${new Date().toISOString()}",
-      "model": null,
-      "nimContainer": null,
-      "provider": "nvidia-nim",
-      "gpuEnabled": false,
-      "policies": []
-    }
-  },
-  "defaultSandbox": "e2e-test"
-}
-REGISTRY`,
-      { timeout: 10_000 },
+    // Assert the onboard bootstrap persisted the sandbox registry entry.
+    console.log(`[${elapsed()}] Verifying sandbox registry...`);
+    const registry = JSON.parse(ssh(`cat ~/.nemoclaw/sandboxes.json`, { timeout: 10_000 }));
+    expect(registry.defaultSandbox).toBe("e2e-test");
+    expect(registry.sandboxes).toHaveProperty("e2e-test");
+    const sandbox = registry.sandboxes["e2e-test"];
+    expect(sandbox).toMatchObject({
+      name: "e2e-test",
+      gpuEnabled: false,
+      policies: [],
+    });
+    const normalizedSandbox = {
+      ...sandbox,
+      createdAt: "<normalized>",
+      model: "<normalized>",
+      nimContainer: "<normalized>",
+    };
+    expect(normalizedSandbox).toEqual(
+      expect.objectContaining({
+        name: "e2e-test",
+        createdAt: "<normalized>",
+        model: "<normalized>",
+        nimContainer: "<normalized>",
+        gpuEnabled: false,
+        policies: [],
+      }),
     );
-    console.log(`[${elapsed()}] Sandbox registered`);
+    console.log(`[${elapsed()}] Sandbox registry verified`);
 
     console.log(`[${elapsed()}] beforeAll complete — total bootstrap time: ${elapsed()}`);
   }, 2_700_000); // 45 min
