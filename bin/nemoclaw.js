@@ -886,7 +886,17 @@ async function sandboxStatus(sandboxName) {
     printGatewayLifecycleHint(lookup.output, sandboxName, console.log);
   }
 
-  const runtimeLines = getInferenceRuntimeStatus(sb || { name: sandboxName }, (name) => nim.nimStatus(name));
+  const runtimeLines = getInferenceRuntimeStatus(
+    sb || { name: sandboxName },
+    (name) => {
+      const status = nim.nimStatus(name);
+      // Always return both properties, never optional
+      return {
+        running: typeof status.running === "boolean" ? status.running : false,
+        healthy: typeof status.healthy === "boolean" ? status.healthy : false,
+      };
+    }
+  );
   for (const line of runtimeLines) {
     console.log(`    ${line.label.padEnd(9)}${line.value}`);
   }
