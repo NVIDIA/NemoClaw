@@ -16,7 +16,6 @@ export const CLOUD_MODEL_OPTIONS = [
   { id: "moonshotai/kimi-k2.5", label: "Kimi K2.5" },
   { id: "z-ai/glm5", label: "GLM-5" },
   { id: "minimaxai/minimax-m2.5", label: "MiniMax M2.5" },
-  { id: "qwen/qwen3.5-397b-a17b", label: "Qwen3.5 397B A17B" },
   { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
 ];
 export const DEFAULT_ROUTE_PROFILE = "inference-local";

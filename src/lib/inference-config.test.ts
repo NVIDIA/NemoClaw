@@ -23,7 +23,6 @@ describe("inference selection config", () => {
       "moonshotai/kimi-k2.5",
       "z-ai/glm5",
       "minimaxai/minimax-m2.5",
-      "qwen/qwen3.5-397b-a17b",
       "openai/gpt-oss-120b",
     ]);
   });
