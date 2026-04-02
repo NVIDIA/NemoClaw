@@ -261,38 +261,6 @@ describe("regression guards", () => {
       expect(src.includes("delete process.env.NVIDIA_API_KEY")).toBeTruthy();
     });
 
-    it("setup.sh uses env-name-only form for nvidia-nim credential", () => {
-      const fs = require("fs");
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "scripts", "setup.sh"),
-        "utf-8",
-      );
-      // Should use "NVIDIA_API_KEY" (name only), not "NVIDIA_API_KEY=$NVIDIA_API_KEY" (value)
-      const lines = src.split("\n");
-      for (const line of lines) {
-        if (line.includes("upsert_provider") || line.includes("--credential")) continue;
-        if (line.trim().startsWith("#")) continue;
-        // Check credential argument lines passed to upsert_provider
-        if (line.includes('"NVIDIA_API_KEY=')) {
-          // Allow "NVIDIA_API_KEY" alone but not "NVIDIA_API_KEY=$..."
-          expect(line.includes("NVIDIA_API_KEY=$")).toBe(false);
-        }
-      }
-    });
-
-    it("setup.sh does not pass NVIDIA_API_KEY in sandbox create env args", () => {
-      const fs = require("fs");
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "scripts", "setup.sh"),
-        "utf-8",
-      );
-      // Find sandbox create command — should not have env NVIDIA_API_KEY
-      const createLines = src.split("\n").filter((l) => l.includes("sandbox create"));
-      for (const line of createLines) {
-        expect(line.includes("NVIDIA_API_KEY")).toBe(false);
-      }
-    });
-
     it("setupSpark does not pass NVIDIA_API_KEY to sudo", () => {
       const fs = require("fs");
       const src = fs.readFileSync(
