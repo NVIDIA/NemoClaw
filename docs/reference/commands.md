@@ -248,7 +248,7 @@ $ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
 ### Legacy `nemoclaw setup`
 
 Deprecated. Use `nemoclaw onboard` instead.
-The legacy setup command runs the old setup script for backwards compatibility only.
+Running `nemoclaw setup` now delegates directly to `nemoclaw onboard`.
 
 ```console
 $ nemoclaw setup
