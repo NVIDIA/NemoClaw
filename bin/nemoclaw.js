@@ -362,6 +362,22 @@ async function setupSpark() {
   run(`sudo bash "${SCRIPTS}/setup-spark.sh"`);
 }
 
+function normalizeBrevGpuName(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  return trimmed.replace(/^nvidia-tesla-/i, "").toUpperCase();
+}
+
+function resolveBrevCreateConfig() {
+  const legacyGpu = String(process.env.NEMOCLAW_GPU || "").trim();
+  const legacyParts = legacyGpu.includes(":") ? legacyGpu.split(":") : [legacyGpu];
+  const type = String(process.env.NEMOCLAW_BREV_TYPE || legacyParts[0] || "a2-highgpu-1g").trim();
+  const gpuName = normalizeBrevGpuName(
+    process.env.NEMOCLAW_BREV_GPU_NAME || legacyParts[1] || "A100",
+  );
+  return { type, gpuName };
+}
+
 // eslint-disable-next-line complexity
 async function deploy(instanceName) {
   if (!instanceName) {
@@ -380,7 +396,7 @@ async function deploy(instanceName) {
   validateName(instanceName, "instance name");
   const name = instanceName;
   const qname = shellQuote(name);
-  const gpu = process.env.NEMOCLAW_GPU || "a2-highgpu-1g:nvidia-tesla-a100:1";
+  const { type, gpuName } = resolveBrevCreateConfig();
 
   console.log("");
   console.log(`  Deploying NemoClaw to Brev instance: ${name}`);
@@ -403,8 +419,8 @@ async function deploy(instanceName) {
   }
 
   if (!exists) {
-    console.log(`  Creating Brev instance '${name}' (${gpu})...`);
-    run(`brev create ${qname} --gpu ${shellQuote(gpu)}`);
+    console.log(`  Creating Brev instance '${name}' (${type}, ${gpuName})...`);
+    run(`brev create ${qname} --type ${shellQuote(type)} --gpu-name ${shellQuote(gpuName)}`);
   } else {
     console.log(`  Brev instance '${name}' already exists.`);
   }

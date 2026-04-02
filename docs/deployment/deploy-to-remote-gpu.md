@@ -90,12 +90,21 @@ $ openclaw agent --agent main --local -m "Hello from the remote sandbox" --sessi
 
 ## GPU Configuration
 
-The deploy script uses the `NEMOCLAW_GPU` environment variable to select the GPU type.
+The deploy script uses the `NEMOCLAW_GPU` environment variable to select the Brev instance type and GPU name.
 The default value is `a2-highgpu-1g:nvidia-tesla-a100:1`.
-Set this variable before running `nemoclaw deploy` to use a different GPU configuration:
+If you want to keep using the legacy combined setting, export `NEMOCLAW_GPU` before running `nemoclaw deploy`:
 
 ```console
-$ export NEMOCLAW_GPU="a2-highgpu-1g:nvidia-tesla-a100:2"
+$ export NEMOCLAW_GPU="a2-highgpu-1g:nvidia-tesla-a100:1"
+$ nemoclaw deploy <instance-name>
+```
+
+For direct overrides, set `NEMOCLAW_BREV_TYPE` and `NEMOCLAW_BREV_GPU_NAME` instead.
+These take precedence over `NEMOCLAW_GPU` when both are set:
+
+```console
+$ export NEMOCLAW_BREV_TYPE="a2-highgpu-1g"
+$ export NEMOCLAW_BREV_GPU_NAME="A100"
 $ nemoclaw deploy <instance-name>
 ```
 
