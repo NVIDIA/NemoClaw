@@ -59,6 +59,28 @@ function runInteractive(cmd, opts = {}) {
 }
 
 /**
+ * Run a program directly with argv-style arguments, bypassing shell parsing.
+ * Exits the process on failure unless opts.ignoreError is true.
+ */
+function runFile(file, args = [], opts = {}) {
+  const stdio = opts.stdio ?? ["ignore", "pipe", "pipe"];
+  const normalizedArgs = args.map((arg) => String(arg));
+  const result = spawnSync(file, normalizedArgs, {
+    ...opts,
+    stdio,
+    cwd: ROOT,
+    env: { ...process.env, ...opts.env },
+  });
+  writeRedactedResult(result, stdio);
+  if (result.status !== 0 && !opts.ignoreError) {
+    const rendered = [shellQuote(file), ...normalizedArgs.map((arg) => shellQuote(arg))].join(" ");
+    console.error(`  Command failed (exit ${result.status}): ${redact(rendered).slice(0, 80)}`);
+    process.exit(result.status || 1);
+  }
+  return result;
+}
+
+/**
  * Run a shell command and return its stdout as a trimmed string.
  * Throws a redacted error on failure, or returns '' when opts.ignoreError is true.
  */
@@ -196,6 +218,7 @@ export {
   redact,
   run,
   runCapture,
+  runFile,
   runInteractive,
   shellQuote,
   validateName,

@@ -57,6 +57,30 @@ describe("runner helpers", () => {
     expect(calls[0][2].stdio).toEqual(["ignore", "pipe", "pipe"]);
     expect(calls[1][2].stdio).toEqual(["inherit", "pipe", "pipe"]);
   });
+
+  it("runs argv-style commands without going through bash -c", () => {
+    const calls = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = (...args) => {
+      calls.push(args);
+      return { status: 0, stdout: "", stderr: "" };
+    };
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { runFile } = require(runnerPath);
+      runFile("bash", ["/tmp/setup.sh", "safe;name", "$(id)"]);
+    } finally {
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe("bash");
+    expect(calls[0][1]).toEqual(["/tmp/setup.sh", "safe;name", "$(id)"]);
+    expect(calls[0][2].stdio).toEqual(["ignore", "pipe", "pipe"]);
+  });
 });
 
 describe("runner env merging", () => {
@@ -92,6 +116,38 @@ describe("runner env merging", () => {
       const { run } = require(runnerPath);
       process.env.PATH = "/usr/local/bin:/usr/bin";
       run("echo test", {
+        env: { OPENSHELL_CLUSTER_IMAGE: "ghcr.io/nvidia/openshell/cluster:0.0.12" },
+      });
+    } finally {
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0][2].env.OPENSHELL_CLUSTER_IMAGE).toBe("ghcr.io/nvidia/openshell/cluster:0.0.12");
+    expect(calls[0][2].env.PATH).toBe("/usr/local/bin:/usr/bin");
+  });
+
+  it("preserves process env when opts.env is provided to runFile", () => {
+    const calls = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    const originalPath = process.env.PATH;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = (...args) => {
+      calls.push(args);
+      return { status: 0, stdout: "", stderr: "" };
+    };
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { runFile } = require(runnerPath);
+      process.env.PATH = "/usr/local/bin:/usr/bin";
+      runFile("bash", ["/tmp/setup.sh"], {
         env: { OPENSHELL_CLUSTER_IMAGE: "ghcr.io/nvidia/openshell/cluster:0.0.12" },
       });
     } finally {
