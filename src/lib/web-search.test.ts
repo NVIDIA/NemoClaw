@@ -26,7 +26,7 @@ describe("web-search helpers", () => {
 
   it("includes the explicit exposure caveat in the warning text", () => {
     const warning = getBraveExposureWarningLines().join(" ");
-    expect(warning).toContain("OpenClaw agent can read");
-    expect(warning).toContain("should be improved in the future");
+    expect(warning).toContain("sandbox OpenClaw config");
+    expect(warning).toContain("OpenClaw agent will be able to read");
   });
 });

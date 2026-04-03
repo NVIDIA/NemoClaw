@@ -13,10 +13,8 @@ export function encodeDockerJsonArg(value: unknown): string {
 
 export function getBraveExposureWarningLines(): string[] {
   return [
-    "Brave Search setup will store the Brave API key in OpenClaw config inside the sandbox.",
-    "The OpenClaw agent can read that key and could exfiltrate or misuse it.",
-    "We explored an OpenShell-hosted credential path first, but current OpenClaw Brave handling does not consume it end to end yet.",
-    "This should be improved in the future.",
+    "NemoClaw will store the Brave API key in sandbox OpenClaw config.",
+    "The OpenClaw agent will be able to read that key.",
   ];
 }
 

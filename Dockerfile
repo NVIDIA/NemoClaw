@@ -122,8 +122,8 @@ config = { \
         'auth': {'token': secrets.token_hex(32)} \
     } \
 }; \
-if web_config.get('provider') == 'brave': \
-    config['tools'] = { \
+config.update({ \
+    'tools': { \
         'web': { \
             'search': { \
                 'enabled': True, \
@@ -134,7 +134,8 @@ if web_config.get('provider') == 'brave': \
                 'enabled': bool(web_config.get('fetchEnabled', True)) \
             } \
         } \
-    }; \
+    } \
+} if web_config.get('provider') == 'brave' else {}); \
 path = os.path.expanduser('~/.openclaw/openclaw.json'); \
 json.dump(config, open(path, 'w'), indent=2); \
 os.chmod(path, 0o600)"
