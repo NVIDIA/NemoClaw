@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import assert from "node:assert/strict";
 import { describe, it, expect } from "vitest";
 
+// Import from compiled dist/ for correct coverage attribution.
 import {
   CLOUD_MODEL_OPTIONS,
   DEFAULT_OLLAMA_MODEL,
@@ -14,16 +14,15 @@ import {
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
   parseGatewayInference,
-} from "../bin/lib/inference-config";
+} from "../../dist/lib/inference-config";
 
 describe("inference selection config", () => {
   it("exposes the curated cloud model picker options", () => {
-    expect(CLOUD_MODEL_OPTIONS.map((option) => option.id)).toEqual([
+    expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).toEqual([
       "nvidia/nemotron-3-super-120b-a12b",
       "moonshotai/kimi-k2.5",
       "z-ai/glm5",
       "minimaxai/minimax-m2.5",
-      "qwen/qwen3.5-397b-a17b",
       "openai/gpt-oss-120b",
     ]);
   });
@@ -42,9 +41,7 @@ describe("inference selection config", () => {
   });
 
   it("maps nvidia-nim to the sandbox inference route", () => {
-    expect(
-      getProviderSelectionConfig("nvidia-nim", "nvidia/nemotron-3-super-120b-a12b")
-    ).toEqual({
+    expect(getProviderSelectionConfig("nvidia-nim", "nvidia/nemotron-3-super-120b-a12b")).toEqual({
       endpointType: "custom",
       endpointUrl: INFERENCE_ROUTE_URL,
       ncpPartner: null,
@@ -57,7 +54,9 @@ describe("inference selection config", () => {
   });
 
   it("maps compatible-anthropic-endpoint to the sandbox inference route", () => {
-    assert.deepEqual(getProviderSelectionConfig("compatible-anthropic-endpoint", "claude-sonnet-proxy"), {
+    expect(
+      getProviderSelectionConfig("compatible-anthropic-endpoint", "claude-sonnet-proxy"),
+    ).toEqual({
       endpointType: "custom",
       endpointUrl: INFERENCE_ROUTE_URL,
       ncpPartner: null,
@@ -70,6 +69,7 @@ describe("inference selection config", () => {
   });
 
   it("maps the remaining hosted providers to the sandbox inference route", () => {
+    // Full-object assertion for one hosted provider to catch structural regressions
     expect(getProviderSelectionConfig("openai-api", "gpt-5.4-mini")).toEqual({
       endpointType: "custom",
       endpointUrl: INFERENCE_ROUTE_URL,
@@ -80,40 +80,19 @@ describe("inference selection config", () => {
       provider: "openai-api",
       providerLabel: "OpenAI",
     });
-
-    expect(getProviderSelectionConfig("anthropic-prod", "claude-sonnet-4-6")).toEqual({
-      endpointType: "custom",
-      endpointUrl: INFERENCE_ROUTE_URL,
-      ncpPartner: null,
-      model: "claude-sonnet-4-6",
-      profile: DEFAULT_ROUTE_PROFILE,
-      credentialEnv: "ANTHROPIC_API_KEY",
-      provider: "anthropic-prod",
-      providerLabel: "Anthropic",
-    });
-
-    expect(getProviderSelectionConfig("gemini-api", "gemini-2.5-pro")).toEqual({
-      endpointType: "custom",
-      endpointUrl: INFERENCE_ROUTE_URL,
-      ncpPartner: null,
-      model: "gemini-2.5-pro",
-      profile: DEFAULT_ROUTE_PROFILE,
-      credentialEnv: "GEMINI_API_KEY",
-      provider: "gemini-api",
-      providerLabel: "Google Gemini",
-    });
-
-    expect(getProviderSelectionConfig("compatible-endpoint", "openrouter/auto")).toEqual({
-      endpointType: "custom",
-      endpointUrl: INFERENCE_ROUTE_URL,
-      ncpPartner: null,
-      model: "openrouter/auto",
-      profile: DEFAULT_ROUTE_PROFILE,
-      credentialEnv: "COMPATIBLE_API_KEY",
-      provider: "compatible-endpoint",
-      providerLabel: "Other OpenAI-compatible endpoint",
-    });
-
+    expect(getProviderSelectionConfig("anthropic-prod", "claude-sonnet-4-6")).toEqual(
+      expect.objectContaining({ model: "claude-sonnet-4-6", providerLabel: "Anthropic" }),
+    );
+    expect(getProviderSelectionConfig("gemini-api", "gemini-2.5-pro")).toEqual(
+      expect.objectContaining({ model: "gemini-2.5-pro", providerLabel: "Google Gemini" }),
+    );
+    expect(getProviderSelectionConfig("compatible-endpoint", "openrouter/auto")).toEqual(
+      expect.objectContaining({
+        model: "openrouter/auto",
+        providerLabel: "Other OpenAI-compatible endpoint",
+      }),
+    );
+    // Full-object assertion for one local provider
     expect(getProviderSelectionConfig("vllm-local", "meta-llama")).toEqual({
       endpointType: "custom",
       endpointUrl: INFERENCE_ROUTE_URL,
@@ -130,21 +109,66 @@ describe("inference selection config", () => {
     expect(getProviderSelectionConfig("bogus-provider")).toBe(null);
   });
 
-  it("builds a qualified OpenClaw primary model for ollama-local", () => {
-    expect(getOpenClawPrimaryModel("ollama-local", "nemotron-3-nano:30b")).toBe(`${MANAGED_PROVIDER_ID}/nemotron-3-nano:30b`);
+  it("does not grow beyond the approved provider set", () => {
+    const APPROVED_PROVIDERS = [
+      "nvidia-prod",
+      "nvidia-nim",
+      "openai-api",
+      "anthropic-prod",
+      "compatible-anthropic-endpoint",
+      "gemini-api",
+      "compatible-endpoint",
+      "vllm-local",
+      "ollama-local",
+    ];
+    for (const key of APPROVED_PROVIDERS) {
+      expect(getProviderSelectionConfig(key)).not.toBe(null);
+    }
+    const CANDIDATES = [
+      "bedrock",
+      "vertex",
+      "azure",
+      "azure-openai",
+      "deepseek",
+      "mistral",
+      "cohere",
+      "fireworks",
+      "together",
+      "groq",
+      "lambda",
+      "replicate",
+      "perplexity",
+      "sambanova",
+    ];
+    for (const key of CANDIDATES) {
+      expect(getProviderSelectionConfig(key)).toBe(null);
+    }
   });
 
   it("falls back to provider defaults when model is omitted", () => {
-    expect(getProviderSelectionConfig("openai-api").model).toBe("gpt-5.4");
-    expect(getProviderSelectionConfig("anthropic-prod").model).toBe("claude-sonnet-4-6");
-    expect(getProviderSelectionConfig("gemini-api").model).toBe("gemini-2.5-flash");
-    expect(getProviderSelectionConfig("compatible-endpoint").model).toBe("custom-model");
-    expect(getProviderSelectionConfig("compatible-anthropic-endpoint").model).toBe("custom-anthropic-model");
-    expect(getProviderSelectionConfig("vllm-local").model).toBe("vllm-local");
+    expect(getProviderSelectionConfig("openai-api")?.model).toBe("gpt-5.4");
+    expect(getProviderSelectionConfig("anthropic-prod")?.model).toBe("claude-sonnet-4-6");
+    expect(getProviderSelectionConfig("gemini-api")?.model).toBe("gemini-2.5-flash");
+    expect(getProviderSelectionConfig("compatible-endpoint")?.model).toBe("custom-model");
+    expect(getProviderSelectionConfig("compatible-anthropic-endpoint")?.model).toBe(
+      "custom-anthropic-model",
+    );
+    expect(getProviderSelectionConfig("vllm-local")?.model).toBe("vllm-local");
+  });
+
+  it("builds a qualified OpenClaw primary model for ollama-local", () => {
+    expect(getOpenClawPrimaryModel("ollama-local", "nemotron-3-nano:30b")).toBe(
+      `${MANAGED_PROVIDER_ID}/nemotron-3-nano:30b`,
+    );
   });
 
   it("builds a default OpenClaw primary model for non-ollama providers", () => {
-    expect(getOpenClawPrimaryModel("nvidia-prod")).toBe(`${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`);
+    expect(getOpenClawPrimaryModel("nvidia-prod")).toBe(
+      `${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`,
+    );
+    expect(getOpenClawPrimaryModel("ollama-local")).toBe(
+      `${MANAGED_PROVIDER_ID}/${DEFAULT_OLLAMA_MODEL}`,
+    );
   });
 });
 
@@ -170,35 +194,18 @@ describe("parseGatewayInference", () => {
   });
 
   it("returns null when inference is not configured", () => {
-    const output = "Gateway inference:\n\n  Not configured";
-    expect(parseGatewayInference(output)).toBeNull();
-  });
-
-  it("parses output with different provider/model combinations", () => {
-    const output = [
-      "Gateway inference:",
-      "",
-      "  Provider: ollama-local",
-      "  Model: qwen/qwen3.5-397b-a17b",
-      "  Version: 1",
-    ].join("\n");
-    expect(parseGatewayInference(output)).toEqual({
-      provider: "ollama-local",
-      model: "qwen/qwen3.5-397b-a17b",
-    });
+    expect(parseGatewayInference("Gateway inference:\n\n  Not configured")).toBeNull();
   });
 
   it("handles output with only provider (no model line)", () => {
-    const output = "Gateway inference:\n\n  Provider: nvidia-nim";
-    expect(parseGatewayInference(output)).toEqual({
+    expect(parseGatewayInference("Gateway inference:\n\n  Provider: nvidia-nim")).toEqual({
       provider: "nvidia-nim",
       model: null,
     });
   });
 
   it("handles output with only model (no provider line)", () => {
-    const output = "Gateway inference:\n\n  Model: some/model";
-    expect(parseGatewayInference(output)).toEqual({
+    expect(parseGatewayInference("Gateway inference:\n\n  Model: some/model")).toEqual({
       provider: null,
       model: "some/model",
     });

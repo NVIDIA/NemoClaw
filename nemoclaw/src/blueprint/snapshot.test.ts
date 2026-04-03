@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type fs from "node:fs";
+const SNAP = "/snap/20260323";
 
 // ── In-memory filesystem ────────────────────────────────────────
 
@@ -27,7 +29,7 @@ vi.mock("node:os", () => ({
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
-  const original = await importOriginal();
+  const original = await importOriginal<typeof fs>();
   return {
     ...original,
     existsSync: (p: string) => store.has(p),
@@ -123,7 +125,9 @@ describe("snapshot", () => {
 
       const result = createSnapshot();
 
+      expect(result).not.toBeNull();
       if (!result) throw new Error("createSnapshot returned null");
+
       expect(result.startsWith(SNAPSHOTS_DIR)).toBe(true);
 
       // Manifest was written
@@ -140,34 +144,34 @@ describe("snapshot", () => {
 
   describe("restoreIntoSandbox", () => {
     it("returns false when snapshot has no openclaw dir", async () => {
-      addDir("/snap/20260323");
-      expect(await restoreIntoSandbox("/snap/20260323")).toBe(false);
+      addDir(SNAP);
+      expect(await restoreIntoSandbox(SNAP)).toBe(false);
     });
 
     it("calls openshell sandbox cp and returns true on success", async () => {
-      addDir("/snap/20260323/openclaw");
+      addDir(`${SNAP}/openclaw`);
       mockExeca.mockResolvedValue({ exitCode: 0 });
 
-      expect(await restoreIntoSandbox("/snap/20260323", "mybox")).toBe(true);
+      expect(await restoreIntoSandbox(SNAP, "mybox")).toBe(true);
       expect(mockExeca).toHaveBeenCalledWith(
         "openshell",
-        ["sandbox", "cp", "/snap/20260323/openclaw", "mybox:/sandbox/.openclaw"],
+        ["sandbox", "cp", `${SNAP}/openclaw`, "mybox:/sandbox/.openclaw"],
         { reject: false },
       );
     });
 
     it("returns false when openshell fails", async () => {
-      addDir("/snap/20260323/openclaw");
+      addDir(`${SNAP}/openclaw`);
       mockExeca.mockResolvedValue({ exitCode: 1 });
 
-      expect(await restoreIntoSandbox("/snap/20260323")).toBe(false);
+      expect(await restoreIntoSandbox(SNAP)).toBe(false);
     });
 
     it("uses default sandbox name 'openclaw'", async () => {
-      addDir("/snap/20260323/openclaw");
+      addDir(`${SNAP}/openclaw`);
       mockExeca.mockResolvedValue({ exitCode: 0 });
 
-      await restoreIntoSandbox("/snap/20260323");
+      await restoreIntoSandbox(SNAP);
       expect(mockExeca).toHaveBeenCalledWith(
         "openshell",
         expect.arrayContaining(["openclaw:/sandbox/.openclaw"]),
@@ -207,15 +211,15 @@ describe("snapshot", () => {
 
   describe("rollbackFromSnapshot", () => {
     it("returns false when snapshot openclaw dir is missing", () => {
-      addDir("/snap/20260323");
-      expect(rollbackFromSnapshot("/snap/20260323")).toBe(false);
+      addDir(SNAP);
+      expect(rollbackFromSnapshot(SNAP)).toBe(false);
     });
 
     it("restores snapshot to ~/.openclaw with content", () => {
-      addDir("/snap/20260323/openclaw");
-      addFile("/snap/20260323/openclaw/openclaw.json", '{"restored":true}');
+      addDir(`${SNAP}/openclaw`);
+      addFile(`${SNAP}/openclaw/openclaw.json`, '{"restored":true}');
 
-      expect(rollbackFromSnapshot("/snap/20260323")).toBe(true);
+      expect(rollbackFromSnapshot(SNAP)).toBe(true);
 
       const restored = store.get(`${OPENCLAW_DIR}/openclaw.json`);
       if (!restored) throw new Error("openclaw.json not restored");
@@ -225,10 +229,10 @@ describe("snapshot", () => {
     it("archives existing ~/.openclaw before restoring", () => {
       addDir(OPENCLAW_DIR);
       addFile(`${OPENCLAW_DIR}/openclaw.json`, '{"old":true}');
-      addDir("/snap/20260323/openclaw");
-      addFile("/snap/20260323/openclaw/openclaw.json", '{"restored":true}');
+      addDir(`${SNAP}/openclaw`);
+      addFile(`${SNAP}/openclaw/openclaw.json`, '{"restored":true}');
 
-      expect(rollbackFromSnapshot("/snap/20260323")).toBe(true);
+      expect(rollbackFromSnapshot(SNAP)).toBe(true);
 
       const archived = [...store.keys()].find((k) => k.includes(".openclaw.nemoclaw-archived."));
       expect(archived).toBeDefined();
