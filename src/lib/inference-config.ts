@@ -121,9 +121,9 @@ export function getOpenClawPrimaryModel(provider: string, model?: string): strin
 }
 
 export function parseGatewayInference(output: string | null | undefined): GatewayInference | null {
-  if (!output || /Not configured/i.test(output)) return null;
-  const provider = output.match(/Provider:\s*(.+)/);
-  const model = output.match(/Model:\s*(.+)/);
+  if (!output) return null;
+  const provider = output.match(/Gateway inference:[\s\S]*?Provider:\s*(.+)/);
+  const model = output.match(/Gateway inference:[\s\S]*?Model:\s*(.+)/);
   if (!provider && !model) return null;
   return {
     provider: provider ? provider[1].trim() : null,
