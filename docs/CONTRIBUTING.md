@@ -88,7 +88,7 @@ make docs-live
 ### Format
 
 - Docs use [MyST Markdown](https://myst-parser.readthedocs.io/), a Sphinx-compatible superset of CommonMark.
-- Every page starts with YAML frontmatter (title, description, topics, tags, content type).
+- Every page starts with YAML frontmatter (title, description.main, description.agent, topics, tags, content type).
 - Include the SPDX license header after frontmatter:
 
   ```html
@@ -105,7 +105,9 @@ make docs-live
 title:
   page: "NemoClaw Page Title — Subtitle with Context"
   nav: "Short Nav Title"
-description: "One-sentence summary of the page."
+description:
+  main: "One-sentence summary for readers, SEO, and doc search snippets."
+  agent: "Third-person verb summary for agent routing. Add 'Use when...' with trigger phrases."
 keywords: ["primary keyword", "secondary keyword phrase"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "relevant", "tags"]
