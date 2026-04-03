@@ -468,14 +468,19 @@ async function deploy(instanceName) {
 
 async function start() {
   await ensureApiKey();
+  const sandboxEnv = getServicesSandboxEnvPrefix();
+  run(`${sandboxEnv}bash "${SCRIPTS}/start-services.sh"`);
+}
+
+function getServicesSandboxEnvPrefix() {
   const { defaultSandbox } = registry.listSandboxes();
   const safeName = defaultSandbox && /^[a-zA-Z0-9._-]+$/.test(defaultSandbox) ? defaultSandbox : null;
-  const sandboxEnv = safeName ? `SANDBOX_NAME=${shellQuote(safeName)}` : "";
-  run(`${sandboxEnv} bash "${SCRIPTS}/start-services.sh"`);
+  return safeName ? `SANDBOX_NAME=${shellQuote(safeName)} ` : "";
 }
 
 function stop() {
-  run(`bash "${SCRIPTS}/start-services.sh" --stop`);
+  const sandboxEnv = getServicesSandboxEnvPrefix();
+  run(`${sandboxEnv}bash "${SCRIPTS}/start-services.sh" --stop`);
 }
 
 function debug(args) {
@@ -533,7 +538,8 @@ function showStatus() {
   }
 
   // Show service status
-  run(`bash "${SCRIPTS}/start-services.sh" --status`);
+  const sandboxEnv = getServicesSandboxEnvPrefix();
+  run(`${sandboxEnv}bash "${SCRIPTS}/start-services.sh" --status`);
 }
 
 function listSandboxes() {

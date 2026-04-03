@@ -26,6 +26,55 @@ function runWithEnv(args, env = {}, timeout = 10000) {
   }
 }
 
+function createServiceCommandHarness(defaultSandbox = "test-slack1") {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-services-"));
+  const localBin = path.join(home, "bin");
+  const registryDir = path.join(home, ".nemoclaw");
+  const markerFile = path.join(home, "bash-commands");
+  fs.mkdirSync(localBin, { recursive: true });
+  fs.mkdirSync(registryDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(registryDir, "sandboxes.json"),
+    JSON.stringify({
+      sandboxes: {
+        [defaultSandbox]: {
+          name: defaultSandbox,
+          model: "test-model",
+          provider: "nvidia-prod",
+          gpuEnabled: false,
+          policies: [],
+        },
+      },
+      defaultSandbox,
+    }),
+    { mode: 0o600 }
+  );
+  fs.writeFileSync(
+    path.join(localBin, "bash"),
+    [
+      "#!/bin/sh",
+      `marker_file=${JSON.stringify(markerFile)}`,
+      "printf '%s\\n' \"$2\" >> \"$marker_file\"",
+      "exit 0",
+    ].join("\n"),
+    { mode: 0o755 }
+  );
+  fs.writeFileSync(
+    path.join(localBin, "openshell"),
+    "#!/bin/sh\nexit 0\n",
+    { mode: 0o755 }
+  );
+  return {
+    home,
+    localBin,
+    markerFile,
+    env: {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    },
+  };
+}
+
 describe("CLI dispatch", () => {
   it("help exits 0 and shows sections", () => {
     const r = run("help");
@@ -102,6 +151,41 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out.includes("Troubleshooting")).toBeTruthy();
     expect(r.out.includes("nemoclaw debug")).toBeTruthy();
+  });
+
+  it("start passes the default sandbox name to start-services.sh", () => {
+    const harness = createServiceCommandHarness();
+    const r = runWithEnv("start", {
+      ...harness.env,
+      NVIDIA_API_KEY: "nvapi-test",
+    });
+
+    expect(r.code).toBe(0);
+    const command = fs.readFileSync(harness.markerFile, "utf8").trim();
+    expect(command).toContain("SANDBOX_NAME='test-slack1' bash");
+    expect(command).toContain("start-services.sh");
+  });
+
+  it("stop passes the default sandbox name to start-services.sh", () => {
+    const harness = createServiceCommandHarness();
+    const r = runWithEnv("stop", harness.env);
+
+    expect(r.code).toBe(0);
+    const command = fs.readFileSync(harness.markerFile, "utf8").trim();
+    expect(command).toContain("SANDBOX_NAME='test-slack1' bash");
+    expect(command).toContain("start-services.sh");
+    expect(command).toContain("--stop");
+  });
+
+  it("status passes the default sandbox name to start-services.sh", () => {
+    const harness = createServiceCommandHarness();
+    const r = runWithEnv("status", harness.env);
+
+    expect(r.code).toBe(0);
+    const command = fs.readFileSync(harness.markerFile, "utf8").trim();
+    expect(command).toContain("SANDBOX_NAME='test-slack1' bash");
+    expect(command).toContain("start-services.sh");
+    expect(command).toContain("--status");
   });
 
   it("passes --follow through to openshell logs", () => {
