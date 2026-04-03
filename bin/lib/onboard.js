@@ -2434,6 +2434,12 @@ async function setupNim(gpu) {
               );
               process.exit(1);
             }
+            const keyError = validateNvidiaApiKeyValue(process.env.NVIDIA_API_KEY);
+            if (keyError) {
+              console.error(keyError);
+              console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
+              process.exit(1);
+            }
           } else {
             await ensureApiKey();
           }
