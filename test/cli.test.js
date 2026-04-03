@@ -553,16 +553,17 @@ describe("CLI dispatch", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-services-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
+    const sandboxName = `alpha-${Date.now()}-${process.pid}`;
     const openshellLog = path.join(home, "openshell.log");
-    const serviceDir = "/tmp/nemoclaw-services-alpha";
+    const serviceDir = path.join(os.tmpdir(), `nemoclaw-services-${sandboxName}`);
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
       path.join(registryDir, "sandboxes.json"),
       JSON.stringify({
         sandboxes: {
-          alpha: {
-            name: "alpha",
+          [sandboxName]: {
+            name: sandboxName,
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
@@ -576,7 +577,7 @@ describe("CLI dispatch", () => {
             policies: [],
           },
         },
-        defaultSandbox: "alpha",
+        defaultSandbox: sandboxName,
       }),
       { mode: 0o600 },
     );
@@ -602,7 +603,7 @@ describe("CLI dispatch", () => {
     fs.writeFileSync(path.join(serviceDir, "cloudflared.pid"), "999999\n");
 
     try {
-      const r = runWithEnv("alpha destroy --yes", {
+      const r = runWithEnv(`${sandboxName} destroy --yes`, {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
@@ -611,8 +612,7 @@ describe("CLI dispatch", () => {
       expect(r.out).toContain("telegram-bridge was not running");
       expect(r.out).toContain("cloudflared was not running");
       expect(r.out).toContain("All services stopped.");
-      expect(fs.existsSync(path.join(serviceDir, "telegram-bridge.pid"))).toBe(false);
-      expect(fs.existsSync(path.join(serviceDir, "cloudflared.pid"))).toBe(false);
+      expect(fs.existsSync(serviceDir)).toBe(false);
     } finally {
       fs.rmSync(serviceDir, { recursive: true, force: true });
     }

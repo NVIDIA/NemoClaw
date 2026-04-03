@@ -1167,6 +1167,8 @@ async function sandboxDestroy(sandboxName, args = []) {
 
   const { stopAll } = require("./lib/services");
   stopAll({ sandboxName });
+  const sandboxServiceDir = path.join(os.tmpdir(), `nemoclaw-services-${sandboxName}`);
+  fs.rmSync(sandboxServiceDir, { recursive: true, force: true });
 
   const removed = registry.removeSandbox(sandboxName);
   if (
