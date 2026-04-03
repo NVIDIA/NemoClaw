@@ -1,11 +1,11 @@
 ---
 name: nemoclaw-monitor-sandbox
-description: Inspects sandbox health, trace agent behavior, and diagnose problems. Use when debug nemoclaw agent issues, monitor nemoclaw sandbox, monitor nemoclaw sandbox activity, monitoring, nemoclaw, openclaw, openshell, troubleshooting.
+description: Inspects sandbox health, traces agent behavior, and diagnoses problems. Use when monitoring a running sandbox, debugging agent issues, or checking sandbox logs.
 ---
 
-# Nemoclaw Monitor Sandbox
+# NemoClaw Monitor Sandbox
 
-Inspect sandbox health, trace agent behavior, and diagnose problems.
+Inspects sandbox health, traces agent behavior, and diagnoses problems. Use when monitoring a running sandbox, debugging agent issues, or checking sandbox logs.
 
 ## Prerequisites
 

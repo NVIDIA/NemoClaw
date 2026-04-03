@@ -2,7 +2,9 @@
 title:
   page: "Deploy NemoClaw to a Remote GPU Instance with Brev"
   nav: "Deploy to Remote GPU"
-description: "Provision a remote GPU VM with NemoClaw using Brev deployment."
+description:
+  main: "Provision a remote GPU VM with NemoClaw using Brev deployment."
+  agent: "Provisions a remote GPU VM with NemoClaw using Brev deployment. Use when deploying to a cloud GPU, setting up a remote NemoClaw instance, or configuring Brev."
 keywords: ["deploy nemoclaw remote gpu", "nemoclaw brev cloud deployment"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "deployment", "gpu", "nemoclaw"]
