@@ -54,6 +54,7 @@ function tgApi(method, body) {
         hostname: "api.telegram.org",
         path: `/bot${TOKEN}/${method}`,
         method: "POST",
+        timeout: 60000,
         headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) },
       },
       (res) => {
@@ -64,6 +65,9 @@ function tgApi(method, body) {
         });
       },
     );
+    req.on("timeout", () => {
+      req.destroy(new Error(`Telegram API ${method} timed out`));
+    });
     req.on("error", reject);
     req.write(data);
     req.end();
