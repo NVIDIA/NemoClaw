@@ -2,7 +2,9 @@
 title:
   page: "Monitor NemoClaw Sandbox Activity and Debug Issues"
   nav: "Monitor Sandbox Activity"
-description: "Inspect sandbox health, trace agent behavior, and diagnose problems."
+description:
+  main: "Inspect sandbox health, trace agent behavior, and diagnose problems."
+  agent: "Inspects sandbox health, traces agent behavior, and diagnoses problems. Use when monitoring a running sandbox, debugging agent issues, or checking sandbox logs."
 keywords: ["monitor nemoclaw sandbox", "debug nemoclaw agent issues"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "monitoring", "troubleshooting", "nemoclaw"]

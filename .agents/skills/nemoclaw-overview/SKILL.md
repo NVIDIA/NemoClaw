@@ -1,11 +1,11 @@
 ---
 name: nemoclaw-overview
-description: Learns how NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox. Also covers nemoClaws is an open source reference stack that simplifies running OpenClaw always-on assistants safely; changelogs and feature history for NemoClaw releases. Use when blueprints, how nemoclaw works, inference routing, nemoclaw, nemoclaw changelog, nemoclaw overview, nemoclaw overview does fits, nemoclaw release notes.
+description: Describes how NemoClaw combines a CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox. Use when explaining the sandbox lifecycle, blueprint architecture, or how NemoClaw layers on top of OpenShell. Explains what NemoClaw does and how it fits with OpenClaw and OpenShell. Use when asking what NemoClaw is, how it works at a high level, or what the project provides. Lists changelogs and feature history for NemoClaw releases. Use when checking what changed in a release, looking up version history, or reviewing the changelog.
 ---
 
-# Nemoclaw Overview
+# NemoClaw Overview
 
-Learn how NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox.
+Describes how NemoClaw combines a CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox. Use when explaining the sandbox lifecycle, blueprint architecture, or how NemoClaw layers on top of OpenShell.
 
 ## Context
 

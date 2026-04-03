@@ -2,7 +2,9 @@
 title:
   page: "NemoClaw Troubleshooting Guide"
   nav: "Troubleshooting"
-description: "Diagnose and resolve common NemoClaw installation, onboarding, and runtime issues."
+description:
+  main: "Diagnose and resolve common NemoClaw installation, onboarding, and runtime issues."
+  agent: "Diagnoses and resolves common NemoClaw installation, onboarding, and runtime issues. Use when troubleshooting errors, debugging sandbox problems, or resolving setup failures."
 keywords: ["nemoclaw troubleshooting", "nemoclaw debug sandbox issues"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "troubleshooting", "nemoclaw"]

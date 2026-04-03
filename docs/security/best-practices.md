@@ -2,7 +2,9 @@
 title:
   page: "NemoClaw Security Best Practices — Controls, Risks, and Posture Profiles"
   nav: "Security Best Practices"
-description: "A risk framework for every configurable security control in NemoClaw: defaults, what you can change, and what happens if you do."
+description:
+  main: "A risk framework for every configurable security control in NemoClaw: defaults, what you can change, and what happens if you do."
+  agent: "Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs."
 keywords: ["nemoclaw security best practices", "sandbox security controls risk framework"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "security", "network_policy", "nemoclaw"]

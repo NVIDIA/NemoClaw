@@ -1,11 +1,11 @@
 ---
 name: nemoclaw-get-started
-description: Installs NemoClaw, launch a sandbox, and run your first agent prompt. Use when inference routing, install nemoclaw openclaw sandbox, nemoclaw, nemoclaw quickstart, nemoclaw quickstart install launch, openclaw, openshell, sandboxing.
+description: Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time.
 ---
 
-# Nemoclaw Get Started
+# NemoClaw Get Started
 
-Install NemoClaw, launch a sandbox, and run your first agent prompt.
+Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time.
 
 ## Prerequisites
 

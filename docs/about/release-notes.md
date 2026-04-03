@@ -2,7 +2,9 @@
 title:
   page: "NemoClaw Release Notes"
   nav: "Release Notes"
-description: "Changelog and feature history for NemoClaw releases."
+description:
+  main: "Changelog and feature history for NemoClaw releases."
+  agent: "Lists changelogs and feature history for NemoClaw releases. Use when checking what changed in a release, looking up version history, or reviewing the changelog."
 keywords: ["nemoclaw release notes", "nemoclaw changelog"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["nemoclaw", "releases"]
