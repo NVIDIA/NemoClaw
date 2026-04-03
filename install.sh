@@ -56,6 +56,14 @@ resolve_installer_version() {
 
 NEMOCLAW_VERSION="$(resolve_installer_version)"
 
+installer_version_for_display() {
+  if [[ -z "${NEMOCLAW_VERSION:-}" || "${NEMOCLAW_VERSION}" == "${DEFAULT_NEMOCLAW_VERSION}" ]]; then
+    printf ""
+    return
+  fi
+  printf "  v%s" "$NEMOCLAW_VERSION"
+}
+
 # Resolve which Git ref to install from.
 # Priority: NEMOCLAW_INSTALL_TAG env var > "latest" tag.
 resolve_release_tag() {
@@ -147,6 +155,8 @@ step() {
 }
 
 print_banner() {
+  local version_suffix
+  version_suffix="$(installer_version_for_display)"
   printf "\n"
   # ANSI Shadow ASCII art — hand-crafted, no figlet dependency
   printf "  ${C_GREEN}${C_BOLD} ███╗   ██╗███████╗███╗   ███╗ ██████╗  ██████╗██╗      █████╗ ██╗    ██╗${C_RESET}\n"
@@ -156,7 +166,7 @@ print_banner() {
   printf "  ${C_GREEN}${C_BOLD} ██║ ╚████║███████╗██║ ╚═╝ ██║╚██████╔╝╚██████╗███████╗██║  ██║╚███╔███╔╝${C_RESET}\n"
   printf "  ${C_GREEN}${C_BOLD} ╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝ ╚═════╝  ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝${C_RESET}\n"
   printf "\n"
-  printf "  ${C_DIM}Launch OpenClaw in an OpenShell sandbox.  v%s${C_RESET}\n" "$NEMOCLAW_VERSION"
+  printf "  ${C_DIM}Launch OpenClaw in an OpenShell sandbox.%s${C_RESET}\n" "$version_suffix"
   printf "\n"
 }
 
@@ -210,8 +220,10 @@ print_done() {
 }
 
 usage() {
+  local version_suffix
+  version_suffix="$(installer_version_for_display)"
   printf "\n"
-  printf "  ${C_BOLD}NemoClaw Installer${C_RESET}  ${C_DIM}v%s${C_RESET}\n\n" "$NEMOCLAW_VERSION"
+  printf "  ${C_BOLD}NemoClaw Installer${C_RESET}${C_DIM}%s${C_RESET}\n\n" "$version_suffix"
   printf "  ${C_DIM}Usage:${C_RESET}\n"
   printf "    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash\n"
   printf "    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- [options]\n\n"
@@ -240,7 +252,12 @@ usage() {
 }
 
 show_usage_notice() {
-  local -a notice_cmd=(node "${SCRIPT_DIR}/bin/lib/usage-notice.js")
+  local source_root="${NEMOCLAW_SOURCE_ROOT:-$SCRIPT_DIR}"
+  local notice_script="${source_root}/bin/lib/usage-notice.js"
+  if [[ ! -f "$notice_script" ]]; then
+    notice_script="${SCRIPT_DIR}/bin/lib/usage-notice.js"
+  fi
+  local -a notice_cmd=(node "$notice_script")
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     notice_cmd+=(--non-interactive)
     if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
@@ -327,6 +344,7 @@ ORIGINAL_PATH="${PATH:-}"
 NEMOCLAW_READY_NOW=false
 NEMOCLAW_RECOVERY_PROFILE=""
 NEMOCLAW_RECOVERY_EXPORT_DIR=""
+NEMOCLAW_SOURCE_ROOT="$SCRIPT_DIR"
 ONBOARD_RAN=false
 
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
@@ -423,22 +441,15 @@ ensure_nemoclaw_shim() {
   return 0
 }
 
-# Detect whether the installer had to extend PATH beyond what the user's
-# original shell had.  When running via `curl | bash`, PATH changes made
-# inside the script do not survive the script's exit, so the parent shell
-# still cannot resolve `nemoclaw`.
+# Detect whether the parent shell likely needs a reload after install.
+# When running via `curl | bash`, the installer executes in a subprocess.
+# Even when the bin directory is already in PATH, the parent shell may have
+# stale bash hash-table entries pointing to a previously deleted binary
+# (e.g. upgrade/reinstall after `rm $(which nemoclaw)`).  Sourcing the
+# shell profile reassigns PATH which clears the hash table, so we always
+# recommend it when the installer verified nemoclaw in the subprocess.
 needs_shell_reload() {
   [[ "$NEMOCLAW_READY_NOW" != true ]] && return 1
-
-  local npm_bin
-  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
-
-  if [[ ":$ORIGINAL_PATH:" == *":$NEMOCLAW_SHIM_DIR:"* ]]; then
-    return 1
-  fi
-  if [[ -n "$npm_bin" && ":$ORIGINAL_PATH:" == *":$npm_bin:"* ]]; then
-    return 1
-  fi
   return 0
 }
 
@@ -775,6 +786,7 @@ install_nemoclaw() {
   command_exists git || error "git was not found on PATH."
   if [[ -f "./package.json" ]] && grep -q '"name": "nemoclaw"' ./package.json 2>/dev/null; then
     info "NemoClaw package.json found in current directory — installing from source…"
+    NEMOCLAW_SOURCE_ROOT="$(pwd)"
     spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$(pwd)" \
       || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
     spin "Installing NemoClaw dependencies" npm install --ignore-scripts
@@ -793,6 +805,7 @@ install_nemoclaw() {
     local nemoclaw_src="${HOME}/.nemoclaw/source"
     rm -rf "$nemoclaw_src"
     mkdir -p "$(dirname "$nemoclaw_src")"
+    NEMOCLAW_SOURCE_ROOT="$nemoclaw_src"
     spin "Cloning NemoClaw source" git clone --depth 1 --branch "$release_ref" https://github.com/NVIDIA/NemoClaw.git "$nemoclaw_src"
     # Fetch version tags into the shallow clone so `git describe --tags
     # --match "v*"` works at runtime (the shallow clone only has the
@@ -941,7 +954,7 @@ main() {
       --non-interactive) NON_INTERACTIVE=1 ;;
       --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
       --version | -v)
-        printf "nemoclaw-installer v%s\n" "$NEMOCLAW_VERSION"
+        printf "nemoclaw-installer%s\n" "$(installer_version_for_display)"
         exit 0
         ;;
       --help | -h)

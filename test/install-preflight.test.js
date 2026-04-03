@@ -355,7 +355,9 @@ exit 98
     });
 
     expect(result.status).toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/nemoclaw-installer v\d+\.\d+\.\d+/);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output.trim()).toMatch(/^nemoclaw-installer(?: v\d+\.\d+\.\d+(?:-.+)?)?$/);
+    expect(output).not.toMatch(/0\.1\.0/);
   });
 
   it("-v exits 0 and prints the version number", () => {
@@ -365,7 +367,35 @@ exit 98
     });
 
     expect(result.status).toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/nemoclaw-installer v\d+\.\d+\.\d+/);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output.trim()).toMatch(/^nemoclaw-installer(?: v\d+\.\d+\.\d+(?:-.+)?)?$/);
+    expect(output).not.toMatch(/0\.1\.0/);
+  });
+
+  it("piped --help does not show the placeholder installer version", () => {
+    const result = spawnSync("bash", ["-s", "--", "--help"], {
+      cwd: os.tmpdir(),
+      encoding: "utf-8",
+      input: fs.readFileSync(INSTALLER, "utf-8"),
+    });
+
+    expect(result.status).toBe(0);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/NemoClaw Installer/);
+    expect(output).not.toMatch(/0\.1\.0/);
+  });
+
+  it("piped --version omits the placeholder installer version", () => {
+    const result = spawnSync("bash", ["-s", "--", "--version"], {
+      cwd: os.tmpdir(),
+      encoding: "utf-8",
+      input: fs.readFileSync(INSTALLER, "utf-8"),
+    });
+
+    expect(result.status).toBe(0);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output.trim()).toBe("nemoclaw-installer");
+    expect(output).not.toMatch(/0\.1\.0/);
   });
 
   it("uses npm install + npm link for a source checkout (no -g)", () => {
@@ -772,7 +802,7 @@ exit 0
     expect(`${result.stdout}${result.stderr}`).toMatch(/Created user-local shim/);
   });
 
-  it("does not print PATH recovery instructions when nemoclaw is already usable in this shell", () => {
+  it("shows source hint even when bin dir is already in PATH (stale hash protection)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-ready-shell-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
@@ -889,7 +919,9 @@ exit 0
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).toBe(0);
     expect(output).not.toMatch(/current shell cannot resolve 'nemoclaw'/);
-    expect(output).not.toMatch(/source .*\.bashrc|source .*\.zshrc|source .*\.profile/);
+    // Always show source hint — the parent shell may have stale hash-table
+    // entries after an upgrade/reinstall even when the dir is in PATH.
+    expect(output).toMatch(/\$ source /);
   });
 
   it("shows shell reload hint when PATH was extended by the installer", () => {
@@ -1279,6 +1311,20 @@ describe("installer pure helpers", () => {
     expect(r.stdout.trim()).toBe("0.1.0");
   });
 
+  it("installer_version_for_display: hides the placeholder default", () => {
+    const r = callInstallerFn(
+      'NEMOCLAW_VERSION="$DEFAULT_NEMOCLAW_VERSION"; installer_version_for_display',
+    );
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe("");
+  });
+
+  it("installer_version_for_display: formats real versions for display", () => {
+    const r = callInstallerFn('NEMOCLAW_VERSION="0.0.21"; installer_version_for_display');
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe("  v0.0.21");
+  });
+
   // -- resolve_default_sandbox_name --
 
   it("resolve_default_sandbox_name: returns 'my-assistant' with no registry", () => {
@@ -1627,5 +1673,45 @@ exit 0`,
     expect(gitCalls).toMatch(/--branch v0\.2\.0/);
     // Confirm the releases API was NOT called
     expect(`${result.stdout}${result.stderr}`).not.toMatch(/curl should not hit the releases API/);
+  });
+
+  it("resolves the usage notice helper from the cloned source during piped installs", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-pipe-usage-notice-"));
+    const { fakeBin, prefix } = buildCurlPipeEnv(tmp, {
+      curlStub: `#!/usr/bin/env bash
+/usr/bin/curl "$@"`,
+      gitStub: `#!/usr/bin/env bash
+if [ "$1" = "clone" ]; then
+  target="\${@: -1}"
+  mkdir -p "$target/nemoclaw" "$target/bin/lib"
+  echo '{"name":"nemoclaw","version":"0.5.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw-plugin","version":"0.5.0"}' > "$target/nemoclaw/package.json"
+  cat > "$target/bin/lib/usage-notice.js" <<'EOS'
+#!/usr/bin/env node
+process.exit(0)
+EOS
+  chmod +x "$target/bin/lib/usage-notice.js"
+  exit 0
+fi
+exit 0`,
+    });
+
+    const installerInput = fs.readFileSync(CURL_PIPE_INSTALLER, "utf-8");
+    const result = spawnSync("bash", [], {
+      cwd: tmp,
+      input: installerInput,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NPM_PREFIX: prefix,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).not.toMatch(/Cannot find module .*usage-notice\.js/);
   });
 });

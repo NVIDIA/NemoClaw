@@ -1,11 +1,11 @@
 ---
 name: nemoclaw-deploy-remote
-description: Provisions a remote GPU VM with NemoClaw using Brev deployment. Also covers securities hardening measures applied to the NemoClaw sandbox container image; forwards messages between Telegram and the sandboxed OpenClaw agent. Use when container security, deploy nemoclaw remote gpu, deployment, docker capabilities, gpu, nemoclaw, nemoclaw brev cloud deployment, nemoclaw sandbox hardening.
+description: Provisions a remote GPU VM with NemoClaw using Brev deployment. Use when deploying to a cloud GPU, setting up a remote NemoClaw instance, or configuring Brev. Describes security hardening measures applied to the NemoClaw sandbox container image. Use when reviewing container security, Docker capabilities, process limits, or sandbox hardening controls. Forwards messages between Telegram and the sandboxed OpenClaw agent. Use when setting up a Telegram bot bridge, connecting a chat interface, or configuring Telegram integration.
 ---
 
-# Nemoclaw Deploy Remote
+# NemoClaw Deploy Remote
 
-Provision a remote GPU VM with NemoClaw using Brev deployment.
+Provisions a remote GPU VM with NemoClaw using Brev deployment. Use when deploying to a cloud GPU, setting up a remote NemoClaw instance, or configuring Brev.
 
 ## Prerequisites
 
