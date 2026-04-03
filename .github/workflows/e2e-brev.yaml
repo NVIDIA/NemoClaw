@@ -158,6 +158,7 @@ jobs:
           TEST_SUITE: ${{ inputs.test_suite }}
           USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
           LAUNCHABLE_SETUP_SCRIPT: ${{ inputs.setup_script_url || '' }}
+          BREV_PROVIDER: gcp
           KEEP_ALIVE: ${{ inputs.keep_alive }}
         run: npx vitest run --project e2e-brev --reporter=verbose
 
