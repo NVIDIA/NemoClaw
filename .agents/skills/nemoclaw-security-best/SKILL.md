@@ -1,11 +1,11 @@
 ---
 name: nemoclaw-security-best
-description: As risk framework for every configurable security control in NemoClaw: defaults, what you can change, and what happens if you do. Use when nemoclaw, nemoclaw security best practices, network policy, openclaw, openshell, sandbox security controls risk framework, sandboxing, security.
+description: Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs.
 ---
 
-# Nemoclaw Security Best
+# NemoClaw Security Best
 
-A risk framework for every configurable security control in NemoClaw: defaults, what you can change, and what happens if you do.
+Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs.
 
 ## Context
 

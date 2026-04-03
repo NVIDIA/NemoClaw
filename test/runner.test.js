@@ -377,7 +377,7 @@ describe("regression guards", () => {
       calls.push(args);
       return {
         status: 0,
-        stdout: "visit https://alice:secret@example.com/?token=abc123456789\n",
+        stdout: "visit https://alice:secret@example.com/?token=abc123456789\n", // gitleaks:allow
         stderr: "",
       };
     };

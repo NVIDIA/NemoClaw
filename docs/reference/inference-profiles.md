@@ -2,7 +2,9 @@
 title:
   page: "NemoClaw Inference Profiles"
   nav: "Inference Profiles"
-description: "Configuration reference for NemoClaw routed inference providers."
+description:
+  main: "Configuration reference for NemoClaw routed inference providers."
+  agent: "Documents configuration options for NemoClaw routed inference providers. Use when configuring inference profiles, looking up provider routing settings, or reviewing available LLM providers."
 keywords: ["nemoclaw inference profiles", "nemoclaw provider routing"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "inference_routing", "llms"]
