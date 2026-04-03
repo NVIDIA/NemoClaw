@@ -241,7 +241,11 @@ usage() {
 
 show_usage_notice() {
   local source_root="${NEMOCLAW_SOURCE_ROOT:-$SCRIPT_DIR}"
-  local -a notice_cmd=(node "${source_root}/bin/lib/usage-notice.js")
+  local notice_script="${source_root}/bin/lib/usage-notice.js"
+  if [[ ! -f "$notice_script" ]]; then
+    notice_script="${SCRIPT_DIR}/bin/lib/usage-notice.js"
+  fi
+  local -a notice_cmd=(node "$notice_script")
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     notice_cmd+=(--non-interactive)
     if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
