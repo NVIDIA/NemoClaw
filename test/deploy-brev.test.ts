@@ -151,19 +151,21 @@ describe("deploy brev compatibility", () => {
     expect(calls.some((call) => call.startsWith("create "))).toBe(false);
   });
 
-  it("falls back to the default GPU name when normalization produces an empty value", () => {
+  it("falls back to the legacy GPU name when an explicit override normalizes to empty", () => {
     const { home, localBin, markerFile } = setupDeployStubs();
 
     const result = runWithEnv("deploy pr-1377-empty-gpu-name", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
       NVIDIA_API_KEY: "nvapi-test",
+      NEMOCLAW_GPU: "a2-highgpu-1g:nvidia-l40s:1",
       NEMOCLAW_BREV_TYPE: "a3-highgpu-1g",
       NEMOCLAW_BREV_GPU_NAME: "nvidia-",
     });
 
     expect(result.code).toBe(0);
     const calls = readBrevCalls(markerFile);
-    expect(calls).toContain("create pr-1377-empty-gpu-name --type a3-highgpu-1g --gpu-name A100");
+    expect(calls).toContain("create pr-1377-empty-gpu-name --type a3-highgpu-1g --gpu-name L40S");
+    expect(calls.join("\n")).not.toContain("--gpu ");
   });
 });

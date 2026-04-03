@@ -668,18 +668,12 @@ function firstNonEmptyValue(...values) {
 function resolveBrevCreateConfig() {
   const legacyGpu = String(process.env.NEMOCLAW_GPU || "").trim();
   const legacyParts = legacyGpu.includes(":") ? legacyGpu.split(":") : [legacyGpu];
-  const type = firstNonEmptyValue(
-    process.env.NEMOCLAW_BREV_TYPE,
-    legacyParts[0],
-    "a2-highgpu-1g",
+  const type = firstNonEmptyValue(process.env.NEMOCLAW_BREV_TYPE, legacyParts[0], "a2-highgpu-1g");
+  const gpuName = firstNonEmptyValue(
+    normalizeBrevGpuName(process.env.NEMOCLAW_BREV_GPU_NAME),
+    normalizeBrevGpuName(legacyParts[1]),
+    "A100",
   );
-  const gpuName = normalizeBrevGpuName(
-    firstNonEmptyValue(
-      process.env.NEMOCLAW_BREV_GPU_NAME,
-      legacyParts[1],
-      "A100",
-    ),
-  ) || "A100";
   return { type, gpuName };
 }
 
