@@ -127,6 +127,34 @@ describe("policies", () => {
         errSpy.mockRestore();
       }
     });
+
+    it("does not log when preset exists but has no host entries", () => {
+      const noHostPreset =
+        "preset:\n  name: empty\n\nnetwork_policies:\n  empty_rule:\n    name: empty_rule\n    endpoints: []\n";
+      const loadSpy = vi.spyOn(policies, "loadPreset").mockReturnValue(noHostPreset);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("exit");
+      });
+
+      try {
+        try {
+          policies.applyPreset("test-sandbox", "empty");
+        } catch {
+          /* applyPreset may throw if sandbox not running */
+        }
+        const messages = logSpy.mock.calls.map((c) => c[0]);
+        expect(
+          messages.some((m) => typeof m === "string" && m.includes("Widening sandbox egress")),
+        ).toBe(false);
+      } finally {
+        loadSpy.mockRestore();
+        logSpy.mockRestore();
+        errSpy.mockRestore();
+        exitSpy.mockRestore();
+      }
+    });
   });
 
   describe("buildPolicySetCommand", () => {
