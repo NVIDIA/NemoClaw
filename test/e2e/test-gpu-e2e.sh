@@ -17,18 +17,20 @@
 #   - NVIDIA GPU with drivers (nvidia-smi works)
 #   - Docker
 #   - NEMOCLAW_NON_INTERACTIVE=1
+#   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 #   - Internet access (ollama.com for install, registry.ollama.ai for model pull)
 #   - No existing Ollama service on port 11434 (ephemeral runners are ideal)
 #
 # Environment variables:
-#   NEMOCLAW_NON_INTERACTIVE=1   — required
-#   NEMOCLAW_SANDBOX_NAME        — sandbox name (default: e2e-gpu-ollama)
-#   NEMOCLAW_RECREATE_SANDBOX=1  — recreate sandbox if it exists
-#   NEMOCLAW_MODEL               — model for onboard (default: auto-selected by onboard)
-#   SKIP_UNINSTALL               — set to 1 to skip uninstall (debugging)
+#   NEMOCLAW_NON_INTERACTIVE=1             — required
+#   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required for non-interactive install/onboard
+#   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-gpu-ollama)
+#   NEMOCLAW_RECREATE_SANDBOX=1            — recreate sandbox if it exists
+#   NEMOCLAW_MODEL                         — model for onboard (default: auto-selected by onboard)
+#   SKIP_UNINSTALL                         — set to 1 to skip uninstall (debugging)
 #
 # Usage:
-#   NEMOCLAW_NON_INTERACTIVE=1 bash test/e2e/test-gpu-e2e.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash test/e2e/test-gpu-e2e.sh
 
 set -uo pipefail
 
@@ -149,6 +151,11 @@ fi
 
 if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then
   fail "NEMOCLAW_NON_INTERACTIVE=1 is required"
+  exit 1
+fi
+
+if [ "${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}" != "1" ]; then
+  fail "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is required for non-interactive install"
   exit 1
 fi
 
