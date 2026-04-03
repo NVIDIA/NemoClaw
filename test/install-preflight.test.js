@@ -355,7 +355,9 @@ exit 98
     });
 
     expect(result.status).toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/nemoclaw-installer v\d+\.\d+\.\d+/);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output.trim()).toMatch(/^nemoclaw-installer(?: v\d+\.\d+\.\d+(?:-.+)?)?$/);
+    expect(output).not.toMatch(/0\.1\.0/);
   });
 
   it("-v exits 0 and prints the version number", () => {
@@ -365,7 +367,35 @@ exit 98
     });
 
     expect(result.status).toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/nemoclaw-installer v\d+\.\d+\.\d+/);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output.trim()).toMatch(/^nemoclaw-installer(?: v\d+\.\d+\.\d+(?:-.+)?)?$/);
+    expect(output).not.toMatch(/0\.1\.0/);
+  });
+
+  it("piped --help does not show the placeholder installer version", () => {
+    const result = spawnSync("bash", ["-s", "--", "--help"], {
+      cwd: os.tmpdir(),
+      encoding: "utf-8",
+      input: fs.readFileSync(INSTALLER, "utf-8"),
+    });
+
+    expect(result.status).toBe(0);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/NemoClaw Installer/);
+    expect(output).not.toMatch(/0\.1\.0/);
+  });
+
+  it("piped --version omits the placeholder installer version", () => {
+    const result = spawnSync("bash", ["-s", "--", "--version"], {
+      cwd: os.tmpdir(),
+      encoding: "utf-8",
+      input: fs.readFileSync(INSTALLER, "utf-8"),
+    });
+
+    expect(result.status).toBe(0);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output.trim()).toBe("nemoclaw-installer");
+    expect(output).not.toMatch(/0\.1\.0/);
   });
 
   it("uses npm install + npm link for a source checkout (no -g)", () => {
@@ -1279,6 +1309,20 @@ describe("installer pure helpers", () => {
       },
     );
     expect(r.stdout.trim()).toBe("0.1.0");
+  });
+
+  it("installer_version_for_display: hides the placeholder default", () => {
+    const r = callInstallerFn(
+      'NEMOCLAW_VERSION="$DEFAULT_NEMOCLAW_VERSION"; installer_version_for_display',
+    );
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe("");
+  });
+
+  it("installer_version_for_display: formats real versions for display", () => {
+    const r = callInstallerFn('NEMOCLAW_VERSION="0.0.21"; installer_version_for_display');
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe("  v0.0.21");
   });
 
   // -- resolve_default_sandbox_name --
