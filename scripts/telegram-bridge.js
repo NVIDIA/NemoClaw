@@ -16,8 +16,8 @@
  *   ALLOWED_CHAT_IDS    — comma-separated Telegram chat IDs to accept (optional, accepts all if unset)
  */
 
-const https = require("https");
 const { execFileSync, spawn } = require("child_process");
+const { tgApi: tgApiRaw } = require("../bin/lib/telegram-api");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 const { shellQuote, validateName } = require("../bin/lib/runner");
 const { parseAllowedChatIds, isChatAllowed } = require("../bin/lib/chat-filter");
@@ -47,27 +47,7 @@ const busyChats = new Set();
 // ── Telegram API helpers ──────────────────────────────────────────
 
 function tgApi(method, body) {
-  return new Promise((resolve, reject) => {
-    const data = JSON.stringify(body);
-    const req = https.request(
-      {
-        hostname: "api.telegram.org",
-        path: `/bot${TOKEN}/${method}`,
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) },
-      },
-      (res) => {
-        let buf = "";
-        res.on("data", (c) => (buf += c));
-        res.on("end", () => {
-          try { resolve(JSON.parse(buf)); } catch { resolve({ ok: false, error: buf }); }
-        });
-      },
-    );
-    req.on("error", reject);
-    req.write(data);
-    req.end();
-  });
+  return tgApiRaw(TOKEN, method, body);
 }
 
 async function sendMessage(chatId, text, replyTo) {
