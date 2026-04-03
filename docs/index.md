@@ -166,6 +166,16 @@ Plugin structure, blueprint system, and sandbox lifecycle.
 {bdg-secondary}`Reference`
 :::
 
+:::{grid-item-card} Support Matrix
+:link: reference/support-matrix
+:link-type: doc
+
+Current platform, runtime, provider, and deployment support status.
+
++++
+{bdg-secondary}`Reference`
+:::
+
 :::{grid-item-card} Network Policies
 :link: reference/network-policies
 :link-type: doc
@@ -292,6 +302,7 @@ Back Up and Restore <workspace/backup-restore>
 :hidden:
 
 Architecture <reference/architecture>
+Support Matrix <reference/support-matrix>
 Commands <reference/commands>
 Network Policies <reference/network-policies>
 Troubleshooting <reference/troubleshooting>
