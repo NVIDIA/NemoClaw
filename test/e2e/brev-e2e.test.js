@@ -22,6 +22,8 @@
  *   LAUNCHABLE_SETUP_SCRIPT — URL to setup script for launchable path (default: brev-launchable-ci-cpu.sh on main)
  *   BREV_MIN_VCPU          — Minimum vCPUs for CPU instance (default: 4)
  *   BREV_MIN_RAM           — Minimum RAM in GB for CPU instance (default: 16)
+ *   BREV_PROVIDER          — Cloud provider filter for brev search (default: gcp)
+ *   BREV_MIN_DISK          — Minimum disk size in GB (default: 50)
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -33,6 +35,8 @@ import path from "node:path";
 // Instance configuration
 const BREV_MIN_VCPU = parseInt(process.env.BREV_MIN_VCPU || "4", 10);
 const BREV_MIN_RAM = parseInt(process.env.BREV_MIN_RAM || "16", 10);
+const BREV_PROVIDER = process.env.BREV_PROVIDER || "gcp";
+const BREV_MIN_DISK = parseInt(process.env.BREV_MIN_DISK || "50", 10);
 const INSTANCE_NAME = process.env.INSTANCE_NAME;
 const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
@@ -231,7 +235,9 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
         `[${elapsed()}] Creating instance via launchable (brev search cpu | brev create + startup-script)...`,
       );
       console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_PATH}`);
-      console.log(`[${elapsed()}]   cpu: min ${BREV_MIN_VCPU} vCPU, ${BREV_MIN_RAM} GB RAM`);
+      console.log(
+        `[${elapsed()}]   cpu: min ${BREV_MIN_VCPU} vCPU, ${BREV_MIN_RAM} GB RAM, ${BREV_MIN_DISK} GB disk, provider: ${BREV_PROVIDER}`,
+      );
 
       // Resolve the setup script to a local file path.
       // Default: repo-local scripts/brev-launchable-ci-cpu.sh (hermetic).
@@ -258,7 +264,7 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       // we catch create failures and check if the instance exists anyway.
       try {
         execSync(
-          `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --sort price | ` +
+          `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --min-disk ${BREV_MIN_DISK} --provider ${BREV_PROVIDER} --sort price | ` +
             `brev create ${INSTANCE_NAME} --startup-script @${setupScriptPath} --detached`,
           { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
         );
@@ -509,10 +515,12 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       // ── Bare instance path: brev create + brev-setup.sh ────────────
       // Full bootstrap from scratch. Slower but doesn't require a launchable.
       console.log(`[${elapsed()}] Creating bare CPU instance via brev search cpu | brev create...`);
-      console.log(`[${elapsed()}]   min-vcpu: ${BREV_MIN_VCPU}, min-ram: ${BREV_MIN_RAM}GB`);
+      console.log(
+        `[${elapsed()}]   min-vcpu: ${BREV_MIN_VCPU}, min-ram: ${BREV_MIN_RAM}GB, disk: ${BREV_MIN_DISK}GB, provider: ${BREV_PROVIDER}`,
+      );
       try {
         execSync(
-          `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --sort price | ` +
+          `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --min-disk ${BREV_MIN_DISK} --provider ${BREV_PROVIDER} --sort price | ` +
             `brev create ${INSTANCE_NAME} --detached`,
           { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
         );
