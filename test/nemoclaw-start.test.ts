@@ -502,3 +502,91 @@ describe("nemoclaw-start signal handling", () => {
     expect(src).toMatch(/AUTO_PAIR_PID=\$!/);
   });
 });
+
+describe("write_auth_profile provider key resolution (#1332)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("reads provider key from NEMOCLAW_PROVIDER_KEY env var", () => {
+    const fn = src.match(/write_auth_profile\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain('NEMOCLAW_PROVIDER_KEY:-inference');
+  });
+
+  it("falls back to 'inference' when NEMOCLAW_PROVIDER_KEY is unset", () => {
+    const fn = src.match(/write_auth_profile\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    // The default value in the parameter expansion must be 'inference'
+    expect(fn[1]).toMatch(/\$\{NEMOCLAW_PROVIDER_KEY:-inference\}/);
+  });
+
+  it("does not hardcode 'nvidia' as the provider key", () => {
+    const fn = src.match(/write_auth_profile\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    // Must not contain the old hardcoded 'nvidia' provider
+    expect(fn[1]).not.toContain("'nvidia'");
+    expect(fn[1]).not.toContain('"nvidia"');
+    expect(fn[1]).not.toContain("nvidia:manual");
+  });
+
+  it("passes provider_key as a CLI argument to python3 (no shell interpolation)", () => {
+    const fn = src.match(/write_auth_profile\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    // Must pass as positional arg, not interpolated into the heredoc
+    expect(fn[1]).toContain('python3 - "$provider_key"');
+    expect(fn[1]).toContain("sys.argv[1]");
+  });
+
+  it("is a no-op when NVIDIA_API_KEY is unset", () => {
+    const fn = src.match(/write_auth_profile\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toMatch(/\[ -z "\$\{NVIDIA_API_KEY:-\}" \]/);
+    expect(fn[1]).toContain("return");
+  });
+});
+
+describe("write_auth_profile functional: resolution path and fallback (#1332)", () => {
+  const { execSync } = require("node:child_process");
+  const os = require("node:os");
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-test-"));
+  const authDir = path.join(tmpDir, ".openclaw", "agents", "main", "agent");
+
+  // Extract the Python snippet from write_auth_profile for isolated testing
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const pyMatch = src.match(/write_auth_profile\(\)[\s\S]*?python3 - "\$provider_key" <<'PYAUTH'\n([\s\S]*?)\nPYAUTH/);
+  const pyScript = pyMatch ? pyMatch[1] : "";
+
+  it("resolution: uses NEMOCLAW_PROVIDER_KEY value as provider in auth profile", () => {
+    expect(pyScript).toBeTruthy();
+    execSync(`python3 - "openai" <<'EOF'\n${pyScript}\nEOF`, {
+      env: { ...process.env, HOME: tmpDir },
+      encoding: "utf-8",
+    });
+    const authPath = path.join(authDir, "auth-profiles.json");
+    expect(fs.existsSync(authPath)).toBe(true);
+    const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
+    expect(profile).toHaveProperty("openai:manual");
+    expect(profile["openai:manual"].provider).toBe("openai");
+    expect(profile["openai:manual"].profileId).toBe("openai:manual");
+  });
+
+  it("fallback: defaults to 'inference' when env var is unset (shell passes default)", () => {
+    // Clean up from previous test
+    if (fs.existsSync(path.join(authDir, "auth-profiles.json"))) {
+      fs.rmSync(path.join(authDir, "auth-profiles.json"), { force: true });
+    }
+
+    execSync(`python3 - "inference" <<'EOF'\n${pyScript}\nEOF`, {
+      env: { ...process.env, HOME: tmpDir },
+      encoding: "utf-8",
+    });
+    const authPath = path.join(authDir, "auth-profiles.json");
+    expect(fs.existsSync(authPath)).toBe(true);
+    const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
+    expect(profile).toHaveProperty("inference:manual");
+    expect(profile["inference:manual"].provider).toBe("inference");
+    expect(profile["inference:manual"].profileId).toBe("inference:manual");
+  });
+
+  // Cleanup
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
