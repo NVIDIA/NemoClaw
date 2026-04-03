@@ -38,18 +38,21 @@ At onboard time, NemoClaw configures:
 
 That means the sandbox knows which model family to use, while OpenShell owns the actual provider credential and upstream endpoint.
 
-## Supported Providers
+## Provider Status
 
-The following non-experimental provider paths are available through `nemoclaw onboard`.
+The following provider paths are available through `nemoclaw onboard`.
 
-| Provider | Endpoint Type | Notes |
-|---|---|---|
-| NVIDIA Endpoints | OpenAI-compatible | Hosted models on `integrate.api.nvidia.com` |
-| OpenAI | Native OpenAI-compatible | Uses OpenAI model IDs |
-| Other OpenAI-compatible endpoint | Custom OpenAI-compatible | For compatible proxies and gateways |
-| Anthropic | Native Anthropic | Uses `anthropic-messages` |
-| Other Anthropic-compatible endpoint | Custom Anthropic-compatible | For Claude proxies and compatible gateways |
-| Google Gemini | OpenAI-compatible | Uses Google's OpenAI-compatible endpoint |
+| Provider | Status | Endpoint Type | Notes |
+|---|---|---|---|
+| NVIDIA Endpoints | Supported | OpenAI-compatible | Hosted models on `integrate.api.nvidia.com` |
+| OpenAI | Supported | Native OpenAI-compatible | Uses OpenAI model IDs |
+| Other OpenAI-compatible endpoint | Supported | Custom OpenAI-compatible | For compatible proxies and gateways |
+| Anthropic | Supported | Native Anthropic | Uses `anthropic-messages` |
+| Other Anthropic-compatible endpoint | Supported | Custom Anthropic-compatible | For Claude proxies and compatible gateways |
+| Google Gemini | Supported | OpenAI-compatible | Uses Google's OpenAI-compatible endpoint |
+| Local Ollama | Caveated | Local Ollama API | Available in the standard onboarding flow when Ollama is installed or running on the host |
+| Local NVIDIA NIM | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable GPU |
+| Local vLLM | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` and a server already running on `localhost:8000` |
 
 ## Validation During Onboarding
 
@@ -68,7 +71,7 @@ If validation fails, the wizard does not continue to sandbox creation.
 
 ## Local Ollama
 
-Local Ollama is available in the standard onboarding flow when Ollama is installed or running on the host.
+Local Ollama is a caveated provider path available in the standard onboarding flow when Ollama is installed or running on the host.
 It uses the same routed `inference.local` pattern, but the upstream runtime runs locally instead of in the cloud.
 
 Ollama gets additional onboarding help:
@@ -80,7 +83,7 @@ Ollama gets additional onboarding help:
 
 ## Experimental Local Providers
 
-The following local providers require `NEMOCLAW_EXPERIMENTAL=1`:
+The following local providers remain experimental and require `NEMOCLAW_EXPERIMENTAL=1`:
 
 - Local NVIDIA NIM (requires a NIM-capable GPU)
 - Local vLLM (must already be running on `localhost:8000`)

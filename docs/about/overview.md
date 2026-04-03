@@ -45,7 +45,7 @@ NemoClaw provides the following capabilities on top of the OpenShell runtime.
 | Hardened blueprint | A security-first Dockerfile with capability drops, least-privilege network rules, and declarative policy. |
 | State management | Safe migration of agent state across machines with credential stripping and integrity verification. |
 | Messaging bridges | Host-side processes that connect Telegram, Discord, and Slack to the sandboxed agent. |
-| Routed inference | Provider-routed model calls through the OpenShell gateway, transparent to the agent. Supports NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and local Ollama. |
+| Routed inference | Provider-routed model calls through the OpenShell gateway, transparent to the agent. Supports NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, compatible OpenAI or Anthropic endpoints, and the caveated Local Ollama path. |
 | Layered protection | Network, filesystem, process, and inference controls that can be hot-reloaded or locked at creation. |
 
 ## Challenge

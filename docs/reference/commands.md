@@ -67,7 +67,8 @@ $ nemoclaw onboard
 ```
 
 The wizard prompts for a provider first, then collects the provider credential if needed.
-Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
+Supported provider choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
+Local Ollama is also available in the standard onboarding flow as a caveated provider path.
 Credentials are stored in `~/.nemoclaw/credentials.json`.
 The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
 

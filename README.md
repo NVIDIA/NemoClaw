@@ -54,13 +54,15 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 
 #### Container Runtimes
 
-| Platform | Supported runtimes | Notes |
-|----------|--------------------|-------|
-| Linux | Docker | Primary supported path. |
-| macOS (Apple Silicon) | Colima, Docker Desktop | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
-| macOS (Intel) | Podman | Not supported yet. Depends on OpenShell support for Podman on macOS. |
-| Windows WSL | Docker Desktop (WSL backend) | Supported target path. |
-| DGX Spark | Docker | Refer to the [DGX Spark setup guide](https://github.com/NVIDIA/NemoClaw/blob/main/spark-install.md) for cgroup v2 and Docker configuration. |
+| Platform | Supported runtimes | Status | Notes |
+|----------|--------------------|--------|-------|
+| Linux | Docker | Supported | Primary supported path. |
+| macOS (Apple Silicon) | Colima, Docker Desktop | Caveated | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
+| macOS (Intel) | Podman | Caveated | Depends on future OpenShell support for Podman on macOS. |
+| Windows WSL2 | Docker Desktop (WSL backend) | Out of scope | The CLI may run in WSL2, but WSL2 is not part of the supported NemoClaw target matrix. |
+| Windows native | N/A | Out of scope | Native Windows hosts are not part of the supported NemoClaw target matrix. |
+| Jetson | N/A | Out of scope | Jetson hosts are not part of the supported NemoClaw target matrix. |
+| DGX Spark | Docker | Supported | Refer to the [DGX Spark setup guide](https://github.com/NVIDIA/NemoClaw/blob/main/spark-install.md) for cgroup v2 and Docker configuration. |
 
 ### Install NemoClaw and Onboard OpenClaw Agent
 
