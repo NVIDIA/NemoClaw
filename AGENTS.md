@@ -82,8 +82,8 @@ Security-sensitive code paths require extra test coverage.
 
 **Updating docs:**
 
-- Edit under `docs/` (never `.agents/skills/docs/`)
-- Regenerate skills: `python scripts/docs-to-skills.py docs/ .agents/skills/docs/ --prefix nemoclaw`
+- Edit under `docs/` (never `.agents/skills/nemoclaw-*/*.md`)
+- Regenerate skills: `python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw`
 - Preview: `make docs-live`
 
 ### Gotchas

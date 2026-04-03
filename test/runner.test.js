@@ -377,7 +377,7 @@ describe("regression guards", () => {
       calls.push(args);
       return {
         status: 0,
-        stdout: "visit https://alice:secret@example.com/?token=abc123456789\n",
+        stdout: "visit https://alice:secret@example.com/?token=abc123456789\n", // gitleaks:allow
         stderr: "",
       };
     };
@@ -529,6 +529,68 @@ describe("regression guards", () => {
       );
       expect(src).toContain("openshell-checksums-sha256.txt");
       expect(src).toContain("shasum -a 256 -c");
+    });
+
+    it("install-openshell.sh falls back to curl when gh fails (#1318)", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh"),
+        "utf-8",
+      );
+      expect(src).toContain("download_with_curl");
+      const ghBlock = src.slice(src.indexOf("command -v gh"));
+      expect(ghBlock).toContain("2>/dev/null");
+      expect(ghBlock).toContain("falling back to curl");
+      expect(ghBlock).toContain("download_with_curl");
+    });
+
+    it("install-openshell.sh gh-absent path uses curl directly", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh"),
+        "utf-8",
+      );
+      expect(src).toContain("download_with_curl");
+      const ghCheck = src.indexOf("command -v gh");
+      const elseBlock = src.indexOf("\nelse\n", ghCheck);
+      const finalFi = src.indexOf("\nfi\n", elseBlock);
+      expect(ghCheck).toBeGreaterThan(-1);
+      expect(elseBlock).toBeGreaterThan(ghCheck);
+      expect(finalFi).toBeGreaterThan(elseBlock);
+      const fallthrough = src.slice(elseBlock, finalFi);
+      expect(fallthrough).toContain("download_with_curl");
+      expect(fallthrough).not.toContain("gh release");
+    });
+
+    it("install-openshell.sh gh-present-but-fails path falls back to curl", () => {
+      const scriptPath = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
+      const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-stub-"));
+      const ghStub = path.join(tmpBin, "gh");
+      fs.writeFileSync(ghStub, "#!/bin/sh\nexit 4\n");
+      fs.chmodSync(ghStub, 0o755);
+
+      const stub = `
+        #!/usr/bin/env bash
+        openshell() { echo "openshell 0.0.1"; }
+        export -f openshell
+        export PATH="${tmpBin}:/usr/bin:/bin"
+        curl() { echo "CURL_FALLBACK $*"; return 0; }
+        export -f curl
+        shasum() { echo "checksum OK"; return 0; }
+        export -f shasum
+        tar() { return 0; }; export -f tar
+        install() { return 0; }; export -f install
+        source "${scriptPath}"
+      `;
+      try {
+        const result = spawnSync("bash", ["-c", stub], {
+          encoding: "utf-8",
+          timeout: 5000,
+        });
+        const out = (result.stdout || "") + (result.stderr || "");
+        expect(out).toContain("falling back to curl");
+        expect(out).toContain("CURL_FALLBACK");
+      } finally {
+        fs.rmSync(tmpBin, { recursive: true, force: true });
+      }
     });
   });
 

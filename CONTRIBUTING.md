@@ -96,6 +96,14 @@ The repository is organized as follows.
 | `test/` | Root-level integration tests |
 | `docs/` | User-facing documentation (Sphinx/MyST) |
 
+## Language Policy
+
+All new source files must be TypeScript. Do not add new `.js` files to the project. When modifying an existing JavaScript file, prefer migrating it to TypeScript in the same PR.
+
+Existing JavaScript in `bin/` and `scripts/` is being incrementally migrated (see `src/lib/` for completed migrations). Tests in `test/` may remain ESM JavaScript for now but new test files should use TypeScript where practical.
+
+Shell scripts (`scripts/*.sh`) must pass ShellCheck and use `shfmt` formatting.
+
 ## Documentation
 
 If your change affects user-facing behavior (new commands, changed defaults, new features, bug fixes that contradict existing docs), update the relevant pages under `docs/` in the same PR.

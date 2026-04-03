@@ -53,6 +53,7 @@ const registry = require("./registry");
 const nim = require("./nim");
 const onboardSession = require("./onboard-session");
 const policies = require("./policies");
+const { ensureUsageNoticeConsent } = require("./usage-notice");
 const { checkPortAvailable, ensureSwap, getMemoryInfo } = require("./preflight");
 
 // Typed modules (compiled from src/lib/*.ts → dist/lib/*.js)
@@ -1905,8 +1906,12 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
     return;
   }
 
+  // When a stale gateway is detected (metadata exists but container is gone,
+  // e.g. after a Docker/Colima restart), skip the destroy — `gateway start`
+  // can recover the container without wiping metadata and mTLS certs.
+  // The retry loop below will destroy only if start genuinely fails.
   if (hasStaleGateway(gwInfo)) {
-    runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+    console.log("  Stale gateway detected — attempting restart without destroy...");
   }
 
   const gwArgs = ["--name", GATEWAY_NAME];
@@ -3276,10 +3281,20 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   }
 
   const knownPresets = new Set(allPresets.map((p) => p.name));
-  const invalidPresets = interactiveChoice.filter((name) => !knownPresets.has(name));
-  if (invalidPresets.length > 0) {
+  let invalidPresets = interactiveChoice.filter((name) => !knownPresets.has(name));
+  while (invalidPresets.length > 0) {
     console.error(`  Unknown policy preset(s): ${invalidPresets.join(", ")}`);
-    process.exit(1);
+    console.log("  Available presets:");
+    for (const p of allPresets) {
+      console.log(`    - ${p.name}`);
+    }
+    const retry = await prompt("  Enter preset names (comma-separated), or leave empty to skip: ");
+    if (!retry.trim()) {
+      console.log("  Skipping policy presets.");
+      return [];
+    }
+    interactiveChoice = parsePolicyPresetEnv(retry);
+    invalidPresets = interactiveChoice.filter((name) => !knownPresets.has(name));
   }
 
   if (onSelection) onSelection(interactiveChoice);
@@ -3305,8 +3320,12 @@ const { resolveDashboardForwardTarget, buildControlUiUrls } = dashboard;
 function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
   const forwardTarget = resolveDashboardForwardTarget(chatUiUrl);
   runOpenshell(["forward", "stop", String(CONTROL_UI_PORT)], { ignoreError: true });
+  // Use stdio "ignore" to prevent spawnSync from waiting on inherited pipe fds.
+  // The --background flag forks a child that inherits stdout/stderr; if those are
+  // pipes, spawnSync blocks until the background process exits (never).
   runOpenshell(["forward", "start", "--background", forwardTarget, sandboxName], {
     ignoreError: true,
+    stdio: ["ignore", "ignore", "ignore"],
   });
 }
 
@@ -3446,6 +3465,14 @@ async function onboard(opts = {}) {
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   delete process.env.OPENSHELL_GATEWAY;
   const resume = opts.resume === true;
+  const noticeAccepted = await ensureUsageNoticeConsent({
+    nonInteractive: isNonInteractive(),
+    acceptedByFlag: opts.acceptThirdPartySoftware === true,
+    writeLine: console.error,
+  });
+  if (!noticeAccepted) {
+    process.exit(1);
+  }
   const lockResult = onboardSession.acquireOnboardLock(
     `nemoclaw onboard${resume ? " --resume" : ""}${isNonInteractive() ? " --non-interactive" : ""}`,
   );

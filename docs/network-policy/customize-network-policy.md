@@ -2,7 +2,9 @@
 title:
   page: "Customize the NemoClaw Sandbox Network Policy"
   nav: "Customize Network Policy"
-description: "Add, remove, or modify allowed endpoints in the sandbox policy."
+description:
+  main: "Add, remove, or modify allowed endpoints in the sandbox policy."
+  agent: "Adds, removes, or modifies allowed endpoints in the sandbox policy. Use when customizing network policy, changing egress rules, or configuring sandbox endpoint access."
 keywords: ["customize nemoclaw network policy", "sandbox egress policy configuration"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "network_policy", "security", "nemoclaw"]
