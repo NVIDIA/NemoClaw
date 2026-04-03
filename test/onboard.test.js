@@ -1824,4 +1824,87 @@ const { setupInference } = require(${onboardPath});
     assert.match(fnBody, /isNonInteractive\(\)/);
     assert.match(fnBody, /process\.exit\(1\)/);
   });
+
+  it("fails fast before Docker checks when host support is unsupported", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-host-support-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const markerPath = path.join(tmpDir, "docker-touched");
+    const scriptPath = path.join(tmpDir, "host-support-fail-fast-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const hostSupportPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "host-support.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+touch "${markerPath}"
+exit 0
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const fs = require("node:fs");
+const Module = require("node:module");
+
+const hostSupportModulePath = ${hostSupportPath};
+const fakeHostSupport = new Module(hostSupportModulePath);
+fakeHostSupport.exports = {
+  checkHostSupport: () => ({
+    os: "win32",
+    version: "unknown",
+    status: "error",
+    code: "UNSUPPORTED_OS",
+    message: "win32 detected: unsupported host operating system for NemoClaw onboarding.",
+  }),
+};
+require.cache[hostSupportModulePath] = fakeHostSupport;
+
+const { onboard } = require(${onboardPath});
+
+const originalExit = process.exit;
+process.exit = (code) => {
+  const err = new Error("EXIT");
+  err.exitCode = code;
+  throw err;
+};
+
+(async () => {
+  try {
+    await onboard({ nonInteractive: true, acceptThirdPartySoftware: true });
+    console.log(JSON.stringify({ exited: false, dockerTouched: fs.existsSync(${JSON.stringify(markerPath)}) }));
+  } catch (error) {
+    console.log(
+      JSON.stringify({
+        exited: true,
+        exitCode: typeof error.exitCode === "number" ? error.exitCode : null,
+        dockerTouched: fs.existsSync(${JSON.stringify(markerPath)}),
+      }),
+    );
+  } finally {
+    process.exit = originalExit;
+  }
+})();
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+    expect(payload).toEqual({
+      exited: true,
+      exitCode: 1,
+      dockerTouched: false,
+    });
+  });
 });

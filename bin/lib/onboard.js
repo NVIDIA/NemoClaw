@@ -55,6 +55,7 @@ const onboardSession = require("./onboard-session");
 const policies = require("./policies");
 const { ensureUsageNoticeConsent } = require("./usage-notice");
 const { checkPortAvailable, ensureSwap, getMemoryInfo } = require("./preflight");
+const { checkHostSupport } = require("./host-support");
 
 // Typed modules (compiled from src/lib/*.ts → dist/lib/*.js)
 const gatewayState = require("../../dist/lib/gateway-state");
@@ -1723,6 +1724,16 @@ function getNonInteractiveModel(providerKey) {
 // eslint-disable-next-line complexity
 async function preflight() {
   step(1, 7, "Preflight checks");
+
+  const hostSupport = checkHostSupport();
+  if (hostSupport.status === "ok") {
+    console.log(`  ✓ ${hostSupport.message}`);
+  } else if (hostSupport.status === "warning") {
+    console.log(`  ⚠ ${hostSupport.message}`);
+  } else {
+    console.error(`  ${hostSupport.message}`);
+    process.exit(1);
+  }
 
   // Docker
   if (!isDockerRunning()) {
