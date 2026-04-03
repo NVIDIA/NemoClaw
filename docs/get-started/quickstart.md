@@ -2,7 +2,9 @@
 title:
   page: "NemoClaw Quickstart — Install, Launch, and Run Your First Agent"
   nav: "Quickstart"
-description: "Install NemoClaw, launch a sandbox, and run your first agent prompt."
+description:
+  main: "Install NemoClaw, launch a sandbox, and run your first agent prompt."
+  agent: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time."
 keywords: ["nemoclaw quickstart", "install nemoclaw openclaw sandbox"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "inference_routing", "nemoclaw"]

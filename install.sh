@@ -217,10 +217,12 @@ usage() {
   printf "    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- [options]\n\n"
   printf "  ${C_DIM}Options:${C_RESET}\n"
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
+  printf "    --yes-i-accept-third-party-software Accept the third-party software notice in non-interactive mode\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
   printf "    NVIDIA_API_KEY                API key (skips credential prompt)\n"
+  printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
@@ -235,6 +237,32 @@ usage() {
   printf "    SLACK_BOT_TOKEN               Auto-enable Slack policy support\n"
   printf "    TELEGRAM_BOT_TOKEN            Auto-enable Telegram policy support\n"
   printf "\n"
+}
+
+show_usage_notice() {
+  local source_root="${NEMOCLAW_SOURCE_ROOT:-$SCRIPT_DIR}"
+  local notice_script="${source_root}/bin/lib/usage-notice.js"
+  if [[ ! -f "$notice_script" ]]; then
+    notice_script="${SCRIPT_DIR}/bin/lib/usage-notice.js"
+  fi
+  local -a notice_cmd=(node "$notice_script")
+  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+    notice_cmd+=(--non-interactive)
+    if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
+      notice_cmd+=(--yes-i-accept-third-party-software)
+    fi
+    "${notice_cmd[@]}"
+  elif [ -t 0 ]; then
+    "${notice_cmd[@]}"
+  elif exec 3</dev/tty; then
+    info "Installer stdin is piped; attaching the usage notice to /dev/tty…"
+    local status=0
+    "${notice_cmd[@]}" <&3 || status=$?
+    exec 3<&-
+    return "$status"
+  else
+    error "Interactive third-party software acceptance requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
+  fi
 }
 
 # spin "label" cmd [args...]
@@ -304,6 +332,7 @@ ORIGINAL_PATH="${PATH:-}"
 NEMOCLAW_READY_NOW=false
 NEMOCLAW_RECOVERY_PROFILE=""
 NEMOCLAW_RECOVERY_EXPORT_DIR=""
+NEMOCLAW_SOURCE_ROOT="$SCRIPT_DIR"
 ONBOARD_RAN=false
 
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
@@ -400,22 +429,15 @@ ensure_nemoclaw_shim() {
   return 0
 }
 
-# Detect whether the installer had to extend PATH beyond what the user's
-# original shell had.  When running via `curl | bash`, PATH changes made
-# inside the script do not survive the script's exit, so the parent shell
-# still cannot resolve `nemoclaw`.
+# Detect whether the parent shell likely needs a reload after install.
+# When running via `curl | bash`, the installer executes in a subprocess.
+# Even when the bin directory is already in PATH, the parent shell may have
+# stale bash hash-table entries pointing to a previously deleted binary
+# (e.g. upgrade/reinstall after `rm $(which nemoclaw)`).  Sourcing the
+# shell profile reassigns PATH which clears the hash table, so we always
+# recommend it when the installer verified nemoclaw in the subprocess.
 needs_shell_reload() {
   [[ "$NEMOCLAW_READY_NOW" != true ]] && return 1
-
-  local npm_bin
-  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
-
-  if [[ ":$ORIGINAL_PATH:" == *":$NEMOCLAW_SHIM_DIR:"* ]]; then
-    return 1
-  fi
-  if [[ -n "$npm_bin" && ":$ORIGINAL_PATH:" == *":$npm_bin:"* ]]; then
-    return 1
-  fi
   return 0
 }
 
@@ -685,7 +707,7 @@ fix_npm_permissions() {
 pre_extract_openclaw() {
   local install_dir="$1"
   local openclaw_version
-  openclaw_version=$(node -e "console.log(require('${install_dir}/package.json').dependencies.openclaw)" 2>/dev/null || echo "")
+  openclaw_version="$(resolve_openclaw_version "$install_dir")"
 
   if [[ -z "$openclaw_version" ]]; then
     warn "Could not determine openclaw version — skipping pre-extraction"
@@ -720,11 +742,40 @@ pre_extract_openclaw() {
   rm -rf "$tmpdir"
 }
 
+resolve_openclaw_version() {
+  local install_dir="$1"
+  local package_json dockerfile_base resolved_version
+
+  package_json="${install_dir}/package.json"
+  dockerfile_base="${install_dir}/Dockerfile.base"
+
+  if [[ -f "$package_json" ]]; then
+    resolved_version="$(
+      node -e "const v = require('${package_json}').dependencies?.openclaw; if (v) console.log(v)" \
+        2>/dev/null || true
+    )"
+    if [[ -n "$resolved_version" ]]; then
+      printf '%s\n' "$resolved_version"
+      return 0
+    fi
+  fi
+
+  if [[ -f "$dockerfile_base" ]]; then
+    awk '
+      match($0, /openclaw@[0-9][0-9.]+/) {
+        print substr($0, RSTART + 9, RLENGTH - 9)
+        exit
+      }
+    ' "$dockerfile_base"
+  fi
+}
+
 install_nemoclaw() {
   command_exists git || error "git was not found on PATH."
   if [[ -f "./package.json" ]] && grep -q '"name": "nemoclaw"' ./package.json 2>/dev/null; then
     info "NemoClaw package.json found in current directory — installing from source…"
-    spin "Preparing OpenClaw package" bash -c "$(declare -f info warn pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$(pwd)" \
+    NEMOCLAW_SOURCE_ROOT="$(pwd)"
+    spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$(pwd)" \
       || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
     spin "Installing NemoClaw dependencies" npm install --ignore-scripts
     spin "Building NemoClaw CLI modules" npm run --if-present build:cli
@@ -742,6 +793,7 @@ install_nemoclaw() {
     local nemoclaw_src="${HOME}/.nemoclaw/source"
     rm -rf "$nemoclaw_src"
     mkdir -p "$(dirname "$nemoclaw_src")"
+    NEMOCLAW_SOURCE_ROOT="$nemoclaw_src"
     spin "Cloning NemoClaw source" git clone --depth 1 --branch "$release_ref" https://github.com/NVIDIA/NemoClaw.git "$nemoclaw_src"
     # Fetch version tags into the shallow clone so `git describe --tags
     # --match "v*"` works at runtime (the shallow clone only has the
@@ -751,7 +803,7 @@ install_nemoclaw() {
     # unavailable or tags are pruned later.
     git -C "$nemoclaw_src" describe --tags --match 'v*' 2>/dev/null \
       | sed 's/^v//' >"$nemoclaw_src/.version" || true
-    spin "Preparing OpenClaw package" bash -c "$(declare -f info warn pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
+    spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
       || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
     spin "Installing NemoClaw dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"
     spin "Building NemoClaw CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
@@ -806,6 +858,7 @@ verify_nemoclaw() {
 # 5. Onboard
 # ---------------------------------------------------------------------------
 run_onboard() {
+  show_usage_notice
   info "Running nemoclaw onboard…"
   local -a onboard_cmd=(onboard)
   if command_exists node && [[ -f "${HOME}/.nemoclaw/onboard-session.json" ]]; then
@@ -827,6 +880,9 @@ run_onboard() {
   fi
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     onboard_cmd+=(--non-interactive)
+    if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
+      onboard_cmd+=(--yes-i-accept-third-party-software)
+    fi
     nemoclaw "${onboard_cmd[@]}"
   elif [ -t 0 ]; then
     nemoclaw "${onboard_cmd[@]}"
@@ -837,7 +893,7 @@ run_onboard() {
     exec 3<&-
     return "$status"
   else
-    error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1."
+    error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
   fi
 }
 
@@ -880,9 +936,11 @@ post_install_message() {
 main() {
   # Parse flags
   NON_INTERACTIVE=""
+  ACCEPT_THIRD_PARTY_SOFTWARE=""
   for arg in "$@"; do
     case "$arg" in
       --non-interactive) NON_INTERACTIVE=1 ;;
+      --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
       --version | -v)
         printf "nemoclaw-installer v%s\n" "$NEMOCLAW_VERSION"
         exit 0
@@ -899,7 +957,9 @@ main() {
   done
   # Also honor env var
   NON_INTERACTIVE="${NON_INTERACTIVE:-${NEMOCLAW_NON_INTERACTIVE:-}}"
+  ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE:-${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}}"
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
+  export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
 
   _INSTALL_START=$SECONDS
   print_banner

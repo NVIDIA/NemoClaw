@@ -2,7 +2,9 @@
 title:
   page: "Workspace Files"
   nav: "Workspace Files"
-description: "What workspace files are, where they live, and how they persist across sandbox restarts."
+description:
+  main: "What workspace files are, where they live, and how they persist across sandbox restarts."
+  agent: "Explains what workspace files are, where they live, and how they persist across sandbox restarts. Use when asking about soul.md, identity.md, memory.md, agents.md, or sandbox file persistence."
 keywords: ["nemoclaw workspace files", "soul.md", "user.md", "identity.md", "agents.md", "memory.md", "sandbox persistence"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "workspace", "persistence", "nemoclaw"]

@@ -2,7 +2,9 @@
 title:
   page: "NemoClaw CLI Commands Reference"
   nav: "Commands"
-description: "Full CLI reference for slash commands and standalone NemoClaw commands."
+description:
+  main: "Full CLI reference for slash commands and standalone NemoClaw commands."
+  agent: "Lists all slash commands and standalone NemoClaw CLI commands. Use when looking up a command, checking command syntax, or browsing the CLI reference."
 keywords: ["nemoclaw cli commands", "nemoclaw command reference"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "nemoclaw", "cli"]
@@ -68,6 +70,18 @@ The wizard prompts for a provider first, then collects the provider credential i
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
 Credentials are stored in `~/.nemoclaw/credentials.json`.
 The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
+
+For non-interactive onboarding, you must explicitly accept the third-party software notice:
+
+```console
+$ nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
+
+or:
+
+```console
+$ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 nemoclaw onboard --non-interactive
+```
 
 The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
@@ -236,7 +250,7 @@ $ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
 ### Legacy `nemoclaw setup`
 
 Deprecated. Use `nemoclaw onboard` instead.
-The legacy setup command runs the old setup script for backwards compatibility only.
+Running `nemoclaw setup` now delegates directly to `nemoclaw onboard`.
 
 ```console
 $ nemoclaw setup
