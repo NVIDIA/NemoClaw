@@ -27,6 +27,7 @@ import {
   getBlueprintMinOpenshellVersion,
   getBlueprintMaxOpenshellVersion,
   versionGte,
+  getMinimumOpenshellVersion,
   getRequestedModelHint,
   getRequestedProviderHint,
   getRequestedSandboxNameHint,
@@ -45,6 +46,7 @@ import {
   resolveDashboardForwardTarget,
   summarizeCurlFailure,
   summarizeProbeFailure,
+  shouldUpgradeOpenshell,
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
 } from "../dist/lib/onboard";
@@ -841,6 +843,13 @@ describe("onboard helpers", () => {
     expect(getInstalledOpenshellVersion("openshell 0.0.12")).toBe("0.0.12");
     expect(getInstalledOpenshellVersion("openshell 0.0.13-dev.8+gbbcaed2ea")).toBe("0.0.13");
     expect(getInstalledOpenshellVersion("bogus")).toBe(null);
+    expect(getMinimumOpenshellVersion('min_openshell_version: "0.1.0"\n')).toBe("0.1.0");
+    expect(getMinimumOpenshellVersion('min_openshell_version: "v0.1.0"\n')).toBe("0.1.0");
+    expect(shouldUpgradeOpenshell("0.0.21", "0.1.0")).toBe(true);
+    expect(shouldUpgradeOpenshell("v0.0.21", "0.1.0")).toBe(true);
+    expect(shouldUpgradeOpenshell("bogus", "0.1.0")).toBe(true);
+    expect(shouldUpgradeOpenshell("0.1.0", "0.1.0")).toBe(false);
+    expect(shouldUpgradeOpenshell("0.1.2", "0.1.0")).toBe(false);
     expect(getStableGatewayImageRef("openshell 0.0.12")).toBe(
       "ghcr.io/nvidia/openshell/cluster:0.0.12",
     );

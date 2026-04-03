@@ -116,6 +116,8 @@ const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
+const TROUBLESHOOTING_GUIDE_URL =
+  "https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html";
 
 const REMOTE_PROVIDER_CONFIG = {
   build: {
@@ -399,24 +401,47 @@ function getInstalledOpenshellVersion(versionOutput = null) {
 }
 
 /**
- * Compare two semver-like x.y.z strings. Returns true iff `left >= right`.
- * Non-numeric or missing components are treated as 0.
+ * Normalize a version-like value into x.y.z form.
+ * Trims whitespace, strips a leading "v", and extracts up to 3 numeric parts.
  */
-function versionGte(left = "0.0.0", right = "0.0.0") {
-  const lhs = String(left)
+function normalizeVersion(version = null) {
+  if (version == null) return null;
+  const raw = String(version).trim().replace(/^v/i, "");
+  if (!raw) return null;
+  const parts = raw
+    .split(/[^0-9]+/)
+    .filter(Boolean)
+    .slice(0, 3)
+    .map((part) => Number.parseInt(part, 10))
+    .filter((part) => Number.isFinite(part));
+  if (parts.length === 0) return null;
+  while (parts.length < 3) parts.push(0);
+  return parts.join(".");
+}
+
+function compareVersions(left = "0.0.0", right = "0.0.0") {
+  const lhs = (normalizeVersion(left) || "0.0.0")
     .split(".")
     .map((part) => Number.parseInt(part, 10) || 0);
-  const rhs = String(right)
+  const rhs = (normalizeVersion(right) || "0.0.0")
     .split(".")
     .map((part) => Number.parseInt(part, 10) || 0);
   const length = Math.max(lhs.length, rhs.length);
   for (let index = 0; index < length; index += 1) {
     const a = lhs[index] || 0;
     const b = rhs[index] || 0;
-    if (a > b) return true;
-    if (a < b) return false;
+    if (a > b) return 1;
+    if (a < b) return -1;
   }
-  return true;
+  return 0;
+}
+
+/**
+ * Compare two semver-like x.y.z strings. Returns true iff `left >= right`.
+ * Non-numeric or missing components are treated as 0.
+ */
+function versionGte(left = "0.0.0", right = "0.0.0") {
+  return compareVersions(left, right) >= 0;
 }
 
 /**
@@ -453,6 +478,24 @@ function getBlueprintMaxOpenshellVersion(rootDir = ROOT) {
   return getBlueprintVersionField("max_openshell_version", rootDir);
 }
 
+function getMinimumOpenshellVersion(blueprintText = null) {
+  if (blueprintText == null) {
+    return getBlueprintMinOpenshellVersion();
+  }
+  const match = String(blueprintText).match(
+    /^\s*min_openshell_version:\s*"?(?<version>v?[0-9]+\.[0-9]+\.[0-9]+)"?\s*$/m,
+  );
+  return normalizeVersion(match?.groups?.version || null);
+}
+
+function shouldUpgradeOpenshell(installedVersion = null, minimumVersion = null) {
+  const normalizedMinimum = normalizeVersion(minimumVersion);
+  if (!normalizedMinimum) return false;
+  const normalizedInstalled = normalizeVersion(installedVersion);
+  if (!normalizedInstalled) return true;
+  return compareVersions(normalizedInstalled, normalizedMinimum) < 0;
+}
+
 function getStableGatewayImageRef(versionOutput = null) {
   const version = getInstalledOpenshellVersion(versionOutput);
   if (!version) return null;
@@ -464,7 +507,7 @@ function getOpenshellBinary() {
   const resolved = resolveOpenshell();
   if (!resolved) {
     console.error("  openshell CLI not found.");
-    console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+    console.error(`  See: ${TROUBLESHOOTING_GUIDE_URL}`);
     process.exit(1);
   }
   OPENSHELL_BIN = resolved;
@@ -1693,10 +1736,14 @@ function getPortConflictServiceHints(platform = process.platform) {
   ];
 }
 
-function installOpenshell() {
+function installOpenshell(opts = {}) {
+  const env = { ...process.env };
+  if (opts.minimumVersion) {
+    env.NEMOCLAW_MIN_OPENSHELL_VERSION = opts.minimumVersion;
+  }
   const result = spawnSync("bash", [path.join(SCRIPTS, "install-openshell.sh")], {
     cwd: ROOT,
-    env: process.env,
+    env,
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf-8",
     timeout: 300_000,
@@ -1851,44 +1898,28 @@ async function preflight() {
   // MIN_VERSION in install-openshell.sh handles the version gate; calling it
   // when openshell already exists is safe (it exits early if version is OK).
   let openshellInstall = { localBin: null, futureShellPathHint: null };
-  if (!isOpenshellInstalled()) {
+  const openshellInstalled = isOpenshellInstalled();
+  const requiredOpenshellVersion = getMinimumOpenshellVersion();
+  const installedOpenshellVersion = openshellInstalled ? getInstalledOpenshellVersion() : null;
+  if (!openshellInstalled) {
     console.log("  openshell CLI not found. Installing...");
-    openshellInstall = installOpenshell();
+    openshellInstall = installOpenshell({ minimumVersion: requiredOpenshellVersion });
     if (!openshellInstall.installed) {
       console.error("  Failed to install openshell CLI.");
-      console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+      console.error(`  See: ${TROUBLESHOOTING_GUIDE_URL}`);
       process.exit(1);
     }
-  } else {
-    // Ensure the installed version meets the minimum required by install-openshell.sh.
-    // The script itself is idempotent — it exits early if the version is already sufficient.
-    const currentVersion = getInstalledOpenshellVersion();
-    if (!currentVersion) {
-      console.log("  openshell version could not be determined. Reinstalling...");
-      openshellInstall = installOpenshell();
-      if (!openshellInstall.installed) {
-        console.error("  Failed to reinstall openshell CLI.");
-        console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
-        process.exit(1);
-      }
-    } else {
-      const parts = currentVersion.split(".").map(Number);
-      const minParts = [0, 0, 24]; // must match MIN_VERSION in scripts/install-openshell.sh
-      const needsUpgrade =
-        parts[0] < minParts[0] ||
-        (parts[0] === minParts[0] && parts[1] < minParts[1]) ||
-        (parts[0] === minParts[0] && parts[1] === minParts[1] && parts[2] < minParts[2]);
-      if (needsUpgrade) {
-        console.log(
-          `  openshell ${currentVersion} is below minimum required version. Upgrading...`,
-        );
-        openshellInstall = installOpenshell();
-        if (!openshellInstall.installed) {
-          console.error("  Failed to upgrade openshell CLI.");
-          console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
-          process.exit(1);
-        }
-      }
+  } else if (shouldUpgradeOpenshell(installedOpenshellVersion, requiredOpenshellVersion)) {
+    console.log(
+      `  openshell CLI ${installedOpenshellVersion || "unknown"} is below required ${requiredOpenshellVersion}. Upgrading...`,
+    );
+    openshellInstall = installOpenshell({ minimumVersion: requiredOpenshellVersion });
+    if (!openshellInstall.installed) {
+      console.error(
+        `  Failed to upgrade openshell CLI to meet NemoClaw's minimum ${requiredOpenshellVersion}.`,
+      );
+      console.error(`  See: ${TROUBLESHOOTING_GUIDE_URL}`);
+      process.exit(1);
     }
   }
   const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
@@ -1897,21 +1928,21 @@ async function preflight() {
   // this check, users can complete a full onboard against an OpenShell that
   // pre-dates required CLI surface (e.g. `sandbox exec`, `--upload`) and hit
   // silent failures inside the sandbox at runtime. See #1317.
-  const installedOpenshellVersion = getInstalledOpenshellVersion(openshellVersionOutput);
+  const currentInstalledOpenshellVersion = getInstalledOpenshellVersion(openshellVersionOutput);
   const minOpenshellVersion = getBlueprintMinOpenshellVersion();
   if (
-    installedOpenshellVersion &&
+    currentInstalledOpenshellVersion &&
     minOpenshellVersion &&
-    !versionGte(installedOpenshellVersion, minOpenshellVersion)
+    !versionGte(currentInstalledOpenshellVersion, minOpenshellVersion)
   ) {
     console.error("");
     console.error(
-      `  ✗ openshell ${installedOpenshellVersion} is below the minimum required by this NemoClaw release.`,
+      `  ✗ openshell ${currentInstalledOpenshellVersion} is below the minimum required by this NemoClaw release.`,
     );
     console.error(`    blueprint.yaml min_openshell_version: ${minOpenshellVersion}`);
     console.error("");
-    console.error("    Upgrade openshell and retry:");
-    console.error("      https://github.com/NVIDIA/OpenShell/releases");
+    console.error("    Upgrade openshell and retry. See:");
+    console.error(`      ${TROUBLESHOOTING_GUIDE_URL}`);
     console.error(
       "    Or remove the existing binary so the installer can re-fetch a current build:",
     );
@@ -1926,19 +1957,19 @@ async function preflight() {
   // OpenShell releases.
   const maxOpenshellVersion = getBlueprintMaxOpenshellVersion();
   if (
-    installedOpenshellVersion &&
+    currentInstalledOpenshellVersion &&
     maxOpenshellVersion &&
-    !versionGte(maxOpenshellVersion, installedOpenshellVersion)
+    !versionGte(maxOpenshellVersion, currentInstalledOpenshellVersion)
   ) {
     console.error("");
     console.error(
-      `  ✗ openshell ${installedOpenshellVersion} is above the maximum supported by this NemoClaw release.`,
+      `  ✗ openshell ${currentInstalledOpenshellVersion} is above the maximum supported by this NemoClaw release.`,
     );
     console.error(`    blueprint.yaml max_openshell_version: ${maxOpenshellVersion}`);
     console.error("");
-    console.error("    Upgrade NemoClaw to a version that supports your OpenShell release,");
-    console.error("    or install a supported OpenShell version:");
-    console.error("      https://github.com/NVIDIA/OpenShell/releases");
+    console.error("    Upgrade NemoClaw to a version that supports your OpenShell release.");
+    console.error("    See:");
+    console.error(`      ${TROUBLESHOOTING_GUIDE_URL}`);
     console.error("");
     process.exit(1);
   }
@@ -5388,6 +5419,7 @@ module.exports = {
   getBlueprintMinOpenshellVersion,
   getBlueprintMaxOpenshellVersion,
   versionGte,
+  getMinimumOpenshellVersion,
   getRequestedModelHint,
   getRequestedProviderHint,
   getStableGatewayImageRef,
@@ -5418,6 +5450,7 @@ module.exports = {
   getDashboardForwardPort,
   getDashboardForwardStartCommand,
   getDashboardGuidanceLines,
+  shouldUpgradeOpenshell,
   startGatewayForRecovery,
   runCaptureOpenshell,
   setupInference,

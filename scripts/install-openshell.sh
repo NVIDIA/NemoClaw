@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -34,13 +37,47 @@ esac
 info "Detected $OS_LABEL ($ARCH_LABEL)"
 
 # Minimum version required for sandbox persistence across gateway restarts
-# (deterministic k3s node name + workspace PVC: NVIDIA/OpenShell#739, #488)
-MIN_VERSION="0.0.24"
+# (deterministic k3s node name + workspace PVC: NVIDIA/OpenShell#739, #488).
+DEFAULT_MIN_VERSION="0.0.24"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
 MAX_VERSION="0.0.26"
 # Pin fresh installs to this version instead of pulling "latest".
 PIN_VERSION="$MAX_VERSION"
+
+# When a blueprint declares a higher minimum, prefer that newer requirement.
+resolve_min_version() {
+  if [[ -n "${NEMOCLAW_MIN_OPENSHELL_VERSION:-}" ]]; then
+    printf "%s" "${NEMOCLAW_MIN_OPENSHELL_VERSION}"
+    return
+  fi
+
+  local blueprint="${REPO_ROOT}/nemoclaw-blueprint/blueprint.yaml"
+  local parser="${SCRIPT_DIR}/lib/openshell-version.js"
+  if [[ -f "$blueprint" && -f "$parser" && -n "$(command -v node || true)" ]]; then
+    local version
+    version="$(node "$parser" "$blueprint" 2>/dev/null || true)"
+    if [[ -n "$version" ]]; then
+      printf "%s" "$version"
+      return
+    fi
+  fi
+
+  if [[ -f "$blueprint" ]]; then
+    local version
+    version="$(sed -nE 's/^[[:space:]]*min_openshell_version:[[:space:]]*"?(v?[0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' "$blueprint" | head -1)"
+    version="${version#v}"
+    if [[ -n "$version" ]]; then
+      printf "%s" "$version"
+      return
+    fi
+  fi
+
+  # Keep a safe fallback for contexts that only have this script.
+  printf "%s" "$DEFAULT_MIN_VERSION"
+}
+
+MIN_VERSION="$(resolve_min_version)"
 
 version_gte() {
   # Returns 0 (true) if $1 >= $2 — portable, no sort -V (BSD compat)
