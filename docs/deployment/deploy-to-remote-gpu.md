@@ -23,6 +23,19 @@ status: published
 Run NemoClaw on a remote GPU instance through [Brev](https://brev.nvidia.com).
 The deploy command provisions the VM, installs dependencies, and connects you to a running sandbox.
 
+## Quick Start
+
+If your Brev instance is already up and you want to try NemoClaw immediately, start with the sandbox chat flow:
+
+```console
+$ nemoclaw my-assistant connect
+$ openclaw tui
+```
+
+This gets you into the sandbox shell first and opens the OpenClaw chat UI right away.
+
+If you are connecting from your local machine and still need to provision the remote VM, use `nemoclaw deploy <instance-name>` as described below.
+
 ## Prerequisites
 
 - The [Brev CLI](https://brev.nvidia.com) installed and authenticated.
@@ -47,7 +60,7 @@ The deploy script performs the following steps on the VM:
 
 1. Installs Docker and the NVIDIA Container Toolkit if a GPU is present.
 2. Installs the OpenShell CLI.
-3. Runs the nemoclaw setup to create the gateway, register providers, and launch the sandbox.
+3. Runs `nemoclaw onboard` (the setup wizard) to create the gateway, register providers, and launch the sandbox.
 4. Starts auxiliary services, such as the Telegram bridge and cloudflared tunnel.
 
 ## Connect to the Remote Sandbox

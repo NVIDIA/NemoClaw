@@ -76,7 +76,11 @@ describe("C-2 PoC: vulnerable pattern (ARG interpolation into python3 -c)", () =
       expect(fs.existsSync(canary)).toBeTruthy();
       expect(fs.readFileSync(canary, "utf-8")).toBe("PWNED");
     } finally {
-      try { fs.unlinkSync(canary); } catch { /* cleanup */ }
+      try {
+        fs.unlinkSync(canary);
+      } catch {
+        /* cleanup */
+      }
     }
   });
 });
@@ -106,7 +110,11 @@ describe("C-2 fix: env var pattern (os.environ) is safe", () => {
       expect(result.status).toBe(0);
       expect(fs.existsSync(canary)).toBe(false);
     } finally {
-      try { fs.unlinkSync(canary); } catch { /* cleanup */ }
+      try {
+        fs.unlinkSync(canary);
+      } catch {
+        /* cleanup */
+      }
     }
   });
 
@@ -138,8 +146,8 @@ describe("C-2 regression: Dockerfile must not interpolate build-args into Python
       if (inPythonRunBlock && vulnerablePattern.test(line)) {
         expect.unreachable(
           `Dockerfile:${i + 1} interpolates CHAT_UI_URL into a Python string literal.\n` +
-          `  Line: ${line.trim()}\n` +
-          `  Fix: use os.environ['CHAT_UI_URL'] instead.`
+            `  Line: ${line.trim()}\n` +
+            `  Fix: use os.environ['CHAT_UI_URL'] instead.`,
         );
       }
       if (inPythonRunBlock && !/\\\s*$/.test(line)) {
@@ -161,8 +169,8 @@ describe("C-2 regression: Dockerfile must not interpolate build-args into Python
       if (inPythonRunBlock && vulnerablePattern.test(line)) {
         expect.unreachable(
           `Dockerfile:${i + 1} interpolates NEMOCLAW_MODEL into a Python string literal.\n` +
-          `  Line: ${line.trim()}\n` +
-          `  Fix: use os.environ['NEMOCLAW_MODEL'] instead.`
+            `  Line: ${line.trim()}\n` +
+            `  Fix: use os.environ['NEMOCLAW_MODEL'] instead.`,
         );
       }
       if (inPythonRunBlock && !/\\\s*$/.test(line)) {
@@ -289,5 +297,73 @@ describe("C-2 regression: Dockerfile must not interpolate build-args into Python
       }
     }
     expect(hasEnvRead).toBeTruthy();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// 4. Gateway auth hardening — no hardcoded insecure defaults (#117)
+// ═══════════════════════════════════════════════════════════════════
+describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth defaults", () => {
+  it("dangerouslyDisableDeviceAuth is not hardcoded to True", () => {
+    const src = fs.readFileSync(DOCKERFILE, "utf-8");
+    // Must not contain a literal `'dangerouslyDisableDeviceAuth': True`
+    expect(src).not.toMatch(/'dangerouslyDisableDeviceAuth':\s*True/);
+  });
+
+  it("allowInsecureAuth is not hardcoded to True", () => {
+    const src = fs.readFileSync(DOCKERFILE, "utf-8");
+    // Must not contain a literal `'allowInsecureAuth': True`
+    expect(src).not.toMatch(/'allowInsecureAuth':\s*True/);
+  });
+
+  it("dangerouslyDisableDeviceAuth is derived from NEMOCLAW_DISABLE_DEVICE_AUTH env var", () => {
+    const src = fs.readFileSync(DOCKERFILE, "utf-8");
+    // The Python config generation must read the env var
+    expect(src).toMatch(/os\.environ\.get\(['"]NEMOCLAW_DISABLE_DEVICE_AUTH['"]/);
+    // And use the derived variable in the config dict
+    expect(src).toMatch(/'dangerouslyDisableDeviceAuth':\s*disable_device_auth/);
+  });
+
+  it("allowInsecureAuth is derived from URL scheme (explicit http allowlist)", () => {
+    const src = fs.readFileSync(DOCKERFILE, "utf-8");
+    // Must use explicit 'http' allowlist — not `!= 'https'` which would allow
+    // insecure auth for malformed or unknown schemes (CodeRabbit review on #123)
+    expect(src).toMatch(/allow_insecure\s*=\s*parsed\.scheme\s*==\s*'http'/);
+    expect(src).not.toMatch(/allow_insecure\s*=\s*parsed\.scheme\s*!=\s*'https'/);
+    // And use the derived variable in the config dict
+    expect(src).toMatch(/'allowInsecureAuth':\s*allow_insecure/);
+  });
+
+  it("NEMOCLAW_DISABLE_DEVICE_AUTH defaults to '0' (secure by default)", () => {
+    const src = fs.readFileSync(DOCKERFILE, "utf-8");
+    expect(src).toMatch(/ARG\s+NEMOCLAW_DISABLE_DEVICE_AUTH=0/);
+  });
+
+  it("NEMOCLAW_DISABLE_DEVICE_AUTH is promoted to ENV before the Python RUN layer", () => {
+    const src = fs.readFileSync(DOCKERFILE, "utf-8");
+    const lines = src.split("\n");
+    let promoted = false;
+    let inEnvBlock = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^\s*FROM\b/.test(line)) {
+        promoted = false;
+        inEnvBlock = false;
+      }
+      if (/^\s*ENV\b/.test(line)) {
+        inEnvBlock = true;
+      }
+      if (inEnvBlock && /NEMOCLAW_DISABLE_DEVICE_AUTH[=\s]/.test(line)) {
+        promoted = true;
+      }
+      if (inEnvBlock && !/\\\s*$/.test(line)) {
+        inEnvBlock = false;
+      }
+      if (/^\s*RUN\b.*python3\s+-c\b/.test(line)) {
+        expect(promoted).toBeTruthy();
+        return;
+      }
+    }
+    expect(promoted).toBeTruthy();
   });
 });
