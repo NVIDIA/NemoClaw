@@ -1109,16 +1109,8 @@ async function sandboxPolicyAdd(sandboxName) {
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
 
-  console.log("");
-  console.log("  Available presets:");
-  allPresets.forEach((p) => {
-    const marker = applied.includes(p.name) ? "●" : "○";
-    console.log(`    ${marker} ${p.name} — ${p.description}`);
-  });
-  console.log("");
-
   const { prompt: askPrompt } = require("./lib/credentials");
-  const answer = await askPrompt("  Preset to apply: ");
+  const answer = await policies.selectFromList(allPresets, { applied });
   if (!answer) return;
 
   const confirm = await askPrompt(`  Apply '${answer}' to sandbox '${sandboxName}'? [Y/n]: `);
