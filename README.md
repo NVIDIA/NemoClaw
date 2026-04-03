@@ -62,7 +62,7 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | Windows WSL2 | Docker Desktop (WSL backend) | Out of scope | The CLI may run in WSL2, but WSL2 is not part of the supported NemoClaw target matrix. |
 | Windows native | N/A | Out of scope | Native Windows hosts are not part of the supported NemoClaw target matrix. |
 | Jetson | N/A | Out of scope | Jetson hosts are not part of the supported NemoClaw target matrix. |
-| DGX Spark | Docker | Supported | Refer to the [DGX Spark setup guide](https://github.com/NVIDIA/NemoClaw/blob/main/spark-install.md) for cgroup v2 and Docker configuration. |
+| DGX Spark | Docker | Supported | Refer to the [DGX Spark setup guide](docs/reference/commands.md#nemoclaw-setup-spark) for cgroup v2 and Docker configuration. |
 
 ### Install NemoClaw and Onboard OpenClaw Agent
 
