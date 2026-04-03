@@ -20,16 +20,19 @@ describe("sandboxName shell quoting in onboard.js", () => {
   });
 
   it("does not have unquoted sandboxName in runCapture or run calls", () => {
-    const lines = src.split("\n");
+    // Match run()/runCapture() calls that span multiple lines and contain
+    // template literals, so multiline invocations are not missed.
+    const callPattern = /\b(run|runCapture)\s*\(\s*`([^`]*)`/g;
     const violations = [];
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+    let match;
+    while ((match = callPattern.exec(src)) !== null) {
+      const template = match[2];
       if (
-        (line.includes("run(") || line.includes("runCapture(")) &&
-        line.includes("${sandboxName}") &&
-        !line.includes("shellQuote(sandboxName)")
+        template.includes("${sandboxName}") &&
+        !template.includes("shellQuote(sandboxName)")
       ) {
-        violations.push(`Line ${i + 1}: ${line.trim()}`);
+        const line = src.slice(0, match.index).split("\n").length;
+        violations.push(`Line ${line}: ${match[0].slice(0, 120).trim()}`);
       }
     }
     expect(violations).toEqual([]);
