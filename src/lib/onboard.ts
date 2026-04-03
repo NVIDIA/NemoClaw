@@ -2354,11 +2354,10 @@ async function promptValidatedSandboxName() {
       "NEMOCLAW_SANDBOX_NAME",
       "my-assistant",
     );
-    const sandboxName = (nameAnswer || "my-assistant").trim().toLowerCase();
+    const sandboxName = (nameAnswer || "my-assistant").trim();
 
-    // Validate: RFC 1123 subdomain — lowercase alphanumeric and hyphens,
-    // must start with a letter (not a digit) to satisfy Kubernetes naming.
-    if (/^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName)) {
+    try {
+      const validatedSandboxName = validateName(sandboxName, "sandbox name");
       // Reject names that collide with global CLI commands.
       // A sandbox named 'status' makes 'nemoclaw status connect' route to
       // the global status command instead of the sandbox.
@@ -2378,10 +2377,11 @@ async function promptValidatedSandboxName() {
         }
         continue;
       }
-      return sandboxName;
+      return validatedSandboxName;
+    } catch (error) {
+      console.error(`  ${error.message}`);
     }
 
-    console.error(`  Invalid sandbox name: '${sandboxName}'`);
     if (/^[0-9]/.test(sandboxName)) {
       console.error("  Names must start with a letter, not a digit.");
     } else {
@@ -2422,7 +2422,7 @@ async function createSandbox(
   step(6, 8, "Creating sandbox");
 
   const sandboxName = validateName(
-    sandboxNameOverride || (await promptValidatedSandboxName()),
+    sandboxNameOverride ?? (await promptValidatedSandboxName()),
     "sandbox name",
   );
   const effectivePort = agent ? agent.forwardPort : CONTROL_UI_PORT;
