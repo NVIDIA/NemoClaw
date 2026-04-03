@@ -1,25 +1,3 @@
----
-title:
-  page: "Sandbox Image Hardening"
-  nav: "Sandbox Hardening"
-description:
-  main: "Security hardening measures applied to the NemoClaw sandbox container image."
-  agent: "Describes security hardening measures applied to the NemoClaw sandbox container image. Use when reviewing container security, Docker capabilities, process limits, or sandbox hardening controls."
-keywords: ["nemoclaw sandbox hardening", "container security", "docker capabilities", "process limits"]
-topics: ["generative_ai", "ai_agents"]
-tags: ["nemoclaw", "sandboxing", "security"]
-content:
-  type: reference
-  difficulty: technical_beginner
-  audience: ["developer", "engineer"]
-status: published
----
-
-<!--
-  SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-  SPDX-License-Identifier: Apache-2.0
--->
-
 # Sandbox Image Hardening
 
 The NemoClaw sandbox image applies several security measures to reduce attack

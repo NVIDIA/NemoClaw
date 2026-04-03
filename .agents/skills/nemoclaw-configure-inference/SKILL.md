@@ -1,11 +1,11 @@
 ---
 name: nemoclaw-configure-inference
-description: Changes the active inference model without restarting the sandbox. Use when change inference runtime, inference routing, openclaw, openshell, switch nemoclaw inference model, switch nemoclaw inference models.
+description: Changes the active inference model without restarting the sandbox. Use when switching inference providers, changing the model runtime, or reconfiguring inference routing.
 ---
 
-# Nemoclaw Configure Inference
+# NemoClaw Configure Inference
 
-Change the active inference model without restarting the sandbox.
+Changes the active inference model without restarting the sandbox. Use when switching inference providers, changing the model runtime, or reconfiguring inference routing.
 
 ## Prerequisites
 
