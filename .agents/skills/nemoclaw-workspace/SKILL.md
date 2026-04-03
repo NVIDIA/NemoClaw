@@ -1,11 +1,11 @@
 ---
 name: nemoclaw-workspace
-description: Hows to back up and restore OpenClaw workspace files before destructive operations. Also covers whats workspace files are, where they live, and how they persist across sandbox restarts. Use when agents.md, back restore workspace files, backup, identity.md, memory.md, nemoclaw, nemoclaw backup, nemoclaw restore.
+description: Backs up and restores OpenClaw workspace files before destructive operations. Use when backing up a sandbox, restoring workspace state, or preparing for a destructive operation. Explains what workspace files are, where they live, and how they persist across sandbox restarts. Use when asking about soul.md, identity.md, memory.md, agents.md, or sandbox file persistence.
 ---
 
-# Nemoclaw Workspace
+# NemoClaw Workspace
 
-How to back up and restore OpenClaw workspace files before destructive operations.
+Backs up and restores OpenClaw workspace files before destructive operations. Use when backing up a sandbox, restoring workspace state, or preparing for a destructive operation.
 
 ## Context
 

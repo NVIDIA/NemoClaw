@@ -49,6 +49,7 @@ jobs:
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-nightly"
           NEMOCLAW_RECREATE_SANDBOX: "1"
           GITHUB_TOKEN: ${{ github.token }}
@@ -80,6 +81,7 @@ jobs:
           # Non-interactive install (expect-driven Phase 3 optional). Runner has no expect; Phase 5e TUI skips if expect is absent.
           RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL: "0"
           NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_RECREATE_SANDBOX: "1"
           NEMOCLAW_POLICY_MODE: "custom"
           NEMOCLAW_POLICY_PRESETS: "npm,pypi"
@@ -171,6 +173,7 @@ jobs:
     timeout-minutes: 60
     env:
       NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-gpu-ollama"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_PROVIDER: "ollama"

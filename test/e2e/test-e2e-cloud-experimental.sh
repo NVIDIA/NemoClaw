@@ -8,7 +8,7 @@
 # Implemented: Phase 0–1, 3, 5–6. Phase 5 runs checks/*.sh; Phase 5b live chat; Phase 5c skill smoke; Phase 5d skill agent verification; Phase 5f check-docs.sh;
 # Phase 5e openclaw TUI smoke (expect, non-interactive); Phase 5f check-docs.sh; Phase 6 final cleanup.
 # Phase 3 default: expect-driven interactive curl|bash (RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=1).
-#   Set RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=0 for non-interactive install (NEMOCLAW_NON_INTERACTIVE=1, no expect).
+#   Set RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=0 for non-interactive install (NEMOCLAW_NON_INTERACTIVE=1 and NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1, no expect).
 # (add checks under e2e-cloud-experimental/checks without editing case loop). VDR3 #12 via env on Phase 3 install.
 # Phase 2 skipped. Phase 5: checks suite (checks/*.sh only; opt-in scripts live under e2e-cloud-experimental/skip/).
 # Phase 5b: POST /v1/chat/completions inside sandbox (model = CLOUD_EXPERIMENTAL_MODEL); retries on transient gateway/upstream failures.
@@ -36,6 +36,7 @@
 #   - NVIDIA_API_KEY set (nvapi-...) for Cloud inference segments
 #   - Network to integrate.api.nvidia.com
 #   - NEMOCLAW_NON_INTERACTIVE=1 for automated onboard segments
+#   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 for automated non-interactive install/onboard segments
 #
 # Environment (suggested):
 #   Sandbox name is fixed in this script: e2e-cloud-experimental
@@ -47,7 +48,7 @@
 #   NEMOCLAW_POLICY_PRESETS            — e.g. npm,pypi (github preset TBD in repo)
 #   RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE=1 — optional: expect-based steps (later phases)
 #   RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL — default 1: Phase 3 uses expect to drive interactive onboard.
-#     Set to 0 for non-interactive curl|bash (requires NEMOCLAW_NON_INTERACTIVE=1 in host env; no expect on PATH).
+#     Set to 0 for non-interactive curl|bash (requires NEMOCLAW_NON_INTERACTIVE=1 and NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 in host env; no expect on PATH).
 #   INTERACTIVE_SANDBOX_NAME / INTERACTIVE_RECREATE_ANSWER / INTERACTIVE_INFERENCE_SEND / INTERACTIVE_MODEL_SEND / INTERACTIVE_PRESETS_SEND — see Phase 3 expect branch
 #   DEMO_FAKE_ONLY=1 — expect-only smoke, exit before Phase 0 (offline)
 #   RUN_E2E_CLOUD_EXPERIMENTAL_TUI=0 — skip Phase 5e (openclaw tui expect smoke)
@@ -73,7 +74,7 @@
 #
 # Usage (Phases 0–1, 3 + cases + Phase 5b–5f + Phase 6 cleanup; Phase 2 skipped):
 #   NVIDIA_API_KEY=nvapi-... bash test/e2e/test-e2e-cloud-experimental.sh
-#   Non-interactive install (no expect): RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=0 NEMOCLAW_NON_INTERACTIVE=1 NVIDIA_API_KEY=nvapi-... bash ...
+#   Non-interactive install (no expect): RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=0 NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_API_KEY=nvapi-... bash ...
 #
 # Validate only (existing sandbox; no install, no Phase 0/6 teardown):
 #   RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-e2e-cloud-experimental.sh
@@ -245,7 +246,7 @@ fi
 # Phase 1: Prerequisites
 # ══════════════════════════════════════════════════════════════════════
 # Docker running; NVIDIA_API_KEY format; reach integrate.api.nvidia.com;
-# NEMOCLAW_NON_INTERACTIVE=1 for automated path; optional: assert Linux + Docker CE.
+# NEMOCLAW_NON_INTERACTIVE=1 and NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 for automated path; optional: assert Linux + Docker CE.
 section "Phase 1: Prerequisites"
 
 if ! e2e_cloud_experimental_phase_enabled phase1; then
@@ -274,8 +275,12 @@ elif docker info >/dev/null 2>&1; then
   elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then
     fail "NEMOCLAW_NON_INTERACTIVE=1 is required when RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=0 (or use default interactive install, or RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5=1)"
     exit 1
+  elif [ "${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}" != "1" ]; then
+    fail "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is required when RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=0"
+    exit 1
   else
     pass "NEMOCLAW_NON_INTERACTIVE=1"
+    pass "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1"
   fi
 
   # Nominal scenario: Ubuntu + Docker (Linux + Docker in README). Others may still run; do not hard-fail on macOS.

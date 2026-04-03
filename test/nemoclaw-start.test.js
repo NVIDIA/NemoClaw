@@ -58,6 +58,14 @@ describe("nemoclaw-start non-root fallback", () => {
       expect(line).toContain(">&2");
     }
   });
+
+  it("unwraps the sandbox-create env self-wrapper before building NEMOCLAW_CMD", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+    expect(src).toContain('if [ "${1:-}" = "env" ]; then');
+    expect(src).toContain('export "${_raw_args[$i]}"');
+    expect(src).toContain('set -- "${_raw_args[@]:$((_self_wrapper_index + 1))}"');
+  });
 });
 
 describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {

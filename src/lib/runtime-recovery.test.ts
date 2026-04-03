@@ -3,12 +3,13 @@
 
 import { describe, expect, it } from "vitest";
 
+// Import from compiled dist/ for correct coverage attribution.
 import {
   classifyGatewayStatus,
   classifySandboxLookup,
   parseLiveSandboxNames,
   shouldAttemptGatewayRecovery,
-} from "../bin/lib/runtime-recovery";
+} from "../../dist/lib/runtime-recovery";
 
 describe("runtime recovery helpers", () => {
   it("parses live sandbox names from openshell sandbox list output", () => {
@@ -27,6 +28,15 @@ describe("runtime recovery helpers", () => {
 
   it("treats no-sandboxes output as an empty set", () => {
     expect(Array.from(parseLiveSandboxNames("No sandboxes found."))).toEqual([]);
+  });
+
+  it("skips error lines", () => {
+    expect(Array.from(parseLiveSandboxNames("Error: something went wrong"))).toEqual([]);
+  });
+
+  it("handles empty input", () => {
+    expect(Array.from(parseLiveSandboxNames(""))).toEqual([]);
+    expect(Array.from(parseLiveSandboxNames())).toEqual([]);
   });
 
   it("classifies missing sandbox lookups", () => {
@@ -52,14 +62,7 @@ describe("runtime recovery helpers", () => {
   it("classifies successful sandbox lookups as present", () => {
     expect(
       classifySandboxLookup(
-        [
-          "Sandbox:",
-          "",
-          "  Id: abc",
-          "  Name: my-assistant",
-          "  Namespace: openshell",
-          "  Phase: Ready",
-        ].join("\n"),
+        ["Sandbox:", "", "  Id: abc", "  Name: my-assistant", "  Phase: Ready"].join("\n"),
       ).state,
     ).toBe("present");
   });
@@ -68,6 +71,11 @@ describe("runtime recovery helpers", () => {
     expect(classifyGatewayStatus("Gateway: nemoclaw\nStatus: Connected").state).toBe("connected");
     expect(classifyGatewayStatus("Error:   × No active gateway").state).toBe("unavailable");
     expect(classifyGatewayStatus("").state).toBe("inactive");
+    expect(classifyGatewayStatus("Gateway: nemoclaw\nStatus: Disconnected").state).toBe(
+      "inactive",
+    );
+    expect(classifyGatewayStatus("Status: Not connected").state).toBe("inactive");
+    expect(classifyGatewayStatus("Connected").state).toBe("connected");
   });
 
   it("only attempts gateway recovery when sandbox access is unavailable and gateway is down", () => {
