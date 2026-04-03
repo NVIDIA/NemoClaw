@@ -11,6 +11,10 @@ Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when
 
 Before getting started, check the prerequisites to ensure you have the necessary software and hardware to run NemoClaw.
 
+## Prerequisites
+
+Before getting started, check the prerequisites to ensure you have the necessary software and hardware to run NemoClaw.
+
 > **Alpha software:** NemoClaw is in alpha, available as an early preview since March 16, 2026.
 > APIs, configuration schemas, and runtime behavior are subject to breaking changes between releases.
 > Do not use this software in production environments.

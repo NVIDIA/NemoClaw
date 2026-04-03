@@ -3281,10 +3281,20 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   }
 
   const knownPresets = new Set(allPresets.map((p) => p.name));
-  const invalidPresets = interactiveChoice.filter((name) => !knownPresets.has(name));
-  if (invalidPresets.length > 0) {
+  let invalidPresets = interactiveChoice.filter((name) => !knownPresets.has(name));
+  while (invalidPresets.length > 0) {
     console.error(`  Unknown policy preset(s): ${invalidPresets.join(", ")}`);
-    process.exit(1);
+    console.log("  Available presets:");
+    for (const p of allPresets) {
+      console.log(`    - ${p.name}`);
+    }
+    const retry = await prompt("  Enter preset names (comma-separated), or leave empty to skip: ");
+    if (!retry.trim()) {
+      console.log("  Skipping policy presets.");
+      return [];
+    }
+    interactiveChoice = parsePolicyPresetEnv(retry);
+    invalidPresets = interactiveChoice.filter((name) => !knownPresets.has(name));
   }
 
   if (onSelection) onSelection(interactiveChoice);
@@ -3310,8 +3320,12 @@ const { resolveDashboardForwardTarget, buildControlUiUrls } = dashboard;
 function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
   const forwardTarget = resolveDashboardForwardTarget(chatUiUrl);
   runOpenshell(["forward", "stop", String(CONTROL_UI_PORT)], { ignoreError: true });
+  // Use stdio "ignore" to prevent spawnSync from waiting on inherited pipe fds.
+  // The --background flag forks a child that inherits stdout/stderr; if those are
+  // pipes, spawnSync blocks until the background process exits (never).
   runOpenshell(["forward", "start", "--background", forwardTarget, sandboxName], {
     ignoreError: true,
+    stdio: ["ignore", "ignore", "ignore"],
   });
 }
 

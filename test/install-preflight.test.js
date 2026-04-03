@@ -772,7 +772,7 @@ exit 0
     expect(`${result.stdout}${result.stderr}`).toMatch(/Created user-local shim/);
   });
 
-  it("does not print PATH recovery instructions when nemoclaw is already usable in this shell", () => {
+  it("shows source hint even when bin dir is already in PATH (stale hash protection)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-ready-shell-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
@@ -889,7 +889,9 @@ exit 0
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).toBe(0);
     expect(output).not.toMatch(/current shell cannot resolve 'nemoclaw'/);
-    expect(output).not.toMatch(/source .*\.bashrc|source .*\.zshrc|source .*\.profile/);
+    // Always show source hint — the parent shell may have stale hash-table
+    // entries after an upgrade/reinstall even when the dir is in PATH.
+    expect(output).toMatch(/\$ source /);
   });
 
   it("shows shell reload hint when PATH was extended by the installer", () => {
@@ -1232,6 +1234,11 @@ describe("installer pure helpers", () => {
     const r = callInstallerFn("resolve_installer_version");
     // May return clean semver ("0.0.2") or git describe format ("0.0.2-3-gabcdef1")
     expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+(-.+)?$/);
+  });
+
+  it("resolve_openclaw_version: falls back to Dockerfile.base when package.json omits it", () => {
+    const r = callInstallerFn('resolve_openclaw_version "$PWD"');
+    expect(r.stdout.trim()).toBe("2026.3.11");
   });
 
   it("resolve_installer_version: falls back to package.json when git tags are unavailable", () => {
