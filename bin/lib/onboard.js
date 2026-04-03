@@ -62,6 +62,7 @@ const validation = require("../../dist/lib/validation");
 const urlUtils = require("../../dist/lib/url-utils");
 const buildContext = require("../../dist/lib/build-context");
 const dashboard = require("../../dist/lib/dashboard");
+const webSearch = require("../../dist/lib/web-search");
 
 /**
  * Create a temp file inside a directory with a cryptographically random name.
@@ -98,6 +99,7 @@ const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
+const BRAVE_SEARCH_HELP_URL = "https://api.search.brave.com/app/keys";
 
 const REMOTE_PROVIDER_CONFIG = {
   build: {
@@ -835,6 +837,67 @@ function encodeDockerJsonArg(value) {
   return Buffer.from(JSON.stringify(value || {}), "utf8").toString("base64");
 }
 
+function isAffirmativeAnswer(value) {
+  return ["y", "yes"].includes(
+    String(value || "")
+      .trim()
+      .toLowerCase(),
+  );
+}
+
+function printBraveExposureWarning() {
+  console.log("");
+  console.log("  Warning: Brave Search API key exposure");
+  for (const line of webSearch.getBraveExposureWarningLines()) {
+    console.log(`    - ${line}`);
+  }
+  console.log("");
+}
+
+async function configureWebSearch(existingConfig = null) {
+  if (existingConfig) {
+    return { fetchEnabled: true };
+  }
+
+  if (isNonInteractive()) {
+    const braveApiKey = normalizeCredentialValue(process.env[webSearch.BRAVE_API_KEY_ENV]);
+    if (!braveApiKey) {
+      return null;
+    }
+    note("  [non-interactive] Brave Search requested.");
+    printBraveExposureWarning();
+    saveCredential(webSearch.BRAVE_API_KEY_ENV, braveApiKey);
+    process.env[webSearch.BRAVE_API_KEY_ENV] = braveApiKey;
+    return { fetchEnabled: true };
+  }
+
+  const enableAnswer = await prompt(
+    "  Configure Brave Search now? This exposes the Brave API key to the OpenClaw agent [y/N]: ",
+  );
+  if (!isAffirmativeAnswer(enableAnswer)) {
+    return null;
+  }
+
+  printBraveExposureWarning();
+  const confirmAnswer = await prompt(
+    "  Continue and store the Brave API key in sandbox OpenClaw config? [y/N]: ",
+  );
+  if (!isAffirmativeAnswer(confirmAnswer)) {
+    console.log("  Skipping Brave Search setup.");
+    console.log("");
+    return null;
+  }
+
+  await ensureNamedCredential(
+    webSearch.BRAVE_API_KEY_ENV,
+    "Brave Search API key",
+    BRAVE_SEARCH_HELP_URL,
+  );
+  console.log("  Using Brave Search with web_fetch enabled.");
+  console.log("");
+  return { fetchEnabled: true };
+}
+
 function getSandboxInferenceConfig(model, provider = null, preferredInferenceApi = null) {
   let providerKey;
   let primaryModelRef;
@@ -886,6 +949,7 @@ function patchStagedDockerfile(
   buildId = String(Date.now()),
   provider = null,
   preferredInferenceApi = null,
+  webSearchConfig = null,
 ) {
   const { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat } =
     getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -915,6 +979,13 @@ function patchStagedDockerfile(
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_BUILD_ID=.*$/m,
     `ARG NEMOCLAW_BUILD_ID=${buildId}`,
+  );
+  dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_WEB_CONFIG_B64=.*$/m,
+    `ARG NEMOCLAW_WEB_CONFIG_B64=${webSearch.buildWebSearchDockerConfig(
+      webSearchConfig,
+      webSearchConfig ? getCredential(webSearch.BRAVE_API_KEY_ENV) : null,
+    )}`,
   );
   // Onboard flow expects immediate dashboard access without device pairing,
   // so disable device auth for images built during onboard (see #1217).
@@ -2089,6 +2160,7 @@ async function createSandbox(
   provider,
   preferredInferenceApi = null,
   sandboxNameOverride = null,
+  webSearchConfig = null,
 ) {
   step(5, 7, "Creating sandbox");
 
@@ -2147,6 +2219,13 @@ async function createSandbox(
   // --gpu is intentionally omitted. See comment in startGateway().
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
+  if (webSearchConfig && !getCredential(webSearch.BRAVE_API_KEY_ENV)) {
+    console.error("  Brave Search is enabled, but BRAVE_API_KEY is not available in this process.");
+    console.error(
+      "  Re-run with BRAVE_API_KEY set, or disable Brave Search before recreating the sandbox.",
+    );
+    process.exit(1);
+  }
   patchStagedDockerfile(
     stagedDockerfile,
     model,
@@ -2154,6 +2233,7 @@ async function createSandbox(
     String(Date.now()),
     provider,
     preferredInferenceApi,
+    webSearchConfig,
   );
   // Only pass non-sensitive env vars to the sandbox. NVIDIA_API_KEY is NOT
   // needed inside the sandbox — inference is proxied through the OpenShell
@@ -3168,6 +3248,7 @@ function arePolicyPresetsApplied(sandboxName, selectedPresets = []) {
 async function setupPoliciesWithSelection(sandboxName, options = {}) {
   const selectedPresets = Array.isArray(options.selectedPresets) ? options.selectedPresets : null;
   const onSelection = typeof options.onSelection === "function" ? options.onSelection : null;
+  const webSearchConfig = options.webSearchConfig || null;
 
   step(7, 7, "Policy presets");
 
@@ -3176,6 +3257,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) suggestions.push("slack");
   if (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN)
     suggestions.push("discord");
+  if (webSearchConfig) suggestions.push("brave");
 
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
@@ -3607,6 +3689,7 @@ async function onboard(opts = {}) {
     let credentialEnv = session?.credentialEnv || null;
     let preferredInferenceApi = session?.preferredInferenceApi || null;
     let nimContainer = session?.nimContainer || null;
+    let webSearchConfig = session?.webSearchConfig || null;
     let forceProviderSelection = false;
     while (true) {
       const resumeProviderSelection =
@@ -3679,6 +3762,16 @@ async function onboard(opts = {}) {
       break;
     }
 
+    if (webSearchConfig) {
+      note("  [resume] Reusing Brave Search configuration.");
+    } else {
+      webSearchConfig = await configureWebSearch(webSearchConfig);
+      onboardSession.updateSession((current) => {
+        current.webSearchConfig = webSearchConfig;
+        return current;
+      });
+    }
+
     const sandboxReuseState = getSandboxReuseState(sandboxName);
     const resumeSandbox =
       resume && session?.steps?.sandbox?.status === "complete" && sandboxReuseState === "ready";
@@ -3699,7 +3792,14 @@ async function onboard(opts = {}) {
         }
       }
       startRecordedStep("sandbox", { sandboxName, provider, model });
-      sandboxName = await createSandbox(gpu, model, provider, preferredInferenceApi, sandboxName);
+      sandboxName = await createSandbox(
+        gpu,
+        model,
+        provider,
+        preferredInferenceApi,
+        sandboxName,
+        webSearchConfig,
+      );
       onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
     }
 
@@ -3741,6 +3841,7 @@ async function onboard(opts = {}) {
           recordedPolicyPresets.length > 0
             ? recordedPolicyPresets
             : null,
+        webSearchConfig,
         onSelection: (policyPresets) => {
           onboardSession.updateSession((current) => {
             current.policyPresets = policyPresets;
