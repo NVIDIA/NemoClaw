@@ -140,7 +140,7 @@ export function classifyLinuxHost(id: string, versionId: string): HostSupportRes
     };
   }
 
-  if (major < 20 || (major === 18 && minor <= 4)) {
+  if (major < 20) {
     return {
       os: "ubuntu",
       version: normalized,
