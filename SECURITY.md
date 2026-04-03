@@ -24,8 +24,8 @@ Use the [NVIDIA public PGP key](https://www.nvidia.com/en-us/security/pgp-key) t
 ### GitHub Private Vulnerability Reporting
 
 GitHub supports [private vulnerability reporting](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configuring-private-vulnerability-reporting-for-a-repository) for repositories that enable it.
-If this repository shows **Report a vulnerability** in the **Security** tab, you can use that flow to submit a private report.
-If the button is not available, use the [NVIDIA Vulnerability Disclosure Program](https://www.nvidia.com/en-us/security/report-vulnerability/) or email [psirt@nvidia.com](mailto:psirt@nvidia.com) instead.
+This repository does not currently show **Report a vulnerability** in the **Security** tab.
+Use the [NVIDIA Vulnerability Disclosure Program](https://www.nvidia.com/en-us/security/report-vulnerability/) or email [psirt@nvidia.com](mailto:psirt@nvidia.com) instead.
 
 ## What to Include
 
