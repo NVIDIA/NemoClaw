@@ -240,6 +240,11 @@ usage() {
 }
 
 show_usage_notice() {
+  if [[ ! -f "${SCRIPT_DIR}/bin/lib/usage-notice.js" ]]; then
+    # usage-notice.js may not exist when the cloned release tag predates the
+    # feature.  Skip gracefully so the installer can still complete.
+    return 0
+  fi
   local -a notice_cmd=(node "${SCRIPT_DIR}/bin/lib/usage-notice.js")
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     notice_cmd+=(--non-interactive)
@@ -774,6 +779,7 @@ install_nemoclaw() {
     spin "Building NemoClaw CLI modules" npm run --if-present build:cli
     spin "Building NemoClaw plugin" bash -c 'cd nemoclaw && npm install --ignore-scripts && npm run build'
     spin "Linking NemoClaw CLI" npm link
+    SCRIPT_DIR="$(pwd)"
   else
     info "Installing NemoClaw from GitHub…"
     # Resolve the latest release tag so we never install raw main.
@@ -801,6 +807,7 @@ install_nemoclaw() {
     spin "Building NemoClaw CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
     spin "Building NemoClaw plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm install --ignore-scripts && npm run build"
     spin "Linking NemoClaw CLI" bash -c "cd \"$nemoclaw_src\" && npm link"
+    SCRIPT_DIR="$nemoclaw_src"
   fi
 
   refresh_path
