@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export interface WebSearchConfig {
-  fetchEnabled: true;
+  fetchEnabled: boolean;
 }
 
 export const BRAVE_API_KEY_ENV = "BRAVE_API_KEY";
