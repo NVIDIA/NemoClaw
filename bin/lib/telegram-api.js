@@ -53,6 +53,7 @@ function tgApi(token, method, body, opts = {}) {
 
     const req = https.request(reqOpts, (res) => {
       let buf = "";
+      res.setEncoding("utf8");
       res.on("data", (c) => (buf += c));
       res.on("aborted", () => settle(reject, new Error(`Telegram API ${method} response aborted`)));
       res.on("error", (err) => settle(reject, err));
