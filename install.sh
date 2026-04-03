@@ -240,7 +240,12 @@ usage() {
 }
 
 show_usage_notice() {
-  local -a notice_cmd=(node "${SCRIPT_DIR}/bin/lib/usage-notice.js")
+  local source_root="${NEMOCLAW_SOURCE_ROOT:-$SCRIPT_DIR}"
+  local notice_script="${source_root}/bin/lib/usage-notice.js"
+  if [[ ! -f "$notice_script" ]]; then
+    notice_script="${SCRIPT_DIR}/bin/lib/usage-notice.js"
+  fi
+  local -a notice_cmd=(node "$notice_script")
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     notice_cmd+=(--non-interactive)
     if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
@@ -327,6 +332,7 @@ ORIGINAL_PATH="${PATH:-}"
 NEMOCLAW_READY_NOW=false
 NEMOCLAW_RECOVERY_PROFILE=""
 NEMOCLAW_RECOVERY_EXPORT_DIR=""
+NEMOCLAW_SOURCE_ROOT="$SCRIPT_DIR"
 ONBOARD_RAN=false
 
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
@@ -768,6 +774,7 @@ install_nemoclaw() {
   command_exists git || error "git was not found on PATH."
   if [[ -f "./package.json" ]] && grep -q '"name": "nemoclaw"' ./package.json 2>/dev/null; then
     info "NemoClaw package.json found in current directory — installing from source…"
+    NEMOCLAW_SOURCE_ROOT="$(pwd)"
     spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$(pwd)" \
       || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
     spin "Installing NemoClaw dependencies" npm install --ignore-scripts
@@ -786,6 +793,7 @@ install_nemoclaw() {
     local nemoclaw_src="${HOME}/.nemoclaw/source"
     rm -rf "$nemoclaw_src"
     mkdir -p "$(dirname "$nemoclaw_src")"
+    NEMOCLAW_SOURCE_ROOT="$nemoclaw_src"
     spin "Cloning NemoClaw source" git clone --depth 1 --branch "$release_ref" https://github.com/NVIDIA/NemoClaw.git "$nemoclaw_src"
     # Fetch version tags into the shallow clone so `git describe --tags
     # --match "v*"` works at runtime (the shallow clone only has the

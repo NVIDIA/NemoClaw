@@ -1630,4 +1630,44 @@ exit 0`,
     // Confirm the releases API was NOT called
     expect(`${result.stdout}${result.stderr}`).not.toMatch(/curl should not hit the releases API/);
   });
+
+  it("resolves the usage notice helper from the cloned source during piped installs", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-pipe-usage-notice-"));
+    const { fakeBin, prefix } = buildCurlPipeEnv(tmp, {
+      curlStub: `#!/usr/bin/env bash
+/usr/bin/curl "$@"`,
+      gitStub: `#!/usr/bin/env bash
+if [ "$1" = "clone" ]; then
+  target="\${@: -1}"
+  mkdir -p "$target/nemoclaw" "$target/bin/lib"
+  echo '{"name":"nemoclaw","version":"0.5.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
+  echo '{"name":"nemoclaw-plugin","version":"0.5.0"}' > "$target/nemoclaw/package.json"
+  cat > "$target/bin/lib/usage-notice.js" <<'EOS'
+#!/usr/bin/env node
+process.exit(0)
+EOS
+  chmod +x "$target/bin/lib/usage-notice.js"
+  exit 0
+fi
+exit 0`,
+    });
+
+    const installerInput = fs.readFileSync(CURL_PIPE_INSTALLER, "utf-8");
+    const result = spawnSync("bash", [], {
+      cwd: tmp,
+      input: installerInput,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NPM_PREFIX: prefix,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).not.toMatch(/Cannot find module .*usage-notice\.js/);
+  });
 });
