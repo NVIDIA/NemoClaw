@@ -2743,7 +2743,14 @@ async function setupNim(gpu) {
           if (!validation.ok) {
             continue;
           }
-          preferredInferenceApi = validation.api;
+          // Ollama's /v1/responses endpoint does not produce correctly
+          // formatted tool calls — force chat completions like vLLM/NIM.
+          if (validation.api !== "openai-completions") {
+            console.log(
+              "  ℹ Using chat completions API (Ollama tool calls require /v1/chat/completions)",
+            );
+          }
+          preferredInferenceApi = "openai-completions";
           break;
         }
         break;
@@ -2788,7 +2795,14 @@ async function setupNim(gpu) {
           if (!validation.ok) {
             continue;
           }
-          preferredInferenceApi = validation.api;
+          // Ollama's /v1/responses endpoint does not produce correctly
+          // formatted tool calls — force chat completions like vLLM/NIM.
+          if (validation.api !== "openai-completions") {
+            console.log(
+              "  ℹ Using chat completions API (Ollama tool calls require /v1/chat/completions)",
+            );
+          }
+          preferredInferenceApi = "openai-completions";
           break;
         }
         break;
