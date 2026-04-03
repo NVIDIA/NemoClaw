@@ -33,6 +33,13 @@ function tgApi(token, method, body, opts = {}) {
   } = opts;
 
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      fn(value);
+    };
+
     const data = JSON.stringify(body);
     const reqOpts = {
       hostname,
@@ -47,18 +54,20 @@ function tgApi(token, method, body, opts = {}) {
     const req = https.request(reqOpts, (res) => {
       let buf = "";
       res.on("data", (c) => (buf += c));
+      res.on("aborted", () => settle(reject, new Error(`Telegram API ${method} response aborted`)));
+      res.on("error", (err) => settle(reject, err));
       res.on("end", () => {
         try {
-          resolve(JSON.parse(buf));
+          settle(resolve, JSON.parse(buf));
         } catch {
-          resolve({ ok: false, error: buf });
+          settle(resolve, { ok: false, error: buf });
         }
       });
     });
     req.on("timeout", () => {
       req.destroy(new Error(`Telegram API ${method} timed out`));
     });
-    req.on("error", reject);
+    req.on("error", (err) => settle(reject, err));
     req.write(data);
     req.end();
   });

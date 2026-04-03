@@ -66,12 +66,17 @@ function localOpts(port, timeoutMs = 2000) {
   return { hostname: "127.0.0.1", port, timeout: timeoutMs, rejectUnauthorized: false };
 }
 
-afterEach(() => {
-  while (servers.length) {
-    const s = servers.pop();
-    if (s.closeAllConnections) s.closeAllConnections();
-    s.close();
-  }
+afterEach(async () => {
+  const toClose = servers.splice(0, servers.length);
+  await Promise.all(
+    toClose.map(
+      (s) =>
+        new Promise((resolve) => {
+          if (s.closeAllConnections) s.closeAllConnections();
+          s.close(() => resolve());
+        }),
+    ),
+  );
 });
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -134,30 +139,31 @@ describe("tgApi (bin/lib/telegram-api)", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("handles server closing connection mid-response (known limitation)", async () => {
-    // Node.js `timeout` only fires on idle sockets — once the server
-    // has started responding, timeout won't fire. This documents the
-    // behavior rather than asserting a specific outcome.
+  it("rejects when server closes connection mid-response", async () => {
     const { port } = await createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.write('{"ok":');
       setTimeout(() => req.socket.destroy(), 50);
     });
 
+    // With res.on("aborted") and res.on("error") handlers, a
+    // mid-response socket destroy now rejects instead of hanging.
     const result = await Promise.race([
-      tgApi("fake-token", "getUpdates", { offset: 0 }, localOpts(port, 1000))
+      tgApi("fake-token", "getUpdates", { offset: 0 }, localOpts(port, 2000))
         .then(() => "resolved")
         .catch(() => "rejected"),
-      new Promise((r) => setTimeout(() => r("timeout-fallback"), 2000)),
+      new Promise((r) => setTimeout(() => r("hung"), 3000)),
     ]);
-    expect(["resolved", "rejected", "timeout-fallback"]).toContain(result);
+    expect(result).not.toBe("hung");
   });
 
   it("handles connection refused (server down)", async () => {
     const tempServer = net.createServer();
     await new Promise((r) => tempServer.listen(0, "127.0.0.1", r));
     const { port } = tempServer.address();
-    tempServer.close();
+    await new Promise((resolve, reject) =>
+      tempServer.close((err) => (err ? reject(err) : resolve())),
+    );
 
     await expect(
       tgApi("fake-token", "getUpdates", { offset: 0 }, localOpts(port, 2000)),
