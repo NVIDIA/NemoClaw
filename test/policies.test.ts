@@ -96,9 +96,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 11 presets", () => {
+    it("returns all 12 presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(11);
+      expect(presets.length).toBe(12);
     });
 
     it("each preset has name and description", () => {
@@ -117,6 +117,7 @@ describe("policies", () => {
         "brave",
         "brew",
         "discord",
+        "docker",
         "github",
         "huggingface",
         "jira",
@@ -619,6 +620,16 @@ describe("policies", () => {
         expect(content.includes("binaries:")).toBe(true);
         expect(content.includes(expectedBinary)).toBe(true);
       }
+    });
+
+    it("docker preset targets clients that exist inside the sandbox", () => {
+      const content = policies.loadPreset("docker");
+      expect(content).toBeTruthy();
+      expect(content.includes("/usr/bin/docker")).toBe(false);
+      expect(content.includes("/usr/local/bin/node")).toBe(true);
+      expect(content.includes("/usr/bin/node")).toBe(true);
+      expect(content.includes("/usr/local/bin/curl")).toBe(true);
+      expect(content.includes("/usr/bin/curl")).toBe(true);
     });
   });
 
