@@ -90,6 +90,28 @@ Run a test agent prompt inside the remote sandbox:
 $ openclaw agent --agent main --local -m "Hello from the remote sandbox" --session-id test
 ```
 
+## Remote Dashboard Access
+
+The NemoClaw dashboard validates the browser origin against an allowlist baked
+into the sandbox image at build time.  By default the allowlist only contains
+`http://127.0.0.1:18789`.  When accessing the dashboard from a remote browser
+(for example through a Brev public URL or an SSH port-forward), set
+`CHAT_UI_URL` to the origin the browser will use **before** running setup:
+
+```console
+$ export CHAT_UI_URL="https://openclaw0-<id>.brevlab.com"
+$ nemoclaw deploy <instance-name>
+```
+
+For SSH port-forwarding, the origin is typically `http://127.0.0.1:18789` (the
+default), so no extra configuration is needed.
+
+:::{note}
+On Brev, set `CHAT_UI_URL` in the launchable environment configuration so it is
+available when the setup script builds the sandbox image.  If `CHAT_UI_URL` is
+not set on a headless host, `brev-setup.sh` prints a warning.
+:::
+
 ## GPU Configuration
 
 The deploy script uses the `NEMOCLAW_GPU` environment variable to select the GPU type.
