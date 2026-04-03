@@ -56,6 +56,14 @@ resolve_installer_version() {
 
 NEMOCLAW_VERSION="$(resolve_installer_version)"
 
+installer_version_for_display() {
+  if [[ -z "${NEMOCLAW_VERSION:-}" || "${NEMOCLAW_VERSION}" == "${DEFAULT_NEMOCLAW_VERSION}" ]]; then
+    printf ""
+    return
+  fi
+  printf "  v%s" "$NEMOCLAW_VERSION"
+}
+
 # Resolve which Git ref to install from.
 # Priority: NEMOCLAW_INSTALL_TAG env var > "latest" tag.
 resolve_release_tag() {
@@ -147,6 +155,8 @@ step() {
 }
 
 print_banner() {
+  local version_suffix
+  version_suffix="$(installer_version_for_display)"
   printf "\n"
   # ANSI Shadow ASCII art — hand-crafted, no figlet dependency
   printf "  ${C_GREEN}${C_BOLD} ███╗   ██╗███████╗███╗   ███╗ ██████╗  ██████╗██╗      █████╗ ██╗    ██╗${C_RESET}\n"
@@ -156,7 +166,7 @@ print_banner() {
   printf "  ${C_GREEN}${C_BOLD} ██║ ╚████║███████╗██║ ╚═╝ ██║╚██████╔╝╚██████╗███████╗██║  ██║╚███╔███╔╝${C_RESET}\n"
   printf "  ${C_GREEN}${C_BOLD} ╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝ ╚═════╝  ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝${C_RESET}\n"
   printf "\n"
-  printf "  ${C_DIM}Launch OpenClaw in an OpenShell sandbox.  v%s${C_RESET}\n" "$NEMOCLAW_VERSION"
+  printf "  ${C_DIM}Launch OpenClaw in an OpenShell sandbox.%s${C_RESET}\n" "$version_suffix"
   printf "\n"
 }
 
@@ -210,8 +220,10 @@ print_done() {
 }
 
 usage() {
+  local version_suffix
+  version_suffix="$(installer_version_for_display)"
   printf "\n"
-  printf "  ${C_BOLD}NemoClaw Installer${C_RESET}  ${C_DIM}v%s${C_RESET}\n\n" "$NEMOCLAW_VERSION"
+  printf "  ${C_BOLD}NemoClaw Installer${C_RESET}${C_DIM}%s${C_RESET}\n\n" "$version_suffix"
   printf "  ${C_DIM}Usage:${C_RESET}\n"
   printf "    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash\n"
   printf "    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- [options]\n\n"
@@ -942,7 +954,7 @@ main() {
       --non-interactive) NON_INTERACTIVE=1 ;;
       --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
       --version | -v)
-        printf "nemoclaw-installer v%s\n" "$NEMOCLAW_VERSION"
+        printf "nemoclaw-installer%s\n" "$(installer_version_for_display)"
         exit 0
         ;;
       --help | -h)
