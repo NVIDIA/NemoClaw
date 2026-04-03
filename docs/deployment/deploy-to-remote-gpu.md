@@ -2,7 +2,9 @@
 title:
   page: "Deploy NemoClaw to a Remote GPU Instance with Brev"
   nav: "Deploy to Remote GPU"
-description: "Provision a remote GPU VM with NemoClaw using Brev deployment."
+description:
+  main: "Provision a remote GPU VM with NemoClaw using Brev deployment."
+  agent: "Provisions a remote GPU VM with NemoClaw using Brev deployment. Use when deploying to a cloud GPU, setting up a remote NemoClaw instance, or configuring Brev."
 keywords: ["deploy nemoclaw remote gpu", "nemoclaw brev cloud deployment"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "deployment", "gpu", "nemoclaw"]
@@ -22,6 +24,19 @@ status: published
 
 Run NemoClaw on a remote GPU instance through [Brev](https://brev.nvidia.com).
 The deploy command provisions the VM, installs dependencies, and connects you to a running sandbox.
+
+## Quick Start
+
+If your Brev instance is already up and you want to try NemoClaw immediately, start with the sandbox chat flow:
+
+```console
+$ nemoclaw my-assistant connect
+$ openclaw tui
+```
+
+This gets you into the sandbox shell first and opens the OpenClaw chat UI right away.
+
+If you are connecting from your local machine and still need to provision the remote VM, use `nemoclaw deploy <instance-name>` as described below.
 
 ## Prerequisites
 
@@ -47,7 +62,7 @@ The deploy script performs the following steps on the VM:
 
 1. Installs Docker and the NVIDIA Container Toolkit if a GPU is present.
 2. Installs the OpenShell CLI.
-3. Runs the nemoclaw setup to create the gateway, register providers, and launch the sandbox.
+3. Runs `nemoclaw onboard` (the setup wizard) to create the gateway, register providers, and launch the sandbox.
 4. Starts auxiliary services, such as the Telegram bridge and cloudflared tunnel.
 
 ## Connect to the Remote Sandbox
@@ -74,6 +89,28 @@ Run a test agent prompt inside the remote sandbox:
 ```console
 $ openclaw agent --agent main --local -m "Hello from the remote sandbox" --session-id test
 ```
+
+## Remote Dashboard Access
+
+The NemoClaw dashboard validates the browser origin against an allowlist baked
+into the sandbox image at build time.  By default the allowlist only contains
+`http://127.0.0.1:18789`.  When accessing the dashboard from a remote browser
+(for example through a Brev public URL or an SSH port-forward), set
+`CHAT_UI_URL` to the origin the browser will use **before** running setup:
+
+```console
+$ export CHAT_UI_URL="https://openclaw0-<id>.brevlab.com"
+$ nemoclaw deploy <instance-name>
+```
+
+For SSH port-forwarding, the origin is typically `http://127.0.0.1:18789` (the
+default), so no extra configuration is needed.
+
+:::{note}
+On Brev, set `CHAT_UI_URL` in the launchable environment configuration so it is
+available when the setup script builds the sandbox image.  If `CHAT_UI_URL` is
+not set on a headless host, `brev-setup.sh` prints a warning.
+:::
 
 ## GPU Configuration
 

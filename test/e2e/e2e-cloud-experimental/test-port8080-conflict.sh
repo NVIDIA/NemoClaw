@@ -18,12 +18,13 @@
 #   2 — skipped (no python3/python to bind 8080)
 #
 # Environment (typical):
-#   NEMOCLAW_SANDBOX_NAME   — default: e2e-cloud-experimental
-#   NEMOCLAW_NON_INTERACTIVE — should be 1 (onboard non-interactive)
-#   NVIDIA_API_KEY          — required if onboard reaches cloud inference (restore path)
+#   NEMOCLAW_SANDBOX_NAME                    — default: e2e-cloud-experimental
+#   NEMOCLAW_NON_INTERACTIVE                — should be 1 (onboard non-interactive)
+#   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1  — required for non-interactive onboard/re-onboard
+#   NVIDIA_API_KEY                          — required if onboard reaches cloud inference (restore path)
 #
 # Usage:
-#   NEMOCLAW_NON_INTERACTIVE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-port8080-conflict.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/e2e-cloud-experimental/test-port8080-conflict.sh
 
 set -uo pipefail
 
@@ -74,7 +75,7 @@ PASS "Port 8080 occupied by dummy process (PID ${occupier_pid})"
 P4_LOG="$(mktemp)"
 INFO "Running nemoclaw onboard --non-interactive (expect preflight to fail on port 8080)..."
 set +e
-nemoclaw onboard --non-interactive >"$P4_LOG" 2>&1
+NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 nemoclaw onboard --non-interactive >"$P4_LOG" 2>&1
 p4_exit=$?
 set -euo pipefail
 p4_out="$(cat "$P4_LOG")"
@@ -123,7 +124,7 @@ else
   INFO "Sandbox missing after gateway destroy/recreate — re-onboarding with NEMOCLAW_RECREATE_SANDBOX=1..."
   P4R_LOG="$(mktemp)"
   set +e
-  NEMOCLAW_RECREATE_SANDBOX=1 nemoclaw onboard --non-interactive >"$P4R_LOG" 2>&1
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NEMOCLAW_RECREATE_SANDBOX=1 nemoclaw onboard --non-interactive >"$P4R_LOG" 2>&1
   p4r_exit=$?
   set -euo pipefail
   if [ "$p4r_exit" -ne 0 ]; then

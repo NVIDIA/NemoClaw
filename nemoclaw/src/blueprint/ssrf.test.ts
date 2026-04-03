@@ -35,6 +35,9 @@ describe("isPrivateIp", () => {
     "::ffff:10.0.0.1", // IPv4-mapped IPv6 — private 10/8
     "::ffff:192.168.1.1", // IPv4-mapped IPv6 — private 192.168/16
     "::ffff:172.16.0.1", // IPv4-mapped IPv6 — private 172.16/12
+    "100.64.0.1", // RFC 6598 CGNAT
+    "100.127.255.254", // RFC 6598 CGNAT upper bound
+    "::ffff:100.64.0.1", // IPv4-mapped IPv6 — CGNAT
   ])("detects private IP: %s", (ip) => {
     expect(isPrivateIp(ip)).toBe(true);
   });

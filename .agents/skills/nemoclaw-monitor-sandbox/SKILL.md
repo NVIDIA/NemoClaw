@@ -1,11 +1,11 @@
 ---
 name: nemoclaw-monitor-sandbox
-description: Inspects sandbox health, trace agent behavior, and diagnose problems. Use when debug nemoclaw agent issues, monitor nemoclaw sandbox, monitor nemoclaw sandbox activity, monitoring, nemoclaw, openclaw, openshell, troubleshooting.
+description: Inspects sandbox health, traces agent behavior, and diagnoses problems. Use when monitoring a running sandbox, debugging agent issues, or checking sandbox logs.
 ---
 
-# Nemoclaw Monitor Sandbox
+# NemoClaw Monitor Sandbox
 
-Inspect sandbox health, trace agent behavior, and diagnose problems.
+Inspects sandbox health, traces agent behavior, and diagnoses problems. Use when monitoring a running sandbox, debugging agent issues, or checking sandbox logs.
 
 ## Prerequisites
 
@@ -28,7 +28,8 @@ Key fields in the output include the following:
 - Blueprint run ID, which is the identifier for the most recent blueprint execution.
 - Inference provider, which shows the active provider, model, and endpoint.
 
-Run `nemoclaw <name> status` on the host to check sandbox state. Use `openshell sandbox list` for the underlying sandbox details.
+Run `nemoclaw <name> status` on the host to check sandbox state.
+Use `openshell sandbox list` for the underlying sandbox details.
 
 ## Step 2: View Blueprint and Sandbox Logs
 
@@ -41,7 +42,7 @@ $ nemoclaw <name> logs
 To follow the log output in real time:
 
 ```console
-$ nemoclaw <name> logs -f
+$ nemoclaw <name> logs --follow
 ```
 
 ## Step 3: Monitor Network Activity in the TUI
@@ -74,7 +75,7 @@ $ openclaw agent --agent main --local -m "Test inference" --session-id debug
 If the request fails, check the following:
 
 1. Run `nemoclaw <name> status` to confirm the active provider and endpoint.
-2. Run `nemoclaw <name> logs -f` to view error messages from the blueprint runner.
+2. Run `nemoclaw <name> logs --follow` to view error messages from the blueprint runner.
 3. Verify that the inference endpoint is reachable from the host.
 
 ## Related Skills

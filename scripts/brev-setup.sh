@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Brev VM bootstrap — installs prerequisites then runs setup.sh.
+# Brev VM bootstrap — installs prerequisites then runs nemoclaw onboard.
 #
 # Run on a fresh Brev VM:
 #   export NVIDIA_API_KEY=nvapi-...
@@ -12,7 +12,7 @@
 #   1. Installs Docker (if missing)
 #   2. Installs NVIDIA Container Toolkit (if GPU present)
 #   3. Installs openshell CLI from GitHub release (binary, no Rust build)
-#   4. Runs setup.sh
+#   4. Installs nemoclaw CLI and runs nemoclaw onboard
 
 set -euo pipefail
 
@@ -21,10 +21,11 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-info() { echo -e "${GREEN}[brev]${NC} $1"; }
-warn() { echo -e "${YELLOW}[brev]${NC} $1"; }
+_ts() { date '+%H:%M:%S'; }
+info() { echo -e "${GREEN}[$(_ts) brev]${NC} $1"; }
+warn() { echo -e "${YELLOW}[$(_ts) brev]${NC} $1"; }
 fail() {
-  echo -e "${RED}[brev]${NC} $1"
+  echo -e "${RED}[$(_ts) brev]${NC} $1"
   exit 1
 }
 
@@ -39,7 +40,23 @@ export DEBIAN_FRONTEND=noninteractive
 # --- 0. Node.js (needed for services) ---
 if ! command -v node >/dev/null 2>&1; then
   info "Installing Node.js..."
-  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - >/dev/null 2>&1
+  NODESOURCE_URL="https://deb.nodesource.com/setup_22.x"
+  NODESOURCE_SHA256="575583bbac2fccc0b5edd0dbc03e222d9f9dc8d724da996d22754d6411104fd1"
+  (
+    tmpdir="$(mktemp -d)"
+    trap 'rm -rf "$tmpdir"' EXIT
+    curl -fsSL "$NODESOURCE_URL" -o "$tmpdir/setup_node.sh"
+    if command -v sha256sum >/dev/null 2>&1; then
+      echo "$NODESOURCE_SHA256  $tmpdir/setup_node.sh" | sha256sum -c - >/dev/null \
+        || fail "NodeSource installer checksum mismatch — expected $NODESOURCE_SHA256"
+    elif command -v shasum >/dev/null 2>&1; then
+      echo "$NODESOURCE_SHA256  $tmpdir/setup_node.sh" | shasum -a 256 -c - >/dev/null \
+        || fail "NodeSource installer checksum mismatch — expected $NODESOURCE_SHA256"
+    else
+      fail "No SHA-256 verification tool found (need sha256sum or shasum)"
+    fi
+    sudo -E bash "$tmpdir/setup_node.sh" >/dev/null 2>&1
+  )
   sudo apt-get install -y -qq nodejs >/dev/null 2>&1
   info "Node.js $(node --version) installed"
 else
@@ -120,7 +137,9 @@ fi
 
 # --- 4. vLLM (local inference, if GPU present) ---
 VLLM_MODEL="nvidia/nemotron-3-nano-30b-a3b"
-if command -v nvidia-smi >/dev/null 2>&1; then
+if [ "${SKIP_VLLM:-}" = "1" ]; then
+  info "Skipping vLLM install (SKIP_VLLM=1)"
+elif command -v nvidia-smi >/dev/null 2>&1; then
   if ! python3 -c "import vllm" 2>/dev/null; then
     info "Installing vLLM..."
     if ! command -v pip3 >/dev/null 2>&1; then
@@ -158,9 +177,33 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   fi
 fi
 
-# --- 5. Run setup.sh ---
+# --- 5. Install nemoclaw CLI and run onboard ---
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+info "Installing nemoclaw CLI..."
+export npm_config_prefix="$HOME/.local"
+export PATH="$HOME/.local/bin:$PATH"
+(cd "$REPO_DIR/nemoclaw" && npm install && npm run build) >/dev/null 2>&1
+(cd "$REPO_DIR" && npm install --ignore-scripts && npm link) >/dev/null 2>&1
+info "nemoclaw $(nemoclaw --version) installed"
+
 # Use sg docker to ensure docker group is active (usermod -aG doesn't
 # take effect in the current session without re-login)
-info "Running setup.sh..."
+
+# CHAT_UI_URL tells onboard which browser origin to allow in the gateway
+# config.  On Brev, the launchable config should set this to the public URL
+# (e.g. https://openclaw0-<id>.brevlab.com).  Without it the dashboard
+# rejects remote browsers with "origin not allowed".
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/795
+if [ -n "${CHAT_UI_URL:-}" ]; then
+  export CHAT_UI_URL
+  info "CHAT_UI_URL=${CHAT_UI_URL}"
+elif [ -z "${DISPLAY:-}" ] && [ ! -e /tmp/.X11-unix ]; then
+  warn "CHAT_UI_URL is not set.  Remote browser access will fail with"
+  warn "'origin not allowed' unless you set CHAT_UI_URL to the public URL"
+  warn "of this instance (e.g. https://openclaw0-<id>.brevlab.com)."
+fi
+
+info "Running nemoclaw onboard..."
 export NVIDIA_API_KEY
-exec sg docker -c "bash $SCRIPT_DIR/setup.sh"
+exec sg docker -c "nemoclaw onboard --non-interactive"

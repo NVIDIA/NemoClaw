@@ -2,7 +2,9 @@
 title:
   page: "NemoClaw CLI Commands Reference"
   nav: "Commands"
-description: "Full CLI reference for plugin and standalone NemoClaw commands."
+description:
+  main: "Full CLI reference for slash commands and standalone NemoClaw commands."
+  agent: "Lists all slash commands and standalone NemoClaw CLI commands. Use when looking up a command, checking command syntax, or browsing the CLI reference."
 keywords: ["nemoclaw cli commands", "nemoclaw command reference"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "nemoclaw", "cli"]
@@ -28,15 +30,35 @@ The `/nemoclaw` slash command is available inside the OpenClaw chat interface fo
 
 | Subcommand | Description |
 |---|---|
+| `/nemoclaw` | Show slash-command help and host CLI pointers |
 | `/nemoclaw status` | Show sandbox and inference state |
+| `/nemoclaw onboard` | Show onboarding status and reconfiguration guidance |
+| `/nemoclaw eject` | Show rollback instructions for returning to the host installation |
 
 ## Standalone Host Commands
 
 The `nemoclaw` binary handles host-side operations that run outside the OpenClaw plugin context.
 
+### `nemoclaw help`, `nemoclaw --help`, `nemoclaw -h`
+
+Show the top-level usage summary and command groups.
+Running `nemoclaw` with no arguments shows the same help output.
+
+```console
+$ nemoclaw help
+```
+
+### `nemoclaw --version`, `nemoclaw -v`
+
+Print the installed NemoClaw CLI version.
+
+```console
+$ nemoclaw --version
+```
+
 ### `nemoclaw onboard`
 
-Run the interactive setup wizard.
+Run the interactive setup wizard (recommended for new installs).
 The wizard creates an OpenShell gateway, registers inference providers, builds the sandbox image, and creates the sandbox.
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
@@ -47,6 +69,19 @@ $ nemoclaw onboard
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
 Credentials are stored in `~/.nemoclaw/credentials.json`.
+The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
+
+For non-interactive onboarding, you must explicitly accept the third-party software notice:
+
+```console
+$ nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
+
+or:
+
+```console
+$ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 nemoclaw onboard --non-interactive
+```
 
 The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
@@ -70,7 +105,7 @@ The `nemoclaw deploy` command is experimental and may not work as expected.
 :::
 
 Deploy NemoClaw to a remote GPU instance through [Brev](https://brev.nvidia.com).
-The deploy script installs Docker, NVIDIA Container Toolkit if a GPU is present, and OpenShell on the VM, then runs the nemoclaw setup and connects to the sandbox.
+The deploy script installs Docker, NVIDIA Container Toolkit if a GPU is present, and OpenShell on the VM, then runs `nemoclaw onboard` and connects to the sandbox.
 
 ```console
 $ nemoclaw deploy <instance-name>
@@ -179,4 +214,44 @@ After the fixes complete, the script prompts you to run `nemoclaw onboard` to co
 
 ```console
 $ sudo nemoclaw setup-spark
+```
+
+### `nemoclaw debug`
+
+Collect diagnostics for bug reports.
+Gathers system info, Docker state, gateway logs, and sandbox status into a summary or tarball.
+Use `--sandbox <name>` to target a specific sandbox, `--quick` for a smaller snapshot, or `--output <path>` to save a tarball that you can attach to an issue.
+
+```console
+$ nemoclaw debug [--quick] [--sandbox NAME] [--output PATH]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--quick` | Collect minimal diagnostics only |
+| `--sandbox NAME` | Target a specific sandbox (default: auto-detect) |
+| `--output PATH` | Write diagnostics tarball to the given path |
+
+### `nemoclaw uninstall`
+
+Run `uninstall.sh` to remove NemoClaw sandboxes, gateway resources, related images and containers, and local state.
+The CLI uses the local `uninstall.sh` first and falls back to the hosted script if the local file is unavailable.
+
+| Flag | Effect |
+|---|---|
+| `--yes` | Skip the confirmation prompt |
+| `--keep-openshell` | Leave the `openshell` binary installed |
+| `--delete-models` | Also remove NemoClaw-pulled Ollama models |
+
+```console
+$ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
+```
+
+### Legacy `nemoclaw setup`
+
+Deprecated. Use `nemoclaw onboard` instead.
+Running `nemoclaw setup` now delegates directly to `nemoclaw onboard`.
+
+```console
+$ nemoclaw setup
 ```

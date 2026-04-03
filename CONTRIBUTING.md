@@ -14,7 +14,7 @@ Open an issue when you encounter one of the following situations.
 
 Install the following before you begin.
 
-- Node.js 20+ and npm 10+
+- Node.js 22.16+ and npm 10+
 - Python 3.11+ (for blueprint and documentation builds)
 - Docker (running)
 - [uv](https://docs.astral.sh/uv/) (for Python dependency management)
@@ -45,6 +45,12 @@ npm run build        # one-time compile
 npm run dev          # watch mode
 ```
 
+The CLI (`bin/`, `scripts/`) is type-checked separately:
+
+```bash
+npm run typecheck:cli   # or: npx tsc -p tsconfig.cli.json
+```
+
 ## Main Tasks
 
 These are the primary `make` and `npm` targets for day-to-day development:
@@ -54,6 +60,7 @@ These are the primary `make` and `npm` targets for day-to-day development:
 | `make check` | Run all linters (TypeScript + Python) |
 | `make lint` | Same as `make check` |
 | `make format` | Auto-format TypeScript and Python source |
+| `npm run typecheck:cli` | Type-check CLI TypeScript (`bin/`, `scripts/`) |
 | `npm test` | Run root-level tests (`test/*.test.js`) |
 | `cd nemoclaw && npm test` | Run plugin unit tests (Vitest) |
 | `make docs` | Build documentation (Sphinx/MyST) |
@@ -68,7 +75,7 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 |------|-----------|
 | **pre-commit** | File fixers, formatters, linters, Vitest (plugin) |
 | **commit-msg** | commitlint (Conventional Commits) |
-| **pre-push** | TypeScript type check (`tsc --noEmit`), Pyright (Python) |
+| **pre-push** | TypeScript type check (`tsc --noEmit` for plugin, JS, and CLI) |
 
 For a full manual check: `npx prek run --all-files`. For scoped runs: `npx prek run --from-ref <base> --to-ref HEAD`.
 
@@ -88,6 +95,14 @@ The repository is organized as follows.
 | `scripts/` | Install helpers and automation scripts |
 | `test/` | Root-level integration tests |
 | `docs/` | User-facing documentation (Sphinx/MyST) |
+
+## Language Policy
+
+All new source files must be TypeScript. Do not add new `.js` files to the project. When modifying an existing JavaScript file, prefer migrating it to TypeScript in the same PR.
+
+Existing JavaScript in `bin/` and `scripts/` is being incrementally migrated (see `src/lib/` for completed migrations). Tests in `test/` may remain ESM JavaScript for now but new test files should use TypeScript where practical.
+
+Shell scripts (`scripts/*.sh`) must pass ShellCheck and use `shfmt` formatting.
 
 ## Documentation
 
