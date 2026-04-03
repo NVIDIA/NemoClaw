@@ -549,6 +549,75 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(bashLog, "utf8")).toContain("docker volume ls -q --filter");
   });
 
+  it("stops auxiliary services for the destroyed sandbox", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-services-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellLog = path.join(home, "openshell.log");
+    const serviceDir = "/tmp/nemoclaw-services-alpha";
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+          beta: {
+            name: "beta",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(openshellLog)}`,
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        '  printf "NAME STATUS\\nbeta Ready\\n" >> "$log_file"',
+        '  printf "NAME STATUS\\nbeta Ready\\n"',
+        "  exit 0",
+        "fi",
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    fs.rmSync(serviceDir, { recursive: true, force: true });
+    fs.mkdirSync(serviceDir, { recursive: true });
+    fs.writeFileSync(path.join(serviceDir, "telegram-bridge.pid"), "999999\n");
+    fs.writeFileSync(path.join(serviceDir, "cloudflared.pid"), "999999\n");
+
+    try {
+      const r = runWithEnv("alpha destroy --yes", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("telegram-bridge was not running");
+      expect(r.out).toContain("cloudflared was not running");
+      expect(r.out).toContain("All services stopped.");
+      expect(fs.existsSync(path.join(serviceDir, "telegram-bridge.pid"))).toBe(false);
+      expect(fs.existsSync(path.join(serviceDir, "cloudflared.pid"))).toBe(false);
+    } finally {
+      fs.rmSync(serviceDir, { recursive: true, force: true });
+    }
+  });
+
   it("passes plain logs through without the tail flag", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-plain-"));
     const localBin = path.join(home, "bin");

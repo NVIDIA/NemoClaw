@@ -1165,6 +1165,9 @@ async function sandboxDestroy(sandboxName, args = []) {
     process.exit(deleteResult.status || 1);
   }
 
+  const { stopAll } = require("./lib/services");
+  stopAll({ sandboxName });
+
   const removed = registry.removeSandbox(sandboxName);
   if (
     (deleteResult.status === 0 || alreadyGone) &&
