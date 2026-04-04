@@ -100,8 +100,11 @@ registry_has() {
   [ -f "$REGISTRY" ] && python3 - "$REGISTRY" "$name" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as fh:
-    sandboxes = json.load(fh).get("sandboxes", [])
-sys.exit(0 if any(sb.get("name") == sys.argv[2] for sb in sandboxes) else 1)
+    sandboxes = json.load(fh).get("sandboxes", {})
+if isinstance(sandboxes, dict):
+    sys.exit(0 if sys.argv[2] in sandboxes else 1)
+else:
+    sys.exit(0 if any(sb.get("name") == sys.argv[2] for sb in sandboxes) else 1)
 PY
 }
 
