@@ -121,6 +121,8 @@ describe("usage notice", () => {
     const lines = [];
     const originalStdoutIsTTY = process.stdout.isTTY;
     const originalStderrIsTTY = process.stderr.isTTY;
+    const originalNoColor = process.env.NO_COLOR;
+    const originalTerm = process.env.TERM;
     try {
       Object.defineProperty(process.stdout, "isTTY", {
         configurable: true,
@@ -130,6 +132,8 @@ describe("usage notice", () => {
         configurable: true,
         value: true,
       });
+      delete process.env.NO_COLOR;
+      process.env.TERM = "xterm-256color";
 
       printUsageNotice(loadUsageNoticeConfig(), (line) => lines.push(line));
     } finally {
@@ -141,6 +145,16 @@ describe("usage notice", () => {
         configurable: true,
         value: originalStderrIsTTY,
       });
+      if (originalNoColor === undefined) {
+        delete process.env.NO_COLOR;
+      } else {
+        process.env.NO_COLOR = originalNoColor;
+      }
+      if (originalTerm === undefined) {
+        delete process.env.TERM;
+      } else {
+        process.env.TERM = originalTerm;
+      }
     }
 
     expect(lines.join("\n")).toContain(

@@ -272,6 +272,7 @@ usage() {
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
   printf "    NEMOCLAW_POLICY_PRESETS       Comma-separated policy presets\n"
+  printf "    BRAVE_API_KEY                 Enable Brave Search with this API key (stored in sandbox OpenClaw config)\n"
   printf "    NEMOCLAW_EXPERIMENTAL=1       Show experimental/local options\n"
   printf "    CHAT_UI_URL                   Chat UI URL to open after setup\n"
   printf "    DISCORD_BOT_TOKEN             Auto-enable Discord policy support\n"
