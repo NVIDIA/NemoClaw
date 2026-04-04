@@ -1,0 +1,179 @@
+[
+  {
+    "id": "ex-001",
+    "name": "명동 우리환전소",
+    "nameEn": "Myeongdong Woori Exchange",
+    "lat": 37.5635,
+    "lng": 126.9832,
+    "address": "서울 중구 명동길 14",
+    "addressEn": "14 Myeongdong-gil, Jung-gu, Seoul",
+    "category": "exchange",
+    "rating": 4.5,
+    "phone": "02-1234-5678",
+    "openHours": "09:00-20:00",
+    "noCommission": true,
+    "minAmount": 10,
+    "rates": [
+      { "currency": "USD", "buyRate": 1347, "sellRate": 1389 },
+      { "currency": "JPY", "buyRate": 908, "sellRate": 936 },
+      { "currency": "CNY", "buyRate": 185, "sellRate": 191 },
+      { "currency": "EUR", "buyRate": 1481, "sellRate": 1527 },
+      { "currency": "GBP", "buyRate": 1724, "sellRate": 1776 }
+    ]
+  },
+  {
+    "id": "ex-002",
+    "name": "동대문 환전센터",
+    "nameEn": "Dongdaemun Exchange Center",
+    "lat": 37.5665,
+    "lng": 127.0088,
+    "address": "서울 중구 을지로 281",
+    "addressEn": "281 Euljiro, Jung-gu, Seoul",
+    "category": "exchange",
+    "rating": 4.2,
+    "phone": "02-2345-6789",
+    "openHours": "10:00-22:00",
+    "noCommission": false,
+    "minAmount": 50,
+    "rates": [
+      { "currency": "USD", "buyRate": 1340, "sellRate": 1396 },
+      { "currency": "JPY", "buyRate": 902, "sellRate": 942 },
+      { "currency": "CNY", "buyRate": 183, "sellRate": 194 },
+      { "currency": "EUR", "buyRate": 1475, "sellRate": 1532 },
+      { "currency": "GBP", "buyRate": 1718, "sellRate": 1783 }
+    ]
+  },
+  {
+    "id": "ex-003",
+    "name": "홍대 베스트환전",
+    "nameEn": "Hongdae Best Exchange",
+    "lat": 37.5578,
+    "lng": 126.9238,
+    "address": "서울 마포구 와우산로 94",
+    "addressEn": "94 Wausan-ro, Mapo-gu, Seoul",
+    "category": "exchange",
+    "rating": 4.7,
+    "phone": "02-3456-7890",
+    "openHours": "10:00-21:00",
+    "noCommission": true,
+    "minAmount": 0,
+    "rates": [
+      { "currency": "USD", "buyRate": 1352, "sellRate": 1384 },
+      { "currency": "JPY", "buyRate": 912, "sellRate": 932 },
+      { "currency": "CNY", "buyRate": 187, "sellRate": 189 },
+      { "currency": "EUR", "buyRate": 1488, "sellRate": 1521 },
+      { "currency": "GBP", "buyRate": 1731, "sellRate": 1770 }
+    ]
+  },
+  {
+    "id": "ex-004",
+    "name": "강남 프리미엄환전",
+    "nameEn": "Gangnam Premium Exchange",
+    "lat": 37.4979,
+    "lng": 127.0276,
+    "address": "서울 강남구 강남대로 396",
+    "addressEn": "396 Gangnam-daero, Gangnam-gu, Seoul",
+    "category": "exchange",
+    "rating": 4.3,
+    "phone": "02-4567-8901",
+    "openHours": "09:30-19:30",
+    "noCommission": false,
+    "minAmount": 100,
+    "rates": [
+      { "currency": "USD", "buyRate": 1335, "sellRate": 1400 },
+      { "currency": "JPY", "buyRate": 899, "sellRate": 945 },
+      { "currency": "CNY", "buyRate": 181, "sellRate": 196 },
+      { "currency": "EUR", "buyRate": 1470, "sellRate": 1538 },
+      { "currency": "GBP", "buyRate": 1712, "sellRate": 1789 }
+    ]
+  },
+  {
+    "id": "ex-005",
+    "name": "이태원 글로벌환전",
+    "nameEn": "Itaewon Global Exchange",
+    "lat": 37.5345,
+    "lng": 126.9945,
+    "address": "서울 용산구 이태원로 177",
+    "addressEn": "177 Itaewon-ro, Yongsan-gu, Seoul",
+    "category": "exchange",
+    "rating": 4.6,
+    "phone": "02-5678-9012",
+    "openHours": "09:00-21:00",
+    "noCommission": true,
+    "minAmount": 20,
+    "rates": [
+      { "currency": "USD", "buyRate": 1350, "sellRate": 1386 },
+      { "currency": "JPY", "buyRate": 910, "sellRate": 934 },
+      { "currency": "CNY", "buyRate": 186, "sellRate": 190 },
+      { "currency": "EUR", "buyRate": 1485, "sellRate": 1524 },
+      { "currency": "GBP", "buyRate": 1728, "sellRate": 1773 },
+      { "currency": "THB", "buyRate": 37, "sellRate": 40 }
+    ]
+  },
+  {
+    "id": "ex-006",
+    "name": "인사동 트래블환전",
+    "nameEn": "Insadong Travel Exchange",
+    "lat": 37.5742,
+    "lng": 126.9853,
+    "address": "서울 종로구 인사동길 42",
+    "addressEn": "42 Insadong-gil, Jongno-gu, Seoul",
+    "category": "exchange",
+    "rating": 4.4,
+    "phone": "02-6789-0123",
+    "openHours": "10:00-19:00",
+    "noCommission": true,
+    "minAmount": 10,
+    "rates": [
+      { "currency": "USD", "buyRate": 1348, "sellRate": 1388 },
+      { "currency": "JPY", "buyRate": 909, "sellRate": 935 },
+      { "currency": "CNY", "buyRate": 185, "sellRate": 191 },
+      { "currency": "EUR", "buyRate": 1482, "sellRate": 1526 },
+      { "currency": "THB", "buyRate": 36, "sellRate": 41 }
+    ]
+  },
+  {
+    "id": "ex-007",
+    "name": "신촌 대학로환전",
+    "nameEn": "Sinchon Campus Exchange",
+    "lat": 37.5596,
+    "lng": 126.9364,
+    "address": "서울 서대문구 신촌로 83",
+    "addressEn": "83 Sinchon-ro, Seodaemun-gu, Seoul",
+    "category": "exchange",
+    "rating": 4.1,
+    "phone": "02-7890-1234",
+    "openHours": "09:00-18:00",
+    "noCommission": false,
+    "minAmount": 30,
+    "rates": [
+      { "currency": "USD", "buyRate": 1344, "sellRate": 1392 },
+      { "currency": "JPY", "buyRate": 905, "sellRate": 939 },
+      { "currency": "CNY", "buyRate": 184, "sellRate": 193 },
+      { "currency": "EUR", "buyRate": 1478, "sellRate": 1530 }
+    ]
+  },
+  {
+    "id": "ex-008",
+    "name": "종로 황금환전",
+    "nameEn": "Jongno Golden Exchange",
+    "lat": 37.5701,
+    "lng": 126.9827,
+    "address": "서울 종로구 종로 99",
+    "addressEn": "99 Jongno, Jongno-gu, Seoul",
+    "category": "exchange",
+    "rating": 4.8,
+    "phone": "02-8901-2345",
+    "openHours": "08:30-20:30",
+    "noCommission": true,
+    "minAmount": 0,
+    "rates": [
+      { "currency": "USD", "buyRate": 1354, "sellRate": 1382 },
+      { "currency": "JPY", "buyRate": 914, "sellRate": 930 },
+      { "currency": "CNY", "buyRate": 188, "sellRate": 188 },
+      { "currency": "EUR", "buyRate": 1490, "sellRate": 1519 },
+      { "currency": "GBP", "buyRate": 1735, "sellRate": 1765 },
+      { "currency": "THB", "buyRate": 38, "sellRate": 39 }
+    ]
+  }
+]

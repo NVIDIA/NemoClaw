@@ -1,0 +1,91 @@
+[
+  {
+    "id": "kara-001",
+    "name": "코인노래방 홍대점",
+    "nameEn": "Coin Noraebang Hongdae",
+    "lat": 37.5576,
+    "lng": 126.9243,
+    "address": "서울 마포구 어울마당로 67",
+    "category": "karaoke",
+    "rating": 4.3,
+    "openHours": "24시간",
+    "hasForeignSongs": true,
+    "hasTambourine": true,
+    "discountHours": "평일 낮 12시-18시 30% 할인",
+    "rates": [
+      { "roomSize": "small", "pricePerHour": 6000, "maxPeople": 2 }
+    ]
+  },
+  {
+    "id": "kara-002",
+    "name": "맥노래방 강남점",
+    "nameEn": "Mac Noraebang Gangnam",
+    "lat": 37.4995,
+    "lng": 127.0267,
+    "address": "서울 강남구 강남대로 380",
+    "category": "karaoke",
+    "rating": 4.5,
+    "openHours": "11:00-04:00",
+    "hasForeignSongs": true,
+    "hasTambourine": true,
+    "discountHours": "낮 할인 11:00-18:00",
+    "rates": [
+      { "roomSize": "small", "pricePerHour": 15000, "maxPeople": 3 },
+      { "roomSize": "medium", "pricePerHour": 20000, "maxPeople": 6 },
+      { "roomSize": "large", "pricePerHour": 30000, "maxPeople": 12 }
+    ]
+  },
+  {
+    "id": "kara-003",
+    "name": "수노래방 명동점",
+    "nameEn": "Su Noraebang Myeongdong",
+    "lat": 37.5638,
+    "lng": 126.9826,
+    "address": "서울 중구 명동길 55",
+    "category": "karaoke",
+    "rating": 4.1,
+    "openHours": "12:00-03:00",
+    "hasForeignSongs": true,
+    "hasTambourine": false,
+    "rates": [
+      { "roomSize": "small", "pricePerHour": 18000, "maxPeople": 4 },
+      { "roomSize": "medium", "pricePerHour": 25000, "maxPeople": 8 },
+      { "roomSize": "large", "pricePerHour": 35000, "maxPeople": 15 }
+    ]
+  },
+  {
+    "id": "kara-004",
+    "name": "코인노래방 신촌점",
+    "nameEn": "Coin Noraebang Sinchon",
+    "lat": 37.5588,
+    "lng": 126.9368,
+    "address": "서울 서대문구 신촌로 62",
+    "category": "karaoke",
+    "rating": 4.0,
+    "openHours": "24시간",
+    "hasForeignSongs": true,
+    "hasTambourine": true,
+    "discountHours": "새벽 02:00-10:00 50% 할인",
+    "rates": [
+      { "roomSize": "small", "pricePerHour": 6000, "maxPeople": 2 }
+    ]
+  },
+  {
+    "id": "kara-005",
+    "name": "럭셔리 노래클럽 이태원",
+    "nameEn": "Luxury Norae Club Itaewon",
+    "lat": 37.5348,
+    "lng": 126.9938,
+    "address": "서울 용산구 이태원로 180",
+    "category": "karaoke",
+    "rating": 4.7,
+    "openHours": "17:00-05:00",
+    "hasForeignSongs": true,
+    "hasTambourine": true,
+    "rates": [
+      { "roomSize": "small", "pricePerHour": 35000, "maxPeople": 4 },
+      { "roomSize": "medium", "pricePerHour": 50000, "maxPeople": 8 },
+      { "roomSize": "large", "pricePerHour": 80000, "maxPeople": 20 }
+    ]
+  }
+]

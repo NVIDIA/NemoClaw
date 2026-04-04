@@ -1,0 +1,160 @@
+[
+  {
+    "id": "cafe-001",
+    "name": "메가MGC커피 명동점",
+    "nameEn": "Mega MGC Coffee Myeongdong",
+    "lat": 37.5629,
+    "lng": 126.9820,
+    "address": "서울 중구 명동길 48",
+    "category": "cafe",
+    "rating": 4.2,
+    "brand": "Mega MGC",
+    "americanoPrice": 2000,
+    "hasWifi": true,
+    "hasOutdoorSeating": false,
+    "items": [
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 2000, "isBestValue": true },
+      { "name": "카페라떼", "nameEn": "Cafe Latte", "price": 2500 },
+      { "name": "바닐라라떼", "nameEn": "Vanilla Latte", "price": 3000 },
+      { "name": "케이크", "nameEn": "Cake slice", "price": 3000 }
+    ]
+  },
+  {
+    "id": "cafe-002",
+    "name": "컴포즈커피 홍대점",
+    "nameEn": "Compose Coffee Hongdae",
+    "lat": 37.5572,
+    "lng": 126.9222,
+    "address": "서울 마포구 와우산로 20",
+    "category": "cafe",
+    "rating": 4.1,
+    "brand": "Compose",
+    "americanoPrice": 1500,
+    "hasWifi": true,
+    "hasOutdoorSeating": false,
+    "items": [
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 1500, "isBestValue": true },
+      { "name": "카페라떼", "nameEn": "Cafe Latte", "price": 2000 },
+      { "name": "달고나라떼", "nameEn": "Dalgona Latte", "price": 2500 }
+    ]
+  },
+  {
+    "id": "cafe-003",
+    "name": "스타벅스 강남점",
+    "nameEn": "Starbucks Gangnam",
+    "lat": 37.4980,
+    "lng": 127.0272,
+    "address": "서울 강남구 강남대로 400",
+    "category": "cafe",
+    "rating": 4.4,
+    "brand": "Starbucks",
+    "americanoPrice": 4500,
+    "hasWifi": true,
+    "hasOutdoorSeating": true,
+    "items": [
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 4500 },
+      { "name": "카페라떼", "nameEn": "Cafe Latte", "price": 5500 },
+      { "name": "카라멜마키아토", "nameEn": "Caramel Macchiato", "price": 6000 },
+      { "name": "프라푸치노", "nameEn": "Frappuccino", "price": 6500 }
+    ]
+  },
+  {
+    "id": "cafe-004",
+    "name": "빽다방 종로점",
+    "nameEn": "Paik's Coffee Jongno",
+    "lat": 37.5713,
+    "lng": 126.9806,
+    "address": "서울 종로구 종로 112",
+    "category": "cafe",
+    "rating": 4.0,
+    "brand": "Paik's Coffee",
+    "americanoPrice": 1500,
+    "hasWifi": true,
+    "hasOutdoorSeating": false,
+    "items": [
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 1500, "isBestValue": true },
+      { "name": "원조커피", "nameEn": "Original Coffee", "price": 2000 },
+      { "name": "딸기라떼", "nameEn": "Strawberry Latte", "price": 3000 },
+      { "name": "옛날과자세트", "nameEn": "Classic Snack Set", "price": 2000 }
+    ]
+  },
+  {
+    "id": "cafe-005",
+    "name": "이디야커피 이태원점",
+    "nameEn": "Ediya Coffee Itaewon",
+    "lat": 37.5344,
+    "lng": 126.9949,
+    "address": "서울 용산구 이태원로 183",
+    "category": "cafe",
+    "rating": 3.9,
+    "brand": "Ediya",
+    "americanoPrice": 2300,
+    "hasWifi": true,
+    "hasOutdoorSeating": false,
+    "items": [
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 2300 },
+      { "name": "카페라떼", "nameEn": "Cafe Latte", "price": 3200 },
+      { "name": "스무디", "nameEn": "Smoothie", "price": 4000 }
+    ]
+  },
+  {
+    "id": "cafe-006",
+    "name": "테라로사 홍대점",
+    "nameEn": "Terarosa Hongdae",
+    "lat": 37.5592,
+    "lng": 126.9268,
+    "address": "서울 마포구 동교로 225",
+    "category": "cafe",
+    "rating": 4.8,
+    "brand": "Terarosa",
+    "americanoPrice": 5500,
+    "hasWifi": true,
+    "hasOutdoorSeating": true,
+    "items": [
+      { "name": "싱글오리진 드립커피", "nameEn": "Single Origin Drip", "price": 7000, "isBestValue": true },
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 5500 },
+      { "name": "플랫화이트", "nameEn": "Flat White", "price": 6000 },
+      { "name": "케이크", "nameEn": "Cake slice", "price": 6500 }
+    ]
+  },
+  {
+    "id": "cafe-007",
+    "name": "투썸플레이스 강남",
+    "nameEn": "A Twosome Place Gangnam",
+    "lat": 37.5015,
+    "lng": 127.0231,
+    "address": "서울 강남구 논현로 432",
+    "category": "cafe",
+    "rating": 4.3,
+    "brand": "A Twosome Place",
+    "americanoPrice": 3900,
+    "hasWifi": true,
+    "hasOutdoorSeating": false,
+    "items": [
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 3900 },
+      { "name": "카페라떼", "nameEn": "Cafe Latte", "price": 4700 },
+      { "name": "딸기 케이크", "nameEn": "Strawberry Cake", "price": 7500 },
+      { "name": "빙수", "nameEn": "Shaved Ice (Bingsu)", "price": 13900 }
+    ]
+  },
+  {
+    "id": "cafe-008",
+    "name": "나무사이로 인사동",
+    "nameEn": "Between Trees Insadong",
+    "lat": 37.5747,
+    "lng": 126.9847,
+    "address": "서울 종로구 인사동길 35",
+    "category": "cafe",
+    "rating": 4.6,
+    "brand": "Independent",
+    "americanoPrice": 4000,
+    "hasWifi": false,
+    "hasOutdoorSeating": true,
+    "items": [
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 4000 },
+      { "name": "쌍화차", "nameEn": "Traditional Herbal Tea", "price": 6000 },
+      { "name": "식혜", "nameEn": "Sweet Rice Drink", "price": 5000 },
+      { "name": "전통과자 세트", "nameEn": "Traditional Snack Set", "price": 8000 }
+    ]
+  }
+]

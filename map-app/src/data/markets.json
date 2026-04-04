@@ -1,0 +1,85 @@
+[
+  {
+    "id": "mkt-001",
+    "name": "광장시장",
+    "nameEn": "Gwangjang Market",
+    "lat": 37.5700,
+    "lng": 126.9993,
+    "address": "서울 종로구 창경궁로 88",
+    "category": "market",
+    "rating": 4.6,
+    "marketType": "전통 재래시장",
+    "marketTypeEn": "Traditional Market",
+    "operatingDays": "매일 운영",
+    "closedDay": "없음",
+    "openHours": "09:00-21:00",
+    "popularItems": [
+      { "name": "빈대떡", "nameEn": "Mung Bean Pancake", "price": 5000, "unit": "1개" },
+      { "name": "마약김밥", "nameEn": "Mini Kimbap", "price": 3000, "unit": "1줄" },
+      { "name": "육회", "nameEn": "Beef Tartare", "price": 15000, "unit": "1인분" },
+      { "name": "순대", "nameEn": "Sundae (blood sausage)", "price": 5000, "unit": "1인분" },
+      { "name": "떡", "nameEn": "Rice Cake", "price": 2000, "unit": "100g" }
+    ]
+  },
+  {
+    "id": "mkt-002",
+    "name": "남대문시장",
+    "nameEn": "Namdaemun Market",
+    "lat": 37.5594,
+    "lng": 126.9764,
+    "address": "서울 중구 남대문시장4길 21",
+    "category": "market",
+    "rating": 4.4,
+    "marketType": "종합 재래시장",
+    "marketTypeEn": "General Traditional Market",
+    "operatingDays": "월~토",
+    "closedDay": "일요일",
+    "openHours": "05:00-18:00",
+    "popularItems": [
+      { "name": "호떡", "nameEn": "Hotteok", "price": 1000, "unit": "1개" },
+      { "name": "갈치조림", "nameEn": "Braised Hairtail Fish", "price": 12000, "unit": "1인분" },
+      { "name": "칼국수", "nameEn": "Knife-cut Noodles", "price": 8000, "unit": "1그릇" },
+      { "name": "핸드메이드 가방", "nameEn": "Handmade Bag", "price": 15000, "unit": "1개" }
+    ]
+  },
+  {
+    "id": "mkt-003",
+    "name": "통인시장",
+    "nameEn": "Tongin Market",
+    "lat": 37.5792,
+    "lng": 126.9706,
+    "address": "서울 종로구 효자로7길 34",
+    "category": "market",
+    "rating": 4.5,
+    "marketType": "엽전 도시락 시장",
+    "marketTypeEn": "Traditional Coin Lunchbox Market",
+    "operatingDays": "화~일",
+    "closedDay": "월요일",
+    "openHours": "10:00-18:00",
+    "popularItems": [
+      { "name": "엽전 도시락 세트", "nameEn": "Traditional Coin Lunchbox", "price": 5000, "unit": "50엽전" },
+      { "name": "떡볶이", "nameEn": "Tteokbokki", "price": 3000, "unit": "1접시" },
+      { "name": "전", "nameEn": "Korean Pancake", "price": 3000, "unit": "1접시" }
+    ]
+  },
+  {
+    "id": "mkt-004",
+    "name": "망원시장",
+    "nameEn": "Mangwon Market",
+    "lat": 37.5556,
+    "lng": 126.9080,
+    "address": "서울 마포구 포은로8길 13",
+    "category": "market",
+    "rating": 4.3,
+    "marketType": "동네 재래시장",
+    "marketTypeEn": "Neighborhood Market",
+    "operatingDays": "매일 운영",
+    "closedDay": "없음",
+    "openHours": "08:00-21:00",
+    "popularItems": [
+      { "name": "신선 채소 모둠", "nameEn": "Fresh Veggie Assortment", "price": 3000, "unit": "1봉" },
+      { "name": "수제 어묵", "nameEn": "Handmade Fish Cake", "price": 5000, "unit": "200g" },
+      { "name": "국물떡볶이", "nameEn": "Soupy Tteokbokki", "price": 3500, "unit": "1인분" }
+    ]
+  }
+]

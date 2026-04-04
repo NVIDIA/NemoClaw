@@ -1,0 +1,100 @@
+[
+  {
+    "id": "conv-001",
+    "name": "CU 명동점",
+    "nameEn": "CU Myeongdong",
+    "lat": 37.5630,
+    "lng": 126.9815,
+    "address": "서울 중구 명동길 50",
+    "category": "convenience",
+    "rating": 4.0,
+    "brand": "CU",
+    "avgItemPrice": 1800,
+    "open24Hours": true,
+    "hasAtm": true,
+    "popularItems": [
+      { "name": "삼각김밥", "nameEn": "Onigiri Rice Ball", "price": 1200, "category": "food" },
+      { "name": "컵라면", "nameEn": "Cup Noodles", "price": 1000, "category": "food" },
+      { "name": "에너지음료", "nameEn": "Energy Drink", "price": 2000, "category": "drink" },
+      { "name": "바나나우유", "nameEn": "Banana Milk", "price": 1500, "category": "drink" },
+      { "name": "편의점 도시락", "nameEn": "Bento Box", "price": 4500, "category": "food" }
+    ]
+  },
+  {
+    "id": "conv-002",
+    "name": "GS25 홍대점",
+    "nameEn": "GS25 Hongdae",
+    "lat": 37.5574,
+    "lng": 126.9234,
+    "address": "서울 마포구 와우산로 31",
+    "category": "convenience",
+    "rating": 4.1,
+    "brand": "GS25",
+    "avgItemPrice": 1850,
+    "open24Hours": true,
+    "hasAtm": true,
+    "popularItems": [
+      { "name": "삼각김밥", "nameEn": "Onigiri Rice Ball", "price": 1100, "category": "food" },
+      { "name": "핫도그", "nameEn": "Corn Dog", "price": 1500, "category": "food" },
+      { "name": "컵얼음 + 음료", "nameEn": "Cup Ice + Drink", "price": 1100, "category": "drink" },
+      { "name": "유통기한 임박 할인", "nameEn": "Near-Expiry Discount", "price": 1400, "category": "food" }
+    ]
+  },
+  {
+    "id": "conv-003",
+    "name": "7-Eleven 강남역점",
+    "nameEn": "7-Eleven Gangnam Station",
+    "lat": 37.4979,
+    "lng": 127.0262,
+    "address": "서울 강남구 강남대로 396",
+    "category": "convenience",
+    "rating": 3.9,
+    "brand": "7-Eleven",
+    "avgItemPrice": 1950,
+    "open24Hours": true,
+    "hasAtm": false,
+    "popularItems": [
+      { "name": "삼각김밥", "nameEn": "Onigiri Rice Ball", "price": 1300, "category": "food" },
+      { "name": "치킨 스트립", "nameEn": "Chicken Strips", "price": 2000, "category": "food" },
+      { "name": "파워에이드", "nameEn": "Powerade", "price": 1600, "category": "drink" }
+    ]
+  },
+  {
+    "id": "conv-004",
+    "name": "emart24 종로점",
+    "nameEn": "emart24 Jongno",
+    "lat": 37.5706,
+    "lng": 126.9820,
+    "address": "서울 종로구 종로 88",
+    "category": "convenience",
+    "rating": 4.0,
+    "brand": "emart24",
+    "avgItemPrice": 1750,
+    "open24Hours": true,
+    "hasAtm": true,
+    "popularItems": [
+      { "name": "자체브랜드 삼각김밥", "nameEn": "PB Onigiri", "price": 900, "category": "food" },
+      { "name": "피코크 도시락", "nameEn": "Peacock Bento", "price": 4200, "category": "food" },
+      { "name": "노브랜드 음료", "nameEn": "No Brand Drink", "price": 800, "category": "drink" }
+    ]
+  },
+  {
+    "id": "conv-005",
+    "name": "CU 이태원점",
+    "nameEn": "CU Itaewon",
+    "lat": 37.5356,
+    "lng": 126.9928,
+    "address": "서울 용산구 이태원로 200",
+    "category": "convenience",
+    "rating": 4.2,
+    "brand": "CU",
+    "avgItemPrice": 1800,
+    "open24Hours": true,
+    "hasAtm": false,
+    "popularItems": [
+      { "name": "수입 맥주 4캔", "nameEn": "Imported Beer 4-pack", "price": 10800, "category": "drink" },
+      { "name": "삼각김밥", "nameEn": "Onigiri Rice Ball", "price": 1200, "category": "food" },
+      { "name": "야채샐러드", "nameEn": "Veggie Salad", "price": 2500, "category": "food" }
+    ]
+  }
+]

@@ -1,0 +1,118 @@
+[
+  {
+    "id": "att-001",
+    "name": "경복궁",
+    "nameEn": "Gyeongbokgung Palace",
+    "lat": 37.5796,
+    "lng": 126.9770,
+    "address": "서울 종로구 사직로 161",
+    "category": "attraction",
+    "rating": 4.7,
+    "attractionType": "궁궐",
+    "freeEntry": false,
+    "discountInfo": "한복 착용 시 무료",
+    "discountInfoEn": "Free with Hanbok rental",
+    "openHours": "09:00-18:00 (화요일 휴관)",
+    "tickets": [
+      { "type": "일반", "typeEn": "Adult", "price": 3000 },
+      { "type": "어린이", "typeEn": "Child (7-18)", "price": 1500 },
+      { "type": "6세 이하", "typeEn": "Under 6", "price": 0 },
+      { "type": "65세 이상", "typeEn": "Senior 65+", "price": 0 }
+    ]
+  },
+  {
+    "id": "att-002",
+    "name": "남산서울타워",
+    "nameEn": "N Seoul Tower",
+    "lat": 37.5512,
+    "lng": 126.9882,
+    "address": "서울 용산구 남산공원길 105",
+    "category": "attraction",
+    "rating": 4.5,
+    "attractionType": "전망대",
+    "freeEntry": false,
+    "openHours": "10:00-23:00",
+    "tickets": [
+      { "type": "전망대 일반", "typeEn": "Observatory Adult", "price": 21000 },
+      { "type": "전망대 어린이", "typeEn": "Observatory Child", "price": 14000 },
+      { "type": "남산 등산 (무료)", "typeEn": "Hiking (Free)", "price": 0 }
+    ]
+  },
+  {
+    "id": "att-003",
+    "name": "창덕궁",
+    "nameEn": "Changdeokgung Palace",
+    "lat": 37.5794,
+    "lng": 126.9910,
+    "address": "서울 종로구 율곡로 99",
+    "category": "attraction",
+    "rating": 4.8,
+    "attractionType": "궁궐 (유네스코)",
+    "freeEntry": false,
+    "discountInfo": "한복 착용 시 무료, 문화가 있는 날 할인",
+    "discountInfoEn": "Free with Hanbok; discount on Culture Day",
+    "openHours": "09:00-17:30",
+    "tickets": [
+      { "type": "일반 (후원 포함)", "typeEn": "Adult + Secret Garden", "price": 8000 },
+      { "type": "일반 (후원 미포함)", "typeEn": "Adult Only", "price": 3000 },
+      { "type": "어린이", "typeEn": "Child", "price": 1500 }
+    ]
+  },
+  {
+    "id": "att-004",
+    "name": "국립중앙박물관",
+    "nameEn": "National Museum of Korea",
+    "lat": 37.5238,
+    "lng": 126.9806,
+    "address": "서울 용산구 서빙고로 137",
+    "category": "attraction",
+    "rating": 4.6,
+    "attractionType": "박물관",
+    "freeEntry": true,
+    "discountInfo": "상설전시 무료, 특별전시 유료",
+    "discountInfoEn": "Permanent exhibits free, special exhibits paid",
+    "openHours": "10:00-18:00 (토 21:00까지)",
+    "tickets": [
+      { "type": "상설전시", "typeEn": "Permanent Exhibition", "price": 0 },
+      { "type": "특별전시", "typeEn": "Special Exhibition", "price": 10000 }
+    ]
+  },
+  {
+    "id": "att-005",
+    "name": "롯데월드 어드벤처",
+    "nameEn": "Lotte World Adventure",
+    "lat": 37.5114,
+    "lng": 127.0980,
+    "address": "서울 송파구 올림픽로 240",
+    "category": "attraction",
+    "rating": 4.4,
+    "attractionType": "테마파크",
+    "freeEntry": false,
+    "discountInfo": "통합이용권 인터넷 구매 시 최대 15% 할인",
+    "discountInfoEn": "Up to 15% off online booking",
+    "openHours": "10:00-21:00",
+    "tickets": [
+      { "type": "종일권 (어른)", "typeEn": "Day Pass Adult", "price": 62000 },
+      { "type": "종일권 (어린이)", "typeEn": "Day Pass Child", "price": 52000 },
+      { "type": "야간권", "typeEn": "Evening Pass (after 4pm)", "price": 48000 }
+    ]
+  },
+  {
+    "id": "att-006",
+    "name": "북촌한옥마을",
+    "nameEn": "Bukchon Hanok Village",
+    "lat": 37.5826,
+    "lng": 126.9852,
+    "address": "서울 종로구 계동길 37",
+    "category": "attraction",
+    "rating": 4.3,
+    "attractionType": "문화마을",
+    "freeEntry": true,
+    "discountInfo": "무료 입장, 관광 안내소 운영",
+    "discountInfoEn": "Free entry, tourist center available",
+    "openHours": "24시간 (주민 거주지역 - 조용히)",
+    "tickets": [
+      { "type": "관람 (무료)", "typeEn": "Visit (Free)", "price": 0 }
+    ]
+  }
+]
