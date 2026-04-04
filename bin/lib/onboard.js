@@ -438,6 +438,129 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
   });
 }
 
+function streamGatewayStart(command, env = process.env) {
+  const child = spawn("bash", ["-lc", command], {
+    cwd: ROOT,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  const lines = [];
+  let pending = "";
+  let settled = false;
+  let resolvePromise;
+  let lastPrintedLine = "";
+  let currentPhase = "cluster";
+  let lastHeartbeatBucket = -1;
+  let lastOutputAt = Date.now();
+  const startedAt = Date.now();
+
+  function getDisplayWidth() {
+    return Math.max(60, Number(process.stdout.columns || 100));
+  }
+
+  function trimDisplayLine(line) {
+    const width = getDisplayWidth();
+    const maxLen = Math.max(40, width - 4);
+    if (line.length <= maxLen) return line;
+    return `${line.slice(0, Math.max(0, maxLen - 3))}...`;
+  }
+
+  function printProgressLine(line) {
+    const display = trimDisplayLine(line);
+    if (display !== lastPrintedLine) {
+      console.log(display);
+      lastPrintedLine = display;
+    }
+  }
+
+  function elapsedSeconds() {
+    return Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  }
+
+  function setPhase(nextPhase) {
+    if (!nextPhase || nextPhase === currentPhase) return;
+    currentPhase = nextPhase;
+    const phaseLine =
+      nextPhase === "install"
+        ? "  Installing OpenShell components..."
+        : nextPhase === "pod"
+          ? "  Starting OpenShell gateway pod..."
+          : nextPhase === "health"
+            ? "  Waiting for gateway health..."
+            : "  Starting gateway cluster...";
+    printProgressLine(phaseLine);
+  }
+
+  function classifyLine(line) {
+    if (/ApplyJob|helm-install-openshell|Applying HelmChart/i.test(line)) return "install";
+    if (/openshell-0|Observed pod startup duration|MountVolume\.MountDevice succeeded/i.test(line)) {
+      return "pod";
+    }
+    if (/Gateway .* ready\.?$/i.test(line)) return "health";
+    return null;
+  }
+
+  function flushLine(rawLine) {
+    const line = rawLine.replace(/\r/g, "").trimEnd();
+    if (!line) return;
+    lines.push(line);
+    lastOutputAt = Date.now();
+    const nextPhase = classifyLine(line);
+    if (nextPhase) setPhase(nextPhase);
+  }
+
+  function onChunk(chunk) {
+    pending += chunk.toString();
+    const parts = pending.split("\n");
+    pending = parts.pop();
+    parts.forEach(flushLine);
+  }
+
+  function finish(result) {
+    if (settled) return;
+    settled = true;
+    if (pending) flushLine(pending);
+    clearInterval(heartbeatTimer);
+    resolvePromise(result);
+  }
+
+  child.stdout.on("data", onChunk);
+  child.stderr.on("data", onChunk);
+
+  printProgressLine("  Starting gateway cluster...");
+  const heartbeatTimer = setInterval(() => {
+    if (settled) return;
+    const elapsed = elapsedSeconds();
+    const bucket = Math.floor(elapsed / 10);
+    if (bucket === lastHeartbeatBucket) return;
+    if (Date.now() - lastOutputAt < 3000 && elapsed < 10) return;
+    const heartbeatLine =
+      currentPhase === "install"
+        ? `  Still installing OpenShell components... (${elapsed}s elapsed)`
+        : currentPhase === "pod"
+          ? `  Still starting OpenShell gateway pod... (${elapsed}s elapsed)`
+          : currentPhase === "health"
+            ? `  Still waiting for gateway health... (${elapsed}s elapsed)`
+            : `  Still starting gateway cluster... (${elapsed}s elapsed)`;
+    printProgressLine(heartbeatLine);
+    lastHeartbeatBucket = bucket;
+  }, 5000);
+  heartbeatTimer.unref?.();
+
+  return new Promise((resolve) => {
+    resolvePromise = resolve;
+    child.on("error", (error) => {
+      const detail = error?.message || String(error);
+      lines.push(detail);
+      finish({ status: 1, output: lines.join("\n") });
+    });
+    child.on("close", (code) => {
+      finish({ status: code ?? 1, output: lines.join("\n") });
+    });
+  });
+}
+
 function step(n, total, msg) {
   console.log("");
   console.log(`  [${n}/${total}] ${msg}`);
@@ -2103,17 +2226,16 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   const retries = exitOnFailure ? 2 : 0;
   try {
     await pRetry(
-      () => {
-        console.log("  Starting gateway cluster...");
-        const startResult = runOpenshell(["gateway", "start", ...gwArgs], {
-          ignoreError: true,
-          env: gatewayEnv,
-          suppressOutput: true,
-        });
+      async () => {
+        const startResult = await streamGatewayStart(
+          openshellShellCommand(["gateway", "start", ...gwArgs]),
+          {
+            ...process.env,
+            ...gatewayEnv,
+          },
+        );
         if (startResult.status !== 0) {
-          const output = compactText(
-            `${String(startResult.stdout || "")} ${String(startResult.stderr || "")}`,
-          );
+          const output = compactText(String(startResult.output || ""));
           if (output) {
             console.log(`  Gateway start returned before healthy: ${output.slice(0, 240)}`);
           }
