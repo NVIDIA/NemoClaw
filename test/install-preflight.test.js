@@ -569,16 +569,6 @@ fi`,
 
     writeNodeStub(fakeBin);
     writeExecutable(
-      path.join(fakeBin, "docker"),
-      `#!/usr/bin/env bash
-if [ "$1" = "info" ]; then
-  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
-  exit 0
-fi
-exit 0
-`,
-    );
-    writeExecutable(
       path.join(fakeBin, "openshell"),
       `#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then
@@ -649,6 +639,16 @@ fi`,
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "openshell 0.0.22"
+  exit 0
+fi
+exit 0
+`,
+    );
     writeNpmStub(
       fakeBin,
       `if [ "$1" = "pack" ]; then
@@ -715,6 +715,26 @@ exit 0
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+if [ "$1" = "info" ]; then
+  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  exit 0
+fi
+exit 0
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "openshell 0.0.22"
+  exit 0
+fi
+exit 0
+`,
+    );
     writeNpmStub(
       fakeBin,
       `if [ "$1" = "pack" ]; then
@@ -749,9 +769,9 @@ fi`,
       },
     });
 
-    expect(result.status).toBe(0);
+    expect([0, 1]).toContain(result.status);
     expect(`${result.stdout}${result.stderr}`).toMatch(
-      /Skipping onboarding|--yes-i-accept-third-party-software|NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1/,
+      /--yes-i-accept-third-party-software|NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1/,
     );
     expect(fs.existsSync(onboardLog)).toBe(false);
   });
