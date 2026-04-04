@@ -56,10 +56,13 @@ function runInteractive(cmd, opts = {}) {
  * Exits the process on failure unless opts.ignoreError is true.
  */
 function runFile(file, args = [], opts = {}) {
+  if (opts.shell) {
+    throw new Error("runFile does not allow opts.shell=true");
+  }
   const stdio = opts.stdio ?? ["ignore", "pipe", "pipe"];
   const normalizedArgs = args.map((arg) => String(arg));
   const rendered = [shellQuote(file), ...normalizedArgs.map((arg) => shellQuote(arg))].join(" ");
-  return spawnAndHandle(file, normalizedArgs, opts, stdio, rendered);
+  return spawnAndHandle(file, normalizedArgs, { ...opts, shell: false }, stdio, rendered);
 }
 
 /**

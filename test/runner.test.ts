@@ -78,7 +78,15 @@ describe("runner helpers", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0][0]).toBe("bash");
     expect(calls[0][1]).toEqual(["/tmp/setup.sh", "safe;name", "$(id)"]);
+    expect(calls[0][2].shell).toBe(false);
     expect(calls[0][2].stdio).toEqual(["ignore", "pipe", "pipe"]);
+  });
+
+  it("rejects opts.shell for argv-style commands", () => {
+    const { runFile } = require(runnerPath);
+    expect(() => runFile("bash", ["/tmp/setup.sh"], { shell: true })).toThrow(
+      /runFile does not allow opts\.shell=true/,
+    );
   });
 
   it("honors suppressOutput for argv-style commands", () => {
