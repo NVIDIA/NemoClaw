@@ -904,6 +904,64 @@ verify_nemoclaw() {
 # ---------------------------------------------------------------------------
 # 5. Onboard
 # ---------------------------------------------------------------------------
+run_installer_host_preflight() {
+  local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/preflight.js"
+  if ! command_exists node || [[ ! -f "$preflight_module" ]]; then
+    return 0
+  fi
+
+  local output status
+  if output="$(
+    # shellcheck disable=SC2016
+    node -e '
+      const preflightPath = process.argv[1];
+      try {
+        const { assessHost, planHostRemediation } = require(preflightPath);
+        const host = assessHost();
+        const actions = planHostRemediation(host);
+        const blockingActions = actions.filter((action) => action && action.blocking);
+        const lines = [];
+        if (host.runtime && host.runtime !== "unknown") {
+          lines.push(`Detected container runtime: ${host.runtime}`);
+        }
+        if (host.notes && host.notes.includes("Running under WSL")) {
+          lines.push("Running under WSL");
+        }
+        for (const action of actions) {
+          lines.push(`- ${action.title}: ${action.reason}`);
+          for (const command of action.commands || []) {
+            lines.push(`  ${command}`);
+          }
+        }
+        if (lines.length > 0) {
+          process.stdout.write(lines.join("\n"));
+        }
+        process.exit(blockingActions.length > 0 ? 10 : 0);
+      } catch {
+        process.exit(0);
+      }
+    ' "$preflight_module"
+  )"; then
+    status=0
+  else
+    status=$?
+  fi
+
+  if [[ -n "$output" ]]; then
+    echo ""
+    if [[ "$status" -eq 10 ]]; then
+      warn "Host preflight found issues that will prevent onboarding right now."
+    else
+      warn "Host preflight found warnings."
+    fi
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && printf "  %s\n" "$line"
+    done <<<"$output"
+  fi
+
+  [[ "$status" -ne 10 ]]
+}
+
 run_onboard() {
   show_usage_notice
   info "Running nemoclaw onboard…"
@@ -1025,8 +1083,12 @@ main() {
 
   step 3 "Onboarding"
   if command_exists nemoclaw; then
-    run_onboard
-    ONBOARD_RAN=true
+    if run_installer_host_preflight; then
+      run_onboard
+      ONBOARD_RAN=true
+    else
+      warn "Skipping onboarding until the host prerequisites above are fixed."
+    fi
   else
     warn "Skipping onboarding — this shell still cannot resolve 'nemoclaw'."
   fi

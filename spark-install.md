@@ -2,7 +2,7 @@
 
 > **WIP** — This page is actively being updated as we work through Spark installs. Expect changes.
 
-This guide walks you through installing and running NemoClaw on an NVIDIA DGX Spark. DGX Spark ships with Ubuntu 24.04 and Docker pre-installed; the steps below handle the remaining Spark-specific configuration so you can get from zero to a working sandbox.
+This guide walks you through installing and running NemoClaw on an NVIDIA DGX Spark. DGX Spark ships with Ubuntu 24.04 and Docker pre-installed, and current OpenShell releases no longer require a Spark-specific Docker cgroup workaround.
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@ Before starting, make sure you have:
 
 - **Docker** (pre-installed on DGX Spark, v28.x/29.x)
 - **Node.js 22** (installed automatically by the NemoClaw installer)
-- **OpenShell CLI** (must be installed separately before running NemoClaw — see the Quick Start below)
+- **OpenShell CLI** (installed automatically during NemoClaw onboarding if missing)
 - **API key** (cloud inference only) — the onboarding wizard prompts for a provider and key during setup. For example, an NVIDIA API key from [build.nvidia.com](https://build.nvidia.com) for NVIDIA Endpoints, or an OpenAI, Anthropic, or Gemini key for those providers. **If you plan to use local inference with Ollama instead, no API key is needed** — see [Local Inference with Ollama](#local-inference-with-ollama) to set up Ollama before installing NemoClaw.
 
 ## Quick Start
@@ -22,9 +22,6 @@ curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | 
 # Clone NemoClaw:
 git clone https://github.com/NVIDIA/NemoClaw.git
 cd NemoClaw
-
-# Spark-specific setup (fixes cgroup v2 and Docker permissions — see Troubleshooting for details)
-sudo ./scripts/setup-spark.sh
 
 # Install NemoClaw:
 ./install.sh
@@ -158,8 +155,8 @@ openclaw agent --agent main --local -m "Which model and GPU are in use?" --sessi
 
 | Issue | Status | Workaround |
 |-------|--------|------------|
-| cgroup v2 kills k3s in Docker | Fixed in `setup-spark` | `daemon.json` cgroupns=host |
-| Docker permission denied | Fixed in `setup-spark` | `usermod -aG docker` |
+| cgroup v2 kills k3s in Docker | Resolved in current OpenShell releases | Use the standard installer and onboard flow |
+| Docker permission denied | Host-specific | Ensure your user can access the Docker daemon |
 | CoreDNS CrashLoop after setup | Fixed in `fix-coredns.sh` | Uses container gateway IP, not 127.0.0.11 |
 | Image pull failure (k3s can't find built image) | OpenShell bug | `openshell gateway destroy && openshell gateway start`, re-run setup |
 | GPU passthrough | Untested on Spark | Should work with `--gpu` flag if NVIDIA Container Toolkit is configured |
@@ -167,36 +164,9 @@ openclaw agent --agent main --local -m "Which model and GPU are in use?" --sessi
 | Port 3000 conflict with AI Workbench | Known | AI Workbench Traefik proxy uses port 3000 (and 10000); use a different port for other services |
 | Network policy blocks NVIDIA cloud API | By design | Ensure `integrate.api.nvidia.com` is in the sandbox network policy if using cloud inference |
 
-### Manual Setup (if setup-spark doesn't work)
+### Manual Setup
 
-If `setup-spark.sh` fails, you can apply the fixes it performs by hand:
-
-#### Fix Docker cgroup namespace
-
-```bash
-# Check if you're on cgroup v2
-stat -fc %T /sys/fs/cgroup/
-# Expected: cgroup2fs
-
-# Add cgroupns=host to Docker daemon config
-sudo python3 -c "
-import json, os
-path = '/etc/docker/daemon.json'
-d = json.load(open(path)) if os.path.exists(path) else {}
-d['default-cgroupns-mode'] = 'host'
-json.dump(d, open(path, 'w'), indent=2)
-"
-
-# Restart Docker
-sudo systemctl restart docker
-```
-
-#### Fix Docker permissions
-
-```bash
-sudo usermod -aG docker $USER
-newgrp docker  # or log out and back in
-```
+If onboarding reports that Docker is missing or unreachable, fix Docker access on the host and rerun `nemoclaw onboard`.
 
 ## Technical Reference
 
