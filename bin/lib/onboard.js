@@ -18,7 +18,7 @@ function envInt(name, fallback) {
   const n = Number(raw);
   return Number.isFinite(n) ? Math.max(0, Math.round(n)) : fallback;
 }
-const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
+const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -2344,11 +2344,20 @@ async function recoverGatewayRuntime() {
     return true;
   }
 
-  runOpenshell(["gateway", "start", "--name", GATEWAY_NAME], {
+  const startResult = runOpenshell(["gateway", "start", "--name", GATEWAY_NAME], {
     ignoreError: true,
     env: getGatewayStartEnv(),
     suppressOutput: true,
   });
+  if (startResult.status !== 0) {
+    const diagnostic = compactText(
+      redact(`${startResult.stderr || ""} ${startResult.stdout || ""}`),
+    );
+    console.error(`  Gateway restart failed (exit ${startResult.status}).`);
+    if (diagnostic) {
+      console.error(`  ${diagnostic.slice(0, 240)}`);
+    }
+  }
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
 
   const recoveryPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 10);
@@ -4028,7 +4037,22 @@ async function onboard(opts = {}) {
     }
 
     if (webSearchConfig) {
-      note("  [resume] Reusing Brave Search configuration.");
+      note("  [resume] Revalidating Brave Search configuration.");
+      const braveApiKey = await ensureValidatedBraveSearchCredential();
+      if (braveApiKey) {
+        webSearchConfig = { fetchEnabled: true };
+        onboardSession.updateSession((current) => {
+          current.webSearchConfig = webSearchConfig;
+          return current;
+        });
+        note("  [resume] Reusing Brave Search configuration.");
+      } else {
+        webSearchConfig = await configureWebSearch(null);
+        onboardSession.updateSession((current) => {
+          current.webSearchConfig = webSearchConfig;
+          return current;
+        });
+      }
     } else {
       webSearchConfig = await configureWebSearch(webSearchConfig);
       onboardSession.updateSession((current) => {

@@ -15,6 +15,15 @@ describe("web-search helpers", () => {
     );
   });
 
+  it("emits empty docker config when fetchEnabled is false", () => {
+    expect(
+      Buffer.from(
+        buildWebSearchDockerConfig({ fetchEnabled: false }, null),
+        "base64",
+      ).toString("utf8"),
+    ).toBe("{}");
+  });
+
   it("encodes Brave Search docker config including the api key", () => {
     const encoded = buildWebSearchDockerConfig({ fetchEnabled: true }, "brv-x");
     expect(JSON.parse(Buffer.from(encoded, "base64").toString("utf8"))).toEqual({

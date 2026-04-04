@@ -22,11 +22,11 @@ export function buildWebSearchDockerConfig(
   config: WebSearchConfig | null,
   braveApiKey: string | null,
 ): string {
-  if (!config) return encodeDockerJsonArg({});
+  if (!config || config.fetchEnabled !== true) return encodeDockerJsonArg({});
 
   const payload = {
     provider: "brave",
-    fetchEnabled: true,
+    fetchEnabled: Boolean(config.fetchEnabled),
     apiKey: braveApiKey || "",
   };
   return encodeDockerJsonArg(payload);

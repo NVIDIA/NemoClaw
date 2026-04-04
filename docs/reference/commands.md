@@ -73,7 +73,7 @@ The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instea
 
 If you enable Brave Search during onboarding, NemoClaw currently stores the Brave API key in the sandbox's OpenClaw configuration.
 That means the OpenClaw agent can read the key.
-NemoClaw explored an OpenShell-hosted credential path first, but the current OpenClaw Brave runtime does not consume that path end to end yet.
+NemoClaw explores an OpenShell-hosted credential path first, but the current OpenClaw Brave runtime does not consume that path end to end yet.
 Treat Brave Search as an explicit opt-in and use a dedicated low-privilege Brave key.
 
 For non-interactive onboarding, you must explicitly accept the third-party software notice:

@@ -413,6 +413,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   if (typeof updates.preferredInferenceApi === "string")
     safe.preferredInferenceApi = updates.preferredInferenceApi;
   if (typeof updates.nimContainer === "string") safe.nimContainer = updates.nimContainer;
+  if (isObject(updates.webSearchConfig) && updates.webSearchConfig.fetchEnabled === true) {
+    safe.webSearchConfig = { fetchEnabled: true };
+  } else if (updates.webSearchConfig === null) {
+    safe.webSearchConfig = null;
+  }
   if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
   }

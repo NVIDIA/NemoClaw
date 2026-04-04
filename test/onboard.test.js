@@ -240,6 +240,7 @@ describe("onboard helpers", () => {
       ].join("\n"),
     );
 
+    const priorBraveKey = process.env.BRAVE_API_KEY;
     process.env.BRAVE_API_KEY = "brv-test-key";
     try {
       patchStagedDockerfile(
@@ -261,7 +262,11 @@ describe("onboard helpers", () => {
         ),
       );
     } finally {
-      delete process.env.BRAVE_API_KEY;
+      if (priorBraveKey === undefined) {
+        delete process.env.BRAVE_API_KEY;
+      } else {
+        process.env.BRAVE_API_KEY = priorBraveKey;
+      }
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });

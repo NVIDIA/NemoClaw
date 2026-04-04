@@ -72,6 +72,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
     NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64} \
+    NEMOCLAW_WEB_CONFIG_B64=${NEMOCLAW_WEB_CONFIG_B64} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH}
 
 WORKDIR /sandbox
@@ -82,7 +83,7 @@ USER sandbox
 # No runtime writes to openclaw.json are needed or possible.
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 # Auth token is generated per build so each image has a unique token.
-RUN NEMOCLAW_WEB_CONFIG_B64=\"${NEMOCLAW_WEB_CONFIG_B64}\" python3 -c "\
+RUN python3 -c "\
 import base64, json, os, secrets; \
 from urllib.parse import urlparse; \
 model = os.environ['NEMOCLAW_MODEL']; \
