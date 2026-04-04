@@ -664,9 +664,15 @@ describe("regression guards", () => {
   describe("uninstall fallback hardening (#577)", () => {
     it("bin/nemoclaw.js does not execute remote uninstall script fallback", () => {
       const src = fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"), "utf-8");
-      const uninstallBlock = src.split("function uninstall(args)")[1].split("function showStatus")[0];
-      expect(uninstallBlock).not.toMatch(/execFileSync\("curl"/);
-      expect(uninstallBlock).not.toMatch(/spawnSync\("bash", \[uninstallScript/);
+      const start = src.indexOf("function uninstall(args)");
+      const end = src.indexOf("function showStatus", start);
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      const uninstallBlock = src.slice(start, end);
+      expect(uninstallBlock).not.toMatch(/exec(File)?Sync\(\s*["']curl["']/);
+      expect(uninstallBlock).not.toMatch(
+        /spawnSync\(\s*["']bash["']\s*,\s*\[[^\]]*uninstallScript[^\]]*\]/,
+      );
       expect(uninstallBlock).toContain("Remote uninstall fallback is disabled for security.");
     });
   });
