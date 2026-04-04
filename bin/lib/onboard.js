@@ -254,6 +254,25 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
   let lastHeartbeatPhase = null;
   let lastHeartbeatBucket = -1;
 
+  function getDisplayWidth() {
+    return Math.max(60, Number(process.stdout.columns || 100));
+  }
+
+  function trimDisplayLine(line) {
+    const width = getDisplayWidth();
+    const maxLen = Math.max(40, width - 4);
+    if (line.length <= maxLen) return line;
+    return `${line.slice(0, Math.max(0, maxLen - 3))}...`;
+  }
+
+  function printProgressLine(line) {
+    const display = trimDisplayLine(line);
+    if (display !== lastPrintedLine) {
+      console.log(display);
+      lastPrintedLine = display;
+    }
+  }
+
   function elapsedSeconds() {
     return Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
   }
@@ -273,10 +292,7 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
             : nextPhase === "ready"
               ? "  Waiting for sandbox to become ready..."
               : null;
-    if (phaseLine && phaseLine !== lastPrintedLine) {
-      console.log(phaseLine);
-      lastPrintedLine = phaseLine;
-    }
+    if (phaseLine) printProgressLine(phaseLine);
   }
 
   function finish(result) {
@@ -332,8 +348,7 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
       setPhase("create");
     }
     if (shouldShowLine(line) && line !== lastPrintedLine) {
-      console.log(line);
-      lastPrintedLine = line;
+      printProgressLine(line);
       sawProgress = true;
     }
   }
@@ -364,10 +379,7 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
           setPhase("ready");
           const detail = "Sandbox reported Ready before create stream exited; continuing.";
           lines.push(detail);
-          if (detail !== lastPrintedLine) {
-            console.log(`  ${detail}`);
-            lastPrintedLine = detail;
-          }
+          printProgressLine(`  ${detail}`);
           try {
             child.kill("SIGTERM");
           } catch {
@@ -399,10 +411,9 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
           ? `  Still creating sandbox in gateway... (${elapsed}s elapsed)`
           : currentPhase === "ready"
             ? `  Still waiting for sandbox to become ready... (${elapsed}s elapsed)`
-            : `  Still building sandbox image... (${elapsed}s elapsed)`;
-    if (heartbeatLine !== lastPrintedLine) {
-      console.log(heartbeatLine);
-      lastPrintedLine = heartbeatLine;
+          : `  Still building sandbox image... (${elapsed}s elapsed)`;
+    if (trimDisplayLine(heartbeatLine) !== lastPrintedLine) {
+      printProgressLine(heartbeatLine);
       lastHeartbeatPhase = currentPhase;
       lastHeartbeatBucket = bucket;
     }
@@ -981,7 +992,7 @@ async function configureWebSearch(existingConfig = null) {
     return null;
   }
 
-  console.log("  Using Brave Web Search with web_fetch enabled.");
+  console.log("  ✓ Enabled Brave Web Search");
   console.log("");
   return { fetchEnabled: true };
 }
@@ -2093,7 +2104,21 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   try {
     await pRetry(
       () => {
-        runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: true, env: gatewayEnv });
+        console.log("  Starting gateway cluster...");
+        const startResult = runOpenshell(["gateway", "start", ...gwArgs], {
+          ignoreError: true,
+          env: gatewayEnv,
+          suppressOutput: true,
+        });
+        if (startResult.status !== 0) {
+          const output = compactText(
+            `${String(startResult.stdout || "")} ${String(startResult.stderr || "")}`,
+          );
+          if (output) {
+            console.log(`  Gateway start returned before healthy: ${output.slice(0, 240)}`);
+          }
+        }
+        console.log("  Waiting for gateway health...");
 
         const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 5);
         const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
@@ -2185,6 +2210,7 @@ async function recoverGatewayRuntime() {
   runOpenshell(["gateway", "start", "--name", GATEWAY_NAME], {
     ignoreError: true,
     env: getGatewayStartEnv(),
+    suppressOutput: true,
   });
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
 
