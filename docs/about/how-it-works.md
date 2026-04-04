@@ -148,4 +148,4 @@ For details on the baseline rules, refer to [Network Policies](../reference/netw
 
 - Follow the [Quickstart](../get-started/quickstart.md) to launch your first sandbox.
 - Refer to the [Architecture](../reference/architecture.md) for the full technical structure, including file layouts and the blueprint lifecycle.
-- Refer to [Inference Profiles](../reference/inference-profiles.md) for detailed provider configuration.
+- Refer to [Inference Options](../inference/inference-options.md) for detailed provider configuration.
