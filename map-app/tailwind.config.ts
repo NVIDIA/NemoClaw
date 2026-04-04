@@ -1,4 +1,5 @@
 import type { Config } from 'tailwindcss'
+import seedPlugin from '@seed-design/tailwind3-plugin'
 
 export default {
   content: [
@@ -10,14 +11,7 @@ export default {
       fontFamily: {
         sans: ['Noto Sans KR', 'system-ui', 'sans-serif'],
       },
-      colors: {
-        navy: {
-          900: '#0f172a',
-          800: '#1e293b',
-          700: '#334155',
-        },
-      },
     },
   },
-  plugins: [],
+  plugins: [seedPlugin],
 } satisfies Config

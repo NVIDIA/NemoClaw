@@ -30,18 +30,18 @@ export function Sidebar() {
   }, {})
 
   return (
-    <aside className="hidden lg:flex flex-col w-64 xl:w-72 bg-white border-r border-slate-100 overflow-y-auto flex-shrink-0">
+    <aside className="hidden lg:flex flex-col w-64 xl:w-72 bg-bg-layer-default border-r border-stroke-neutral-subtle overflow-y-auto flex-shrink-0">
       <div className="p-4 space-y-4">
         {/* Category filter */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-slate-700">
+            <h3 className="text-sm font-semibold text-fg-neutral-muted">
               {language === 'ko' ? '카테고리' : 'Categories'}
             </h3>
             {activeCategories.length > 0 && (
               <button
                 onClick={clearCategories}
-                className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                className="text-xs text-fg-brand hover:text-fg-brand-contrast font-medium"
               >
                 {language === 'ko' ? '전체보기' : 'All'}
               </button>
@@ -58,8 +58,8 @@ export function Sidebar() {
                   onClick={() => toggleCategory(cat)}
                   className={`w-full flex items-center justify-between px-3 py-2 rounded-xl transition-all text-sm
                     ${isActive
-                      ? 'text-white shadow-sm'
-                      : 'text-slate-600 hover:bg-slate-50'
+                      ? 'text-fg-neutral-inverted shadow-sm'
+                      : 'text-fg-neutral-muted hover:bg-bg-layer-fill'
                     }`}
                   style={isActive ? { backgroundColor: meta.color } : {}}
                 >
@@ -68,7 +68,7 @@ export function Sidebar() {
                     <span className="font-medium">{language === 'ko' ? meta.label : meta.labelEn}</span>
                   </div>
                   <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full
-                    ${isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                    ${isActive ? 'bg-white/20 text-fg-neutral-inverted' : 'bg-bg-layer-fill text-fg-neutral-subtle'}`}>
                     {count}
                   </span>
                 </button>
@@ -81,7 +81,7 @@ export function Sidebar() {
         <PriceRangeSlider />
 
         {/* Cheapest-only toggle */}
-        <div className="bg-yellow-50 rounded-2xl p-3 border border-yellow-100">
+        <div className="bg-bg-brand-weak rounded-2xl p-3 border border-stroke-brand-weak">
           <button
             onClick={toggleCheapestOnly}
             className="w-full flex items-center justify-between"
@@ -89,16 +89,16 @@ export function Sidebar() {
             <div className="flex items-center gap-2">
               <span className="text-lg">👑</span>
               <div className="text-left">
-                <div className="text-sm font-semibold text-slate-800">
+                <div className="text-sm font-semibold text-fg-neutral">
                   {language === 'ko' ? '최저가만 보기' : 'Cheapest Only'}
                 </div>
-                <div className="text-xs text-slate-400">
+                <div className="text-xs text-fg-neutral-subtle">
                   {language === 'ko' ? '각 카테고리 1위 핀만 표시' : 'Show only #1 pin per category'}
                 </div>
               </div>
             </div>
             <div className={`w-11 h-6 rounded-full transition-colors relative flex-shrink-0
-              ${showCheapestOnly ? 'bg-yellow-400' : 'bg-slate-200'}`}>
+              ${showCheapestOnly ? 'bg-bg-brand-solid' : 'bg-bg-neutral-weak'}`}>
               <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform
                 ${showCheapestOnly ? 'translate-x-5' : 'translate-x-0.5'}`} />
             </div>
@@ -109,12 +109,12 @@ export function Sidebar() {
         {favoriteIds.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold text-slate-700">
+              <h3 className="text-sm font-semibold text-fg-neutral-muted">
                 ❤️ {language === 'ko' ? `즐겨찾기 (${favoriteIds.length})` : `Favorites (${favoriteIds.length})`}
               </h3>
               <button
                 onClick={clearFavs}
-                className="text-xs text-slate-400 hover:text-red-500 font-medium transition-colors"
+                className="text-xs text-fg-neutral-subtle hover:text-fg-critical font-medium transition-colors"
               >
                 {language === 'ko' ? '전체삭제' : 'Clear all'}
               </button>
@@ -128,14 +128,14 @@ export function Sidebar() {
                   <button
                     key={id}
                     onClick={() => setSelectedPin(loc)}
-                    className="w-full flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-slate-50 transition-colors text-left"
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-bg-layer-fill transition-colors text-left"
                   >
                     <span className="text-base">{m.emoji}</span>
                     <div className="min-w-0">
-                      <div className="text-sm font-medium text-slate-700 truncate">
+                      <div className="text-sm font-medium text-fg-neutral-muted truncate">
                         {language === 'ko' ? loc.name : (loc.nameEn || loc.name)}
                       </div>
-                      <div className="text-xs text-slate-400 truncate">{loc.address}</div>
+                      <div className="text-xs text-fg-neutral-subtle truncate">{loc.address}</div>
                     </div>
                   </button>
                 )
@@ -145,8 +145,8 @@ export function Sidebar() {
         )}
 
         {/* Stats — dynamic */}
-        <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-4 text-white">
-          <div className="text-xs font-semibold text-slate-400 mb-3 uppercase tracking-wide">
+        <div className="bg-bg-neutral-inverted rounded-2xl p-4 text-fg-neutral-inverted">
+          <div className="text-xs font-semibold text-fg-neutral-subtle mb-3 uppercase tracking-wide">
             {language === 'ko' ? '데이터 현황' : 'Data Overview'}
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -154,13 +154,13 @@ export function Sidebar() {
               <div key={s.cat} className="bg-white/10 rounded-xl p-2 text-center">
                 <div className="text-lg">{s.emoji}</div>
                 <div className="text-base font-bold">{countByCategory[s.cat] ?? 0}</div>
-                <div className="text-[10px] text-slate-400">
+                <div className="text-[10px] text-fg-neutral-subtle">
                   {language === 'ko' ? s.labelKo : s.labelEn}
                 </div>
               </div>
             ))}
           </div>
-          <div className="mt-2 text-center text-xs text-slate-500">
+          <div className="mt-2 text-center text-xs text-fg-neutral-subtle">
             {language === 'ko' ? `전체 ${all.length}개 장소` : `${all.length} total places`}
           </div>
         </div>

@@ -43,7 +43,7 @@ export function PanelContent({ onClose }: PanelContentProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-start justify-between p-4 pb-3 border-b border-slate-100">
+      <div className="flex items-start justify-between p-4 pb-3 border-b border-stroke-neutral-subtle">
         <div className="flex items-start gap-3 flex-1 min-w-0">
           <div
             className="w-11 h-11 rounded-2xl flex items-center justify-center text-2xl flex-shrink-0"
@@ -53,7 +53,7 @@ export function PanelContent({ onClose }: PanelContentProps) {
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <h2 className="text-base font-bold text-slate-900 leading-tight">
+              <h2 className="text-base font-bold text-fg-neutral leading-tight">
                 {language === 'ko' ? selectedPin.name : (selectedPin.nameEn || selectedPin.name)}
               </h2>
             </div>
@@ -65,11 +65,11 @@ export function PanelContent({ onClose }: PanelContentProps) {
                 {language === 'ko' ? meta.label : meta.labelEn}
               </span>
               {selectedPin.rating && (
-                <span className="text-xs text-slate-500">⭐ {selectedPin.rating}</span>
+                <span className="text-xs text-fg-neutral-subtle">⭐ {selectedPin.rating}</span>
               )}
             </div>
             {selectedPin.address && (
-              <p className="text-xs text-slate-400 mt-1 leading-tight truncate">{selectedPin.address}</p>
+              <p className="text-xs text-fg-neutral-subtle mt-1 leading-tight truncate">{selectedPin.address}</p>
             )}
           </div>
         </div>
@@ -78,7 +78,7 @@ export function PanelContent({ onClose }: PanelContentProps) {
           <button
             onClick={() => toggle(selectedPin.id)}
             className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors
-              ${fav ? 'text-red-500 bg-red-50' : 'text-slate-300 hover:text-red-400 hover:bg-red-50'}`}
+              ${fav ? 'text-fg-critical bg-bg-critical-weak' : 'text-fg-neutral-subtle hover:text-fg-critical hover:bg-bg-critical-weak'}`}
             title={fav ? (language === 'ko' ? '즐겨찾기 해제' : 'Remove from favorites') : (language === 'ko' ? '즐겨찾기 추가' : 'Add to favorites')}
           >
             {fav ? '❤️' : '🤍'}
@@ -86,7 +86,7 @@ export function PanelContent({ onClose }: PanelContentProps) {
           {/* Close button */}
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors"
+            className="w-8 h-8 rounded-full hover:bg-bg-layer-fill flex items-center justify-center text-fg-neutral-subtle hover:text-fg-neutral-muted transition-colors"
           >
             ✕
           </button>
@@ -99,21 +99,21 @@ export function PanelContent({ onClose }: PanelContentProps) {
 
         {/* Phone */}
         {selectedPin.phone && (
-          <div className="pt-3 border-t border-slate-100">
-            <div className="flex items-center gap-2 text-sm text-slate-600">
+          <div className="pt-3 border-t border-stroke-neutral-subtle">
+            <div className="flex items-center gap-2 text-sm text-fg-neutral-muted">
               <span>📞</span>
-              <a href={`tel:${selectedPin.phone}`} className="hover:text-blue-600">{selectedPin.phone}</a>
+              <a href={`tel:${selectedPin.phone}`} className="hover:text-fg-brand">{selectedPin.phone}</a>
             </div>
           </div>
         )}
 
         {/* Open in Maps */}
-        <div className="pt-3 border-t border-slate-100 grid grid-cols-2 gap-2">
+        <div className="pt-3 border-t border-stroke-neutral-subtle grid grid-cols-2 gap-2">
           <a
             href={kakaoUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-yellow-400 hover:bg-yellow-500 text-yellow-900 text-xs font-semibold transition-colors"
+            className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-bg-brand-solid hover:bg-bg-brand-solid-pressed text-fg-neutral-inverted text-xs font-semibold transition-colors"
           >
             🗺️ {language === 'ko' ? '카카오맵' : 'Kakao Map'}
           </a>
@@ -121,7 +121,7 @@ export function PanelContent({ onClose }: PanelContentProps) {
             href={googleUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold transition-colors"
+            className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-bg-informative-solid hover:bg-bg-informative-solid-pressed text-fg-neutral-inverted text-xs font-semibold transition-colors"
           >
             📍 Google Maps
           </a>
@@ -137,7 +137,7 @@ export function DesktopDetailPanel() {
 
   return (
     <div
-      className={`hidden md:flex flex-col w-80 xl:w-96 bg-white border-l border-slate-100 shadow-xl
+      className={`hidden md:flex flex-col w-80 xl:w-96 bg-bg-layer-default border-l border-stroke-neutral-subtle shadow-xl
         transition-all duration-300 flex-shrink-0 overflow-hidden
         ${isPanelOpen ? 'opacity-100' : 'w-0 opacity-0 pointer-events-none'}`}
       style={{ width: isPanelOpen ? undefined : 0 }}
@@ -155,18 +155,18 @@ export function MobileBottomSheet() {
     <>
       {isPanelOpen && (
         <div
-          className="md:hidden fixed inset-0 bg-black/30 z-40"
+          className="md:hidden fixed inset-0 bg-bg-overlay z-40"
           onClick={closePanel}
         />
       )}
       <div
-        className={`md:hidden fixed bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-2xl z-50
+        className={`md:hidden fixed bottom-0 left-0 right-0 bg-bg-layer-floating rounded-t-3xl shadow-2xl z-50
           transition-transform duration-300
           ${isPanelOpen ? 'translate-y-0' : 'translate-y-full'}`}
         style={{ maxHeight: '75vh' }}
       >
         <div className="flex justify-center pt-3 pb-1">
-          <div className="w-10 h-1 bg-slate-200 rounded-full" />
+          <div className="w-10 h-1 bg-bg-neutral-weak rounded-full" />
         </div>
         <div className="overflow-y-auto" style={{ maxHeight: 'calc(75vh - 24px)' }}>
           {isPanelOpen && <PanelContent onClose={closePanel} />}

@@ -12,21 +12,24 @@ export function PriceRangeSlider() {
     return `₩${v.toLocaleString()}`
   }
 
+  const brandColor = 'var(--seed-color-bg-brand-solid)'
+  const trackColor = 'var(--seed-color-bg-neutral-weak)'
+
   return (
-    <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
+    <div className="bg-bg-layer-default rounded-2xl p-4 shadow-sm border border-stroke-neutral-subtle">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-slate-700">
+        <h3 className="text-sm font-semibold text-fg-neutral-muted">
           {language === 'ko' ? '💰 가격 범위' : '💰 Price Range'}
         </h3>
-        <span className="text-xs text-slate-500">
+        <span className="text-xs text-fg-neutral-subtle">
           {formatPrice(priceRange[0])} ~ {formatPrice(priceRange[1])}
         </span>
       </div>
       <div className="space-y-3">
         <div>
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+          <div className="flex items-center justify-between text-xs text-fg-neutral-subtle mb-1">
             <span>{language === 'ko' ? '최소' : 'Min'}</span>
-            <span className="font-medium text-blue-600">{formatPrice(priceRange[0])}</span>
+            <span className="font-medium text-fg-brand">{formatPrice(priceRange[0])}</span>
           </div>
           <input
             type="range"
@@ -38,16 +41,16 @@ export function PriceRangeSlider() {
               const val = Number(e.target.value)
               if (val < priceRange[1]) setPriceRange([val, priceRange[1]])
             }}
-            className="w-full accent-blue-500"
+            className="w-full seed-range"
             style={{
-              background: `linear-gradient(to right, #e2e8f0 0%, #e2e8f0 ${(priceRange[0]/MAX)*100}%, #3b82f6 ${(priceRange[0]/MAX)*100}%, #3b82f6 100%)`
+              background: `linear-gradient(to right, ${trackColor} 0%, ${trackColor} ${(priceRange[0]/MAX)*100}%, ${brandColor} ${(priceRange[0]/MAX)*100}%, ${brandColor} 100%)`
             }}
           />
         </div>
         <div>
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+          <div className="flex items-center justify-between text-xs text-fg-neutral-subtle mb-1">
             <span>{language === 'ko' ? '최대' : 'Max'}</span>
-            <span className="font-medium text-blue-600">
+            <span className="font-medium text-fg-brand">
               {priceRange[1] >= MAX ? (language === 'ko' ? '제한없음' : 'No limit') : formatPrice(priceRange[1])}
             </span>
           </div>
@@ -61,16 +64,16 @@ export function PriceRangeSlider() {
               const val = Number(e.target.value)
               if (val > priceRange[0]) setPriceRange([priceRange[0], val])
             }}
-            className="w-full accent-blue-500"
+            className="w-full seed-range"
             style={{
-              background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(priceRange[1]/MAX)*100}%, #e2e8f0 ${(priceRange[1]/MAX)*100}%, #e2e8f0 100%)`
+              background: `linear-gradient(to right, ${brandColor} 0%, ${brandColor} ${(priceRange[1]/MAX)*100}%, ${trackColor} ${(priceRange[1]/MAX)*100}%, ${trackColor} 100%)`
             }}
           />
         </div>
       </div>
       <button
         onClick={() => setPriceRange([0, MAX])}
-        className="mt-3 w-full text-xs text-slate-400 hover:text-slate-600 transition-colors py-1"
+        className="mt-3 w-full text-xs text-fg-neutral-subtle hover:text-fg-neutral-muted transition-colors py-1"
       >
         {language === 'ko' ? '초기화' : 'Reset'}
       </button>

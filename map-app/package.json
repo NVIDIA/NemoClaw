@@ -10,6 +10,9 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
+    "@seed-design/css": "^1.2.7",
+    "@seed-design/design-token": "^1.0.4",
+    "@seed-design/tailwind3-plugin": "^1.1.18",
     "leaflet": "^1.9.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

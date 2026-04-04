@@ -16,7 +16,7 @@ export default function App() {
   }, [setIsMobile])
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-slate-50">
+    <div className="flex flex-col h-screen overflow-hidden bg-bg-layer-basement">
       {/* Top navigation bar */}
       <TopBar />
 
@@ -28,7 +28,7 @@ export default function App() {
         {/* Map + filter bar + detail panel */}
         <div className="flex flex-col flex-1 overflow-hidden">
           {/* Mobile category filter bar */}
-          <div className="lg:hidden bg-white border-b border-slate-100 shadow-sm z-20 flex-shrink-0">
+          <div className="lg:hidden bg-bg-layer-default border-b border-stroke-neutral-subtle shadow-sm z-20 flex-shrink-0">
             <CategoryFilterBar />
           </div>
 

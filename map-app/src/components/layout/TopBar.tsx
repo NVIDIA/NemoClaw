@@ -26,18 +26,18 @@ export function TopBar() {
   }
 
   return (
-    <header className="flex-shrink-0 bg-[#0f172a] text-white px-4 py-3 shadow-md z-30">
+    <header className="flex-shrink-0 bg-bg-layer-default text-fg-neutral px-4 py-3 shadow-sm border-b border-stroke-neutral-subtle z-30">
       <div className="flex items-center justify-between gap-3">
         {/* Logo */}
         <div className="flex items-center gap-2.5 flex-shrink-0">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center text-lg shadow-md">
+          <div className="w-9 h-9 rounded-xl bg-bg-brand-solid flex items-center justify-center text-lg shadow-sm">
             💰
           </div>
           <div>
-            <h1 className="font-bold text-base leading-tight">
+            <h1 className="font-bold text-base leading-tight text-fg-brand">
               {language === 'ko' ? '최저가 지도' : 'Lowest Price Map'}
             </h1>
-            <p className="text-[11px] text-slate-400 leading-none">
+            <p className="text-[11px] text-fg-neutral-subtle leading-none">
               {language === 'ko' ? `${filteredCount}개 장소` : `${filteredCount} places`}
             </p>
           </div>
@@ -52,8 +52,8 @@ export function TopBar() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={language === 'ko' ? '장소 검색...' : 'Search places...'}
-              className="w-full bg-slate-700 text-white placeholder-slate-400 text-sm px-3 py-1.5
-                rounded-lg border border-slate-600 focus:outline-none focus:border-yellow-400 transition-colors"
+              className="w-full bg-bg-layer-fill text-fg-neutral placeholder:text-fg-neutral-subtle text-sm px-3 py-1.5
+                rounded-lg border border-stroke-neutral-subtle focus:outline-none focus:border-stroke-brand-solid transition-colors"
               onKeyDown={(e) => {
                 if (e.key === 'Escape') {
                   setSearchQuery('')
@@ -70,8 +70,8 @@ export function TopBar() {
           <button
             onClick={handleSearchToggle}
             className={`w-8 h-8 rounded-full flex items-center justify-center text-sm transition-colors
-              ${searchOpen ? 'bg-yellow-500 text-black' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'}
-              border border-slate-600`}
+              ${searchOpen ? 'bg-bg-brand-solid text-fg-neutral-inverted' : 'bg-bg-layer-fill hover:bg-bg-layer-default-pressed text-fg-neutral-muted'}
+              border border-stroke-neutral-subtle`}
             title={language === 'ko' ? '검색' : 'Search'}
           >
             {searchOpen && searchQuery ? '✕' : '🔍'}
@@ -83,8 +83,8 @@ export function TopBar() {
           {/* Language toggle */}
           <button
             onClick={toggleLanguage}
-            className="px-2.5 py-1.5 rounded-full bg-slate-700 hover:bg-slate-600 text-xs font-bold
-              transition-colors text-slate-200 border border-slate-600"
+            className="px-2.5 py-1.5 rounded-full bg-bg-layer-fill hover:bg-bg-layer-default-pressed text-xs font-bold
+              transition-colors text-fg-neutral-muted border border-stroke-neutral-subtle"
           >
             {language === 'ko' ? 'EN' : '한'}
           </button>

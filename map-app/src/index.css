@@ -1,4 +1,7 @@
-/* Leaflet CSS - must be first */
+/* Seed Design System */
+@import '@seed-design/css/all.css';
+
+/* Leaflet CSS */
 @import 'leaflet/dist/leaflet.css';
 
 @tailwind base;
@@ -22,10 +25,10 @@ html, body, #root {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #f1f5f9;
+  background: var(--seed-color-bg-layer-basement);
 }
 ::-webkit-scrollbar-thumb {
-  background: #94a3b8;
+  background: var(--seed-color-stroke-neutral-muted);
   border-radius: 3px;
 }
 
@@ -63,4 +66,9 @@ html, body, #root {
 }
 .leaflet-tooltip::before {
   display: none !important;
+}
+
+/* Seed slider accent */
+input[type="range"].seed-range {
+  accent-color: var(--seed-color-bg-brand-solid);
 }

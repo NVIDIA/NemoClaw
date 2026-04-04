@@ -20,8 +20,8 @@ export function CategoryFilterBar() {
         className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium
           border transition-all duration-150
           ${activeCategories.length === 0
-            ? 'bg-slate-800 text-white border-slate-800 shadow-md'
-            : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+            ? 'bg-bg-neutral-inverted text-fg-neutral-inverted border-transparent shadow-sm'
+            : 'bg-bg-layer-default text-fg-neutral-muted border-stroke-neutral-subtle hover:border-stroke-neutral-muted'
           }`}
       >
         🌍 {language === 'ko' ? '전체' : 'All'}
@@ -37,8 +37,8 @@ export function CategoryFilterBar() {
             className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium
               border transition-all duration-150
               ${isActive
-                ? 'text-white border-transparent shadow-md'
-                : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+                ? 'text-fg-neutral-inverted border-transparent shadow-sm'
+                : 'bg-bg-layer-default text-fg-neutral-muted border-stroke-neutral-subtle hover:border-stroke-neutral-muted'
               }`}
             style={isActive ? { backgroundColor: meta.color, borderColor: meta.color } : {}}
           >
