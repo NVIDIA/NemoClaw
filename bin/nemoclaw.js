@@ -1067,7 +1067,27 @@ function showStatus() {
   showServiceStatus({ sandboxName: defaultSandbox || undefined });
 }
 
-async function listSandboxes() {
+async function listSandboxes(args = []) {
+  const jsonMode = args.includes("--json");
+
+  if (jsonMode) {
+    const { sandboxes, defaultSandbox } = registry.listSandboxes();
+    const output = {
+      sandboxes: sandboxes.map((sb) => ({
+        name: sb.name,
+        default: sb.name === defaultSandbox,
+        model: sb.model || null,
+        provider: sb.provider || null,
+        gpuEnabled: sb.gpuEnabled || false,
+        policies: sb.policies || [],
+        createdAt: sb.createdAt || null,
+      })),
+      defaultSandbox,
+    };
+    console.log(JSON.stringify(output, null, 2));
+    return;
+  }
+
   const recovery = await recoverRegistryEntries();
   const { sandboxes, defaultSandbox } = recovery;
   if (sandboxes.length === 0) {
@@ -1132,8 +1152,30 @@ async function sandboxConnect(sandboxName) {
 }
 
 // eslint-disable-next-line complexity
-async function sandboxStatus(sandboxName) {
+async function sandboxStatus(sandboxName, args = []) {
+  const jsonMode = args.includes("--json");
   const sb = registry.getSandbox(sandboxName);
+
+  if (jsonMode) {
+    const nimStat =
+      sb && sb.nimContainer ? nim.nimStatusByName(sb.nimContainer) : nim.nimStatus(sandboxName);
+    const output = {
+      name: sandboxName,
+      model: (sb && sb.model) || null,
+      provider: (sb && sb.provider) || null,
+      gpuEnabled: (sb && sb.gpuEnabled) || false,
+      policies: (sb && sb.policies) || [],
+      createdAt: (sb && sb.createdAt) || null,
+      nim: {
+        running: nimStat.running,
+        healthy: nimStat.healthy || false,
+        container: nimStat.container || null,
+      },
+    };
+    console.log(JSON.stringify(output, null, 2));
+    return;
+  }
+
   const live = parseGatewayInference(
     captureOpenshell(["inference", "get"], { ignoreError: true }).output,
   );
@@ -1303,9 +1345,24 @@ async function sandboxPolicyAdd(sandboxName) {
   policies.applyPreset(sandboxName, answer);
 }
 
-function sandboxPolicyList(sandboxName) {
+function sandboxPolicyList(sandboxName, args = []) {
+  const jsonMode = args.includes("--json");
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
+
+  if (jsonMode) {
+    const output = {
+      sandbox: sandboxName,
+      presets: allPresets.map((p) => ({
+        name: p.name,
+        description: p.description,
+        applied: applied.includes(p.name),
+      })),
+      applied,
+    };
+    console.log(JSON.stringify(output, null, 2));
+    return;
+  }
 
   console.log("");
   console.log(`  Policy presets for sandbox '${sandboxName}':`);
@@ -1377,15 +1434,15 @@ function help() {
     nemoclaw setup-spark             Set up on DGX Spark ${D}(fixes cgroup v2 + Docker)${R}
 
   ${G}Sandbox Management:${R}
-    ${B}nemoclaw list${R}                    List all sandboxes
+    ${B}nemoclaw list${R} ${D}[--json]${R}            List all sandboxes
     nemoclaw <name> connect          Shell into a running sandbox
-    nemoclaw <name> status           Sandbox health + NIM status
+    nemoclaw <name> status ${D}[--json]${R}  Sandbox health + NIM status
     nemoclaw <name> logs ${D}[--follow]${R}  Stream sandbox logs
     nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
 
   ${G}Policy Presets:${R}
     nemoclaw <name> policy-add       Add a network or filesystem policy preset
-    nemoclaw <name> policy-list      List presets ${D}(● = applied)${R}
+    nemoclaw <name> policy-list ${D}[--json]${R}  List presets ${D}(● = applied)${R}
 
   ${G}Deploy:${R}
     nemoclaw deploy <instance>       Deploy to a Brev VM and start services
@@ -1456,7 +1513,7 @@ const [cmd, ...args] = process.argv.slice(2);
         uninstall(args);
         break;
       case "list":
-        await listSandboxes();
+        await listSandboxes(args);
         break;
       case "--version":
       case "-v": {
@@ -1482,7 +1539,7 @@ const [cmd, ...args] = process.argv.slice(2);
         await sandboxConnect(cmd);
         break;
       case "status":
-        await sandboxStatus(cmd);
+        await sandboxStatus(cmd, actionArgs);
         break;
       case "logs":
         sandboxLogs(cmd, actionArgs.includes("--follow"));
@@ -1491,7 +1548,7 @@ const [cmd, ...args] = process.argv.slice(2);
         await sandboxPolicyAdd(cmd);
         break;
       case "policy-list":
-        sandboxPolicyList(cmd);
+        sandboxPolicyList(cmd, actionArgs);
         break;
       case "destroy":
         await sandboxDestroy(cmd, actionArgs);
