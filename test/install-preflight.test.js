@@ -769,7 +769,7 @@ fi`,
       },
     });
 
-    expect([0, 1]).toContain(result.status);
+    expect(result.status).toBe(1);
     expect(`${result.stdout}${result.stderr}`).toMatch(
       /--yes-i-accept-third-party-software|NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1/,
     );
