@@ -71,7 +71,9 @@ function runFile(file, args = [], opts = {}) {
     cwd: ROOT,
     env: { ...process.env, ...opts.env },
   });
-  writeRedactedResult(result, stdio);
+  if (!opts.suppressOutput) {
+    writeRedactedResult(result, stdio);
+  }
   if (result.status !== 0 && !opts.ignoreError) {
     const rendered = [shellQuote(file), ...normalizedArgs.map((arg) => shellQuote(arg))].join(" ");
     console.error(`  Command failed (exit ${result.status}): ${redact(rendered).slice(0, 80)}`);

@@ -57,7 +57,6 @@ describe("runner helpers", () => {
     expect(calls[0][2].stdio).toEqual(["ignore", "pipe", "pipe"]);
     expect(calls[1][2].stdio).toEqual(["inherit", "pipe", "pipe"]);
   });
-
   it("runs argv-style commands without going through bash -c", () => {
     const calls = [];
     const originalSpawnSync = childProcess.spawnSync;
@@ -80,6 +79,32 @@ describe("runner helpers", () => {
     expect(calls[0][0]).toBe("bash");
     expect(calls[0][1]).toEqual(["/tmp/setup.sh", "safe;name", "$(id)"]);
     expect(calls[0][2].stdio).toEqual(["ignore", "pipe", "pipe"]);
+  });
+
+  it("honors suppressOutput for argv-style commands", () => {
+    const originalSpawnSync = childProcess.spawnSync;
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = () => ({
+      status: 0,
+      stdout: "safe stdout\n",
+      stderr: "safe stderr\n",
+    });
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { runFile } = require(runnerPath);
+      runFile("bash", ["/tmp/setup.sh"], { suppressOutput: true });
+    } finally {
+      childProcess.spawnSync = originalSpawnSync;
+      stdoutSpy.mockRestore();
+      stderrSpy.mockRestore();
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    expect(stdoutSpy).not.toHaveBeenCalled();
+    expect(stderrSpy).not.toHaveBeenCalled();
   });
 });
 
