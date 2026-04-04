@@ -1336,6 +1336,29 @@ describe("installer pure helpers", () => {
     expect(r.stdout.trim()).toBe("yes");
   });
 
+  it("is_source_checkout: rejects bootstrap payload clones even when git metadata exists", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-checkout-bootstrap-"));
+    fs.mkdirSync(path.join(tmp, ".git"));
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+    );
+    const r = spawnSync(
+      "bash",
+      [
+        "-c",
+        `source "${INSTALLER}" 2>/dev/null; is_source_checkout "${tmp}" && echo yes || echo no`,
+      ],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: { HOME: tmp, PATH: TEST_SYSTEM_PATH, NEMOCLAW_BOOTSTRAP_PAYLOAD: "1" },
+      },
+    );
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe("no");
+  });
+
   it("resolve_installer_version: falls back to package.json when git tags are unavailable", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-ver-pkg-"));
     fs.mkdirSync(path.join(tmp, ".git"));
@@ -1822,7 +1845,8 @@ EOS
 #!/usr/bin/env bash
 set -euo pipefail
 # NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1
-node "$NEMOCLAW_REPO_ROOT/bin/lib/usage-notice.js"
+repo_root="\${NEMOCLAW_REPO_ROOT:-$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)}"
+node "$repo_root/bin/lib/usage-notice.js"
 EOS
   chmod +x "$target/scripts/install.sh"
   exit 0

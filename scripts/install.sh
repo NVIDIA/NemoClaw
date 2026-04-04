@@ -833,6 +833,10 @@ is_source_checkout() {
   [[ -f "$package_json" ]] || return 1
   grep -q '"name"[[:space:]]*:[[:space:]]*"nemoclaw"' "$package_json" 2>/dev/null || return 1
 
+  if [[ "${NEMOCLAW_BOOTSTRAP_PAYLOAD:-}" == "1" ]]; then
+    return 1
+  fi
+
   if [[ -n "${NEMOCLAW_REPO_ROOT:-}" || -d "${repo_root}/.git" ]]; then
     return 0
   fi
