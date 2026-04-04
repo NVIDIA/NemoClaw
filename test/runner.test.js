@@ -640,34 +640,18 @@ describe("regression guards", () => {
       expect(findShellViolations(src)).toEqual([]);
     });
 
-    it("scripts/brev-setup.sh does not pipe curl to shell", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "scripts", "brev-setup.sh"),
-        "utf-8",
-      );
-      expect(findShellViolations(src)).toEqual([]);
-    });
-
-    it("scripts/brev-setup.sh delegates to the standard installer", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "scripts", "brev-setup.sh"),
-        "utf-8",
-      );
-      expect(src).toContain('INSTALLER_SCRIPT="${REPO_DIR}/scripts/install.sh"');
-      expect(src).toContain(
-        'exec bash "$INSTALLER_SCRIPT" --non-interactive --yes-i-accept-third-party-software',
+    it("scripts/brev-setup.sh has been removed", () => {
+      expect(fs.existsSync(path.join(import.meta.dirname, "..", "scripts", "brev-setup.sh"))).toBe(
+        false,
       );
     });
 
-    it("scripts/brev-setup.sh no longer embeds bespoke apt bootstrap logic", () => {
+    it("services no longer tell users to install brev-setup.sh", () => {
       const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "scripts", "brev-setup.sh"),
+        path.join(import.meta.dirname, "..", "src", "lib", "services.ts"),
         "utf-8",
       );
-      expect(src).not.toContain("apt-get install");
-      expect(src).not.toContain("gh release download");
-      expect(src).not.toContain("cloudflared-linux-");
-      expect(src).not.toContain("python3 -m vllm.entrypoints.openai.api_server");
+      expect(src).not.toContain("brev-setup.sh");
     });
 
     it("deploy uses the standard installer and connects to the actual sandbox name", () => {
@@ -742,6 +726,16 @@ describe("regression guards", () => {
       expect(src).toContain('brev("ls")');
       expect(src).not.toContain("BREV_API_TOKEN");
       expect(src).not.toContain('brev("login", "--token"');
+    });
+
+    it("brev e2e suite no longer contains the old brev-setup compatibility path", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.js"),
+        "utf-8",
+      );
+      expect(src).not.toContain("scripts/brev-setup.sh");
+      expect(src).not.toContain("USE_LAUNCHABLE");
+      expect(src).not.toContain("SKIP_VLLM=1");
     });
 
     it("bin/nemoclaw.js does not pipe curl to shell", () => {
