@@ -660,7 +660,8 @@ async function deploy(instanceName) {
     shellQuote,
     run,
     runInteractive,
-    execFileSync,
+    execFileSync: (file, args, opts = {}) =>
+      String(execFileSync(file, args, { encoding: "utf-8", ...opts })),
     spawnSync,
     log: console.log,
     error: console.error,
