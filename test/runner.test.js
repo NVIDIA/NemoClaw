@@ -660,4 +660,14 @@ describe("regression guards", () => {
       expect(findJsViolations(src)).toEqual([]);
     });
   });
+
+  describe("uninstall fallback hardening (#577)", () => {
+    it("bin/nemoclaw.js does not execute remote uninstall script fallback", () => {
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"), "utf-8");
+      const uninstallBlock = src.split("function uninstall(args)")[1].split("function showStatus")[0];
+      expect(uninstallBlock).not.toMatch(/execFileSync\("curl"/);
+      expect(uninstallBlock).not.toMatch(/spawnSync\("bash", \[uninstallScript/);
+      expect(uninstallBlock).toContain("Remote uninstall fallback is disabled for security.");
+    });
+  });
 });

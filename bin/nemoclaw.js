@@ -1015,34 +1015,11 @@ function uninstall(args) {
     exitWithSpawnResult(result);
   }
 
-  // Download to file before execution — prevents partial-download execution.
-  // Upstream URL is a rolling release so SHA-256 pinning isn't practical.
-  console.log(`  Local uninstall script not found; falling back to ${REMOTE_UNINSTALL_URL}`);
-  const uninstallDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-"));
-  const uninstallScript = path.join(uninstallDir, "uninstall.sh");
-  let result;
-  let downloadFailed = false;
-  try {
-    try {
-      execFileSync("curl", ["-fsSL", REMOTE_UNINSTALL_URL, "-o", uninstallScript], {
-        stdio: "inherit",
-      });
-    } catch {
-      console.error(`  Failed to download uninstall script from ${REMOTE_UNINSTALL_URL}`);
-      downloadFailed = true;
-    }
-    if (!downloadFailed) {
-      result = spawnSync("bash", [uninstallScript, ...args], {
-        stdio: "inherit",
-        cwd: ROOT,
-        env: process.env,
-      });
-    }
-  } finally {
-    fs.rmSync(uninstallDir, { recursive: true, force: true });
-  }
-  if (downloadFailed) process.exit(1);
-  exitWithSpawnResult(result);
+  console.error("  Local uninstall script not found.");
+  console.error("  Remote uninstall fallback is disabled for security.");
+  console.error(`  Download and review manually: ${REMOTE_UNINSTALL_URL}`);
+  console.error("  Then run: bash uninstall.sh [flags]");
+  process.exit(1);
 }
 
 function showStatus() {
@@ -1400,7 +1377,7 @@ function help() {
     nemoclaw debug --output FILE     Save diagnostics tarball for GitHub issues
 
   Cleanup:
-    nemoclaw uninstall [flags]       Run uninstall.sh (local first, curl fallback)
+    nemoclaw uninstall [flags]       Run uninstall.sh (local only; no remote fallback)
 
   ${G}Uninstall flags:${R}
     --yes                            Skip the confirmation prompt
