@@ -1,4 +1,5 @@
 # Build artifacts and caches
+.version
 *.pyc
 *.tsbuildinfo
 .pytest_cache/
@@ -15,6 +16,7 @@ Thumbs.db
 
 # Project-specific
 draft_newsletter_*
+research/
 specs/
 vdr-notes/
 

@@ -2,7 +2,9 @@
 title:
   page: "Switch NemoClaw Inference Models at Runtime"
   nav: "Switch Inference Models"
-description: "Change the active inference model without restarting the sandbox."
+description:
+  main: "Change the active inference model without restarting the sandbox."
+  agent: "Changes the active inference model without restarting the sandbox. Use when switching inference providers, changing the model runtime, or reconfiguring inference routing."
 keywords: ["switch nemoclaw inference model", "change inference runtime"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "inference_routing"]
@@ -95,4 +97,4 @@ The output includes the active provider, model, and endpoint.
 
 ## Related Topics
 
-- [Inference Profiles](../reference/inference-profiles.md) for full profile configuration details.
+- [Inference Options](inference-options.md) for the full list of providers available during onboarding.

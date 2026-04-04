@@ -25,4 +25,6 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Check Dockerfile base-image pin
-        run: bash scripts/update-docker-pin.sh --check
+        run: |
+          bash scripts/update-docker-pin.sh --check
+          DOCKERFILE=Dockerfile.base bash scripts/update-docker-pin.sh --check

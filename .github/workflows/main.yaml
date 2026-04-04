@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: main
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/workflows/docs-preview-*.yaml"
+      - "ISSUE_TEMPLATE/**"
+      - ".github/ISSUE_TEMPLATE/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run basic checks
+        uses: ./.github/actions/basic-checks
+
+  sandbox-images-and-e2e:
+    needs: checks
+    uses: ./.github/workflows/sandbox-images-and-e2e.yaml
