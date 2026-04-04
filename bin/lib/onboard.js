@@ -411,7 +411,7 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
           ? `  Still creating sandbox in gateway... (${elapsed}s elapsed)`
           : currentPhase === "ready"
             ? `  Still waiting for sandbox to become ready... (${elapsed}s elapsed)`
-          : `  Still building sandbox image... (${elapsed}s elapsed)`;
+            : `  Still building sandbox image... (${elapsed}s elapsed)`;
     if (trimDisplayLine(heartbeatLine) !== lastPrintedLine) {
       printProgressLine(heartbeatLine);
       lastHeartbeatPhase = currentPhase;
