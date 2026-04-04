@@ -18,9 +18,8 @@ if (dockerHost) {
  * Run a shell command via bash, streaming stdout/stderr (redacted) to the terminal.
  * Exits the process on failure unless opts.ignoreError is true.
  */
-function run(cmd, opts = {}) {
-  const stdio = opts.stdio ?? ["ignore", "pipe", "pipe"];
-  const result = spawnSync("bash", ["-c", cmd], {
+function spawnAndHandle(file, args, opts = {}, stdio, renderedCommand) {
+  const result = spawnSync(file, args, {
     ...opts,
     stdio,
     cwd: ROOT,
@@ -30,10 +29,17 @@ function run(cmd, opts = {}) {
     writeRedactedResult(result, stdio);
   }
   if (result.status !== 0 && !opts.ignoreError) {
-    console.error(`  Command failed (exit ${result.status}): ${redact(cmd).slice(0, 80)}`);
+    console.error(
+      `  Command failed (exit ${result.status}): ${redact(renderedCommand).slice(0, 80)}`,
+    );
     process.exit(result.status || 1);
   }
   return result;
+}
+
+function run(cmd, opts = {}) {
+  const stdio = opts.stdio ?? ["ignore", "pipe", "pipe"];
+  return spawnAndHandle("bash", ["-c", cmd], opts, stdio, cmd);
 }
 
 /**
@@ -42,20 +48,7 @@ function run(cmd, opts = {}) {
  */
 function runInteractive(cmd, opts = {}) {
   const stdio = opts.stdio ?? ["inherit", "pipe", "pipe"];
-  const result = spawnSync("bash", ["-c", cmd], {
-    ...opts,
-    stdio,
-    cwd: ROOT,
-    env: { ...process.env, ...opts.env },
-  });
-  if (!opts.suppressOutput) {
-    writeRedactedResult(result, stdio);
-  }
-  if (result.status !== 0 && !opts.ignoreError) {
-    console.error(`  Command failed (exit ${result.status}): ${redact(cmd).slice(0, 80)}`);
-    process.exit(result.status || 1);
-  }
-  return result;
+  return spawnAndHandle("bash", ["-c", cmd], opts, stdio, cmd);
 }
 
 /**
@@ -65,21 +58,8 @@ function runInteractive(cmd, opts = {}) {
 function runFile(file, args = [], opts = {}) {
   const stdio = opts.stdio ?? ["ignore", "pipe", "pipe"];
   const normalizedArgs = args.map((arg) => String(arg));
-  const result = spawnSync(file, normalizedArgs, {
-    ...opts,
-    stdio,
-    cwd: ROOT,
-    env: { ...process.env, ...opts.env },
-  });
-  if (!opts.suppressOutput) {
-    writeRedactedResult(result, stdio);
-  }
-  if (result.status !== 0 && !opts.ignoreError) {
-    const rendered = [shellQuote(file), ...normalizedArgs.map((arg) => shellQuote(arg))].join(" ");
-    console.error(`  Command failed (exit ${result.status}): ${redact(rendered).slice(0, 80)}`);
-    process.exit(result.status || 1);
-  }
-  return result;
+  const rendered = [shellQuote(file), ...normalizedArgs.map((arg) => shellQuote(arg))].join(" ");
+  return spawnAndHandle(file, normalizedArgs, opts, stdio, rendered);
 }
 
 /**

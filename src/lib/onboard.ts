@@ -856,12 +856,18 @@ async function promptBraveSearchApiKey() {
   }
 }
 
-async function ensureValidatedBraveSearchCredential() {
-  let apiKey = getCredential(webSearch.BRAVE_API_KEY_ENV);
-  let usingSavedKey = Boolean(apiKey);
+async function ensureValidatedBraveSearchCredential(nonInteractive = isNonInteractive()) {
+  const savedApiKey = getCredential(webSearch.BRAVE_API_KEY_ENV);
+  let apiKey = savedApiKey || normalizeCredentialValue(process.env[webSearch.BRAVE_API_KEY_ENV]);
+  let usingSavedKey = Boolean(savedApiKey);
 
   while (true) {
     if (!apiKey) {
+      if (nonInteractive) {
+        throw new Error(
+          "Brave Search requires BRAVE_API_KEY or a saved Brave Search credential in non-interactive mode.",
+        );
+      }
       apiKey = await promptBraveSearchApiKey();
       usingSavedKey = false;
     }
@@ -879,6 +885,13 @@ async function ensureValidatedBraveSearchCredential() {
     console.error(prefix);
     if (validation.message) {
       console.error(`  ${validation.message}`);
+    }
+
+    if (nonInteractive) {
+      throw new Error(
+        validation.message ||
+          "Brave Search API key validation failed in non-interactive mode.",
+      );
     }
 
     const action = await promptBraveSearchRecovery(validation);
@@ -5208,31 +5221,6 @@ async function onboard(opts = {}) {
       break;
     }
 
-    if (webSearchConfig) {
-      note("  [resume] Revalidating Brave Search configuration.");
-      const braveApiKey = await ensureValidatedBraveSearchCredential();
-      if (braveApiKey) {
-        webSearchConfig = { fetchEnabled: true };
-        onboardSession.updateSession((current) => {
-          current.webSearchConfig = webSearchConfig;
-          return current;
-        });
-        note("  [resume] Reusing Brave Search configuration.");
-      } else {
-        webSearchConfig = await configureWebSearch(null);
-        onboardSession.updateSession((current) => {
-          current.webSearchConfig = webSearchConfig;
-          return current;
-        });
-      }
-    } else {
-      webSearchConfig = await configureWebSearch(webSearchConfig);
-      onboardSession.updateSession((current) => {
-        current.webSearchConfig = webSearchConfig;
-        return current;
-      });
-    }
-
     const sandboxReuseState = getSandboxReuseState(sandboxName);
     const webSearchConfigChanged = Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
     const resumeSandbox =
@@ -5241,6 +5229,9 @@ async function onboard(opts = {}) {
       session?.steps?.sandbox?.status === "complete" &&
       sandboxReuseState === "ready";
     if (resumeSandbox) {
+      if (webSearchConfig) {
+        note("  [resume] Reusing Brave Search configuration already baked into the sandbox.");
+      }
       skippedStepMessage("sandbox", sandboxName);
     } else {
       if (resume && session?.steps?.sandbox?.status === "complete") {
@@ -5261,6 +5252,17 @@ async function onboard(opts = {}) {
           }
         }
       }
+      let nextWebSearchConfig = webSearchConfig;
+      if (nextWebSearchConfig) {
+        note("  [resume] Revalidating Brave Search configuration for sandbox recreation.");
+        const braveApiKey = await ensureValidatedBraveSearchCredential();
+        nextWebSearchConfig = braveApiKey ? { fetchEnabled: true } : null;
+        if (nextWebSearchConfig) {
+          note("  [resume] Reusing Brave Search configuration.");
+        }
+      } else {
+        nextWebSearchConfig = await configureWebSearch(null);
+      }
       startRecordedStep("sandbox", { sandboxName, provider, model });
       selectedMessagingChannels = await setupMessagingChannels();
       onboardSession.updateSession((current) => {
@@ -5273,17 +5275,24 @@ async function onboard(opts = {}) {
         provider,
         preferredInferenceApi,
         sandboxName,
-        webSearchConfig,
+        nextWebSearchConfig,
         selectedMessagingChannels,
         fromDockerfile,
         agent,
         dangerouslySkipPermissions,
       );
+      webSearchConfig = nextWebSearchConfig;
       // Persist model and provider after the sandbox entry exists in the registry.
       // updateSandbox() silently no-ops when the entry is missing, so this must
       // run after createSandbox() / registerSandbox() — not before. Fixes #1881.
       registry.updateSandbox(sandboxName, { model, provider });
-      onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
+      onboardSession.markStepComplete("sandbox", {
+        sandboxName,
+        provider,
+        model,
+        nimContainer,
+        webSearchConfig,
+      });
     }
 
     if (agent) {
@@ -5381,7 +5390,9 @@ module.exports = {
   compactText,
   copyBuildContextDir,
   classifySandboxCreateFailure,
+  configureWebSearch,
   createSandbox,
+  ensureValidatedBraveSearchCredential,
   formatEnvAssignment,
   getFutureShellPathHint,
   getGatewayStartEnv,
