@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: resolve-sandbox-base-image
+description: Resolve the sandbox base image from GHCR, falling back to a local Dockerfile.base build.
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve sandbox base image
+      shell: bash
+      run: |
+        if docker pull ghcr.io/nvidia/nemoclaw/sandbox-base:latest 2>/dev/null; then
+          echo "BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest" >> "$GITHUB_ENV"
+        else
+          echo "::warning::GHCR base image not available, building locally"
+          docker build -f Dockerfile.base -t nemoclaw-sandbox-base-local .
+          echo "BASE_IMAGE=nemoclaw-sandbox-base-local" >> "$GITHUB_ENV"
+        fi

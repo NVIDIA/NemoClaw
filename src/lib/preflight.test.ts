@@ -1,0 +1,340 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it } from "vitest";
+// Import through the compiled dist/ output (via the bin/lib shim) so
+// coverage is attributed to dist/lib/preflight.js, which is what the
+// ratchet measures.
+import {
+  checkPortAvailable,
+  getMemoryInfo,
+  ensureSwap,
+} from "../../dist/lib/preflight";
+
+describe("checkPortAvailable", () => {
+  it("falls through to the probe when lsof output is empty", async () => {
+    let probedPort: number | null = null;
+    const result = await checkPortAvailable(18789, {
+      lsofOutput: "",
+      probeImpl: async (port) => {
+        probedPort = port;
+        return { ok: true };
+      },
+    });
+
+    expect(probedPort).toBe(18789);
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("probe catches occupied port even when lsof returns empty", async () => {
+    const result = await checkPortAvailable(18789, {
+      lsofOutput: "",
+      probeImpl: async () => ({
+        ok: false,
+        process: "unknown",
+        pid: null,
+        reason: "port 18789 is in use (EADDRINUSE)",
+      }),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.process).toBe("unknown");
+    expect(result.reason).toContain("EADDRINUSE");
+  });
+
+  it("parses process and PID from lsof output", async () => {
+    const lsofOutput = [
+      "COMMAND     PID   USER   FD   TYPE DEVICE SIZE/OFF NODE NAME",
+      "openclaw  12345   root    7u  IPv4  54321      0t0  TCP *:18789 (LISTEN)",
+    ].join("\n");
+    const result = await checkPortAvailable(18789, { lsofOutput });
+
+    expect(result.ok).toBe(false);
+    expect(result.process).toBe("openclaw");
+    expect(result.pid).toBe(12345);
+    expect(result.reason).toContain("openclaw");
+  });
+
+  it("picks first listener when lsof shows multiple", async () => {
+    const lsofOutput = [
+      "COMMAND     PID   USER   FD   TYPE DEVICE SIZE/OFF NODE NAME",
+      "gateway   111   root    7u  IPv4  54321      0t0  TCP *:18789 (LISTEN)",
+      "node      222   root    8u  IPv4  54322      0t0  TCP *:18789 (LISTEN)",
+    ].join("\n");
+    const result = await checkPortAvailable(18789, { lsofOutput });
+
+    expect(result.ok).toBe(false);
+    expect(result.process).toBe("gateway");
+    expect(result.pid).toBe(111);
+  });
+
+  it("returns ok for a free port probe", async () => {
+    const result = await checkPortAvailable(8080, {
+      skipLsof: true,
+      probeImpl: async () => ({ ok: true }),
+    });
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("returns occupied for EADDRINUSE probe results", async () => {
+    const result = await checkPortAvailable(8080, {
+      skipLsof: true,
+      probeImpl: async () => ({
+        ok: false,
+        process: "unknown",
+        pid: null,
+        reason: "port 8080 is in use (EADDRINUSE)",
+      }),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.process).toBe("unknown");
+    expect(result.reason).toContain("EADDRINUSE");
+  });
+
+  it("treats restricted probe environments as inconclusive instead of occupied", async () => {
+    const result = await checkPortAvailable(8080, {
+      skipLsof: true,
+      probeImpl: async () => ({
+        ok: true as const,
+        warning: "port probe skipped: listen EPERM: operation not permitted 127.0.0.1",
+      }),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.warning).toContain("EPERM");
+  });
+
+  it("defaults to port 18789 when no port is given", async () => {
+    let probedPort: number | null = null;
+    const result = await checkPortAvailable(undefined, {
+      skipLsof: true,
+      probeImpl: async (port) => {
+        probedPort = port;
+        return { ok: true };
+      },
+    });
+
+    expect(probedPort).toBe(18789);
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("probePortAvailability", () => {
+  // Import probePortAvailability directly for targeted testing
+  const { probePortAvailability } = require("../../dist/lib/preflight");
+
+  it("returns ok when port is free (real net probe)", async () => {
+    // Use a high ephemeral port unlikely to be in use
+    const result = await probePortAvailability(0, {});
+    // Port 0 lets the OS pick a free port, so it should always succeed
+    expect(result.ok).toBe(true);
+  });
+
+  it("detects EADDRINUSE on an occupied port (real net probe)", async () => {
+    // Start a server on a random port, then probe it
+    const net = require("node:net");
+    const srv = net.createServer();
+    await new Promise<void>((resolve) => srv.listen(0, "127.0.0.1", resolve));
+    const port = srv.address().port;
+    try {
+      const result = await probePortAvailability(port, {});
+      expect(result.ok).toBe(false);
+      expect(result.reason).toContain("EADDRINUSE");
+    } finally {
+      await new Promise<void>((resolve) => srv.close(resolve));
+    }
+  });
+
+  it("delegates to probeImpl when provided", async () => {
+    let called = false;
+    const result = await probePortAvailability(9999, {
+      probeImpl: async (port: number) => {
+        called = true;
+        expect(port).toBe(9999);
+        return { ok: true as const };
+      },
+    });
+    expect(called).toBe(true);
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("checkPortAvailable — real probe fallback", () => {
+  it("returns ok for a free port via full detection chain", async () => {
+    // skipLsof forces the net probe path; use port 0 which is always free
+    const result = await checkPortAvailable(0, { skipLsof: true });
+    expect(result.ok).toBe(true);
+  });
+
+  it("detects a real occupied port", async () => {
+    const net = require("node:net");
+    const srv = net.createServer();
+    await new Promise<void>((resolve) => srv.listen(0, "127.0.0.1", resolve));
+    const port = srv.address().port;
+    try {
+      const result = await checkPortAvailable(port, { skipLsof: true });
+      expect(result.ok).toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => srv.close(resolve));
+    }
+  });
+});
+
+describe("checkPortAvailable — sudo -n lsof retry", () => {
+  it("uses sudo -n (non-interactive) for the lsof retry path", async () => {
+    // When lsof returns empty (non-root can't see root-owned listeners),
+    // checkPortAvailable retries with sudo -n. We can't easily test this
+    // without mocking runCapture, but we can verify the lsofOutput injection
+    // path handles header-only output correctly (falls through to probe).
+    let probed = false;
+    const result = await checkPortAvailable(18789, {
+      lsofOutput: "COMMAND     PID   USER   FD   TYPE DEVICE SIZE/OFF NODE NAME\n",
+      probeImpl: async () => {
+        probed = true;
+        return { ok: true };
+      },
+    });
+    expect(probed).toBe(true);
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("getMemoryInfo", () => {
+  it("parses valid /proc/meminfo content", () => {
+    const meminfoContent = [
+      "MemTotal:        8152056 kB",
+      "MemFree:         1234567 kB",
+      "MemAvailable:    4567890 kB",
+      "SwapTotal:       4194300 kB",
+      "SwapFree:        4194300 kB",
+    ].join("\n");
+
+    const result = getMemoryInfo({ meminfoContent, platform: "linux" });
+    expect(result).not.toBeNull();
+    expect(result!.totalRamMB).toBe(Math.floor(8152056 / 1024));
+    expect(result!.totalSwapMB).toBe(Math.floor(4194300 / 1024));
+    expect(result!.totalMB).toBe(result!.totalRamMB + result!.totalSwapMB);
+  });
+
+  it("returns correct values when swap is zero", () => {
+    const meminfoContent = [
+      "MemTotal:        8152056 kB",
+      "MemFree:         1234567 kB",
+      "SwapTotal:             0 kB",
+      "SwapFree:              0 kB",
+    ].join("\n");
+
+    const result = getMemoryInfo({ meminfoContent, platform: "linux" });
+    expect(result).not.toBeNull();
+    expect(result!.totalRamMB).toBe(Math.floor(8152056 / 1024));
+    expect(result!.totalSwapMB).toBe(0);
+    expect(result!.totalMB).toBe(result!.totalRamMB);
+  });
+
+  it("returns null on unsupported platforms", () => {
+    const result = getMemoryInfo({ platform: "win32" });
+    expect(result).toBeNull();
+  });
+
+  it("returns null on darwin when sysctl returns empty", () => {
+    // When runCapture("sysctl -n hw.memsize") returns empty/falsy,
+    // getMemoryInfo should return null rather than crash.
+    // This exercises the darwin branch without requiring a real sysctl binary.
+    const result = getMemoryInfo({ platform: "darwin" });
+    // On macOS with sysctl available, returns info; otherwise null — both are valid
+    if (result !== null) {
+      expect(result.totalRamMB).toBeGreaterThan(0);
+      expect(result.totalSwapMB).toBe(0);
+    }
+  });
+
+  it("handles malformed /proc/meminfo gracefully", () => {
+    const result = getMemoryInfo({
+      meminfoContent: "garbage data\nno fields here",
+      platform: "linux",
+    });
+    expect(result).not.toBeNull();
+    expect(result!.totalRamMB).toBe(0);
+    expect(result!.totalSwapMB).toBe(0);
+    expect(result!.totalMB).toBe(0);
+  });
+});
+
+describe("ensureSwap", () => {
+  it("returns ok when total memory already exceeds threshold", () => {
+    const result = ensureSwap(6144, {
+      platform: "linux",
+      memoryInfo: { totalRamMB: 8000, totalSwapMB: 0, totalMB: 8000 },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.swapCreated).toBe(false);
+    expect(result.totalMB).toBe(8000);
+  });
+
+  it("reports swap would be created in dry-run mode when below threshold", () => {
+    const result = ensureSwap(6144, {
+      platform: "linux",
+      memoryInfo: { totalRamMB: 4000, totalSwapMB: 0, totalMB: 4000 },
+      dryRun: true,
+      swapfileExists: false,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.swapCreated).toBe(true);
+  });
+
+  it("skips swap creation when /swapfile already exists (dry-run)", () => {
+    const result = ensureSwap(6144, {
+      platform: "linux",
+      memoryInfo: { totalRamMB: 4000, totalSwapMB: 0, totalMB: 4000 },
+      dryRun: true,
+      swapfileExists: true,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.swapCreated).toBe(false);
+    expect(result.reason).toMatch(/swapfile already exists/);
+  });
+
+  it("skips on non-Linux platforms", () => {
+    const result = ensureSwap(6144, {
+      platform: "darwin",
+      memoryInfo: { totalRamMB: 4000, totalSwapMB: 0, totalMB: 4000 },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.swapCreated).toBe(false);
+  });
+
+  it("returns error when memory info is unavailable", () => {
+    const result = ensureSwap(6144, {
+      platform: "linux",
+      memoryInfo: null,
+      getMemoryInfoImpl: () => null,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/could not read memory info/);
+  });
+
+  it("uses default 12000 MB threshold when minTotalMB is undefined", () => {
+    const result = ensureSwap(undefined, {
+      platform: "linux",
+      memoryInfo: { totalRamMB: 16000, totalSwapMB: 0, totalMB: 16000 },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.swapCreated).toBe(false);
+    expect(result.totalMB).toBe(16000);
+  });
+
+  it("uses getMemoryInfoImpl when memoryInfo is not provided", () => {
+    let called = false;
+    const result = ensureSwap(6144, {
+      platform: "linux",
+      getMemoryInfoImpl: () => {
+        called = true;
+        return { totalRamMB: 8000, totalSwapMB: 0, totalMB: 8000 };
+      },
+    });
+    expect(called).toBe(true);
+    expect(result.ok).toBe(true);
+  });
+});

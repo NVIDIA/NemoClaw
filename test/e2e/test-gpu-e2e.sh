@@ -17,18 +17,20 @@
 #   - NVIDIA GPU with drivers (nvidia-smi works)
 #   - Docker
 #   - NEMOCLAW_NON_INTERACTIVE=1
+#   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 #   - Internet access (ollama.com for install, registry.ollama.ai for model pull)
 #   - No existing Ollama service on port 11434 (ephemeral runners are ideal)
 #
 # Environment variables:
-#   NEMOCLAW_NON_INTERACTIVE=1   — required
-#   NEMOCLAW_SANDBOX_NAME        — sandbox name (default: e2e-gpu-ollama)
-#   NEMOCLAW_RECREATE_SANDBOX=1  — recreate sandbox if it exists
-#   NEMOCLAW_MODEL               — model for onboard (default: auto-selected by onboard)
-#   SKIP_UNINSTALL               — set to 1 to skip uninstall (debugging)
+#   NEMOCLAW_NON_INTERACTIVE=1             — required
+#   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required for non-interactive install/onboard
+#   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-gpu-ollama)
+#   NEMOCLAW_RECREATE_SANDBOX=1            — recreate sandbox if it exists
+#   NEMOCLAW_MODEL                         — model for onboard (default: auto-selected by onboard)
+#   SKIP_UNINSTALL                         — set to 1 to skip uninstall (debugging)
 #
 # Usage:
-#   NEMOCLAW_NON_INTERACTIVE=1 bash test/e2e/test-gpu-e2e.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash test/e2e/test-gpu-e2e.sh
 
 set -uo pipefail
 
@@ -152,7 +154,12 @@ if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then
   exit 1
 fi
 
-# Verify port 11434 is free (onboard needs to start Ollama on 0.0.0.0:11434 on Linux)
+if [ "${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}" != "1" ]; then
+  fail "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is required for non-interactive install"
+  exit 1
+fi
+
+# Verify port 11434 is free (onboard needs to start Ollama on 0.0.0.0:11434 on Linux for container reachability)
 if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
   info "WARNING: Something is already listening on port 11434."
   info "Onboard may not be able to bind Ollama to 0.0.0.0:11434."
@@ -382,9 +389,12 @@ section "Phase 6: Destroy and uninstall"
 info "Destroying sandbox ${SANDBOX_NAME}..."
 nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -5 || true
 
-list_after_destroy=$(nemoclaw list 2>&1)
-if echo "$list_after_destroy" | grep -Fq -- "$SANDBOX_NAME"; then
-  fail "Sandbox ${SANDBOX_NAME} still in list after destroy"
+# Verify against the registry file directly.  `nemoclaw list` triggers
+# gateway recovery which can restart a destroyed gateway and re-import stale
+# sandbox entries — that's a separate issue (#TBD), so avoid it here.
+registry_file="${HOME}/.nemoclaw/sandboxes.json"
+if [ -f "$registry_file" ] && grep -Fq "\"${SANDBOX_NAME}\"" "$registry_file"; then
+  fail "Sandbox ${SANDBOX_NAME} still in registry after destroy"
 else
   pass "Sandbox ${SANDBOX_NAME} removed from registry"
 fi

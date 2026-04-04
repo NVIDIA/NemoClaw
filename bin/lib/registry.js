@@ -29,9 +29,21 @@ function acquireLock() {
         fs.renameSync(ownerTmp, LOCK_OWNER);
       } catch (ownerErr) {
         // Remove the directory we just created so it doesn't look like a stale lock
-        try { fs.unlinkSync(ownerTmp); } catch { /* best effort */ }
-        try { fs.unlinkSync(LOCK_OWNER); } catch { /* best effort */ }
-        try { fs.rmdirSync(LOCK_DIR); } catch { /* best effort */ }
+        try {
+          fs.unlinkSync(ownerTmp);
+        } catch {
+          /* best effort */
+        }
+        try {
+          fs.unlinkSync(LOCK_OWNER);
+        } catch {
+          /* best effort */
+        }
+        try {
+          fs.rmdirSync(LOCK_DIR);
+        } catch {
+          /* best effort */
+        }
         throw ownerErr;
       }
       return;
@@ -85,11 +97,15 @@ function acquireLock() {
 }
 
 function releaseLock() {
-  try { fs.unlinkSync(LOCK_OWNER); } catch (err) {
+  try {
+    fs.unlinkSync(LOCK_OWNER);
+  } catch (err) {
     if (err.code !== "ENOENT") throw err;
   }
   // rmSync handles leftover tmp files from crashed acquireLock attempts
-  try { fs.rmSync(LOCK_DIR, { recursive: true, force: true }); } catch (err) {
+  try {
+    fs.rmSync(LOCK_DIR, { recursive: true, force: true });
+  } catch (err) {
     if (err.code !== "ENOENT") throw err;
   }
 }
@@ -109,7 +125,9 @@ function load() {
     if (fs.existsSync(REGISTRY_FILE)) {
       return JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf-8"));
     }
-  } catch { /* ignored */ }
+  } catch {
+    /* ignored */
+  }
   return { sandboxes: {}, defaultSandbox: null };
 }
 
@@ -123,7 +141,11 @@ function save(data) {
     fs.renameSync(tmp, REGISTRY_FILE);
   } catch (err) {
     // Clean up partial temp file on failure
-    try { fs.unlinkSync(tmp); } catch { /* best effort */ }
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* best effort */
+    }
     throw err;
   }
 }
