@@ -487,19 +487,15 @@ describe("regression guards", () => {
       expect(src.includes("delete process.env.NVIDIA_API_KEY")).toBeTruthy();
     });
 
-    it("setupSpark does not pass NVIDIA_API_KEY to sudo", () => {
+    it("setupSpark is a compatibility alias that does not shell out to sudo", () => {
       const fs = require("fs");
       const src = fs.readFileSync(
         path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
         "utf-8",
       );
-      // Find the run() call inside setupSpark — it should not contain the key
-      const sparkLines = src
-        .split("\n")
-        .filter((l) => l.includes("setup-spark") && l.includes("run("));
-      for (const line of sparkLines) {
-        expect(line.includes("NVIDIA_API_KEY")).toBe(false);
-      }
+      expect(src).toContain("`nemoclaw setup-spark` is deprecated.");
+      expect(src).toContain("await onboard(args);");
+      expect(src).not.toContain('sudo bash "${SCRIPTS}/setup-spark.sh"');
     });
 
     it("walkthrough.sh does not embed NVIDIA_API_KEY in tmux or sandbox commands", () => {
@@ -644,12 +640,102 @@ describe("regression guards", () => {
       expect(findShellViolations(src)).toEqual([]);
     });
 
-    it("scripts/brev-setup.sh does not pipe curl to shell", () => {
+    it("scripts/brev-setup.sh has been removed", () => {
+      expect(fs.existsSync(path.join(import.meta.dirname, "..", "scripts", "brev-setup.sh"))).toBe(
+        false,
+      );
+    });
+
+    it("services no longer tell users to install brev-setup.sh", () => {
       const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "scripts", "brev-setup.sh"),
+        path.join(import.meta.dirname, "..", "src", "lib", "services.ts"),
         "utf-8",
       );
-      expect(findShellViolations(src)).toEqual([]);
+      expect(src).not.toContain("brev-setup.sh");
+    });
+
+    it("deploy uses the standard installer and connects to the actual sandbox name", () => {
+      const tsSrc = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
+        "utf-8",
+      );
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
+        "utf-8",
+      );
+      expect(src).toContain('const { executeDeploy } = require("../dist/lib/deploy")');
+      expect(tsSrc).toContain("export function inferDeployProvider(");
+      expect(tsSrc).toContain("export function buildDeployEnvLines(");
+      expect(tsSrc).toContain(
+        "bash scripts/install.sh --non-interactive --yes-i-accept-third-party-software",
+      );
+      expect(tsSrc).not.toContain("sandbox connect nemoclaw");
+      expect(tsSrc).toContain("openshell sandbox connect ${shellQuote(sandboxName)}");
+    });
+
+    it("deploy syncs a complete buildable checkout instead of excluding src", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
+        "utf-8",
+      );
+      expect(src).not.toContain("--exclude src");
+      expect(src).toContain('"${rootDir}/"');
+      expect(src).toContain("--exclude dist");
+      expect(src).toContain('const brevProvider = String(env.NEMOCLAW_BREV_PROVIDER || "gcp")');
+      expect(src).toContain("--provider ${shellQuote(brevProvider)}");
+    });
+
+    it("deploy supports test-friendly non-interactive skip flags", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
+        "utf-8",
+      );
+      expect(src).toContain("NEMOCLAW_DEPLOY_NO_CONNECT");
+      expect(src).toContain("NEMOCLAW_DEPLOY_NO_START_SERVICES");
+      expect(src).toContain("Skipping interactive sandbox connect");
+    });
+
+    it("deploy reports Brev failure states before SSH timeout", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
+        "utf-8",
+      );
+      expect(src).toContain("function getBrevInstanceStatus(");
+      expect(src).toContain('brev", ["ls", "--json"]');
+      expect(src).toContain("Brev instance '${name}' did not become ready.");
+      expect(src).toContain("Try: brev reset");
+      expect(src).toContain("Brev status at timeout:");
+    });
+
+    it("brev e2e suite includes a deploy-cli mode", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.js"),
+        "utf-8",
+      );
+      expect(src).toContain('TEST_SUITE === "deploy-cli"');
+      expect(src).toContain("deploy CLI provisions a remote sandbox end to end");
+      expect(src).toContain('NEMOCLAW_DEPLOY_NO_CONNECT: "1"');
+    });
+
+    it("brev e2e suite relies on an authenticated brev CLI instead of a Brev API token", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.js"),
+        "utf-8",
+      );
+      expect(src).toContain("const hasAuthenticatedBrev =");
+      expect(src).toContain('brev("ls")');
+      expect(src).not.toContain("BREV_API_TOKEN");
+      expect(src).not.toContain('brev("login", "--token"');
+    });
+
+    it("brev e2e suite no longer contains the old brev-setup compatibility path", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.js"),
+        "utf-8",
+      );
+      expect(src).not.toContain("scripts/brev-setup.sh");
+      expect(src).not.toContain("USE_LAUNCHABLE");
+      expect(src).not.toContain("SKIP_VLLM=1");
     });
 
     it("bin/nemoclaw.js does not pipe curl to shell", () => {

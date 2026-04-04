@@ -162,7 +162,7 @@ do_start() {
     start_service cloudflared \
       cloudflared tunnel --url "http://localhost:$DASHBOARD_PORT"
   else
-    warn "cloudflared not found — no public URL. Install: brev-setup.sh or manually."
+    warn "cloudflared not found — no public URL. Install it separately if you need a public tunnel."
   fi
 
   # Wait for cloudflared to publish URL

@@ -102,7 +102,7 @@ Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters an
 Uppercase letters are automatically lowercased.
 
 Before creating the gateway, the wizard runs preflight checks.
-On systems with cgroup v2 (Ubuntu 24.04, DGX Spark, WSL2), it verifies that Docker is configured with `"default-cgroupns-mode": "host"` and provides fix instructions if the setting is missing.
+It verifies that Docker is reachable, warns on unsupported runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
 
 ### `nemoclaw list`
 
@@ -115,11 +115,12 @@ $ nemoclaw list
 ### `nemoclaw deploy`
 
 :::{warning}
-The `nemoclaw deploy` command is experimental and may not work as expected.
+The `nemoclaw deploy` command is deprecated.
+Prefer provisioning the remote host separately, then running the standard NemoClaw installer and `nemoclaw onboard` on that host.
 :::
 
 Deploy NemoClaw to a remote GPU instance through [Brev](https://brev.nvidia.com).
-The deploy script installs Docker, NVIDIA Container Toolkit if a GPU is present, and OpenShell on the VM, then runs `nemoclaw onboard` and connects to the sandbox.
+This command remains as a compatibility wrapper for the older Brev-specific bootstrap flow.
 
 ```console
 $ nemoclaw deploy <instance-name>
@@ -221,13 +222,15 @@ $ nemoclaw status
 
 ### `nemoclaw setup-spark`
 
-Set up NemoClaw on DGX Spark.
-This command applies cgroup v2 and Docker fixes required for Ubuntu 24.04.
-Run with `sudo` on the Spark host.
-After the fixes complete, the script prompts you to run `nemoclaw onboard` to continue setup.
+:::{warning}
+The `nemoclaw setup-spark` command is deprecated.
+Use the standard installer and run `nemoclaw onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
+:::
+
+This command remains as a compatibility alias to `nemoclaw onboard`.
 
 ```console
-$ sudo nemoclaw setup-spark
+$ nemoclaw setup-spark
 ```
 
 ### `nemoclaw debug`
