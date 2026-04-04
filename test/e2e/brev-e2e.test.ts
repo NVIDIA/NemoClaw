@@ -717,14 +717,4 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     },
     600_000,
   );
-
-  it.runIf(TEST_SUITE === "gpu")(
-    "GPU E2E suite passes on remote VM",
-    () => {
-      const output = runRemoteTest("test/e2e/test-gpu-e2e.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
-    },
-    900_000,
-  );
 });

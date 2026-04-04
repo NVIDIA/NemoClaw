@@ -552,8 +552,8 @@ jobs:
       - name: Install Brev CLI
         run: |
           curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.322/brev-cli_0.6.322_linux_amd64.tar.gz"
-          tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
-          chmod +x /usr/local/bin/brev
+          sudo tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
+          sudo chmod +x /usr/local/bin/brev
 
       - name: Provision Brev GPU Instance & Run Test
         env:
@@ -563,7 +563,7 @@ jobs:
           echo "Provisioning GPU instance..."
           brev create --name "$INSTANCE_NAME" \
             --flavor "t4" \
-            --startup-script "https://raw.githubusercontent.com/NVIDIA/NemoClaw/${{ github.sha }}/scripts/brev-launchable-ci-gpu.sh"
+            --startup-script "@scripts/brev-launchable-ci-gpu.sh"
 
           echo "Waiting for readiness sentinel..."
           export READY=0

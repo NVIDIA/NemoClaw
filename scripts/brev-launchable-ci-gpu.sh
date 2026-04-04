@@ -260,14 +260,14 @@ if command -v nvidia-smi >/dev/null 2>&1; then
 
   info "Validating GPU passthrough..."
   if command -v nvidia-smi >/dev/null 2>&1; then
-    nvidia-smi || warn "GPU detected but not functioning"
+    nvidia-smi || fail "GPU detected but not functioning"
     docker run --rm --gpus all nvidia/cuda:12.2.0-base nvidia-smi \
-      || warn "Docker GPU passthrough failed"
+      || fail "Docker GPU passthrough failed"
   else
-    warn "No GPU detected"
+    fail "No GPU detected"
   fi
 else
-  warn "nvidia-smi not found, assuming a CPU-only instance or failed passthrough"
+  fail "nvidia-smi not found, assuming a CPU-only instance or failed passthrough"
 fi
 
 # ══════════════════════════════════════════════════════════════════════
@@ -295,8 +295,14 @@ else
   ollama serve >/dev/null 2>&1 &
   OLLAMA_PID=$!
   info "Waiting for Ollama to start..."
+  poll_timeout=60
+  poll_elapsed=0
   until curl -s http://localhost:11434 >/dev/null; do
+    if ((poll_elapsed >= poll_timeout)); then
+      fail "Ollama failed to start within ${poll_timeout}s"
+    fi
     sleep 1
+    ((poll_elapsed++))
   done
   ollama pull "$OLLAMA_MODEL" >/dev/null 2>&1 || warn "Failed to pull $OLLAMA_MODEL (might fallback to qwen2.5:0.5b)"
   if ! ollama list | grep -q "${OLLAMA_MODEL}"; then
