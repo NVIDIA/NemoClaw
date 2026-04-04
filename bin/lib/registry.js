@@ -120,6 +120,7 @@ function withLock(fn) {
   }
 }
 
+/** Load the sandbox registry from disk, returning an empty state if absent or corrupt. */
 function load() {
   try {
     if (fs.existsSync(REGISTRY_FILE)) {
@@ -150,11 +151,13 @@ function save(data) {
   }
 }
 
+/** Return the sandbox entry for the given name, or null if not found. */
 function getSandbox(name) {
   const data = load();
   return data.sandboxes[name] || null;
 }
 
+/** Return the name of the default sandbox, falling back to the first registered one. */
 function getDefault() {
   const data = load();
   if (data.defaultSandbox && data.sandboxes[data.defaultSandbox]) {
@@ -165,6 +168,7 @@ function getDefault() {
   return names.length > 0 ? names[0] : null;
 }
 
+/** Register a new sandbox in the registry, setting it as default if none exists. */
 function registerSandbox(entry) {
   return withLock(() => {
     const data = load();
@@ -184,6 +188,7 @@ function registerSandbox(entry) {
   });
 }
 
+/** Merge updates into an existing sandbox entry. Returns false if the sandbox does not exist. */
 function updateSandbox(name, updates) {
   return withLock(() => {
     const data = load();
@@ -197,6 +202,7 @@ function updateSandbox(name, updates) {
   });
 }
 
+/** Remove a sandbox by name and reassign the default if necessary. */
 function removeSandbox(name) {
   return withLock(() => {
     const data = load();
@@ -211,6 +217,7 @@ function removeSandbox(name) {
   });
 }
 
+/** List all registered sandboxes and the current default. */
 function listSandboxes() {
   const data = load();
   return {
@@ -219,6 +226,7 @@ function listSandboxes() {
   };
 }
 
+/** Set the named sandbox as the default. Returns false if the sandbox does not exist. */
 function setDefault(name) {
   return withLock(() => {
     const data = load();
@@ -229,7 +237,15 @@ function setDefault(name) {
   });
 }
 
+/** Reset the registry to an empty state, removing all sandboxes and the default selection. */
+function clearAll() {
+  withLock(() => {
+    save({ sandboxes: {}, defaultSandbox: null });
+  });
+}
+
 module.exports = {
+  clearAll,
   load,
   save,
   getSandbox,

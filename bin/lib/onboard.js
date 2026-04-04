@@ -1631,7 +1631,13 @@ function sleep(seconds) {
 }
 
 function destroyGateway() {
-  runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+  const destroyResult = runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], {
+    ignoreError: true,
+  });
+  // Clear the local registry so `nemoclaw list` stays consistent with OpenShell state. (#532)
+  if (destroyResult.status === 0) {
+    registry.clearAll();
+  }
   // openshell gateway destroy doesn't remove Docker volumes, which leaves
   // corrupted cluster state that breaks the next gateway start. Clean them up.
   run(
@@ -1792,7 +1798,14 @@ async function preflight() {
   if (gatewayReuseState === "stale" || gatewayReuseState === "active-unnamed") {
     console.log("  Cleaning up previous NemoClaw session...");
     runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
-    runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+    const destroyResult = runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], {
+      ignoreError: true,
+    });
+    // Sandboxes under the destroyed gateway no longer exist in OpenShell —
+    // clear the local registry so `nemoclaw list` stays consistent. (#532)
+    if (destroyResult.status === 0) {
+      registry.clearAll();
+    }
     console.log("  ✓ Previous session cleaned up");
   }
 

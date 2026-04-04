@@ -125,14 +125,14 @@ CLI commands for launching, connecting, monitoring, and managing sandboxes.
 {bdg-secondary}`Reference`
 :::
 
-:::{grid-item-card} Inference Profiles
-:link: reference/inference-profiles
+:::{grid-item-card} Inference Options
+:link: inference/inference-options
 :link-type: doc
 
-NVIDIA endpoint inference configuration and available models.
+Providers available during onboarding and how inference routing works.
 
 +++
-{bdg-secondary}`Reference`
+{bdg-secondary}`Concept`
 :::
 
 :::{grid-item-card} How It Works
@@ -231,6 +231,8 @@ Quickstart <get-started/quickstart>
 :caption: Inference
 :hidden:
 
+Inference Options <inference/inference-options>
+Use Local Inference <inference/use-local-inference>
 Switch Inference Providers <inference/switch-inference-providers>
 ```
 
@@ -279,7 +281,6 @@ Back Up and Restore <workspace/backup-restore>
 
 Architecture <reference/architecture>
 Commands <reference/commands>
-Inference Profiles <reference/inference-profiles>
 Network Policies <reference/network-policies>
 Troubleshooting <reference/troubleshooting>
 ```

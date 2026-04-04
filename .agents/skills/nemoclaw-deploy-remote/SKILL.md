@@ -75,7 +75,27 @@ Run a test agent prompt inside the remote sandbox:
 $ openclaw agent --agent main --local -m "Hello from the remote sandbox" --session-id test
 ```
 
-## Step 6: GPU Configuration
+## Step 6: Remote Dashboard Access
+
+The NemoClaw dashboard validates the browser origin against an allowlist baked
+into the sandbox image at build time.  By default the allowlist only contains
+`http://127.0.0.1:18789`.  When accessing the dashboard from a remote browser
+(for example through a Brev public URL or an SSH port-forward), set
+`CHAT_UI_URL` to the origin the browser will use **before** running setup:
+
+```console
+$ export CHAT_UI_URL="https://openclaw0-<id>.brevlab.com"
+$ nemoclaw deploy <instance-name>
+```
+
+For SSH port-forwarding, the origin is typically `http://127.0.0.1:18789` (the
+default), so no extra configuration is needed.
+
+> **Note:** On Brev, set `CHAT_UI_URL` in the launchable environment configuration so it is
+> available when the setup script builds the sandbox image.  If `CHAT_UI_URL` is
+> not set on a headless host, `brev-setup.sh` prints a warning.
+
+## Step 7: GPU Configuration
 
 The deploy script uses the `NEMOCLAW_GPU` environment variable to select the GPU type.
 The default value is `a2-highgpu-1g:nvidia-tesla-a100:1`.
@@ -91,12 +111,12 @@ $ nemoclaw deploy <instance-name>
 Forward messages between a Telegram bot and the OpenClaw agent running inside the sandbox.
 The Telegram bridge is an auxiliary service managed by `nemoclaw start`.
 
-## Step 7: Create a Telegram Bot
+## Step 8: Create a Telegram Bot
 
 Open Telegram and send `/newbot` to [@BotFather](https://t.me/BotFather).
 Follow the prompts to create a bot and receive a bot token.
 
-## Step 8: Set the Environment Variable
+## Step 9: Set the Environment Variable
 
 Export the bot token as an environment variable:
 
@@ -104,7 +124,7 @@ Export the bot token as an environment variable:
 $ export TELEGRAM_BOT_TOKEN=<your-bot-token>
 ```
 
-## Step 9: Start Auxiliary Services
+## Step 10: Start Auxiliary Services
 
 Start the Telegram bridge and other auxiliary services:
 
@@ -119,7 +139,7 @@ The `start` command launches the following services:
 
 The Telegram bridge starts only when the `TELEGRAM_BOT_TOKEN` environment variable is set.
 
-## Step 10: Verify the Services
+## Step 11: Verify the Services
 
 Check that the Telegram bridge is running:
 
@@ -129,12 +149,12 @@ $ nemoclaw status
 
 The output shows the status of all auxiliary services.
 
-## Step 11: Send a Message
+## Step 12: Send a Message
 
 Open Telegram, find your bot, and send a message.
 The bridge forwards the message to the OpenClaw agent inside the sandbox and returns the agent response.
 
-## Step 12: Restrict Access by Chat ID
+## Step 13: Restrict Access by Chat ID
 
 To restrict which Telegram chats can interact with the agent, set the `ALLOWED_CHAT_IDS` environment variable to a comma-separated list of Telegram chat IDs:
 
@@ -143,7 +163,7 @@ $ export ALLOWED_CHAT_IDS="123456789,987654321"
 $ nemoclaw start
 ```
 
-## Step 13: Stop the Services
+## Step 14: Stop the Services
 
 To stop the Telegram bridge and all other auxiliary services:
 

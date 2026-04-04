@@ -126,4 +126,4 @@ For details on the baseline rules, refer to Network Policies (see the `nemoclaw-
 
 - Follow the Quickstart (see the `nemoclaw-get-started` skill) to launch your first sandbox.
 - Refer to the Architecture (see the `nemoclaw-reference` skill) for the full technical structure, including file layouts and the blueprint lifecycle.
-- Refer to Inference Profiles (see the `nemoclaw-reference` skill) for detailed provider configuration.
+- Refer to Inference Options (see the `nemoclaw-configure-inference` skill) for detailed provider configuration.
