@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useFilterStore } from '@/store'
 import { useAllLocations } from './useAllLocations'
-import type { AnyLocation, Restaurant } from '@/types'
+import type { AnyLocation, PriceCategory, Restaurant } from '@/types'
 
 function getLocationPrice(loc: AnyLocation): number {
   switch (loc.category) {
@@ -31,11 +31,39 @@ function getLocationPrice(loc: AnyLocation): number {
   }
 }
 
+const ALL_CATEGORIES: PriceCategory[] = [
+  'exchange', 'fuel', 'restaurant', 'cafe', 'convenience',
+  'jjimjilbang', 'karaoke', 'market', 'attraction', 'extra',
+]
+
+function getCheapestIdsByCategory(all: AnyLocation[]): Set<string> {
+  const cheapestIds = new Set<string>()
+  ALL_CATEGORIES.forEach((cat) => {
+    const catLocs = all
+      .filter((loc) => loc.category === cat)
+      .map((loc) => ({ id: loc.id, price: getLocationPrice(loc) }))
+    if (catLocs.length === 0) return
+    // For exchange (price=0), just take first; otherwise sort by price
+    const sorted = catLocs.filter((l) => l.price > 0).sort((a, b) => a.price - b.price)
+    if (sorted.length > 0) {
+      cheapestIds.add(sorted[0].id)
+    } else {
+      // all free (e.g. free attractions) — take first
+      cheapestIds.add(catLocs[0].id)
+    }
+  })
+  return cheapestIds
+}
+
 export function useFilteredMarkers(): AnyLocation[] {
-  const { activeCategories, nationality, priceRange } = useFilterStore()
+  const { activeCategories, nationality, priceRange, searchQuery, showCheapestOnly } = useFilterStore()
   const all = useAllLocations()
 
   return useMemo(() => {
+    const cheapestIds = showCheapestOnly ? getCheapestIdsByCategory(all) : null
+
+    const q = searchQuery.trim().toLowerCase()
+
     return all.filter((loc) => {
       // Category filter
       if (activeCategories.length > 0 && !activeCategories.includes(loc.category)) {
@@ -56,9 +84,24 @@ export function useFilteredMarkers(): AnyLocation[] {
         return false
       }
 
+      // Search filter
+      if (q) {
+        const name = loc.name.toLowerCase()
+        const nameEn = loc.nameEn.toLowerCase()
+        const address = loc.address.toLowerCase()
+        if (!name.includes(q) && !nameEn.includes(q) && !address.includes(q)) {
+          return false
+        }
+      }
+
+      // Cheapest only filter
+      if (cheapestIds && !cheapestIds.has(loc.id)) {
+        return false
+      }
+
       return true
     })
-  }, [all, activeCategories, nationality, priceRange])
+  }, [all, activeCategories, nationality, priceRange, searchQuery, showCheapestOnly])
 }
 
 export { getLocationPrice }

@@ -1,9 +1,11 @@
 import { Marker, Tooltip } from 'react-leaflet'
+import L from 'leaflet'
 import { useFilteredMarkers } from '@/hooks/useFilteredMarkers'
 import { useAllPriceRanks } from '@/hooks/useAllPriceRanks'
 import { useUiStore } from '@/store'
 import { createCategoryIcon } from './CategoryPin'
 import { CATEGORY_META } from '@/types'
+import { EmptyState } from './EmptyState'
 import type { AnyLocation } from '@/types'
 
 function getDisplayPrice(loc: AnyLocation): string {
@@ -34,16 +36,41 @@ function getDisplayPrice(loc: AnyLocation): string {
   }
 }
 
+function createSelectedIcon(loc: AnyLocation, rank: 1 | 2 | 3 | undefined) {
+  const meta = CATEGORY_META[loc.category]
+  const rankStyle = rank === 1
+    ? 'background:#fbbf24;border-color:#f59e0b'
+    : rank === 2
+    ? 'background:#94a3b8;border-color:#64748b'
+    : rank === 3
+    ? 'background:#cd7c4a;border-color:#a16207'
+    : `background:${meta.color};border-color:${meta.color}`
+
+  const html = `
+    <div style="
+      width:44px;height:44px;border-radius:50%;display:flex;align-items:center;
+      justify-content:center;font-size:20px;border:4px solid white;
+      box-shadow:0 0 0 3px ${meta.color},0 4px 12px rgba(0,0,0,0.35);
+      transform:scale(1.25);${rankStyle}
+    ">${meta.emoji}</div>
+  `
+  return L.divIcon({ html, className: '', iconSize: [44, 44], iconAnchor: [22, 22] })
+}
+
 export function MarkerLayer() {
   const markers = useFilteredMarkers()
-  const { setSelectedPin } = useUiStore()
+  const { setSelectedPin, selectedPin } = useUiStore()
   const rankMap = useAllPriceRanks()
 
   return (
     <>
+      {markers.length === 0 && <EmptyState />}
       {markers.map((loc) => {
         const rank = rankMap[loc.id] as 1 | 2 | 3 | undefined
-        const icon = createCategoryIcon(loc.category, rank)
+        const isSelected = selectedPin?.id === loc.id
+        const icon = isSelected
+          ? createSelectedIcon(loc, rank)
+          : createCategoryIcon(loc.category, rank)
         const meta = CATEGORY_META[loc.category]
         const priceLabel = getDisplayPrice(loc)
 
@@ -52,13 +79,14 @@ export function MarkerLayer() {
             key={loc.id}
             position={[loc.lat, loc.lng]}
             icon={icon}
+            zIndexOffset={isSelected ? 1000 : 0}
             eventHandlers={{
               click: () => setSelectedPin(loc),
             }}
           >
             <Tooltip
               direction="top"
-              offset={[0, -42]}
+              offset={[0, isSelected ? -54 : -42]}
               opacity={1}
               className="!bg-white !border-0 !shadow-lg !rounded-xl !px-3 !py-2 !text-sm"
             >

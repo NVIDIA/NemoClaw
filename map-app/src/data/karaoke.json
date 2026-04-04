@@ -87,5 +87,94 @@
       { "roomSize": "medium", "pricePerHour": 50000, "maxPeople": 8 },
       { "roomSize": "large", "pricePerHour": 80000, "maxPeople": 20 }
     ]
+  },
+  {
+    "id": "kara-006",
+    "name": "코인노래방 건대점",
+    "nameEn": "Coin Noraebang Konkuk",
+    "lat": 37.5407,
+    "lng": 127.0708,
+    "address": "서울 광진구 아차산로 270",
+    "category": "karaoke",
+    "rating": 4.2,
+    "openHours": "24시간",
+    "hasForeignSongs": true,
+    "hasTambourine": true,
+    "discountHours": "오전 10:00-13:00 40% 할인",
+    "rates": [
+      { "roomSize": "small", "pricePerHour": 6000, "maxPeople": 2 }
+    ]
+  },
+  {
+    "id": "kara-007",
+    "name": "에스노래방 성수점",
+    "nameEn": "S Noraebang Seongsu",
+    "lat": 37.5447,
+    "lng": 127.0553,
+    "address": "서울 성동구 뚝섬로 413",
+    "category": "karaoke",
+    "rating": 4.0,
+    "openHours": "11:00-03:00",
+    "hasForeignSongs": true,
+    "hasTambourine": true,
+    "rates": [
+      { "roomSize": "small", "pricePerHour": 12000, "maxPeople": 3 },
+      { "roomSize": "medium", "pricePerHour": 18000, "maxPeople": 6 },
+      { "roomSize": "large", "pricePerHour": 25000, "maxPeople": 10 }
+    ]
+  },
+  {
+    "id": "kara-008",
+    "name": "코인노래방 잠실점",
+    "nameEn": "Coin Noraebang Jamsil",
+    "lat": 37.5130,
+    "lng": 127.1005,
+    "address": "서울 송파구 잠실로 21",
+    "category": "karaoke",
+    "rating": 4.1,
+    "openHours": "24시간",
+    "hasForeignSongs": true,
+    "hasTambourine": false,
+    "discountHours": "평일 오전 9:00-14:00 50% 할인",
+    "rates": [
+      { "roomSize": "small", "pricePerHour": 6000, "maxPeople": 2 }
+    ]
+  },
+  {
+    "id": "kara-009",
+    "name": "왕십리 포레스트 노래방",
+    "nameEn": "Wangsimni Forest Noraebang",
+    "lat": 37.5615,
+    "lng": 127.0370,
+    "address": "서울 성동구 왕십리광장로 20",
+    "category": "karaoke",
+    "rating": 3.9,
+    "openHours": "12:00-04:00",
+    "hasForeignSongs": true,
+    "hasTambourine": true,
+    "rates": [
+      { "roomSize": "small", "pricePerHour": 13000, "maxPeople": 3 },
+      { "roomSize": "medium", "pricePerHour": 20000, "maxPeople": 7 },
+      { "roomSize": "large", "pricePerHour": 28000, "maxPeople": 12 }
+    ]
+  },
+  {
+    "id": "kara-010",
+    "name": "상암 MBC 노래방",
+    "nameEn": "Sangam MBC Noraebang",
+    "lat": 37.5678,
+    "lng": 126.8930,
+    "address": "서울 마포구 상암동 1589",
+    "category": "karaoke",
+    "rating": 4.3,
+    "openHours": "10:00-02:00",
+    "hasForeignSongs": true,
+    "hasTambourine": true,
+    "discountHours": "낮 12:00-18:00 20% 할인",
+    "rates": [
+      { "roomSize": "small", "pricePerHour": 10000, "maxPeople": 3 },
+      { "roomSize": "medium", "pricePerHour": 16000, "maxPeople": 6 },
+      { "roomSize": "large", "pricePerHour": 22000, "maxPeople": 10 }
+    ]
   }
 ]

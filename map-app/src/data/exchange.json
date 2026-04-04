@@ -1,18 +1,9 @@
 [
   {
-    "id": "ex-001",
-    "name": "명동 우리환전소",
-    "nameEn": "Myeongdong Woori Exchange",
-    "lat": 37.5635,
-    "lng": 126.9832,
-    "address": "서울 중구 명동길 14",
-    "addressEn": "14 Myeongdong-gil, Jung-gu, Seoul",
-    "category": "exchange",
-    "rating": 4.5,
-    "phone": "02-1234-5678",
-    "openHours": "09:00-20:00",
-    "noCommission": true,
-    "minAmount": 10,
+    "id": "ex-001", "name": "명동 우리환전소", "nameEn": "Myeongdong Woori Exchange",
+    "lat": 37.5635, "lng": 126.9832, "address": "서울 중구 명동길 14", "category": "exchange",
+    "rating": 4.5, "phone": "02-1234-5678", "openHours": "09:00-20:00",
+    "noCommission": true, "minAmount": 10,
     "rates": [
       { "currency": "USD", "buyRate": 1347, "sellRate": 1389 },
       { "currency": "JPY", "buyRate": 908, "sellRate": 936 },
@@ -22,41 +13,22 @@
     ]
   },
   {
-    "id": "ex-002",
-    "name": "동대문 환전센터",
-    "nameEn": "Dongdaemun Exchange Center",
-    "lat": 37.5665,
-    "lng": 127.0088,
-    "address": "서울 중구 을지로 281",
-    "addressEn": "281 Euljiro, Jung-gu, Seoul",
-    "category": "exchange",
-    "rating": 4.2,
-    "phone": "02-2345-6789",
-    "openHours": "10:00-22:00",
-    "noCommission": false,
-    "minAmount": 50,
+    "id": "ex-002", "name": "동대문 환전센터", "nameEn": "Dongdaemun Exchange Center",
+    "lat": 37.5665, "lng": 127.0088, "address": "서울 중구 을지로 281", "category": "exchange",
+    "rating": 4.2, "phone": "02-2345-6789", "openHours": "10:00-22:00",
+    "noCommission": false, "minAmount": 50,
     "rates": [
       { "currency": "USD", "buyRate": 1340, "sellRate": 1396 },
       { "currency": "JPY", "buyRate": 902, "sellRate": 942 },
       { "currency": "CNY", "buyRate": 183, "sellRate": 194 },
-      { "currency": "EUR", "buyRate": 1475, "sellRate": 1532 },
-      { "currency": "GBP", "buyRate": 1718, "sellRate": 1783 }
+      { "currency": "EUR", "buyRate": 1475, "sellRate": 1532 }
     ]
   },
   {
-    "id": "ex-003",
-    "name": "홍대 베스트환전",
-    "nameEn": "Hongdae Best Exchange",
-    "lat": 37.5578,
-    "lng": 126.9238,
-    "address": "서울 마포구 와우산로 94",
-    "addressEn": "94 Wausan-ro, Mapo-gu, Seoul",
-    "category": "exchange",
-    "rating": 4.7,
-    "phone": "02-3456-7890",
-    "openHours": "10:00-21:00",
-    "noCommission": true,
-    "minAmount": 0,
+    "id": "ex-003", "name": "홍대 베스트환전", "nameEn": "Hongdae Best Exchange",
+    "lat": 37.5578, "lng": 126.9238, "address": "서울 마포구 와우산로 94", "category": "exchange",
+    "rating": 4.7, "phone": "02-3456-7890", "openHours": "10:00-21:00",
+    "noCommission": true, "minAmount": 0,
     "rates": [
       { "currency": "USD", "buyRate": 1352, "sellRate": 1384 },
       { "currency": "JPY", "buyRate": 912, "sellRate": 932 },
@@ -66,41 +38,22 @@
     ]
   },
   {
-    "id": "ex-004",
-    "name": "강남 프리미엄환전",
-    "nameEn": "Gangnam Premium Exchange",
-    "lat": 37.4979,
-    "lng": 127.0276,
-    "address": "서울 강남구 강남대로 396",
-    "addressEn": "396 Gangnam-daero, Gangnam-gu, Seoul",
-    "category": "exchange",
-    "rating": 4.3,
-    "phone": "02-4567-8901",
-    "openHours": "09:30-19:30",
-    "noCommission": false,
-    "minAmount": 100,
+    "id": "ex-004", "name": "강남 프리미엄환전", "nameEn": "Gangnam Premium Exchange",
+    "lat": 37.4979, "lng": 127.0276, "address": "서울 강남구 강남대로 396", "category": "exchange",
+    "rating": 4.3, "phone": "02-4567-8901", "openHours": "09:30-19:30",
+    "noCommission": false, "minAmount": 100,
     "rates": [
       { "currency": "USD", "buyRate": 1335, "sellRate": 1400 },
       { "currency": "JPY", "buyRate": 899, "sellRate": 945 },
       { "currency": "CNY", "buyRate": 181, "sellRate": 196 },
-      { "currency": "EUR", "buyRate": 1470, "sellRate": 1538 },
-      { "currency": "GBP", "buyRate": 1712, "sellRate": 1789 }
+      { "currency": "EUR", "buyRate": 1470, "sellRate": 1538 }
     ]
   },
   {
-    "id": "ex-005",
-    "name": "이태원 글로벌환전",
-    "nameEn": "Itaewon Global Exchange",
-    "lat": 37.5345,
-    "lng": 126.9945,
-    "address": "서울 용산구 이태원로 177",
-    "addressEn": "177 Itaewon-ro, Yongsan-gu, Seoul",
-    "category": "exchange",
-    "rating": 4.6,
-    "phone": "02-5678-9012",
-    "openHours": "09:00-21:00",
-    "noCommission": true,
-    "minAmount": 20,
+    "id": "ex-005", "name": "이태원 글로벌환전", "nameEn": "Itaewon Global Exchange",
+    "lat": 37.5345, "lng": 126.9945, "address": "서울 용산구 이태원로 177", "category": "exchange",
+    "rating": 4.6, "phone": "02-5678-9012", "openHours": "09:00-21:00",
+    "noCommission": true, "minAmount": 20,
     "rates": [
       { "currency": "USD", "buyRate": 1350, "sellRate": 1386 },
       { "currency": "JPY", "buyRate": 910, "sellRate": 934 },
@@ -111,19 +64,10 @@
     ]
   },
   {
-    "id": "ex-006",
-    "name": "인사동 트래블환전",
-    "nameEn": "Insadong Travel Exchange",
-    "lat": 37.5742,
-    "lng": 126.9853,
-    "address": "서울 종로구 인사동길 42",
-    "addressEn": "42 Insadong-gil, Jongno-gu, Seoul",
-    "category": "exchange",
-    "rating": 4.4,
-    "phone": "02-6789-0123",
-    "openHours": "10:00-19:00",
-    "noCommission": true,
-    "minAmount": 10,
+    "id": "ex-006", "name": "인사동 트래블환전", "nameEn": "Insadong Travel Exchange",
+    "lat": 37.5742, "lng": 126.9853, "address": "서울 종로구 인사동길 42", "category": "exchange",
+    "rating": 4.4, "phone": "02-6789-0123", "openHours": "10:00-19:00",
+    "noCommission": true, "minAmount": 10,
     "rates": [
       { "currency": "USD", "buyRate": 1348, "sellRate": 1388 },
       { "currency": "JPY", "buyRate": 909, "sellRate": 935 },
@@ -133,19 +77,10 @@
     ]
   },
   {
-    "id": "ex-007",
-    "name": "신촌 대학로환전",
-    "nameEn": "Sinchon Campus Exchange",
-    "lat": 37.5596,
-    "lng": 126.9364,
-    "address": "서울 서대문구 신촌로 83",
-    "addressEn": "83 Sinchon-ro, Seodaemun-gu, Seoul",
-    "category": "exchange",
-    "rating": 4.1,
-    "phone": "02-7890-1234",
-    "openHours": "09:00-18:00",
-    "noCommission": false,
-    "minAmount": 30,
+    "id": "ex-007", "name": "신촌 대학로환전", "nameEn": "Sinchon Campus Exchange",
+    "lat": 37.5596, "lng": 126.9364, "address": "서울 서대문구 신촌로 83", "category": "exchange",
+    "rating": 4.1, "phone": "02-7890-1234", "openHours": "09:00-18:00",
+    "noCommission": false, "minAmount": 30,
     "rates": [
       { "currency": "USD", "buyRate": 1344, "sellRate": 1392 },
       { "currency": "JPY", "buyRate": 905, "sellRate": 939 },
@@ -154,19 +89,10 @@
     ]
   },
   {
-    "id": "ex-008",
-    "name": "종로 황금환전",
-    "nameEn": "Jongno Golden Exchange",
-    "lat": 37.5701,
-    "lng": 126.9827,
-    "address": "서울 종로구 종로 99",
-    "addressEn": "99 Jongno, Jongno-gu, Seoul",
-    "category": "exchange",
-    "rating": 4.8,
-    "phone": "02-8901-2345",
-    "openHours": "08:30-20:30",
-    "noCommission": true,
-    "minAmount": 0,
+    "id": "ex-008", "name": "종로 황금환전", "nameEn": "Jongno Golden Exchange",
+    "lat": 37.5701, "lng": 126.9827, "address": "서울 종로구 종로 99", "category": "exchange",
+    "rating": 4.8, "phone": "02-8901-2345", "openHours": "08:30-20:30",
+    "noCommission": true, "minAmount": 0,
     "rates": [
       { "currency": "USD", "buyRate": 1354, "sellRate": 1382 },
       { "currency": "JPY", "buyRate": 914, "sellRate": 930 },
@@ -174,6 +100,96 @@
       { "currency": "EUR", "buyRate": 1490, "sellRate": 1519 },
       { "currency": "GBP", "buyRate": 1735, "sellRate": 1765 },
       { "currency": "THB", "buyRate": 38, "sellRate": 39 }
+    ]
+  },
+  {
+    "id": "ex-009", "name": "건대 스타시티환전", "nameEn": "Konkuk Star City Exchange",
+    "lat": 37.5404, "lng": 127.0710, "address": "서울 광진구 능동로 120", "category": "exchange",
+    "rating": 4.2, "phone": "02-9012-3456", "openHours": "10:00-21:00",
+    "noCommission": true, "minAmount": 0,
+    "rates": [
+      { "currency": "USD", "buyRate": 1349, "sellRate": 1387 },
+      { "currency": "JPY", "buyRate": 907, "sellRate": 937 },
+      { "currency": "CNY", "buyRate": 185, "sellRate": 192 },
+      { "currency": "EUR", "buyRate": 1483, "sellRate": 1523 }
+    ]
+  },
+  {
+    "id": "ex-010", "name": "성수 트렌디환전", "nameEn": "Seongsu Trendy Exchange",
+    "lat": 37.5445, "lng": 127.0564, "address": "서울 성동구 성수이로 78", "category": "exchange",
+    "rating": 4.5, "phone": "02-0123-4567", "openHours": "10:00-20:00",
+    "noCommission": true, "minAmount": 10,
+    "rates": [
+      { "currency": "USD", "buyRate": 1351, "sellRate": 1385 },
+      { "currency": "JPY", "buyRate": 911, "sellRate": 933 },
+      { "currency": "CNY", "buyRate": 186, "sellRate": 190 },
+      { "currency": "EUR", "buyRate": 1486, "sellRate": 1522 }
+    ]
+  },
+  {
+    "id": "ex-011", "name": "잠실 롯데환전", "nameEn": "Jamsil Lotte Exchange",
+    "lat": 37.5107, "lng": 127.0980, "address": "서울 송파구 올림픽로 240 롯데월드타워", "category": "exchange",
+    "rating": 4.0, "phone": "02-1122-3344", "openHours": "10:00-20:00",
+    "noCommission": false, "minAmount": 50,
+    "rates": [
+      { "currency": "USD", "buyRate": 1339, "sellRate": 1397 },
+      { "currency": "JPY", "buyRate": 901, "sellRate": 943 },
+      { "currency": "CNY", "buyRate": 182, "sellRate": 195 },
+      { "currency": "EUR", "buyRate": 1473, "sellRate": 1534 },
+      { "currency": "GBP", "buyRate": 1715, "sellRate": 1786 }
+    ]
+  },
+  {
+    "id": "ex-012", "name": "인천공항 1터미널 환전", "nameEn": "ICN Airport T1 Exchange",
+    "lat": 37.4491, "lng": 126.4509, "address": "인천 중구 공항로 272 인천국제공항 1터미널", "category": "exchange",
+    "rating": 3.8, "phone": "032-741-1234", "openHours": "06:00-22:00",
+    "noCommission": false, "minAmount": 0,
+    "rates": [
+      { "currency": "USD", "buyRate": 1328, "sellRate": 1408 },
+      { "currency": "JPY", "buyRate": 895, "sellRate": 949 },
+      { "currency": "CNY", "buyRate": 179, "sellRate": 199 },
+      { "currency": "EUR", "buyRate": 1462, "sellRate": 1542 },
+      { "currency": "GBP", "buyRate": 1702, "sellRate": 1798 },
+      { "currency": "THB", "buyRate": 34, "sellRate": 43 }
+    ]
+  },
+  {
+    "id": "ex-013", "name": "왕십리 민환전", "nameEn": "Wangsimni Min Exchange",
+    "lat": 37.5613, "lng": 127.0367, "address": "서울 성동구 왕십리광장로 9", "category": "exchange",
+    "rating": 4.3, "phone": "02-2233-4455", "openHours": "09:00-20:00",
+    "noCommission": true, "minAmount": 20,
+    "rates": [
+      { "currency": "USD", "buyRate": 1346, "sellRate": 1390 },
+      { "currency": "JPY", "buyRate": 907, "sellRate": 937 },
+      { "currency": "CNY", "buyRate": 184, "sellRate": 192 },
+      { "currency": "EUR", "buyRate": 1480, "sellRate": 1527 }
+    ]
+  },
+  {
+    "id": "ex-014", "name": "강남역 24시 환전", "nameEn": "Gangnam Station 24H Exchange",
+    "lat": 37.4975, "lng": 127.0287, "address": "서울 강남구 강남대로 426", "category": "exchange",
+    "rating": 4.4, "phone": "02-3344-5566", "openHours": "24시간",
+    "noCommission": true, "minAmount": 10,
+    "rates": [
+      { "currency": "USD", "buyRate": 1350, "sellRate": 1386 },
+      { "currency": "JPY", "buyRate": 909, "sellRate": 935 },
+      { "currency": "CNY", "buyRate": 185, "sellRate": 191 },
+      { "currency": "EUR", "buyRate": 1484, "sellRate": 1524 },
+      { "currency": "GBP", "buyRate": 1727, "sellRate": 1773 }
+    ]
+  },
+  {
+    "id": "ex-015", "name": "명동 KEB하나은행 공식환전", "nameEn": "Myeongdong KEB Hana Bank",
+    "lat": 37.5624, "lng": 126.9820, "address": "서울 중구 명동11길 35", "category": "exchange",
+    "rating": 4.6, "phone": "02-1588-1111", "openHours": "09:00-17:00 (평일)",
+    "noCommission": false, "minAmount": 0,
+    "rates": [
+      { "currency": "USD", "buyRate": 1345, "sellRate": 1391 },
+      { "currency": "JPY", "buyRate": 906, "sellRate": 938 },
+      { "currency": "CNY", "buyRate": 184, "sellRate": 193 },
+      { "currency": "EUR", "buyRate": 1479, "sellRate": 1529 },
+      { "currency": "GBP", "buyRate": 1722, "sellRate": 1778 },
+      { "currency": "THB", "buyRate": 36, "sellRate": 41 }
     ]
   }
 ]

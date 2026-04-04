@@ -1,17 +1,8 @@
 [
   {
-    "id": "cafe-001",
-    "name": "메가MGC커피 명동점",
-    "nameEn": "Mega MGC Coffee Myeongdong",
-    "lat": 37.5629,
-    "lng": 126.9820,
-    "address": "서울 중구 명동길 48",
-    "category": "cafe",
-    "rating": 4.2,
-    "brand": "Mega MGC",
-    "americanoPrice": 2000,
-    "hasWifi": true,
-    "hasOutdoorSeating": false,
+    "id": "cafe-001", "name": "메가MGC커피 명동점", "nameEn": "Mega MGC Coffee Myeongdong",
+    "lat": 37.5629, "lng": 126.9820, "address": "서울 중구 명동길 48", "category": "cafe",
+    "rating": 4.2, "brand": "Mega MGC", "americanoPrice": 2000, "hasWifi": true, "hasOutdoorSeating": false,
     "items": [
       { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 2000, "isBestValue": true },
       { "name": "카페라떼", "nameEn": "Cafe Latte", "price": 2500 },
@@ -20,18 +11,9 @@
     ]
   },
   {
-    "id": "cafe-002",
-    "name": "컴포즈커피 홍대점",
-    "nameEn": "Compose Coffee Hongdae",
-    "lat": 37.5572,
-    "lng": 126.9222,
-    "address": "서울 마포구 와우산로 20",
-    "category": "cafe",
-    "rating": 4.1,
-    "brand": "Compose",
-    "americanoPrice": 1500,
-    "hasWifi": true,
-    "hasOutdoorSeating": false,
+    "id": "cafe-002", "name": "컴포즈커피 홍대점", "nameEn": "Compose Coffee Hongdae",
+    "lat": 37.5572, "lng": 126.9222, "address": "서울 마포구 와우산로 20", "category": "cafe",
+    "rating": 4.1, "brand": "Compose", "americanoPrice": 1500, "hasWifi": true, "hasOutdoorSeating": false,
     "items": [
       { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 1500, "isBestValue": true },
       { "name": "카페라떼", "nameEn": "Cafe Latte", "price": 2000 },
@@ -39,18 +21,9 @@
     ]
   },
   {
-    "id": "cafe-003",
-    "name": "스타벅스 강남점",
-    "nameEn": "Starbucks Gangnam",
-    "lat": 37.4980,
-    "lng": 127.0272,
-    "address": "서울 강남구 강남대로 400",
-    "category": "cafe",
-    "rating": 4.4,
-    "brand": "Starbucks",
-    "americanoPrice": 4500,
-    "hasWifi": true,
-    "hasOutdoorSeating": true,
+    "id": "cafe-003", "name": "스타벅스 강남점", "nameEn": "Starbucks Gangnam",
+    "lat": 37.4980, "lng": 127.0272, "address": "서울 강남구 강남대로 400", "category": "cafe",
+    "rating": 4.4, "brand": "Starbucks", "americanoPrice": 4500, "hasWifi": true, "hasOutdoorSeating": true,
     "items": [
       { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 4500 },
       { "name": "카페라떼", "nameEn": "Cafe Latte", "price": 5500 },
@@ -59,38 +32,19 @@
     ]
   },
   {
-    "id": "cafe-004",
-    "name": "빽다방 종로점",
-    "nameEn": "Paik's Coffee Jongno",
-    "lat": 37.5713,
-    "lng": 126.9806,
-    "address": "서울 종로구 종로 112",
-    "category": "cafe",
-    "rating": 4.0,
-    "brand": "Paik's Coffee",
-    "americanoPrice": 1500,
-    "hasWifi": true,
-    "hasOutdoorSeating": false,
+    "id": "cafe-004", "name": "빽다방 종로점", "nameEn": "Paik's Coffee Jongno",
+    "lat": 37.5713, "lng": 126.9806, "address": "서울 종로구 종로 112", "category": "cafe",
+    "rating": 4.0, "brand": "Paik's Coffee", "americanoPrice": 1500, "hasWifi": true, "hasOutdoorSeating": false,
     "items": [
       { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 1500, "isBestValue": true },
       { "name": "원조커피", "nameEn": "Original Coffee", "price": 2000 },
-      { "name": "딸기라떼", "nameEn": "Strawberry Latte", "price": 3000 },
-      { "name": "옛날과자세트", "nameEn": "Classic Snack Set", "price": 2000 }
+      { "name": "딸기라떼", "nameEn": "Strawberry Latte", "price": 3000 }
     ]
   },
   {
-    "id": "cafe-005",
-    "name": "이디야커피 이태원점",
-    "nameEn": "Ediya Coffee Itaewon",
-    "lat": 37.5344,
-    "lng": 126.9949,
-    "address": "서울 용산구 이태원로 183",
-    "category": "cafe",
-    "rating": 3.9,
-    "brand": "Ediya",
-    "americanoPrice": 2300,
-    "hasWifi": true,
-    "hasOutdoorSeating": false,
+    "id": "cafe-005", "name": "이디야커피 이태원점", "nameEn": "Ediya Coffee Itaewon",
+    "lat": 37.5344, "lng": 126.9949, "address": "서울 용산구 이태원로 183", "category": "cafe",
+    "rating": 3.9, "brand": "Ediya", "americanoPrice": 2300, "hasWifi": true, "hasOutdoorSeating": false,
     "items": [
       { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 2300 },
       { "name": "카페라떼", "nameEn": "Cafe Latte", "price": 3200 },
@@ -98,63 +52,131 @@
     ]
   },
   {
-    "id": "cafe-006",
-    "name": "테라로사 홍대점",
-    "nameEn": "Terarosa Hongdae",
-    "lat": 37.5592,
-    "lng": 126.9268,
-    "address": "서울 마포구 동교로 225",
-    "category": "cafe",
-    "rating": 4.8,
-    "brand": "Terarosa",
-    "americanoPrice": 5500,
-    "hasWifi": true,
-    "hasOutdoorSeating": true,
+    "id": "cafe-006", "name": "테라로사 홍대점", "nameEn": "Terarosa Hongdae",
+    "lat": 37.5592, "lng": 126.9268, "address": "서울 마포구 동교로 225", "category": "cafe",
+    "rating": 4.8, "brand": "Terarosa", "americanoPrice": 5500, "hasWifi": true, "hasOutdoorSeating": true,
     "items": [
       { "name": "싱글오리진 드립커피", "nameEn": "Single Origin Drip", "price": 7000, "isBestValue": true },
       { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 5500 },
-      { "name": "플랫화이트", "nameEn": "Flat White", "price": 6000 },
-      { "name": "케이크", "nameEn": "Cake slice", "price": 6500 }
+      { "name": "플랫화이트", "nameEn": "Flat White", "price": 6000 }
     ]
   },
   {
-    "id": "cafe-007",
-    "name": "투썸플레이스 강남",
-    "nameEn": "A Twosome Place Gangnam",
-    "lat": 37.5015,
-    "lng": 127.0231,
-    "address": "서울 강남구 논현로 432",
-    "category": "cafe",
-    "rating": 4.3,
-    "brand": "A Twosome Place",
-    "americanoPrice": 3900,
-    "hasWifi": true,
-    "hasOutdoorSeating": false,
+    "id": "cafe-007", "name": "투썸플레이스 강남", "nameEn": "A Twosome Place Gangnam",
+    "lat": 37.5015, "lng": 127.0231, "address": "서울 강남구 논현로 432", "category": "cafe",
+    "rating": 4.3, "brand": "A Twosome Place", "americanoPrice": 3900, "hasWifi": true, "hasOutdoorSeating": false,
     "items": [
       { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 3900 },
       { "name": "카페라떼", "nameEn": "Cafe Latte", "price": 4700 },
-      { "name": "딸기 케이크", "nameEn": "Strawberry Cake", "price": 7500 },
-      { "name": "빙수", "nameEn": "Shaved Ice (Bingsu)", "price": 13900 }
+      { "name": "딸기 케이크", "nameEn": "Strawberry Cake", "price": 7500 }
     ]
   },
   {
-    "id": "cafe-008",
-    "name": "나무사이로 인사동",
-    "nameEn": "Between Trees Insadong",
-    "lat": 37.5747,
-    "lng": 126.9847,
-    "address": "서울 종로구 인사동길 35",
-    "category": "cafe",
-    "rating": 4.6,
-    "brand": "Independent",
-    "americanoPrice": 4000,
-    "hasWifi": false,
-    "hasOutdoorSeating": true,
+    "id": "cafe-008", "name": "나무사이로 인사동", "nameEn": "Between Trees Insadong",
+    "lat": 37.5747, "lng": 126.9847, "address": "서울 종로구 인사동길 35", "category": "cafe",
+    "rating": 4.6, "brand": "Independent", "americanoPrice": 4000, "hasWifi": false, "hasOutdoorSeating": true,
     "items": [
       { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 4000 },
       { "name": "쌍화차", "nameEn": "Traditional Herbal Tea", "price": 6000 },
-      { "name": "식혜", "nameEn": "Sweet Rice Drink", "price": 5000 },
-      { "name": "전통과자 세트", "nameEn": "Traditional Snack Set", "price": 8000 }
+      { "name": "식혜", "nameEn": "Sweet Rice Drink", "price": 5000 }
+    ]
+  },
+  {
+    "id": "cafe-009", "name": "더벤티 건대점", "nameEn": "The Venti Konkuk",
+    "lat": 37.5410, "lng": 127.0706, "address": "서울 광진구 아차산로 258", "category": "cafe",
+    "rating": 4.1, "brand": "The Venti", "americanoPrice": 1800, "hasWifi": true, "hasOutdoorSeating": false,
+    "items": [
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 1800, "isBestValue": true },
+      { "name": "오레오라떼", "nameEn": "Oreo Latte", "price": 3000 },
+      { "name": "생크림빙수", "nameEn": "Cream Shaved Ice", "price": 5500 }
+    ]
+  },
+  {
+    "id": "cafe-010", "name": "성수 어니언", "nameEn": "Onion Seongsu",
+    "lat": 37.5448, "lng": 127.0557, "address": "서울 성동구 아차산로9길 8", "category": "cafe",
+    "rating": 4.9, "brand": "Onion", "americanoPrice": 5000, "hasWifi": false, "hasOutdoorSeating": true,
+    "items": [
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 5000 },
+      { "name": "어니언 소금빵", "nameEn": "Onion Salt Bread", "price": 4200, "isBestValue": true },
+      { "name": "시그니처 케이크", "nameEn": "Signature Cake", "price": 7500 }
+    ]
+  },
+  {
+    "id": "cafe-011", "name": "컴포즈커피 잠실점", "nameEn": "Compose Coffee Jamsil",
+    "lat": 37.5122, "lng": 127.1014, "address": "서울 송파구 올림픽로 300", "category": "cafe",
+    "rating": 4.0, "brand": "Compose", "americanoPrice": 1500, "hasWifi": true, "hasOutdoorSeating": false,
+    "items": [
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 1500, "isBestValue": true },
+      { "name": "카페라떼", "nameEn": "Cafe Latte", "price": 2000 },
+      { "name": "초코라떼", "nameEn": "Choco Latte", "price": 2500 }
+    ]
+  },
+  {
+    "id": "cafe-012", "name": "메가커피 왕십리점", "nameEn": "Mega Coffee Wangsimni",
+    "lat": 37.5617, "lng": 127.0368, "address": "서울 성동구 왕십리로 95", "category": "cafe",
+    "rating": 4.0, "brand": "Mega MGC", "americanoPrice": 2000, "hasWifi": true, "hasOutdoorSeating": false,
+    "items": [
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 2000, "isBestValue": true },
+      { "name": "카페라떼", "nameEn": "Cafe Latte", "price": 2500 },
+      { "name": "아이스티", "nameEn": "Iced Tea", "price": 2000 }
+    ]
+  },
+  {
+    "id": "cafe-013", "name": "스타벅스 홍대입구역", "nameEn": "Starbucks Hongik Univ.",
+    "lat": 37.5566, "lng": 126.9240, "address": "서울 마포구 양화로 177", "category": "cafe",
+    "rating": 4.3, "brand": "Starbucks", "americanoPrice": 4500, "hasWifi": true, "hasOutdoorSeating": true,
+    "items": [
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 4500 },
+      { "name": "콜드브루", "nameEn": "Cold Brew", "price": 5500 },
+      { "name": "마카롱", "nameEn": "Macaron", "price": 2400 }
+    ]
+  },
+  {
+    "id": "cafe-014", "name": "빽다방 강남역점", "nameEn": "Paik's Coffee Gangnam Station",
+    "lat": 37.4977, "lng": 127.0282, "address": "서울 강남구 강남대로 364", "category": "cafe",
+    "rating": 4.1, "brand": "Paik's Coffee", "americanoPrice": 1500, "hasWifi": true, "hasOutdoorSeating": false,
+    "items": [
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 1500, "isBestValue": true },
+      { "name": "원조커피", "nameEn": "Original Coffee", "price": 2000 },
+      { "name": "팥빙수", "nameEn": "Red Bean Shaved Ice", "price": 5500 }
+    ]
+  },
+  {
+    "id": "cafe-015", "name": "블루보틀 성수", "nameEn": "Blue Bottle Seongsu",
+    "lat": 37.5440, "lng": 127.0558, "address": "서울 성동구 왕십리로2길 20-1", "category": "cafe",
+    "rating": 4.7, "brand": "Blue Bottle", "americanoPrice": 6000, "hasWifi": false, "hasOutdoorSeating": true,
+    "items": [
+      { "name": "뉴올리언즈 아이스커피", "nameEn": "New Orleans Iced", "price": 7500, "isBestValue": true },
+      { "name": "카페라떼", "nameEn": "Cafe Latte", "price": 7000 },
+      { "name": "싱글오리진 드립", "nameEn": "Single Origin Drip", "price": 8000 }
+    ]
+  },
+  {
+    "id": "cafe-016", "name": "이디야 상암점", "nameEn": "Ediya Coffee Sangam",
+    "lat": 37.5680, "lng": 126.8935, "address": "서울 마포구 월드컵북로 366", "category": "cafe",
+    "rating": 3.8, "brand": "Ediya", "americanoPrice": 2300, "hasWifi": true, "hasOutdoorSeating": false,
+    "items": [
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 2300 },
+      { "name": "쿨 블루베리", "nameEn": "Cool Blueberry", "price": 3800 }
+    ]
+  },
+  {
+    "id": "cafe-017", "name": "메가커피 신촌점", "nameEn": "Mega Coffee Sinchon",
+    "lat": 37.5592, "lng": 126.9366, "address": "서울 서대문구 신촌로 75", "category": "cafe",
+    "rating": 4.0, "brand": "Mega MGC", "americanoPrice": 2000, "hasWifi": true, "hasOutdoorSeating": false,
+    "items": [
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 2000, "isBestValue": true },
+      { "name": "딸기라떼", "nameEn": "Strawberry Latte", "price": 3000 }
+    ]
+  },
+  {
+    "id": "cafe-018", "name": "트리하우스 카페 북촌", "nameEn": "Treehouse Cafe Bukchon",
+    "lat": 37.5822, "lng": 126.9848, "address": "서울 종로구 북촌로 112", "category": "cafe",
+    "rating": 4.5, "brand": "Independent", "americanoPrice": 5000, "hasWifi": false, "hasOutdoorSeating": true,
+    "items": [
+      { "name": "아이스 아메리카노", "nameEn": "Iced Americano", "price": 5000 },
+      { "name": "홍삼라떼", "nameEn": "Red Ginseng Latte", "price": 7000, "isBestValue": true },
+      { "name": "전통 수정과", "nameEn": "Persimmon Punch", "price": 6000 }
     ]
   }
 ]

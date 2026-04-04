@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from 'react'
 import { useUiStore } from '@/store'
 import { useFilteredMarkers } from '@/hooks/useFilteredMarkers'
 import { NationalityDropdown } from '@/components/filters/NationalityDropdown'
@@ -6,7 +7,23 @@ import { useFilterStore } from '@/store'
 export function TopBar() {
   const { language, toggleLanguage } = useUiStore()
   const filteredCount = useFilteredMarkers().length
-  const { nationality } = useFilterStore()
+  const { searchQuery, setSearchQuery } = useFilterStore()
+  const [searchOpen, setSearchOpen] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (searchOpen && inputRef.current) {
+      inputRef.current.focus()
+    }
+  }, [searchOpen])
+
+  function handleSearchToggle() {
+    if (searchOpen && searchQuery) {
+      setSearchQuery('')
+    } else {
+      setSearchOpen((v) => !v)
+    }
+  }
 
   return (
     <header className="flex-shrink-0 bg-[#0f172a] text-white px-4 py-3 shadow-md z-30">
@@ -26,10 +43,42 @@ export function TopBar() {
           </div>
         </div>
 
+        {/* Search bar (expanded state) */}
+        {searchOpen && (
+          <div className="flex-1 min-w-0">
+            <input
+              ref={inputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={language === 'ko' ? '장소 검색...' : 'Search places...'}
+              className="w-full bg-slate-700 text-white placeholder-slate-400 text-sm px-3 py-1.5
+                rounded-lg border border-slate-600 focus:outline-none focus:border-yellow-400 transition-colors"
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setSearchQuery('')
+                  setSearchOpen(false)
+                }
+              }}
+            />
+          </div>
+        )}
+
         {/* Right side controls */}
         <div className="flex items-center gap-2 flex-shrink-0">
-          {/* Nationality filter */}
-          <NationalityDropdown />
+          {/* Search button */}
+          <button
+            onClick={handleSearchToggle}
+            className={`w-8 h-8 rounded-full flex items-center justify-center text-sm transition-colors
+              ${searchOpen ? 'bg-yellow-500 text-black' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'}
+              border border-slate-600`}
+            title={language === 'ko' ? '검색' : 'Search'}
+          >
+            {searchOpen && searchQuery ? '✕' : '🔍'}
+          </button>
+
+          {/* Nationality filter (hide when search open on small screens) */}
+          {!searchOpen && <NationalityDropdown />}
 
           {/* Language toggle */}
           <button

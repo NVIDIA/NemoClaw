@@ -114,5 +114,118 @@
     "tickets": [
       { "type": "관람 (무료)", "typeEn": "Visit (Free)", "price": 0 }
     ]
+  },
+  {
+    "id": "att-007",
+    "name": "덕수궁",
+    "nameEn": "Deoksugung Palace",
+    "lat": 37.5658,
+    "lng": 126.9748,
+    "address": "서울 중구 세종대로 99",
+    "category": "attraction",
+    "rating": 4.5,
+    "attractionType": "궁궐",
+    "freeEntry": false,
+    "discountInfo": "한복 착용 시 무료, 수문장 교대식 무료 관람",
+    "discountInfoEn": "Free with Hanbok; free Royal Guard ceremony",
+    "openHours": "09:00-21:00 (월요일 휴관)",
+    "tickets": [
+      { "type": "일반", "typeEn": "Adult", "price": 1000 },
+      { "type": "어린이", "typeEn": "Child", "price": 0 }
+    ]
+  },
+  {
+    "id": "att-008",
+    "name": "서울숲",
+    "nameEn": "Seoul Forest",
+    "lat": 37.5449,
+    "lng": 127.0374,
+    "address": "서울 성동구 뚝섬로 273",
+    "category": "attraction",
+    "rating": 4.6,
+    "attractionType": "공원",
+    "freeEntry": true,
+    "discountInfo": "입장 무료, 주차 유료",
+    "discountInfoEn": "Free entry, paid parking",
+    "openHours": "24시간",
+    "tickets": [
+      { "type": "공원 입장", "typeEn": "Park Entry", "price": 0 }
+    ]
+  },
+  {
+    "id": "att-009",
+    "name": "한강공원 여의도",
+    "nameEn": "Han River Park Yeouido",
+    "lat": 37.5283,
+    "lng": 126.9332,
+    "address": "서울 영등포구 여의동로 330",
+    "category": "attraction",
+    "rating": 4.5,
+    "attractionType": "한강공원",
+    "freeEntry": true,
+    "discountInfo": "무료 입장",
+    "discountInfoEn": "Free entry",
+    "openHours": "24시간",
+    "tickets": [
+      { "type": "공원 입장", "typeEn": "Park Entry", "price": 0 },
+      { "type": "자전거 대여", "typeEn": "Bike Rental/hr", "price": 3000 }
+    ]
+  },
+  {
+    "id": "att-010",
+    "name": "국립민속박물관",
+    "nameEn": "National Folk Museum",
+    "lat": 37.5808,
+    "lng": 126.9789,
+    "address": "서울 종로구 삼청로 37",
+    "category": "attraction",
+    "rating": 4.4,
+    "attractionType": "박물관",
+    "freeEntry": true,
+    "discountInfo": "상설전시 무료 (경복궁 입장 후)",
+    "discountInfoEn": "Free with Gyeongbokgung ticket",
+    "openHours": "09:00-18:00 (화요일 휴관)",
+    "tickets": [
+      { "type": "상설전시", "typeEn": "Permanent Exhibition", "price": 0 }
+    ]
+  },
+  {
+    "id": "att-011",
+    "name": "서울대공원",
+    "nameEn": "Seoul Grand Park",
+    "lat": 37.4270,
+    "lng": 127.0102,
+    "address": "경기도 과천시 대공원광장로 102",
+    "category": "attraction",
+    "rating": 4.3,
+    "attractionType": "동물원·놀이공원",
+    "freeEntry": false,
+    "discountInfo": "기후동행카드 소지자 20% 할인",
+    "discountInfoEn": "20% off with Climate Card",
+    "openHours": "09:00-19:00",
+    "tickets": [
+      { "type": "동물원 (어른)", "typeEn": "Zoo Adult", "price": 5000 },
+      { "type": "동물원 (어린이)", "typeEn": "Zoo Child", "price": 2000 },
+      { "type": "식물원", "typeEn": "Botanical Garden", "price": 1000 }
+    ]
+  },
+  {
+    "id": "att-012",
+    "name": "DDP 동대문디자인플라자",
+    "nameEn": "Dongdaemun Design Plaza",
+    "lat": 37.5666,
+    "lng": 127.0093,
+    "address": "서울 중구 을지로 281",
+    "category": "attraction",
+    "rating": 4.4,
+    "attractionType": "복합문화공간",
+    "freeEntry": true,
+    "discountInfo": "외부 관람 무료, 전시관 유료",
+    "discountInfoEn": "Free to visit exterior; exhibitions paid",
+    "openHours": "10:00-20:00",
+    "tickets": [
+      { "type": "외부 관람", "typeEn": "Exterior View", "price": 0 },
+      { "type": "기획 전시", "typeEn": "Special Exhibition", "price": 8000 }
+    ]
   }
 ]

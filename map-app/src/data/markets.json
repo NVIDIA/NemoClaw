@@ -81,5 +81,86 @@
       { "name": "수제 어묵", "nameEn": "Handmade Fish Cake", "price": 5000, "unit": "200g" },
       { "name": "국물떡볶이", "nameEn": "Soupy Tteokbokki", "price": 3500, "unit": "1인분" }
     ]
+  },
+  {
+    "id": "mkt-005",
+    "name": "동대문 풍물시장",
+    "nameEn": "Dongdaemun Flea Market",
+    "lat": 37.5676,
+    "lng": 127.0118,
+    "address": "서울 중구 장충단로 247",
+    "category": "market",
+    "rating": 4.2,
+    "marketType": "벼룩시장·빈티지",
+    "marketTypeEn": "Flea & Vintage Market",
+    "operatingDays": "금~일",
+    "closedDay": "월~목",
+    "openHours": "10:00-20:00",
+    "popularItems": [
+      { "name": "빈티지 의류", "nameEn": "Vintage Clothing", "price": 5000, "unit": "1벌" },
+      { "name": "골동품 소품", "nameEn": "Antique Decor", "price": 3000, "unit": "1점" },
+      { "name": "수제 액세서리", "nameEn": "Handmade Accessories", "price": 4000, "unit": "1개" }
+    ]
+  },
+  {
+    "id": "mkt-006",
+    "name": "노량진 수산시장",
+    "nameEn": "Noryangjin Fish Market",
+    "lat": 37.5137,
+    "lng": 126.9424,
+    "address": "서울 동작구 노량진로 12",
+    "category": "market",
+    "rating": 4.5,
+    "marketType": "수산시장",
+    "marketTypeEn": "Fish Market",
+    "operatingDays": "매일 운영",
+    "closedDay": "없음",
+    "openHours": "01:00-22:00",
+    "popularItems": [
+      { "name": "회 (광어)", "nameEn": "Sashimi (Flatfish)", "price": 30000, "unit": "1인분" },
+      { "name": "꽃게", "nameEn": "Blue Crab", "price": 15000, "unit": "500g" },
+      { "name": "낙지", "nameEn": "Octopus", "price": 10000, "unit": "마리" },
+      { "name": "해물탕", "nameEn": "Seafood Stew", "price": 25000, "unit": "2인분" }
+    ]
+  },
+  {
+    "id": "mkt-007",
+    "name": "강동 길동 자연생태공원 주말장",
+    "nameEn": "Gildong Weekend Market",
+    "lat": 37.5298,
+    "lng": 127.1244,
+    "address": "서울 강동구 천호대로 1258",
+    "category": "market",
+    "rating": 4.1,
+    "marketType": "주말 로컬마켓",
+    "marketTypeEn": "Weekend Local Market",
+    "operatingDays": "토~일",
+    "closedDay": "평일",
+    "openHours": "10:00-17:00",
+    "popularItems": [
+      { "name": "로컬 베이커리", "nameEn": "Local Bakery Items", "price": 3500, "unit": "1개" },
+      { "name": "수제청 잼", "nameEn": "Handmade Jam", "price": 8000, "unit": "1병" },
+      { "name": "농산물 직거래", "nameEn": "Farm Direct Produce", "price": 5000, "unit": "1묶음" }
+    ]
+  },
+  {
+    "id": "mkt-008",
+    "name": "성수 수제화거리 마켓",
+    "nameEn": "Seongsu Handmade Shoes Market",
+    "lat": 37.5441,
+    "lng": 127.0569,
+    "address": "서울 성동구 성수이로 78",
+    "category": "market",
+    "rating": 4.4,
+    "marketType": "특화 수제화 마켓",
+    "marketTypeEn": "Artisan Shoe Market",
+    "operatingDays": "화~일",
+    "closedDay": "월요일",
+    "openHours": "11:00-20:00",
+    "popularItems": [
+      { "name": "수제 스니커즈", "nameEn": "Handmade Sneakers", "price": 80000, "unit": "1켤레" },
+      { "name": "수제 로퍼", "nameEn": "Handmade Loafers", "price": 120000, "unit": "1켤레" },
+      { "name": "가죽 파우치", "nameEn": "Leather Pouch", "price": 25000, "unit": "1개" }
+    ]
   }
 ]

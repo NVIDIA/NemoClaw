@@ -1,346 +1,328 @@
 [
   {
-    "id": "rest-001",
-    "name": "명동 교자",
-    "nameEn": "Myeongdong Kyoja",
-    "lat": 37.5634,
-    "lng": 126.9844,
-    "address": "서울 중구 명동10길 29",
-    "category": "restaurant",
-    "rating": 4.7,
-    "nationalityTags": ["all", "korean", "japanese", "chinese", "western"],
-    "pricePerPerson": 11000,
-    "cuisineType": "칼국수/만두",
-    "cuisineTypeEn": "Kalguksu & Dumplings",
-    "isHalal": false,
-    "isVegetarianFriendly": false,
-    "hasEnglishMenu": true,
-    "hasChineseMenu": true,
-    "hasJapaneseMenu": true,
+    "id": "rest-001", "name": "명동 교자", "nameEn": "Myeongdong Kyoja",
+    "lat": 37.5634, "lng": 126.9844, "address": "서울 중구 명동10길 29", "category": "restaurant",
+    "rating": 4.7, "nationalityTags": ["all","korean","japanese","chinese","western"],
+    "pricePerPerson": 11000, "cuisineType": "칼국수/만두", "cuisineTypeEn": "Kalguksu & Dumplings",
+    "isHalal": false, "isVegetarianFriendly": false, "hasEnglishMenu": true, "hasChineseMenu": true, "hasJapaneseMenu": true,
     "menuItems": [
-      { "name": "칼국수", "nameEn": "Kalguksu Noodles", "price": 11000, "spicyLevel": 1 },
+      { "name": "칼국수", "nameEn": "Knife-cut Noodles", "price": 11000, "spicyLevel": 1 },
       { "name": "비빔국수", "nameEn": "Bibim Noodles", "price": 11000, "spicyLevel": 2 },
-      { "name": "만두", "nameEn": "Dumplings", "price": 9000, "spicyLevel": 0 },
-      { "name": "콩국수", "nameEn": "Soy Milk Noodles", "price": 12000, "spicyLevel": 0, "isVegetarian": true }
+      { "name": "만두", "nameEn": "Dumplings", "price": 9000, "spicyLevel": 0 }
     ]
   },
   {
-    "id": "rest-002",
-    "name": "광장시장 빈대떡",
-    "nameEn": "Gwangjang Market Bindaetteok",
-    "lat": 37.5699,
-    "lng": 126.9997,
-    "address": "서울 종로구 창경궁로 88",
-    "category": "restaurant",
-    "rating": 4.5,
-    "nationalityTags": ["all", "korean", "western", "vegan"],
-    "pricePerPerson": 8000,
-    "cuisineType": "전통 분식",
-    "cuisineTypeEn": "Traditional Street Food",
-    "isHalal": false,
-    "isVegetarianFriendly": true,
-    "hasEnglishMenu": false,
-    "hasChineseMenu": false,
-    "hasJapaneseMenu": false,
+    "id": "rest-002", "name": "광장시장 빈대떡", "nameEn": "Gwangjang Market Bindaetteok",
+    "lat": 37.5699, "lng": 126.9997, "address": "서울 종로구 창경궁로 88", "category": "restaurant",
+    "rating": 4.5, "nationalityTags": ["all","korean","western","vegan"],
+    "pricePerPerson": 8000, "cuisineType": "전통 분식", "cuisineTypeEn": "Traditional Street Food",
+    "isHalal": false, "isVegetarianFriendly": true, "hasEnglishMenu": false, "hasChineseMenu": false, "hasJapaneseMenu": false,
     "menuItems": [
       { "name": "빈대떡", "nameEn": "Mung Bean Pancake", "price": 5000, "spicyLevel": 0, "isVegetarian": true },
       { "name": "마약김밥", "nameEn": "Mini Kimbap", "price": 3000, "spicyLevel": 0, "isVegetarian": true },
-      { "name": "육회", "nameEn": "Beef Tartare", "price": 15000, "spicyLevel": 1 },
-      { "name": "순대", "nameEn": "Sundae Blood Sausage", "price": 5000, "spicyLevel": 0 }
+      { "name": "육회", "nameEn": "Beef Tartare", "price": 15000, "spicyLevel": 1 }
     ]
   },
   {
-    "id": "rest-003",
-    "name": "이태원 할랄 인도요리",
-    "nameEn": "Itaewon Halal Indian Kitchen",
-    "lat": 37.5341,
-    "lng": 126.9911,
-    "address": "서울 용산구 이태원로 171",
-    "category": "restaurant",
-    "rating": 4.6,
-    "nationalityTags": ["indian", "halal", "vegan"],
-    "pricePerPerson": 18000,
-    "cuisineType": "인도 요리",
-    "cuisineTypeEn": "Indian Cuisine",
-    "isHalal": true,
-    "isVegetarianFriendly": true,
-    "hasEnglishMenu": true,
-    "hasChineseMenu": false,
-    "hasJapaneseMenu": false,
+    "id": "rest-003", "name": "이태원 할랄 인도요리", "nameEn": "Itaewon Halal Indian Kitchen",
+    "lat": 37.5341, "lng": 126.9911, "address": "서울 용산구 이태원로 171", "category": "restaurant",
+    "rating": 4.6, "nationalityTags": ["indian","halal","vegan"],
+    "pricePerPerson": 18000, "cuisineType": "인도 요리", "cuisineTypeEn": "Indian Cuisine",
+    "isHalal": true, "isVegetarianFriendly": true, "hasEnglishMenu": true, "hasChineseMenu": false, "hasJapaneseMenu": false,
     "menuItems": [
       { "name": "버터 치킨 커리", "nameEn": "Butter Chicken Curry", "price": 18000, "spicyLevel": 2, "isHalal": true },
       { "name": "팔락 파니르", "nameEn": "Palak Paneer", "price": 16000, "spicyLevel": 1, "isVegetarian": true, "isHalal": true },
       { "name": "달 마크니", "nameEn": "Dal Makhni", "price": 14000, "spicyLevel": 1, "isVegetarian": true, "isHalal": true },
-      { "name": "난", "nameEn": "Naan Bread", "price": 3000, "spicyLevel": 0, "isVegetarian": true, "isHalal": true },
       { "name": "비리야니", "nameEn": "Chicken Biryani", "price": 20000, "spicyLevel": 2, "isHalal": true }
     ]
   },
   {
-    "id": "rest-004",
-    "name": "홍대 삼겹살 천국",
-    "nameEn": "Hongdae Samgyeopsal Heaven",
-    "lat": 37.5586,
-    "lng": 126.9258,
-    "address": "서울 마포구 어울마당로 55",
-    "category": "restaurant",
-    "rating": 4.4,
-    "nationalityTags": ["korean", "japanese", "western", "chinese"],
-    "pricePerPerson": 18000,
-    "cuisineType": "고기구이",
-    "cuisineTypeEn": "Korean BBQ",
-    "isHalal": false,
-    "isVegetarianFriendly": false,
-    "hasEnglishMenu": true,
-    "hasChineseMenu": false,
-    "hasJapaneseMenu": false,
+    "id": "rest-004", "name": "홍대 삼겹살 천국", "nameEn": "Hongdae Samgyeopsal Heaven",
+    "lat": 37.5586, "lng": 126.9258, "address": "서울 마포구 어울마당로 55", "category": "restaurant",
+    "rating": 4.4, "nationalityTags": ["korean","japanese","western","chinese"],
+    "pricePerPerson": 18000, "cuisineType": "고기구이", "cuisineTypeEn": "Korean BBQ",
+    "isHalal": false, "isVegetarianFriendly": false, "hasEnglishMenu": true, "hasChineseMenu": false, "hasJapaneseMenu": false,
     "menuItems": [
       { "name": "삼겹살", "nameEn": "Grilled Pork Belly", "price": 17000, "spicyLevel": 0 },
       { "name": "목살", "nameEn": "Pork Neck BBQ", "price": 17000, "spicyLevel": 0 },
-      { "name": "된장찌개", "nameEn": "Soybean Paste Stew", "price": 8000, "spicyLevel": 1 },
-      { "name": "쌈장", "nameEn": "Lettuce Wrap Paste", "price": 1000, "spicyLevel": 0 }
+      { "name": "된장찌개", "nameEn": "Soybean Paste Stew", "price": 8000, "spicyLevel": 1 }
     ]
   },
   {
-    "id": "rest-005",
-    "name": "강남 스시오마카세 하나",
-    "nameEn": "Gangnam Sushi Omakase Hana",
-    "lat": 37.5050,
-    "lng": 127.0235,
-    "address": "서울 강남구 논현로 705",
-    "category": "restaurant",
-    "rating": 4.9,
-    "nationalityTags": ["japanese", "western"],
-    "pricePerPerson": 95000,
-    "cuisineType": "일식/스시",
-    "cuisineTypeEn": "Japanese Sushi",
-    "isHalal": false,
-    "isVegetarianFriendly": false,
-    "hasEnglishMenu": true,
-    "hasChineseMenu": false,
-    "hasJapaneseMenu": true,
+    "id": "rest-005", "name": "강남 스시오마카세 하나", "nameEn": "Gangnam Sushi Omakase Hana",
+    "lat": 37.5050, "lng": 127.0235, "address": "서울 강남구 논현로 705", "category": "restaurant",
+    "rating": 4.9, "nationalityTags": ["japanese","western"],
+    "pricePerPerson": 95000, "cuisineType": "일식/스시", "cuisineTypeEn": "Japanese Sushi",
+    "isHalal": false, "isVegetarianFriendly": false, "hasEnglishMenu": true, "hasChineseMenu": false, "hasJapaneseMenu": true,
     "menuItems": [
       { "name": "오마카세 코스 A", "nameEn": "Omakase Set A", "price": 95000, "spicyLevel": 0 },
-      { "name": "오마카세 코스 B", "nameEn": "Omakase Set B", "price": 150000, "spicyLevel": 0 },
-      { "name": "스시 단품", "nameEn": "Individual Sushi", "price": 8000, "spicyLevel": 0 }
+      { "name": "오마카세 코스 B", "nameEn": "Omakase Set B", "price": 150000, "spicyLevel": 0 }
     ]
   },
   {
-    "id": "rest-006",
-    "name": "차이나타운 마라탕",
-    "nameEn": "Chinatown Malatang",
-    "lat": 37.5672,
-    "lng": 126.9974,
-    "address": "서울 중구 을지로 120",
-    "category": "restaurant",
-    "rating": 4.3,
-    "nationalityTags": ["chinese", "western", "korean"],
-    "pricePerPerson": 15000,
-    "cuisineType": "중국 요리",
-    "cuisineTypeEn": "Chinese Cuisine",
-    "isHalal": false,
-    "isVegetarianFriendly": true,
-    "hasEnglishMenu": true,
-    "hasChineseMenu": true,
-    "hasJapaneseMenu": false,
+    "id": "rest-006", "name": "차이나타운 마라탕", "nameEn": "Chinatown Malatang",
+    "lat": 37.5672, "lng": 126.9974, "address": "서울 중구 을지로 120", "category": "restaurant",
+    "rating": 4.3, "nationalityTags": ["chinese","western","korean"],
+    "pricePerPerson": 15000, "cuisineType": "중국 요리", "cuisineTypeEn": "Chinese Cuisine",
+    "isHalal": false, "isVegetarianFriendly": true, "hasEnglishMenu": true, "hasChineseMenu": true, "hasJapaneseMenu": false,
     "menuItems": [
       { "name": "마라탕", "nameEn": "Malatang Hot Pot", "price": 15000, "spicyLevel": 3 },
       { "name": "짜장면", "nameEn": "Jjajangmyeon", "price": 9000, "spicyLevel": 0 },
-      { "name": "짬뽕", "nameEn": "Jjamppong Seafood Noodles", "price": 10000, "spicyLevel": 3 },
-      { "name": "탕수육", "nameEn": "Sweet & Sour Pork", "price": 22000, "spicyLevel": 0 }
+      { "name": "짬뽕", "nameEn": "Jjamppong Seafood Noodles", "price": 10000, "spicyLevel": 3 }
     ]
   },
   {
-    "id": "rest-007",
-    "name": "사찰음식 발우공양",
-    "nameEn": "Temple Food Balwoo Gongyang",
-    "lat": 37.5756,
-    "lng": 126.9834,
-    "address": "서울 종로구 우정국로 56",
-    "category": "restaurant",
-    "rating": 4.8,
-    "nationalityTags": ["vegan", "indian", "western"],
-    "pricePerPerson": 45000,
-    "cuisineType": "사찰음식",
-    "cuisineTypeEn": "Buddhist Temple Food",
-    "isHalal": false,
-    "isVegetarianFriendly": true,
-    "hasEnglishMenu": true,
-    "hasChineseMenu": false,
-    "hasJapaneseMenu": false,
+    "id": "rest-007", "name": "사찰음식 발우공양", "nameEn": "Temple Food Balwoo Gongyang",
+    "lat": 37.5756, "lng": 126.9834, "address": "서울 종로구 우정국로 56", "category": "restaurant",
+    "rating": 4.8, "nationalityTags": ["vegan","indian","western"],
+    "pricePerPerson": 45000, "cuisineType": "사찰음식", "cuisineTypeEn": "Buddhist Temple Food",
+    "isHalal": false, "isVegetarianFriendly": true, "hasEnglishMenu": true, "hasChineseMenu": false, "hasJapaneseMenu": false,
     "menuItems": [
       { "name": "점심 코스", "nameEn": "Lunch Course", "price": 45000, "spicyLevel": 0, "isVegetarian": true },
       { "name": "저녁 코스", "nameEn": "Dinner Course", "price": 65000, "spicyLevel": 0, "isVegetarian": true }
     ]
   },
   {
-    "id": "rest-008",
-    "name": "이태원 할랄 터키 케밥",
-    "nameEn": "Itaewon Halal Turkish Kebab",
-    "lat": 37.5350,
-    "lng": 126.9932,
-    "address": "서울 용산구 이태원로 184",
-    "category": "restaurant",
-    "rating": 4.2,
-    "nationalityTags": ["halal", "western", "indian"],
-    "pricePerPerson": 12000,
-    "cuisineType": "터키 요리",
-    "cuisineTypeEn": "Turkish / Kebab",
-    "isHalal": true,
-    "isVegetarianFriendly": true,
-    "hasEnglishMenu": true,
-    "hasChineseMenu": false,
-    "hasJapaneseMenu": false,
+    "id": "rest-008", "name": "이태원 할랄 터키 케밥", "nameEn": "Itaewon Halal Turkish Kebab",
+    "lat": 37.5350, "lng": 126.9932, "address": "서울 용산구 이태원로 184", "category": "restaurant",
+    "rating": 4.2, "nationalityTags": ["halal","western","indian"],
+    "pricePerPerson": 12000, "cuisineType": "터키 요리", "cuisineTypeEn": "Turkish / Kebab",
+    "isHalal": true, "isVegetarianFriendly": true, "hasEnglishMenu": true, "hasChineseMenu": false, "hasJapaneseMenu": false,
     "menuItems": [
       { "name": "치킨 케밥", "nameEn": "Chicken Kebab", "price": 12000, "spicyLevel": 1, "isHalal": true },
-      { "name": "팔라펠 랩", "nameEn": "Falafel Wrap", "price": 9000, "spicyLevel": 0, "isVegetarian": true, "isHalal": true },
-      { "name": "램 샤와르마", "nameEn": "Lamb Shawarma", "price": 14000, "spicyLevel": 1, "isHalal": true }
+      { "name": "팔라펠 랩", "nameEn": "Falafel Wrap", "price": 9000, "spicyLevel": 0, "isVegetarian": true, "isHalal": true }
     ]
   },
   {
-    "id": "rest-009",
-    "name": "강남 국밥집 어머니",
-    "nameEn": "Gangnam Gomtang Mother's Kitchen",
-    "lat": 37.4985,
-    "lng": 127.0258,
-    "address": "서울 강남구 강남대로 152",
-    "category": "restaurant",
-    "rating": 4.5,
-    "nationalityTags": ["korean", "western"],
-    "pricePerPerson": 10000,
-    "cuisineType": "국밥/설렁탕",
-    "cuisineTypeEn": "Korean Bone Broth Soup",
-    "isHalal": false,
-    "isVegetarianFriendly": false,
-    "hasEnglishMenu": false,
-    "hasChineseMenu": false,
-    "hasJapaneseMenu": false,
+    "id": "rest-009", "name": "강남 국밥집 어머니", "nameEn": "Gangnam Gomtang",
+    "lat": 37.4985, "lng": 127.0258, "address": "서울 강남구 강남대로 152", "category": "restaurant",
+    "rating": 4.5, "nationalityTags": ["korean","western"],
+    "pricePerPerson": 10000, "cuisineType": "국밥/설렁탕", "cuisineTypeEn": "Korean Bone Broth Soup",
+    "isHalal": false, "isVegetarianFriendly": false, "hasEnglishMenu": false, "hasChineseMenu": false, "hasJapaneseMenu": false,
     "menuItems": [
       { "name": "순대국밥", "nameEn": "Sundae Gukbap", "price": 10000, "spicyLevel": 1 },
-      { "name": "설렁탕", "nameEn": "Seolleongtang Ox Bone Soup", "price": 12000, "spicyLevel": 0 },
-      { "name": "돼지국밥", "nameEn": "Pork Gukbap", "price": 10000, "spicyLevel": 0 }
+      { "name": "설렁탕", "nameEn": "Seolleongtang", "price": 12000, "spicyLevel": 0 }
     ]
   },
   {
-    "id": "rest-010",
-    "name": "동대문 순대타운",
-    "nameEn": "Dongdaemun Sundae Town",
-    "lat": 37.5672,
-    "lng": 127.0103,
-    "address": "서울 중구 청계천로 575",
-    "category": "restaurant",
-    "rating": 4.3,
-    "nationalityTags": ["korean"],
-    "pricePerPerson": 9000,
-    "cuisineType": "분식",
-    "cuisineTypeEn": "Korean Street Food",
-    "isHalal": false,
-    "isVegetarianFriendly": false,
-    "hasEnglishMenu": false,
-    "hasChineseMenu": false,
-    "hasJapaneseMenu": false,
+    "id": "rest-010", "name": "동대문 순대타운", "nameEn": "Dongdaemun Sundae Town",
+    "lat": 37.5672, "lng": 127.0103, "address": "서울 중구 청계천로 575", "category": "restaurant",
+    "rating": 4.3, "nationalityTags": ["korean"],
+    "pricePerPerson": 9000, "cuisineType": "분식", "cuisineTypeEn": "Korean Street Food",
+    "isHalal": false, "isVegetarianFriendly": false, "hasEnglishMenu": false, "hasChineseMenu": false, "hasJapaneseMenu": false,
     "menuItems": [
       { "name": "순대", "nameEn": "Sundae", "price": 5000, "spicyLevel": 0 },
-      { "name": "떡볶이", "nameEn": "Tteokbokki", "price": 5000, "spicyLevel": 3 },
-      { "name": "오뎅", "nameEn": "Fish Cake", "price": 3000, "spicyLevel": 1 }
+      { "name": "떡볶이", "nameEn": "Tteokbokki", "price": 5000, "spicyLevel": 3 }
     ]
   },
   {
-    "id": "rest-011",
-    "name": "신촌 일식라멘 사쿠라",
-    "nameEn": "Sinchon Ramen Sakura",
-    "lat": 37.5582,
-    "lng": 126.9387,
-    "address": "서울 서대문구 신촌로 93",
-    "category": "restaurant",
-    "rating": 4.4,
-    "nationalityTags": ["japanese", "western", "korean"],
-    "pricePerPerson": 14000,
-    "cuisineType": "일식 라멘",
-    "cuisineTypeEn": "Japanese Ramen",
-    "isHalal": false,
-    "isVegetarianFriendly": false,
-    "hasEnglishMenu": true,
-    "hasChineseMenu": false,
-    "hasJapaneseMenu": true,
+    "id": "rest-011", "name": "신촌 일식라멘 사쿠라", "nameEn": "Sinchon Ramen Sakura",
+    "lat": 37.5582, "lng": 126.9387, "address": "서울 서대문구 신촌로 93", "category": "restaurant",
+    "rating": 4.4, "nationalityTags": ["japanese","western","korean"],
+    "pricePerPerson": 14000, "cuisineType": "일식 라멘", "cuisineTypeEn": "Japanese Ramen",
+    "isHalal": false, "isVegetarianFriendly": false, "hasEnglishMenu": true, "hasChineseMenu": false, "hasJapaneseMenu": true,
     "menuItems": [
       { "name": "돈코츠 라멘", "nameEn": "Tonkotsu Ramen", "price": 14000, "spicyLevel": 0 },
       { "name": "쇼유 라멘", "nameEn": "Shoyu Ramen", "price": 13000, "spicyLevel": 0 },
-      { "name": "미소 라멘", "nameEn": "Miso Ramen", "price": 13000, "spicyLevel": 1 },
-      { "name": "교자", "nameEn": "Gyoza Dumplings", "price": 7000, "spicyLevel": 0 }
+      { "name": "교자", "nameEn": "Gyoza", "price": 7000, "spicyLevel": 0 }
     ]
   },
   {
-    "id": "rest-012",
-    "name": "이태원 멕시칸 타코 바",
-    "nameEn": "Itaewon Mexican Taco Bar",
-    "lat": 37.5362,
-    "lng": 126.9921,
-    "address": "서울 용산구 이태원로 168",
-    "category": "restaurant",
-    "rating": 4.3,
-    "nationalityTags": ["western", "halal"],
-    "pricePerPerson": 16000,
-    "cuisineType": "멕시칸",
-    "cuisineTypeEn": "Mexican",
-    "isHalal": true,
-    "isVegetarianFriendly": true,
-    "hasEnglishMenu": true,
-    "hasChineseMenu": false,
-    "hasJapaneseMenu": false,
+    "id": "rest-012", "name": "이태원 멕시칸 타코 바", "nameEn": "Itaewon Mexican Taco Bar",
+    "lat": 37.5362, "lng": 126.9921, "address": "서울 용산구 이태원로 168", "category": "restaurant",
+    "rating": 4.3, "nationalityTags": ["western","halal"],
+    "pricePerPerson": 16000, "cuisineType": "멕시칸", "cuisineTypeEn": "Mexican",
+    "isHalal": true, "isVegetarianFriendly": true, "hasEnglishMenu": true, "hasChineseMenu": false, "hasJapaneseMenu": false,
     "menuItems": [
       { "name": "치킨 타코 3개", "nameEn": "Chicken Tacos x3", "price": 16000, "spicyLevel": 2, "isHalal": true },
-      { "name": "비건 타코 3개", "nameEn": "Vegan Tacos x3", "price": 14000, "spicyLevel": 1, "isVegetarian": true },
-      { "name": "나초 플레이트", "nameEn": "Nacho Plate", "price": 13000, "spicyLevel": 1, "isVegetarian": true }
+      { "name": "비건 타코 3개", "nameEn": "Vegan Tacos x3", "price": 14000, "spicyLevel": 1, "isVegetarian": true }
     ]
   },
   {
-    "id": "rest-013",
-    "name": "종로 비빔밥 본가",
-    "nameEn": "Jongno Bibimbap Original",
-    "lat": 37.5703,
-    "lng": 126.9792,
-    "address": "서울 종로구 종로 55",
-    "category": "restaurant",
-    "rating": 4.6,
-    "nationalityTags": ["all", "korean", "japanese", "chinese", "western", "vegan"],
-    "pricePerPerson": 12000,
-    "cuisineType": "한식",
-    "cuisineTypeEn": "Korean Traditional",
-    "isHalal": false,
-    "isVegetarianFriendly": true,
-    "hasEnglishMenu": true,
-    "hasChineseMenu": true,
-    "hasJapaneseMenu": true,
+    "id": "rest-013", "name": "종로 비빔밥 본가", "nameEn": "Jongno Bibimbap Original",
+    "lat": 37.5703, "lng": 126.9792, "address": "서울 종로구 종로 55", "category": "restaurant",
+    "rating": 4.6, "nationalityTags": ["all","korean","japanese","chinese","western","vegan"],
+    "pricePerPerson": 12000, "cuisineType": "한식", "cuisineTypeEn": "Korean Traditional",
+    "isHalal": false, "isVegetarianFriendly": true, "hasEnglishMenu": true, "hasChineseMenu": true, "hasJapaneseMenu": true,
     "menuItems": [
       { "name": "비빔밥", "nameEn": "Bibimbap", "price": 12000, "spicyLevel": 1, "isVegetarian": true },
       { "name": "돌솥비빔밥", "nameEn": "Stone Pot Bibimbap", "price": 14000, "spicyLevel": 1 },
-      { "name": "된장찌개", "nameEn": "Doenjang Jjigae", "price": 9000, "spicyLevel": 1, "isVegetarian": true },
-      { "name": "제육볶음", "nameEn": "Spicy Stir-Fried Pork", "price": 13000, "spicyLevel": 3 }
+      { "name": "된장찌개", "nameEn": "Doenjang Jjigae", "price": 9000, "spicyLevel": 1, "isVegetarian": true }
     ]
   },
   {
-    "id": "rest-014",
-    "name": "홍대 베트남 쌀국수",
-    "nameEn": "Hongdae Vietnamese Pho",
-    "lat": 37.5568,
-    "lng": 126.9219,
-    "address": "서울 마포구 홍익로 14",
-    "category": "restaurant",
-    "rating": 4.2,
-    "nationalityTags": ["western", "vegan", "chinese"],
-    "pricePerPerson": 12000,
-    "cuisineType": "베트남 요리",
-    "cuisineTypeEn": "Vietnamese",
-    "isHalal": false,
-    "isVegetarianFriendly": true,
-    "hasEnglishMenu": true,
-    "hasChineseMenu": false,
-    "hasJapaneseMenu": false,
+    "id": "rest-014", "name": "홍대 베트남 쌀국수", "nameEn": "Hongdae Vietnamese Pho",
+    "lat": 37.5568, "lng": 126.9219, "address": "서울 마포구 홍익로 14", "category": "restaurant",
+    "rating": 4.2, "nationalityTags": ["western","vegan","chinese"],
+    "pricePerPerson": 12000, "cuisineType": "베트남 요리", "cuisineTypeEn": "Vietnamese",
+    "isHalal": false, "isVegetarianFriendly": true, "hasEnglishMenu": true, "hasChineseMenu": false, "hasJapaneseMenu": false,
     "menuItems": [
       { "name": "소고기 쌀국수", "nameEn": "Beef Pho", "price": 12000, "spicyLevel": 1 },
-      { "name": "채소 쌀국수", "nameEn": "Vegetable Pho", "price": 11000, "spicyLevel": 0, "isVegetarian": true },
-      { "name": "분짜", "nameEn": "Bun Cha", "price": 13000, "spicyLevel": 1 },
-      { "name": "스프링롤", "nameEn": "Spring Rolls", "price": 8000, "spicyLevel": 0, "isVegetarian": true }
+      { "name": "채소 쌀국수", "nameEn": "Vegetable Pho", "price": 11000, "spicyLevel": 0, "isVegetarian": true }
+    ]
+  },
+  {
+    "id": "rest-015", "name": "건대 양꼬치 전문점", "nameEn": "Konkuk Lamb Skewer House",
+    "lat": 37.5408, "lng": 127.0699, "address": "서울 광진구 자양동 248", "category": "restaurant",
+    "rating": 4.4, "nationalityTags": ["chinese","korean","western"],
+    "pricePerPerson": 20000, "cuisineType": "중식/양꼬치", "cuisineTypeEn": "Lamb Skewers",
+    "isHalal": false, "isVegetarianFriendly": false, "hasEnglishMenu": false, "hasChineseMenu": true, "hasJapaneseMenu": false,
+    "menuItems": [
+      { "name": "양꼬치", "nameEn": "Lamb Skewers", "price": 2000, "spicyLevel": 1 },
+      { "name": "칭따오 맥주", "nameEn": "Tsingtao Beer", "price": 5000, "spicyLevel": 0 },
+      { "name": "마라향 양꼬치", "nameEn": "Spicy Mala Lamb", "price": 2500, "spicyLevel": 3 }
+    ]
+  },
+  {
+    "id": "rest-016", "name": "성수 브런치 카페 식물", "nameEn": "Seongsu Brunch Sikul",
+    "lat": 37.5444, "lng": 127.0571, "address": "서울 성동구 성수이로7길 22", "category": "restaurant",
+    "rating": 4.7, "nationalityTags": ["western","vegan","japanese"],
+    "pricePerPerson": 22000, "cuisineType": "브런치/카페", "cuisineTypeEn": "Brunch Cafe",
+    "isHalal": false, "isVegetarianFriendly": true, "hasEnglishMenu": true, "hasChineseMenu": false, "hasJapaneseMenu": false,
+    "menuItems": [
+      { "name": "에그 베네딕트", "nameEn": "Eggs Benedict", "price": 22000, "spicyLevel": 0 },
+      { "name": "비건 샐러드볼", "nameEn": "Vegan Salad Bowl", "price": 19000, "spicyLevel": 0, "isVegetarian": true },
+      { "name": "팬케이크 플레이트", "nameEn": "Pancake Plate", "price": 18000, "spicyLevel": 0, "isVegetarian": true }
+    ]
+  },
+  {
+    "id": "rest-017", "name": "잠실 치맥 명가", "nameEn": "Jamsil Chicken & Beer",
+    "lat": 37.5128, "lng": 127.1024, "address": "서울 송파구 올림픽로 43", "category": "restaurant",
+    "rating": 4.5, "nationalityTags": ["korean","western","chinese"],
+    "pricePerPerson": 25000, "cuisineType": "치킨/맥주", "cuisineTypeEn": "Korean Fried Chicken",
+    "isHalal": false, "isVegetarianFriendly": false, "hasEnglishMenu": true, "hasChineseMenu": false, "hasJapaneseMenu": false,
+    "menuItems": [
+      { "name": "후라이드 치킨", "nameEn": "Fried Chicken", "price": 19000, "spicyLevel": 0 },
+      { "name": "양념 치킨", "nameEn": "Spicy Sauce Chicken", "price": 20000, "spicyLevel": 2 },
+      { "name": "생맥주 500ml", "nameEn": "Draft Beer 500ml", "price": 5000, "spicyLevel": 0 }
+    ]
+  },
+  {
+    "id": "rest-018", "name": "인사동 한정식 전통", "nameEn": "Insadong Korean Table d'hote",
+    "lat": 37.5745, "lng": 126.9858, "address": "서울 종로구 인사동5길 26", "category": "restaurant",
+    "rating": 4.7, "nationalityTags": ["all","korean","japanese","chinese","western"],
+    "pricePerPerson": 35000, "cuisineType": "한정식", "cuisineTypeEn": "Korean Full-Course",
+    "isHalal": false, "isVegetarianFriendly": true, "hasEnglishMenu": true, "hasChineseMenu": true, "hasJapaneseMenu": true,
+    "menuItems": [
+      { "name": "점심 한정식", "nameEn": "Lunch Course", "price": 35000, "spicyLevel": 1 },
+      { "name": "저녁 한정식", "nameEn": "Dinner Course", "price": 55000, "spicyLevel": 1 }
+    ]
+  },
+  {
+    "id": "rest-019", "name": "왕십리 감자탕", "nameEn": "Wangsimni Gamjatang",
+    "lat": 37.5614, "lng": 127.0379, "address": "서울 성동구 왕십리로 130", "category": "restaurant",
+    "rating": 4.3, "nationalityTags": ["korean"],
+    "pricePerPerson": 13000, "cuisineType": "감자탕", "cuisineTypeEn": "Pork Bone Stew",
+    "isHalal": false, "isVegetarianFriendly": false, "hasEnglishMenu": false, "hasChineseMenu": false, "hasJapaneseMenu": false,
+    "menuItems": [
+      { "name": "감자탕 (2인)", "nameEn": "Gamjatang for 2", "price": 26000, "spicyLevel": 2 },
+      { "name": "뼈해장국", "nameEn": "Bone Soup", "price": 12000, "spicyLevel": 1 }
+    ]
+  },
+  {
+    "id": "rest-020", "name": "홍대 이탈리안 파스타", "nameEn": "Hongdae Italian Pasta",
+    "lat": 37.5564, "lng": 126.9235, "address": "서울 마포구 홍익로 21", "category": "restaurant",
+    "rating": 4.3, "nationalityTags": ["western","vegan"],
+    "pricePerPerson": 18000, "cuisineType": "이탈리안", "cuisineTypeEn": "Italian",
+    "isHalal": false, "isVegetarianFriendly": true, "hasEnglishMenu": true, "hasChineseMenu": false, "hasJapaneseMenu": false,
+    "menuItems": [
+      { "name": "카르보나라", "nameEn": "Carbonara", "price": 18000, "spicyLevel": 0 },
+      { "name": "토마토 스파게티", "nameEn": "Tomato Spaghetti", "price": 16000, "spicyLevel": 0, "isVegetarian": true },
+      { "name": "마르게리타 피자", "nameEn": "Margherita Pizza", "price": 19000, "spicyLevel": 0, "isVegetarian": true }
+    ]
+  },
+  {
+    "id": "rest-021", "name": "강남 네팔 커리하우스", "nameEn": "Gangnam Nepal Curry House",
+    "lat": 37.5022, "lng": 127.0261, "address": "서울 강남구 역삼로 222", "category": "restaurant",
+    "rating": 4.4, "nationalityTags": ["indian","halal","vegan"],
+    "pricePerPerson": 16000, "cuisineType": "네팔/인도 요리", "cuisineTypeEn": "Nepali/Indian",
+    "isHalal": true, "isVegetarianFriendly": true, "hasEnglishMenu": true, "hasChineseMenu": false, "hasJapaneseMenu": false,
+    "menuItems": [
+      { "name": "달밧 (채식)", "nameEn": "Dal Bhat Veg", "price": 14000, "spicyLevel": 1, "isVegetarian": true, "isHalal": true },
+      { "name": "치킨 모모", "nameEn": "Chicken Momo Dumplings", "price": 12000, "spicyLevel": 1, "isHalal": true },
+      { "name": "채식 커리", "nameEn": "Vegetable Curry", "price": 14000, "spicyLevel": 2, "isVegetarian": true, "isHalal": true }
+    ]
+  },
+  {
+    "id": "rest-022", "name": "상암 푸드트럭 거리", "nameEn": "Sangam Food Truck Street",
+    "lat": 37.5672, "lng": 126.8921, "address": "서울 마포구 상암동 월드컵공원로", "category": "restaurant",
+    "rating": 4.1, "nationalityTags": ["korean","western"],
+    "pricePerPerson": 8000, "cuisineType": "길거리 음식", "cuisineTypeEn": "Street Food",
+    "isHalal": false, "isVegetarianFriendly": false, "hasEnglishMenu": false, "hasChineseMenu": false, "hasJapaneseMenu": false,
+    "menuItems": [
+      { "name": "불닭볶음면", "nameEn": "Fire Noodles", "price": 7000, "spicyLevel": 3 },
+      { "name": "핫도그", "nameEn": "Corn Dog", "price": 3000, "spicyLevel": 0 },
+      { "name": "오뎅탕", "nameEn": "Fish Cake Soup", "price": 5000, "spicyLevel": 1 }
+    ]
+  },
+  {
+    "id": "rest-023", "name": "노원 순대국밥 원조", "nameEn": "Nowon Original Sundae Gukbap",
+    "lat": 37.6540, "lng": 127.0563, "address": "서울 노원구 동일로 1181", "category": "restaurant",
+    "rating": 4.4, "nationalityTags": ["korean"],
+    "pricePerPerson": 9000, "cuisineType": "국밥", "cuisineTypeEn": "Korean Gukbap",
+    "isHalal": false, "isVegetarianFriendly": false, "hasEnglishMenu": false, "hasChineseMenu": false, "hasJapaneseMenu": false,
+    "menuItems": [
+      { "name": "순대국밥", "nameEn": "Sundae Gukbap", "price": 9000, "spicyLevel": 1 },
+      { "name": "내장국밥", "nameEn": "Offal Gukbap", "price": 10000, "spicyLevel": 1 }
+    ]
+  },
+  {
+    "id": "rest-024", "name": "이태원 태국 쏨땀", "nameEn": "Itaewon Thai Som Tam",
+    "lat": 37.5357, "lng": 126.9946, "address": "서울 용산구 이태원로 193", "category": "restaurant",
+    "rating": 4.3, "nationalityTags": ["western","vegan","halal"],
+    "pricePerPerson": 16000, "cuisineType": "태국 요리", "cuisineTypeEn": "Thai Cuisine",
+    "isHalal": false, "isVegetarianFriendly": true, "hasEnglishMenu": true, "hasChineseMenu": false, "hasJapaneseMenu": false,
+    "menuItems": [
+      { "name": "쏨땀", "nameEn": "Som Tam Papaya Salad", "price": 13000, "spicyLevel": 3, "isVegetarian": true },
+      { "name": "팟타이", "nameEn": "Pad Thai", "price": 15000, "spicyLevel": 1 },
+      { "name": "그린 커리", "nameEn": "Green Curry", "price": 16000, "spicyLevel": 2 }
+    ]
+  },
+  {
+    "id": "rest-025", "name": "잠실 일식 돈부리 야마", "nameEn": "Jamsil Donburi Yama",
+    "lat": 37.5116, "lng": 127.0996, "address": "서울 송파구 잠실동 184", "category": "restaurant",
+    "rating": 4.5, "nationalityTags": ["japanese","western","korean"],
+    "pricePerPerson": 13000, "cuisineType": "일식 덮밥", "cuisineTypeEn": "Japanese Donburi",
+    "isHalal": false, "isVegetarianFriendly": false, "hasEnglishMenu": true, "hasChineseMenu": false, "hasJapaneseMenu": true,
+    "menuItems": [
+      { "name": "카츠동", "nameEn": "Katsudon", "price": 13000, "spicyLevel": 0 },
+      { "name": "규동", "nameEn": "Gyudon Beef Bowl", "price": 12000, "spicyLevel": 0 },
+      { "name": "오야코동", "nameEn": "Oyakodon", "price": 13000, "spicyLevel": 0 }
+    ]
+  },
+  {
+    "id": "rest-026", "name": "강동 중국집 복덕방", "nameEn": "Gangdong Chinese Bokdeokbang",
+    "lat": 37.5302, "lng": 127.1235, "address": "서울 강동구 천호대로 1256", "category": "restaurant",
+    "rating": 4.2, "nationalityTags": ["chinese","korean"],
+    "pricePerPerson": 10000, "cuisineType": "중식", "cuisineTypeEn": "Chinese",
+    "isHalal": false, "isVegetarianFriendly": false, "hasEnglishMenu": false, "hasChineseMenu": false, "hasJapaneseMenu": false,
+    "menuItems": [
+      { "name": "짜장면", "nameEn": "Jjajangmyeon", "price": 8000, "spicyLevel": 0 },
+      { "name": "짬뽕", "nameEn": "Jjamppong", "price": 9000, "spicyLevel": 3 },
+      { "name": "탕수육 (소)", "nameEn": "Sweet & Sour Pork Small", "price": 18000, "spicyLevel": 0 }
+    ]
+  },
+  {
+    "id": "rest-027", "name": "종로 청국장 집", "nameEn": "Jongno Cheonggukjang",
+    "lat": 37.5695, "lng": 126.9810, "address": "서울 종로구 돈화문로 80", "category": "restaurant",
+    "rating": 4.2, "nationalityTags": ["korean","vegan"],
+    "pricePerPerson": 10000, "cuisineType": "한식 찌개", "cuisineTypeEn": "Korean Fermented Stew",
+    "isHalal": false, "isVegetarianFriendly": true, "hasEnglishMenu": false, "hasChineseMenu": false, "hasJapaneseMenu": false,
+    "menuItems": [
+      { "name": "청국장", "nameEn": "Fermented Soybean Stew", "price": 10000, "spicyLevel": 1, "isVegetarian": true },
+      { "name": "된장찌개", "nameEn": "Doenjang Jjigae", "price": 9000, "spicyLevel": 1, "isVegetarian": true }
+    ]
+  },
+  {
+    "id": "rest-028", "name": "홍대 중동 할랄 식당", "nameEn": "Hongdae Middle Eastern Halal",
+    "lat": 37.5558, "lng": 126.9250, "address": "서울 마포구 와우산로 67", "category": "restaurant",
+    "rating": 4.4, "nationalityTags": ["halal","indian","western"],
+    "pricePerPerson": 15000, "cuisineType": "중동/아랍 요리", "cuisineTypeEn": "Middle Eastern",
+    "isHalal": true, "isVegetarianFriendly": true, "hasEnglishMenu": true, "hasChineseMenu": false, "hasJapaneseMenu": false,
+    "menuItems": [
+      { "name": "훔무스 & 피타", "nameEn": "Hummus & Pita", "price": 10000, "spicyLevel": 0, "isVegetarian": true, "isHalal": true },
+      { "name": "램 코프타", "nameEn": "Lamb Kofta", "price": 17000, "spicyLevel": 1, "isHalal": true },
+      { "name": "팔라펠 박스", "nameEn": "Falafel Box", "price": 13000, "spicyLevel": 0, "isVegetarian": true, "isHalal": true }
     ]
   }
 ]

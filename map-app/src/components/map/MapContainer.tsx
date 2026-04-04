@@ -1,5 +1,7 @@
 import { MapContainer as LeafletMap, TileLayer } from 'react-leaflet'
 import { MarkerLayer } from './MarkerLayer'
+import { MyLocationButton } from './MyLocationButton'
+import { MapLegend } from './MapLegend'
 import 'leaflet/dist/leaflet.css'
 
 // Fix for default marker icons in leaflet + webpack/vite
@@ -32,6 +34,8 @@ export function MapContainer() {
         maxZoom={19}
       />
       <MarkerLayer />
+      <MyLocationButton />
+      <MapLegend />
     </LeafletMap>
   )
 }
