@@ -883,9 +883,7 @@ async function promptBraveSearchRecovery(validation) {
     console.log("  Brave Search validation did not succeed.");
   }
 
-  const answer = (await prompt("  Type 'retry', 'skip', or 'exit' [retry]: "))
-    .trim()
-    .toLowerCase();
+  const answer = (await prompt("  Type 'retry', 'skip', or 'exit' [retry]: ")).trim().toLowerCase();
   if (answer === "skip") return "skip";
   if (answer === "exit" || answer === "quit") {
     exitOnboardFromPrompt();
@@ -899,7 +897,9 @@ async function promptBraveSearchApiKey() {
   console.log("");
 
   while (true) {
-    const key = normalizeCredentialValue(await prompt("  Brave Search API key: ", { secret: true }));
+    const key = normalizeCredentialValue(
+      await prompt("  Brave Search API key: ", { secret: true }),
+    );
     if (!key) {
       console.error("  Brave Search API key is required.");
       continue;
