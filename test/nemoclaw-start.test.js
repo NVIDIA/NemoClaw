@@ -31,7 +31,11 @@ describe("nemoclaw-start non-root fallback", () => {
 
     expect(src).toMatch(/PERSISTENT_AGENTS_PATH="\/sandbox\/\.nemoclaw\/agents-overlay\.json"/);
     expect(src).toMatch(/overlay_path = '\/sandbox\/\.nemoclaw\/agents-overlay\.json'/);
+    expect(src).toMatch(/def sanitize_subagents\(subagents\):/);
+    expect(src).toMatch(/if not workspace and not agent_dir and not sanitized_subagents:/);
+    expect(src).toMatch(/def merge_agent_entries\(base_agent, overlay_agent\):/);
     expect(src).toMatch(/def merge_agent_lists\(base_agents, overlay_agents\):/);
+    expect(src).toMatch(/merged\[positions\[agent_id\]\] = merge_agent_entries\(merged\[positions\[agent_id\]\], agent\)/);
     expect(src).toMatch(/cfg_agents\['list'\] = merge_agent_lists\(existing_agents, overlay_agents\)/);
   });
 });

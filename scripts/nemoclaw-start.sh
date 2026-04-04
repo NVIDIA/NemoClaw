@@ -133,6 +133,28 @@ def sanitize_identity(identity):
   return sanitized or None
 
 
+def sanitize_subagents(subagents):
+  if not isinstance(subagents, dict):
+    return None
+
+  allow_agents = []
+  for raw_value in subagents.get('allowAgents') or []:
+    value = normalize_string(raw_value)
+    if not value:
+      continue
+    if value == '*':
+      if '*' not in allow_agents:
+        allow_agents.append('*')
+      continue
+    if re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', value) and value not in allow_agents:
+      allow_agents.append(value)
+
+  if allow_agents:
+    return {'allowAgents': allow_agents}
+
+  return None
+
+
 def sanitize_agent_entry(agent):
   if not isinstance(agent, dict):
     return None
@@ -143,7 +165,8 @@ def sanitize_agent_entry(agent):
 
   workspace = normalize_path(agent.get('workspace'))
   agent_dir = normalize_path(agent.get('agentDir'))
-  if not workspace and not agent_dir:
+  sanitized_subagents = sanitize_subagents(agent.get('subagents'))
+  if not workspace and not agent_dir and not sanitized_subagents:
     return None
 
   sanitized = {'id': agent_id}
@@ -162,8 +185,28 @@ def sanitize_agent_entry(agent):
   identity = sanitize_identity(agent.get('identity'))
   if identity:
     sanitized['identity'] = identity
+  if sanitized_subagents:
+    sanitized['subagents'] = sanitized_subagents
 
   return sanitized
+
+
+def merge_agent_entries(base_agent, overlay_agent):
+  merged = dict(base_agent)
+  merged.update(overlay_agent)
+
+  base_subagents = base_agent.get('subagents') if isinstance(base_agent, dict) else None
+  overlay_subagents = overlay_agent.get('subagents') if isinstance(overlay_agent, dict) else None
+  if isinstance(base_subagents, dict) or isinstance(overlay_subagents, dict):
+    merged_subagents = {}
+    if isinstance(base_subagents, dict):
+      merged_subagents.update(base_subagents)
+    if isinstance(overlay_subagents, dict):
+      merged_subagents.update(overlay_subagents)
+    if merged_subagents:
+      merged['subagents'] = merged_subagents
+
+  return merged
 
 
 def merge_agent_lists(base_agents, overlay_agents):
@@ -177,7 +220,7 @@ def merge_agent_lists(base_agents, overlay_agents):
         continue
       agent_id = agent['id']
       if agent_id in positions:
-        merged[positions[agent_id]] = agent
+        merged[positions[agent_id]] = merge_agent_entries(merged[positions[agent_id]], agent)
         continue
       positions[agent_id] = len(merged)
       merged.append(agent)

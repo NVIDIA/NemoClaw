@@ -35,6 +35,8 @@ Each entry can have its own:
 - model selection.
 - channel bindings if you want traffic routed to that agent.
 
+To appear in `agents_list` or be targetable with `sessions_spawn`, the requester agent must also allow that target through `subagents.allowAgents`.
+
 ## Prerequisites
 
 - A running sandbox, shown by `nemoclaw list`.
@@ -125,10 +127,70 @@ Expected output includes:
 }
 ```
 
-## Step 7: Persist the Agent Across Sandbox Restarts
+## Step 7: Allow Main to See or Spawn the Agent
+
+Creating `jophiel` adds the agent to `agents.list`, but it does not automatically make the agent visible to `main`.
+OpenClaw restricts `agents_list` and `sessions_spawn` using the requester agent's `subagents.allowAgents` list.
+
+If you want `main` to see only `jophiel`, update the `main` agent entry in the writable runtime config like this:
+
+```console
+$ python3 - <<'PY'
+import json
+
+path = '/tmp/nemoclaw/openclaw.json'
+with open(path) as f:
+  cfg = json.load(f)
+
+agents = cfg.setdefault('agents', {}).setdefault('list', [])
+main_entry = next((entry for entry in agents if isinstance(entry, dict) and entry.get('id') == 'main'), None)
+if main_entry is None:
+  main_entry = {'id': 'main'}
+  agents.insert(0, main_entry)
+
+main_entry.setdefault('subagents', {})['allowAgents'] = ['jophiel']
+
+with open(path, 'w') as f:
+  json.dump(cfg, f, indent=2)
+PY
+```
+
+If you want `main` to see every configured agent, use `['*']` instead:
+
+```console
+$ python3 - <<'PY'
+import json
+
+path = '/tmp/nemoclaw/openclaw.json'
+with open(path) as f:
+  cfg = json.load(f)
+
+agents = cfg.setdefault('agents', {}).setdefault('list', [])
+main_entry = next((entry for entry in agents if isinstance(entry, dict) and entry.get('id') == 'main'), None)
+if main_entry is None:
+  main_entry = {'id': 'main'}
+  agents.insert(0, main_entry)
+
+main_entry.setdefault('subagents', {})['allowAgents'] = ['*']
+
+with open(path, 'w') as f:
+  json.dump(cfg, f, indent=2)
+PY
+```
+
+After updating the allowlist, you can verify that `main` now sees the agent:
+
+```console
+$ openclaw agent --agent main --local -m "Call the agents_list tool and return only its raw JSON result." --session-id verify-main-allowlist --json
+```
+
+Expected output includes `jophiel` in the returned `agents` array.
+
+## Step 8: Persist the Agent Across Sandbox Restarts
 
 On current NemoClaw builds, the runtime config is regenerated when the sandbox gateway starts.
-To keep custom agents across sandbox restarts, copy non-default agents into the sandbox-local overlay file:
+To keep custom agents across sandbox restarts, copy non-default agents into the sandbox-local overlay file.
+If you also configured `main.subagents.allowAgents`, persist a minimal `main` overlay entry alongside the custom agents:
 
 ```console
 $ python3 - <<'PY'
@@ -137,11 +199,24 @@ import json
 with open('/tmp/nemoclaw/openclaw.json') as f:
     cfg = json.load(f)
 
-agent_list = [
-    entry
-    for entry in (cfg.get('agents', {}).get('list') or [])
-    if isinstance(entry, dict) and entry.get('id') != 'main'
-]
+agent_list = []
+
+for entry in (cfg.get('agents', {}).get('list') or []):
+  if not isinstance(entry, dict):
+    continue
+
+  if entry.get('id') == 'main':
+    allow_agents = ((entry.get('subagents') or {}).get('allowAgents') or [])
+    if allow_agents:
+      agent_list.append({
+        'id': 'main',
+        'subagents': {
+          'allowAgents': allow_agents,
+        },
+      })
+    continue
+
+  agent_list.append(entry)
 
 with open('/sandbox/.nemoclaw/agents-overlay.json', 'w') as f:
     json.dump({'agents': {'list': agent_list}}, f, indent=2)
@@ -153,6 +228,9 @@ The startup script merges `/sandbox/.nemoclaw/agents-overlay.json` into the runt
 :::{note}
 This is sandbox-local state, not a global default for all future sandboxes.
 Only sandboxes that contain this overlay file load those additional agents.
+
+The overlay merge preserves the basic agent entry fields such as `id`, `name`, `workspace`, `agentDir`, `model`, `default`, and `identity`.
+It also preserves `subagents.allowAgents` when you include that field in the overlay entry.
 :::
 
 ## Optional: Make the Agent Visible in the Control UI
@@ -198,6 +276,11 @@ Create the missing agent directory with `mkdir -p /sandbox/.openclaw/agents/<age
 Agent disappears after restart
 
 Write the non-default agent entries into `/sandbox/.nemoclaw/agents-overlay.json`.
+
+Agent exists, but `main` cannot see or spawn it
+
+Update `main.subagents.allowAgents` in `/tmp/nemoclaw/openclaw.json` to include the agent id or `*`.
+If you want it to survive restart, include a minimal `main` entry with that allowlist in `/sandbox/.nemoclaw/agents-overlay.json`.
 
 Agent does not appear in the Control UI
 
