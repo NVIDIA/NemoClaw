@@ -504,6 +504,6 @@ The following patterns weaken security without providing meaningful benefit.
 - [Customize the Network Policy](../network-policy/customize-network-policy.md) for static and dynamic policy changes.
 - [Approve or Deny Network Requests](../network-policy/approve-network-requests.md) for the operator approval flow.
 - [Sandbox Hardening](../deployment/sandbox-hardening.md) for container-level security measures.
-- [Inference Profiles](../reference/inference-profiles.md) for provider configuration details.
+- [Inference Options](../inference/inference-options.md) for provider configuration details.
 - [How It Works](../about/how-it-works.md) for the protection layer architecture.
 <!-- - OpenShell [Security Best Practices](https://docs.nvidia.com/openshell/latest/security/best-practices.html) for the platform-level controls reference, including network namespace isolation, seccomp filters, SSRF protection, TLS termination, and gateway authentication. -->
