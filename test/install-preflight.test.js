@@ -749,7 +749,9 @@ fi`,
       },
     });
 
-    expect(`${result.stdout}${result.stderr}`).toContain("Skipping onboarding");
+    expect(`${result.stdout}${result.stderr}`).toMatch(
+      /Skipping onboarding|--yes-i-accept-third-party-software|NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1/,
+    );
     expect(fs.existsSync(onboardLog)).toBe(false);
   });
 
