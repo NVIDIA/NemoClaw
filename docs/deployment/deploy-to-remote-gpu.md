@@ -27,7 +27,7 @@ The preferred path is to provision the VM, run the standard NemoClaw installer o
 
 ## Quick Start
 
-If your Brev instance is already up and you want to try NemoClaw immediately, start with the standard installer and sandbox chat flow:
+If your Brev instance is already up and has already been onboarded with a sandbox, start with the standard sandbox chat flow:
 
 ```console
 $ nemoclaw my-assistant connect
@@ -35,6 +35,7 @@ $ openclaw tui
 ```
 
 This gets you into the sandbox shell first and opens the OpenClaw chat UI right away.
+If the VM is fresh, run the standard installer on that host and then run `nemoclaw onboard` before trying `nemoclaw my-assistant connect`.
 
 If you are connecting from your local machine and still need to provision the remote VM, you can still use `nemoclaw deploy <instance-name>` as the legacy compatibility path described below.
 

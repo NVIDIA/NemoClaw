@@ -20,7 +20,8 @@ Before starting, make sure you have:
 git clone https://github.com/NVIDIA/NemoClaw.git
 cd NemoClaw
 
-# Install NemoClaw:
+# Install NemoClaw. The standard installer and onboarding flow handle the
+# OpenShell CLI and current DGX Spark cgroup behavior automatically:
 ./install.sh
 
 # Alternatively, you can use the hosted install script:
@@ -183,7 +184,7 @@ Some NIM containers (e.g., Nemotron-3-Super-120B-A12B) ship native arm64 images 
 
 ### What's Different on Spark
 
-DGX Spark ships **Ubuntu 24.04 (Noble) + Docker 28.x/29.x** on **aarch64 (Grace CPU + GB10 GPU, 128 GB unified memory)** but no k8s/k3s. OpenShell embeds k3s inside a Docker container, which hits two problems on Spark:
+DGX Spark ships **Ubuntu 24.04 (Noble) + Docker 28.x/29.x** on **aarch64 (Grace CPU + GB10 GPU, 128 GB unified memory)** but no k8s/k3s. OpenShell embeds k3s inside a Docker container, so the main Spark-specific concerns today are Docker access and using a current OpenShell release.
 
 #### Docker permissions
 
@@ -193,7 +194,7 @@ Error in the hyper legacy client: client error (Connect)
 ```
 
 **Cause**: Your user isn't in the `docker` group.
-**Fix**: `setup-spark` runs `usermod -aG docker $USER`. You may need to log out and back in (or `newgrp docker`) for it to take effect.
+**Fix**: Grant your user access to the Docker daemon, then rerun `nemoclaw onboard`. You may need to log out and back in (or `newgrp docker`) for group membership changes to take effect.
 
 #### cgroup v2 incompatibility (resolved)
 
@@ -205,7 +206,7 @@ Failed to start ContainerManager: failed to initialize top level QOS containers
 
 **Cause**: Spark runs cgroup v2 (Ubuntu 24.04 default). OpenShell's gateway container starts k3s, which tries to create cgroup v1-style paths that don't exist without host cgroup namespace access.
 
-**Fix**: Recent OpenShell versions set `cgroupns=host` on the gateway container directly ([OpenShell PR #329](https://github.com/NVIDIA/OpenShell/pull/329)). No `daemon.json` workaround is needed. If you are on an older OpenShell version, upgrade with:
+**Fix**: Recent OpenShell versions set `cgroupns=host` on the gateway container directly ([OpenShell PR #329](https://github.com/NVIDIA/OpenShell/pull/329)). No `default-cgroupns-mode=host` or other `daemon.json` workaround is needed. The standard NemoClaw installer/onboarding flow installs the current OpenShell CLI automatically when it is missing. If you are on an older OpenShell version, upgrade with:
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh

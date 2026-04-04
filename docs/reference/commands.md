@@ -224,7 +224,7 @@ $ nemoclaw status
 
 :::{warning}
 The `nemoclaw setup-spark` command is deprecated.
-Current OpenShell releases handle the older DGX Spark cgroup behavior themselves, so the standard installer and `nemoclaw onboard` flow should be used instead.
+Use the standard installer and run `nemoclaw onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 :::
 
 This command remains as a compatibility alias to `nemoclaw onboard`.

@@ -47,6 +47,8 @@ export interface DeployExecutionOptions {
   exit: (code: number) => never;
 }
 
+const SSH_HOST_KEY_ARGS = ["-o", "StrictHostKeyChecking=accept-new", "-o", "LogLevel=ERROR"];
+
 export function inferDeployProvider(
   explicitProvider: string | undefined,
   credentials: DeployCredentials,
@@ -101,6 +103,12 @@ export function buildDeployEnvLines(opts: {
   }
 
   return envLines;
+}
+
+function outputHasExactLine(output: string | undefined, expected: string): boolean {
+  return String(output || "")
+    .split(/\r?\n/)
+    .some((line) => line.trim() === expected);
 }
 
 export function findBrevInstanceStatus(
@@ -240,11 +248,11 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
   let exists = false;
   try {
     const out = execFileSync("brev", ["ls"], { encoding: "utf-8" });
-    exists = out.includes(name);
+    exists = outputHasExactLine(out, name);
   } catch (caught) {
     const err = caught as { stdout?: string; stderr?: string };
-    if (err.stdout && err.stdout.includes(name)) exists = true;
-    if (err.stderr && err.stderr.includes(name)) exists = true;
+    if (outputHasExactLine(err.stdout, name)) exists = true;
+    if (outputHasExactLine(err.stderr, name)) exists = true;
   }
 
   if (!exists) {
@@ -293,7 +301,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     try {
       execFileSync(
         "ssh",
-        ["-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no", name, "echo", "ok"],
+        ["-o", "ConnectTimeout=5", ...SSH_HOST_KEY_ARGS, name, "echo", "ok"],
         { encoding: "utf-8", stdio: "ignore" },
       );
       stdoutWrite(" ✓\n");
@@ -310,17 +318,17 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
 
   const remoteHome = execFileSync(
     "ssh",
-    ["-o", "StrictHostKeyChecking=no", "-o", "LogLevel=ERROR", name, "echo", "$HOME"],
+    [...SSH_HOST_KEY_ARGS, name, "echo", "$HOME"],
     { encoding: "utf-8" },
   ).trim();
   const remoteDir = `${remoteHome}/nemoclaw`;
 
   log("  Syncing NemoClaw to VM...");
   run(
-    `ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'mkdir -p ${shellQuote(remoteDir)}'`,
+    `ssh -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR ${qname} 'mkdir -p ${shellQuote(remoteDir)}'`,
   );
   run(
-    `rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .venv -e "ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR" "${rootDir}/" ${qname}:${shellQuote(`${remoteDir}/`)}`,
+    `rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .venv -e "ssh -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR" "${rootDir}/" ${qname}:${shellQuote(`${remoteDir}/`)}`,
   );
 
   const envLines = buildDeployEnvLines({
@@ -335,10 +343,10 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
   fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
   try {
     run(
-      `scp -q -o StrictHostKeyChecking=no -o LogLevel=ERROR ${shellQuote(envTmp)} ${qname}:${shellQuote(`${remoteDir}/.env`)}`,
+      `scp -q -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR ${shellQuote(envTmp)} ${qname}:${shellQuote(`${remoteDir}/.env`)}`,
     );
     run(
-      `ssh -q -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'chmod 600 ${shellQuote(`${remoteDir}/.env`)}'`,
+      `ssh -q -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR ${qname} 'chmod 600 ${shellQuote(`${remoteDir}/.env`)}'`,
     );
   } finally {
     try {
@@ -355,7 +363,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
 
   log("  Running setup...");
   runInteractive(
-    `ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && bash scripts/install.sh --non-interactive --yes-i-accept-third-party-software'`,
+    `ssh -t -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && bash scripts/install.sh --non-interactive --yes-i-accept-third-party-software'`,
   );
 
   if (
@@ -364,7 +372,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
   ) {
     log("  Starting services...");
     run(
-      `ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && bash scripts/start-services.sh'`,
+      `ssh -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && bash scripts/start-services.sh'`,
     );
   }
 
@@ -384,6 +392,6 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
   log("  Connecting to sandbox...");
   log("");
   runInteractive(
-    `ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && openshell sandbox connect ${shellQuote(sandboxName)}'`,
+    `ssh -t -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && openshell sandbox connect ${shellQuote(sandboxName)}'`,
   );
 }

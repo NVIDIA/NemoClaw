@@ -96,6 +96,7 @@ function deleteBrevInstance(instanceName, { attempts = 5, intervalSeconds = 5 } 
     } catch {
       // Best-effort delete. We'll verify via ls below and retry if needed.
     }
+    sleep(2);
 
     try {
       brev("refresh");
@@ -280,17 +281,17 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     // This can happen when a previous run's create succeeded on the backend
     // but the CLI got a network error (unexpected EOF) before confirming,
     // then the retry/fallback fails with "duplicate workspace".
-    try {
-      deleteBrevInstance(INSTANCE_NAME);
+    if (hasBrevInstance(INSTANCE_NAME)) {
+      if (!deleteBrevInstance(INSTANCE_NAME)) {
+        throw new Error(`Failed to delete leftover instance "${INSTANCE_NAME}"`);
+      }
       console.log(`[${elapsed()}] Deleted leftover instance "${INSTANCE_NAME}"`);
-    } catch {
-      // Expected — no leftover instance exists
     }
 
     if (TEST_SUITE === "deploy-cli") {
       console.log(`[${elapsed()}] Running nemoclaw deploy end to end...`);
-      runLocalDeploy(INSTANCE_NAME);
       instanceCreated = true;
+      runLocalDeploy(INSTANCE_NAME);
       try {
         brev("refresh");
       } catch {

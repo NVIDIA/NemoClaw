@@ -24,15 +24,16 @@ fail() {
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 INSTALLER_SCRIPT="${REPO_DIR}/scripts/install.sh"
+EFFECTIVE_PROVIDER="${NEMOCLAW_PROVIDER:-build}"
 
-[ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY not set"
+[ "$EFFECTIVE_PROVIDER" != "build" ] || [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY not set"
 [ -f "$INSTALLER_SCRIPT" ] || fail "Installer not found at $INSTALLER_SCRIPT"
 
 export NEEDRESTART_MODE=a
 export DEBIAN_FRONTEND=noninteractive
 export NEMOCLAW_NON_INTERACTIVE=1
 export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
-export NEMOCLAW_PROVIDER="${NEMOCLAW_PROVIDER:-build}"
+export NEMOCLAW_PROVIDER="${EFFECTIVE_PROVIDER}"
 
 info "\`scripts/brev-setup.sh\` is deprecated."
 info "Delegating to the standard NemoClaw installer and onboard flow."

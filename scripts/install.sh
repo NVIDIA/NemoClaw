@@ -953,21 +953,25 @@ run_installer_host_preflight() {
         const host = assessHost();
         const actions = planHostRemediation(host);
         const blockingActions = actions.filter((action) => action && action.blocking);
-        const lines = [];
+        const infoLines = [];
+        const actionLines = [];
         if (host.runtime && host.runtime !== "unknown") {
-          lines.push(`Detected container runtime: ${host.runtime}`);
+          infoLines.push(`Detected container runtime: ${host.runtime}`);
         }
         if (host.notes && host.notes.includes("Running under WSL")) {
-          lines.push("Running under WSL");
+          infoLines.push("Running under WSL");
         }
         for (const action of actions) {
-          lines.push(`- ${action.title}: ${action.reason}`);
+          actionLines.push(`- ${action.title}: ${action.reason}`);
           for (const command of action.commands || []) {
-            lines.push(`  ${command}`);
+            actionLines.push(`  ${command}`);
           }
         }
-        if (lines.length > 0) {
-          process.stdout.write(lines.join("\n"));
+        if (infoLines.length > 0) {
+          process.stdout.write(`__INFO__\n${infoLines.join("\n")}\n`);
+        }
+        if (actionLines.length > 0) {
+          process.stdout.write(`__ACTIONS__\n${actionLines.join("\n")}`);
         }
         process.exit(blockingActions.length > 0 ? 10 : 0);
       } catch {
@@ -981,15 +985,28 @@ run_installer_host_preflight() {
   fi
 
   if [[ -n "$output" ]]; then
+    local info_output="" action_output=""
+    info_output="$(printf "%s\n" "$output" | awk 'BEGIN{mode=0} /^__INFO__$/ {mode=1; next} /^__ACTIONS__$/ {mode=0} mode {print}')"
+    action_output="$(printf "%s\n" "$output" | awk 'BEGIN{mode=0} /^__ACTIONS__$/ {mode=1; next} mode {print}')"
     echo ""
+    if [[ -n "$info_output" ]]; then
+      while IFS= read -r line; do
+        [[ -n "$line" ]] && printf "  %s\n" "$line"
+      done <<<"$info_output"
+    fi
     if [[ "$status" -eq 10 ]]; then
       warn "Host preflight found issues that will prevent onboarding right now."
-    else
+      if [[ -n "$action_output" ]]; then
+        while IFS= read -r line; do
+          [[ -n "$line" ]] && printf "  %s\n" "$line"
+        done <<<"$action_output"
+      fi
+    elif [[ -n "$action_output" ]]; then
       warn "Host preflight found warnings."
+      while IFS= read -r line; do
+        [[ -n "$line" ]] && printf "  %s\n" "$line"
+      done <<<"$action_output"
     fi
-    while IFS= read -r line; do
-      [[ -n "$line" ]] && printf "  %s\n" "$line"
-    done <<<"$output"
   fi
 
   [[ "$status" -ne 10 ]]

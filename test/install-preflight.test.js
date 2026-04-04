@@ -749,6 +749,7 @@ fi`,
       },
     });
 
+    expect(result.status).toBe(0);
     expect(`${result.stdout}${result.stderr}`).toMatch(
       /Skipping onboarding|--yes-i-accept-third-party-software|NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1/,
     );

@@ -132,7 +132,8 @@ If onboarding reports that Docker is missing or unreachable, fix Docker first an
 $ nemoclaw onboard
 ```
 
-If you are using Podman, NemoClaw warns and continues, but OpenShell officially documents Docker-based runtimes only. If onboarding or sandbox lifecycle fails, switch to Docker Desktop, Colima, or Docker Engine and rerun onboarding.
+If you are using Podman, NemoClaw warns and continues, but OpenShell officially documents Docker-based runtimes only.
+If onboarding or sandbox lifecycle fails, switch to Docker Desktop, Colima, or Docker Engine and rerun onboarding.
 
 ### Invalid sandbox name
 

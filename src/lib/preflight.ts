@@ -203,7 +203,10 @@ function isHeadlessLikely(env: NodeJS.ProcessEnv): boolean {
 function detectNvidiaGpu(
   runCaptureImpl: (command: string, options?: { ignoreError?: boolean }) => string,
 ): boolean {
-  return commandExists("nvidia-smi", runCaptureImpl);
+  if (!commandExists("nvidia-smi", runCaptureImpl)) {
+    return false;
+  }
+  return Boolean(String(runCaptureImpl("nvidia-smi -L", { ignoreError: true }) || "").trim());
 }
 
 function detectPackageManager(
