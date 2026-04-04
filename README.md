@@ -1,296 +1,131 @@
-# NVIDIA NemoClaw: Reference Stack for Running OpenClaw in OpenShell
+# 💰 최저가 지도 (Lowest Price Map)
 
-<!-- start-badges -->
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue)](https://github.com/NVIDIA/NemoClaw/blob/main/LICENSE)
-[![Security Policy](https://img.shields.io/badge/Security-Report%20a%20Vulnerability-red)](https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md)
-[![Project Status](https://img.shields.io/badge/status-alpha-orange)](https://github.com/NVIDIA/NemoClaw/blob/main/docs/about/release-notes.md)
-<!-- end-badges -->
+> 서울 관광객을 위한 **인터랙티브 최저가 지도** — 환전소·주유소·맛집·카페·편의점·찜질방·노래방·전통시장·관광명소를 한 눈에.
 
-<!-- start-intro -->
-NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
-It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of NVIDIA Agent Toolkit, which provides additional security for running autonomous agents.
-It also includes open source models such as [NVIDIA Nemotron](https://build.nvidia.com).
-<!-- end-intro -->
-
-> **Alpha software**
->
-> NemoClaw is available in early preview starting March 16, 2026.
-> This software is not production-ready.
-> Interfaces, APIs, and behavior may change without notice as we iterate on the design.
-> The project is shared to gather feedback and enable early experimentation.
-> We welcome issues and discussion from the community while the project evolves.
+[![React](https://img.shields.io/badge/React-18-61dafb?logo=react)](https://react.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?logo=typescript)](https://www.typescriptlang.org)
+[![Vite](https://img.shields.io/badge/Vite-5-646cff?logo=vite)](https://vitejs.dev)
+[![Leaflet](https://img.shields.io/badge/Leaflet-1.9-199900?logo=leaflet)](https://leafletjs.com)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind-3-06b6d4?logo=tailwindcss)](https://tailwindcss.com)
 
 ---
 
-## Quick Start
+## 스크린샷
 
-Follow these steps to get started with NemoClaw and your first sandboxed OpenClaw agent.
+| 지도 메인 | 상세 패널 | 사이드바 필터 |
+|-----------|-----------|---------------|
+| 카테고리별 컬러 핀 + 가격 툴팁 | 즐겨찾기 · 카카오맵 링크 | 최저가 토글 · 국적 필터 |
 
-> **ℹ️ Note**
->
-> NemoClaw creates a fresh OpenClaw instance inside the sandbox during onboarding.
+---
 
-<!-- start-quickstart-guide -->
+## 주요 기능
 
-### Prerequisites
+### 🗺️ 지도 & 핀
+- **10개 카테고리** 컬러 다이아몬드 핀 (카테고리별 고유 색상 + 이모지)
+- **👑 최저가 순위** — 카테고리 내 1·2·3위 핀에 금·은·동 배지
+- **선택된 핀 강조** — 클릭 시 scale 1.25 + 흰색 테두리 링
+- **툴팁** — 호버 시 이름 + 핵심 가격 정보
+- **접히는 범례** (좌측 하단) — 카테고리 색상/이모지 설명
 
-Check the prerequisites before you start to ensure you have the necessary software and hardware to run NemoClaw.
+### 🔍 검색 & 필터
+- **실시간 검색** — 이름·영문명·주소 (TopBar 🔍 버튼, Escape로 닫기)
+- **카테고리 필터** — 10개 카테고리 다중 선택
+- **국적 필터** — 한식 / 일식 / 중식 / 서양식 / 인도식 / 할랄 / 비건
+- **가격 범위 슬라이더** — 최소~최대 가격 설정
+- **최저가만 보기** — 카테고리별 1개 최저가 핀만 표시
+- **필터 영속성** — 새로고침 후에도 localStorage에서 복원
 
-#### Hardware
+### ❤️ 즐겨찾기
+- 상세 패널에서 ❤️ 버튼으로 북마크
+- Sidebar 즐겨찾기 섹션에서 모아보기
+- localStorage 기반 영구 저장
 
-| Resource | Minimum        | Recommended      |
-|----------|----------------|------------------|
-| CPU      | 4 vCPU         | 4+ vCPU          |
-| RAM      | 8 GB           | 16 GB            |
-| Disk     | 20 GB free     | 40 GB free       |
+### 📍 내 위치
+- 브라우저 Geolocation API → 현재 위치로 지도 flyTo
+- 오른쪽 상단 📍 버튼 (Leaflet 네이티브 컨트롤)
 
-The sandbox image is approximately 2.4 GB compressed. During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline, which buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer. If you cannot add memory, configuring at least 8 GB of swap can work around the issue at the cost of slower performance.
+### 📱 상세 패널
+- 카테고리별 맞춤 정보 (가격표 · 메뉴 · 환율 · 편의시설 등)
+- 카카오맵 / Google Maps 딥링크 버튼
+- 패널 열릴 때 스크롤 자동 초기화
 
-#### Software
+### 🌐 다국어
+- 한국어 / English 토글 (localStorage 저장)
 
-| Dependency | Version                          |
-|------------|----------------------------------|
-| Linux      | Ubuntu 22.04 LTS or later |
-| Node.js    | 20 or later |
-| npm        | 10 or later |
-| Container runtime | Supported runtime installed and running |
-| [OpenShell](https://github.com/NVIDIA/OpenShell) | Installed |
+### 🌑 결과 없음 처리
+- 핀 0개일 때 오버레이 안내 + 필터 초기화 버튼
 
-#### Container Runtime Support
+---
 
-| Platform | Supported runtimes | Notes |
-|----------|--------------------|-------|
-| Linux | Docker | Primary supported path today |
-| macOS (Apple Silicon) | Colima, Docker Desktop | Recommended runtimes for supported macOS setups |
-| macOS | Podman | Not supported yet. NemoClaw currently depends on OpenShell support for Podman on macOS. |
-| Windows WSL | Docker Desktop (WSL backend) | Supported target path |
+## 데이터 (151개 장소)
 
-#### macOS first-run checklist
+| 카테고리 | 수 | 주요 정보 |
+|---|---|---|
+| 💱 사설환전소 | 15 | 통화별 매입/판매 환율, 수수료 여부 |
+| ⛽ 주유/충전소 | 22 | 휘발유·경유·LPG·전기·수소 가격 |
+| 🍜 식당 | 28 | 1인 가격, 국적 태그 (할랄·비건 포함) |
+| ☕ 카페 | 18 | 아메리카노 가격, WiFi·야외석 여부 |
+| 🏪 편의점 | 12 | 브랜드, 평균 단가, ATM·24시 여부 |
+| 🛁 찜질방 | 10 | 입장료, 숙박료, 편의시설 목록 |
+| 🎤 노래방 | 10 | 룸 크기별 시간당 요금, 할인 시간대 |
+| 🏮 전통시장 | 8 | 인기 메뉴·상품별 가격 |
+| 🏛️ 관광명소 | 12 | 입장권 종류별 가격, 무료 입장 조건 |
+| ✨ 기타 | 16 | 포장마차·PC방·게스트하우스·빨래방 등 |
 
-On a fresh macOS machine, install the prerequisites in this order:
+---
 
-1. Install Xcode Command Line Tools:
+## 기술 스택
 
-   ```bash
-   xcode-select --install
-   ```
+```
+Frontend   React 18 + TypeScript 5 + Vite 5
+지도       react-leaflet 4.x + Leaflet 1.9.x + OpenStreetMap (CARTO Voyager)
+상태관리   Zustand 4.x (filterStore · uiStore · favoritesStore)
+스타일     Tailwind CSS v3 + Noto Sans KR
+```
 
-2. Install and start a supported container runtime:
-   - Docker Desktop
-   - Colima
-3. Run the NemoClaw installer.
+---
 
-This avoids the two most common first-run failures on macOS:
-
-- missing developer tools needed by the installer and Node.js toolchain
-- Docker connection errors when no supported container runtime is installed or running
-
-> **💡 Tip**
->
-> For DGX Spark, follow the [DGX Spark setup guide](https://github.com/NVIDIA/NemoClaw/blob/main/spark-install.md). It covers Spark-specific prerequisites, such as cgroup v2 and Docker configuration, before running the standard installer.
-
-### Install NemoClaw and Onboard OpenClaw Agent
-
-Download and run the installer script.
-The script installs Node.js if it is not already present, then runs the guided onboard wizard to create a sandbox, configure inference, and apply security policies.
+## 로컬 실행
 
 ```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+cd map-app
+npm install
+npm run dev
+# → http://localhost:5173
 ```
 
-If you use nvm or fnm to manage Node.js, the installer may not update your current shell's PATH.
-If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
-
-When the install completes, a summary confirms the running environment:
-
-```text
-──────────────────────────────────────────────────
-Sandbox      my-assistant (Landlock + seccomp + netns)
-Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
-──────────────────────────────────────────────────
-Run:         nemoclaw my-assistant connect
-Status:      nemoclaw my-assistant status
-Logs:        nemoclaw my-assistant logs --follow
-──────────────────────────────────────────────────
-
-[INFO]  === Installation complete ===
-```
-
-### Chat with the Agent
-
-Connect to the sandbox, then chat with the agent through the TUI or the CLI.
-
-#### Connect to the Sandbox
-
-Run the following command to connect to the sandbox:
+빌드:
 
 ```bash
-nemoclaw my-assistant connect
+npm run build
 ```
 
-This connects you to the sandbox shell `sandbox@my-assistant:~$` where you can run `openclaw` commands.
+---
 
-#### OpenClaw TUI
+## 프로젝트 구조
 
-In the sandbox shell, run the following command to open the OpenClaw TUI, which opens an interactive chat interface.
-
-```bash
-openclaw tui
+```
+map-app/src/
+├── components/
+│   ├── filters/        # CategoryFilter, NationalityDropdown, PriceRangeSlider
+│   ├── layout/         # TopBar (검색), Sidebar (필터+즐겨찾기)
+│   ├── map/            # MapContainer, MarkerLayer, CategoryPin
+│   │                   # MyLocationButton, EmptyState, MapLegend
+│   └── panels/         # DetailPanel (상세 정보)
+├── data/               # 10개 카테고리 JSON (151개 장소)
+├── hooks/              # useFilteredMarkers, useAllLocations, useAllPriceRanks
+├── store/              # filterStore, uiStore, favoritesStore
+└── types/              # AnyLocation union type, CATEGORY_META
 ```
 
-Send a test message to the agent and verify you receive a response.
+---
 
-> **ℹ️ Note**
->
-> The TUI is best for interactive back-and-forth. If you need the full text of a long response such as a large code generation output, use the CLI instead.
+## 개발 브랜치
 
-#### OpenClaw CLI
-
-In the sandbox shell, run the following command to send a single message and print the response:
-
-```bash
-openclaw agent --agent main --local -m "hello" --session-id test
-```
-
-This prints the complete response directly in the terminal and avoids relying on the TUI view for long output.
-
-### Uninstall
-
-To remove NemoClaw and all resources created during setup, in the terminal outside the sandbox, run:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash
-```
-
-The script removes sandboxes, the NemoClaw gateway and providers, related Docker images and containers, local state directories, and the global `nemoclaw` npm package. It does not remove shared system tooling such as Docker, Node.js, npm, or Ollama.
-
-| Flag               | Effect                                              |
-|--------------------|-----------------------------------------------------|
-| `--yes`            | Skip the confirmation prompt.                       |
-| `--keep-openshell` | Leave the `openshell` binary installed.              |
-| `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
-
-For example, to skip the confirmation prompt:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash -s -- --yes
-```
-
-<!-- end-quickstart-guide -->
+`claude/lowest-price-map-app-aj4LR`
 
 ---
 
-## How It Works
+## 라이선스
 
-NemoClaw installs the NVIDIA OpenShell runtime, then creates a sandboxed OpenClaw environment where every network request, file access, and inference call is governed by declarative policy. The `nemoclaw` CLI orchestrates the full stack: OpenShell gateway, sandbox, inference provider, and network policy.
-
-| Component        | Role                                                                                      |
-|------------------|-------------------------------------------------------------------------------------------|
-| **Plugin**       | TypeScript CLI commands for launch, connect, status, and logs.                            |
-| **Blueprint**    | Versioned Python artifact that orchestrates sandbox creation, policy, and inference setup. |
-| **Sandbox**      | Isolated OpenShell container running OpenClaw with policy-enforced egress and filesystem.  |
-| **Inference**    | Provider-routed model calls, routed through the OpenShell gateway, transparent to the agent. |
-
-The blueprint lifecycle follows four stages: resolve the artifact, verify its digest, plan the resources, and apply through the OpenShell CLI.
-
-When something goes wrong, errors may originate from either NemoClaw or the OpenShell layer underneath. Run `nemoclaw <name> status` for NemoClaw-level health and `openshell sandbox list` to check the underlying sandbox state.
-
----
-
-## Inference
-
-Inference requests from the agent never leave the sandbox directly. OpenShell intercepts every call and routes it to the provider you selected during onboarding.
-
-Supported non-experimental onboarding paths:
-
-| Provider | Notes |
-|---|---|
-| NVIDIA Endpoints | Curated hosted models on `integrate.api.nvidia.com`. |
-| OpenAI | Curated GPT models plus `Other...` for manual model entry. |
-| Other OpenAI-compatible endpoint | For proxies and compatible gateways. |
-| Anthropic | Curated Claude models plus `Other...` for manual model entry. |
-| Other Anthropic-compatible endpoint | For Claude proxies and compatible gateways. |
-| Google Gemini | Google's OpenAI-compatible endpoint. |
-
-During onboarding, NemoClaw validates the selected provider and model before it creates the sandbox:
-
-- OpenAI-compatible providers: tries `/responses` first, then `/chat/completions`
-- Anthropic-compatible providers: tries `/v1/messages`
-- If validation fails, the wizard prompts you to fix the selection before continuing
-
-Credentials stay on the host in `~/.nemoclaw/credentials.json`. The sandbox only sees the routed `inference.local` endpoint, not your raw provider key.
-
-Local Ollama is supported in the standard onboarding flow. Local vLLM remains experimental, and local host-routed inference on macOS still depends on OpenShell host-routing support in addition to the local service itself being reachable on the host.
-
----
-
-## Protection Layers
-
-The sandbox starts with a default policy that controls network egress and filesystem access:
-
-| Layer      | What it protects                                    | When it applies             |
-|------------|-----------------------------------------------------|-----------------------------|
-| Network    | Blocks unauthorized outbound connections.           | Hot-reloadable at runtime.  |
-| Filesystem | Prevents reads/writes outside `/sandbox` and `/tmp`.| Locked at sandbox creation. |
-| Process    | Blocks privilege escalation and dangerous syscalls. | Locked at sandbox creation. |
-| Inference  | Reroutes model API calls to controlled backends.    | Hot-reloadable at runtime.  |
-
-When the agent tries to reach an unlisted host, OpenShell blocks the request and surfaces it in the TUI for operator approval.
-
----
-
-## Configuring Sandbox Policy
-
-The sandbox policy is defined in a declarative YAML file and enforced by the OpenShell runtime.
-NemoClaw ships a default policy in [`nemoclaw-blueprint/policies/openclaw-sandbox.yaml`](https://github.com/NVIDIA/NemoClaw/blob/main/nemoclaw-blueprint/policies/openclaw-sandbox.yaml) that denies all network egress except explicitly listed endpoints.
-
-Operators can customize the policy in two ways:
-
-| Method | How | Scope |
-|--------|-----|-------|
-| **Static** | Edit `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`. | Persists across restarts. |
-| **Dynamic** | Run `openshell policy set <policy-file>` on a running sandbox. | Session only; resets on restart. |
-
-NemoClaw includes preset policy files for common integrations such as PyPI, Docker Hub, Slack, and Jira in `nemoclaw-blueprint/policies/presets/`. Apply a preset as-is or use it as a starting template.
-
-NemoClaw is an open project — we are still determining which presets to ship by default. If you have suggestions, please open an [issue](https://github.com/NVIDIA/NemoClaw/issues) or [discussion](https://github.com/NVIDIA/NemoClaw/discussions).
-
-When the agent attempts to reach an endpoint not covered by the policy, OpenShell blocks the request and surfaces it in the TUI (`openshell term`) for the operator to approve or deny in real time. Approved endpoints persist for the current session only.
-
-For step-by-step instructions, see [Customize Network Policy](https://docs.nvidia.com/nemoclaw/latest/network-policy/customize-network-policy.html). For the underlying enforcement details, see the OpenShell [Policy Schema](https://docs.nvidia.com/openshell/latest/reference/policy-schema.html) and [Sandbox Policies](https://docs.nvidia.com/openshell/latest/sandboxes/policies.html) documentation.
-
----
-
-## Key Commands
-
-### Host commands (`nemoclaw`)
-
-Run these on the host to set up, connect to, and manage sandboxes.
-
-| Command                              | Description                                            |
-|--------------------------------------|--------------------------------------------------------|
-| `nemoclaw onboard`                  | Interactive setup wizard: gateway, providers, sandbox. |
-| `nemoclaw <name> connect`            | Open an interactive shell inside the sandbox.          |
-| `openshell term`                     | Launch the OpenShell TUI for monitoring and approvals. |
-| `nemoclaw start` / `stop` / `status` | Manage auxiliary services (Telegram bridge, tunnel).   |
-
-See the full [CLI reference](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html) for all commands, flags, and options.
-
----
-
-## Learn More
-
-Refer to the documentation for more information on NemoClaw.
-
-- [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html): Learn what NemoClaw does and how it fits together.
-- [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html): Learn about the plugin, blueprint, and sandbox lifecycle.
-- [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html): Learn about the plugin structure, blueprint lifecycle, and sandbox environment.
-- [Inference Profiles](https://docs.nvidia.com/nemoclaw/latest/reference/inference-profiles.html): Learn how NemoClaw configures routed inference providers.
-- [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html): Learn about egress control and policy customization.
-- [CLI Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html): Learn about the full command reference.
-- [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html): Troubleshoot common issues and resolution steps.
-- [Discord](https://discord.gg/XFpfPv9Uvx): Join the community for questions and discussion.
-
-## License
-
-This project is licensed under the [Apache License 2.0](LICENSE).
+[Apache License 2.0](LICENSE)
