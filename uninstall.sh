@@ -337,7 +337,7 @@ is_installer_managed_nemoclaw_shim() {
   local exec_line="exec \""
   local exec_suffix="/nemoclaw\" \"\$@\""
   case "$contents" in
-    '#!/usr/bin/env bash'*$'\n'"$path_line"*"$path_suffix"$'\n'"$exec_line"*"$exec_suffix"*)
+    '#!/usr/bin/env bash'$'\n'"$path_line"*"$path_suffix"$'\n'"$exec_line"*"$exec_suffix")
       return 0
       ;;
   esac
