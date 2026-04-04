@@ -409,6 +409,7 @@ exit 98
     const prefix = path.join(tmp, "prefix");
     const npmLog = path.join(tmp, "npm.log");
     fs.mkdirSync(fakeBin);
+    fs.mkdirSync(path.join(tmp, ".git"));
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
@@ -809,7 +810,8 @@ exit 0
 
     const shimPath = path.join(tmp, ".local", "bin", "nemoclaw");
     expect(result.status).toBe(0);
-    expect(fs.readlinkSync(shimPath)).toBe(path.join(prefix, "bin", "nemoclaw"));
+    expect(fs.readFileSync(shimPath, "utf-8")).toContain(`export PATH="${fakeBin}:$PATH"`);
+    expect(fs.readFileSync(shimPath, "utf-8")).toContain(path.join(prefix, "bin", "nemoclaw"));
     expect(`${result.stdout}${result.stderr}`).toMatch(/Created user-local shim/);
   });
 
@@ -1287,6 +1289,74 @@ describe("installer pure helpers", () => {
   it("resolve_openclaw_version: falls back to Dockerfile.base when package.json omits it", () => {
     const r = callInstallerFn('resolve_openclaw_version "$PWD"');
     expect(r.stdout.trim()).toBe("2026.3.11");
+  });
+
+  it("is_source_checkout: rejects a payload-like checkout without git metadata", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-checkout-"));
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+    );
+    const r = spawnSync(
+      "bash",
+      [
+        "-c",
+        `source "${INSTALLER}" 2>/dev/null; is_source_checkout "${tmp}" && echo yes || echo no`,
+      ],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: { HOME: tmp, PATH: TEST_SYSTEM_PATH },
+      },
+    );
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe("no");
+  });
+
+  it("is_source_checkout: accepts an explicit source checkout with git metadata", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-checkout-git-"));
+    fs.mkdirSync(path.join(tmp, ".git"));
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+    );
+    const r = spawnSync(
+      "bash",
+      [
+        "-c",
+        `source "${INSTALLER}" 2>/dev/null; is_source_checkout "${tmp}" && echo yes || echo no`,
+      ],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: { HOME: tmp, PATH: TEST_SYSTEM_PATH },
+      },
+    );
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe("yes");
+  });
+
+  it("is_source_checkout: rejects bootstrap payload clones even when git metadata exists", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-checkout-bootstrap-"));
+    fs.mkdirSync(path.join(tmp, ".git"));
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+    );
+    const r = spawnSync(
+      "bash",
+      [
+        "-c",
+        `source "${INSTALLER}" 2>/dev/null; is_source_checkout "${tmp}" && echo yes || echo no`,
+      ],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: { HOME: tmp, PATH: TEST_SYSTEM_PATH, NEMOCLAW_BOOTSTRAP_PAYLOAD: "1" },
+      },
+    );
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe("no");
   });
 
   it("resolve_installer_version: falls back to package.json when git tags are unavailable", () => {
@@ -1775,7 +1845,8 @@ EOS
 #!/usr/bin/env bash
 set -euo pipefail
 # NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1
-node "$NEMOCLAW_REPO_ROOT/bin/lib/usage-notice.js"
+repo_root="\${NEMOCLAW_REPO_ROOT:-$(cd "$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)}"
+node "$repo_root/bin/lib/usage-notice.js"
 EOS
   chmod +x "$target/scripts/install.sh"
   exit 0

@@ -373,7 +373,6 @@ MIN_NODE_VERSION="22.16.0"
 MIN_NPM_MAJOR=10
 RUNTIME_REQUIREMENT_MSG="NemoClaw requires Node.js >=${MIN_NODE_VERSION} and npm >=${MIN_NPM_MAJOR}."
 NEMOCLAW_SHIM_DIR="${HOME}/.local/bin"
-ORIGINAL_PATH="${PATH:-}"
 NEMOCLAW_READY_NOW=false
 NEMOCLAW_RECOVERY_PROFILE=""
 NEMOCLAW_RECOVERY_EXPORT_DIR=""
@@ -454,7 +453,7 @@ refresh_path() {
 }
 
 ensure_nemoclaw_shim() {
-  local npm_bin shim_path
+  local npm_bin shim_path node_path node_dir cli_path
   npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
   shim_path="${NEMOCLAW_SHIM_DIR}/nemoclaw"
 
@@ -462,12 +461,24 @@ ensure_nemoclaw_shim() {
     return 1
   fi
 
-  if [[ ":$ORIGINAL_PATH:" == *":$npm_bin:"* ]] || [[ ":$ORIGINAL_PATH:" == *":$NEMOCLAW_SHIM_DIR:"* ]]; then
-    return 0
+  node_path="$(command -v node 2>/dev/null || true)"
+  if [[ -z "$node_path" || ! -x "$node_path" ]]; then
+    return 1
   fi
 
+  cli_path="$npm_bin/nemoclaw"
+  if [[ -z "$cli_path" || ! -x "$cli_path" ]]; then
+    return 1
+  fi
+  node_dir="$(dirname "$node_path")"
+
   mkdir -p "$NEMOCLAW_SHIM_DIR"
-  ln -sfn "$npm_bin/nemoclaw" "$shim_path"
+  cat >"$shim_path" <<EOF
+#!/usr/bin/env bash
+export PATH="$node_dir:\$PATH"
+exec "$cli_path" "\$@"
+EOF
+  chmod +x "$shim_path"
   refresh_path
   ensure_local_bin_in_profile
   info "Created user-local shim at $shim_path"
@@ -815,12 +826,30 @@ resolve_openclaw_version() {
   fi
 }
 
+is_source_checkout() {
+  local repo_root="$1"
+  local package_json="${repo_root}/package.json"
+
+  [[ -f "$package_json" ]] || return 1
+  grep -q '"name"[[:space:]]*:[[:space:]]*"nemoclaw"' "$package_json" 2>/dev/null || return 1
+
+  if [[ "${NEMOCLAW_BOOTSTRAP_PAYLOAD:-}" == "1" ]]; then
+    return 1
+  fi
+
+  if [[ -n "${NEMOCLAW_REPO_ROOT:-}" || -d "${repo_root}/.git" ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
 install_nemoclaw() {
   command_exists git || error "git was not found on PATH."
   local repo_root package_json
   repo_root="$(resolve_repo_root)"
   package_json="${repo_root}/package.json"
-  if [[ -f "$package_json" ]] && grep -q '"name"[[:space:]]*:[[:space:]]*"nemoclaw"' "$package_json" 2>/dev/null; then
+  if is_source_checkout "$repo_root"; then
     info "NemoClaw package.json found in the selected source checkout — installing from source…"
     NEMOCLAW_SOURCE_ROOT="$repo_root"
     spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$NEMOCLAW_SOURCE_ROOT" \
@@ -830,6 +859,9 @@ install_nemoclaw() {
     spin "Building NemoClaw plugin" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\"/nemoclaw && npm install --ignore-scripts && npm run build"
     spin "Linking NemoClaw CLI" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm link"
   else
+    if [[ -f "$package_json" ]]; then
+      info "Installer payload is not a persistent source checkout — installing from GitHub…"
+    fi
     info "Installing NemoClaw from GitHub…"
     # Resolve the latest release tag so we never install raw main.
     local release_ref
