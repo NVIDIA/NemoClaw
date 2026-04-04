@@ -494,7 +494,9 @@ function streamGatewayStart(command, env = process.env) {
 
   function classifyLine(line) {
     if (/ApplyJob|helm-install-openshell|Applying HelmChart/i.test(line)) return "install";
-    if (/openshell-0|Observed pod startup duration|MountVolume\.MountDevice succeeded/i.test(line)) {
+    if (
+      /openshell-0|Observed pod startup duration|MountVolume\.MountDevice succeeded/i.test(line)
+    ) {
       return "pod";
     }
     if (/Gateway .* ready\.?$/i.test(line)) return "health";
