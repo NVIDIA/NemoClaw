@@ -485,6 +485,26 @@ fi`,
     );
 
     writeNodeStub(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+if [ "$1" = "info" ]; then
+  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  exit 0
+fi
+exit 0
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "openshell 0.0.22"
+  exit 0
+fi
+exit 0
+`,
+    );
     writeNpmStub(
       fakeBin,
       `if [ "$1" = "pack" ]; then
@@ -539,6 +559,153 @@ fi`,
     );
   });
 
+  it("skips onboarding when shared host preflight detects Docker is missing", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-missing-docker-"));
+    const fakeBin = path.join(tmp, "bin");
+    const prefix = path.join(tmp, "prefix");
+    const onboardLog = path.join(tmp, "onboard.log");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+
+    writeNodeStub(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "openshell 0.0.22"
+  exit 0
+fi
+exit 0
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+if [ "$1" = "info" ]; then
+  exit 1
+fi
+exit 0
+`,
+    );
+    writeNpmStub(
+      fakeBin,
+      `if [ "$1" = "pack" ]; then
+  tmpdir="$4"
+  mkdir -p "$tmpdir/package"
+  tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
+  exit 0
+fi
+if [ "$1" = "install" ]; then exit 0; fi
+if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$NEMOCLAW_ONBOARD_LOG"
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi`,
+    );
+
+    const result = spawnSync("bash", [INSTALLER], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NPM_PREFIX: prefix,
+        NEMOCLAW_ONBOARD_LOG: onboardLog,
+      },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).toBe(0);
+    expect(output).toMatch(/Host preflight found issues that will prevent onboarding right now\./);
+    expect(output).toMatch(/Start Docker/);
+    expect(output).toMatch(/Skipping onboarding until the host prerequisites above are fixed\./);
+    expect(fs.existsSync(onboardLog)).toBe(false);
+  });
+
+  it("warns on Podman but still runs onboarding", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-podman-warning-"));
+    const fakeBin = path.join(tmp, "bin");
+    const prefix = path.join(tmp, "prefix");
+    const onboardLog = path.join(tmp, "onboard.log");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+
+    writeNodeStub(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "openshell 0.0.22"
+  exit 0
+fi
+exit 0
+`,
+    );
+    writeNpmStub(
+      fakeBin,
+      `if [ "$1" = "pack" ]; then
+  tmpdir="$4"
+  mkdir -p "$tmpdir/package"
+  tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
+  exit 0
+fi
+if [ "$1" = "install" ]; then exit 0; fi
+if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$NEMOCLAW_ONBOARD_LOG"
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+if [ "$1" = "info" ]; then
+  echo "Podman Engine"
+  exit 0
+fi
+exit 0
+`,
+    );
+
+    const result = spawnSync("bash", [INSTALLER], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NPM_PREFIX: prefix,
+        NEMOCLAW_ONBOARD_LOG: onboardLog,
+      },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).toBe(0);
+    expect(output).toMatch(/Host preflight found warnings\./);
+    expect(output).toMatch(/Detected container runtime: podman/);
+    expect(output).toMatch(
+      /Podman may work in some environments, but it is not a supported runtime/,
+    );
+    expect(fs.readFileSync(onboardLog, "utf-8")).toMatch(
+      /^onboard --non-interactive --yes-i-accept-third-party-software$/m,
+    );
+  });
+
   it("requires explicit terms acceptance in non-interactive install mode", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-terms-required-"));
     const fakeBin = path.join(tmp, "bin");
@@ -548,6 +715,26 @@ fi`,
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+if [ "$1" = "info" ]; then
+  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  exit 0
+fi
+exit 0
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "openshell 0.0.22"
+  exit 0
+fi
+exit 0
+`,
+    );
     writeNpmStub(
       fakeBin,
       `if [ "$1" = "pack" ]; then
@@ -576,13 +763,16 @@ fi`,
         ...process.env,
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "",
         NPM_PREFIX: prefix,
         NEMOCLAW_ONBOARD_LOG: onboardLog,
       },
     });
 
-    expect(result.status).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/--yes-i-accept-third-party-software/);
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toMatch(
+      /--yes-i-accept-third-party-software|NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1/,
+    );
     expect(fs.existsSync(onboardLog)).toBe(false);
   });
 
@@ -595,6 +785,26 @@ fi`,
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+if [ "$1" = "info" ]; then
+  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  exit 0
+fi
+exit 0
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "openshell 0.0.22"
+  exit 0
+fi
+exit 0
+`,
+    );
     writeNpmStub(
       fakeBin,
       `if [ "$1" = "pack" ]; then
@@ -951,6 +1161,26 @@ exit 0
     fs.writeFileSync(path.join(nvmDir, "nvm.sh"), "# stub nvm\n");
 
     writeNodeStub(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+if [ "$1" = "info" ]; then
+  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  exit 0
+fi
+exit 0
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "openshell 0.0.22"
+  exit 0
+fi
+exit 0
+`,
+    );
     writeNpmStub(
       fakeBin,
       `if [ "$1" = "pack" ]; then exit 1; fi

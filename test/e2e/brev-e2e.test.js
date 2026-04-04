@@ -4,21 +4,22 @@
 /**
  * Ephemeral Brev E2E test suite.
  *
- * Creates a fresh Brev instance (via launchable or bare CPU), bootstraps it,
+ * Creates a fresh Brev instance via the launchable bootstrap path, bootstraps it,
  * runs E2E tests remotely, then tears it down.
  *
  * Intended to be run from CI via:
  *   npx vitest run --project e2e-brev
  *
  * Required env vars:
- *   BREV_API_TOKEN   — Brev refresh token for headless auth
  *   NVIDIA_API_KEY   — passed to VM for inference config during onboarding
  *   GITHUB_TOKEN     — passed to VM for OpenShell binary download
  *   INSTANCE_NAME    — Brev instance name (e.g. pr-156-test)
  *
+ * Prerequisite:
+ *   The local `brev` CLI must already be authenticated before this suite runs.
+ *
  * Optional env vars:
- *   TEST_SUITE             — which test to run: full (default), credential-sanitization, telegram-injection, all
- *   USE_LAUNCHABLE         — "1" (default) to use CI launchable, "0" for bare brev create + brev-setup.sh
+ *   TEST_SUITE             — which test to run: full (default), deploy-cli, credential-sanitization, telegram-injection, all
  *   LAUNCHABLE_SETUP_SCRIPT — URL to setup script for launchable path (default: brev-launchable-ci-cpu.sh on main)
  *   BREV_MIN_VCPU          — Minimum vCPUs for CPU instance (default: 4)
  *   BREV_MIN_RAM           — Minimum RAM in GB for CPU instance (default: 16)
@@ -28,8 +29,6 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execSync, execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 
 // Instance configuration
@@ -40,6 +39,7 @@ const BREV_MIN_DISK = parseInt(process.env.BREV_MIN_DISK || "50", 10);
 const INSTANCE_NAME = process.env.INSTANCE_NAME;
 const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
+const CLI_PATH = path.join(REPO_DIR, "bin", "nemoclaw.js");
 
 // Launchable configuration
 // CI-Ready CPU setup script: pre-bakes Docker, Node.js, OpenShell CLI, npm deps, Docker images.
@@ -49,8 +49,6 @@ const REPO_DIR = path.resolve(import.meta.dirname, "../..");
 const DEFAULT_SETUP_SCRIPT_PATH =
   process.env.LAUNCHABLE_SETUP_SCRIPT ||
   path.join(REPO_DIR, "scripts", "brev-launchable-ci-cpu.sh");
-const USE_LAUNCHABLE = !["0", "false"].includes(process.env.USE_LAUNCHABLE?.toLowerCase());
-
 // Sentinel file written by brev-launchable-ci-cpu.sh when setup is complete.
 // More reliable than grepping log files.
 const LAUNCHABLE_SENTINEL = "/var/run/nemoclaw-launchable-ready";
@@ -66,6 +64,53 @@ function brev(...args) {
     timeout: 60_000,
     stdio: ["pipe", "pipe", "pipe"],
   }).trim();
+}
+
+function sleep(seconds) {
+  execSync(`sleep ${seconds}`);
+}
+
+function listBrevInstances() {
+  try {
+    return JSON.parse(brev("ls", "--json"));
+  } catch {
+    return [];
+  }
+}
+
+function hasBrevInstance(instanceName) {
+  return listBrevInstances().some((instance) => instance.name === instanceName);
+}
+
+function deleteBrevInstance(instanceName, { attempts = 5, intervalSeconds = 5 } = {}) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (!hasBrevInstance(instanceName)) {
+      return true;
+    }
+
+    try {
+      brev("delete", instanceName);
+    } catch {
+      // Best-effort delete. We'll verify via ls below and retry if needed.
+    }
+    sleep(2);
+
+    try {
+      brev("refresh");
+    } catch {
+      // Ignore transient refresh failures and rely on the next existence check.
+    }
+
+    if (!hasBrevInstance(instanceName)) {
+      return true;
+    }
+
+    if (attempt < attempts) {
+      sleep(intervalSeconds);
+    }
+  }
+
+  return !hasBrevInstance(instanceName);
 }
 
 function ssh(cmd, { timeout = 120_000, stream = false } = {}) {
@@ -193,36 +238,67 @@ function runRemoteTest(scriptPath) {
   return ssh("cat /tmp/test-output.log", { timeout: 30_000 });
 }
 
+function runLocalDeploy(instanceName) {
+  const env = {
+    ...process.env,
+    NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    NEMOCLAW_SANDBOX_NAME: "e2e-test",
+    NEMOCLAW_PROVIDER: process.env.NEMOCLAW_PROVIDER || "build",
+    NEMOCLAW_DEPLOY_NO_CONNECT: "1",
+    NEMOCLAW_DEPLOY_NO_START_SERVICES: "1",
+  };
+
+  execFileSync("node", [CLI_PATH, "deploy", instanceName], {
+    timeout: 2_700_000,
+    env,
+    stdio: "inherit",
+  });
+}
+
 // --- suite ------------------------------------------------------------------
 
-const REQUIRED_VARS = ["BREV_API_TOKEN", "NVIDIA_API_KEY", "GITHUB_TOKEN", "INSTANCE_NAME"];
+const REQUIRED_VARS = ["NVIDIA_API_KEY", "GITHUB_TOKEN", "INSTANCE_NAME"];
 const hasRequiredVars = REQUIRED_VARS.every((key) => process.env[key]);
+const hasAuthenticatedBrev = (() => {
+  try {
+    brev("ls");
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
-describe.runIf(hasRequiredVars)("Brev E2E", () => {
+describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   beforeAll(() => {
     const bootstrapStart = Date.now();
     const elapsed = () => `${Math.round((Date.now() - bootstrapStart) / 1000)}s`;
-
-    // Authenticate with Brev
-    mkdirSync(path.join(homedir(), ".brev"), { recursive: true });
-    writeFileSync(
-      path.join(homedir(), ".brev", "onboarding_step.json"),
-      '{"step":1,"hasRunBrevShell":true,"hasRunBrevOpen":true}',
-    );
-    brev("login", "--token", process.env.BREV_API_TOKEN);
 
     // Pre-cleanup: delete any leftover instance with the same name.
     // This can happen when a previous run's create succeeded on the backend
     // but the CLI got a network error (unexpected EOF) before confirming,
     // then the retry/fallback fails with "duplicate workspace".
-    try {
-      brev("delete", INSTANCE_NAME);
+    if (hasBrevInstance(INSTANCE_NAME)) {
+      if (!deleteBrevInstance(INSTANCE_NAME)) {
+        throw new Error(`Failed to delete leftover instance "${INSTANCE_NAME}"`);
+      }
       console.log(`[${elapsed()}] Deleted leftover instance "${INSTANCE_NAME}"`);
-    } catch {
-      // Expected — no leftover instance exists
     }
 
-    if (USE_LAUNCHABLE) {
+    if (TEST_SUITE === "deploy-cli") {
+      console.log(`[${elapsed()}] Running nemoclaw deploy end to end...`);
+      instanceCreated = true;
+      runLocalDeploy(INSTANCE_NAME);
+      try {
+        brev("refresh");
+      } catch {
+        /* ignore */
+      }
+      waitForSsh();
+      console.log(`[${elapsed()}] SSH is up after deploy`);
+      const remoteHome = ssh("echo $HOME");
+      remoteDir = `${remoteHome}/nemoclaw`;
+    } else {
       // ── Launchable path: pre-baked CI environment ──────────────────
       // Uses brev search cpu | brev create with --startup-script.
       // The script pre-installs Docker, Node.js, OpenShell CLI, npm deps,
@@ -499,7 +575,7 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
               nimContainer: null,
               provider: null,
               gpuEnabled: false,
-              policies: [],
+              policies: ["pypi", "npm"],
             },
           },
         },
@@ -511,81 +587,6 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
         { timeout: 15_000 },
       );
       console.log(`[${elapsed()}] Registry written, onboard workaround complete`);
-    } else {
-      // ── Bare instance path: brev create + brev-setup.sh ────────────
-      // Full bootstrap from scratch. Slower but doesn't require a launchable.
-      console.log(`[${elapsed()}] Creating bare CPU instance via brev search cpu | brev create...`);
-      console.log(
-        `[${elapsed()}]   min-vcpu: ${BREV_MIN_VCPU}, min-ram: ${BREV_MIN_RAM}GB, disk: ${BREV_MIN_DISK}GB, provider: ${BREV_PROVIDER}`,
-      );
-      try {
-        execSync(
-          `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --min-disk ${BREV_MIN_DISK} --provider ${BREV_PROVIDER} --sort price | ` +
-            `brev create ${INSTANCE_NAME} --detached`,
-          { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
-        );
-      } catch (createErr) {
-        console.log(
-          `[${elapsed()}] brev create exited with error — checking if instance was created anyway...`,
-        );
-        try {
-          brev("refresh");
-        } catch {
-          /* ignore */
-        }
-        const lsOutput = execSync(`brev ls 2>&1 || true`, { encoding: "utf-8", timeout: 30_000 });
-        if (!lsOutput.includes(INSTANCE_NAME)) {
-          throw new Error(
-            `brev create failed and instance "${INSTANCE_NAME}" not found in brev ls. ` +
-              `Original error: ${createErr.message}`,
-            { cause: createErr },
-          );
-        }
-        console.log(
-          `[${elapsed()}] Instance "${INSTANCE_NAME}" found in brev ls despite create error — proceeding`,
-        );
-      }
-      instanceCreated = true;
-      console.log(`[${elapsed()}] brev create returned (instance provisioning in background)`);
-
-      // Wait for SSH
-      try {
-        brev("refresh");
-      } catch {
-        /* ignore */
-      }
-      waitForSsh();
-      console.log(`[${elapsed()}] SSH is up`);
-
-      // Sync code
-      const remoteHome = ssh("echo $HOME");
-      remoteDir = `${remoteHome}/nemoclaw`;
-      ssh(`mkdir -p ${remoteDir}`);
-      execSync(
-        `rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .venv "${REPO_DIR}/" "${INSTANCE_NAME}:${remoteDir}/"`,
-        { encoding: "utf-8", timeout: 120_000 },
-      );
-      console.log(`[${elapsed()}] Code synced`);
-
-      // Bootstrap VM — stream output to CI log so we can see progress
-      console.log(`[${elapsed()}] Running brev-setup.sh (bootstrap)...`);
-      sshEnv(`cd ${remoteDir} && SKIP_VLLM=1 bash scripts/brev-setup.sh`, {
-        timeout: 2_400_000,
-        stream: true,
-      });
-      console.log(`[${elapsed()}] Bootstrap complete`);
-
-      // Verify the CLI installed by brev-setup.sh is visible
-      console.log(`[${elapsed()}] Verifying nemoclaw CLI...`);
-      ssh(
-        [
-          `export npm_config_prefix=$HOME/.local`,
-          `export PATH=$HOME/.local/bin:$PATH`,
-          `which nemoclaw && nemoclaw --version`,
-        ].join(" && "),
-        { timeout: 120_000 },
-      );
-      console.log(`[${elapsed()}] nemoclaw CLI verified`);
     }
 
     // Verify sandbox registry (common to both paths)
@@ -597,7 +598,7 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
     expect(sandbox).toMatchObject({
       name: "e2e-test",
       gpuEnabled: false,
-      policies: [],
+      policies: ["pypi", "npm"],
     });
     console.log(`[${elapsed()}] Sandbox registry verified`);
 
@@ -612,10 +613,8 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       console.log(`  To delete:  brev delete ${INSTANCE_NAME}\n`);
       return;
     }
-    try {
-      brev("delete", INSTANCE_NAME);
-    } catch {
-      // Best-effort cleanup — instance may already be gone
+    if (!deleteBrevInstance(INSTANCE_NAME)) {
+      throw new Error(`Failed to delete Brev instance "${INSTANCE_NAME}" during test cleanup`);
     }
   });
 
@@ -651,5 +650,22 @@ describe.runIf(hasRequiredVars)("Brev E2E", () => {
       expect(output).not.toMatch(/FAIL:/);
     },
     600_000,
+  );
+
+  it.runIf(TEST_SUITE === "deploy-cli")(
+    "deploy CLI provisions a remote sandbox end to end",
+    () => {
+      const sandboxList = ssh(
+        "export PATH=$HOME/.local/bin:$PATH && openshell sandbox list 2>/dev/null",
+        { timeout: 30_000 },
+      );
+      expect(sandboxList).toContain("e2e-test");
+      expect(sandboxList).toContain("Ready");
+
+      const registry = JSON.parse(ssh("cat ~/.nemoclaw/sandboxes.json", { timeout: 10_000 }));
+      expect(registry.defaultSandbox).toBe("e2e-test");
+      expect(registry.sandboxes).toHaveProperty("e2e-test");
+    },
+    120_000,
   );
 });
