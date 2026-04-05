@@ -124,6 +124,62 @@ describe("uninstall helpers", () => {
     expect(`${result.stdout}${result.stderr}`).toMatch(/not an installer-managed shim/);
   });
 
+  it("removes an installer-managed nemoclaw wrapper file in the shim directory", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-wrapper-"));
+    const shimDir = path.join(tmp, ".local", "bin");
+    const shimPath = path.join(shimDir, "nemoclaw");
+
+    fs.mkdirSync(shimDir, { recursive: true });
+    fs.writeFileSync(
+      shimPath,
+      [
+        "#!/usr/bin/env bash",
+        'export PATH="/tmp/node-bin:$PATH"',
+        'exec "/tmp/prefix/bin/nemoclaw" "$@"',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const result = spawnSync("bash", ["-c", `source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_cli`], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: createFakeNpmEnv(tmp),
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(shimPath)).toBe(false);
+  });
+
+  it("preserves a wrapper-like shim when extra content is appended", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-wrapper-extra-"));
+    const shimDir = path.join(tmp, ".local", "bin");
+    const shimPath = path.join(shimDir, "nemoclaw");
+
+    fs.mkdirSync(shimDir, { recursive: true });
+    fs.writeFileSync(
+      shimPath,
+      [
+        "#!/usr/bin/env bash",
+        'export PATH="/tmp/node-bin:$PATH"',
+        'exec "/tmp/prefix/bin/nemoclaw" "$@"',
+        "echo user-extra",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const result = spawnSync("bash", ["-c", `source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_cli`], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: createFakeNpmEnv(tmp),
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(shimPath)).toBe(true);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/not an installer-managed shim/);
+  });
+
   it("removes the onboard session file as part of NemoClaw state cleanup", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-session-"));
     const stateDir = path.join(tmp, ".nemoclaw");

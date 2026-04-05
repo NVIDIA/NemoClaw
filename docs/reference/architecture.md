@@ -2,7 +2,9 @@
 title:
   page: "NemoClaw Architecture — Plugin, Blueprint, and Sandbox Structure"
   nav: "Architecture"
-description: "Learn how NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox."
+description:
+  main: "Learn how NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox."
+  agent: "Describes how NemoClaw combines a CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox. Use when looking up NemoClaw architecture, plugin structure, or blueprint design."
 keywords: ["nemoclaw architecture", "nemoclaw plugin blueprint structure"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "blueprints", "inference_routing"]
@@ -168,7 +170,7 @@ OpenShell intercepts them and routes to the configured provider:
 Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA Endpoint (build.nvidia.com)
 ```
 
-Refer to [Inference Profiles](../reference/inference-profiles.md) for provider configuration details.
+Refer to [Inference Options](../inference/inference-options.md) for provider configuration details.
 
 ## Host-Side State and Config
 

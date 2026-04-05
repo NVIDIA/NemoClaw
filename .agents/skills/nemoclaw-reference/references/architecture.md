@@ -2,6 +2,67 @@
 
 NemoClaw has two main components: a TypeScript plugin that integrates with the OpenClaw CLI, and a Python blueprint that orchestrates OpenShell resources.
 
+## System Overview
+
+NVIDIA OpenShell is a general-purpose agent runtime. It provides sandbox containers, a credential-storing gateway, inference proxying, and policy enforcement, but has no opinions about what runs inside. NemoClaw is an opinionated reference stack built on OpenShell that handles what goes in the sandbox and makes the setup accessible.
+
+```mermaid
+graph LR
+    classDef nemoclaw fill:#76b900,stroke:#5a8f00,color:#fff,stroke-width:2px,font-weight:bold
+    classDef openshell fill:#1a1a1a,stroke:#1a1a1a,color:#fff,stroke-width:2px,font-weight:bold
+    classDef sandbox fill:#444,stroke:#76b900,color:#fff,stroke-width:2px,font-weight:bold
+    classDef agent fill:#f5f5f5,stroke:#e0e0e0,color:#1a1a1a,stroke-width:1px
+    classDef external fill:#f5f5f5,stroke:#e0e0e0,color:#1a1a1a,stroke-width:1px
+    classDef user fill:#fff,stroke:#76b900,color:#1a1a1a,stroke-width:2px,font-weight:bold
+
+    USER(["👤 User"]):::user
+
+    subgraph EXTERNAL["External Services"]
+        INFERENCE["Inference Provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM</small>"]:::external
+        MSGAPI["Messaging Platforms<br/><small>Telegram · Discord · Slack</small>"]:::external
+        INTERNET["Internet<br/><small>PyPI · npm · GitHub · APIs</small>"]:::external
+    end
+
+    subgraph HOST["Host Machine"]
+
+        subgraph NEMOCLAW["NemoClaw"]
+            direction TB
+            NCLI["CLI + Onboarding<br/><small>Guided setup · provider selection<br/>credential validation · deploy</small>"]:::nemoclaw
+            BRIDGE["Messaging Bridges<br/><small>Connect chat platforms<br/>to sandboxed agent</small>"]:::nemoclaw
+            BP["Blueprint<br/><small>Hardened Dockerfile<br/>Network policies · Presets<br/>Security configuration</small>"]:::nemoclaw
+            MIGRATE["State Management<br/><small>Migration snapshots<br/>Credential stripping<br/>Integrity verification</small>"]:::nemoclaw
+        end
+
+        subgraph OPENSHELL["OpenShell"]
+            direction TB
+            GW["Gateway<br/><small>Credential store<br/>Inference proxy<br/>Policy engine<br/>Device auth</small>"]:::openshell
+            OSCLI["openshell CLI<br/><small>provider · sandbox<br/>gateway · policy</small>"]:::openshell
+
+            subgraph SANDBOX["Sandbox Container 🔒"]
+                direction TB
+                AGENT["Agent<br/><small>OpenClaw or any<br/>compatible agent</small>"]:::agent
+                PLUG["NemoClaw Plugin<br/><small>Extends agent with<br/>managed configuration</small>"]:::sandbox
+            end
+        end
+    end
+
+    USER -->|"nemoclaw onboard<br/>nemoclaw connect"| NCLI
+    USER -->|"Chat messages"| MSGAPI
+
+    NCLI -->|"Orchestrates"| OSCLI
+    BP -->|"Defines sandbox<br/>shape + policies"| SANDBOX
+    MIGRATE -->|"Safe state<br/>transfer"| SANDBOX
+
+    AGENT -->|"Inference requests<br/><small>no credentials</small>"| GW
+    GW -->|"Proxied with<br/>credential injected"| INFERENCE
+
+    MSGAPI -->|"Bot messages"| BRIDGE
+    BRIDGE -->|"Relayed as data<br/>via SSH"| AGENT
+
+    AGENT -.->|"Policy-gated"| INTERNET
+    GW -.->|"Enforced by<br/>gateway"| INTERNET
+```
+
 ## NemoClaw Plugin
 
 The plugin is a thin TypeScript package that registers an inference provider and the `/nemoclaw` slash command.
@@ -87,4 +148,24 @@ OpenShell intercepts them and routes to the configured provider:
 Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA Endpoint (build.nvidia.com)
 ```
 
-Refer to Inference Profiles (see the `nemoclaw-reference` skill) for provider configuration details.
+Refer to Inference Options (see the `nemoclaw-configure-inference` skill) for provider configuration details.
+
+## Host-Side State and Config
+
+NemoClaw keeps its operator-facing state on the host rather than inside the sandbox.
+
+| Path | Purpose |
+|---|---|
+| `~/.nemoclaw/credentials.json` | Provider credentials saved during onboarding. |
+| `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata, including the default sandbox selection. |
+| `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw snapshots or restores during migration flows. |
+
+The following environment variables configure optional services and local access.
+
+| Variable | Purpose |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Bot token for the Telegram bridge. |
+| `ALLOWED_CHAT_IDS` | Comma-separated list of Telegram chat IDs allowed to message the agent. |
+| `CHAT_UI_URL` | URL for the optional chat UI endpoint. |
+
+For normal setup and reconfiguration, prefer `nemoclaw onboard` over editing these files by hand.
