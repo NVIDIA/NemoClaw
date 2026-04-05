@@ -4,7 +4,13 @@
 version: "0.1.0"
 min_openshell_version: "0.1.0"
 min_openclaw_version: "2026.3.0"
-digest: ""  # Computed at release time
+# Supply-chain integrity: populate the digest after building/pulling the
+# pinned image so that the blueprint is tied to an exact manifest:
+#   docker pull ghcr.io/nvidia/openshell-community/sandboxes/openclaw:0.1.0
+#   docker inspect --format='{{index .RepoDigests 0}}' \
+#       ghcr.io/nvidia/openshell-community/sandboxes/openclaw:0.1.0
+# Then paste the sha256:... value below.
+digest: ""  # TODO: pin after first 0.1.0 image publish
 
 profiles:
   - default
@@ -18,7 +24,7 @@ description: |
 
 components:
   sandbox:
-    image: "ghcr.io/nvidia/openshell-community/sandboxes/openclaw:latest"
+    image: "ghcr.io/nvidia/openshell-community/sandboxes/openclaw:0.1.0"
     name: "openclaw"
     forward_ports:
       - 18789
