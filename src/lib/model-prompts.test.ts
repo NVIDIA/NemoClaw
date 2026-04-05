@@ -52,6 +52,22 @@ describe("model prompt helpers", () => {
     );
   });
 
+  it("returns back-to-selection with a clear message when the NVIDIA key is missing", async () => {
+    const errorLine = vi.fn();
+    const result = await promptCloudModel({
+      promptFn: promptSequence(["abc"]),
+      errorLine,
+      writeLine: vi.fn(),
+      cloudModelOptions: [{ id: "nemotron", label: "Nemotron" }],
+      getCredentialFn: () => null,
+    });
+
+    expect(result).toBe(BACK_TO_SELECTION);
+    expect(errorLine).toHaveBeenCalledWith(
+      "  NVIDIA_API_KEY is required before validating a custom NVIDIA Endpoints model.",
+    );
+  });
+
   it("returns back-to-selection for manual ids and input prompts", async () => {
     await expect(
       promptManualModelId("  Model: ", "Provider", null, { promptFn: promptSequence(["back"]) }),
@@ -68,6 +84,15 @@ describe("model prompt helpers", () => {
     });
 
     expect(result).toBe("gpt-5.4-mini");
+  });
+
+  it("treats non-numeric curated selections as manual-entry fallback", async () => {
+    const result = await promptRemoteModel("OpenAI", "openai", "gpt-5.4-mini", null, {
+      promptFn: promptSequence(["abc", "custom-model"]),
+      writeLine: vi.fn(),
+    });
+
+    expect(result).toBe("custom-model");
   });
 
   it("retries invalid input models until validation succeeds", async () => {

@@ -77,7 +77,12 @@ export function fetchNvidiaEndpointModels(
     }
     return { ok: true, ids: parseModelIds(result.body) };
   } catch (error) {
-    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    return {
+      ok: false,
+      status: 0,
+      curlStatus: 0,
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
