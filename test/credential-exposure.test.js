@@ -63,7 +63,19 @@ describe("credential exposure in process arguments", () => {
   it("onboard.js does not embed sandbox secrets in the sandbox create command line", () => {
     const src = fs.readFileSync(ONBOARD_JS, "utf-8");
 
-    expect(src).toMatch(/const sandboxEnv = \{ \.\.\.process\.env \};/);
+    // sandboxEnv must be built with a blocklist that strips all credential env vars.
+    // The blocklist derives provider keys from REMOTE_PROVIDER_CONFIG and adds
+    // messaging tokens explicitly. Verify both mechanisms are present.
+    const blocklistMatch = src.match(/const blockedSandboxEnvNames = new Set\(\[([\s\S]*?)\]\);/);
+    expect(blocklistMatch).not.toBeNull();
+    const blocklist = blocklistMatch[1];
+    // Provider credentials are derived from REMOTE_PROVIDER_CONFIG
+    expect(blocklist).toContain("REMOTE_PROVIDER_CONFIG");
+    // Messaging and additional credentials are listed explicitly
+    expect(blocklist).toContain('"BEDROCK_API_KEY"');
+    expect(blocklist).toContain('"DISCORD_BOT_TOKEN"');
+    expect(blocklist).toContain('"SLACK_BOT_TOKEN"');
+    expect(blocklist).toContain('"TELEGRAM_BOT_TOKEN"');
     expect(src).toMatch(/streamSandboxCreate\(createCommand, sandboxEnv(?:, \{)?/);
     expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("NVIDIA_API_KEY"/);
     expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("DISCORD_BOT_TOKEN"/);

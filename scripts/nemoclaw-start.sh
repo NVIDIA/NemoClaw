@@ -137,6 +137,25 @@ os.chmod(path, 0o600)
 PYAUTH
 }
 
+configure_messaging_channels() {
+  # Channel entries are baked into openclaw.json at image build time via
+  # NEMOCLAW_MESSAGING_CHANNELS_B64 (see Dockerfile). Placeholder tokens
+  # (openshell:resolve:env:*) flow through to API calls where the L7 proxy
+  # rewrites them with real secrets at egress. Real tokens are never visible
+  # inside the sandbox.
+  #
+  # Runtime patching of /sandbox/.openclaw/openclaw.json is not possible:
+  # Landlock enforces read-only on /sandbox/.openclaw/ at the kernel level,
+  # regardless of DAC (file ownership/chmod). Writes fail with EPERM.
+  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || [ -n "${DISCORD_BOT_TOKEN:-}" ] || [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
+
+  echo "[channels] Messaging channels active (baked at build time):" >&2
+  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && echo "[channels]   telegram (native)" >&2
+  [ -n "${DISCORD_BOT_TOKEN:-}" ] && echo "[channels]   discord (native)" >&2
+  [ -n "${SLACK_BOT_TOKEN:-}" ] && echo "[channels]   slack (native)" >&2
+  return 0
+}
+
 print_dashboard_urls() {
   local token chat_ui_base local_url remote_url
 
@@ -190,7 +209,7 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 # is defense-in-depth, not a trust boundary. PR #690 adds one-shot exit,
 # timeout reduction, and token cleanup for a more comprehensive fix.
 ALLOWED_CLIENTS = {'openclaw-control-ui'}
-ALLOWED_MODES = {'webchat'}
+ALLOWED_MODES = {'webchat', 'cli'}
 
 def run(*args):
     proc = subprocess.run(args, capture_output=True, text=True)
@@ -345,6 +364,7 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
+  configure_messaging_channels
   write_auth_profile
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
@@ -374,6 +394,11 @@ fi
 
 # Verify config integrity before starting anything
 verify_config_integrity
+
+# Inject messaging channel config if provider tokens are present.
+# Must run AFTER integrity check (to detect build-time tampering) and
+# BEFORE chattr +i (which locks the config permanently).
+configure_messaging_channels
 
 # Write auth profile as sandbox user (needs writable .openclaw-data)
 gosu sandbox bash -c "$(declare -f write_auth_profile); write_auth_profile"

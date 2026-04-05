@@ -19,6 +19,10 @@ name: e2e-brev
 #                              through $(cmd), backticks, quote breakout, ${VAR} expansion,
 #                              process table leak checks, and SANDBOX_NAME validation.
 #                              Requires running sandbox.
+#   messaging-providers      — 20+ tests validating PR #1081: provider creation, credential
+#                              isolation, openclaw.json config patching, network reachability,
+#                              and L7 proxy token rewriting for Telegram + Discord. Creates
+#                              its own sandbox (e2e-msg-provider). (~15 min)
 #   all                      — Runs credential-sanitization + telegram-injection (NOT full,
 #                              which destroys the sandbox the security tests need).
 #
@@ -41,6 +45,7 @@ on:
           - full
           - credential-sanitization
           - telegram-injection
+          - messaging-providers
           - all
       use_launchable:
         description: "Use CI launchable (true) or bare brev create + brev-setup.sh (false)"
