@@ -559,6 +559,24 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("rejects sandbox names starting with a digit", () => {
+    // The validation regex must require names to start with a letter,
+    // not a digit — Kubernetes rejects digit-prefixed names downstream.
+    const SANDBOX_NAME_REGEX = /^[a-z]([a-z0-9-]*[a-z0-9])?$/;
+
+    expect(SANDBOX_NAME_REGEX.test("my-assistant")).toBe(true);
+    expect(SANDBOX_NAME_REGEX.test("a")).toBe(true);
+    expect(SANDBOX_NAME_REGEX.test("agent-1")).toBe(true);
+    expect(SANDBOX_NAME_REGEX.test("test-sandbox-v2")).toBe(true);
+
+    expect(SANDBOX_NAME_REGEX.test("7racii")).toBe(false);
+    expect(SANDBOX_NAME_REGEX.test("1sandbox")).toBe(false);
+    expect(SANDBOX_NAME_REGEX.test("123")).toBe(false);
+    expect(SANDBOX_NAME_REGEX.test("-start-hyphen")).toBe(false);
+    expect(SANDBOX_NAME_REGEX.test("end-hyphen-")).toBe(false);
+    expect(SANDBOX_NAME_REGEX.test("")).toBe(false);
+  });
+
   it("passes credential names to openshell without embedding secret values in argv", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-inference-"));
@@ -1869,9 +1887,12 @@ const { setupInference } = require(${onboardPath});
     );
     assert.ok(fnMatch, "promptValidatedSandboxName function not found");
     const fnBody = fnMatch[1];
-    // Verify the retry loop exists within this function
-    assert.match(fnBody, /while\s*\(true\)/);
+    // Verify the bounded retry loop exists within this function
+    assert.match(fnBody, /MAX_ATTEMPTS/);
+    assert.match(fnBody, /for\s*\(let attempt/);
     assert.match(fnBody, /Please try again/);
+    // Exits after too many invalid attempts
+    assert.match(fnBody, /Too many invalid attempts/);
     // Non-interactive still exits within this function
     assert.match(fnBody, /isNonInteractive\(\)/);
     assert.match(fnBody, /process\.exit\(1\)/);

@@ -2394,23 +2394,28 @@ async function recoverGatewayRuntime() {
 // ── Step 3: Sandbox ──────────────────────────────────────────────
 
 async function promptValidatedSandboxName() {
-  while (true) {
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const nameAnswer = await promptOrDefault(
-      "  Sandbox name (lowercase, numbers, hyphens) [my-assistant]: ",
+      "  Sandbox name (lowercase, starts with letter, hyphens ok) [my-assistant]: ",
       "NEMOCLAW_SANDBOX_NAME",
       "my-assistant",
     );
     const sandboxName = (nameAnswer || "my-assistant").trim().toLowerCase();
 
     // Validate: RFC 1123 subdomain — lowercase alphanumeric and hyphens,
-    // must start and end with alphanumeric (required by Kubernetes/OpenShell)
-    if (/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName)) {
+    // must start with a letter (not a digit) to satisfy Kubernetes naming.
+    if (/^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName)) {
       return sandboxName;
     }
 
     console.error(`  Invalid sandbox name: '${sandboxName}'`);
-    console.error("  Names must be lowercase, contain only letters, numbers, and hyphens,");
-    console.error("  and must start and end with a letter or number.");
+    if (/^[0-9]/.test(sandboxName)) {
+      console.error("  Names must start with a letter, not a digit.");
+    } else {
+      console.error("  Names must be lowercase, contain only letters, numbers, and hyphens,");
+      console.error("  must start with a letter, and end with a letter or number.");
+    }
 
     // Non-interactive runs cannot re-prompt — abort so the caller can fix the
     // NEMOCLAW_SANDBOX_NAME env var and retry.
@@ -2418,8 +2423,13 @@ async function promptValidatedSandboxName() {
       process.exit(1);
     }
 
-    console.error("  Please try again.\n");
+    if (attempt < MAX_ATTEMPTS - 1) {
+      console.error("  Please try again.\n");
+    }
   }
+
+  console.error("  Too many invalid attempts.");
+  process.exit(1);
 }
 
 // ── Step 5: Sandbox ──────────────────────────────────────────────
