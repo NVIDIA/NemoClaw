@@ -1,0 +1,87 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  BACK_TO_SELECTION,
+  promptCloudModel,
+  promptInputModel,
+  promptManualModelId,
+  promptRemoteModel,
+} from "./model-prompts";
+
+function promptSequence(responses: string[]) {
+  const queue = [...responses];
+  return vi.fn(async () => queue.shift() ?? "");
+}
+
+describe("model prompt helpers", () => {
+  it("returns the selected cloud model from the curated list", async () => {
+    const promptFn = promptSequence(["2"]);
+    const result = await promptCloudModel({
+      promptFn,
+      writeLine: vi.fn(),
+      cloudModelOptions: [
+        { id: "nemotron", label: "Nemotron" },
+        { id: "llama", label: "Llama" },
+      ],
+    });
+
+    expect(result).toBe("llama");
+  });
+
+  it("validates manual cloud model ids against the saved NVIDIA key", async () => {
+    const promptFn = promptSequence(["9", "bad-model", "nemotron-custom"]);
+    const errorLine = vi.fn();
+    const result = await promptCloudModel({
+      promptFn,
+      errorLine,
+      writeLine: vi.fn(),
+      cloudModelOptions: [{ id: "nemotron", label: "Nemotron" }],
+      getCredentialFn: () => "nvapi-test",
+      validateNvidiaEndpointModelFn: (model) => ({
+        ok: model === "nemotron-custom",
+        message: `Model '${model}' is not available from NVIDIA Endpoints. Checked https://integrate.api.nvidia.com/v1/models.`,
+      }),
+    });
+
+    expect(result).toBe("nemotron-custom");
+    expect(errorLine).toHaveBeenCalledWith(
+      "  Model 'bad-model' is not available from NVIDIA Endpoints. Checked https://integrate.api.nvidia.com/v1/models.",
+    );
+  });
+
+  it("returns back-to-selection for manual ids and input prompts", async () => {
+    await expect(
+      promptManualModelId("  Model: ", "Provider", null, { promptFn: promptSequence(["back"]) }),
+    ).resolves.toBe(BACK_TO_SELECTION);
+    await expect(
+      promptInputModel("Provider", "default-model", null, { promptFn: promptSequence(["back"]) }),
+    ).resolves.toBe(BACK_TO_SELECTION);
+  });
+
+  it("uses the default remote model choice when the user presses enter", async () => {
+    const result = await promptRemoteModel("OpenAI", "openai", "gpt-5.4-mini", null, {
+      promptFn: promptSequence([""]),
+      writeLine: vi.fn(),
+    });
+
+    expect(result).toBe("gpt-5.4-mini");
+  });
+
+  it("retries invalid input models until validation succeeds", async () => {
+    const promptFn = promptSequence(["bad model", "other", "candidate"]);
+    const errorLine = vi.fn();
+    const result = await promptInputModel(
+      "Custom",
+      "default-model",
+      (model) => ({ ok: model === "candidate", message: "try again" }),
+      { promptFn, errorLine },
+    );
+
+    expect(result).toBe("candidate");
+    expect(errorLine).toHaveBeenCalledWith("  Invalid Custom model id.");
+    expect(errorLine).toHaveBeenCalledWith("  try again");
+  });
+});

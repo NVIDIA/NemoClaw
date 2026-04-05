@@ -30,7 +30,6 @@ const {
   validateLocalProvider,
 } = require("./local-inference");
 const {
-  CLOUD_MODEL_OPTIONS,
   DEFAULT_CLOUD_MODEL,
   getProviderSelectionConfig,
   parseGatewayInference,
@@ -64,6 +63,7 @@ const urlUtils = require("../../dist/lib/url-utils");
 const buildContext = require("../../dist/lib/build-context");
 const dashboard = require("../../dist/lib/dashboard");
 const httpProbe = require("../../dist/lib/http-probe");
+const modelPrompts = require("../../dist/lib/model-prompts");
 const providerModels = require("../../dist/lib/provider-models");
 const validationRecovery = require("../../dist/lib/validation-recovery");
 const webSearch = require("../../dist/lib/web-search");
@@ -170,19 +170,6 @@ const REMOTE_PROVIDER_CONFIG = {
     defaultModel: "",
     skipVerify: true,
   },
-};
-
-const REMOTE_MODEL_OPTIONS = {
-  openai: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4-pro-2026-03-05"],
-  anthropic: ["claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"],
-  gemini: [
-    "gemini-3.1-pro-preview",
-    "gemini-3.1-flash-lite-preview",
-    "gemini-3-flash-preview",
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-  ],
 };
 
 // Non-interactive mode: set by --non-interactive flag or env var.
@@ -1377,119 +1364,13 @@ async function validateCustomAnthropicSelection(
   return { ok: false, retry };
 }
 
-const { validateNvidiaEndpointModel, validateAnthropicModel, validateOpenAiLikeModel } =
-  providerModels;
+const { promptManualModelId, promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
+const { validateAnthropicModel, validateOpenAiLikeModel } = providerModels;
 
-async function promptManualModelId(promptLabel, errorLabel, validator = null) {
-  while (true) {
-    const manual = await prompt(promptLabel);
-    const trimmed = manual.trim();
-    const navigation = getNavigationChoice(trimmed);
-    if (navigation === "back") {
-      return BACK_TO_SELECTION;
-    }
-    if (navigation === "exit") {
-      exitOnboardFromPrompt();
-    }
-    if (!trimmed || !isSafeModelId(trimmed)) {
-      console.error(`  Invalid ${errorLabel} model id.`);
-      continue;
-    }
-    if (validator) {
-      const validation = validator(trimmed);
-      if (!validation.ok) {
-        console.error(`  ${validation.message}`);
-        continue;
-      }
-    }
-    return trimmed;
-  }
-}
 // Build context helpers — delegated to src/lib/build-context.ts
 const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRecoveryHints } =
   buildContext;
 // classifySandboxCreateFailure — see validation import above
-
-async function promptCloudModel() {
-  console.log("");
-  console.log("  Cloud models:");
-  CLOUD_MODEL_OPTIONS.forEach((option, index) => {
-    console.log(`    ${index + 1}) ${option.label} (${option.id})`);
-  });
-  console.log(`    ${CLOUD_MODEL_OPTIONS.length + 1}) Other...`);
-  console.log("");
-
-  const choice = await prompt("  Choose model [1]: ");
-  const navigation = getNavigationChoice(choice);
-  if (navigation === "back") {
-    return BACK_TO_SELECTION;
-  }
-  if (navigation === "exit") {
-    exitOnboardFromPrompt();
-  }
-  const index = parseInt(choice || "1", 10) - 1;
-  if (index >= 0 && index < CLOUD_MODEL_OPTIONS.length) {
-    return CLOUD_MODEL_OPTIONS[index].id;
-  }
-
-  return promptManualModelId("  NVIDIA Endpoints model id: ", "NVIDIA Endpoints", (model) =>
-    validateNvidiaEndpointModel(model, getCredential("NVIDIA_API_KEY")),
-  );
-}
-
-async function promptRemoteModel(label, providerKey, defaultModel, validator = null) {
-  const options = REMOTE_MODEL_OPTIONS[providerKey] || [];
-  const defaultIndex = Math.max(0, options.indexOf(defaultModel));
-
-  console.log("");
-  console.log(`  ${label} models:`);
-  options.forEach((option, index) => {
-    console.log(`    ${index + 1}) ${option}`);
-  });
-  console.log(`    ${options.length + 1}) Other...`);
-  console.log("");
-
-  const choice = await prompt(`  Choose model [${defaultIndex + 1}]: `);
-  const navigation = getNavigationChoice(choice);
-  if (navigation === "back") {
-    return BACK_TO_SELECTION;
-  }
-  if (navigation === "exit") {
-    exitOnboardFromPrompt();
-  }
-  const index = parseInt(choice || String(defaultIndex + 1), 10) - 1;
-  if (index >= 0 && index < options.length) {
-    return options[index];
-  }
-
-  return promptManualModelId(`  ${label} model id: `, label, validator);
-}
-
-async function promptInputModel(label, defaultModel, validator = null) {
-  while (true) {
-    const value = await prompt(`  ${label} model [${defaultModel}]: `);
-    const navigation = getNavigationChoice(value);
-    if (navigation === "back") {
-      return BACK_TO_SELECTION;
-    }
-    if (navigation === "exit") {
-      exitOnboardFromPrompt();
-    }
-    const trimmed = (value || defaultModel).trim();
-    if (!trimmed || !isSafeModelId(trimmed)) {
-      console.error(`  Invalid ${label} model id.`);
-      continue;
-    }
-    if (validator) {
-      const validation = validator(trimmed);
-      if (!validation.ok) {
-        console.error(`  ${validation.message}`);
-        continue;
-      }
-    }
-    return trimmed;
-  }
-}
 
 async function promptOllamaModel(gpu = null) {
   const installed = getOllamaModelOptions(runCapture);
