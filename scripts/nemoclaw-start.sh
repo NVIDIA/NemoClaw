@@ -190,7 +190,7 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 # is defense-in-depth, not a trust boundary. PR #690 adds one-shot exit,
 # timeout reduction, and token cleanup for a more comprehensive fix.
 ALLOWED_CLIENTS = {'openclaw-control-ui'}
-ALLOWED_MODES = {'webchat'}
+ALLOWED_MODES = {'webchat', 'cli'}
 
 def run(*args):
     proc = subprocess.run(args, capture_output=True, text=True)
