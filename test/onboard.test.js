@@ -1240,14 +1240,23 @@ const { setupInference } = require(${onboardPath});
   });
 
   it("uses split curl timeout args and does not mislabel curl usage errors as timeouts", () => {
-    const source = fs.readFileSync(
+    const onboardSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
+      "utf-8",
+    );
+    const probeSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "http-probe.ts"),
+      "utf-8",
+    );
+    const recoverySource = fs.readFileSync(
       path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
       "utf-8",
     );
 
-    assert.match(source, /return \["--connect-timeout", "10", "--max-time", "60"\];/);
-    assert.match(source, /failure\.curlStatus === 2/);
-    assert.match(source, /local curl invocation error/);
+    assert.match(onboardSource, /http-probe/);
+    assert.match(probeSource, /return \["--connect-timeout", "10", "--max-time", "60"\];/);
+    assert.match(recoverySource, /failure\.curlStatus === 2/);
+    assert.match(recoverySource, /local curl invocation error/);
   });
 
   it("suppresses expected provider-create AlreadyExists noise when update succeeds", () => {

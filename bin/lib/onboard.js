@@ -63,6 +63,7 @@ const validation = require("../../dist/lib/validation");
 const urlUtils = require("../../dist/lib/url-utils");
 const buildContext = require("../../dist/lib/build-context");
 const dashboard = require("../../dist/lib/dashboard");
+const httpProbe = require("../../dist/lib/http-probe");
 const webSearch = require("../../dist/lib/web-search");
 
 /**
@@ -625,23 +626,7 @@ function hydrateCredentialEnv(envName) {
   return value || null;
 }
 
-function getCurlTimingArgs() {
-  return ["--connect-timeout", "10", "--max-time", "60"];
-}
-
-function summarizeCurlFailure(curlStatus = 0, stderr = "", body = "") {
-  const detail = compactText(stderr || body);
-  return detail
-    ? `curl failed (exit ${curlStatus}): ${detail.slice(0, 200)}`
-    : `curl failed (exit ${curlStatus})`;
-}
-
-function summarizeProbeFailure(body = "", status = 0, curlStatus = 0, stderr = "") {
-  if (curlStatus) {
-    return summarizeCurlFailure(curlStatus, stderr, body);
-  }
-  return summarizeProbeError(body, status);
-}
+const { getCurlTimingArgs, summarizeCurlFailure, summarizeProbeFailure, runCurlProbe } = httpProbe;
 
 function getNavigationChoice(value = "") {
   const normalized = String(value || "")
@@ -724,65 +709,6 @@ function getProbeRecovery(probe, options = {}) {
     return { kind: "unknown", retry: "selection" };
   }
   return fallback;
-}
-
-// eslint-disable-next-line complexity
-function runCurlProbe(argv) {
-  const bodyFile = secureTempFile("nemoclaw-curl-probe", ".json");
-  try {
-    const args = [...argv];
-    const url = args.pop();
-    const result = spawnSync("curl", [...args, "-o", bodyFile, "-w", "%{http_code}", url], {
-      cwd: ROOT,
-      encoding: "utf8",
-      timeout: 30_000,
-      env: {
-        ...process.env,
-      },
-    });
-    const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
-    if (result.error) {
-      const spawnError = /** @type {NodeJS.ErrnoException} */ (result.error);
-      const rawErrorCode = spawnError.errno ?? spawnError.code;
-      const errorCode = typeof rawErrorCode === "number" ? rawErrorCode : 1;
-      const errorMessage = compactText(
-        `${spawnError.message || String(spawnError)} ${String(result.stderr || "")}`,
-      );
-      return {
-        ok: false,
-        httpStatus: 0,
-        curlStatus: errorCode,
-        body,
-        stderr: errorMessage,
-        message: summarizeProbeFailure(body, 0, errorCode, errorMessage),
-      };
-    }
-    const status = Number(String(result.stdout || "").trim());
-    return {
-      ok: result.status === 0 && status >= 200 && status < 300,
-      httpStatus: Number.isFinite(status) ? status : 0,
-      curlStatus: result.status || 0,
-      body,
-      stderr: String(result.stderr || ""),
-      message: summarizeProbeFailure(
-        body,
-        status || 0,
-        result.status || 0,
-        String(result.stderr || ""),
-      ),
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      httpStatus: 0,
-      curlStatus: error?.status || 1,
-      body: "",
-      stderr: error?.message || String(error),
-      message: summarizeCurlFailure(error?.status || 1, error?.message || String(error)),
-    };
-  } finally {
-    cleanupTempDir(bodyFile, "nemoclaw-curl-probe");
-  }
 }
 
 // validateNvidiaApiKeyValue — see validation import above
@@ -1292,24 +1218,6 @@ function patchStagedDockerfile(
     );
   }
   fs.writeFileSync(dockerfilePath, dockerfile);
-}
-
-function summarizeProbeError(body, status) {
-  if (!body) return `HTTP ${status} with no response body`;
-  try {
-    const parsed = JSON.parse(body);
-    const message =
-      parsed?.error?.message ||
-      parsed?.error?.details ||
-      parsed?.message ||
-      parsed?.detail ||
-      parsed?.details;
-    if (message) return `HTTP ${status}: ${String(message)}`;
-  } catch {
-    /* non-JSON body — fall through to raw text */
-  }
-  const compact = String(body).replace(/\s+/g, " ").trim();
-  return `HTTP ${status}: ${compact.slice(0, 200)}`;
 }
 
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
