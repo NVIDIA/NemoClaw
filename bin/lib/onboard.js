@@ -2515,6 +2515,7 @@ async function createSandbox(
   preferredInferenceApi = null,
   sandboxNameOverride = null,
   webSearchConfig = null,
+  enabledChannels = null,
 ) {
   step(6, 8, "Creating sandbox");
 
@@ -2526,6 +2527,15 @@ async function createSandbox(
   // without provider attachments (security: prevents legacy raw-env-var leaks).
   const getMessagingToken = (envKey) =>
     getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
+
+  // When enabledChannels is provided (from the toggle picker), only include
+  // channels the user selected. When null (backward compat), include all.
+  const enabledEnvKeys =
+    enabledChannels != null
+      ? new Set(
+          MESSAGING_CHANNELS.filter((c) => enabledChannels.includes(c.name)).map((c) => c.envKey),
+        )
+      : null;
 
   const messagingTokenDefs = [
     {
@@ -2543,7 +2553,7 @@ async function createSandbox(
       envKey: "TELEGRAM_BOT_TOKEN",
       token: getMessagingToken("TELEGRAM_BOT_TOKEN"),
     },
-  ];
+  ].filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey));
   const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
 
   // Reconcile local registry state with the live OpenShell gateway state.
@@ -3570,7 +3580,7 @@ async function setupMessagingChannels() {
     } else {
       note("  [non-interactive] No messaging tokens configured. Skipping.");
     }
-    return;
+    return found;
   }
 
   // Single-keypress toggle selector — pre-select channels that already have tokens.
@@ -3663,7 +3673,7 @@ async function setupMessagingChannels() {
   const selected = Array.from(enabled);
   if (selected.length === 0) {
     console.log("  Skipping messaging channels.");
-    return;
+    return [];
   }
 
   // For each selected channel, prompt for token if not already set
@@ -3706,6 +3716,7 @@ async function setupMessagingChannels() {
     }
   }
   console.log("");
+  return selected;
 }
 
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
@@ -4448,7 +4459,7 @@ async function onboard(opts = {}) {
           }
         }
       }
-      await setupMessagingChannels();
+      const enabledChannels = await setupMessagingChannels();
 
       startRecordedStep("sandbox", { sandboxName, provider, model });
       sandboxName = await createSandbox(
@@ -4458,6 +4469,7 @@ async function onboard(opts = {}) {
         preferredInferenceApi,
         sandboxName,
         webSearchConfig,
+        enabledChannels,
       );
       onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
     }
