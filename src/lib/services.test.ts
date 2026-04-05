@@ -26,17 +26,16 @@ describe("getServiceStatuses", () => {
 
   it("returns stopped status when no PID files exist", () => {
     const statuses = getServiceStatuses({ pidDir });
-    expect(statuses).toHaveLength(2);
+    expect(statuses).toHaveLength(1);
     for (const s of statuses) {
       expect(s.running).toBe(false);
       expect(s.pid).toBeNull();
     }
   });
 
-  it("returns service names telegram-bridge and cloudflared", () => {
+  it("returns service name cloudflared", () => {
     const statuses = getServiceStatuses({ pidDir });
     const names = statuses.map((s) => s.name);
-    expect(names).toContain("telegram-bridge");
     expect(names).toContain("cloudflared");
   });
 
@@ -51,18 +50,18 @@ describe("getServiceStatuses", () => {
   });
 
   it("ignores invalid PID file contents", () => {
-    writeFileSync(join(pidDir, "telegram-bridge.pid"), "not-a-number");
+    writeFileSync(join(pidDir, "cloudflared.pid"), "not-a-number");
     const statuses = getServiceStatuses({ pidDir });
-    const tg = statuses.find((s) => s.name === "telegram-bridge");
-    expect(tg?.pid).toBeNull();
-    expect(tg?.running).toBe(false);
+    const cf = statuses.find((s) => s.name === "cloudflared");
+    expect(cf?.pid).toBeNull();
+    expect(cf?.running).toBe(false);
   });
 
   it("creates pidDir if it does not exist", () => {
     const nested = join(pidDir, "nested", "deep");
     const statuses = getServiceStatuses({ pidDir: nested });
     expect(existsSync(nested)).toBe(true);
-    expect(statuses).toHaveLength(2);
+    expect(statuses).toHaveLength(1);
   });
 });
 
@@ -99,7 +98,6 @@ describe("showStatus", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     showStatus({ pidDir });
     const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
-    expect(output).toContain("telegram-bridge");
     expect(output).toContain("cloudflared");
     expect(output).toContain("stopped");
     logSpy.mockRestore();
@@ -135,14 +133,12 @@ describe("stopAll", () => {
 
   it("removes stale PID files", () => {
     writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
-    writeFileSync(join(pidDir, "telegram-bridge.pid"), "999999998");
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     stopAll({ pidDir });
     logSpy.mockRestore();
 
     expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
-    expect(existsSync(join(pidDir, "telegram-bridge.pid"))).toBe(false);
   });
 
   it("is idempotent — calling twice does not throw", () => {
