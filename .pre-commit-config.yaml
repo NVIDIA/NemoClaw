@@ -160,6 +160,16 @@ repos:
         types: [file]
         priority: 10
 
+  - repo: local
+    hooks:
+      - id: validate-policy-yaml
+        name: Validate NemoClaw policy YAML
+        entry: node scripts/validate-policies.js
+        language: system
+        files: 'nemoclaw-blueprint/policies/.*\.yaml$'
+        pass_filenames: true
+        priority: 10
+
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.1
     hooks:
