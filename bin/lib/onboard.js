@@ -64,6 +64,7 @@ const urlUtils = require("../../dist/lib/url-utils");
 const buildContext = require("../../dist/lib/build-context");
 const dashboard = require("../../dist/lib/dashboard");
 const httpProbe = require("../../dist/lib/http-probe");
+const providerModels = require("../../dist/lib/provider-models");
 const validationRecovery = require("../../dist/lib/validation-recovery");
 const webSearch = require("../../dist/lib/web-search");
 
@@ -1376,146 +1377,8 @@ async function validateCustomAnthropicSelection(
   return { ok: false, retry };
 }
 
-function fetchNvidiaEndpointModels(apiKey) {
-  try {
-    const result = runCurlProbe([
-      "-sS",
-      ...getCurlTimingArgs(),
-      "-H",
-      "Content-Type: application/json",
-      "-H",
-      `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`,
-      `${BUILD_ENDPOINT_URL}/models`,
-    ]);
-    if (!result.ok) {
-      return {
-        ok: false,
-        message: result.message,
-        status: result.httpStatus,
-        curlStatus: result.curlStatus,
-      };
-    }
-    const parsed = JSON.parse(result.body);
-    const ids = Array.isArray(parsed?.data)
-      ? parsed.data.map((item) => item && item.id).filter(Boolean)
-      : [];
-    return { ok: true, ids };
-  } catch (error) {
-    return { ok: false, message: error.message || String(error) };
-  }
-}
-
-function validateNvidiaEndpointModel(model, apiKey) {
-  const available = fetchNvidiaEndpointModels(apiKey);
-  if (!available.ok) {
-    return {
-      ok: false,
-      message: `Could not validate model against ${BUILD_ENDPOINT_URL}/models: ${available.message}`,
-    };
-  }
-  if (available.ids.includes(model)) {
-    return { ok: true };
-  }
-  return {
-    ok: false,
-    message: `Model '${model}' is not available from NVIDIA Endpoints. Checked ${BUILD_ENDPOINT_URL}/models.`,
-  };
-}
-
-function fetchOpenAiLikeModels(endpointUrl, apiKey) {
-  try {
-    const result = runCurlProbe([
-      "-sS",
-      ...getCurlTimingArgs(),
-      ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
-      `${String(endpointUrl).replace(/\/+$/, "")}/models`,
-    ]);
-    if (!result.ok) {
-      return {
-        ok: false,
-        status: result.httpStatus,
-        curlStatus: result.curlStatus,
-        message: result.message,
-      };
-    }
-    const parsed = JSON.parse(result.body);
-    const ids = Array.isArray(parsed?.data)
-      ? parsed.data.map((item) => item && item.id).filter(Boolean)
-      : [];
-    return { ok: true, ids };
-  } catch (error) {
-    return { ok: false, status: 0, message: error.message || String(error) };
-  }
-}
-
-function fetchAnthropicModels(endpointUrl, apiKey) {
-  try {
-    const result = runCurlProbe([
-      "-sS",
-      ...getCurlTimingArgs(),
-      "-H",
-      `x-api-key: ${normalizeCredentialValue(apiKey)}`,
-      "-H",
-      "anthropic-version: 2023-06-01",
-      `${String(endpointUrl).replace(/\/+$/, "")}/v1/models`,
-    ]);
-    if (!result.ok) {
-      return {
-        ok: false,
-        status: result.httpStatus,
-        curlStatus: result.curlStatus,
-        message: result.message,
-      };
-    }
-    const parsed = JSON.parse(result.body);
-    const ids = Array.isArray(parsed?.data)
-      ? parsed.data.map((item) => item && (item.id || item.name)).filter(Boolean)
-      : [];
-    return { ok: true, ids };
-  } catch (error) {
-    return { ok: false, status: 0, message: error.message || String(error) };
-  }
-}
-
-function validateAnthropicModel(endpointUrl, model, apiKey) {
-  const available = fetchAnthropicModels(endpointUrl, apiKey);
-  if (!available.ok) {
-    if (available.status === 404 || available.status === 405) {
-      return { ok: true, validated: false };
-    }
-    return {
-      ok: false,
-      message: `Could not validate model against ${String(endpointUrl).replace(/\/+$/, "")}/v1/models: ${available.message}`,
-    };
-  }
-  if (available.ids.includes(model)) {
-    return { ok: true, validated: true };
-  }
-  return {
-    ok: false,
-    message: `Model '${model}' is not available from Anthropic. Checked ${String(endpointUrl).replace(/\/+$/, "")}/v1/models.`,
-  };
-}
-
-function validateOpenAiLikeModel(label, endpointUrl, model, apiKey) {
-  const available = fetchOpenAiLikeModels(endpointUrl, apiKey);
-  if (!available.ok) {
-    if (available.status === 404 || available.status === 405) {
-      return { ok: true, validated: false };
-    }
-    return {
-      ok: false,
-      message: `Could not validate model against ${String(endpointUrl).replace(/\/+$/, "")}/models: ${available.message}`,
-    };
-  }
-  if (available.ids.includes(model)) {
-    return { ok: true, validated: true };
-  }
-  return {
-    ok: false,
-    message: `Model '${model}' is not available from ${label}. Checked ${String(endpointUrl).replace(/\/+$/, "")}/models.`,
-  };
-}
+const { validateNvidiaEndpointModel, validateAnthropicModel, validateOpenAiLikeModel } =
+  providerModels;
 
 async function promptManualModelId(promptLabel, errorLabel, validator = null) {
   while (true) {
