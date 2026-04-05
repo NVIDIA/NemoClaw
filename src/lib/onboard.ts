@@ -63,7 +63,6 @@ const {
   getMinimumOpenshellVersionFromFile,
   parseMinimumOpenshellVersion,
 } = require("../../scripts/lib/openshell-version");
-const tiers = require("./tiers");
 const { ensureUsageNoticeConsent } = require("./usage-notice");
 const {
   assessHost,
@@ -485,7 +484,10 @@ function getBlueprintMaxOpenshellVersion(rootDir = ROOT) {
 }
 
 function getMinimumOpenshellVersion(blueprintText = null) {
-    return getMinimumOpenshellVersionFromFile(path.join(ROOT, "nemoclaw-blueprint", "blueprint.yaml"));
+  if (blueprintText == null) {
+    return getMinimumOpenshellVersionFromFile(
+      path.join(ROOT, "nemoclaw-blueprint", "blueprint.yaml"),
+    );
   }
   return normalizeVersion(parseMinimumOpenshellVersion(String(blueprintText))) || DEFAULT_MIN_OPENSHELL_VERSION;
 }
