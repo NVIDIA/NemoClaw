@@ -60,6 +60,26 @@ describe("buildDeployEnvLines", () => {
     expect(envLines).toContain("NEMOCLAW_POLICY_MODE='suggested'");
     expect(envLines).toContain("NVIDIA_API_KEY='nvapi-test'");
   });
+
+  it("propagates Telegram allowlist settings to remote deploy env", () => {
+    const envLines = buildDeployEnvLines({
+      env: {
+        NEMOCLAW_TELEGRAM_DISCOVERY: "1",
+      },
+      sandboxName: "my-assistant",
+      provider: "build",
+      credentials: {
+        NVIDIA_API_KEY: "nvapi-test",
+        ALLOWED_CHAT_IDS: "111,222",
+        TELEGRAM_BOT_TOKEN: "123456:abc",
+      },
+      shellQuote: (value: string) => `'${value}'`,
+    });
+
+    expect(envLines).toContain("ALLOWED_CHAT_IDS='111,222'");
+    expect(envLines).toContain("NEMOCLAW_TELEGRAM_DISCOVERY='1'");
+    expect(envLines).toContain("TELEGRAM_BOT_TOKEN='123456:abc'");
+  });
 });
 
 describe("Brev status helpers", () => {

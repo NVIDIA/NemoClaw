@@ -13,6 +13,7 @@ export interface DeployCredentials {
   COMPATIBLE_API_KEY?: string | null;
   COMPATIBLE_ANTHROPIC_API_KEY?: string | null;
   GITHUB_TOKEN?: string | null;
+  ALLOWED_CHAT_IDS?: string | null;
   TELEGRAM_BOT_TOKEN?: string | null;
   DISCORD_BOT_TOKEN?: string | null;
   SLACK_BOT_TOKEN?: string | null;
@@ -91,6 +92,7 @@ export function buildDeployEnvLines(opts: {
     "NEMOCLAW_ENDPOINT_URL",
     "NEMOCLAW_POLICY_MODE",
     "NEMOCLAW_POLICY_PRESETS",
+    "NEMOCLAW_TELEGRAM_DISCOVERY",
     "CHAT_UI_URL",
   ] as const;
   for (const key of passthroughVars) {
@@ -218,6 +220,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     COMPATIBLE_API_KEY: getCredential("COMPATIBLE_API_KEY"),
     COMPATIBLE_ANTHROPIC_API_KEY: getCredential("COMPATIBLE_ANTHROPIC_API_KEY"),
     GITHUB_TOKEN: getCredential("GITHUB_TOKEN"),
+    ALLOWED_CHAT_IDS: getCredential("ALLOWED_CHAT_IDS"),
     TELEGRAM_BOT_TOKEN: getCredential("TELEGRAM_BOT_TOKEN"),
     DISCORD_BOT_TOKEN: getCredential("DISCORD_BOT_TOKEN"),
     SLACK_BOT_TOKEN: getCredential("SLACK_BOT_TOKEN"),

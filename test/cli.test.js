@@ -15,7 +15,7 @@ function run(args) {
 
 function runWithEnv(args, env = {}, timeout = 10000) {
   try {
-    const out = execSync(`node "${CLI}" ${args}`, {
+    const out = execSync(`${JSON.stringify(process.execPath)} "${CLI}" ${args}`, {
       encoding: "utf-8",
       timeout,
       env: {
@@ -50,6 +50,32 @@ function writeBashCaptureStub(localBin, markerFile) {
     ].join("\n"),
     { mode: 0o755 },
   );
+}
+
+function writeNodeCaptureStub(localBin, markerFile) {
+  fs.writeFileSync(
+    path.join(localBin, "node"),
+    [
+      "#!/bin/sh",
+      `marker_file=${JSON.stringify(markerFile)}`,
+      'printf \'SANDBOX_NAME=%s\\nALLOWED_CHAT_IDS=%s\\nNEMOCLAW_TELEGRAM_DISCOVERY=%s\\nARGS=%s\\n\' "$SANDBOX_NAME" "$ALLOWED_CHAT_IDS" "$NEMOCLAW_TELEGRAM_DISCOVERY" "$*" > "$marker_file"',
+      "exit 0",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+}
+
+function readFileEventually(filePath, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, "utf8");
+      if (content.includes("ARGS=")) {
+        return content;
+      }
+    }
+  }
+  return fs.readFileSync(filePath, "utf8");
 }
 
 describe("CLI dispatch", () => {
@@ -153,24 +179,23 @@ describe("CLI dispatch", () => {
       }),
       { mode: 0o600 },
     );
-    writeBashCaptureStub(localBin, markerFile);
+    writeNodeCaptureStub(localBin, markerFile);
 
     expect(runWithEnv("telegram allow 12345,67890", { HOME: home }).code).toBe(0);
 
     const r = runWithEnv("start", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
-      TELEGRAM_BOT_TOKEN: "",
-      ALLOWED_CHAT_IDS: "",
+      NVIDIA_API_KEY: "nvapi-test",
+      TELEGRAM_BOT_TOKEN: "telegram-token",
     });
 
     expect(r.code).toBe(0);
-    const marker = fs.readFileSync(markerFile, "utf8");
+    const marker = readFileEventually(markerFile);
     expect(marker).toContain("SANDBOX_NAME=alpha");
     expect(marker).toContain("ALLOWED_CHAT_IDS=12345,67890");
     expect(marker).toContain("NEMOCLAW_TELEGRAM_DISCOVERY=0");
-    expect(marker).toContain("ARGS=");
-    expect(marker).toContain("start-services.sh");
+    expect(marker).toContain("scripts/telegram-bridge.js");
   });
 
   it("start clears Telegram allowlist and discovery mode when unset", () => {
@@ -196,20 +221,20 @@ describe("CLI dispatch", () => {
       }),
       { mode: 0o600 },
     );
-    writeBashCaptureStub(localBin, markerFile);
+    writeNodeCaptureStub(localBin, markerFile);
 
     const r = runWithEnv("start", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
-      TELEGRAM_BOT_TOKEN: "",
-      ALLOWED_CHAT_IDS: "",
+      NVIDIA_API_KEY: "nvapi-test",
+      TELEGRAM_BOT_TOKEN: "telegram-token",
     });
 
     expect(r.code).toBe(0);
-    const marker = fs.readFileSync(markerFile, "utf8");
+    const marker = readFileEventually(markerFile);
     expect(marker).toContain("ALLOWED_CHAT_IDS=");
     expect(marker).toContain("NEMOCLAW_TELEGRAM_DISCOVERY=0");
-    expect(marker).toContain("start-services.sh");
+    expect(marker).toContain("scripts/telegram-bridge.js");
   });
 
   it("start --discover-chat-id enables discovery mode", () => {
@@ -217,19 +242,19 @@ describe("CLI dispatch", () => {
     const localBin = path.join(home, "bin");
     const markerFile = path.join(home, "start-env");
     fs.mkdirSync(localBin, { recursive: true });
-    writeBashCaptureStub(localBin, markerFile);
+    writeNodeCaptureStub(localBin, markerFile);
 
     const r = runWithEnv("start --discover-chat-id", {
       HOME: home,
       PATH: `${localBin}:${process.env.PATH || ""}`,
-      TELEGRAM_BOT_TOKEN: "",
-      ALLOWED_CHAT_IDS: "",
+      NVIDIA_API_KEY: "nvapi-test",
+      TELEGRAM_BOT_TOKEN: "telegram-token",
     });
 
     expect(r.code).toBe(0);
-    const marker = fs.readFileSync(markerFile, "utf8");
+    const marker = readFileEventually(markerFile);
     expect(marker).toContain("NEMOCLAW_TELEGRAM_DISCOVERY=1");
-    expect(marker).toContain("start-services.sh");
+    expect(marker).toContain("scripts/telegram-bridge.js");
   });
 
   it("telegram allow rejects invalid chat ids", () => {

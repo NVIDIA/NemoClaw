@@ -873,7 +873,6 @@ function printReservedSandboxHint(name, args = []) {
   console.error(`  Sandbox '${name}' conflicts with a global command.`);
   console.error(`  Use 'nemoclaw -- ${name}${suffix}' to target the sandbox explicitly.`);
 }
-}
 
 function stop() {
   const { stopAll } = require("./lib/services");
