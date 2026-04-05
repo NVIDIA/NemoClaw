@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-session-"));
+let tmpDir: string;
 const require = createRequire(import.meta.url);
 // Clear both the shim and the dist module so HOME changes take effect.
 const shimPath = require.resolve("../../bin/lib/onboard-session");
@@ -17,6 +17,7 @@ const originalHome = process.env.HOME;
 let session: any;
 
 beforeEach(() => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-session-"));
   process.env.HOME = tmpDir;
   delete require.cache[shimPath];
   delete require.cache[distPath];
@@ -32,6 +33,12 @@ afterEach(() => {
     delete process.env.HOME;
   } else {
     process.env.HOME = originalHome;
+  }
+  // Clean up the per-test temporary directory.
+  try {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  } catch {
+    /* best-effort cleanup */
   }
 });
 
