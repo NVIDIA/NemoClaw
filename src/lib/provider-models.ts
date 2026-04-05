@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getCurlTimingArgs, runCurlProbe, type CurlProbeResult } from "./http-probe";
+import { runCurlProbe, type CurlProbeResult } from "./http-probe";
 
 // credentials.js is CJS.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -60,7 +60,6 @@ export function fetchNvidiaEndpointModels(
   try {
     const result = runCurlProbeImpl([
       "-sS",
-      ...getCurlTimingArgs(),
       "-H",
       "Content-Type: application/json",
       "-H",
@@ -112,7 +111,6 @@ export function fetchOpenAiLikeModels(
   try {
     const result = runCurlProbeImpl([
       "-sS",
-      ...getCurlTimingArgs(),
       ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
       `${String(endpointUrl).replace(/\/+$/, "")}/models`,
     ]);
@@ -143,7 +141,6 @@ export function fetchAnthropicModels(
   try {
     const result = runCurlProbeImpl([
       "-sS",
-      ...getCurlTimingArgs(),
       "-H",
       `x-api-key: ${normalizeCredentialValue(apiKey)}`,
       "-H",

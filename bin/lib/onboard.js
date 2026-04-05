@@ -412,7 +412,7 @@ function hydrateCredentialEnv(envName) {
   return value || null;
 }
 
-const { getCurlTimingArgs, summarizeCurlFailure, summarizeProbeFailure, runCurlProbe } = httpProbe;
+const { summarizeCurlFailure, summarizeProbeFailure, runCurlProbe } = httpProbe;
 
 function getNavigationChoice(value = "") {
   const normalized = String(value || "")
@@ -974,7 +974,6 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
   for (const probe of probes) {
     const result = runCurlProbe([
       "-sS",
-      ...getCurlTimingArgs(),
       "-H",
       "Content-Type: application/json",
       ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
@@ -1003,7 +1002,6 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
 function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
   const result = runCurlProbe([
     "-sS",
-    ...getCurlTimingArgs(),
     "-H",
     `x-api-key: ${normalizeCredentialValue(apiKey)}`,
     "-H",

@@ -51,6 +51,11 @@ export function getCurlTimingArgs(): string[] {
   return ["--connect-timeout", "10", "--max-time", "60"];
 }
 
+function splitCurlArgs(argv: readonly string[]): { args: string[]; url: string } {
+  const args = [...argv];
+  return { args, url: String(args.pop() || "") };
+}
+
 export function summarizeCurlFailure(curlStatus = 0, stderr = "", body = ""): string {
   const detail = compactText(stderr || body);
   return detail
@@ -97,16 +102,15 @@ export function summarizeProbeFailure(
 export function runCurlProbe(argv: string[], opts: CurlProbeOptions = {}): CurlProbeResult {
   const bodyFile = secureTempFile("nemoclaw-curl-probe", ".json");
   try {
-    const args = [...argv];
-    const url = args.pop();
+    const { args, url } = splitCurlArgs(argv);
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
     const result = spawnSyncImpl(
       "curl",
-      [...args, "-o", bodyFile, "-w", "%{http_code}", String(url || "")],
+      [...args, ...getCurlTimingArgs(), "-o", bodyFile, "-w", "%{http_code}", url],
       {
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
-        timeout: 30_000,
+        timeout: 65_000,
         env: {
           ...process.env,
           ...opts.env,
