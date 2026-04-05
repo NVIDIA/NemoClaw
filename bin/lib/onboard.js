@@ -3695,7 +3695,9 @@ const CONTROL_UI_PORT = 18789;
 const { resolveDashboardForwardTarget, buildControlUiUrls } = dashboard;
 
 function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
-  const forwardTarget = resolveDashboardForwardTarget(chatUiUrl);
+  const forwardTarget = isWsl()
+    ? `0.0.0.0:${CONTROL_UI_PORT}`
+    : resolveDashboardForwardTarget(chatUiUrl);
   runOpenshell(["forward", "stop", String(CONTROL_UI_PORT)], { ignoreError: true });
   // Use stdio "ignore" to prevent spawnSync from waiting on inherited pipe fds.
   // The --background flag forks a child that inherits stdout/stderr; if those are
@@ -3835,7 +3837,9 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
   else if (provider === "vllm-local") providerLabel = "Local vLLM";
   else if (provider === "ollama-local") providerLabel = "Local Ollama";
 
-  const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
+  const dashboardAccess = getDashboardAccessInfo(sandboxName);
+  const guidanceLines = getDashboardGuidanceLines(dashboardAccess);
+  const token = dashboardAccess.length > 0 ? null : fetchGatewayAuthTokenFromSandbox(sandboxName);
 
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
@@ -3848,7 +3852,15 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
   console.log(`  Status:      nemoclaw ${sandboxName} status`);
   console.log(`  Logs:        nemoclaw ${sandboxName} logs --follow`);
   console.log("");
-  if (token) {
+  if (dashboardAccess.length > 0) {
+    console.log("  OpenClaw UI (tokenized URL; treat it like a password)");
+    for (const line of guidanceLines) {
+      console.log(`  ${line}`);
+    }
+    for (const entry of dashboardAccess) {
+      console.log(`  ${entry.label}: ${entry.url}`);
+    }
+  } else if (token) {
     console.log("  OpenClaw UI (tokenized URL; treat it like a password)");
     console.log(`  Port ${CONTROL_UI_PORT} must be forwarded before opening this URL.`);
     for (const url of buildControlUiUrls(token)) {

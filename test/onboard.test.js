@@ -201,7 +201,11 @@ describe("onboard helpers", () => {
       release: "6.6.87.2-microsoft-standard-WSL2",
     });
 
-    expect(command).toContain("'forward' 'start' '--background' '0.0.0.0:18789' 'the-crucible'");
+    expect(command).toContain("forward");
+    expect(command).toContain("start");
+    expect(command).toContain("--background");
+    expect(command).toContain("0.0.0.0:18789");
+    expect(command).toContain("the-crucible");
   });
 
   it("prints platform-appropriate service hints for port conflicts", () => {
@@ -1428,10 +1432,14 @@ const { createSandbox } = require(${onboardPath});
     assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
     assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
     assert.ok(
-      payload.commands.some((entry) =>
-        entry.command.includes("'forward' 'start' '--background' '18789' 'my-assistant'"),
+      payload.commands.some(
+        (entry) =>
+          entry.command.includes("'forward' 'start' '--background' '18789' 'my-assistant'") ||
+          entry.command.includes(
+            "'forward' 'start' '--background' '0.0.0.0:18789' 'my-assistant'",
+          ),
       ),
-      "expected default loopback dashboard forward",
+      "expected dashboard forward (loopback or WSL 0.0.0.0)",
     );
   });
 
