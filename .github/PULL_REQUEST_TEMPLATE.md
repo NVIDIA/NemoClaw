@@ -1,12 +1,16 @@
 <!-- markdownlint-disable MD041 -->
+<!-- Replace the placeholder guidance below and remove sections that do not apply before requesting review. -->
 ## Summary
-<!-- 1-3 sentences: what this PR does and why. -->
+<!-- 1-3 bullets or short paragraphs: what changed, why it changed, and the user/developer impact. -->
 
-## Related Issue
-<!-- Link to the issue: Fixes #NNN or Closes #NNN. Remove this section if none. -->
+## Related Issues
+<!-- Use GitHub keywords when applicable: Fixes #NNN, Closes #NNN, Addresses #NNN. Remove this section if none. -->
+
+## Why
+<!-- Root cause, motivation, or design constraint. For bug fixes, explain why the old behavior was wrong. For features, explain why this shape was chosen. -->
 
 ## Changes
-<!-- Bullet list of key changes. -->
+<!-- Bullet list of the concrete code/docs/test changes in this PR. -->
 
 ## Type of Change
 <!-- Check the one that applies. -->
@@ -15,11 +19,21 @@
 - [ ] Doc only. Prose changes without code sample modifications.
 - [ ] Doc only. Includes code sample changes.
 
-## Testing
-<!-- What testing was done? -->
+## Validation
+<!-- Check the broad validations that ran, then list the exact targeted commands below. If something could not be run, say so. -->
 - [ ] `npx prek run --all-files` passes (or equivalently `make check`).
 - [ ] `npm test` passes.
 - [ ] `make docs` builds without warnings. (for doc-only changes)
+- [ ] Additional targeted validation commands are listed below.
+
+```console
+# Paste the exact commands you ran, for example:
+# npx vitest run test/onboard.test.js
+# npm run build:cli
+```
+
+## Risks / Notes
+<!-- Optional. Call out rollout concerns, known gaps, follow-ups, or environment-specific caveats. Remove this section if none. -->
 
 ## Checklist
 
@@ -42,5 +56,5 @@
 - [ ] Cross-references and links verified.
 
 ---
-<!-- DCO sign-off (required by CI). Replace with your real name and email. -->
+<!-- DCO sign-off (required by CI). Replace with your real name and email before opening the PR. -->
 Signed-off-by: Your Name <your-email@example.com>
