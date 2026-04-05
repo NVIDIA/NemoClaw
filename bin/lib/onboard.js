@@ -3752,6 +3752,74 @@ function fetchGatewayAuthTokenFromSandbox(sandboxName) {
 
 // buildControlUiUrls — see dashboard import above
 
+function getDashboardForwardPort() {
+  return CONTROL_UI_PORT;
+}
+
+function getDashboardForwardStartCommand(sandboxName, options = {}) {
+  const forwardTarget = isWsl(options)
+    ? `0.0.0.0:${CONTROL_UI_PORT}`
+    : resolveDashboardForwardTarget(`http://127.0.0.1:${CONTROL_UI_PORT}`);
+  return `${openshellShellCommand(["forward", "start", "--background", forwardTarget, sandboxName])}`;
+}
+
+function buildAuthenticatedDashboardUrl(baseUrl, token = null) {
+  if (!token) return baseUrl;
+  return `${baseUrl}#token=${encodeURIComponent(token)}`;
+}
+
+function getWslHostAddress(options = {}) {
+  if (options.wslHostAddress) {
+    return options.wslHostAddress;
+  }
+  if (!isWsl(options)) {
+    return null;
+  }
+  const runCaptureFn = options.runCapture || runCapture;
+  const output = runCaptureFn("hostname -I 2>/dev/null", { ignoreError: true });
+  const candidates = String(output || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  return candidates[0] || null;
+}
+
+function getDashboardAccessInfo(sandboxName, options = {}) {
+  const token = Object.prototype.hasOwnProperty.call(options, "token")
+    ? options.token
+    : fetchGatewayAuthTokenFromSandbox(sandboxName);
+  const dashboardAccess = buildControlUiUrls(token).map((url, index) => ({
+    label: index === 0 ? "Dashboard" : `Alt ${index}`,
+    url: buildAuthenticatedDashboardUrl(url, null),
+  }));
+
+  const wslHostAddress = getWslHostAddress(options);
+  if (wslHostAddress) {
+    const wslUrl = buildAuthenticatedDashboardUrl(
+      `http://${wslHostAddress}:${CONTROL_UI_PORT}/`,
+      token,
+    );
+    if (!dashboardAccess.some((access) => access.url === wslUrl)) {
+      dashboardAccess.push({ label: "VS Code/WSL", url: wslUrl });
+    }
+  }
+
+  return dashboardAccess;
+}
+
+function getDashboardGuidanceLines(dashboardAccess = []) {
+  const guidance = [`Port ${CONTROL_UI_PORT} must be forwarded before opening these URLs.`];
+  if (isWsl()) {
+    guidance.push(
+      "WSL detected: if localhost fails in Windows, use the WSL host IP shown by `hostname -I`.",
+    );
+  }
+  if (dashboardAccess.length === 0) {
+    guidance.push("No dashboard URLs were generated.");
+  }
+  return guidance;
+}
+
 function printDashboard(sandboxName, model, provider, nimContainer = null) {
   const nimStat = nimContainer ? nim.nimStatusByName(nimContainer) : nim.nimStatus(sandboxName);
   const nimLabel = nimStat.running ? "running" : "not running";
@@ -4207,6 +4275,11 @@ module.exports = {
   repairRecordedSandbox,
   recoverGatewayRuntime,
   resolveDashboardForwardTarget,
+  buildAuthenticatedDashboardUrl,
+  getDashboardAccessInfo,
+  getDashboardForwardPort,
+  getDashboardForwardStartCommand,
+  getDashboardGuidanceLines,
   startGatewayForRecovery,
   runCaptureOpenshell,
   setupInference,

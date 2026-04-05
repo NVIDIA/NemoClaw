@@ -11,6 +11,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildSandboxConfigSyncScript,
   classifySandboxCreateFailure,
+  getDashboardAccessInfo,
+  getDashboardForwardStartCommand,
   getGatewayReuseState,
   getPortConflictServiceHints,
   getFutureShellPathHint,
@@ -175,6 +177,31 @@ describe("onboard helpers", () => {
     expect(resolveDashboardForwardTarget("http://[::1]:18789")).toBe("18789");
     expect(resolveDashboardForwardTarget("https://chat.example.com")).toBe("0.0.0.0:18789");
     expect(resolveDashboardForwardTarget("http://10.0.0.25:18789")).toBe("0.0.0.0:18789");
+  });
+
+  it("includes a VS Code/WSL dashboard URL when running under WSL", () => {
+    const access = getDashboardAccessInfo("the-crucible", {
+      token: "secret-token",
+      env: { WSL_DISTRO_NAME: "Ubuntu" },
+      platform: "linux",
+      release: "6.6.87.2-microsoft-standard-WSL2",
+      runCapture: (command) => (command.includes("hostname -I") ? "172.24.240.1\n" : ""),
+    });
+
+    expect(access).toEqual([
+      { label: "Dashboard", url: "http://127.0.0.1:18789/#token=secret-token" },
+      { label: "VS Code/WSL", url: "http://172.24.240.1:18789/#token=secret-token" },
+    ]);
+  });
+
+  it("binds the dashboard forward to all interfaces under WSL", () => {
+    const command = getDashboardForwardStartCommand("the-crucible", {
+      env: { WSL_DISTRO_NAME: "Ubuntu" },
+      platform: "linux",
+      release: "6.6.87.2-microsoft-standard-WSL2",
+    });
+
+    expect(command).toContain("'forward' 'start' '--background' '0.0.0.0:18789' 'the-crucible'");
   });
 
   it("prints platform-appropriate service hints for port conflicts", () => {
