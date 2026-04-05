@@ -170,7 +170,7 @@ OpenShell intercepts them and routes to the configured provider:
 Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA Endpoint (build.nvidia.com)
 ```
 
-Refer to [Inference Profiles](../reference/inference-profiles.md) for provider configuration details.
+Refer to [Inference Options](../inference/inference-options.md) for provider configuration details.
 
 ## Host-Side State and Config
 

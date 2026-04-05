@@ -47,8 +47,19 @@ function setupDeployStubs({ brevLsOutput = "" }: { brevLsOutput?: string } = {})
     "#!/usr/bin/env bash",
     `marker_file=${JSON.stringify(markerFile)}`,
     'printf \'%s\\n\' "$*" >> "$marker_file"',
+    'if [ "$1" = "ls" ] && [ "$2" = "--json" ]; then',
+    '  created_name=$(awk \'/^create / { print $2; exit }\' "$marker_file")',
+    `  existing_name=${JSON.stringify(brevLsOutput.split(/\r?\n/).find(Boolean) || "")}`,
+    '  instance_name="${created_name:-$existing_name}"',
+    '  if [ -n "$instance_name" ]; then',
+    '    printf \'[{"name":"%s","status":"RUNNING","build_status":"COMPLETED","shell_status":"READY"}]\' "$instance_name"',
+    "  else",
+    "    printf '[]'",
+    "  fi",
+    "  exit 0",
+    "fi",
     'if [ "$1" = "ls" ]; then',
-    `  printf '%s' ${JSON.stringify(brevLsOutput)}`,
+    `  printf '%b' ${JSON.stringify(brevLsOutput)}`,
     "  exit 0",
     "fi",
     "exit 0",
@@ -78,7 +89,9 @@ describe("deploy brev compatibility", () => {
     expect(result.code).toBe(0);
     const calls = readBrevCalls(markerFile);
     expect(calls).toContain("ls");
-    expect(calls).toContain("create pr-1377-legacy --type a2-highgpu-1g --gpu-name A100");
+    expect(calls).toContain(
+      "create pr-1377-legacy --type a2-highgpu-1g --gpu-name A100 --provider gcp",
+    );
     expect(calls.join("\n")).not.toContain("--gpu ");
   });
 
@@ -96,7 +109,9 @@ describe("deploy brev compatibility", () => {
 
     expect(result.code).toBe(0);
     const calls = readBrevCalls(markerFile);
-    expect(calls).toContain("create pr-1377-overrides --type a3-highgpu-1g --gpu-name H100");
+    expect(calls).toContain(
+      "create pr-1377-overrides --type a3-highgpu-1g --gpu-name H100 --provider gcp",
+    );
     expect(calls.join("\n")).not.toContain("--gpu ");
   });
 
@@ -111,7 +126,9 @@ describe("deploy brev compatibility", () => {
 
     expect(result.code).toBe(0);
     const calls = readBrevCalls(markerFile);
-    expect(calls).toContain("create pr-1377-defaults --type a2-highgpu-1g --gpu-name A100");
+    expect(calls).toContain(
+      "create pr-1377-defaults --type a2-highgpu-1g --gpu-name A100 --provider gcp",
+    );
     expect(calls.join("\n")).not.toContain("--gpu ");
   });
 
@@ -129,7 +146,9 @@ describe("deploy brev compatibility", () => {
 
     expect(result.code).toBe(0);
     const calls = readBrevCalls(markerFile);
-    expect(calls).toContain("create pr-1377-l40s --type a3-highgpu-1g --gpu-name L40S");
+    expect(calls).toContain(
+      "create pr-1377-l40s --type a3-highgpu-1g --gpu-name L40S --provider gcp",
+    );
     expect(calls.join("\n")).not.toContain("--gpu ");
   });
 
@@ -165,7 +184,26 @@ describe("deploy brev compatibility", () => {
 
     expect(result.code).toBe(0);
     const calls = readBrevCalls(markerFile);
-    expect(calls).toContain("create pr-1377-empty-gpu-name --type a3-highgpu-1g --gpu-name L40S");
+    expect(calls).toContain(
+      "create pr-1377-empty-gpu-name --type a3-highgpu-1g --gpu-name L40S --provider gcp",
+    );
     expect(calls.join("\n")).not.toContain("--gpu ");
+  });
+
+  it("passes through an explicit Brev provider override", () => {
+    const { home, localBin, markerFile } = setupDeployStubs();
+
+    const result = runWithEnv("deploy pr-1377-provider", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NVIDIA_API_KEY: "nvapi-test",
+      NEMOCLAW_BREV_PROVIDER: "aws",
+    });
+
+    expect(result.code).toBe(0);
+    const calls = readBrevCalls(markerFile);
+    expect(calls).toContain(
+      "create pr-1377-provider --type a2-highgpu-1g --gpu-name A100 --provider aws",
+    );
   });
 });
