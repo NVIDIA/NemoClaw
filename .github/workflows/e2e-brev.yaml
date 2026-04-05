@@ -28,12 +28,8 @@ name: e2e-brev
 on:
   workflow_dispatch:
     inputs:
-      branch:
-        description: "Branch to test"
-        required: true
-        default: "main"
       pr_number:
-        description: "PR number (for status reporting, optional)"
+        description: "PR number (resolves branch automatically)"
         required: false
         default: ""
       test_suite:
@@ -46,11 +42,16 @@ on:
           - credential-sanitization
           - telegram-injection
           - all
+      use_launchable:
+        description: "Use CI launchable (true) or bare brev create + brev-setup.sh (false)"
+        required: false
+        type: boolean
+        default: true
       keep_alive:
         description: "Keep Brev instance alive after tests (for SSH debugging)"
         required: false
         type: boolean
-        default: true
+        default: false
       brev_token:
         description: "Brev refresh token (overrides BREV_API_TOKEN secret if provided)"
         required: false
@@ -68,6 +69,14 @@ on:
         required: false
         type: string
         default: "full"
+      use_launchable:
+        required: false
+        type: boolean
+        default: true
+      setup_script_url:
+        required: false
+        type: string
+        default: ""
       keep_alive:
         required: false
         type: boolean
@@ -89,14 +98,23 @@ concurrency:
 
 jobs:
   e2e-brev:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    # if: github.repository == 'NVIDIA/NemoClaw'  # Disabled for fork testing — re-enable before merge
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
+      - name: Resolve branch from PR number
+        if: inputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH=$(gh pr view ${{ inputs.pr_number }} --repo ${{ github.repository }} --json headRefName -q .headRefName)
+          echo "Resolved PR #${{ inputs.pr_number }} → branch: $BRANCH"
+          echo "RESOLVED_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
       - name: Checkout target branch
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.branch }}
+          ref: ${{ env.RESOLVED_BRANCH || inputs.branch || 'main' }}
 
       - name: Create check run (pending)
         if: inputs.pr_number != ''
@@ -122,7 +140,8 @@ jobs:
 
       - name: Install Brev CLI
         run: |
-          # Use latest Brev CLI (v0.6.322+) — CPU instances require `brev search cpu | brev create`
+          # Brev CLI v0.6.322+ — CPU instances use `brev search cpu | brev create`
+          # Startup scripts use `brev create --startup-script @file` (not brev start --cpu)
           curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.322/brev-cli_0.6.322_linux_amd64.tar.gz"
           tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
           chmod +x /usr/local/bin/brev
@@ -137,6 +156,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           INSTANCE_NAME: e2e-pr-${{ inputs.pr_number || github.run_id }}
           TEST_SUITE: ${{ inputs.test_suite }}
+          USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
+          LAUNCHABLE_SETUP_SCRIPT: ${{ inputs.setup_script_url || '' }}
+          BREV_PROVIDER: gcp
           KEEP_ALIVE: ${{ inputs.keep_alive }}
         run: npx vitest run --project e2e-brev --reporter=verbose
 
@@ -166,7 +188,8 @@ jobs:
             STATUS="FAILED"
           fi
           INSTANCE="e2e-pr-${{ inputs.pr_number || github.run_id }}"
-          BODY="${EMOJI} **Brev E2E** (${{ inputs.test_suite }}): **${STATUS}** on branch \`${{ inputs.branch }}\` — [See logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          BRANCH="${RESOLVED_BRANCH:-${{ inputs.branch || 'main' }}}"
+          BODY="${EMOJI} **Brev E2E** (${{ inputs.test_suite }}): **${STATUS}** on branch \`${BRANCH}\` — [See logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           if [ "${{ inputs.keep_alive }}" = "true" ]; then
             BODY="${BODY}
 

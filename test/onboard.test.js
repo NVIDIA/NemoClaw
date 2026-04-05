@@ -33,6 +33,7 @@ import {
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
 } from "../bin/lib/onboard";
+import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
 
 describe("onboard helpers", () => {
   it("classifies sandbox create timeout failures and tracks upload progress", () => {
@@ -101,6 +102,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -196,6 +198,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -215,6 +218,55 @@ describe("onboard helpers", () => {
       assert.match(patched, /^ARG NEMOCLAW_INFERENCE_BASE_URL=https:\/\/inference\.local$/m);
       assert.match(patched, /^ARG NEMOCLAW_INFERENCE_API=anthropic-messages$/m);
     } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patches the staged Dockerfile with Brave Search config when enabled", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-web-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    const priorBraveKey = process.env.BRAVE_API_KEY;
+    process.env.BRAVE_API_KEY = "brv-test-key";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-web",
+        "openai-api",
+        null,
+        { fetchEnabled: true },
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      const expected = buildWebSearchDockerConfig({ fetchEnabled: true }, "brv-test-key");
+      assert.match(
+        patched,
+        new RegExp(
+          `^ARG NEMOCLAW_WEB_CONFIG_B64=${expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+          "m",
+        ),
+      );
+    } finally {
+      if (priorBraveKey === undefined) {
+        delete process.env.BRAVE_API_KEY;
+      } else {
+        process.env.BRAVE_API_KEY = priorBraveKey;
+      }
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
@@ -505,6 +557,24 @@ describe("onboard helpers", () => {
         fs.rmSync(parentDir, { recursive: true, force: true });
       }
     }
+  });
+
+  it("rejects sandbox names starting with a digit", () => {
+    // The validation regex must require names to start with a letter,
+    // not a digit — Kubernetes rejects digit-prefixed names downstream.
+    const SANDBOX_NAME_REGEX = /^[a-z]([a-z0-9-]*[a-z0-9])?$/;
+
+    expect(SANDBOX_NAME_REGEX.test("my-assistant")).toBe(true);
+    expect(SANDBOX_NAME_REGEX.test("a")).toBe(true);
+    expect(SANDBOX_NAME_REGEX.test("agent-1")).toBe(true);
+    expect(SANDBOX_NAME_REGEX.test("test-sandbox-v2")).toBe(true);
+
+    expect(SANDBOX_NAME_REGEX.test("7racii")).toBe(false);
+    expect(SANDBOX_NAME_REGEX.test("1sandbox")).toBe(false);
+    expect(SANDBOX_NAME_REGEX.test("123")).toBe(false);
+    expect(SANDBOX_NAME_REGEX.test("-start-hyphen")).toBe(false);
+    expect(SANDBOX_NAME_REGEX.test("end-hyphen-")).toBe(false);
+    expect(SANDBOX_NAME_REGEX.test("")).toBe(false);
   });
 
   it("passes credential names to openshell without embedding secret values in argv", () => {
@@ -1074,7 +1144,7 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*sandboxName = await createSandbox\(gpu, model, provider, preferredInferenceApi, sandboxName\);/,
+      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*webSearchConfig,\s*\);/,
     );
   });
 
@@ -1817,9 +1887,12 @@ const { setupInference } = require(${onboardPath});
     );
     assert.ok(fnMatch, "promptValidatedSandboxName function not found");
     const fnBody = fnMatch[1];
-    // Verify the retry loop exists within this function
-    assert.match(fnBody, /while\s*\(true\)/);
+    // Verify the bounded retry loop exists within this function
+    assert.match(fnBody, /MAX_ATTEMPTS/);
+    assert.match(fnBody, /for\s*\(let attempt/);
     assert.match(fnBody, /Please try again/);
+    // Exits after too many invalid attempts
+    assert.match(fnBody, /Too many invalid attempts/);
     // Non-interactive still exits within this function
     assert.match(fnBody, /isNonInteractive\(\)/);
     assert.match(fnBody, /process\.exit\(1\)/);

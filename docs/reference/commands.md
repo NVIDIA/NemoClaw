@@ -2,7 +2,9 @@
 title:
   page: "NemoClaw CLI Commands Reference"
   nav: "Commands"
-description: "Full CLI reference for slash commands and standalone NemoClaw commands."
+description:
+  main: "Full CLI reference for slash commands and standalone NemoClaw commands."
+  agent: "Lists all slash commands and standalone NemoClaw CLI commands. Use when looking up a command, checking command syntax, or browsing the CLI reference."
 keywords: ["nemoclaw cli commands", "nemoclaw command reference"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "nemoclaw", "cli"]
@@ -69,12 +71,38 @@ Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, 
 Credentials are stored in `~/.nemoclaw/credentials.json`.
 The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
 
+If you enable Brave Search during onboarding, NemoClaw currently stores the Brave API key in the sandbox's OpenClaw configuration.
+That means the OpenClaw agent can read the key.
+NemoClaw explores an OpenShell-hosted credential path first, but the current OpenClaw Brave runtime does not consume that path end to end yet.
+Treat Brave Search as an explicit opt-in and use a dedicated low-privilege Brave key.
+
+For non-interactive onboarding, you must explicitly accept the third-party software notice:
+
+```console
+$ nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
+
+or:
+
+```console
+$ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 nemoclaw onboard --non-interactive
+```
+
+To enable Brave Search in non-interactive mode, set:
+
+```console
+$ BRAVE_API_KEY=... \
+  nemoclaw onboard --non-interactive
+```
+
+`BRAVE_API_KEY` enables Brave Search in non-interactive mode and also enables `web_fetch`.
+
 The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
 Uppercase letters are automatically lowercased.
 
 Before creating the gateway, the wizard runs preflight checks.
-On systems with cgroup v2 (Ubuntu 24.04, DGX Spark, WSL2), it verifies that Docker is configured with `"default-cgroupns-mode": "host"` and provides fix instructions if the setting is missing.
+It verifies that Docker is reachable, warns on unsupported runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
 
 ### `nemoclaw list`
 
@@ -87,11 +115,12 @@ $ nemoclaw list
 ### `nemoclaw deploy`
 
 :::{warning}
-The `nemoclaw deploy` command is experimental and may not work as expected.
+The `nemoclaw deploy` command is deprecated.
+Prefer provisioning the remote host separately, then running the standard NemoClaw installer and `nemoclaw onboard` on that host.
 :::
 
 Deploy NemoClaw to a remote GPU instance through [Brev](https://brev.nvidia.com).
-The deploy script installs Docker, NVIDIA Container Toolkit if a GPU is present, and OpenShell on the VM, then runs `nemoclaw onboard` and connects to the sandbox.
+This command remains as a compatibility wrapper for the older Brev-specific bootstrap flow.
 
 ```console
 $ nemoclaw deploy <instance-name>
@@ -193,13 +222,15 @@ $ nemoclaw status
 
 ### `nemoclaw setup-spark`
 
-Set up NemoClaw on DGX Spark.
-This command applies cgroup v2 and Docker fixes required for Ubuntu 24.04.
-Run with `sudo` on the Spark host.
-After the fixes complete, the script prompts you to run `nemoclaw onboard` to continue setup.
+:::{warning}
+The `nemoclaw setup-spark` command is deprecated.
+Use the standard installer and run `nemoclaw onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
+:::
+
+This command remains as a compatibility alias to `nemoclaw onboard`.
 
 ```console
-$ sudo nemoclaw setup-spark
+$ nemoclaw setup-spark
 ```
 
 ### `nemoclaw debug`
@@ -236,7 +267,7 @@ $ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
 ### Legacy `nemoclaw setup`
 
 Deprecated. Use `nemoclaw onboard` instead.
-The legacy setup command runs the old setup script for backwards compatibility only.
+Running `nemoclaw setup` now delegates directly to `nemoclaw onboard`.
 
 ```console
 $ nemoclaw setup

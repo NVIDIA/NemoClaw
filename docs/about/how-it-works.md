@@ -2,7 +2,9 @@
 title:
   page: "How NemoClaw Works — Plugin, Blueprint, and Sandbox Lifecycle"
   nav: "How It Works"
-description: "Learn how NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox."
+description:
+  main: "Learn how NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox."
+  agent: "Describes how NemoClaw combines a CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox. Use when explaining the sandbox lifecycle, blueprint architecture, or how NemoClaw layers on top of OpenShell."
 keywords: ["how nemoclaw works", "nemoclaw sandbox lifecycle blueprint"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "inference_routing", "blueprints", "network_policy"]
@@ -146,4 +148,4 @@ For details on the baseline rules, refer to [Network Policies](../reference/netw
 
 - Follow the [Quickstart](../get-started/quickstart.md) to launch your first sandbox.
 - Refer to the [Architecture](../reference/architecture.md) for the full technical structure, including file layouts and the blueprint lifecycle.
-- Refer to [Inference Profiles](../reference/inference-profiles.md) for detailed provider configuration.
+- Refer to [Inference Options](../inference/inference-options.md) for detailed provider configuration.
