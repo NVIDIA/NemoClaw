@@ -23,6 +23,7 @@ import {
   getPortConflictServiceHints,
   getFutureShellPathHint,
   getSandboxInferenceConfig,
+  DEFAULT_MIN_OPENSHELL_VERSION,
   getInstalledOpenshellVersion,
   getBlueprintMinOpenshellVersion,
   getBlueprintMaxOpenshellVersion,
@@ -845,6 +846,12 @@ describe("onboard helpers", () => {
     expect(getInstalledOpenshellVersion("bogus")).toBe(null);
     expect(getMinimumOpenshellVersion('min_openshell_version: "0.1.0"\n')).toBe("0.1.0");
     expect(getMinimumOpenshellVersion('min_openshell_version: "v0.1.0"\n')).toBe("0.1.0");
+    expect(getMinimumOpenshellVersion("min_openshell_version: 0.2.0\n")).toBe(
+      DEFAULT_MIN_OPENSHELL_VERSION,
+    );
+    expect(getMinimumOpenshellVersion("name: no-version-here\n")).toBe(
+      DEFAULT_MIN_OPENSHELL_VERSION,
+    );
     expect(shouldUpgradeOpenshell("0.0.21", "0.1.0")).toBe(true);
     expect(shouldUpgradeOpenshell("v0.0.21", "0.1.0")).toBe(true);
     expect(shouldUpgradeOpenshell("bogus", "0.1.0")).toBe(true);

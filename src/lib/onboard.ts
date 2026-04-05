@@ -58,6 +58,12 @@ const nim = require("./nim");
 const onboardSession = require("./onboard-session");
 const policies = require("./policies");
 const tiers = require("./tiers");
+const {
+  DEFAULT_MIN_OPENSHELL_VERSION,
+  getMinimumOpenshellVersionFromFile,
+  parseMinimumOpenshellVersion,
+} = require("../../scripts/lib/openshell-version");
+const tiers = require("./tiers");
 const { ensureUsageNoticeConsent } = require("./usage-notice");
 const {
   assessHost,
@@ -479,13 +485,9 @@ function getBlueprintMaxOpenshellVersion(rootDir = ROOT) {
 }
 
 function getMinimumOpenshellVersion(blueprintText = null) {
-  if (blueprintText == null) {
-    return getBlueprintMinOpenshellVersion();
+    return getMinimumOpenshellVersionFromFile(path.join(ROOT, "nemoclaw-blueprint", "blueprint.yaml"));
   }
-  const match = String(blueprintText).match(
-    /^\s*min_openshell_version:\s*"?(?<version>v?[0-9]+\.[0-9]+\.[0-9]+)"?\s*$/m,
-  );
-  return normalizeVersion(match?.groups?.version || null);
+  return normalizeVersion(parseMinimumOpenshellVersion(String(blueprintText))) || DEFAULT_MIN_OPENSHELL_VERSION;
 }
 
 function shouldUpgradeOpenshell(installedVersion = null, minimumVersion = null) {
@@ -5409,6 +5411,7 @@ module.exports = {
   copyBuildContextDir,
   classifySandboxCreateFailure,
   createSandbox,
+  DEFAULT_MIN_OPENSHELL_VERSION,
   formatEnvAssignment,
   getFutureShellPathHint,
   getGatewayStartEnv,
