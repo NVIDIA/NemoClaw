@@ -39,6 +39,7 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Getting Started")).toBeTruthy();
     expect(r.out.includes("Sandbox Management")).toBeTruthy();
     expect(r.out.includes("Policy Presets")).toBeTruthy();
+    expect(r.out.includes("Compatibility Commands")).toBeTruthy();
   });
 
   it("--help exits 0", () => {
@@ -111,7 +112,8 @@ describe("CLI dispatch", () => {
 
     expect(r.code).toBe(0);
     expect(r.out).not.toContain("NVIDIA API Key required");
-    expect(fs.readFileSync(markerFile, "utf8")).toContain("start-services.sh");
+    // Services module now runs in-process (no bash shelling)
+    expect(r.out).toContain("NemoClaw Services");
   });
 
   it("unknown onboard option exits 1", () => {
@@ -126,6 +128,12 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
   });
 
+  it("accepts the third-party software flag in onboard CLI parsing", () => {
+    const r = run("onboard --yes-i-accept-third-party-software --non-interactiv");
+    expect(r.code).toBe(1);
+    expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
+  });
+
   it("setup forwards unknown options into onboard parsing", () => {
     const r = run("setup --non-interactiv");
     expect(r.code).toBe(1);
@@ -134,9 +142,17 @@ describe("CLI dispatch", () => {
   });
 
   it("setup forwards --resume into onboard parsing", () => {
-    const r = run("setup --resume");
+    const r = run("setup --resume --non-interactive --yes-i-accept-third-party-software");
     expect(r.code).toBe(1);
     expect(r.out.includes("deprecated")).toBeTruthy();
+    expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
+  });
+
+  it("setup-spark is a deprecated compatibility alias for onboard", () => {
+    const r = run("setup-spark --resume --non-interactive --yes-i-accept-third-party-software");
+    expect(r.code).toBe(1);
+    expect(r.out.includes("setup-spark` is deprecated")).toBeTruthy();
+    expect(r.out.includes("Use `nemoclaw onboard` instead")).toBeTruthy();
     expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
   });
 

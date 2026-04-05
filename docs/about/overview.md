@@ -2,7 +2,9 @@
 title:
   page: "NemoClaw Overview — What It Does and How It Fits Together"
   nav: "Overview"
-description: "NemoClaw is an open source reference stack that simplifies running OpenClaw always-on assistants safely."
+description:
+  main: "NemoClaw is an open source reference stack that simplifies running OpenClaw always-on assistants safely."
+  agent: "Explains what NemoClaw does and how it fits with OpenClaw and OpenShell. Use when asking what NemoClaw is, how it works at a high level, or what the project provides."
 keywords: ["nemoclaw overview", "openclaw always-on assistants", "nvidia openshell", "nvidia nemotron"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "inference_routing", "blueprints"]

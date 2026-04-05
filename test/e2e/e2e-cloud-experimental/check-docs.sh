@@ -220,13 +220,27 @@ collect_default_docs() {
   fi
 }
 
+strip_html_comments() {
+  perl -CS -0pe '
+    my $copy = $_;
+    $copy =~ s/```.*?```//gs;
+    my $comment = qr/<!--.*?-->/s;
+    my $stripped = $copy;
+    $stripped =~ s/$comment//g;
+    if ($stripped =~ /<!--|-->/) {
+      die "malformed HTML comment";
+    }
+    s/$comment//g;
+  ' -- "$1"
+}
+
 extract_targets() {
-  perl -CS -ne '
+  strip_html_comments "$1" | perl -CS -ne '
     if (/^\s*```/) { $in = !$in; next; }
     next if $in;
     while (/\!?\[[^\]]*\]\(([^)\s]+)(?:\s+["'"'"'][^)"'"'"']*["'"'"'])?\)/g) { print "$1\n"; }
     while (/<(https?:[^>\s]+)>/g) { print "$1\n"; }
-  ' -- "$1"
+  '
 }
 
 check_local_ref() {
@@ -368,6 +382,15 @@ run_links_check() {
       continue
     fi
     local target rc
+    local _targets_output _targets_err
+    _targets_err="$(mktemp)"
+    if ! _targets_output="$(extract_targets "$md" 2>"$_targets_err")"; then
+      echo "check-docs: [links] malformed HTML comment in $md: $(tr '\n' ' ' <"$_targets_err" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')" >&2
+      rm -f "$_targets_err"
+      failures=1
+      continue
+    fi
+    rm -f "$_targets_err"
     while IFS= read -r target || [[ -n "$target" ]]; do
       [[ -z "$target" ]] && continue
       set +e
@@ -381,7 +404,7 @@ run_links_check() {
       else
         failures=1
       fi
-    done < <(extract_targets "$md")
+    done <<<"$_targets_output"
   done
 
   if [[ "$failures" -ne 0 ]]; then

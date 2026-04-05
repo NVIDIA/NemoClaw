@@ -8,6 +8,17 @@ This page explains the key concepts about NemoClaw at a high level.
 The `nemoclaw` CLI is the primary entrypoint for setting up and managing sandboxed OpenClaw agents.
 It delegates heavy lifting to a versioned blueprint, a Python artifact that orchestrates sandbox creation, policy application, and inference provider setup through the OpenShell CLI.
 
+NemoClaw adds the following layers on top of OpenShell.
+
+| Layer | What it provides |
+|-------|------------------|
+| Onboarding | Guided setup that validates credentials, selects providers, and creates a working sandbox in one command. |
+| Blueprint | A hardened Dockerfile with security policies, capability drops, and least-privilege network rules. |
+| State management | Safe migration of agent state across machines with credential stripping and integrity verification. |
+| Messaging bridges | Host-side processes that connect Telegram, Discord, and Slack to the sandboxed agent. |
+
+OpenShell handles *how* to sandbox an agent securely. NemoClaw handles *what* goes in the sandbox and makes the setup accessible. For the full system diagram, see Architecture (see the `nemoclaw-reference` skill).
+
 ```mermaid
 flowchart TB
     subgraph Host
@@ -96,20 +107,23 @@ OpenShell intercepts every inference call and routes it to the configured provid
 During onboarding, NemoClaw validates the selected provider and model, configures the OpenShell route, and bakes the matching model reference into the sandbox image.
 The sandbox then talks to `inference.local`, while the host owns the actual provider credential and upstream endpoint.
 
-## Network and Filesystem Policy
+## Protection Layers
 
-The sandbox starts with a default policy defined in `openclaw-sandbox.yaml`.
-This policy controls which network endpoints the agent can reach and which filesystem paths it can access.
+The sandbox starts with a default policy that controls network egress, filesystem access, process privileges, and inference routing.
 
-- For network, only endpoints listed in the policy are allowed.
-  When the agent tries to reach an unlisted host, OpenShell blocks the request and surfaces it in the TUI for operator approval.
-- For filesystem, the agent can write to `/sandbox` and `/tmp`.
-  All other system paths are read-only.
+| Layer | What it protects | When it applies |
+|---|---|---|
+| Network | Blocks unauthorized outbound connections. | Hot-reloadable at runtime. |
+| Filesystem | Prevents reads and writes outside `/sandbox` and `/tmp`. | Locked at sandbox creation. |
+| Process | Blocks privilege escalation and dangerous syscalls. | Locked at sandbox creation. |
+| Inference | Reroutes model API calls to controlled backends. | Hot-reloadable at runtime. |
 
-Approved endpoints persist for the current session but are not saved to the baseline policy file.
+When the agent tries to reach an unlisted host, OpenShell blocks the request and surfaces it in the TUI for operator approval. Approved endpoints persist for the current session but are not saved to the baseline policy file.
+
+For details on the baseline rules, refer to Network Policies (see the `nemoclaw-reference` skill). For container-level hardening, refer to Sandbox Hardening (see the `nemoclaw-deploy-remote` skill).
 
 ## Next Steps
 
 - Follow the Quickstart (see the `nemoclaw-get-started` skill) to launch your first sandbox.
 - Refer to the Architecture (see the `nemoclaw-reference` skill) for the full technical structure, including file layouts and the blueprint lifecycle.
-- Refer to Inference Profiles (see the `nemoclaw-reference` skill) for detailed provider configuration.
+- Refer to Inference Options (see the `nemoclaw-configure-inference` skill) for detailed provider configuration.
