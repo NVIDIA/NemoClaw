@@ -62,7 +62,7 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | Linux | Docker | Supported | Primary supported path. |
 | macOS (Apple Silicon) | Colima, Docker Desktop | Caveated | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
 | macOS (Intel) | Docker Desktop | Caveated | Start the runtime before running the installer. |
-| Windows WSL | Docker Desktop (WSL backend) | Out of scope | WSL2 hosts are not part of the supported NemoClaw target matrix. |
+| Windows WSL2 | Docker Desktop (WSL backend) | Out of scope | WSL2 hosts are not part of the supported NemoClaw target matrix. |
 | Windows native | N/A | Out of scope | Native Windows hosts are not part of the supported NemoClaw target matrix. |
 | Jetson | N/A | Out of scope | Jetson hosts are not part of the supported NemoClaw target matrix. |
 | DGX Spark | Docker | Supported | Use the standard installer and `nemoclaw onboard`. |
