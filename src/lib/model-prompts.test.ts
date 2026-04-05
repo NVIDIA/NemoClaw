@@ -68,6 +68,21 @@ describe("model prompt helpers", () => {
     );
   });
 
+  it("defers transient manual validation failures back to the caller flow", async () => {
+    const errorLine = vi.fn();
+    const result = await promptManualModelId(
+      "  Model: ",
+      "Provider",
+      () => ({ ok: false, message: "Could not validate model against /models: timeout" }),
+      { promptFn: promptSequence(["custom-model"]), errorLine },
+    );
+
+    expect(result).toBe("custom-model");
+    expect(errorLine).toHaveBeenCalledWith(
+      "  Could not validate model against /models: timeout",
+    );
+  });
+
   it("returns back-to-selection for manual ids and input prompts", async () => {
     await expect(
       promptManualModelId("  Model: ", "Provider", null, { promptFn: promptSequence(["back"]) }),
@@ -108,5 +123,20 @@ describe("model prompt helpers", () => {
     expect(result).toBe("candidate");
     expect(errorLine).toHaveBeenCalledWith("  Invalid Custom model id.");
     expect(errorLine).toHaveBeenCalledWith("  try again");
+  });
+
+  it("returns input models immediately when validation should be deferred", async () => {
+    const errorLine = vi.fn();
+    const result = await promptInputModel(
+      "Custom",
+      "default-model",
+      () => ({ ok: false, message: "Could not validate model against /models: auth failed" }),
+      { promptFn: promptSequence(["candidate"]), errorLine },
+    );
+
+    expect(result).toBe("candidate");
+    expect(errorLine).toHaveBeenCalledWith(
+      "  Could not validate model against /models: auth failed",
+    );
   });
 });

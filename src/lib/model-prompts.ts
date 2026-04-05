@@ -27,6 +27,7 @@ export const REMOTE_MODEL_OPTIONS: Record<string, string[]> = {
 export interface PromptValidationResult {
   ok: boolean;
   message?: string;
+  deferValidation?: boolean;
 }
 
 export interface ModelPromptOptions {
@@ -54,6 +55,13 @@ function getNavigationChoice(value = ""): "back" | "exit" | null {
 function exitOnboardFromPrompt(): never {
   console.log("  Exiting onboarding.");
   process.exit(1);
+}
+
+function shouldDeferValidationFailure(validation: PromptValidationResult): boolean {
+  return (
+    validation.deferValidation === true ||
+    /^Could not validate model against /i.test(String(validation.message || ""))
+  );
 }
 
 function resolvePromptOptions(options: ModelPromptOptions = {}) {
@@ -96,7 +104,12 @@ export async function promptManualModelId(
     if (validator) {
       const validation = validator(trimmed);
       if (!validation.ok) {
-        deps.errorLine(`  ${validation.message}`);
+        if (validation.message) {
+          deps.errorLine(`  ${validation.message}`);
+        }
+        if (shouldDeferValidationFailure(validation)) {
+          return trimmed;
+        }
         continue;
       }
     }
@@ -201,7 +214,12 @@ export async function promptInputModel(
     if (validator) {
       const validation = validator(trimmed);
       if (!validation.ok) {
-        deps.errorLine(`  ${validation.message}`);
+        if (validation.message) {
+          deps.errorLine(`  ${validation.message}`);
+        }
+        if (shouldDeferValidationFailure(validation)) {
+          return trimmed;
+        }
         continue;
       }
     }
