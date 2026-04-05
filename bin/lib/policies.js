@@ -6,11 +6,12 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const readline = require("readline");
+const YAML = require("yaml");
 const { ROOT, run, runCapture, shellQuote } = require("./runner");
 const registry = require("./registry");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
-
 function getOpenshellCommand() {
   const binary = process.env.NEMOCLAW_OPENSHELL_BIN;
   if (!binary) return "openshell";
@@ -63,6 +64,7 @@ function getPresetEndpoints(content) {
  * `preset:` metadata header.
  */
 function extractPresetEntries(presetContent) {
+  if (!presetContent) return null;
   const npMatch = presetContent.match(/^network_policies:\n([\s\S]*)$/m);
   if (!npMatch) return null;
   return npMatch[1].trimEnd();
@@ -75,8 +77,23 @@ function extractPresetEntries(presetContent) {
 function parseCurrentPolicy(raw) {
   if (!raw) return "";
   const sep = raw.indexOf("---");
-  if (sep === -1) return raw;
-  return raw.slice(sep + 3).trim();
+  const candidate = (sep === -1 ? raw : raw.slice(sep + 3)).trim();
+  if (!candidate) return "";
+  if (/^(error|failed|invalid|warning|status)\b/i.test(candidate)) {
+    return "";
+  }
+  if (!/^[a-z_][a-z0-9_]*\s*:/m.test(candidate)) {
+    return "";
+  }
+  try {
+    const parsed = YAML.parse(candidate);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return "";
+    }
+  } catch {
+    return "";
+  }
+  return candidate;
 }
 
 /**
@@ -94,60 +111,111 @@ function buildPolicyGetCommand(sandboxName) {
 }
 
 /**
- * Merge preset entries into existing policy YAML. Handles versionless policies
- * by ensuring the merged result has a version header when the current policy
- * has content but no version field. Pure function for testing.
- *
- * @param {string} currentPolicy - Existing policy YAML (may be versionless)
- * @param {string} presetEntries - Indented network_policies entries from preset
- * @returns {string} Merged YAML with version header when missing
+ * Text-based fallback for merging preset entries into policy YAML.
+ * Used when preset entries cannot be parsed as structured YAML.
  */
-function mergePresetIntoPolicy(currentPolicy, presetEntries) {
-  if (!presetEntries) {
-    return currentPolicy || "version: 1\n\nnetwork_policies:\n";
-  }
+function textBasedMerge(currentPolicy, presetEntries) {
   if (!currentPolicy) {
     return "version: 1\n\nnetwork_policies:\n" + presetEntries;
   }
-
   let merged;
   if (/^network_policies\s*:/m.test(currentPolicy)) {
     const lines = currentPolicy.split("\n");
     const result = [];
-    let inNetworkPolicies = false;
+    let inNp = false;
     let inserted = false;
-
     for (const line of lines) {
-      const isTopLevel = /^\S.*:/.test(line);
-
       if (/^network_policies\s*:/.test(line)) {
-        inNetworkPolicies = true;
+        inNp = true;
         result.push(line);
         continue;
       }
-
-      if (inNetworkPolicies && isTopLevel && !inserted) {
+      if (inNp && /^\S.*:/.test(line) && !inserted) {
         result.push(presetEntries);
         inserted = true;
-        inNetworkPolicies = false;
+        inNp = false;
       }
-
       result.push(line);
     }
-
-    if (inNetworkPolicies && !inserted) {
-      result.push(presetEntries);
-    }
-
+    if (inNp && !inserted) result.push(presetEntries);
     merged = result.join("\n");
   } else {
     merged = currentPolicy.trimEnd() + "\n\nnetwork_policies:\n" + presetEntries;
   }
-
-  if (!merged.trimStart().startsWith("version:")) {
-    merged = "version: 1\n" + merged;
-  }
+  if (!merged.trimStart().startsWith("version:")) merged = "version: 1\n\n" + merged;
   return merged;
+}
+
+/**
+ * Merge preset entries into existing policy YAML using structured YAML
+ * parsing. Replaces the previous text-based manipulation which could
+ * produce invalid YAML when indentation or ordering varied.
+ *
+ * Behavior:
+ *   - Parses both current policy and preset entries as YAML
+ *   - Merges network_policies by name (preset overrides on collision)
+ *   - Preserves all non-network sections (filesystem_policy, process, etc.)
+ *   - Ensures version: 1 exists
+ *
+ * @param {string} currentPolicy - Existing policy YAML (may be empty/versionless)
+ * @param {string} presetEntries - Indented network_policies entries from preset
+ * @returns {string} Merged YAML
+ */
+function mergePresetIntoPolicy(currentPolicy, presetEntries) {
+  const normalizedCurrentPolicy = parseCurrentPolicy(currentPolicy);
+  if (!presetEntries) {
+    return normalizedCurrentPolicy || "version: 1\n\nnetwork_policies:\n";
+  }
+
+  // Parse preset entries. They come as indented content under network_policies:,
+  // so we wrap them to make valid YAML for parsing.
+  let presetPolicies;
+  try {
+    const wrapped = "network_policies:\n" + presetEntries;
+    const parsed = YAML.parse(wrapped);
+    presetPolicies = parsed?.network_policies;
+  } catch {
+    presetPolicies = null;
+  }
+
+  // If YAML parsing failed or entries are not a mergeable object,
+  // fall back to the text-based approach for backward compatibility.
+  if (!presetPolicies || typeof presetPolicies !== "object" || Array.isArray(presetPolicies)) {
+    return textBasedMerge(normalizedCurrentPolicy, presetEntries);
+  }
+
+  if (!normalizedCurrentPolicy) {
+    return YAML.stringify({ version: 1, network_policies: presetPolicies });
+  }
+
+  // Parse the current policy as structured YAML
+  let current;
+  try {
+    current = YAML.parse(normalizedCurrentPolicy);
+  } catch {
+    return textBasedMerge(normalizedCurrentPolicy, presetEntries);
+  }
+
+  if (!current || typeof current !== "object") current = {};
+
+  // Structured merge: preset entries override existing on name collision.
+  // Guard: network_policies may be an array in legacy policies — only
+  // object-merge when both sides are plain objects.
+  const existingNp = current.network_policies;
+  let mergedNp;
+  if (existingNp && typeof existingNp === "object" && !Array.isArray(existingNp)) {
+    mergedNp = { ...existingNp, ...presetPolicies };
+  } else {
+    mergedNp = presetPolicies;
+  }
+
+  const output = { version: current.version || 1 };
+  for (const [key, val] of Object.entries(current)) {
+    if (key !== "version" && key !== "network_policies") output[key] = val;
+  }
+  output.network_policies = mergedNp;
+
+  return YAML.stringify(output);
 }
 function applyPreset(sandboxName, presetName) {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
@@ -156,7 +224,7 @@ function applyPreset(sandboxName, presetName) {
   if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
     throw new Error(
       `Invalid or truncated sandbox name: '${sandboxName}'. ` +
-      `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`
+        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
     );
   }
 
@@ -175,11 +243,10 @@ function applyPreset(sandboxName, presetName) {
   // Get current policy YAML from sandbox
   let rawPolicy = "";
   try {
-    rawPolicy = runCapture(
-      buildPolicyGetCommand(sandboxName),
-      { ignoreError: true }
-    );
-  } catch { /* ignored */ }
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+  } catch {
+    /* ignored */
+  }
 
   const currentPolicy = parseCurrentPolicy(rawPolicy);
   const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
@@ -193,8 +260,16 @@ function applyPreset(sandboxName, presetName) {
 
     console.log(`  Applied preset: ${presetName}`);
   } finally {
-    try { fs.unlinkSync(tmpFile); } catch { /* ignored */ }
-    try { fs.rmdirSync(tmpDir); } catch { /* ignored */ }
+    try {
+      fs.unlinkSync(tmpFile);
+    } catch {
+      /* ignored */
+    }
+    try {
+      fs.rmdirSync(tmpDir);
+    } catch {
+      /* ignored */
+    }
   }
 
   const sandbox = registry.getSandbox(sandboxName);
@@ -214,6 +289,53 @@ function getAppliedPresets(sandboxName) {
   return sandbox ? sandbox.policies || [] : [];
 }
 
+function selectFromList(items, { applied = [] } = {}) {
+  return new Promise((resolve) => {
+    process.stderr.write("\n  Available presets:\n");
+    items.forEach((item, i) => {
+      const marker = applied.includes(item.name) ? "●" : "○";
+      const description = item.description ? ` — ${item.description}` : "";
+      process.stderr.write(`    ${i + 1}) ${marker} ${item.name}${description}\n`);
+    });
+    process.stderr.write("\n  ● applied, ○ not applied\n\n");
+    const defaultIdx = items.findIndex((item) => !applied.includes(item.name));
+    const defaultNum = defaultIdx >= 0 ? defaultIdx + 1 : null;
+    const question = defaultNum ? `  Choose preset [${defaultNum}]: ` : "  Choose preset: ";
+    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+    rl.question(question, (answer) => {
+      rl.close();
+      if (!process.stdin.isTTY) {
+        if (typeof process.stdin.pause === "function") process.stdin.pause();
+        if (typeof process.stdin.unref === "function") process.stdin.unref();
+      }
+      const trimmed = answer.trim();
+      const effectiveInput = trimmed || (defaultNum ? String(defaultNum) : "");
+      if (!effectiveInput) {
+        resolve(null);
+        return;
+      }
+      if (!/^\d+$/.test(effectiveInput)) {
+        process.stderr.write("\n  Invalid preset number.\n");
+        resolve(null);
+        return;
+      }
+      const num = Number(effectiveInput);
+      const item = items[num - 1];
+      if (!item) {
+        process.stderr.write("\n  Invalid preset number.\n");
+        resolve(null);
+        return;
+      }
+      if (applied.includes(item.name)) {
+        process.stderr.write(`\n  Preset '${item.name}' is already applied.\n`);
+        resolve(null);
+        return;
+      }
+      resolve(item.name);
+    });
+  });
+}
+
 module.exports = {
   PRESETS_DIR,
   listPresets,
@@ -226,4 +348,5 @@ module.exports = {
   mergePresetIntoPolicy,
   applyPreset,
   getAppliedPresets,
+  selectFromList,
 };
