@@ -19,12 +19,18 @@
  *   The local `brev` CLI must already be authenticated before this suite runs.
  *
  * Optional env vars:
- *   TEST_SUITE             — which test to run: full (default), deploy-cli, credential-sanitization, telegram-injection, all
+ *   TEST_SUITE             — which test to run: full (default), deploy-cli, credential-sanitization,
+ *                             telegram-injection, messaging-providers, all
  *   LAUNCHABLE_SETUP_SCRIPT — URL to setup script for launchable path (default: brev-launchable-ci-cpu.sh on main)
  *   BREV_MIN_VCPU          — Minimum vCPUs for CPU instance (default: 4)
  *   BREV_MIN_RAM           — Minimum RAM in GB for CPU instance (default: 16)
  *   BREV_PROVIDER          — Cloud provider filter for brev search (default: gcp)
  *   BREV_MIN_DISK          — Minimum disk size in GB (default: 50)
+ *   TELEGRAM_BOT_TOKEN       — Telegram bot token for messaging-providers test (fake OK)
+ *   DISCORD_BOT_TOKEN        — Discord bot token for messaging-providers test (fake OK)
+ *   TELEGRAM_BOT_TOKEN_REAL  — Real Telegram token for optional live round-trip
+ *   DISCORD_BOT_TOKEN_REAL   — Real Discord token for optional live round-trip
+ *   TELEGRAM_CHAT_ID_E2E     — Telegram chat ID for optional sendMessage test
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -134,13 +140,26 @@ function shellEscape(value) {
 
 /** Run a command on the remote VM with env vars set for NemoClaw. */
 function sshEnv(cmd, { timeout = 600_000, stream = false } = {}) {
-  const envPrefix = [
+  const envParts = [
     `export NVIDIA_API_KEY='${shellEscape(process.env.NVIDIA_API_KEY)}'`,
     `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
     `export NEMOCLAW_NON_INTERACTIVE=1`,
     `export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`,
     `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
-  ].join(" && ");
+  ];
+  // Forward optional messaging tokens for the messaging-providers test
+  for (const key of [
+    "TELEGRAM_BOT_TOKEN",
+    "DISCORD_BOT_TOKEN",
+    "TELEGRAM_BOT_TOKEN_REAL",
+    "DISCORD_BOT_TOKEN_REAL",
+    "TELEGRAM_CHAT_ID_E2E",
+  ]) {
+    if (process.env[key]) {
+      envParts.push(`export ${key}='${shellEscape(process.env[key])}'`);
+    }
+  }
+  const envPrefix = envParts.join(" && ");
 
   return ssh(`${envPrefix} && ${cmd}`, { timeout, stream });
 }
@@ -667,5 +686,18 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       expect(registry.sandboxes).toHaveProperty("e2e-test");
     },
     120_000,
+  );
+
+  // NOTE: The messaging-providers test creates its own sandbox (e2e-msg-provider)
+  // with messaging tokens attached. It does not conflict with the e2e-test sandbox
+  // used by other tests, but it may recreate the gateway.
+  it.runIf(TEST_SUITE === "messaging-providers" || TEST_SUITE === "all")(
+    "messaging credential provider suite passes on remote VM",
+    () => {
+      const output = runRemoteTest("test/e2e/test-messaging-providers.sh");
+      expect(output).toContain("PASS");
+      expect(output).not.toMatch(/FAIL:/);
+    },
+    900_000, // 15 min — creates a new sandbox with messaging providers
   );
 });
