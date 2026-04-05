@@ -10,6 +10,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import type { WebSearchConfig } from "./web-search";
+
 export const SESSION_VERSION = 1;
 export const SESSION_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
@@ -53,6 +55,7 @@ export interface Session {
   credentialEnv: string | null;
   preferredInferenceApi: string | null;
   nimContainer: string | null;
+  webSearchConfig: WebSearchConfig | null;
   policyPresets: string[] | null;
   metadata: SessionMetadata;
   steps: Record<string, StepState>;
@@ -81,6 +84,7 @@ export interface SessionUpdates {
   credentialEnv?: string;
   preferredInferenceApi?: string;
   nimContainer?: string;
+  webSearchConfig?: WebSearchConfig | null;
   policyPresets?: string[];
   metadata?: { gatewayName?: string };
 }
@@ -119,7 +123,7 @@ export function redactSensitiveText(value: unknown): string | null {
   if (typeof value !== "string") return null;
   return value
     .replace(
-      /(NVIDIA_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|COMPATIBLE_API_KEY|COMPATIBLE_ANTHROPIC_API_KEY)=\S+/gi,
+      /(NVIDIA_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|COMPATIBLE_API_KEY|COMPATIBLE_ANTHROPIC_API_KEY|BRAVE_API_KEY)=\S+/gi,
       "$1=<REDACTED>",
     )
     .replace(/Bearer\s+\S+/gi, "Bearer <REDACTED>")
@@ -188,6 +192,10 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     credentialEnv: overrides.credentialEnv || null,
     preferredInferenceApi: overrides.preferredInferenceApi || null,
     nimContainer: overrides.nimContainer || null,
+    webSearchConfig:
+      overrides.webSearchConfig && overrides.webSearchConfig.fetchEnabled === true
+        ? { fetchEnabled: true }
+        : null,
     policyPresets: Array.isArray(overrides.policyPresets)
       ? overrides.policyPresets.filter((value) => typeof value === "string")
       : null,
@@ -218,6 +226,11 @@ export function normalizeSession(data: unknown): Session | null {
     preferredInferenceApi:
       typeof d.preferredInferenceApi === "string" ? d.preferredInferenceApi : null,
     nimContainer: typeof d.nimContainer === "string" ? d.nimContainer : null,
+    webSearchConfig:
+      isObject(d.webSearchConfig) &&
+      (d.webSearchConfig as Record<string, unknown>).fetchEnabled === true
+        ? { fetchEnabled: true }
+        : null,
     policyPresets: Array.isArray(d.policyPresets)
       ? (d.policyPresets as unknown[]).filter((value) => typeof value === "string") as string[]
       : null,
@@ -400,6 +413,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   if (typeof updates.preferredInferenceApi === "string")
     safe.preferredInferenceApi = updates.preferredInferenceApi;
   if (typeof updates.nimContainer === "string") safe.nimContainer = updates.nimContainer;
+  if (isObject(updates.webSearchConfig) && updates.webSearchConfig.fetchEnabled === true) {
+    safe.webSearchConfig = { fetchEnabled: true };
+  } else if (updates.webSearchConfig === null) {
+    safe.webSearchConfig = null;
+  }
   if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
   }

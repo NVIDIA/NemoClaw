@@ -58,11 +58,11 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 |----------|--------------------|--------|-------|
 | Linux | Docker | Supported | Primary supported path. |
 | macOS (Apple Silicon) | Colima, Docker Desktop | Caveated | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
-| macOS (Intel) | Podman | Caveated | Depends on future OpenShell support for Podman on macOS. |
-| Windows WSL2 | Docker Desktop (WSL backend) | Out of scope | The CLI may run in WSL2, but WSL2 is not part of the supported NemoClaw target matrix. |
+| macOS (Intel) | Docker Desktop | Caveated | Start the runtime before running the installer. |
+| Windows WSL | Docker Desktop (WSL backend) | Supported | Supported target path. |
 | Windows native | N/A | Out of scope | Native Windows hosts are not part of the supported NemoClaw target matrix. |
 | Jetson | N/A | Out of scope | Jetson hosts are not part of the supported NemoClaw target matrix. |
-| DGX Spark | Docker | Supported | Refer to the [DGX Spark setup guide](docs/reference/commands.md#nemoclaw-setup-spark) for cgroup v2 and Docker configuration. |
+| DGX Spark | Docker | Supported | Use the standard installer and `nemoclaw onboard`. |
 
 ### Install NemoClaw and Onboard OpenClaw Agent
 
@@ -142,7 +142,7 @@ Refer to the following pages on the official documentation website for more info
 | [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html) | What NemoClaw does and how it fits together. |
 | [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) | Plugin, blueprint, sandbox lifecycle, and protection layers. |
 | [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html) | Plugin structure, blueprint lifecycle, sandbox environment, and host-side state. |
-| [Inference Profiles](https://docs.nvidia.com/nemoclaw/latest/reference/inference-profiles.html) | Supported providers, validation, and routed inference configuration. |
+| [Inference Options](https://docs.nvidia.com/nemoclaw/latest/inference/inference-options.html) | Supported providers, validation, and routed inference configuration. |
 | [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html) | Baseline rules, operator approval flow, and egress control. |
 | [Customize Network Policy](https://docs.nvidia.com/nemoclaw/latest/network-policy/customize-network-policy.html) | Static and dynamic policy changes, presets. |
 | [Security Best Practices](https://docs.nvidia.com/nemoclaw/latest/security/best-practices.html) | Controls reference, risk framework, and posture profiles for sandbox security. |

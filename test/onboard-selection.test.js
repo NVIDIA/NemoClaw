@@ -624,7 +624,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
-    assert.equal(payload.result.preferredInferenceApi, "openai-responses");
+    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.ok(
       payload.lines.some((line) => line.includes("Loading Ollama model: nemotron-3-nano:30b")),
     );

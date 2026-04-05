@@ -18,7 +18,7 @@ function envInt(name, fallback) {
   const n = Number(raw);
   return Number.isFinite(n) ? Math.max(0, Math.round(n)) : fallback;
 }
-const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("./runner");
+const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -35,12 +35,7 @@ const {
   getProviderSelectionConfig,
   parseGatewayInference,
 } = require("./inference-config");
-const {
-  inferContainerRuntime,
-  isUnsupportedMacosRuntime,
-  isWsl,
-  shouldPatchCoredns,
-} = require("./platform");
+const { inferContainerRuntime, isWsl, shouldPatchCoredns } = require("./platform");
 const { resolveOpenshell } = require("./resolve-openshell");
 const {
   prompt,
@@ -54,7 +49,13 @@ const nim = require("./nim");
 const onboardSession = require("./onboard-session");
 const policies = require("./policies");
 const { ensureUsageNoticeConsent } = require("./usage-notice");
-const { checkPortAvailable, ensureSwap, getMemoryInfo } = require("./preflight");
+const {
+  assessHost,
+  checkPortAvailable,
+  ensureSwap,
+  getMemoryInfo,
+  planHostRemediation,
+} = require("./preflight");
 
 // Typed modules (compiled from src/lib/*.ts → dist/lib/*.js)
 const gatewayState = require("../../dist/lib/gateway-state");
@@ -62,6 +63,7 @@ const validation = require("../../dist/lib/validation");
 const urlUtils = require("../../dist/lib/url-utils");
 const buildContext = require("../../dist/lib/build-context");
 const dashboard = require("../../dist/lib/dashboard");
+const webSearch = require("../../dist/lib/web-search");
 
 /**
  * Create a temp file inside a directory with a cryptographically random name.
@@ -98,6 +100,7 @@ const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
+const BRAVE_SEARCH_HELP_URL = "https://api.search.brave.com/app/keys";
 
 const REMOTE_PROVIDER_CONFIG = {
   build: {
@@ -252,6 +255,25 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
   let lastHeartbeatPhase = null;
   let lastHeartbeatBucket = -1;
 
+  function getDisplayWidth() {
+    return Math.max(60, Number(process.stdout.columns || 100));
+  }
+
+  function trimDisplayLine(line) {
+    const width = getDisplayWidth();
+    const maxLen = Math.max(40, width - 4);
+    if (line.length <= maxLen) return line;
+    return `${line.slice(0, Math.max(0, maxLen - 3))}...`;
+  }
+
+  function printProgressLine(line) {
+    const display = trimDisplayLine(line);
+    if (display !== lastPrintedLine) {
+      console.log(display);
+      lastPrintedLine = display;
+    }
+  }
+
   function elapsedSeconds() {
     return Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
   }
@@ -271,10 +293,7 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
             : nextPhase === "ready"
               ? "  Waiting for sandbox to become ready..."
               : null;
-    if (phaseLine && phaseLine !== lastPrintedLine) {
-      console.log(phaseLine);
-      lastPrintedLine = phaseLine;
-    }
+    if (phaseLine) printProgressLine(phaseLine);
   }
 
   function finish(result) {
@@ -330,8 +349,7 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
       setPhase("create");
     }
     if (shouldShowLine(line) && line !== lastPrintedLine) {
-      console.log(line);
-      lastPrintedLine = line;
+      printProgressLine(line);
       sawProgress = true;
     }
   }
@@ -362,10 +380,7 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
           setPhase("ready");
           const detail = "Sandbox reported Ready before create stream exited; continuing.";
           lines.push(detail);
-          if (detail !== lastPrintedLine) {
-            console.log(`  ${detail}`);
-            lastPrintedLine = detail;
-          }
+          printProgressLine(`  ${detail}`);
           try {
             child.kill("SIGTERM");
           } catch {
@@ -398,9 +413,8 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
           : currentPhase === "ready"
             ? `  Still waiting for sandbox to become ready... (${elapsed}s elapsed)`
             : `  Still building sandbox image... (${elapsed}s elapsed)`;
-    if (heartbeatLine !== lastPrintedLine) {
-      console.log(heartbeatLine);
-      lastPrintedLine = heartbeatLine;
+    if (trimDisplayLine(heartbeatLine) !== lastPrintedLine) {
+      printProgressLine(heartbeatLine);
       lastHeartbeatPhase = currentPhase;
       lastHeartbeatBucket = bucket;
     }
@@ -421,6 +435,131 @@ function streamSandboxCreate(command, env = process.env, options = {}) {
 
     child.on("close", (code) => {
       finish({ status: code ?? 1, output: lines.join("\n"), sawProgress });
+    });
+  });
+}
+
+function streamGatewayStart(command, env = process.env) {
+  const child = spawn("bash", ["-lc", command], {
+    cwd: ROOT,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  const lines = [];
+  let pending = "";
+  let settled = false;
+  let resolvePromise;
+  let lastPrintedLine = "";
+  let currentPhase = "cluster";
+  let lastHeartbeatBucket = -1;
+  let lastOutputAt = Date.now();
+  const startedAt = Date.now();
+
+  function getDisplayWidth() {
+    return Math.max(60, Number(process.stdout.columns || 100));
+  }
+
+  function trimDisplayLine(line) {
+    const width = getDisplayWidth();
+    const maxLen = Math.max(40, width - 4);
+    if (line.length <= maxLen) return line;
+    return `${line.slice(0, Math.max(0, maxLen - 3))}...`;
+  }
+
+  function printProgressLine(line) {
+    const display = trimDisplayLine(line);
+    if (display !== lastPrintedLine) {
+      console.log(display);
+      lastPrintedLine = display;
+    }
+  }
+
+  function elapsedSeconds() {
+    return Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  }
+
+  function setPhase(nextPhase) {
+    if (!nextPhase || nextPhase === currentPhase) return;
+    currentPhase = nextPhase;
+    const phaseLine =
+      nextPhase === "install"
+        ? "  Installing OpenShell components..."
+        : nextPhase === "pod"
+          ? "  Starting OpenShell gateway pod..."
+          : nextPhase === "health"
+            ? "  Waiting for gateway health..."
+            : "  Starting gateway cluster...";
+    printProgressLine(phaseLine);
+  }
+
+  function classifyLine(line) {
+    if (/ApplyJob|helm-install-openshell|Applying HelmChart/i.test(line)) return "install";
+    if (
+      /openshell-0|Observed pod startup duration|MountVolume\.MountDevice succeeded/i.test(line)
+    ) {
+      return "pod";
+    }
+    if (/Gateway .* ready\.?$/i.test(line)) return "health";
+    return null;
+  }
+
+  function flushLine(rawLine) {
+    const line = rawLine.replace(/\r/g, "").trimEnd();
+    if (!line) return;
+    lines.push(line);
+    lastOutputAt = Date.now();
+    const nextPhase = classifyLine(line);
+    if (nextPhase) setPhase(nextPhase);
+  }
+
+  function onChunk(chunk) {
+    pending += chunk.toString();
+    const parts = pending.split("\n");
+    pending = parts.pop();
+    parts.forEach(flushLine);
+  }
+
+  function finish(result) {
+    if (settled) return;
+    settled = true;
+    if (pending) flushLine(pending);
+    clearInterval(heartbeatTimer);
+    resolvePromise(result);
+  }
+
+  child.stdout.on("data", onChunk);
+  child.stderr.on("data", onChunk);
+
+  printProgressLine("  Starting gateway cluster...");
+  const heartbeatTimer = setInterval(() => {
+    if (settled) return;
+    const elapsed = elapsedSeconds();
+    const bucket = Math.floor(elapsed / 10);
+    if (bucket === lastHeartbeatBucket) return;
+    if (Date.now() - lastOutputAt < 3000 && elapsed < 10) return;
+    const heartbeatLine =
+      currentPhase === "install"
+        ? `  Still installing OpenShell components... (${elapsed}s elapsed)`
+        : currentPhase === "pod"
+          ? `  Still starting OpenShell gateway pod... (${elapsed}s elapsed)`
+          : currentPhase === "health"
+            ? `  Still waiting for gateway health... (${elapsed}s elapsed)`
+            : `  Still starting gateway cluster... (${elapsed}s elapsed)`;
+    printProgressLine(heartbeatLine);
+    lastHeartbeatBucket = bucket;
+  }, 5000);
+  heartbeatTimer.unref?.();
+
+  return new Promise((resolve) => {
+    resolvePromise = resolve;
+    child.on("error", (error) => {
+      const detail = error?.message || String(error);
+      lines.push(detail);
+      finish({ status: 1, output: lines.join("\n") });
+    });
+    child.on("close", (code) => {
+      finish({ status: code ?? 1, output: lines.join("\n") });
     });
   });
 }
@@ -835,6 +974,155 @@ function encodeDockerJsonArg(value) {
   return Buffer.from(JSON.stringify(value || {}), "utf8").toString("base64");
 }
 
+function isAffirmativeAnswer(value) {
+  return ["y", "yes"].includes(
+    String(value || "")
+      .trim()
+      .toLowerCase(),
+  );
+}
+
+function printBraveExposureWarning() {
+  console.log("");
+  for (const line of webSearch.getBraveExposureWarningLines()) {
+    console.log(`  ${line}`);
+  }
+  console.log("");
+}
+
+function validateBraveSearchApiKey(apiKey) {
+  return runCurlProbe([
+    "-sS",
+    "--compressed",
+    "-H",
+    "Accept: application/json",
+    "-H",
+    "Accept-Encoding: gzip",
+    "-H",
+    `X-Subscription-Token: ${apiKey}`,
+    "--get",
+    "--data-urlencode",
+    "q=ping",
+    "--data-urlencode",
+    "count=1",
+    "https://api.search.brave.com/res/v1/web/search",
+  ]);
+}
+
+async function promptBraveSearchRecovery(validation) {
+  const recovery = classifyValidationFailure(validation);
+
+  if (recovery.kind === "credential") {
+    console.log("  Brave Search rejected that API key.");
+  } else if (recovery.kind === "transport") {
+    console.log(getTransportRecoveryMessage(validation));
+  } else {
+    console.log("  Brave Search validation did not succeed.");
+  }
+
+  const answer = (await prompt("  Type 'retry', 'skip', or 'exit' [retry]: ")).trim().toLowerCase();
+  if (answer === "skip") return "skip";
+  if (answer === "exit" || answer === "quit") {
+    exitOnboardFromPrompt();
+  }
+  return "retry";
+}
+
+async function promptBraveSearchApiKey() {
+  console.log("");
+  console.log(`  Get your Brave Search API key from: ${BRAVE_SEARCH_HELP_URL}`);
+  console.log("");
+
+  while (true) {
+    const key = normalizeCredentialValue(
+      await prompt("  Brave Search API key: ", { secret: true }),
+    );
+    if (!key) {
+      console.error("  Brave Search API key is required.");
+      continue;
+    }
+    return key;
+  }
+}
+
+async function ensureValidatedBraveSearchCredential() {
+  let apiKey = getCredential(webSearch.BRAVE_API_KEY_ENV);
+  let usingSavedKey = Boolean(apiKey);
+
+  while (true) {
+    if (!apiKey) {
+      apiKey = await promptBraveSearchApiKey();
+      usingSavedKey = false;
+    }
+
+    const validation = validateBraveSearchApiKey(apiKey);
+    if (validation.ok) {
+      saveCredential(webSearch.BRAVE_API_KEY_ENV, apiKey);
+      process.env[webSearch.BRAVE_API_KEY_ENV] = apiKey;
+      return apiKey;
+    }
+
+    const prefix = usingSavedKey
+      ? "  Saved Brave Search API key validation failed."
+      : "  Brave Search API key validation failed.";
+    console.error(prefix);
+    if (validation.message) {
+      console.error(`  ${validation.message}`);
+    }
+
+    const action = await promptBraveSearchRecovery(validation);
+    if (action === "skip") {
+      console.log("  Skipping Brave Web Search setup.");
+      console.log("");
+      return null;
+    }
+
+    apiKey = null;
+    usingSavedKey = false;
+  }
+}
+
+async function configureWebSearch(existingConfig = null) {
+  if (existingConfig) {
+    return { fetchEnabled: true };
+  }
+
+  if (isNonInteractive()) {
+    const braveApiKey = normalizeCredentialValue(process.env[webSearch.BRAVE_API_KEY_ENV]);
+    if (!braveApiKey) {
+      return null;
+    }
+    note("  [non-interactive] Brave Web Search requested.");
+    printBraveExposureWarning();
+    const validation = validateBraveSearchApiKey(braveApiKey);
+    if (!validation.ok) {
+      console.error("  Brave Search API key validation failed.");
+      if (validation.message) {
+        console.error(`  ${validation.message}`);
+      }
+      process.exit(1);
+    }
+    saveCredential(webSearch.BRAVE_API_KEY_ENV, braveApiKey);
+    process.env[webSearch.BRAVE_API_KEY_ENV] = braveApiKey;
+    return { fetchEnabled: true };
+  }
+
+  printBraveExposureWarning();
+  const enableAnswer = await prompt("  Enable Brave Web Search? [y/N]: ");
+  if (!isAffirmativeAnswer(enableAnswer)) {
+    return null;
+  }
+
+  const braveApiKey = await ensureValidatedBraveSearchCredential();
+  if (!braveApiKey) {
+    return null;
+  }
+
+  console.log("  ✓ Enabled Brave Web Search");
+  console.log("");
+  return { fetchEnabled: true };
+}
+
 function getSandboxInferenceConfig(model, provider = null, preferredInferenceApi = null) {
   let providerKey;
   let primaryModelRef;
@@ -886,6 +1174,7 @@ function patchStagedDockerfile(
   buildId = String(Date.now()),
   provider = null,
   preferredInferenceApi = null,
+  webSearchConfig = null,
 ) {
   const { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat } =
     getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -915,6 +1204,13 @@ function patchStagedDockerfile(
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_BUILD_ID=.*$/m,
     `ARG NEMOCLAW_BUILD_ID=${buildId}`,
+  );
+  dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_WEB_CONFIG_B64=.*$/m,
+    `ARG NEMOCLAW_WEB_CONFIG_B64=${webSearch.buildWebSearchDockerConfig(
+      webSearchConfig,
+      webSearchConfig ? getCredential(webSearch.BRAVE_API_KEY_ENV) : null,
+    )}`,
   );
   // Onboard flow expects immediate dashboard access without device pairing,
   // so disable device auth for images built during onboard (see #1217).
@@ -1554,18 +1850,25 @@ function getResumeConfigConflicts(session, opts = {}) {
   return conflicts;
 }
 
-function isDockerRunning() {
-  try {
-    runCapture("docker info", { ignoreError: false });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function getContainerRuntime() {
   const info = runCapture("docker info 2>/dev/null", { ignoreError: true });
   return inferContainerRuntime(info);
+}
+
+function printRemediationActions(actions) {
+  if (!Array.isArray(actions) || actions.length === 0) {
+    return;
+  }
+
+  console.error("");
+  console.error("  Suggested fix:");
+  console.error("");
+  for (const action of actions) {
+    console.error(`  - ${action.title}: ${action.reason}`);
+    for (const command of action.commands || []) {
+      console.error(`    ${command}`);
+    }
+  }
 }
 
 function isOpenshellInstalled() {
@@ -1630,7 +1933,13 @@ function sleep(seconds) {
 }
 
 function destroyGateway() {
-  runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+  const destroyResult = runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], {
+    ignoreError: true,
+  });
+  // Clear the local registry so `nemoclaw list` stays consistent with OpenShell state. (#532)
+  if (destroyResult.status === 0) {
+    registry.clearAll();
+  }
   // openshell gateway destroy doesn't remove Docker volumes, which leaves
   // corrupted cluster state that breaks the next gateway start. Clean them up.
   run(
@@ -1724,24 +2033,27 @@ function getNonInteractiveModel(providerKey) {
 async function preflight() {
   step(1, 7, "Preflight checks");
 
-  // Docker
-  if (!isDockerRunning()) {
-    console.error("  Docker is not running. Please start Docker and try again.");
+  const host = assessHost();
+
+  // Docker / runtime
+  if (!host.dockerReachable) {
+    console.error("  Docker is not reachable. Please fix Docker and try again.");
+    printRemediationActions(planHostRemediation(host));
     process.exit(1);
   }
   console.log("  ✓ Docker is running");
 
-  const runtime = getContainerRuntime();
-  if (isUnsupportedMacosRuntime(runtime)) {
-    console.error("  Podman on macOS is not supported by NemoClaw at this time.");
-    console.error(
-      "  OpenShell currently depends on Docker host-gateway behavior that Podman on macOS does not provide.",
-    );
-    console.error("  Use Colima or Docker Desktop on macOS instead.");
-    process.exit(1);
+  if (host.runtime !== "unknown") {
+    console.log(`  ✓ Container runtime: ${host.runtime}`);
   }
-  if (runtime !== "unknown") {
-    console.log(`  ✓ Container runtime: ${runtime}`);
+  if (host.isUnsupportedRuntime) {
+    console.warn(
+      "  ! Podman is not a supported OpenShell runtime. NemoClaw will continue, but your experience may vary.",
+    );
+    printRemediationActions(planHostRemediation(host));
+  }
+  if (host.notes.includes("Running under WSL")) {
+    console.log("  ⓘ Running under WSL");
   }
 
   // OpenShell CLI
@@ -1781,7 +2093,14 @@ async function preflight() {
   if (gatewayReuseState === "stale" || gatewayReuseState === "active-unnamed") {
     console.log("  Cleaning up previous NemoClaw session...");
     runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
-    runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], { ignoreError: true });
+    const destroyResult = runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], {
+      ignoreError: true,
+    });
+    // Sandboxes under the destroyed gateway no longer exist in OpenShell —
+    // clear the local registry so `nemoclaw list` stays consistent. (#532)
+    if (destroyResult.status === 0) {
+      registry.clearAll();
+    }
     console.log("  ✓ Previous session cleaned up");
   }
 
@@ -1933,8 +2252,21 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   const retries = exitOnFailure ? 2 : 0;
   try {
     await pRetry(
-      () => {
-        runOpenshell(["gateway", "start", ...gwArgs], { ignoreError: true, env: gatewayEnv });
+      async () => {
+        const startResult = await streamGatewayStart(
+          openshellShellCommand(["gateway", "start", ...gwArgs]),
+          {
+            ...process.env,
+            ...gatewayEnv,
+          },
+        );
+        if (startResult.status !== 0) {
+          const output = compactText(String(startResult.output || ""));
+          if (output) {
+            console.log(`  Gateway start returned before healthy: ${output.slice(0, 240)}`);
+          }
+        }
+        console.log("  Waiting for gateway health...");
 
         const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 5);
         const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
@@ -2023,10 +2355,20 @@ async function recoverGatewayRuntime() {
     return true;
   }
 
-  runOpenshell(["gateway", "start", "--name", GATEWAY_NAME], {
+  const startResult = runOpenshell(["gateway", "start", "--name", GATEWAY_NAME], {
     ignoreError: true,
     env: getGatewayStartEnv(),
+    suppressOutput: true,
   });
+  if (startResult.status !== 0) {
+    const diagnostic = compactText(
+      redact(`${startResult.stderr || ""} ${startResult.stdout || ""}`),
+    );
+    console.error(`  Gateway restart failed (exit ${startResult.status}).`);
+    if (diagnostic) {
+      console.error(`  ${diagnostic.slice(0, 240)}`);
+    }
+  }
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
 
   const recoveryPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 10);
@@ -2052,23 +2394,28 @@ async function recoverGatewayRuntime() {
 // ── Step 3: Sandbox ──────────────────────────────────────────────
 
 async function promptValidatedSandboxName() {
-  while (true) {
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const nameAnswer = await promptOrDefault(
-      "  Sandbox name (lowercase, numbers, hyphens) [my-assistant]: ",
+      "  Sandbox name (lowercase, starts with letter, hyphens ok) [my-assistant]: ",
       "NEMOCLAW_SANDBOX_NAME",
       "my-assistant",
     );
     const sandboxName = (nameAnswer || "my-assistant").trim().toLowerCase();
 
     // Validate: RFC 1123 subdomain — lowercase alphanumeric and hyphens,
-    // must start and end with alphanumeric (required by Kubernetes/OpenShell)
-    if (/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName)) {
+    // must start with a letter (not a digit) to satisfy Kubernetes naming.
+    if (/^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName)) {
       return sandboxName;
     }
 
     console.error(`  Invalid sandbox name: '${sandboxName}'`);
-    console.error("  Names must be lowercase, contain only letters, numbers, and hyphens,");
-    console.error("  and must start and end with a letter or number.");
+    if (/^[0-9]/.test(sandboxName)) {
+      console.error("  Names must start with a letter, not a digit.");
+    } else {
+      console.error("  Names must be lowercase, contain only letters, numbers, and hyphens,");
+      console.error("  must start with a letter, and end with a letter or number.");
+    }
 
     // Non-interactive runs cannot re-prompt — abort so the caller can fix the
     // NEMOCLAW_SANDBOX_NAME env var and retry.
@@ -2076,8 +2423,13 @@ async function promptValidatedSandboxName() {
       process.exit(1);
     }
 
-    console.error("  Please try again.\n");
+    if (attempt < MAX_ATTEMPTS - 1) {
+      console.error("  Please try again.\n");
+    }
   }
+
+  console.error("  Too many invalid attempts.");
+  process.exit(1);
 }
 
 // ── Step 5: Sandbox ──────────────────────────────────────────────
@@ -2089,6 +2441,7 @@ async function createSandbox(
   provider,
   preferredInferenceApi = null,
   sandboxNameOverride = null,
+  webSearchConfig = null,
 ) {
   step(5, 7, "Creating sandbox");
 
@@ -2147,6 +2500,13 @@ async function createSandbox(
   // --gpu is intentionally omitted. See comment in startGateway().
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
+  if (webSearchConfig && !getCredential(webSearch.BRAVE_API_KEY_ENV)) {
+    console.error("  Brave Search is enabled, but BRAVE_API_KEY is not available in this process.");
+    console.error(
+      "  Re-run with BRAVE_API_KEY set, or disable Brave Search before recreating the sandbox.",
+    );
+    process.exit(1);
+  }
   patchStagedDockerfile(
     stagedDockerfile,
     model,
@@ -2154,6 +2514,7 @@ async function createSandbox(
     String(Date.now()),
     provider,
     preferredInferenceApi,
+    webSearchConfig,
   );
   // Only pass non-sensitive env vars to the sandbox. NVIDIA_API_KEY is NOT
   // needed inside the sandbox — inference is proxied through the OpenShell
@@ -2732,7 +3093,14 @@ async function setupNim(gpu) {
           if (!validation.ok) {
             continue;
           }
-          preferredInferenceApi = validation.api;
+          // Ollama's /v1/responses endpoint does not produce correctly
+          // formatted tool calls — force chat completions like vLLM/NIM.
+          if (validation.api !== "openai-completions") {
+            console.log(
+              "  ℹ Using chat completions API (Ollama tool calls require /v1/chat/completions)",
+            );
+          }
+          preferredInferenceApi = "openai-completions";
           break;
         }
         break;
@@ -2777,7 +3145,14 @@ async function setupNim(gpu) {
           if (!validation.ok) {
             continue;
           }
-          preferredInferenceApi = validation.api;
+          // Ollama's /v1/responses endpoint does not produce correctly
+          // formatted tool calls — force chat completions like vLLM/NIM.
+          if (validation.api !== "openai-completions") {
+            console.log(
+              "  ℹ Using chat completions API (Ollama tool calls require /v1/chat/completions)",
+            );
+          }
+          preferredInferenceApi = "openai-completions";
           break;
         }
         break;
@@ -3168,6 +3543,7 @@ function arePolicyPresetsApplied(sandboxName, selectedPresets = []) {
 async function setupPoliciesWithSelection(sandboxName, options = {}) {
   const selectedPresets = Array.isArray(options.selectedPresets) ? options.selectedPresets : null;
   const onSelection = typeof options.onSelection === "function" ? options.onSelection : null;
+  const webSearchConfig = options.webSearchConfig || null;
 
   step(7, 7, "Policy presets");
 
@@ -3176,6 +3552,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) suggestions.push("slack");
   if (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN)
     suggestions.push("discord");
+  if (webSearchConfig) suggestions.push("brave");
 
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
@@ -3607,6 +3984,7 @@ async function onboard(opts = {}) {
     let credentialEnv = session?.credentialEnv || null;
     let preferredInferenceApi = session?.preferredInferenceApi || null;
     let nimContainer = session?.nimContainer || null;
+    let webSearchConfig = session?.webSearchConfig || null;
     let forceProviderSelection = false;
     while (true) {
       const resumeProviderSelection =
@@ -3679,6 +4057,31 @@ async function onboard(opts = {}) {
       break;
     }
 
+    if (webSearchConfig) {
+      note("  [resume] Revalidating Brave Search configuration.");
+      const braveApiKey = await ensureValidatedBraveSearchCredential();
+      if (braveApiKey) {
+        webSearchConfig = { fetchEnabled: true };
+        onboardSession.updateSession((current) => {
+          current.webSearchConfig = webSearchConfig;
+          return current;
+        });
+        note("  [resume] Reusing Brave Search configuration.");
+      } else {
+        webSearchConfig = await configureWebSearch(null);
+        onboardSession.updateSession((current) => {
+          current.webSearchConfig = webSearchConfig;
+          return current;
+        });
+      }
+    } else {
+      webSearchConfig = await configureWebSearch(webSearchConfig);
+      onboardSession.updateSession((current) => {
+        current.webSearchConfig = webSearchConfig;
+        return current;
+      });
+    }
+
     const sandboxReuseState = getSandboxReuseState(sandboxName);
     const resumeSandbox =
       resume && session?.steps?.sandbox?.status === "complete" && sandboxReuseState === "ready";
@@ -3699,7 +4102,14 @@ async function onboard(opts = {}) {
         }
       }
       startRecordedStep("sandbox", { sandboxName, provider, model });
-      sandboxName = await createSandbox(gpu, model, provider, preferredInferenceApi, sandboxName);
+      sandboxName = await createSandbox(
+        gpu,
+        model,
+        provider,
+        preferredInferenceApi,
+        sandboxName,
+        webSearchConfig,
+      );
       onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
     }
 
@@ -3741,6 +4151,7 @@ async function onboard(opts = {}) {
           recordedPolicyPresets.length > 0
             ? recordedPolicyPresets
             : null,
+        webSearchConfig,
         onSelection: (policyPresets) => {
           onboardSession.updateSession((current) => {
             current.policyPresets = policyPresets;

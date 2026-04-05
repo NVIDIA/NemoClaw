@@ -40,11 +40,11 @@ The current generated skills and their source pages are:
 |---|---|
 | `nemoclaw-overview` | `docs/about/overview.md`, `docs/about/how-it-works.md`, `docs/about/release-notes.md` |
 | `nemoclaw-get-started` | `docs/get-started/quickstart.md` |
-| `nemoclaw-configure-inference` | `docs/inference/switch-inference-providers.md` |
+| `nemoclaw-configure-inference` | `docs/inference/inference-options.md`, `docs/inference/use-local-inference.md`, `docs/inference/switch-inference-providers.md` |
 | `nemoclaw-manage-policy` | `docs/network-policy/customize-network-policy.md`, `docs/network-policy/approve-network-requests.md` |
 | `nemoclaw-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.md` |
 | `nemoclaw-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.md`, `docs/deployment/set-up-telegram-bridge.md` |
-| `nemoclaw-reference` | `docs/reference/architecture.md`, `docs/reference/commands.md`, `docs/reference/inference-profiles.md`, `docs/reference/network-policies.md`, `docs/reference/troubleshooting.md` |
+| `nemoclaw-reference` | `docs/reference/architecture.md`, `docs/reference/commands.md`, `docs/reference/network-policies.md`, `docs/reference/troubleshooting.md` |
 
 ### Regenerating skills after doc changes
 
