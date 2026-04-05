@@ -1249,7 +1249,7 @@ const { setupInference } = require(${onboardPath});
       "utf-8",
     );
     const recoverySource = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
+      path.join(import.meta.dirname, "..", "src", "lib", "validation-recovery.ts"),
       "utf-8",
     );
 
