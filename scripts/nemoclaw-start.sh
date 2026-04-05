@@ -145,12 +145,14 @@ configure_messaging_channels() {
   # Real tokens are never visible inside the sandbox.
   #
   # Requires root: openclaw.json is owned by root with chmod 444.
-  # Non-root mode cannot patch the config — channels are unavailable.
+  # Non-root mode relies on channels being pre-baked into openclaw.json
+  # at build time via NEMOCLAW_MESSAGING_CHANNELS_B64.
   [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || [ -n "${DISCORD_BOT_TOKEN:-}" ] || [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
 
   if [ "$(id -u)" -ne 0 ]; then
-    echo "[channels] Messaging tokens detected but running as non-root — skipping openclaw.json patch" >&2
-    echo "[channels] Channels still work via L7 proxy token rewriting (no config patch needed)" >&2
+    echo "[channels] Messaging tokens detected (non-root mode)" >&2
+    echo "[channels] Channel entries should be baked into openclaw.json at build time" >&2
+    echo "[channels] (NEMOCLAW_MESSAGING_CHANNELS_B64). L7 proxy rewrites placeholder tokens at egress." >&2
     return 0
   fi
 

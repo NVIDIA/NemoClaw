@@ -1233,6 +1233,7 @@ function patchStagedDockerfile(
   provider = null,
   preferredInferenceApi = null,
   webSearchConfig = null,
+  messagingChannels = [],
 ) {
   const { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat } =
     getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -1276,6 +1277,12 @@ function patchStagedDockerfile(
     /^ARG NEMOCLAW_DISABLE_DEVICE_AUTH=.*$/m,
     `ARG NEMOCLAW_DISABLE_DEVICE_AUTH=1`,
   );
+  if (messagingChannels.length > 0) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_MESSAGING_CHANNELS_B64=.*$/m,
+      `ARG NEMOCLAW_MESSAGING_CHANNELS_B64=${encodeDockerJsonArg(messagingChannels)}`,
+    );
+  }
   fs.writeFileSync(dockerfilePath, dockerfile);
 }
 
@@ -2598,6 +2605,15 @@ async function createSandbox(
     );
     process.exit(1);
   }
+  const activeMessagingChannels = messagingTokenDefs
+    .filter(({ token }) => !!token)
+    .map(({ envKey }) => {
+      if (envKey === "DISCORD_BOT_TOKEN") return "discord";
+      if (envKey === "SLACK_BOT_TOKEN") return "slack";
+      if (envKey === "TELEGRAM_BOT_TOKEN") return "telegram";
+      return null;
+    })
+    .filter(Boolean);
   patchStagedDockerfile(
     stagedDockerfile,
     model,
@@ -2606,6 +2622,7 @@ async function createSandbox(
     provider,
     preferredInferenceApi,
     webSearchConfig,
+    activeMessagingChannels,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
