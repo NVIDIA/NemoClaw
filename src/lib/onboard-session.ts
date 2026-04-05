@@ -337,49 +337,84 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
     2,
   );
 
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      fs.writeFileSync(LOCK_FILE, payload, { flag: "wx", mode: 0o600 });
-      return { acquired: true, lockFile: LOCK_FILE, stale: false };
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") {
-        throw error;
-      }
-
-      let existing: LockInfo | null;
-      try {
-        existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
-      } catch (readError: unknown) {
-        if ((readError as NodeJS.ErrnoException)?.code === "ENOENT") {
-          continue;
-        }
-        throw readError;
-      }
-      if (!existing) {
-        continue;
-      }
-      if (existing && isProcessAlive(existing.pid)) {
-        return {
-          acquired: false,
-          lockFile: LOCK_FILE,
-          stale: false,
-          holderPid: existing.pid,
-          holderStartedAt: existing.startedAt,
-          holderCommand: existing.command,
-        };
-      }
-
-      try {
-        fs.unlinkSync(LOCK_FILE);
-      } catch (unlinkError: unknown) {
-        if ((unlinkError as NodeJS.ErrnoException)?.code !== "ENOENT") {
-          throw unlinkError;
-        }
-      }
+  // Fast path: no lock exists yet — atomic exclusive create.
+  try {
+    fs.writeFileSync(LOCK_FILE, payload, { flag: "wx", mode: 0o600 });
+    return { acquired: true, lockFile: LOCK_FILE, stale: false };
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") {
+      throw error;
     }
   }
 
-  return { acquired: false, lockFile: LOCK_FILE, stale: true };
+  // Lock file exists — check if it is held by a live process.
+  let existing: LockInfo | null;
+  try {
+    existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
+  } catch (readError: unknown) {
+    if ((readError as NodeJS.ErrnoException)?.code === "ENOENT") {
+      // Disappeared between the wx attempt and the read — retry once.
+      try {
+        fs.writeFileSync(LOCK_FILE, payload, { flag: "wx", mode: 0o600 });
+        return { acquired: true, lockFile: LOCK_FILE, stale: false };
+      } catch (retryError: unknown) {
+        if ((retryError as NodeJS.ErrnoException)?.code !== "EEXIST") throw retryError;
+        return { acquired: false, lockFile: LOCK_FILE, stale: true };
+      }
+    }
+    throw readError;
+  }
+
+  if (!existing) {
+    // Malformed lock — cannot determine owner so don't remove it.
+    return { acquired: false, lockFile: LOCK_FILE, stale: true };
+  }
+
+  if (isProcessAlive(existing.pid)) {
+    return {
+      acquired: false,
+      lockFile: LOCK_FILE,
+      stale: false,
+      holderPid: existing.pid,
+      holderStartedAt: existing.startedAt,
+      holderCommand: existing.command,
+    };
+  }
+
+  // Stale lock detected — use atomic link-based claim so concurrent
+  // processes cannot both win.
+  const claimFile = path.join(
+    SESSION_DIR,
+    `.onboard-lock.${process.pid}.${Date.now()}.claim`,
+  );
+  try {
+    fs.writeFileSync(claimFile, payload, { mode: 0o600 });
+
+    // Remove the stale lock, then atomically link our claim into place.
+    // linkSync fails with EEXIST if another process already claimed it.
+    try {
+      fs.unlinkSync(LOCK_FILE);
+    } catch (unlinkError: unknown) {
+      if ((unlinkError as NodeJS.ErrnoException)?.code !== "ENOENT") throw unlinkError;
+    }
+    try {
+      fs.linkSync(claimFile, LOCK_FILE);
+      return { acquired: true, lockFile: LOCK_FILE, stale: true };
+    } catch (linkError: unknown) {
+      if ((linkError as NodeJS.ErrnoException)?.code === "EEXIST") {
+        // Another process claimed it first.
+        return { acquired: false, lockFile: LOCK_FILE, stale: true };
+      }
+      throw linkError;
+    }
+  } finally {
+    // Always clean up the temporary claim file.
+    try {
+      fs.unlinkSync(claimFile);
+    } catch {
+      /* ignored — best-effort cleanup */
+    }
+  }
 }
 
 export function releaseOnboardLock(): void {
