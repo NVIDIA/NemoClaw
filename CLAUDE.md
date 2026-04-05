@@ -137,3 +137,7 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 - Update docs for any user-facing behavior changes
 - No secrets, API keys, or credentials committed
 - Limit open PRs to fewer than 10
+
+## Claude Behavior Rules
+
+- **"cloude2e" = trigger `nightly-e2e.yaml` on the current branch.** No exploring workflows, no asking which one. One command: `gh api repos/NVIDIA/NemoClaw/actions/workflows/nightly-e2e.yaml/dispatches -f ref=<branch>`, then give the run link.

@@ -877,6 +877,15 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
   return "selection";
 }
 
+/**
+ * Build the argument array for an `openshell provider create` or `update` command.
+ * @param {"create"|"update"} action - Whether to create or update.
+ * @param {string} name - Provider name.
+ * @param {string} type - Provider type (e.g. "openai", "anthropic", "generic").
+ * @param {string} credentialEnv - Credential environment variable name.
+ * @param {string|null} baseUrl - Optional base URL for API-compatible endpoints.
+ * @returns {string[]} Argument array for runOpenshell().
+ */
 function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
   const args =
     action === "create"
@@ -890,6 +899,18 @@ function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
   return args;
 }
 
+/**
+ * Create or update an OpenShell provider in the gateway.
+ *
+ * Attempts `openshell provider create`; if that fails (provider already exists),
+ * falls back to `openshell provider update` with the same credential.
+ * @param {string} name - Provider name (e.g. "discord-bridge", "inference").
+ * @param {string} type - Provider type ("openai", "anthropic", "generic").
+ * @param {string} credentialEnv - Environment variable name for the credential.
+ * @param {string|null} baseUrl - Optional base URL for the provider endpoint.
+ * @param {Record<string, string>} [env={}] - Environment variables for the openshell command.
+ * @returns {{ ok: boolean, status?: number, message?: string }}
+ */
 function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
   const createArgs = buildProviderArgs("create", name, type, credentialEnv, baseUrl);
   const runOpts = { ignoreError: true, env, stdio: ["ignore", "pipe", "pipe"] };
@@ -914,6 +935,44 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
   }
   console.log(`✓ Updated provider ${name}`);
   return { ok: true };
+}
+
+/**
+ * Upsert all messaging providers that have tokens configured.
+ * Returns the list of provider names that were successfully created/updated.
+ * Exits the process if any upsert fails.
+ * @param {Array<{name: string, envKey: string, token: string|null}>} tokenDefs
+ * @returns {string[]} Provider names that were upserted.
+ */
+function upsertMessagingProviders(tokenDefs) {
+  const providers = [];
+  for (const { name, envKey, token } of tokenDefs) {
+    if (!token) continue;
+    const result = upsertProvider(name, "generic", envKey, null, { [envKey]: token });
+    if (!result.ok) {
+      console.error(`\n  ✗ Failed to create messaging provider '${name}': ${result.message}`);
+      process.exit(1);
+    }
+    providers.push(name);
+  }
+  return providers;
+}
+
+/**
+ * Check whether an OpenShell provider exists in the gateway.
+ *
+ * Queries the gateway-level provider registry via `openshell provider get`.
+ * Does NOT verify that the provider is attached to a specific sandbox —
+ * OpenShell CLI does not currently expose a sandbox-scoped provider query.
+ * @param {string} name - Provider name to look up (e.g. "discord-bridge").
+ * @returns {boolean} True if the provider exists in the gateway.
+ */
+function providerExistsInGateway(name) {
+  const result = runOpenshell(["provider", "get", name], {
+    ignoreError: true,
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  return result.status === 0;
 }
 
 function verifyInferenceRoute(_provider, _model) {
@@ -1175,6 +1234,8 @@ function patchStagedDockerfile(
   provider = null,
   preferredInferenceApi = null,
   webSearchConfig = null,
+  messagingChannels = [],
+  messagingAllowedIds = {},
 ) {
   const { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat } =
     getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -1218,6 +1279,18 @@ function patchStagedDockerfile(
     /^ARG NEMOCLAW_DISABLE_DEVICE_AUTH=.*$/m,
     `ARG NEMOCLAW_DISABLE_DEVICE_AUTH=1`,
   );
+  if (messagingChannels.length > 0) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_MESSAGING_CHANNELS_B64=.*$/m,
+      `ARG NEMOCLAW_MESSAGING_CHANNELS_B64=${encodeDockerJsonArg(messagingChannels)}`,
+    );
+  }
+  if (Object.keys(messagingAllowedIds).length > 0) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=.*$/m,
+      `ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${encodeDockerJsonArg(messagingAllowedIds)}`,
+    );
+  }
   fs.writeFileSync(dockerfilePath, dockerfile);
 }
 
@@ -2031,7 +2104,7 @@ function getNonInteractiveModel(providerKey) {
 
 // eslint-disable-next-line complexity
 async function preflight() {
-  step(1, 7, "Preflight checks");
+  step(1, 8, "Preflight checks");
 
   const host = assessHost();
 
@@ -2211,7 +2284,7 @@ async function preflight() {
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
 async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
-  step(2, 7, "Starting OpenShell gateway");
+  step(2, 8, "Starting OpenShell gateway");
 
   const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
@@ -2443,29 +2516,73 @@ async function createSandbox(
   sandboxNameOverride = null,
   webSearchConfig = null,
 ) {
-  step(5, 7, "Creating sandbox");
+  step(6, 8, "Creating sandbox");
 
   const sandboxName = sandboxNameOverride || (await promptValidatedSandboxName());
   const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
+
+  // Check whether messaging providers will be needed — this must happen before
+  // the sandbox reuse decision so we can detect stale sandboxes that were created
+  // without provider attachments (security: prevents legacy raw-env-var leaks).
+  const getMessagingToken = (envKey) =>
+    getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
+
+  const messagingTokenDefs = [
+    {
+      name: `${sandboxName}-discord-bridge`,
+      envKey: "DISCORD_BOT_TOKEN",
+      token: getMessagingToken("DISCORD_BOT_TOKEN"),
+    },
+    {
+      name: `${sandboxName}-slack-bridge`,
+      envKey: "SLACK_BOT_TOKEN",
+      token: getMessagingToken("SLACK_BOT_TOKEN"),
+    },
+    {
+      name: `${sandboxName}-telegram-bridge`,
+      envKey: "TELEGRAM_BOT_TOKEN",
+      token: getMessagingToken("TELEGRAM_BOT_TOKEN"),
+    },
+  ];
+  const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
 
   // Reconcile local registry state with the live OpenShell gateway state.
   const liveExists = pruneStaleSandboxEntry(sandboxName);
 
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
+
+    // Check whether messaging providers are missing from the gateway. Only
+    // force recreation when at least one required provider doesn't exist yet —
+    // this avoids destroying sandboxes already created with provider attachments.
+    const needsProviderMigration =
+      hasMessagingTokens &&
+      messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
+
     if (existingSandboxState === "ready" && process.env.NEMOCLAW_RECREATE_SANDBOX !== "1") {
-      ensureDashboardForward(sandboxName, chatUiUrl);
-      if (isNonInteractive()) {
-        note(`  [non-interactive] Sandbox '${sandboxName}' exists and is ready — reusing it`);
+      if (needsProviderMigration) {
+        console.log(`  Sandbox '${sandboxName}' exists but messaging providers are not attached.`);
+        console.log("  Recreating to ensure credentials flow through the provider pipeline.");
       } else {
-        console.log(`  Sandbox '${sandboxName}' already exists and is ready.`);
-        console.log("  Reusing existing sandbox.");
-        console.log("  Set NEMOCLAW_RECREATE_SANDBOX=1 to recreate it instead.");
+        // Upsert messaging providers even on reuse so credential changes take
+        // effect without requiring a full sandbox recreation. Only the
+        // --provider attachment flags need to be on the create path.
+        upsertMessagingProviders(messagingTokenDefs);
+        ensureDashboardForward(sandboxName, chatUiUrl);
+        if (isNonInteractive()) {
+          note(`  [non-interactive] Sandbox '${sandboxName}' exists and is ready — reusing it`);
+        } else {
+          console.log(`  Sandbox '${sandboxName}' already exists and is ready.`);
+          console.log("  Reusing existing sandbox.");
+          console.log("  Set NEMOCLAW_RECREATE_SANDBOX=1 to recreate it instead.");
+        }
+        return sandboxName;
       }
-      return sandboxName;
     }
 
-    if (existingSandboxState === "ready") {
+    if (existingSandboxState === "ready" && needsProviderMigration) {
+      note(`  Sandbox '${sandboxName}' exists — recreating to attach messaging providers.`);
+    } else if (existingSandboxState === "ready") {
       note(`  Sandbox '${sandboxName}' exists and is ready — recreating by explicit request.`);
     } else {
       note(`  Sandbox '${sandboxName}' exists but is not ready — recreating it.`);
@@ -2499,6 +2616,15 @@ async function createSandbox(
   ];
   // --gpu is intentionally omitted. See comment in startGateway().
 
+  // Create OpenShell providers for messaging credentials so they flow through
+  // the provider/placeholder system instead of raw env vars. The L7 proxy
+  // rewrites Authorization headers (Bearer/Bot) and URL-path segments
+  // (/bot{TOKEN}/) with real secrets at egress (OpenShell ≥ 0.0.20).
+  const messagingProviders = upsertMessagingProviders(messagingTokenDefs);
+  for (const p of messagingProviders) {
+    createArgs.push("--provider", p);
+  }
+
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   if (webSearchConfig && !getCredential(webSearch.BRAVE_API_KEY_ENV)) {
     console.error("  Brave Search is enabled, but BRAVE_API_KEY is not available in this process.");
@@ -2506,6 +2632,28 @@ async function createSandbox(
       "  Re-run with BRAVE_API_KEY set, or disable Brave Search before recreating the sandbox.",
     );
     process.exit(1);
+  }
+  const activeMessagingChannels = messagingTokenDefs
+    .filter(({ token }) => !!token)
+    .map(({ envKey }) => {
+      if (envKey === "DISCORD_BOT_TOKEN") return "discord";
+      if (envKey === "SLACK_BOT_TOKEN") return "slack";
+      if (envKey === "TELEGRAM_BOT_TOKEN") return "telegram";
+      return null;
+    })
+    .filter(Boolean);
+  // Build allowed sender IDs map from env vars set during the messaging prompt.
+  // Each channel with a userIdEnvKey in MESSAGING_CHANNELS may have a
+  // comma-separated list of IDs (e.g. TELEGRAM_ALLOWED_IDS="123,456").
+  const messagingAllowedIds = {};
+  for (const ch of MESSAGING_CHANNELS) {
+    if (ch.userIdEnvKey && process.env[ch.userIdEnvKey]) {
+      const ids = process.env[ch.userIdEnvKey]
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (ids.length > 0) messagingAllowedIds[ch.name] = ids;
+    }
   }
   patchStagedDockerfile(
     stagedDockerfile,
@@ -2515,24 +2663,29 @@ async function createSandbox(
     provider,
     preferredInferenceApi,
     webSearchConfig,
+    activeMessagingChannels,
+    messagingAllowedIds,
   );
-  // Only pass non-sensitive env vars to the sandbox. NVIDIA_API_KEY is NOT
-  // needed inside the sandbox — inference is proxied through the OpenShell
-  // gateway which injects the stored credential server-side. The gateway
-  // also strips any Authorization headers sent by the sandbox client.
-  // See: crates/openshell-sandbox/src/proxy.rs (header stripping),
-  //      crates/openshell-router/src/backend.rs (server-side auth injection).
+  // Only pass non-sensitive env vars to the sandbox. Credentials flow through
+  // OpenShell providers — the gateway injects them as placeholders and the L7
+  // proxy rewrites Authorization headers with real secrets at egress.
+  // See: crates/openshell-sandbox/src/secrets.rs (placeholder rewriting),
+  //      crates/openshell-router/src/backend.rs (inference auth injection).
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
-  const sandboxEnv = { ...process.env };
-  delete sandboxEnv.NVIDIA_API_KEY;
-  const discordToken = getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN;
-  if (discordToken) {
-    sandboxEnv.DISCORD_BOT_TOKEN = discordToken;
-  }
-  const slackToken = getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN;
-  if (slackToken) {
-    sandboxEnv.SLACK_BOT_TOKEN = slackToken;
-  }
+  const blockedSandboxEnvNames = new Set([
+    // Derived from REMOTE_PROVIDER_CONFIG to prevent drift
+    ...Object.values(REMOTE_PROVIDER_CONFIG)
+      .map((cfg) => cfg.credentialEnv)
+      .filter(Boolean),
+    // Additional credentials not in REMOTE_PROVIDER_CONFIG
+    "BEDROCK_API_KEY",
+    "DISCORD_BOT_TOKEN",
+    "SLACK_BOT_TOKEN",
+    "TELEGRAM_BOT_TOKEN",
+  ]);
+  const sandboxEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !blockedSandboxEnvNames.has(name)),
+  );
   // Run without piping through awk — the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
@@ -2638,6 +2791,18 @@ async function createSandbox(
     { ignoreError: true },
   );
 
+  // Check that messaging providers exist in the gateway (sandbox attachment
+  // cannot be verified via CLI yet — only gateway-level existence is checked).
+  for (const p of messagingProviders) {
+    if (!providerExistsInGateway(p)) {
+      console.error(`  ⚠ Messaging provider '${p}' was not found in the gateway.`);
+      console.error(`    The credential may not be available inside the sandbox.`);
+      console.error(
+        `    To fix: openshell provider create --name ${p} --type generic --credential <KEY>`,
+      );
+    }
+  }
+
   console.log(`  ✓ Sandbox '${sandboxName}' created`);
   return sandboxName;
 }
@@ -2646,7 +2811,7 @@ async function createSandbox(
 
 // eslint-disable-next-line complexity
 async function setupNim(gpu) {
-  step(3, 7, "Configuring inference (NIM)");
+  step(3, 8, "Configuring inference (NIM)");
 
   let model = null;
   let provider = REMOTE_PROVIDER_CONFIG.build.providerName;
@@ -3228,7 +3393,7 @@ async function setupInference(
   endpointUrl = null,
   credentialEnv = null,
 ) {
-  step(4, 7, "Setting up inference provider");
+  step(4, 8, "Setting up inference provider");
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
 
   if (
@@ -3362,10 +3527,191 @@ async function setupInference(
   return { ok: true };
 }
 
-// ── Step 6: OpenClaw ─────────────────────────────────────────────
+// ── Step 6: Messaging channels ───────────────────────────────────
+
+const MESSAGING_CHANNELS = [
+  {
+    name: "telegram",
+    envKey: "TELEGRAM_BOT_TOKEN",
+    description: "Telegram bot messaging",
+    help: "Create a bot via @BotFather on Telegram, then copy the token.",
+    label: "Telegram Bot Token",
+    userIdEnvKey: "TELEGRAM_ALLOWED_IDS",
+    userIdHelp: "Send /start to @userinfobot on Telegram to get your numeric user ID.",
+    userIdLabel: "Telegram User ID (for DM access)",
+  },
+  {
+    name: "discord",
+    envKey: "DISCORD_BOT_TOKEN",
+    description: "Discord bot messaging",
+    help: "Discord Developer Portal → Applications → Bot → Reset/Copy Token.",
+    label: "Discord Bot Token",
+  },
+  {
+    name: "slack",
+    envKey: "SLACK_BOT_TOKEN",
+    description: "Slack bot messaging",
+    help: "Slack API → Your Apps → OAuth & Permissions → Bot User OAuth Token (xoxb-...).",
+    label: "Slack Bot Token",
+  },
+];
+
+async function setupMessagingChannels() {
+  step(5, 8, "Messaging channels");
+
+  const getMessagingToken = (envKey) =>
+    getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
+
+  // Non-interactive: skip prompt, tokens come from env/credentials
+  if (isNonInteractive() || process.env.NEMOCLAW_NON_INTERACTIVE === "1") {
+    const found = MESSAGING_CHANNELS.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name);
+    if (found.length > 0) {
+      note(`  [non-interactive] Messaging tokens detected: ${found.join(", ")}`);
+    } else {
+      note("  [non-interactive] No messaging tokens configured. Skipping.");
+    }
+    return;
+  }
+
+  // Single-keypress toggle selector — pre-select channels that already have tokens.
+  // Press 1/2/3 to instantly toggle a channel; press Enter to continue.
+  const enabled = new Set(
+    MESSAGING_CHANNELS.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name),
+  );
+
+  const output = process.stderr;
+  // Lines above the prompt: 1 blank + 1 header + N channels + 1 blank = N + 3
+  const linesAbovePrompt = MESSAGING_CHANNELS.length + 3;
+  let firstDraw = true;
+  const showList = () => {
+    if (!firstDraw) {
+      // Cursor is at end of prompt line. Move to column 0, go up, clear to end of screen.
+      output.write(`\r\x1b[${linesAbovePrompt}A\x1b[J`);
+    }
+    firstDraw = false;
+    output.write("\n");
+    output.write("  Available messaging channels:\n");
+    MESSAGING_CHANNELS.forEach((ch, i) => {
+      const marker = enabled.has(ch.name) ? "●" : "○";
+      const status = getMessagingToken(ch.envKey) ? " (configured)" : "";
+      output.write(`    [${i + 1}] ${marker} ${ch.name} — ${ch.description}${status}\n`);
+    });
+    output.write("\n");
+    output.write("  Press 1-3 to toggle, Enter when done: ");
+  };
+
+  showList();
+
+  await new Promise((resolve, reject) => {
+    const input = process.stdin;
+    let rawModeEnabled = false;
+    let finished = false;
+
+    function cleanup() {
+      input.removeListener("data", onData);
+      if (rawModeEnabled && typeof input.setRawMode === "function") {
+        input.setRawMode(false);
+      }
+    }
+
+    function finish() {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      output.write("\n");
+      resolve();
+    }
+
+    function onData(chunk) {
+      const text = chunk.toString("utf8");
+      for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        if (ch === "\u0003") {
+          cleanup();
+          reject(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
+          process.kill(process.pid, "SIGINT");
+          return;
+        }
+        if (ch === "\r" || ch === "\n") {
+          finish();
+          return;
+        }
+        const num = parseInt(ch, 10);
+        if (num >= 1 && num <= MESSAGING_CHANNELS.length) {
+          const channel = MESSAGING_CHANNELS[num - 1];
+          if (enabled.has(channel.name)) {
+            enabled.delete(channel.name);
+          } else {
+            enabled.add(channel.name);
+          }
+          showList();
+        }
+      }
+    }
+
+    input.setEncoding("utf8");
+    if (typeof input.resume === "function") {
+      input.resume();
+    }
+    if (typeof input.setRawMode === "function") {
+      input.setRawMode(true);
+      rawModeEnabled = true;
+    }
+    input.on("data", onData);
+  });
+
+  const selected = Array.from(enabled);
+  if (selected.length === 0) {
+    console.log("  Skipping messaging channels.");
+    return;
+  }
+
+  // For each selected channel, prompt for token if not already set
+  for (const name of selected) {
+    const ch = MESSAGING_CHANNELS.find((c) => c.name === name);
+    if (!ch) {
+      console.log(`  Unknown channel: ${name}`);
+      continue;
+    }
+    if (getMessagingToken(ch.envKey)) {
+      console.log(`  ✓ ${ch.name} — already configured`);
+    } else {
+      console.log("");
+      console.log(`  ${ch.help}`);
+      const token = normalizeCredentialValue(await prompt(`  ${ch.label}: `, { secret: true }));
+      if (token) {
+        saveCredential(ch.envKey, token);
+        process.env[ch.envKey] = token;
+        console.log(`  ✓ ${ch.name} token saved`);
+      } else {
+        console.log(`  Skipped ${ch.name} (no token entered)`);
+        continue;
+      }
+    }
+    // Prompt for user/sender ID if the channel supports DM allowlisting
+    if (ch.userIdEnvKey) {
+      const existingIds = process.env[ch.userIdEnvKey] || "";
+      if (existingIds) {
+        console.log(`  ✓ ${ch.name} — allowed IDs already set: ${existingIds}`);
+      } else {
+        console.log(`  ${ch.userIdHelp}`);
+        const userId = (await prompt(`  ${ch.userIdLabel}: `)).trim();
+        if (userId) {
+          process.env[ch.userIdEnvKey] = userId;
+          console.log(`  ✓ ${ch.name} user ID saved`);
+        } else {
+          console.log(`  Skipped ${ch.name} user ID (bot will require manual pairing)`);
+        }
+      }
+    }
+  }
+  console.log("");
+}
+
+// ── Step 7: OpenClaw ─────────────────────────────────────────────
 
 async function setupOpenclaw(sandboxName, model, provider) {
-  step(6, 7, "Setting up OpenClaw inside sandbox");
+  step(7, 8, "Setting up OpenClaw inside sandbox");
 
   const selectionConfig = getProviderSelectionConfig(provider, model);
   if (selectionConfig) {
@@ -3392,7 +3738,7 @@ async function setupOpenclaw(sandboxName, model, provider) {
 
 // eslint-disable-next-line complexity
 async function _setupPolicies(sandboxName) {
-  step(7, 7, "Policy presets");
+  step(8, 8, "Policy presets");
 
   const suggestions = ["pypi", "npm"];
 
@@ -3545,7 +3891,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   const onSelection = typeof options.onSelection === "function" ? options.onSelection : null;
   const webSearchConfig = options.webSearchConfig || null;
 
-  step(7, 7, "Policy presets");
+  step(8, 8, "Policy presets");
 
   const suggestions = ["pypi", "npm"];
   if (getCredential("TELEGRAM_BOT_TOKEN")) suggestions.push("telegram");
@@ -3821,15 +4167,16 @@ const ONBOARD_STEP_INDEX = {
   gateway: { number: 2, title: "Starting OpenShell gateway" },
   provider_selection: { number: 3, title: "Configuring inference (NIM)" },
   inference: { number: 4, title: "Setting up inference provider" },
-  sandbox: { number: 5, title: "Creating sandbox" },
-  openclaw: { number: 6, title: "Setting up OpenClaw inside sandbox" },
-  policies: { number: 7, title: "Policy presets" },
+  messaging: { number: 5, title: "Messaging channels" },
+  sandbox: { number: 6, title: "Creating sandbox" },
+  openclaw: { number: 7, title: "Setting up OpenClaw inside sandbox" },
+  policies: { number: 8, title: "Policy presets" },
 };
 
 function skippedStepMessage(stepName, detail, reason = "resume") {
   const stepInfo = ONBOARD_STEP_INDEX[stepName];
   if (stepInfo) {
-    step(stepInfo.number, 7, stepInfo.title);
+    step(stepInfo.number, 8, stepInfo.title);
   }
   const prefix = reason === "reuse" ? "[reuse]" : "[resume]";
   console.log(`  ${prefix} Skipping ${stepName}${detail ? ` (${detail})` : ""}`);
@@ -4101,6 +4448,8 @@ async function onboard(opts = {}) {
           }
         }
       }
+      await setupMessagingChannels();
+
       startRecordedStep("sandbox", { sandboxName, provider, model });
       sandboxName = await createSandbox(
         gpu,
@@ -4176,13 +4525,17 @@ async function onboard(opts = {}) {
 }
 
 module.exports = {
+  buildProviderArgs,
   buildSandboxConfigSyncScript,
+  compactText,
   copyBuildContextDir,
   classifySandboxCreateFailure,
   createSandbox,
+  formatEnvAssignment,
   getFutureShellPathHint,
   getGatewayStartEnv,
   getGatewayReuseState,
+  getNavigationChoice,
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
   getRequestedModelHint,
@@ -4203,6 +4556,8 @@ module.exports = {
   onboard,
   onboardSession,
   printSandboxCreateRecoveryHints,
+  providerExistsInGateway,
+  parsePolicyPresetEnv,
   pruneStaleSandboxEntry,
   repairRecordedSandbox,
   recoverGatewayRuntime,
@@ -4215,6 +4570,9 @@ module.exports = {
   isOpenclawReady,
   arePolicyPresetsApplied,
   setupPoliciesWithSelection,
+  summarizeCurlFailure,
+  summarizeProbeFailure,
+  upsertProvider,
   hydrateCredentialEnv,
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
