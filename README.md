@@ -54,7 +54,7 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 
 #### OpenShell Compatibility
 
-NemoClaw 0.1.0 was validated with OpenShell 0.0.7.
+NemoClaw 0.1.0 supports OpenShell 0.0.7.
 During onboarding, NemoClaw derives the OpenShell gateway image from the installed `openshell` CLI version, so upgrading OpenShell independently can rebuild the sandbox with a different runtime layout than the current NemoClaw release expects.
 
 | NemoClaw | OpenShell | Notes |

@@ -13,6 +13,7 @@ import {
   buildSandboxConfigSyncScript,
   classifySandboxCreateFailure,
   compactText,
+  formatSupportedOpenshellVersions,
   formatEnvAssignment,
   getNavigationChoice,
   getGatewayReuseState,
@@ -28,6 +29,7 @@ import {
   getResumeSandboxConflict,
   getSandboxStateFromOutputs,
   getStableGatewayImageRef,
+  getSupportedOpenshellVersions,
   isGatewayHealthy,
   classifyValidationFailure,
   isLoopbackHostname,
@@ -45,6 +47,76 @@ import { stageOptimizedSandboxBuildContext } from "../bin/lib/sandbox-build-cont
 import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
+
+function runGatewayReuseWithMockOpenshell(versionOutput) {
+  const mockDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-mock-"));
+  const openshellPath = path.join(mockDir, "openshell");
+  const onboardPath = path.join(ROOT, "bin/lib/onboard.js");
+  const childScript = `
+const { startGatewayForRecovery } = require(${JSON.stringify(onboardPath)});
+Promise.resolve(startGatewayForRecovery(false))
+  .then(() => process.exit(0))
+  .catch((error) => {
+    console.error(error && error.stack ? error.stack : String(error));
+    process.exit(1);
+  });
+`;
+
+  fs.writeFileSync(
+    openshellPath,
+    `#!/bin/sh
+set -eu
+
+if [ "\${1:-}" = "-V" ]; then
+  printf '%s\\n' ${JSON.stringify(versionOutput)}
+  exit 0
+fi
+
+if [ "\${1:-}" = "status" ]; then
+  cat <<'EOF'
+Gateway status: Connected
+Gateway: nemoclaw
+EOF
+  exit 0
+fi
+
+if [ "\${1:-}" = "gateway" ] && [ "\${2:-}" = "info" ]; then
+  cat <<'EOF'
+Gateway Info
+
+  Gateway: nemoclaw
+  Gateway endpoint: https://127.0.0.1:8080
+EOF
+  exit 0
+fi
+
+if [ "\${1:-}" = "gateway" ] && [ "\${2:-}" = "select" ]; then
+  exit 0
+fi
+
+printf 'unexpected openshell args: %s\\n' "$*" >&2
+exit 1
+`,
+    { mode: 0o755 },
+  );
+
+  try {
+    const envPath = process.env.PATH ? `${mockDir}:${process.env.PATH}` : mockDir;
+    const result = spawnSync(process.execPath, ["-e", childScript], {
+      cwd: ROOT,
+      env: {
+        ...process.env,
+        NO_COLOR: "1",
+        PATH: envPath,
+      },
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    return result;
+  } finally {
+    fs.rmSync(mockDir, { recursive: true, force: true });
+  }
+}
 
 describe("onboard helpers", () => {
   it("classifies sandbox create timeout failures and tracks upload progress", () => {
@@ -317,35 +389,60 @@ describe("onboard helpers", () => {
     expect(getStableGatewayImageRef("bogus")).toBe(null);
   });
 
-  it("prints a compatibility note when the gateway version is pinned", () => {
+  it("tracks the current NemoClaw version in the compatibility map", () => {
+    const { version } = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+    expect(getSupportedOpenshellVersions(version).length).toBeGreaterThan(0);
+    expect(getSupportedOpenshellVersions(`${version}-beta.1`)).toEqual(
+      getSupportedOpenshellVersions(version),
+    );
+  });
+
+  it("formats supported OpenShell versions with correct grammar", () => {
+    expect(formatSupportedOpenshellVersions(["0.0.7"])).toBe("0.0.7");
+    expect(formatSupportedOpenshellVersions(["0.0.7", "0.0.8"])).toBe("0.0.7 or 0.0.8");
+    expect(formatSupportedOpenshellVersions(["0.0.7", "0.0.8", "0.0.9"])).toBe(
+      "0.0.7, 0.0.8, or 0.0.9",
+    );
+  });
+
+  it("prints a concise compatibility note when the gateway version is supported", () => {
     expect(getOpenshellCompatibilityNotice("0.0.7")).toEqual([
-      "  OpenShell compatibility: NemoClaw derives the gateway image from the installed openshell CLI (0.0.7).",
-      "  Use `nemoclaw onboard` to recreate NemoClaw-managed sandboxes, and avoid `openshell self-update`, `openshell gateway start --recreate`, or `openshell sandbox create` directly.",
+      "  OpenShell compatibility: OpenShell 0.0.7 is supported for NemoClaw 0.1.0. Use `nemoclaw onboard` to recreate NemoClaw-managed sandboxes, and avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly.",
     ]);
+  });
+
+  it("warns when the installed OpenShell version cannot be detected", () => {
     expect(getOpenshellCompatibilityNotice()).toEqual([
-      "  OpenShell compatibility: NemoClaw derives the gateway image from the installed openshell CLI.",
-      "  Use `nemoclaw onboard` to recreate NemoClaw-managed sandboxes, and avoid `openshell self-update`, `openshell gateway start --recreate`, or `openshell sandbox create` directly.",
+      "  OpenShell compatibility warning: Could not detect the installed openshell CLI version.",
+      "  Verify `openshell -V` works, then rerun `nemoclaw onboard` before creating or reusing NemoClaw-managed sandboxes.",
+      "  Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly until the compatibility check succeeds.",
     ]);
   });
 
   it("warns when the installed OpenShell version falls outside the supported baseline", () => {
     expect(getOpenshellCompatibilityNotice("0.0.8")).toEqual([
-      "  OpenShell compatibility warning: NemoClaw 0.1.0 was validated with OpenShell 0.0.7, but found 0.0.8.",
+      "  OpenShell compatibility warning: NemoClaw 0.1.0 supports OpenShell 0.0.7, but found 0.0.8.",
       "  Install OpenShell 0.0.7, then rerun `nemoclaw onboard` before creating or reusing NemoClaw-managed sandboxes.",
-      "  Avoid `openshell self-update`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you are also updating the NemoClaw compatibility baseline.",
+      "  Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you are also updating the NemoClaw compatibility baseline.",
     ]);
   });
 
-  it("prints the compatibility notice before the healthy gateway reuse early return", () => {
-    const content = fs.readFileSync(path.join(ROOT, "bin/lib/onboard.js"), "utf-8");
-    const startGwBlock = content.match(/async function startGatewayWithOptions[\s\S]*?^}/m);
-    expect(startGwBlock).toBeTruthy();
+  it("prints compatibility guidance before reusing a healthy gateway", () => {
+    const result = runGatewayReuseWithMockOpenshell("openshell 0.0.7");
+    expect(result.stderr).toBe("");
 
-    const noticeIndex = startGwBlock[0].indexOf("getOpenshellCompatibilityNotice(");
-    const healthyCheckIndex = startGwBlock[0].indexOf("if (isGatewayHealthy(");
+    const noticeIndex = result.stdout.indexOf("OpenShell compatibility:");
+    const reuseIndex = result.stdout.indexOf("✓ Reusing existing gateway");
     expect(noticeIndex).toBeGreaterThanOrEqual(0);
-    expect(healthyCheckIndex).toBeGreaterThanOrEqual(0);
-    expect(noticeIndex).toBeLessThan(healthyCheckIndex);
+    expect(reuseIndex).toBeGreaterThanOrEqual(0);
+    expect(noticeIndex).toBeLessThan(reuseIndex);
+  });
+
+  it("sends compatibility warnings to stderr for unsupported OpenShell versions", () => {
+    const result = runGatewayReuseWithMockOpenshell("openshell 0.0.8");
+    expect(result.stdout).toContain("✓ Reusing existing gateway");
+    expect(result.stderr).toContain("OpenShell compatibility warning:");
+    expect(result.stderr).toContain("npm update -g openshell");
   });
 
   it("treats the gateway as healthy only when nemoclaw is running and connected", () => {

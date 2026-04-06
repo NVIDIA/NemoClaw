@@ -68,7 +68,7 @@ $ nemoclaw onboard
 
 :::{warning}
 For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
-NemoClaw derives the gateway image from the installed `openshell` CLI version, so `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` can replace the runtime with a different OpenShell release than NemoClaw 0.1.0 was validated against.
+NemoClaw derives the gateway image from the installed `openshell` CLI version, so `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` can replace the runtime with a different OpenShell release than NemoClaw 0.1.0 supports.
 :::
 
 The wizard prompts for a provider first, then collects the provider credential if needed.

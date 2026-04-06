@@ -97,11 +97,13 @@ const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 const OPENSHELL_COMPATIBILITY = Object.freeze({
   "0.1.0": Object.freeze(["0.0.7"]),
 });
+const OPENSHELL_DIRECT_COMMANDS =
+  "`openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create`";
 
 function parseSemver(version) {
   const match = String(version || "")
     .trim()
-    .match(/^(\d+)\.(\d+)\.(\d+)$/);
+    .match(/^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/);
   if (!match) return null;
   return match.slice(1).map((part) => Number(part));
 }
@@ -119,7 +121,8 @@ function isExactSemverMatch(version, supportedVersion) {
 }
 
 function getSupportedOpenshellVersions(nemoclawVersion = NEMOCLAW_VERSION) {
-  return OPENSHELL_COMPATIBILITY[nemoclawVersion] || [];
+  const normalizedVersion = parseSemver(nemoclawVersion)?.join(".");
+  return (normalizedVersion && OPENSHELL_COMPATIBILITY[normalizedVersion]) || [];
 }
 
 function isSupportedOpenshellVersion(version, supportedVersions = getSupportedOpenshellVersions()) {
@@ -132,6 +135,7 @@ function isSupportedOpenshellVersion(version, supportedVersions = getSupportedOp
 function formatSupportedOpenshellVersions(supportedVersions) {
   if (supportedVersions.length === 0) return null;
   if (supportedVersions.length === 1) return supportedVersions[0];
+  if (supportedVersions.length === 2) return supportedVersions.join(" or ");
   return `${supportedVersions.slice(0, -1).join(", ")}, or ${supportedVersions.at(-1)}`;
 }
 const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
@@ -428,21 +432,49 @@ function getStableGatewayImageRef(versionOutput = null) {
   return `ghcr.io/nvidia/openshell/cluster:${version}`;
 }
 
-function getOpenshellCompatibilityNotice(version = null) {
-  const supportedVersions = getSupportedOpenshellVersions();
+function getOpenshellCompatibilityLevel(version = null, nemoclawVersion = NEMOCLAW_VERSION) {
+  const supportedVersions = getSupportedOpenshellVersions(nemoclawVersion);
   const supportedLabel = formatSupportedOpenshellVersions(supportedVersions);
-  if (version && supportedLabel && !isSupportedOpenshellVersion(version, supportedVersions)) {
+  if (!supportedLabel) return "warn";
+  if (!version) return "warn";
+  if (!isSupportedOpenshellVersion(version, supportedVersions)) return "warn";
+  return "info";
+}
+
+function getOpenshellCompatibilityNotice(version = null, nemoclawVersion = NEMOCLAW_VERSION) {
+  const supportedVersions = getSupportedOpenshellVersions(nemoclawVersion);
+  const supportedLabel = formatSupportedOpenshellVersions(supportedVersions);
+  if (!supportedLabel) {
     return [
-      `  OpenShell compatibility warning: NemoClaw ${NEMOCLAW_VERSION} was validated with OpenShell ${supportedLabel}, but found ${version}.`,
-      `  Install OpenShell ${supportedLabel}, then rerun \`nemoclaw onboard\` before creating or reusing NemoClaw-managed sandboxes.`,
-      "  Avoid `openshell self-update`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you are also updating the NemoClaw compatibility baseline.",
+      `  OpenShell compatibility warning: NemoClaw ${nemoclawVersion} does not declare a supported OpenShell baseline.`,
+      "  Update the OPENSHELL_COMPATIBILITY map before onboarding against a new OpenShell release.",
+      `  Avoid ${OPENSHELL_DIRECT_COMMANDS} directly until the compatibility baseline is updated.`,
     ];
   }
-  const suffix = version ? ` (${version})` : "";
+  if (!version) {
+    return [
+      "  OpenShell compatibility warning: Could not detect the installed openshell CLI version.",
+      "  Verify `openshell -V` works, then rerun `nemoclaw onboard` before creating or reusing NemoClaw-managed sandboxes.",
+      `  Avoid ${OPENSHELL_DIRECT_COMMANDS} directly until the compatibility check succeeds.`,
+    ];
+  }
+  if (!isSupportedOpenshellVersion(version, supportedVersions)) {
+    return [
+      `  OpenShell compatibility warning: NemoClaw ${nemoclawVersion} supports OpenShell ${supportedLabel}, but found ${version}.`,
+      `  Install OpenShell ${supportedLabel}, then rerun \`nemoclaw onboard\` before creating or reusing NemoClaw-managed sandboxes.`,
+      `  Avoid ${OPENSHELL_DIRECT_COMMANDS} directly unless you are also updating the NemoClaw compatibility baseline.`,
+    ];
+  }
   return [
-    `  OpenShell compatibility: NemoClaw derives the gateway image from the installed openshell CLI${suffix}.`,
-    "  Use `nemoclaw onboard` to recreate NemoClaw-managed sandboxes, and avoid `openshell self-update`, `openshell gateway start --recreate`, or `openshell sandbox create` directly.",
+    `  OpenShell compatibility: OpenShell ${version} is supported for NemoClaw ${nemoclawVersion}. Use \`nemoclaw onboard\` to recreate NemoClaw-managed sandboxes, and avoid ${OPENSHELL_DIRECT_COMMANDS} directly.`,
   ];
+}
+
+function printOpenshellCompatibilityNotice(version = null) {
+  const printer = getOpenshellCompatibilityLevel(version) === "warn" ? console.warn : console.log;
+  for (const line of getOpenshellCompatibilityNotice(version)) {
+    printer(line);
+  }
 }
 
 function getOpenshellBinary() {
@@ -1751,9 +1783,7 @@ async function preflight() {
 async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   step(2, 8, "Starting OpenShell gateway");
   const gatewayEnv = getGatewayStartEnv();
-  for (const line of getOpenshellCompatibilityNotice(gatewayEnv.IMAGE_TAG || null)) {
-    console.log(line);
-  }
+  printOpenshellCompatibilityNotice(gatewayEnv.IMAGE_TAG || null);
 
   const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
@@ -4033,6 +4063,7 @@ module.exports = {
   copyBuildContextDir,
   classifySandboxCreateFailure,
   createSandbox,
+  formatSupportedOpenshellVersions,
   formatEnvAssignment,
   getFutureShellPathHint,
   getGatewayStartEnv,
@@ -4040,6 +4071,7 @@ module.exports = {
   getNavigationChoice,
   getSandboxInferenceConfig,
   getOpenshellCompatibilityNotice,
+  getSupportedOpenshellVersions,
   getInstalledOpenshellVersion,
   getRequestedModelHint,
   getRequestedProviderHint,
