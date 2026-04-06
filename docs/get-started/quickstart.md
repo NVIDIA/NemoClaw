@@ -61,9 +61,9 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 |----------|--------------------|-------|
 | Linux | Docker | Primary supported path. |
 | macOS (Apple Silicon) | Colima, Docker Desktop | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
-| macOS (Intel) | Podman | Not supported yet. Depends on OpenShell support for Podman on macOS. |
+| macOS (Intel) | Docker Desktop | Start the runtime before running the installer. |
 | Windows WSL | Docker Desktop (WSL backend) | Supported target path. |
-| DGX Spark | Docker | Refer to the [DGX Spark setup guide](https://github.com/NVIDIA/NemoClaw/blob/main/spark-install.md) for cgroup v2 and Docker configuration. |
+| DGX Spark | Docker | Use the standard installer and `nemoclaw onboard`. |
 
 ## Install NemoClaw and Onboard OpenClaw Agent
 

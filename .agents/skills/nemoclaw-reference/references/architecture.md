@@ -148,7 +148,7 @@ OpenShell intercepts them and routes to the configured provider:
 Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA Endpoint (build.nvidia.com)
 ```
 
-Refer to Inference Profiles (see the `nemoclaw-reference` skill) for provider configuration details.
+Refer to Inference Options (see the `nemoclaw-configure-inference` skill) for provider configuration details.
 
 ## Host-Side State and Config
 

@@ -25,7 +25,9 @@ function run(cmd, opts = {}) {
     cwd: ROOT,
     env: { ...process.env, ...opts.env },
   });
-  writeRedactedResult(result, stdio);
+  if (!opts.suppressOutput) {
+    writeRedactedResult(result, stdio);
+  }
   if (result.status !== 0 && !opts.ignoreError) {
     console.error(`  Command failed (exit ${result.status}): ${redact(cmd).slice(0, 80)}`);
     process.exit(result.status || 1);
@@ -45,7 +47,9 @@ function runInteractive(cmd, opts = {}) {
     cwd: ROOT,
     env: { ...process.env, ...opts.env },
   });
-  writeRedactedResult(result, stdio);
+  if (!opts.suppressOutput) {
+    writeRedactedResult(result, stdio);
+  }
   if (result.status !== 0 && !opts.ignoreError) {
     console.error(`  Command failed (exit ${result.status}): ${redact(cmd).slice(0, 80)}`);
     process.exit(result.status || 1);

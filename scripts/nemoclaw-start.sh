@@ -115,6 +115,52 @@ verify_config_integrity() {
   fi
 }
 
+validate_openclaw_symlinks() {
+  local entry name target expected
+  for entry in /sandbox/.openclaw/*; do
+    [ -L "$entry" ] || continue
+    name="$(basename "$entry")"
+    target="$(readlink -f "$entry" 2>/dev/null || true)"
+    expected="/sandbox/.openclaw-data/$name"
+    if [ "$target" != "$expected" ]; then
+      echo "[SECURITY] Symlink $entry points to unexpected target: $target (expected $expected)" >&2
+      return 1
+    fi
+  done
+}
+
+harden_openclaw_symlinks() {
+  local entry hardened failed
+  hardened=0
+  failed=0
+
+  if ! command -v chattr >/dev/null 2>&1; then
+    echo "[SECURITY] chattr not available — relying on DAC + Landlock for .openclaw hardening" >&2
+    return 0
+  fi
+
+  if chattr +i /sandbox/.openclaw 2>/dev/null; then
+    hardened=$((hardened + 1))
+  else
+    failed=$((failed + 1))
+  fi
+
+  for entry in /sandbox/.openclaw/*; do
+    [ -L "$entry" ] || continue
+    if chattr +i "$entry" 2>/dev/null; then
+      hardened=$((hardened + 1))
+    else
+      failed=$((failed + 1))
+    fi
+  done
+
+  if [ "$failed" -gt 0 ]; then
+    echo "[SECURITY] Immutable hardening applied to $hardened path(s); $failed path(s) could not be hardened — continuing with DAC + Landlock" >&2
+  elif [ "$hardened" -gt 0 ]; then
+    echo "[SECURITY] Immutable hardening applied to /sandbox/.openclaw and validated symlinks" >&2
+  fi
+}
+
 write_auth_profile() {
   if [ -z "${NVIDIA_API_KEY:-}" ]; then
     return
@@ -135,6 +181,25 @@ json.dump({
 }, open(path, 'w'))
 os.chmod(path, 0o600)
 PYAUTH
+}
+
+configure_messaging_channels() {
+  # Channel entries are baked into openclaw.json at image build time via
+  # NEMOCLAW_MESSAGING_CHANNELS_B64 (see Dockerfile). Placeholder tokens
+  # (openshell:resolve:env:*) flow through to API calls where the L7 proxy
+  # rewrites them with real secrets at egress. Real tokens are never visible
+  # inside the sandbox.
+  #
+  # Runtime patching of /sandbox/.openclaw/openclaw.json is not possible:
+  # Landlock enforces read-only on /sandbox/.openclaw/ at the kernel level,
+  # regardless of DAC (file ownership/chmod). Writes fail with EPERM.
+  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || [ -n "${DISCORD_BOT_TOKEN:-}" ] || [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
+
+  echo "[channels] Messaging channels active (baked at build time):" >&2
+  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && echo "[channels]   telegram (native)" >&2
+  [ -n "${DISCORD_BOT_TOKEN:-}" ] && echo "[channels]   discord (native)" >&2
+  [ -n "${SLACK_BOT_TOKEN:-}" ] && echo "[channels]   slack (native)" >&2
+  return 0
 }
 
 print_dashboard_urls() {
@@ -190,7 +255,7 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 # is defense-in-depth, not a trust boundary. PR #690 adds one-shot exit,
 # timeout reduction, and token cleanup for a more comprehensive fix.
 ALLOWED_CLIENTS = {'openclaw-control-ui'}
-ALLOWED_MODES = {'webchat'}
+ALLOWED_MODES = {'webchat', 'cli'}
 
 def run(*args):
     proc = subprocess.run(args, capture_output=True, text=True)
@@ -345,6 +410,8 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
+  configure_messaging_channels
+  validate_openclaw_symlinks
   write_auth_profile
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
@@ -375,6 +442,11 @@ fi
 # Verify config integrity before starting anything
 verify_config_integrity
 
+# Inject messaging channel config if provider tokens are present.
+# Must run AFTER integrity check (to detect build-time tampering) and
+# BEFORE chattr +i (which locks the config permanently).
+configure_messaging_channels
+
 # Write auth profile as sandbox user (needs writable .openclaw-data)
 gosu sandbox bash -c "$(declare -f write_auth_profile); write_auth_profile"
 
@@ -395,29 +467,14 @@ chmod 600 /tmp/auto-pair.log
 
 # Verify ALL symlinks in .openclaw point to expected .openclaw-data targets.
 # Dynamic scan so future OpenClaw symlinks are covered automatically.
-for entry in /sandbox/.openclaw/*; do
-  [ -L "$entry" ] || continue
-  name="$(basename "$entry")"
-  target="$(readlink -f "$entry" 2>/dev/null || true)"
-  expected="/sandbox/.openclaw-data/$name"
-  if [ "$target" != "$expected" ]; then
-    echo "[SECURITY] Symlink $entry points to unexpected target: $target (expected $expected)" >&2
-    exit 1
-  fi
-done
+validate_openclaw_symlinks
 
 # Lock .openclaw directory after symlink validation: set the immutable flag
 # so symlinks cannot be swapped at runtime even if DAC or Landlock are
 # bypassed. chattr requires cap_linux_immutable which the entrypoint has
 # as root; the sandbox user cannot remove the flag.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/1019
-if command -v chattr >/dev/null 2>&1; then
-  chattr +i /sandbox/.openclaw 2>/dev/null || true
-  for entry in /sandbox/.openclaw/*; do
-    [ -L "$entry" ] || continue
-    chattr +i "$entry" 2>/dev/null || true
-  done
-fi
+harden_openclaw_symlinks
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs

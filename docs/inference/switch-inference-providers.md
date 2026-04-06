@@ -97,4 +97,4 @@ The output includes the active provider, model, and endpoint.
 
 ## Related Topics
 
-- [Inference Profiles](../reference/inference-profiles.md) for full profile configuration details.
+- [Inference Options](inference-options.md) for the full list of providers available during onboarding.

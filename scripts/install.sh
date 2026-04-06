@@ -272,6 +272,7 @@ usage() {
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
   printf "    NEMOCLAW_POLICY_PRESETS       Comma-separated policy presets\n"
+  printf "    BRAVE_API_KEY                 Enable Brave Search with this API key (stored in sandbox OpenClaw config)\n"
   printf "    NEMOCLAW_EXPERIMENTAL=1       Show experimental/local options\n"
   printf "    CHAT_UI_URL                   Chat UI URL to open after setup\n"
   printf "    DISCORD_BOT_TOKEN             Auto-enable Discord policy support\n"
@@ -372,7 +373,6 @@ MIN_NODE_VERSION="22.16.0"
 MIN_NPM_MAJOR=10
 RUNTIME_REQUIREMENT_MSG="NemoClaw requires Node.js >=${MIN_NODE_VERSION} and npm >=${MIN_NPM_MAJOR}."
 NEMOCLAW_SHIM_DIR="${HOME}/.local/bin"
-ORIGINAL_PATH="${PATH:-}"
 NEMOCLAW_READY_NOW=false
 NEMOCLAW_RECOVERY_PROFILE=""
 NEMOCLAW_RECOVERY_EXPORT_DIR=""
@@ -453,7 +453,7 @@ refresh_path() {
 }
 
 ensure_nemoclaw_shim() {
-  local npm_bin shim_path
+  local npm_bin shim_path node_path node_dir cli_path
   npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
   shim_path="${NEMOCLAW_SHIM_DIR}/nemoclaw"
 
@@ -461,12 +461,24 @@ ensure_nemoclaw_shim() {
     return 1
   fi
 
-  if [[ ":$ORIGINAL_PATH:" == *":$npm_bin:"* ]] || [[ ":$ORIGINAL_PATH:" == *":$NEMOCLAW_SHIM_DIR:"* ]]; then
-    return 0
+  node_path="$(command -v node 2>/dev/null || true)"
+  if [[ -z "$node_path" || ! -x "$node_path" ]]; then
+    return 1
   fi
 
+  cli_path="$npm_bin/nemoclaw"
+  if [[ -z "$cli_path" || ! -x "$cli_path" ]]; then
+    return 1
+  fi
+  node_dir="$(dirname "$node_path")"
+
   mkdir -p "$NEMOCLAW_SHIM_DIR"
-  ln -sfn "$npm_bin/nemoclaw" "$shim_path"
+  cat >"$shim_path" <<EOF
+#!/usr/bin/env bash
+export PATH="$node_dir:\$PATH"
+exec "$cli_path" "\$@"
+EOF
+  chmod +x "$shim_path"
   refresh_path
   ensure_local_bin_in_profile
   info "Created user-local shim at $shim_path"
@@ -814,12 +826,30 @@ resolve_openclaw_version() {
   fi
 }
 
+is_source_checkout() {
+  local repo_root="$1"
+  local package_json="${repo_root}/package.json"
+
+  [[ -f "$package_json" ]] || return 1
+  grep -q '"name"[[:space:]]*:[[:space:]]*"nemoclaw"' "$package_json" 2>/dev/null || return 1
+
+  if [[ "${NEMOCLAW_BOOTSTRAP_PAYLOAD:-}" == "1" ]]; then
+    return 1
+  fi
+
+  if [[ -n "${NEMOCLAW_REPO_ROOT:-}" || -d "${repo_root}/.git" ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
 install_nemoclaw() {
   command_exists git || error "git was not found on PATH."
   local repo_root package_json
   repo_root="$(resolve_repo_root)"
   package_json="${repo_root}/package.json"
-  if [[ -f "$package_json" ]] && grep -q '"name"[[:space:]]*:[[:space:]]*"nemoclaw"' "$package_json" 2>/dev/null; then
+  if is_source_checkout "$repo_root"; then
     info "NemoClaw package.json found in the selected source checkout — installing from source…"
     NEMOCLAW_SOURCE_ROOT="$repo_root"
     spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$NEMOCLAW_SOURCE_ROOT" \
@@ -829,6 +859,9 @@ install_nemoclaw() {
     spin "Building NemoClaw plugin" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\"/nemoclaw && npm install --ignore-scripts && npm run build"
     spin "Linking NemoClaw CLI" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm link"
   else
+    if [[ -f "$package_json" ]]; then
+      info "Installer payload is not a persistent source checkout — installing from GitHub…"
+    fi
     info "Installing NemoClaw from GitHub…"
     # Resolve the latest release tag so we never install raw main.
     local release_ref
@@ -904,6 +937,81 @@ verify_nemoclaw() {
 # ---------------------------------------------------------------------------
 # 5. Onboard
 # ---------------------------------------------------------------------------
+run_installer_host_preflight() {
+  local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/preflight.js"
+  if ! command_exists node || [[ ! -f "$preflight_module" ]]; then
+    return 0
+  fi
+
+  local output status
+  if output="$(
+    # shellcheck disable=SC2016
+    node -e '
+      const preflightPath = process.argv[1];
+      try {
+        const { assessHost, planHostRemediation } = require(preflightPath);
+        const host = assessHost();
+        const actions = planHostRemediation(host);
+        const blockingActions = actions.filter((action) => action && action.blocking);
+        const infoLines = [];
+        const actionLines = [];
+        if (host.runtime && host.runtime !== "unknown") {
+          infoLines.push(`Detected container runtime: ${host.runtime}`);
+        }
+        if (host.notes && host.notes.includes("Running under WSL")) {
+          infoLines.push("Running under WSL");
+        }
+        for (const action of actions) {
+          actionLines.push(`- ${action.title}: ${action.reason}`);
+          for (const command of action.commands || []) {
+            actionLines.push(`  ${command}`);
+          }
+        }
+        if (infoLines.length > 0) {
+          process.stdout.write(`__INFO__\n${infoLines.join("\n")}\n`);
+        }
+        if (actionLines.length > 0) {
+          process.stdout.write(`__ACTIONS__\n${actionLines.join("\n")}`);
+        }
+        process.exit(blockingActions.length > 0 ? 10 : 0);
+      } catch {
+        process.exit(0);
+      }
+    ' "$preflight_module"
+  )"; then
+    status=0
+  else
+    status=$?
+  fi
+
+  if [[ -n "$output" ]]; then
+    local info_output="" action_output=""
+    info_output="$(printf "%s\n" "$output" | awk 'BEGIN{mode=0} /^__INFO__$/ {mode=1; next} /^__ACTIONS__$/ {mode=0} mode {print}')"
+    action_output="$(printf "%s\n" "$output" | awk 'BEGIN{mode=0} /^__ACTIONS__$/ {mode=1; next} mode {print}')"
+    echo ""
+    if [[ -n "$info_output" ]]; then
+      while IFS= read -r line; do
+        [[ -n "$line" ]] && printf "  %s\n" "$line"
+      done <<<"$info_output"
+    fi
+    if [[ "$status" -eq 10 ]]; then
+      warn "Host preflight found issues that will prevent onboarding right now."
+      if [[ -n "$action_output" ]]; then
+        while IFS= read -r line; do
+          [[ -n "$line" ]] && printf "  %s\n" "$line"
+        done <<<"$action_output"
+      fi
+    elif [[ -n "$action_output" ]]; then
+      warn "Host preflight found warnings."
+      while IFS= read -r line; do
+        [[ -n "$line" ]] && printf "  %s\n" "$line"
+      done <<<"$action_output"
+    fi
+  fi
+
+  [[ "$status" -ne 10 ]]
+}
+
 run_onboard() {
   show_usage_notice
   info "Running nemoclaw onboard…"
@@ -1025,8 +1133,12 @@ main() {
 
   step 3 "Onboarding"
   if command_exists nemoclaw; then
-    run_onboard
-    ONBOARD_RAN=true
+    if run_installer_host_preflight; then
+      run_onboard
+      ONBOARD_RAN=true
+    else
+      warn "Skipping onboarding until the host prerequisites above are fixed."
+    fi
   else
     warn "Skipping onboarding — this shell still cannot resolve 'nemoclaw'."
   fi
