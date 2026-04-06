@@ -26,7 +26,12 @@ extensions = [
     "sphinxcontrib.mermaid",
     "json_output",
     "search_assets",
+    "sphinx_reredirects",
 ]
+
+redirects = {
+    "reference/inference-profiles": "../inference/inference-options.html",
+}
 
 autodoc_default_options = {
     "members": True,
@@ -96,7 +101,7 @@ highlight_language = "console"
 html_theme_options = {
     # "public_docs_features": True, # TODO: Uncomment this when the docs are public
     "announcement": (
-        "&#x1F514; NemoClaw is <strong>alpha software</strong>. APIs and behavior"
+        "&#x1F514; NVIDIA NemoClaw is <strong>alpha software</strong>. APIs and behavior"
         " may change without notice. Do not use in production."
     ),
     "icon_links": [

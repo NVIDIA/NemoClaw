@@ -2,7 +2,9 @@
 title:
   page: "NemoClaw Security Best Practices — Controls, Risks, and Posture Profiles"
   nav: "Security Best Practices"
-description: "A risk framework for every configurable security control in NemoClaw: defaults, what you can change, and what happens if you do."
+description:
+  main: "A risk framework for every configurable security control in NemoClaw: defaults, what you can change, and what happens if you do."
+  agent: "Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs."
 keywords: ["nemoclaw security best practices", "sandbox security controls risk framework"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "security", "network_policy", "nemoclaw"]
@@ -358,6 +360,55 @@ The Dockerfile removes compilers and network probes from the runtime image.
 | Risk if relaxed | A compiler lets the agent build arbitrary native code, including kernel exploits or custom network tools. `netcat` enables arbitrary TCP connections that bypass HTTP-level policy enforcement. |
 | Recommendation | Keep build tools removed. If the agent needs to compile code, run the build in a separate, purpose-built container and copy artifacts into the sandbox. |
 
+## Gateway Authentication Controls
+
+The OpenClaw gateway authenticates devices that connect to the Control UI dashboard.
+NemoClaw hardens these defaults at image build time.
+
+### Device Authentication
+
+Device authentication requires each connecting device to go through a pairing flow before it can interact with the gateway.
+
+| Aspect | Detail |
+|---|---|
+| Default | Enabled. The gateway requires device pairing for all connections. |
+| What you can change | Set `NEMOCLAW_DISABLE_DEVICE_AUTH=1` as a Docker build argument to disable device authentication. This is a build-time setting baked into `openclaw.json` and verified by hash at startup. |
+| Risk if relaxed | Disabling device auth allows any device on the network to connect to the gateway without proving identity. This is dangerous when combined with LAN-bind changes or cloudflared tunnels in remote deployments, resulting in an unauthenticated, publicly reachable dashboard. |
+| Recommendation | Keep device auth enabled (the default). Only disable it for headless or development environments where no untrusted devices can reach the gateway. |
+
+### Insecure Auth Derivation
+
+The `allowInsecureAuth` setting controls whether the gateway permits non-HTTPS authentication.
+
+| Aspect | Detail |
+|---|---|
+| Default | Derived from the `CHAT_UI_URL` scheme at build time. When the URL uses `http://` (local development), insecure auth is allowed. When it uses `https://` (remote or production), insecure auth is blocked. |
+| What you can change | This is derived automatically from `CHAT_UI_URL`. Set `CHAT_UI_URL` to an `https://` URL to enforce secure auth. |
+| Risk if relaxed | Allowing insecure auth over HTTPS defeats the purpose of TLS, because authentication tokens transit in cleartext. |
+| Recommendation | Use `https://` for any deployment accessible beyond `localhost`. The default local URL (`http://127.0.0.1:18789`) correctly allows insecure auth for local development. |
+
+### Auto-Pair Client Allowlist
+
+The auto-pair watcher automatically approves device pairing requests from recognized clients, so you do not need to manually approve the Control UI.
+
+| Aspect | Detail |
+|---|---|
+| Default | The watcher approves devices with `clientId` set to `openclaw-control-ui` or `clientMode` set to `webchat`. All other clients are rejected and logged. |
+| What you can change | This is not a user-facing knob. The allowlist is defined in the entrypoint script. |
+| Risk if relaxed | Approving all device types without validation lets rogue or unexpected clients pair with the gateway unchallenged. |
+| Recommendation | No action needed. The entrypoint handles this automatically. If you see `[auto-pair] rejected unknown client=...` in the logs, investigate the source of the unexpected connection. |
+
+### CLI Secret Redaction
+
+The CLI automatically redacts secret patterns (API keys, bearer tokens, provider credentials) from command output and error messages before logging them.
+
+| Aspect | Detail |
+|---|---|
+| Default | Enabled. The runner redacts secrets from stdout, stderr, and thrown error messages. |
+| What you can change | This is not a user-facing knob. The CLI enforces it on all command output paths. |
+| Risk if relaxed | Without redaction, secrets could appear in terminal scrollback, log files, or debug output shared in bug reports. |
+| Recommendation | No action needed. If you share `nemoclaw debug` output, verify that no secrets appear in the collected diagnostics. |
+
 ## Inference Controls
 
 OpenShell routes all inference traffic through the gateway to isolate provider credentials from the sandbox.
@@ -445,6 +496,7 @@ The following patterns weaken security without providing meaningful benefit.
 | Relying solely on the entrypoint for capability drops | The entrypoint drops dangerous capabilities using `capsh`, but this is best-effort. If `capsh` is unavailable or `CAP_SETPCAP` is not in the bounding set, the container runs with the default capability set. | Pass `--cap-drop=ALL` at the container runtime level as defense-in-depth. |
 | Granting write access to `/sandbox/.openclaw` | This directory contains the OpenClaw gateway configuration. A writable `.openclaw` lets the agent modify auth tokens, disable CORS, or redirect inference routing. | Store agent-writable state in `/sandbox/.openclaw-data`. |
 | Adding inference provider hosts to the network policy | Direct network access to an inference host bypasses credential isolation and usage tracking. | Use OpenShell inference routing instead of adding hosts like `api.openai.com` or `api.anthropic.com` to the network policy. |
+| Disabling device auth for remote deployments | Without device auth, any device on the network can connect to the gateway without pairing. Combined with a cloudflared tunnel, this makes the dashboard publicly accessible and unauthenticated. | Keep `NEMOCLAW_DISABLE_DEVICE_AUTH` at its default (`0`). Only set it to `1` for local headless or development environments. |
 
 ## Related Topics
 
@@ -452,6 +504,6 @@ The following patterns weaken security without providing meaningful benefit.
 - [Customize the Network Policy](../network-policy/customize-network-policy.md) for static and dynamic policy changes.
 - [Approve or Deny Network Requests](../network-policy/approve-network-requests.md) for the operator approval flow.
 - [Sandbox Hardening](../deployment/sandbox-hardening.md) for container-level security measures.
-- [Inference Profiles](../reference/inference-profiles.md) for provider configuration details.
+- [Inference Options](../inference/inference-options.md) for provider configuration details.
 - [How It Works](../about/how-it-works.md) for the protection layer architecture.
 <!-- - OpenShell [Security Best Practices](https://docs.nvidia.com/openshell/latest/security/best-practices.html) for the platform-level controls reference, including network namespace isolation, seccomp filters, SSRF protection, TLS termination, and gateway authentication. -->

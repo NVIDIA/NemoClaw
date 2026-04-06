@@ -2,7 +2,7 @@
 
 > **WIP** — This page is actively being updated as we work through Spark installs. Expect changes.
 
-This guide walks you through installing and running NemoClaw on an NVIDIA DGX Spark. DGX Spark ships with Ubuntu 24.04 and Docker pre-installed; the steps below handle the remaining Spark-specific configuration so you can get from zero to a working sandbox.
+This guide walks you through installing and running NemoClaw on an NVIDIA DGX Spark. DGX Spark ships with Ubuntu 24.04 and Docker pre-installed, and current OpenShell releases no longer require a Spark-specific Docker cgroup workaround.
 
 ## Prerequisites
 
@@ -10,23 +10,18 @@ Before starting, make sure you have:
 
 - **Docker** (pre-installed on DGX Spark, v28.x/29.x)
 - **Node.js 22** (installed automatically by the NemoClaw installer)
-- **OpenShell CLI** (must be installed separately before running NemoClaw — see the Quick Start below)
+- **OpenShell CLI** (installed automatically during NemoClaw onboarding if missing)
 - **API key** (cloud inference only) — the onboarding wizard prompts for a provider and key during setup. For example, an NVIDIA API key from [build.nvidia.com](https://build.nvidia.com) for NVIDIA Endpoints, or an OpenAI, Anthropic, or Gemini key for those providers. **If you plan to use local inference with Ollama instead, no API key is needed** — see [Local Inference with Ollama](#local-inference-with-ollama) to set up Ollama before installing NemoClaw.
 
 ## Quick Start
 
 ```bash
-# Install OpenShell:
-curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
-
 # Clone NemoClaw:
 git clone https://github.com/NVIDIA/NemoClaw.git
 cd NemoClaw
 
-# Spark-specific setup (fixes cgroup v2 and Docker permissions — see Troubleshooting for details)
-sudo ./scripts/setup-spark.sh
-
-# Install NemoClaw:
+# Install NemoClaw. The standard installer and onboarding flow handle the
+# OpenShell CLI and current DGX Spark cgroup behavior automatically:
 ./install.sh
 
 # Alternatively, you can use the hosted install script:
@@ -124,8 +119,6 @@ If NemoClaw is **already installed** with a cloud provider and you want to switc
 
 ```bash
 nemoclaw uninstall
-
-curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
@@ -158,8 +151,8 @@ openclaw agent --agent main --local -m "Which model and GPU are in use?" --sessi
 
 | Issue | Status | Workaround |
 |-------|--------|------------|
-| cgroup v2 kills k3s in Docker | Fixed in `setup-spark` | `daemon.json` cgroupns=host |
-| Docker permission denied | Fixed in `setup-spark` | `usermod -aG docker` |
+| cgroup v2 kills k3s in Docker | Resolved in current OpenShell releases | Use the standard installer and onboard flow |
+| Docker permission denied | Host-specific | Ensure your user can access the Docker daemon |
 | CoreDNS CrashLoop after setup | Fixed in `fix-coredns.sh` | Uses container gateway IP, not 127.0.0.11 |
 | Image pull failure (k3s can't find built image) | OpenShell bug | `openshell gateway destroy && openshell gateway start`, re-run setup |
 | GPU passthrough | Untested on Spark | Should work with `--gpu` flag if NVIDIA Container Toolkit is configured |
@@ -167,36 +160,9 @@ openclaw agent --agent main --local -m "Which model and GPU are in use?" --sessi
 | Port 3000 conflict with AI Workbench | Known | AI Workbench Traefik proxy uses port 3000 (and 10000); use a different port for other services |
 | Network policy blocks NVIDIA cloud API | By design | Ensure `integrate.api.nvidia.com` is in the sandbox network policy if using cloud inference |
 
-### Manual Setup (if setup-spark doesn't work)
+### Manual Setup
 
-If `setup-spark.sh` fails, you can apply the fixes it performs by hand:
-
-#### Fix Docker cgroup namespace
-
-```bash
-# Check if you're on cgroup v2
-stat -fc %T /sys/fs/cgroup/
-# Expected: cgroup2fs
-
-# Add cgroupns=host to Docker daemon config
-sudo python3 -c "
-import json, os
-path = '/etc/docker/daemon.json'
-d = json.load(open(path)) if os.path.exists(path) else {}
-d['default-cgroupns-mode'] = 'host'
-json.dump(d, open(path, 'w'), indent=2)
-"
-
-# Restart Docker
-sudo systemctl restart docker
-```
-
-#### Fix Docker permissions
-
-```bash
-sudo usermod -aG docker $USER
-newgrp docker  # or log out and back in
-```
+If onboarding reports that Docker is missing or unreachable, fix Docker access on the host and rerun `nemoclaw onboard`.
 
 ## Technical Reference
 
@@ -218,7 +184,7 @@ Some NIM containers (e.g., Nemotron-3-Super-120B-A12B) ship native arm64 images 
 
 ### What's Different on Spark
 
-DGX Spark ships **Ubuntu 24.04 (Noble) + Docker 28.x/29.x** on **aarch64 (Grace CPU + GB10 GPU, 128 GB unified memory)** but no k8s/k3s. OpenShell embeds k3s inside a Docker container, which hits two problems on Spark:
+DGX Spark ships **Ubuntu 24.04 (Noble) + Docker 28.x/29.x** on **aarch64 (Grace CPU + GB10 GPU, 128 GB unified memory)** but no k8s/k3s. OpenShell embeds k3s inside a Docker container, so the main Spark-specific concerns today are Docker access and using a current OpenShell release.
 
 #### Docker permissions
 
@@ -228,9 +194,9 @@ Error in the hyper legacy client: client error (Connect)
 ```
 
 **Cause**: Your user isn't in the `docker` group.
-**Fix**: `setup-spark` runs `usermod -aG docker $USER`. You may need to log out and back in (or `newgrp docker`) for it to take effect.
+**Fix**: Grant your user access to the Docker daemon, then rerun `nemoclaw onboard`. You may need to log out and back in (or `newgrp docker`) for group membership changes to take effect.
 
-#### cgroup v2 incompatibility
+#### cgroup v2 incompatibility (resolved)
 
 ```text
 K8s namespace not ready
@@ -238,15 +204,19 @@ openat2 /sys/fs/cgroup/kubepods/pids.max: no
 Failed to start ContainerManager: failed to initialize top level QOS containers
 ```
 
-**Cause**: Spark runs cgroup v2 (Ubuntu 24.04 default). OpenShell's gateway container starts k3s, which tries to create cgroup v1-style paths that don't exist. The fix is `--cgroupns=host` on the container, but OpenShell doesn't expose that flag.
+**Cause**: Spark runs cgroup v2 (Ubuntu 24.04 default). OpenShell's gateway container starts k3s, which tries to create cgroup v1-style paths that don't exist without host cgroup namespace access.
 
-**Fix**: `setup-spark` sets `"default-cgroupns-mode": "host"` in `/etc/docker/daemon.json` and restarts Docker. This makes all containers use the host cgroup namespace, which is what k3s needs.
+**Fix**: Recent OpenShell versions set `cgroupns=host` on the gateway container directly ([OpenShell PR #329](https://github.com/NVIDIA/OpenShell/pull/329)). No `default-cgroupns-mode=host` or other `daemon.json` workaround is needed. The standard NemoClaw installer/onboarding flow installs the current OpenShell CLI automatically when it is missing. If you are on an older OpenShell version, upgrade with:
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
+```
 
 ### Architecture
 
 ```text
 DGX Spark (Ubuntu 24.04, aarch64, cgroup v2, 128 GB unified memory)
-  └── Docker (28.x/29.x, cgroupns=host)
+  └── Docker (28.x/29.x)
        └── OpenShell gateway container
             └── k3s (embedded)
                  └── nemoclaw sandbox pod

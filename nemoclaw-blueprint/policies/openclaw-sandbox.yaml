@@ -185,6 +185,7 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/bot*/**" }
           - allow: { method: POST, path: "/bot*/**" }
+          - allow: { method: GET, path: "/file/bot*/**" }
     binaries:
       - { path: /usr/local/bin/node }
 

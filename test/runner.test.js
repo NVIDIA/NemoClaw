@@ -377,7 +377,7 @@ describe("regression guards", () => {
       calls.push(args);
       return {
         status: 0,
-        stdout: "visit https://alice:secret@example.com/?token=abc123456789\n",
+        stdout: "visit https://alice:secret@example.com/?token=abc123456789\n", // gitleaks:allow
         stderr: "",
       };
     };
@@ -456,15 +456,6 @@ describe("regression guards", () => {
     }
   });
 
-  it("telegram bridge validates SANDBOX_NAME on startup", () => {
-    const src = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "scripts", "telegram-bridge.js"),
-      "utf-8",
-    );
-    expect(src.includes("validateName(SANDBOX")).toBeTruthy();
-    expect(src.includes("execSync")).toBeFalsy();
-  });
-
   describe("credential exposure guards (#429)", () => {
     it("onboard createSandbox does not pass NVIDIA_API_KEY to sandbox env", () => {
       const fs = require("fs");
@@ -487,19 +478,15 @@ describe("regression guards", () => {
       expect(src.includes("delete process.env.NVIDIA_API_KEY")).toBeTruthy();
     });
 
-    it("setupSpark does not pass NVIDIA_API_KEY to sudo", () => {
+    it("setupSpark is a compatibility alias that does not shell out to sudo", () => {
       const fs = require("fs");
       const src = fs.readFileSync(
         path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
         "utf-8",
       );
-      // Find the run() call inside setupSpark — it should not contain the key
-      const sparkLines = src
-        .split("\n")
-        .filter((l) => l.includes("setup-spark") && l.includes("run("));
-      for (const line of sparkLines) {
-        expect(line.includes("NVIDIA_API_KEY")).toBe(false);
-      }
+      expect(src).toContain("`nemoclaw setup-spark` is deprecated.");
+      expect(src).toContain("await onboard(args);");
+      expect(src).not.toContain('sudo bash "${SCRIPTS}/setup-spark.sh"');
     });
 
     it("walkthrough.sh does not embed NVIDIA_API_KEY in tmux or sandbox commands", () => {
@@ -529,6 +516,68 @@ describe("regression guards", () => {
       );
       expect(src).toContain("openshell-checksums-sha256.txt");
       expect(src).toContain("shasum -a 256 -c");
+    });
+
+    it("install-openshell.sh falls back to curl when gh fails (#1318)", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh"),
+        "utf-8",
+      );
+      expect(src).toContain("download_with_curl");
+      const ghBlock = src.slice(src.indexOf("command -v gh"));
+      expect(ghBlock).toContain("2>/dev/null");
+      expect(ghBlock).toContain("falling back to curl");
+      expect(ghBlock).toContain("download_with_curl");
+    });
+
+    it("install-openshell.sh gh-absent path uses curl directly", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh"),
+        "utf-8",
+      );
+      expect(src).toContain("download_with_curl");
+      const ghCheck = src.indexOf("command -v gh");
+      const elseBlock = src.indexOf("\nelse\n", ghCheck);
+      const finalFi = src.indexOf("\nfi\n", elseBlock);
+      expect(ghCheck).toBeGreaterThan(-1);
+      expect(elseBlock).toBeGreaterThan(ghCheck);
+      expect(finalFi).toBeGreaterThan(elseBlock);
+      const fallthrough = src.slice(elseBlock, finalFi);
+      expect(fallthrough).toContain("download_with_curl");
+      expect(fallthrough).not.toContain("gh release");
+    });
+
+    it("install-openshell.sh gh-present-but-fails path falls back to curl", () => {
+      const scriptPath = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
+      const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-stub-"));
+      const ghStub = path.join(tmpBin, "gh");
+      fs.writeFileSync(ghStub, "#!/bin/sh\nexit 4\n");
+      fs.chmodSync(ghStub, 0o755);
+
+      const stub = `
+        #!/usr/bin/env bash
+        openshell() { echo "openshell 0.0.1"; }
+        export -f openshell
+        export PATH="${tmpBin}:/usr/bin:/bin"
+        curl() { echo "CURL_FALLBACK $*"; return 0; }
+        export -f curl
+        shasum() { echo "checksum OK"; return 0; }
+        export -f shasum
+        tar() { return 0; }; export -f tar
+        install() { return 0; }; export -f install
+        source "${scriptPath}"
+      `;
+      try {
+        const result = spawnSync("bash", ["-c", stub], {
+          encoding: "utf-8",
+          timeout: 5000,
+        });
+        const out = (result.stdout || "") + (result.stderr || "");
+        expect(out).toContain("falling back to curl");
+        expect(out).toContain("CURL_FALLBACK");
+      } finally {
+        fs.rmSync(tmpBin, { recursive: true, force: true });
+      }
     });
   });
 
@@ -582,12 +631,114 @@ describe("regression guards", () => {
       expect(findShellViolations(src)).toEqual([]);
     });
 
-    it("scripts/brev-setup.sh does not pipe curl to shell", () => {
+    it("scripts/brev-setup.sh has been removed", () => {
+      expect(fs.existsSync(path.join(import.meta.dirname, "..", "scripts", "brev-setup.sh"))).toBe(
+        false,
+      );
+    });
+
+    it("services no longer tell users to install brev-setup.sh", () => {
       const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "scripts", "brev-setup.sh"),
+        path.join(import.meta.dirname, "..", "src", "lib", "services.ts"),
         "utf-8",
       );
-      expect(findShellViolations(src)).toEqual([]);
+      expect(src).not.toContain("brev-setup.sh");
+    });
+
+    it("deploy uses the standard installer and connects to the actual sandbox name", () => {
+      const tsSrc = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
+        "utf-8",
+      );
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
+        "utf-8",
+      );
+      expect(src).toContain('const { executeDeploy } = require("../dist/lib/deploy")');
+      expect(tsSrc).toContain("export function inferDeployProvider(");
+      expect(tsSrc).toContain("export function buildDeployEnvLines(");
+      expect(tsSrc).toContain(
+        "bash scripts/install.sh --non-interactive --yes-i-accept-third-party-software",
+      );
+      expect(tsSrc).not.toContain("sandbox connect nemoclaw");
+      expect(tsSrc).toContain("openshell sandbox connect ${shellQuote(sandboxName)}");
+    });
+
+    it("deploy syncs a complete buildable checkout instead of excluding src", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
+        "utf-8",
+      );
+      expect(src).not.toContain("--exclude src");
+      expect(src).toContain('"${rootDir}/"');
+      expect(src).toContain("--exclude dist");
+      expect(src).toContain('const brevProvider = String(env.NEMOCLAW_BREV_PROVIDER || "gcp")');
+      expect(src).toContain("--provider ${shellQuote(brevProvider)}");
+    });
+
+    it("deploy supports test-friendly non-interactive skip flags", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
+        "utf-8",
+      );
+      expect(src).toContain("NEMOCLAW_DEPLOY_NO_CONNECT");
+      expect(src).toContain("NEMOCLAW_DEPLOY_NO_START_SERVICES");
+      expect(src).toContain("Skipping interactive sandbox connect");
+    });
+
+    it("deploy pins SSH host keys via TOFU instead of accept-new (#691)", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
+        "utf-8",
+      );
+      expect(src).not.toContain("StrictHostKeyChecking=accept-new");
+      expect(src).toContain("StrictHostKeyChecking=yes");
+      expect(src).toContain("ssh-keyscan");
+      expect(src).toContain("UserKnownHostsFile=");
+      expect(src).toContain("nemoclaw-ssh-");
+    });
+
+    it("deploy reports Brev failure states before SSH timeout", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
+        "utf-8",
+      );
+      expect(src).toContain("function getBrevInstanceStatus(");
+      expect(src).toContain('brev", ["ls", "--json"]');
+      expect(src).toContain("Brev instance '${name}' did not become ready.");
+      expect(src).toContain("Try: brev reset");
+      expect(src).toContain("Brev status at timeout:");
+    });
+
+    it("brev e2e suite includes a deploy-cli mode", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.js"),
+        "utf-8",
+      );
+      expect(src).toContain('TEST_SUITE === "deploy-cli"');
+      expect(src).toContain("deploy CLI provisions a remote sandbox end to end");
+      expect(src).toContain('NEMOCLAW_DEPLOY_NO_CONNECT: "1"');
+    });
+
+    it("brev e2e suite relies on an authenticated brev CLI instead of a Brev API token", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.js"),
+        "utf-8",
+      );
+      expect(src).toContain("const hasAuthenticatedBrev =");
+      expect(src).toContain('brev("ls")');
+      expect(src).not.toContain("BREV_API_TOKEN");
+      expect(src).not.toContain('brev("login", "--token"');
+    });
+
+    it("brev e2e suite no longer contains the old brev-setup compatibility path", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.js"),
+        "utf-8",
+      );
+      expect(src).not.toContain("scripts/brev-setup.sh");
+      expect(src).not.toContain("USE_LAUNCHABLE");
+      expect(src).not.toContain("SKIP_VLLM=1");
     });
 
     it("bin/nemoclaw.js does not pipe curl to shell", () => {
