@@ -13,7 +13,9 @@ function stageLegacySandboxBuildContext(rootDir, tmpDir = os.tmpdir()) {
   const buildCtx = createBuildContextDir(tmpDir);
   fs.copyFileSync(path.join(rootDir, "Dockerfile"), path.join(buildCtx, "Dockerfile"));
   fs.cpSync(path.join(rootDir, "nemoclaw"), path.join(buildCtx, "nemoclaw"), { recursive: true });
-  fs.cpSync(path.join(rootDir, "nemoclaw-blueprint"), path.join(buildCtx, "nemoclaw-blueprint"), { recursive: true });
+  fs.cpSync(path.join(rootDir, "nemoclaw-blueprint"), path.join(buildCtx, "nemoclaw-blueprint"), {
+    recursive: true,
+  });
   fs.cpSync(path.join(rootDir, "scripts"), path.join(buildCtx, "scripts"), { recursive: true });
   fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), { recursive: true, force: true });
   return {
@@ -34,17 +36,32 @@ function stageOptimizedSandboxBuildContext(rootDir, tmpDir = os.tmpdir()) {
   fs.copyFileSync(path.join(rootDir, "Dockerfile"), stagedDockerfile);
 
   fs.mkdirSync(stagedNemoclawDir, { recursive: true });
-  for (const file of ["package.json", "package-lock.json", "tsconfig.json", "openclaw.plugin.json"]) {
+  for (const file of [
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "openclaw.plugin.json",
+  ]) {
     fs.copyFileSync(path.join(sourceNemoclawDir, file), path.join(stagedNemoclawDir, file));
   }
-  fs.cpSync(path.join(sourceNemoclawDir, "src"), path.join(stagedNemoclawDir, "src"), { recursive: true });
+  fs.cpSync(path.join(sourceNemoclawDir, "src"), path.join(stagedNemoclawDir, "src"), {
+    recursive: true,
+  });
 
   fs.mkdirSync(stagedBlueprintDir, { recursive: true });
-  fs.copyFileSync(path.join(sourceBlueprintDir, "blueprint.yaml"), path.join(stagedBlueprintDir, "blueprint.yaml"));
-  fs.cpSync(path.join(sourceBlueprintDir, "policies"), path.join(stagedBlueprintDir, "policies"), { recursive: true });
+  fs.copyFileSync(
+    path.join(sourceBlueprintDir, "blueprint.yaml"),
+    path.join(stagedBlueprintDir, "blueprint.yaml"),
+  );
+  fs.cpSync(path.join(sourceBlueprintDir, "policies"), path.join(stagedBlueprintDir, "policies"), {
+    recursive: true,
+  });
 
   fs.mkdirSync(stagedScriptsDir, { recursive: true });
-  fs.copyFileSync(path.join(rootDir, "scripts", "nemoclaw-start.sh"), path.join(stagedScriptsDir, "nemoclaw-start.sh"));
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "nemoclaw-start.sh"),
+    path.join(stagedScriptsDir, "nemoclaw-start.sh"),
+  );
 
   return { buildCtx, stagedDockerfile };
 }

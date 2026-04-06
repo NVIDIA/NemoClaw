@@ -3,32 +3,91 @@
 
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const readline = require("readline");
-const { execSync } = require("child_process");
+const { execFileSync } = require("child_process");
 
-const CREDS_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
-const CREDS_FILE = path.join(CREDS_DIR, "credentials.json");
+const UNSAFE_HOME_PATHS = new Set(["/tmp", "/var/tmp", "/dev/shm", "/"]);
+
+function resolveHomeDir() {
+  const raw = process.env.HOME || os.homedir();
+  if (!raw) {
+    throw new Error(
+      "Cannot determine safe home directory for credential storage. " +
+        "Set the HOME environment variable to a user-owned directory.",
+    );
+  }
+  const home = path.resolve(raw);
+  try {
+    const real = fs.realpathSync(home);
+    if (UNSAFE_HOME_PATHS.has(real)) {
+      throw new Error(
+        "Cannot store credentials: HOME resolves to '" +
+          real +
+          "' which is world-readable. " +
+          "Set the HOME environment variable to a user-owned directory.",
+      );
+    }
+  } catch (e) {
+    if (e.code !== "ENOENT") throw e;
+  }
+  if (UNSAFE_HOME_PATHS.has(home)) {
+    throw new Error(
+      "Cannot store credentials: HOME resolves to '" +
+        home +
+        "' which is world-readable. " +
+        "Set the HOME environment variable to a user-owned directory.",
+    );
+  }
+  return home;
+}
+
+let _credsDir = null;
+let _credsFile = null;
+
+function getCredsDir() {
+  if (!_credsDir) _credsDir = path.join(resolveHomeDir(), ".nemoclaw");
+  return _credsDir;
+}
+
+function getCredsFile() {
+  if (!_credsFile) _credsFile = path.join(getCredsDir(), "credentials.json");
+  return _credsFile;
+}
 
 function loadCredentials() {
   try {
-    if (fs.existsSync(CREDS_FILE)) {
-      return JSON.parse(fs.readFileSync(CREDS_FILE, "utf-8"));
+    const file = getCredsFile();
+    if (fs.existsSync(file)) {
+      return JSON.parse(fs.readFileSync(file, "utf-8"));
     }
-  } catch { /* ignored */ }
+  } catch {
+    /* ignored */
+  }
   return {};
 }
 
+function normalizeCredentialValue(value) {
+  if (typeof value !== "string") return "";
+  return value.replace(/\r/g, "").trim();
+}
+
 function saveCredential(key, value) {
-  fs.mkdirSync(CREDS_DIR, { recursive: true, mode: 0o700 });
+  const dir = getCredsDir();
+  const file = getCredsFile();
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
   const creds = loadCredentials();
-  creds[key] = value;
-  fs.writeFileSync(CREDS_FILE, JSON.stringify(creds, null, 2), { mode: 0o600 });
+  creds[key] = normalizeCredentialValue(value);
+  fs.writeFileSync(file, JSON.stringify(creds, null, 2), { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
 }
 
 function getCredential(key) {
-  if (process.env[key]) return process.env[key];
+  if (process.env[key]) return normalizeCredentialValue(process.env[key]);
   const creds = loadCredentials();
-  return creds[key] || null;
+  const value = normalizeCredentialValue(creds[key]);
+  return value || null;
 }
 
 function promptSecret(question) {
@@ -73,7 +132,10 @@ function promptSecret(question) {
         }
 
         if (ch === "\u0008" || ch === "\u007f") {
-          answer = answer.slice(0, -1);
+          if (answer.length > 0) {
+            answer = answer.slice(0, -1);
+            output.write("\b \b");
+          }
           continue;
         }
 
@@ -91,6 +153,7 @@ function promptSecret(question) {
 
         if (ch >= " ") {
           answer += ch;
+          output.write("*");
         }
       }
     }
@@ -125,7 +188,10 @@ function prompt(question, opts = {}) {
       return;
     }
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    rl.question(question, (answer) => {
+    let finished = false;
+    function finish(fn, value) {
+      if (finished) return;
+      finished = true;
       rl.close();
       if (!process.stdin.isTTY) {
         if (typeof process.stdin.pause === "function") {
@@ -135,7 +201,15 @@ function prompt(question, opts = {}) {
           process.stdin.unref();
         }
       }
-      resolve(answer.trim());
+      fn(value);
+    }
+    rl.on("SIGINT", () => {
+      const err = Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
+      finish(reject, err);
+      process.kill(process.pid, "SIGINT");
+    });
+    rl.question(question, (answer) => {
+      finish(resolve, answer.trim());
     });
   });
 }
@@ -158,11 +232,20 @@ async function ensureApiKey() {
   console.log("  └─────────────────────────────────────────────────────────────────┘");
   console.log("");
 
-  key = await prompt("  NVIDIA API Key: ", { secret: true });
+  while (true) {
+    key = normalizeCredentialValue(await prompt("  NVIDIA API Key: ", { secret: true }));
 
-  if (!key || !key.startsWith("nvapi-")) {
-    console.error("  Invalid key. Must start with nvapi-");
-    process.exit(1);
+    if (!key) {
+      console.error("  NVIDIA API Key is required.");
+      continue;
+    }
+
+    if (!key.startsWith("nvapi-")) {
+      console.error("  Invalid key. Must start with nvapi-");
+      continue;
+    }
+
+    break;
   }
 
   saveCredential("NVIDIA_API_KEY", key);
@@ -174,7 +257,10 @@ async function ensureApiKey() {
 
 function isRepoPrivate(repo) {
   try {
-    const json = execSync(`gh api repos/${repo} --jq .private 2>/dev/null`, { encoding: "utf-8" }).trim();
+    const json = execFileSync("gh", ["api", `repos/${repo}`, "--jq", ".private"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
     return json === "true";
   } catch {
     return false;
@@ -189,12 +275,17 @@ async function ensureGithubToken() {
   }
 
   try {
-    token = execSync("gh auth token 2>/dev/null", { encoding: "utf-8" }).trim();
+    token = execFileSync("gh", ["auth", "token"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
     if (token) {
       process.env.GITHUB_TOKEN = token;
       return;
     }
-  } catch { /* ignored */ }
+  } catch {
+    /* ignored */
+  }
 
   console.log("");
   console.log("  ┌──────────────────────────────────────────────────┐");
@@ -219,10 +310,9 @@ async function ensureGithubToken() {
   console.log("");
 }
 
-module.exports = {
-  CREDS_DIR,
-  CREDS_FILE,
+const exports_ = {
   loadCredentials,
+  normalizeCredentialValue,
   saveCredential,
   getCredential,
   prompt,
@@ -230,3 +320,8 @@ module.exports = {
   ensureGithubToken,
   isRepoPrivate,
 };
+
+Object.defineProperty(exports_, "CREDS_DIR", { get: getCredsDir, enumerable: true });
+Object.defineProperty(exports_, "CREDS_FILE", { get: getCredsFile, enumerable: true });
+
+module.exports = exports_;

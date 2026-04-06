@@ -15,134 +15,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
+  checks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-          cache: npm
+      - name: Run basic checks
+        uses: ./.github/actions/basic-checks
 
-      - name: Install hadolint
-        run: |
-          HADOLINT_URL="https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64"
-          curl -fsSL -o /usr/local/bin/hadolint "$HADOLINT_URL"
-          EXPECTED=$(curl -fsSL "${HADOLINT_URL}.sha256" | awk '{print $1}')
-          ACTUAL=$(sha256sum /usr/local/bin/hadolint | awk '{print $1}')
-          [ "$EXPECTED" = "$ACTUAL" ] || { echo "::error::hadolint checksum mismatch"; exit 1; }
-          chmod +x /usr/local/bin/hadolint
-
-      - name: Install dependencies
-        run: |
-          npm install --ignore-scripts
-          cd nemoclaw && npm install
-
-      - name: Build TypeScript plugin
-        run: cd nemoclaw && npm run build
-
-      - name: Run all hooks (pre-commit + pre-push)
-        run: npx prek run --all-files --stage pre-push
-
-  test-unit:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-          cache: npm
-
-      - name: Install dependencies
-        run: |
-          npm install --ignore-scripts
-          cd nemoclaw && npm install
-
-      - name: Build TypeScript plugin
-        run: cd nemoclaw && npm run build
-
-      - name: Run all unit tests with coverage
-        run: npx vitest run --coverage
-
-      - name: Check coverage ratchet
-        run: bash scripts/check-coverage-ratchet.sh
-
-  build-sandbox-images:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Build production image
-        run: docker build -t nemoclaw-production .
-
-      - name: Build sandbox test image (fixtures layered on production)
-        run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production -t nemoclaw-sandbox-test .
-
-      - name: Save images to tarballs
-        run: |
-          docker save nemoclaw-sandbox-test | gzip > /tmp/sandbox-test-image.tar.gz
-          docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz
-
-      - name: Upload sandbox test image
-        uses: actions/upload-artifact@v4
-        with:
-          name: sandbox-test-image
-          path: /tmp/sandbox-test-image.tar.gz
-          retention-days: 1
-
-      - name: Upload isolation image
-        uses: actions/upload-artifact@v4
-        with:
-          name: isolation-image
-          path: /tmp/isolation-image.tar.gz
-          retention-days: 1
-
-  test-e2e-sandbox:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: build-sandbox-images
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Download image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: sandbox-test-image
-          path: /tmp
-
-      - name: Load image
-        run: gunzip -c /tmp/sandbox-test-image.tar.gz | docker load
-
-      - name: Run sandbox E2E tests
-        run: docker run --rm -v "${{ github.workspace }}/test:/opt/test" nemoclaw-sandbox-test /opt/test/e2e-test.sh
-
-  test-e2e-gateway-isolation:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: build-sandbox-images
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Download image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: isolation-image
-          path: /tmp
-
-      - name: Load image
-        run: gunzip -c /tmp/isolation-image.tar.gz | docker load
-
-      - name: Run gateway isolation E2E tests
-        run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh
+  sandbox-images-and-e2e:
+    needs: checks
+    uses: ./.github/workflows/sandbox-images-and-e2e.yaml
+    with:
+      run_arm64: true

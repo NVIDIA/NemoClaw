@@ -15,6 +15,7 @@ const PRIVATE_NETWORKS: CidrRange[] = [
   cidr("172.16.0.0", 12),
   cidr("192.168.0.0", 16),
   cidr("169.254.0.0", 16),
+  cidr("100.64.0.0", 10), // RFC 6598 CGNAT (shared address space)
   cidr6("::1", 128),
   cidr6("fd00::", 8),
 ];

@@ -32,6 +32,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _normalize_description_fields(metadata: dict[str, Any]) -> tuple[str, str]:
+    """Parse description from frontmatter: nested main/agent or legacy flat string."""
+    raw = metadata.get("description")
+    if isinstance(raw, dict):
+        main = str(raw.get("main") or "").strip()
+        agent = str(raw.get("agent") or "").strip()
+        if main and not agent:
+            agent = main
+        elif agent and not main:
+            main = agent
+        return main, agent
+    if raw is not None and not isinstance(raw, dict):
+        text = str(raw).strip()
+        if text:
+            return text, text
+    return "", ""
+
+
 class JSONFormatter:
     """Handles JSON data structure building and formatting."""
 
@@ -56,9 +74,12 @@ class JSONFormatter:
         New schema: topics, tags, industry, content.type, content.learning_level, content.audience, facets.modality
         Legacy schema: categories, personas, difficulty, content_type, modality
         """
-        # Basic metadata fields
-        if metadata.get("description"):
-            data["description"] = metadata["description"]
+        # Basic metadata fields — nested description.main / description.agent or legacy string
+        main_desc, agent_desc = _normalize_description_fields(metadata)
+        if main_desc:
+            data["description"] = main_desc
+        if agent_desc and agent_desc != main_desc:
+            data["description_agent"] = agent_desc
 
         # Tags (same in both schemas)
         if metadata.get("tags"):

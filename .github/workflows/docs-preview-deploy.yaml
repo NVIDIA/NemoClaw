@@ -67,19 +67,40 @@ jobs:
 
       - name: Deploy preview
         if: steps.meta.outputs.action != 'closed' && steps.meta.outputs.same-repo == 'true'
-        uses: rossjrw/pr-preview-action@v1
+        uses: rossjrw/pr-preview-action@ffa7509e91a3ec8dfc2e5536c4d5c1acdf7a6de9  # v1
         with:
           source-dir: ./docs-preview-html/
           preview-branch: gh-pages
           umbrella-dir: pr-preview
           action: deploy
           pr-number: ${{ steps.meta.outputs.pr-number }}
+          comment: false
+
+      - name: Post preview comment
+        if: steps.meta.outputs.action != 'closed' && steps.meta.outputs.same-repo == 'true'
+        uses: marocchino/sticky-pull-request-comment@70d2764d1a7d5d9560b100cbea0077fc8f633987  # v3.0.2
+        with:
+          header: pr-preview
+          number: ${{ steps.meta.outputs.pr-number }}
+          message: |
+            :rocket: **Docs preview ready!**
+
+            https://NVIDIA.github.io/NemoClaw/pr-preview/pr-${{ steps.meta.outputs.pr-number }}/
 
       - name: Remove preview
         if: steps.meta.outputs.action == 'closed'
-        uses: rossjrw/pr-preview-action@v1
+        uses: rossjrw/pr-preview-action@ffa7509e91a3ec8dfc2e5536c4d5c1acdf7a6de9  # v1
         with:
           preview-branch: gh-pages
           umbrella-dir: pr-preview
           action: remove
           pr-number: ${{ steps.meta.outputs.pr-number }}
+          comment: false
+
+      - name: Remove preview comment
+        if: steps.meta.outputs.action == 'closed'
+        uses: marocchino/sticky-pull-request-comment@70d2764d1a7d5d9560b100cbea0077fc8f633987  # v3.0.2
+        with:
+          header: pr-preview
+          number: ${{ steps.meta.outputs.pr-number }}
+          delete: true

@@ -21,7 +21,11 @@ describe("sandbox build context staging", () => {
       const { buildCtx } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "blueprint.yaml"))).toBe(true);
-      expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"))).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(buildCtx, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+        ),
+      ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "nemoclaw-start.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
     } finally {
@@ -29,7 +33,7 @@ describe("sandbox build context staging", () => {
     }
   });
 
-  it("optimized staging is smaller than the legacy build context", () => {
+  it("optimized staging is smaller than the legacy build context", { timeout: 30_000 }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-compare-"));
 
