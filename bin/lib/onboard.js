@@ -211,6 +211,22 @@ const {
   getSandboxStateFromOutputs,
 } = gatewayState;
 
+/**
+ * Remove known_hosts lines whose host field contains an openshell-* entry.
+ * Preserves blank lines and comments. Returns the cleaned string.
+ */
+function pruneKnownHostsEntries(contents) {
+  return contents
+    .split("\n")
+    .filter((l) => {
+      const trimmed = l.trim();
+      if (!trimmed || trimmed.startsWith("#")) return true;
+      const hostField = trimmed.split(/\s+/)[0];
+      return !hostField.split(",").some((h) => h.startsWith("openshell-"));
+    })
+    .join("\n");
+}
+
 function getSandboxReuseState(sandboxName) {
   if (!sandboxName) return "missing";
   const getOutput = runCaptureOpenshell(["sandbox", "get", sandboxName], { ignoreError: true });
@@ -1706,6 +1722,25 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   // The retry loop below will destroy only if start genuinely fails.
   if (hasStaleGateway(gwInfo)) {
     console.log("  Stale gateway detected — attempting restart without destroy...");
+  }
+
+  // Clear stale SSH host keys from previous gateway (fixes #768)
+  try {
+    const { execFileSync } = require("child_process");
+    execFileSync("ssh-keygen", ["-R", `openshell-${GATEWAY_NAME}`], { stdio: "ignore" });
+  } catch {
+    /* ssh-keygen -R may fail if entry doesn't exist — safe to ignore */
+  }
+  // Also purge any known_hosts entries matching the gateway hostname pattern
+  const knownHostsPath = path.join(os.homedir(), ".ssh", "known_hosts");
+  if (fs.existsSync(knownHostsPath)) {
+    try {
+      const kh = fs.readFileSync(knownHostsPath, "utf8");
+      const cleaned = pruneKnownHostsEntries(kh);
+      if (cleaned !== kh) fs.writeFileSync(knownHostsPath, cleaned);
+    } catch {
+      /* best-effort cleanup — ignore read/write errors */
+    }
   }
 
   const gwArgs = ["--name", GATEWAY_NAME];
@@ -3992,6 +4027,7 @@ module.exports = {
   summarizeProbeFailure,
   upsertProvider,
   hydrateCredentialEnv,
+  pruneKnownHostsEntries,
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
   patchStagedDockerfile,
