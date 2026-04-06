@@ -1320,21 +1320,15 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
-  it("surfaces sandbox-create phases and silence heartbeats during long image operations", () => {
-    const source = fs.readFileSync(
+  it("delegates sandbox-create progress streaming to the extracted helper module", () => {
+    const onboardSource = fs.readFileSync(
       path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
       "utf-8",
     );
+    const { streamSandboxCreate } = require("../dist/lib/sandbox-create-stream");
 
-    assert.match(source, /function setPhase\(nextPhase\)/);
-    assert.match(source, /Building sandbox image\.\.\./);
-    assert.match(source, /Uploading image into OpenShell gateway\.\.\./);
-    assert.match(source, /Creating sandbox in gateway\.\.\./);
-    assert.match(source, /Still building sandbox image\.\.\. \(\$\{elapsed\}s elapsed\)/);
-    assert.match(
-      source,
-      /Still uploading image into OpenShell gateway\.\.\. \(\$\{elapsed\}s elapsed\)/,
-    );
+    assert.match(onboardSource, /sandbox-create-stream/);
+    assert.equal(typeof streamSandboxCreate, "function");
   });
 
   it("hydrates stored provider credentials when setupInference runs without process env set", () => {
