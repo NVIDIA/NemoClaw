@@ -70,10 +70,20 @@ if ! docker info >/dev/null 2>&1; then
   fail "Docker is not running."
 fi
 
-# Find the sandbox container ID
+# Find the sandbox container ID (must have a RUNNING task — stale
+# containers from previous sandbox lifecycles may linger without one).
 find_container() {
-  docker exec "$CLUSTER_CONTAINER" ctr -n k8s.io containers list 2>/dev/null \
-    | grep 'sandbox-from' | awk '{print $1}' | head -1
+  local running_tasks containers
+  running_tasks=$(docker exec "$CLUSTER_CONTAINER" ctr -n k8s.io task list 2>/dev/null \
+    | awk '/RUNNING/ {print $1}')
+  containers=$(docker exec "$CLUSTER_CONTAINER" ctr -n k8s.io containers list 2>/dev/null \
+    | grep 'sandbox-from' | awk '{print $1}')
+  for cid in $containers; do
+    if echo "$running_tasks" | grep -q "$cid"; then
+      echo "$cid"
+      return
+    fi
+  done
 }
 
 CONTAINER_ID="$(find_container)"

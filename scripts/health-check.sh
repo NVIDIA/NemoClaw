@@ -219,8 +219,16 @@ check_inference() {
 
 check_dashboard() {
   if should_skip "dashboard"; then record "dashboard" "skip" ""; return; fi
-  if curl -sf --max-time 3 "http://127.0.0.1:${DASHBOARD_PORT}/" >/dev/null 2>&1; then
-    record "dashboard" "pass" "Dashboard on port $DASHBOARD_PORT"
+  # Use -o /dev/null -w to get HTTP status; accept any response (even errors)
+  # as proof the port forward is alive. curl exit 7 = connection refused (down),
+  # exit 52 = empty reply (gateway restarting). Only 7 is a hard failure.
+  local http_code curl_exit
+  http_code=$(curl -s --max-time 3 -o /dev/null -w "%{http_code}" \
+    "http://127.0.0.1:${DASHBOARD_PORT}/" 2>/dev/null) && curl_exit=0 || curl_exit=$?
+  if [ "$http_code" != "000" ]; then
+    record "dashboard" "pass" "Dashboard on port $DASHBOARD_PORT (HTTP $http_code)"
+  elif [ "$curl_exit" -eq 7 ]; then
+    record "dashboard" "fail" "Port forward not running on $DASHBOARD_PORT"
   else
     record "dashboard" "fail" "Dashboard not responding on port $DASHBOARD_PORT"
   fi
