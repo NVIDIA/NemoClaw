@@ -68,6 +68,17 @@ repos:
         pass_filenames: true
         priority: 4
 
+  # ── Priority 4: regenerate agent skills when docs change ──────────────────
+  - repo: local
+    hooks:
+      - id: docs-to-skills
+        name: Regenerate agent skills from docs
+        entry: bash -c 'python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw && git add .agents/skills/'
+        language: system
+        files: ^docs/.*\.md$
+        pass_filenames: false
+        priority: 4
+
   # ── Priority 5: formatters ────────────────────────────────────────────────
   - repo: https://github.com/scop/pre-commit-shfmt
     rev: v3.12.0-2

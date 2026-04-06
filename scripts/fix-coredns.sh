@@ -65,9 +65,51 @@ if [ -z "$UPSTREAM_DNS" ]; then
   UPSTREAM_DNS="8.8.8.8"
 fi
 
+# Defense-in-depth: reject values with characters that are never valid in
+# an IP address or DNS hostname.  The real injection fix is the jq-based
+# JSON construction below — this just catches obvious garbage early.
+if ! printf '%s' "$UPSTREAM_DNS" | grep -qE '^[a-zA-Z0-9.:_-]+$'; then
+  echo "ERROR: UPSTREAM_DNS='$UPSTREAM_DNS' contains invalid characters. Aborting."
+  exit 1
+fi
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "ERROR: jq is required to safely construct the kubectl patch payload."
+  exit 1
+fi
+
 echo "Patching CoreDNS to forward to $UPSTREAM_DNS..."
 
-docker exec "$CLUSTER" kubectl patch configmap coredns -n kube-system --type merge -p "{\"data\":{\"Corefile\":\".:53 {\\n    errors\\n    health\\n    ready\\n    kubernetes cluster.local in-addr.arpa ip6.arpa {\\n      pods insecure\\n      fallthrough in-addr.arpa ip6.arpa\\n    }\\n    hosts /etc/coredns/NodeHosts {\\n      ttl 60\\n      reload 15s\\n      fallthrough\\n    }\\n    prometheus :9153\\n    cache 30\\n    loop\\n    reload\\n    loadbalance\\n    forward . $UPSTREAM_DNS\\n}\\n\"}}" >/dev/null
+# Build the Corefile as a plain string, then let jq handle all JSON
+# escaping (CWE-78, NVBUG 6009988).  This avoids interpolating
+# UPSTREAM_DNS into a shell-constructed JSON/string literal.
+read -r -d '' COREFILE <<COREFILE_EOF || true
+.:53 {
+    errors
+    health
+    ready
+    kubernetes cluster.local in-addr.arpa ip6.arpa {
+      pods insecure
+      fallthrough in-addr.arpa ip6.arpa
+    }
+    hosts /etc/coredns/NodeHosts {
+      ttl 60
+      reload 15s
+      fallthrough
+    }
+    prometheus :9153
+    cache 30
+    loop
+    reload
+    loadbalance
+    forward . ${UPSTREAM_DNS}
+}
+COREFILE_EOF
+
+PATCH_JSON="$(jq -n --arg corefile "$COREFILE" '{"data":{"Corefile":$corefile}}')"
+
+docker exec "$CLUSTER" kubectl patch configmap coredns -n kube-system \
+  --type merge -p "$PATCH_JSON" >/dev/null
 
 docker exec "$CLUSTER" kubectl rollout restart deploy/coredns -n kube-system >/dev/null
 
