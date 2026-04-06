@@ -45,16 +45,19 @@ fi
 # -------------------------------------------------------
 info "3. Verify blueprint YAML is valid"
 # -------------------------------------------------------
-if python3 -c "
-import yaml, sys
-bp = yaml.safe_load(open('/opt/nemoclaw-blueprint/blueprint.yaml'))
-assert bp['version'] == '0.1.0', f'Bad version: {bp[\"version\"]}'
-profiles = bp['components']['inference']['profiles']
-assert 'default' in profiles, 'Missing default profile'
-assert 'ncp' in profiles, 'Missing ncp profile'
-assert 'vllm' in profiles, 'Missing vllm profile'
-assert 'nim-local' in profiles, 'Missing nim-local profile'
-print(f'Profiles: {list(profiles.keys())}')
+if node --input-type=module -e "
+  import { createRequire } from 'node:module';
+  import { readFileSync } from 'node:fs';
+  const require = createRequire('/opt/nemoclaw/');
+  const YAML = require('yaml');
+
+  const bp = YAML.parse(readFileSync('/opt/nemoclaw-blueprint/blueprint.yaml', 'utf-8'));
+  if (bp.version !== '0.1.0') throw new Error('Bad version: ' + bp.version);
+  const profiles = bp.components?.inference?.profiles ?? {};
+  for (const profile of ['default', 'ncp', 'vllm', 'nim-local']) {
+    if (!(profile in profiles)) throw new Error('Missing ' + profile + ' profile');
+  }
+  console.log('Profiles: ' + Object.keys(profiles).join(', '));
 "; then
   pass "Blueprint YAML valid with all 4 profiles"
 else

@@ -115,6 +115,52 @@ verify_config_integrity() {
   fi
 }
 
+validate_openclaw_symlinks() {
+  local entry name target expected
+  for entry in /sandbox/.openclaw/*; do
+    [ -L "$entry" ] || continue
+    name="$(basename "$entry")"
+    target="$(readlink -f "$entry" 2>/dev/null || true)"
+    expected="/sandbox/.openclaw-data/$name"
+    if [ "$target" != "$expected" ]; then
+      echo "[SECURITY] Symlink $entry points to unexpected target: $target (expected $expected)" >&2
+      return 1
+    fi
+  done
+}
+
+harden_openclaw_symlinks() {
+  local entry hardened failed
+  hardened=0
+  failed=0
+
+  if ! command -v chattr >/dev/null 2>&1; then
+    echo "[SECURITY] chattr not available — relying on DAC + Landlock for .openclaw hardening" >&2
+    return 0
+  fi
+
+  if chattr +i /sandbox/.openclaw 2>/dev/null; then
+    hardened=$((hardened + 1))
+  else
+    failed=$((failed + 1))
+  fi
+
+  for entry in /sandbox/.openclaw/*; do
+    [ -L "$entry" ] || continue
+    if chattr +i "$entry" 2>/dev/null; then
+      hardened=$((hardened + 1))
+    else
+      failed=$((failed + 1))
+    fi
+  done
+
+  if [ "$failed" -gt 0 ]; then
+    echo "[SECURITY] Immutable hardening applied to $hardened path(s); $failed path(s) could not be hardened — continuing with DAC + Landlock" >&2
+  elif [ "$hardened" -gt 0 ]; then
+    echo "[SECURITY] Immutable hardening applied to /sandbox/.openclaw and validated symlinks" >&2
+  fi
+}
+
 write_auth_profile() {
   if [ -z "${NVIDIA_API_KEY:-}" ]; then
     return
@@ -365,6 +411,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
   fi
   configure_messaging_channels
+  validate_openclaw_symlinks
   write_auth_profile
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
@@ -420,29 +467,14 @@ chmod 600 /tmp/auto-pair.log
 
 # Verify ALL symlinks in .openclaw point to expected .openclaw-data targets.
 # Dynamic scan so future OpenClaw symlinks are covered automatically.
-for entry in /sandbox/.openclaw/*; do
-  [ -L "$entry" ] || continue
-  name="$(basename "$entry")"
-  target="$(readlink -f "$entry" 2>/dev/null || true)"
-  expected="/sandbox/.openclaw-data/$name"
-  if [ "$target" != "$expected" ]; then
-    echo "[SECURITY] Symlink $entry points to unexpected target: $target (expected $expected)" >&2
-    exit 1
-  fi
-done
+validate_openclaw_symlinks
 
 # Lock .openclaw directory after symlink validation: set the immutable flag
 # so symlinks cannot be swapped at runtime even if DAC or Landlock are
 # bypassed. chattr requires cap_linux_immutable which the entrypoint has
 # as root; the sandbox user cannot remove the flag.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/1019
-if command -v chattr >/dev/null 2>&1; then
-  chattr +i /sandbox/.openclaw 2>/dev/null || true
-  for entry in /sandbox/.openclaw/*; do
-    [ -L "$entry" ] || continue
-    chattr +i "$entry" 2>/dev/null || true
-  done
-fi
+harden_openclaw_symlinks
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs

@@ -253,6 +253,15 @@ $ nemoclaw <name> status
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
 Then verify the credential and base URL for the provider you selected during onboarding.
 
+### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
+
+This is expected behavior.
+`NEMOCLAW_DISABLE_DEVICE_AUTH` is a build-time setting used when NemoClaw creates the sandbox image.
+Changing or exporting it later does not rewrite the baked `openclaw.json` inside an existing sandbox.
+
+If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration.
+For the security trade-offs, refer to [Security Best Practices](../security/best-practices.md).
+
 ### Agent cannot reach an external host
 
 OpenShell blocks outbound connections to hosts not listed in the network policy.

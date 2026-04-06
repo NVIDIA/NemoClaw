@@ -686,6 +686,18 @@ describe("regression guards", () => {
       expect(src).toContain("Skipping interactive sandbox connect");
     });
 
+    it("deploy pins SSH host keys via TOFU instead of accept-new (#691)", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
+        "utf-8",
+      );
+      expect(src).not.toContain("StrictHostKeyChecking=accept-new");
+      expect(src).toContain("StrictHostKeyChecking=yes");
+      expect(src).toContain("ssh-keyscan");
+      expect(src).toContain("UserKnownHostsFile=");
+      expect(src).toContain("nemoclaw-ssh-");
+    });
+
     it("deploy reports Brev failure states before SSH timeout", () => {
       const src = fs.readFileSync(
         path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
