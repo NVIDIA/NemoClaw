@@ -247,6 +247,7 @@ Monitor Sandbox Activity <monitoring/monitor-sandbox-activity>
 
 Workspace Files <workspace/workspace-files>
 Create Sub-Agents <workspace/create-sub-agents>
+Serialized Turn-Taking <workspace/serialized-turn-taking>
 Back Up and Restore <workspace/backup-restore>
 ```
 

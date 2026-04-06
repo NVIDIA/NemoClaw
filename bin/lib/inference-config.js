@@ -16,6 +16,11 @@ const DEFAULT_ROUTE_CREDENTIAL_ENV = "OPENAI_API_KEY";
 const MANAGED_PROVIDER_ID = "inference";
 const { DEFAULT_OLLAMA_MODEL } = require("./local-inference");
 
+function stripAnsi(value) {
+  // eslint-disable-next-line no-control-regex
+  return String(value || "").replace(/\x1b\[[0-9;]*m/g, "");
+}
+
 function getProviderSelectionConfig(provider, model) {
   switch (provider) {
     case "nvidia-prod":
@@ -119,9 +124,10 @@ function getOpenClawPrimaryModel(provider, model) {
 }
 
 function parseGatewayInference(output) {
-  if (!output || /Not configured/i.test(output)) return null;
-  const provider = output.match(/Provider:\s*(.+)/);
-  const model = output.match(/Model:\s*(.+)/);
+  if (!output) return null;
+  const clean = stripAnsi(output);
+  const provider = clean.match(/Provider:\s*(.+)/);
+  const model = clean.match(/Model:\s*(.+)/);
   if (!provider && !model) return null;
   return {
     provider: provider ? provider[1].trim() : null,

@@ -174,6 +174,38 @@ describe("parseGatewayInference", () => {
     expect(parseGatewayInference(output)).toBeNull();
   });
 
+  it("ignores an unconfigured system inference section when gateway inference is set", () => {
+    const output = [
+      "Gateway inference:",
+      "",
+      "  Provider: ollama-local",
+      "  Model: qwen2.5-coder:7b-64k",
+      "  Version: 16",
+      "",
+      "System inference:",
+      "",
+      "  Not configured",
+    ].join("\n");
+    expect(parseGatewayInference(output)).toEqual({
+      provider: "ollama-local",
+      model: "qwen2.5-coder:7b-64k",
+    });
+  });
+
+  it("strips ANSI codes from gateway inference output", () => {
+    const output = [
+      "Gateway inference:",
+      "",
+      "  Provider: \u001b[0m ollama-local",
+      "  Model: \u001b[0m qwen2.5-coder:7b-64k",
+      "  Version: 16",
+    ].join("\n");
+    expect(parseGatewayInference(output)).toEqual({
+      provider: "ollama-local",
+      model: "qwen2.5-coder:7b-64k",
+    });
+  });
+
   it("parses output with different provider/model combinations", () => {
     const output = [
       "Gateway inference:",

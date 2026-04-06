@@ -1,0 +1,29 @@
+{
+  "sandbox": "the-crucible",
+  "provider": "ollama-local",
+  "skipRouteVerification": true,
+  "task": "Validate serialized turn-taking across the existing custom agents in the-crucible. Each turn should be short, plain text, and aware of earlier transcript content.",
+  "sharedInstructions": "You are part of a live orchestration validation. Keep the answer under 60 words. Do not use markdown lists or code fences. Mention the requested marker exactly.",
+  "turns": [
+    {
+      "agent": "jophiel",
+      "model": "inference/haervwe/glm-4.6v-flash-9b:latest",
+      "instructions": "Reply with one short sentence that begins with JOPHIEL_TURN_OK and states your role in the relay."
+    },
+    {
+      "agent": "uriel",
+      "model": "inference/qwen2.5-coder:7b-64k",
+      "instructions": "Reply with one short sentence that begins with URIEL_TURN_OK and explicitly mentions the previous turn marker you saw in the transcript."
+    },
+    {
+      "agent": "gabriel",
+      "model": "inference/phi4-mini:latest",
+      "instructions": "Reply with one short sentence that begins with GABRIEL_TURN_OK and says whether the transcript markers look internally consistent so far."
+    },
+    {
+      "agent": "main",
+      "model": "inference/qwen2.5-coder:7b-64k",
+      "instructions": "Reply with one short sentence that begins with METATRON_TURN_OK and summarizes which agent markers appeared before you."
+    }
+  ]
+}

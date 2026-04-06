@@ -227,11 +227,37 @@ def merge_agent_lists(base_agents, overlay_agents):
 
   return merged
 
+
+def ensure_primary_agent_config(cfg):
+  agents_cfg = cfg.setdefault('agents', {})
+  defaults_cfg = agents_cfg.setdefault('defaults', {})
+
+  default_workspace = normalize_path(defaults_cfg.get('workspace'))
+  if not default_workspace:
+    default_workspace = '/sandbox/.openclaw/workspace'
+    defaults_cfg['workspace'] = default_workspace
+
+  default_model = normalize_string((defaults_cfg.get('model') or {}).get('primary'))
+  existing_agents = agents_cfg.get('list') or []
+  main_entry = {
+    'id': 'main',
+    'name': 'main',
+    'workspace': default_workspace,
+    'agentDir': '/sandbox/.openclaw/agents/main/agent',
+    'default': True,
+  }
+  if default_model:
+    main_entry['model'] = default_model
+
+  agents_cfg['list'] = merge_agent_lists([main_entry], existing_agents)
+
 os.makedirs(os.path.dirname(runtime_path), exist_ok=True)
 shutil.copyfile(base_path, runtime_path)
 
 with open(runtime_path) as f:
   cfg = json.load(f)
+
+ensure_primary_agent_config(cfg)
 
 if os.path.exists(selection_path):
     with open(selection_path) as f:
@@ -270,6 +296,8 @@ if os.path.exists(selection_path):
           cfg_agents = cfg.setdefault('agents', {})
           existing_agents = cfg_agents.get('list') or []
           cfg_agents['list'] = merge_agent_lists(existing_agents, overlay_agents)
+
+        ensure_primary_agent_config(cfg)
 
         with open(runtime_path, 'w') as f:
           json.dump(cfg, f, indent=2)

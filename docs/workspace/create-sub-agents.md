@@ -289,5 +289,6 @@ Seed the webchat session metadata in `/sandbox/.openclaw-data/agents/<agent-id>/
 ## Next Steps
 
 - [Workspace Files](workspace-files.md)
+- [Serialized Turn-Taking](serialized-turn-taking.md)
 - [Back Up and Restore](backup-restore.md)
 - [Commands reference](../reference/commands.md)

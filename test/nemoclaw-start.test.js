@@ -35,7 +35,13 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(src).toMatch(/if not workspace and not agent_dir and not sanitized_subagents:/);
     expect(src).toMatch(/def merge_agent_entries\(base_agent, overlay_agent\):/);
     expect(src).toMatch(/def merge_agent_lists\(base_agents, overlay_agents\):/);
+    expect(src).toMatch(/def ensure_primary_agent_config\(cfg\):/);
+    expect(src).toMatch(/defaults_cfg\['workspace'\] = default_workspace/);
+    expect(src).toMatch(/'id': 'main'/);
+    expect(src).toMatch(/'agentDir': '\/sandbox\/.openclaw\/agents\/main\/agent'/);
+    expect(src).toMatch(/agents_cfg\['list'\] = merge_agent_lists\(\[main_entry\], existing_agents\)/);
     expect(src).toMatch(/merged\[positions\[agent_id\]\] = merge_agent_entries\(merged\[positions\[agent_id\]\], agent\)/);
     expect(src).toMatch(/cfg_agents\['list'\] = merge_agent_lists\(existing_agents, overlay_agents\)/);
+    expect(src).toMatch(/ensure_primary_agent_config\(cfg\)/);
   });
 });
