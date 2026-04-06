@@ -323,8 +323,10 @@ function createHostRuntime(options = {}) {
       const responseText = extractAgentText(parsed, result.stdout);
 
       if (result.status !== 0) {
-        const error = new Error(
+        const error = /** @type {Error & {stdout?: unknown, stderr?: unknown, parsed?: unknown}} */ (
+          new Error(
           `Agent '${agent}' failed with exit ${result.status}${result.stderr ? `: ${String(result.stderr).trim()}` : ""}`
+          )
         );
         error.stdout = result.stdout;
         error.stderr = result.stderr;
