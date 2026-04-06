@@ -85,10 +85,14 @@ done
 TMPDIR_BASE="${TMPDIR:-/tmp}"
 COLLECT_DIR=$(mktemp -d "${TMPDIR_BASE}/nemoclaw-debug-XXXXXX")
 SANDBOX_SSH_CONFIG=""
+SANDBOX_SSH_KNOWN=""
 cleanup() {
   rm -rf "$COLLECT_DIR"
   if [ -n "$SANDBOX_SSH_CONFIG" ]; then
     rm -f "$SANDBOX_SSH_CONFIG"
+  fi
+  if [ -n "$SANDBOX_SSH_KNOWN" ]; then
+    rm -f "$SANDBOX_SSH_KNOWN"
   fi
 }
 trap cleanup EXIT
@@ -284,7 +288,8 @@ if command -v openshell &>/dev/null \
   SANDBOX_SSH_CONFIG=$(mktemp "${TMPDIR_BASE}/nemoclaw-ssh-XXXXXX")
   if openshell sandbox ssh-config "$SANDBOX_NAME" >"$SANDBOX_SSH_CONFIG" 2>/dev/null; then
     SANDBOX_SSH_HOST="openshell-${SANDBOX_NAME}"
-    SANDBOX_SSH_OPTS=(-F "$SANDBOX_SSH_CONFIG" -o StrictHostKeyChecking=no -o ConnectTimeout=10)
+    SANDBOX_SSH_KNOWN=$(mktemp "${TMPDIR_BASE}/nemoclaw-ssh-known-XXXXXX")
+    SANDBOX_SSH_OPTS=(-F "$SANDBOX_SSH_CONFIG" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$SANDBOX_SSH_KNOWN" -o ConnectTimeout=10)
 
     collect "sandbox-ps" ssh "${SANDBOX_SSH_OPTS[@]}" "$SANDBOX_SSH_HOST" ps -ef
     collect "sandbox-free" ssh "${SANDBOX_SSH_OPTS[@]}" "$SANDBOX_SSH_HOST" free -m

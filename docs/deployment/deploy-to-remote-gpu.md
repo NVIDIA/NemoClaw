@@ -116,6 +116,12 @@ available when the installer builds the sandbox image. If `CHAT_UI_URL` is not
 set on a headless host, the compatibility wrapper prints a warning.
 :::
 
+:::{warning}
+`NEMOCLAW_DISABLE_DEVICE_AUTH` is also evaluated at image build time.
+If you disable device auth for a remote deployment, any device that can reach the dashboard origin can connect without pairing.
+Avoid this on internet-reachable or shared-network deployments.
+:::
+
 ## GPU Configuration
 
 The deploy script uses the `NEMOCLAW_GPU` environment variable to select the GPU type.
