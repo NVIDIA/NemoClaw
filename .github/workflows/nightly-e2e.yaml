@@ -589,7 +589,7 @@ jobs:
              export NEMOCLAW_SANDBOX_NAME=${NEMOCLAW_SANDBOX_NAME} && \
              export NEMOCLAW_RECREATE_SANDBOX=${NEMOCLAW_RECREATE_SANDBOX} && \
              export NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER} && \
-             export OLLAMA_MODEL=qwen3:0.6b && \
+             export NEMOCLAW_MODEL=qwen3:0.6b && \
              bash test/e2e/test-gpu-e2e.sh"
 
       - name: Tear down GPU instance
