@@ -102,6 +102,8 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
         /sandbox/.openclaw-data/canvas \
         /sandbox/.openclaw-data/cron \
         /sandbox/.openclaw-data/memory \
+        /sandbox/.openclaw-data/telegram \
+        /sandbox/.openclaw-data/credentials \
     && mkdir -p /sandbox/.openclaw \
     && ln -s /sandbox/.openclaw-data/agents /sandbox/.openclaw/agents \
     && ln -s /sandbox/.openclaw-data/extensions /sandbox/.openclaw/extensions \
@@ -115,6 +117,10 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
     && ln -s /sandbox/.openclaw-data/memory /sandbox/.openclaw/memory \
     && touch /sandbox/.openclaw-data/update-check.json \
     && ln -s /sandbox/.openclaw-data/update-check.json /sandbox/.openclaw/update-check.json \
+    && touch /sandbox/.openclaw-data/exec-approvals.json \
+    && ln -s /sandbox/.openclaw-data/exec-approvals.json /sandbox/.openclaw/exec-approvals.json \
+    && ln -s /sandbox/.openclaw-data/telegram /sandbox/.openclaw/telegram \
+    && ln -s /sandbox/.openclaw-data/credentials /sandbox/.openclaw/credentials \
     && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
 
 # Install OpenClaw CLI + PyYAML for inline Python scripts in e2e tests.
