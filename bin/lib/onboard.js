@@ -19,6 +19,7 @@ function envInt(name, fallback) {
   return Number.isFinite(n) ? Math.max(0, Math.round(n)) : fallback;
 }
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
+const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -30,7 +31,6 @@ const {
   validateLocalProvider,
 } = require("./local-inference");
 const {
-  CLOUD_MODEL_OPTIONS,
   DEFAULT_CLOUD_MODEL,
   getProviderSelectionConfig,
   parseGatewayInference,
@@ -65,7 +65,9 @@ const urlUtils = require("../../dist/lib/url-utils");
 const buildContext = require("../../dist/lib/build-context");
 const dashboard = require("../../dist/lib/dashboard");
 const httpProbe = require("../../dist/lib/http-probe");
+const modelPrompts = require("../../dist/lib/model-prompts");
 const providerModels = require("../../dist/lib/provider-models");
+const sandboxCreateStream = require("../../dist/lib/sandbox-create-stream");
 const validationRecovery = require("../../dist/lib/validation-recovery");
 const webSearch = require("../../dist/lib/web-search");
 
@@ -173,19 +175,6 @@ const REMOTE_PROVIDER_CONFIG = {
   },
 };
 
-const REMOTE_MODEL_OPTIONS = {
-  openai: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4-pro-2026-03-05"],
-  anthropic: ["claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"],
-  gemini: [
-    "gemini-3.1-pro-preview",
-    "gemini-3.1-flash-lite-preview",
-    "gemini-3-flash-preview",
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-  ],
-};
-
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
 let NON_INTERACTIVE = false;
@@ -222,6 +211,22 @@ const {
   getSandboxStateFromOutputs,
 } = gatewayState;
 
+/**
+ * Remove known_hosts lines whose host field contains an openshell-* entry.
+ * Preserves blank lines and comments. Returns the cleaned string.
+ */
+function pruneKnownHostsEntries(contents) {
+  return contents
+    .split("\n")
+    .filter((l) => {
+      const trimmed = l.trim();
+      if (!trimmed || trimmed.startsWith("#")) return true;
+      const hostField = trimmed.split(/\s+/)[0];
+      return !hostField.split(",").some((h) => h.startsWith("openshell-"));
+    })
+    .join("\n");
+}
+
 function getSandboxReuseState(sandboxName) {
   if (!sandboxName) return "missing";
   const getOutput = runCaptureOpenshell(["sandbox", "get", sandboxName], { ignoreError: true });
@@ -237,211 +242,7 @@ function repairRecordedSandbox(sandboxName) {
   registry.removeSandbox(sandboxName);
 }
 
-function streamSandboxCreate(command, env = process.env, options = {}) {
-  const child = spawn("bash", ["-lc", command], {
-    cwd: ROOT,
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  const lines = [];
-  let pending = "";
-  let lastPrintedLine = "";
-  let sawProgress = false;
-  let settled = false;
-  let polling = false;
-  const pollIntervalMs = options.pollIntervalMs || 2000;
-  const heartbeatIntervalMs = options.heartbeatIntervalMs || 5000;
-  const silentPhaseMs = options.silentPhaseMs || 15000;
-  const startedAt = Date.now();
-  let lastOutputAt = startedAt;
-  let currentPhase = "build";
-  let lastHeartbeatPhase = null;
-  let lastHeartbeatBucket = -1;
-
-  function getDisplayWidth() {
-    return Math.max(60, Number(process.stdout.columns || 100));
-  }
-
-  function trimDisplayLine(line) {
-    const width = getDisplayWidth();
-    const maxLen = Math.max(40, width - 4);
-    if (line.length <= maxLen) return line;
-    return `${line.slice(0, Math.max(0, maxLen - 3))}...`;
-  }
-
-  function printProgressLine(line) {
-    const display = trimDisplayLine(line);
-    if (display !== lastPrintedLine) {
-      console.log(display);
-      lastPrintedLine = display;
-    }
-  }
-
-  function elapsedSeconds() {
-    return Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-  }
-
-  function setPhase(nextPhase) {
-    if (!nextPhase || nextPhase === currentPhase) return;
-    currentPhase = nextPhase;
-    lastHeartbeatPhase = null;
-    lastHeartbeatBucket = -1;
-    const phaseLine =
-      nextPhase === "build"
-        ? "  Building sandbox image..."
-        : nextPhase === "upload"
-          ? "  Uploading image into OpenShell gateway..."
-          : nextPhase === "create"
-            ? "  Creating sandbox in gateway..."
-            : nextPhase === "ready"
-              ? "  Waiting for sandbox to become ready..."
-              : null;
-    if (phaseLine) printProgressLine(phaseLine);
-  }
-
-  function finish(result) {
-    if (settled) return;
-    settled = true;
-    if (pending) flushLine(pending);
-    if (readyTimer) clearInterval(readyTimer);
-    if (heartbeatTimer) clearInterval(heartbeatTimer);
-    resolvePromise(result);
-  }
-
-  function detachChild() {
-    child.stdout?.removeAllListeners?.("data");
-    child.stderr?.removeAllListeners?.("data");
-    child.stdout?.destroy?.();
-    child.stderr?.destroy?.();
-    child.removeAllListeners?.("error");
-    child.removeAllListeners?.("close");
-    child.unref?.();
-  }
-
-  function shouldShowLine(line) {
-    return (
-      /^ {2}Building image /.test(line) ||
-      /^ {2}Step \d+\/\d+ : /.test(line) ||
-      /^ {2}Context: /.test(line) ||
-      /^ {2}Gateway: /.test(line) ||
-      /^Successfully built /.test(line) ||
-      /^Successfully tagged /.test(line) ||
-      /^ {2}Built image /.test(line) ||
-      /^ {2}Pushing image /.test(line) ||
-      /^\s*\[progress\]/.test(line) ||
-      /^ {2}Image .*available in the gateway/.test(line) ||
-      /^Created sandbox: /.test(line) ||
-      /^✓ /.test(line)
-    );
-  }
-
-  function flushLine(rawLine) {
-    const line = rawLine.replace(/\r/g, "").trimEnd();
-    if (!line) return;
-    lines.push(line);
-    lastOutputAt = Date.now();
-    if (/^ {2}Building image /.test(line) || /^ {2}Step \d+\/\d+ : /.test(line)) {
-      setPhase("build");
-    } else if (
-      /^ {2}Pushing image /.test(line) ||
-      /^\s*\[progress\]/.test(line) ||
-      /^ {2}Image .*available in the gateway/.test(line)
-    ) {
-      setPhase("upload");
-    } else if (/^Created sandbox: /.test(line)) {
-      setPhase("create");
-    }
-    if (shouldShowLine(line) && line !== lastPrintedLine) {
-      printProgressLine(line);
-      sawProgress = true;
-    }
-  }
-
-  function onChunk(chunk) {
-    pending += chunk.toString();
-    const parts = pending.split("\n");
-    pending = parts.pop();
-    parts.forEach(flushLine);
-  }
-
-  child.stdout.on("data", onChunk);
-  child.stderr.on("data", onChunk);
-
-  let resolvePromise;
-  const readyTimer = options.readyCheck
-    ? setInterval(() => {
-        if (settled || polling) return;
-        polling = true;
-        try {
-          let ready = false;
-          try {
-            ready = !!options.readyCheck();
-          } catch {
-            return;
-          }
-          if (!ready) return;
-          setPhase("ready");
-          const detail = "Sandbox reported Ready before create stream exited; continuing.";
-          lines.push(detail);
-          printProgressLine(`  ${detail}`);
-          try {
-            child.kill("SIGTERM");
-          } catch {
-            // Best effort only — the child may have already exited.
-          }
-          detachChild();
-          finish({ status: 0, output: lines.join("\n"), sawProgress: true, forcedReady: true });
-        } finally {
-          polling = false;
-        }
-      }, pollIntervalMs)
-    : null;
-  readyTimer?.unref?.();
-
-  setPhase("build");
-  const heartbeatTimer = setInterval(() => {
-    if (settled) return;
-    const silentForMs = Date.now() - lastOutputAt;
-    if (silentForMs < silentPhaseMs) return;
-    const elapsed = elapsedSeconds();
-    const bucket = Math.floor(elapsed / 15);
-    if (currentPhase === lastHeartbeatPhase && bucket === lastHeartbeatBucket) {
-      return;
-    }
-    const heartbeatLine =
-      currentPhase === "upload"
-        ? `  Still uploading image into OpenShell gateway... (${elapsed}s elapsed)`
-        : currentPhase === "create"
-          ? `  Still creating sandbox in gateway... (${elapsed}s elapsed)`
-          : currentPhase === "ready"
-            ? `  Still waiting for sandbox to become ready... (${elapsed}s elapsed)`
-            : `  Still building sandbox image... (${elapsed}s elapsed)`;
-    if (trimDisplayLine(heartbeatLine) !== lastPrintedLine) {
-      printProgressLine(heartbeatLine);
-      lastHeartbeatPhase = currentPhase;
-      lastHeartbeatBucket = bucket;
-    }
-  }, heartbeatIntervalMs);
-  heartbeatTimer.unref?.();
-
-  return new Promise((resolve) => {
-    resolvePromise = resolve;
-    child.on("error", (error) => {
-      // @ts-expect-error — Node ErrnoException has .code but TS types Error
-      const code = error && error.code;
-      const detail = code
-        ? `spawn failed: ${error.message} (${code})`
-        : `spawn failed: ${error.message}`;
-      lines.push(detail);
-      finish({ status: 1, output: lines.join("\n"), sawProgress: false });
-    });
-
-    child.on("close", (code) => {
-      finish({ status: code ?? 1, output: lines.join("\n"), sawProgress });
-    });
-  });
-}
+const { streamSandboxCreate } = sandboxCreateStream;
 
 function streamGatewayStart(command, env = process.env) {
   const child = spawn("bash", ["-lc", command], {
@@ -694,7 +495,7 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
     console.log(
       `  ${label} authorization failed. Re-enter the API key or choose a different provider/model.`,
     );
-    const choice = (await prompt("  Type 'retry', 'back', or 'exit' [retry]: "))
+    const choice = (await prompt("  Type 'retry', 'back', or 'exit' [retry]: ", { secret: true }))
       .trim()
       .toLowerCase();
     if (choice === "back") {
@@ -1376,119 +1177,13 @@ async function validateCustomAnthropicSelection(
   return { ok: false, retry };
 }
 
-const { validateNvidiaEndpointModel, validateAnthropicModel, validateOpenAiLikeModel } =
-  providerModels;
+const { promptManualModelId, promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
+const { validateAnthropicModel, validateOpenAiLikeModel } = providerModels;
 
-async function promptManualModelId(promptLabel, errorLabel, validator = null) {
-  while (true) {
-    const manual = await prompt(promptLabel);
-    const trimmed = manual.trim();
-    const navigation = getNavigationChoice(trimmed);
-    if (navigation === "back") {
-      return BACK_TO_SELECTION;
-    }
-    if (navigation === "exit") {
-      exitOnboardFromPrompt();
-    }
-    if (!trimmed || !isSafeModelId(trimmed)) {
-      console.error(`  Invalid ${errorLabel} model id.`);
-      continue;
-    }
-    if (validator) {
-      const validation = validator(trimmed);
-      if (!validation.ok) {
-        console.error(`  ${validation.message}`);
-        continue;
-      }
-    }
-    return trimmed;
-  }
-}
 // Build context helpers — delegated to src/lib/build-context.ts
 const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRecoveryHints } =
   buildContext;
 // classifySandboxCreateFailure — see validation import above
-
-async function promptCloudModel() {
-  console.log("");
-  console.log("  Cloud models:");
-  CLOUD_MODEL_OPTIONS.forEach((option, index) => {
-    console.log(`    ${index + 1}) ${option.label} (${option.id})`);
-  });
-  console.log(`    ${CLOUD_MODEL_OPTIONS.length + 1}) Other...`);
-  console.log("");
-
-  const choice = await prompt("  Choose model [1]: ");
-  const navigation = getNavigationChoice(choice);
-  if (navigation === "back") {
-    return BACK_TO_SELECTION;
-  }
-  if (navigation === "exit") {
-    exitOnboardFromPrompt();
-  }
-  const index = parseInt(choice || "1", 10) - 1;
-  if (index >= 0 && index < CLOUD_MODEL_OPTIONS.length) {
-    return CLOUD_MODEL_OPTIONS[index].id;
-  }
-
-  return promptManualModelId("  NVIDIA Endpoints model id: ", "NVIDIA Endpoints", (model) =>
-    validateNvidiaEndpointModel(model, getCredential("NVIDIA_API_KEY")),
-  );
-}
-
-async function promptRemoteModel(label, providerKey, defaultModel, validator = null) {
-  const options = REMOTE_MODEL_OPTIONS[providerKey] || [];
-  const defaultIndex = Math.max(0, options.indexOf(defaultModel));
-
-  console.log("");
-  console.log(`  ${label} models:`);
-  options.forEach((option, index) => {
-    console.log(`    ${index + 1}) ${option}`);
-  });
-  console.log(`    ${options.length + 1}) Other...`);
-  console.log("");
-
-  const choice = await prompt(`  Choose model [${defaultIndex + 1}]: `);
-  const navigation = getNavigationChoice(choice);
-  if (navigation === "back") {
-    return BACK_TO_SELECTION;
-  }
-  if (navigation === "exit") {
-    exitOnboardFromPrompt();
-  }
-  const index = parseInt(choice || String(defaultIndex + 1), 10) - 1;
-  if (index >= 0 && index < options.length) {
-    return options[index];
-  }
-
-  return promptManualModelId(`  ${label} model id: `, label, validator);
-}
-
-async function promptInputModel(label, defaultModel, validator = null) {
-  while (true) {
-    const value = await prompt(`  ${label} model [${defaultModel}]: `);
-    const navigation = getNavigationChoice(value);
-    if (navigation === "back") {
-      return BACK_TO_SELECTION;
-    }
-    if (navigation === "exit") {
-      exitOnboardFromPrompt();
-    }
-    const trimmed = (value || defaultModel).trim();
-    if (!trimmed || !isSafeModelId(trimmed)) {
-      console.error(`  Invalid ${label} model id.`);
-      continue;
-    }
-    if (validator) {
-      const validation = validator(trimmed);
-      if (!validation.ok) {
-        console.error(`  ${validation.message}`);
-        continue;
-      }
-    }
-    return trimmed;
-  }
-}
 
 async function promptOllamaModel(gpu = null) {
   const installed = getOllamaModelOptions(runCapture);
@@ -2019,6 +1714,25 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
     console.log("  Stale gateway detected — attempting restart without destroy...");
   }
 
+  // Clear stale SSH host keys from previous gateway (fixes #768)
+  try {
+    const { execFileSync } = require("child_process");
+    execFileSync("ssh-keygen", ["-R", `openshell-${GATEWAY_NAME}`], { stdio: "ignore" });
+  } catch {
+    /* ssh-keygen -R may fail if entry doesn't exist — safe to ignore */
+  }
+  // Also purge any known_hosts entries matching the gateway hostname pattern
+  const knownHostsPath = path.join(os.homedir(), ".ssh", "known_hosts");
+  if (fs.existsSync(knownHostsPath)) {
+    try {
+      const kh = fs.readFileSync(knownHostsPath, "utf8");
+      const cleaned = pruneKnownHostsEntries(kh);
+      if (cleaned !== kh) fs.writeFileSync(knownHostsPath, cleaned);
+    } catch {
+      /* best-effort cleanup — ignore read/write errors */
+    }
+  }
+
   const gwArgs = ["--name", GATEWAY_NAME];
   // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
   // routed through a host-side provider (Ollama, vLLM, or cloud API) — the
@@ -2315,16 +2029,8 @@ async function createSandbox(
     registry.removeSandbox(sandboxName);
   }
 
-  // Stage build context
-  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
-  const stagedDockerfile = path.join(buildCtx, "Dockerfile");
-  fs.copyFileSync(path.join(ROOT, "Dockerfile"), stagedDockerfile);
-  copyBuildContextDir(path.join(ROOT, "nemoclaw"), path.join(buildCtx, "nemoclaw"));
-  copyBuildContextDir(
-    path.join(ROOT, "nemoclaw-blueprint"),
-    path.join(buildCtx, "nemoclaw-blueprint"),
-  );
-  copyBuildContextDir(path.join(ROOT, "scripts"), path.join(buildCtx, "scripts"));
+  // Stage only the files the Docker build actually consumes so uploads stay small.
+  const { buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(ROOT);
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
@@ -2959,6 +2665,11 @@ async function setupNim(gpu) {
           } else {
             model = await promptOllamaModel(gpu);
           }
+          if (model === BACK_TO_SELECTION) {
+            console.log("  Returning to provider selection.");
+            console.log("");
+            continue selectionLoop;
+          }
           const probe = prepareOllamaModel(model, installedModels);
           if (!probe.ok) {
             console.error(`  ${probe.message}`);
@@ -3010,6 +2721,11 @@ async function setupNim(gpu) {
             model = requestedModel || getDefaultOllamaModel(runCapture, gpu);
           } else {
             model = await promptOllamaModel(gpu);
+          }
+          if (model === BACK_TO_SELECTION) {
+            console.log("  Returning to provider selection.");
+            console.log("");
+            continue selectionLoop;
           }
           const probe = prepareOllamaModel(model, installedModels);
           if (!probe.ok) {
@@ -4306,6 +4022,7 @@ module.exports = {
   summarizeProbeFailure,
   upsertProvider,
   hydrateCredentialEnv,
+  pruneKnownHostsEntries,
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
   patchStagedDockerfile,
