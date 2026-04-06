@@ -2,7 +2,9 @@
 title:
   page: "NemoClaw Quickstart — Install, Launch, and Run Your First Agent"
   nav: "Quickstart"
-description: "Install NemoClaw, launch a sandbox, and run your first agent prompt."
+description:
+  main: "Install NemoClaw, launch a sandbox, and run your first agent prompt."
+  agent: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time."
 keywords: ["nemoclaw quickstart", "install nemoclaw openclaw sandbox"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "inference_routing", "nemoclaw"]
@@ -59,9 +61,9 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 |----------|--------------------|-------|
 | Linux | Docker | Primary supported path. |
 | macOS (Apple Silicon) | Colima, Docker Desktop | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
-| macOS (Intel) | Podman | Not supported yet. Depends on OpenShell support for Podman on macOS. |
+| macOS (Intel) | Docker Desktop | Start the runtime before running the installer. |
 | Windows WSL | Docker Desktop (WSL backend) | Supported target path. |
-| DGX Spark | Docker | Refer to the [DGX Spark setup guide](https://github.com/NVIDIA/NemoClaw/blob/main/spark-install.md) for cgroup v2 and Docker configuration. |
+| DGX Spark | Docker | Use the standard installer and `nemoclaw onboard`. |
 
 ## Install NemoClaw and Onboard OpenClaw Agent
 

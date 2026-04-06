@@ -16,7 +16,6 @@ export const CLOUD_MODEL_OPTIONS = [
   { id: "moonshotai/kimi-k2.5", label: "Kimi K2.5" },
   { id: "z-ai/glm5", label: "GLM-5" },
   { id: "minimaxai/minimax-m2.5", label: "MiniMax M2.5" },
-  { id: "qwen/qwen3.5-397b-a17b", label: "Qwen3.5 397B A17B" },
   { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
 ];
 export const DEFAULT_ROUTE_PROFILE = "inference-local";
@@ -122,12 +121,29 @@ export function getOpenClawPrimaryModel(provider: string, model?: string): strin
 }
 
 export function parseGatewayInference(output: string | null | undefined): GatewayInference | null {
-  if (!output || /Not configured/i.test(output)) return null;
-  const provider = output.match(/Provider:\s*(.+)/);
-  const model = output.match(/Model:\s*(.+)/);
+  if (!output) return null;
+  // eslint-disable-next-line no-control-regex
+  const stripped = output.replace(/\u001b\[[0-9;]*m/g, "");
+  const lines = stripped.split("\n");
+  let inGateway = false;
+  let provider: string | null = null;
+  let model: string | null = null;
+  for (const line of lines) {
+    if (/^Gateway inference:\s*$/i.test(line)) {
+      inGateway = true;
+      continue;
+    }
+    if (inGateway && /^\S.*:$/.test(line)) {
+      break;
+    }
+    if (inGateway) {
+      const trimmed = line.trim();
+      const p = trimmed.match(/^Provider:\s*(.+)/);
+      const m = trimmed.match(/^Model:\s*(.+)/);
+      if (p) provider = p[1].trim();
+      if (m) model = m[1].trim();
+    }
+  }
   if (!provider && !model) return null;
-  return {
-    provider: provider ? provider[1].trim() : null,
-    model: model ? model[1].trim() : null,
-  };
+  return { provider, model };
 }

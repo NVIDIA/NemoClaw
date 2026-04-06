@@ -6,6 +6,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const readline = require("readline");
 const YAML = require("yaml");
 const { ROOT, run, runCapture, shellQuote } = require("./runner");
 const registry = require("./registry");
@@ -288,6 +289,53 @@ function getAppliedPresets(sandboxName) {
   return sandbox ? sandbox.policies || [] : [];
 }
 
+function selectFromList(items, { applied = [] } = {}) {
+  return new Promise((resolve) => {
+    process.stderr.write("\n  Available presets:\n");
+    items.forEach((item, i) => {
+      const marker = applied.includes(item.name) ? "●" : "○";
+      const description = item.description ? ` — ${item.description}` : "";
+      process.stderr.write(`    ${i + 1}) ${marker} ${item.name}${description}\n`);
+    });
+    process.stderr.write("\n  ● applied, ○ not applied\n\n");
+    const defaultIdx = items.findIndex((item) => !applied.includes(item.name));
+    const defaultNum = defaultIdx >= 0 ? defaultIdx + 1 : null;
+    const question = defaultNum ? `  Choose preset [${defaultNum}]: ` : "  Choose preset: ";
+    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+    rl.question(question, (answer) => {
+      rl.close();
+      if (!process.stdin.isTTY) {
+        if (typeof process.stdin.pause === "function") process.stdin.pause();
+        if (typeof process.stdin.unref === "function") process.stdin.unref();
+      }
+      const trimmed = answer.trim();
+      const effectiveInput = trimmed || (defaultNum ? String(defaultNum) : "");
+      if (!effectiveInput) {
+        resolve(null);
+        return;
+      }
+      if (!/^\d+$/.test(effectiveInput)) {
+        process.stderr.write("\n  Invalid preset number.\n");
+        resolve(null);
+        return;
+      }
+      const num = Number(effectiveInput);
+      const item = items[num - 1];
+      if (!item) {
+        process.stderr.write("\n  Invalid preset number.\n");
+        resolve(null);
+        return;
+      }
+      if (applied.includes(item.name)) {
+        process.stderr.write(`\n  Preset '${item.name}' is already applied.\n`);
+        resolve(null);
+        return;
+      }
+      resolve(item.name);
+    });
+  });
+}
+
 module.exports = {
   PRESETS_DIR,
   listPresets,
@@ -300,4 +348,5 @@ module.exports = {
   mergePresetIntoPolicy,
   applyPreset,
   getAppliedPresets,
+  selectFromList,
 };

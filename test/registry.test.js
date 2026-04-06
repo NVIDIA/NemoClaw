@@ -289,4 +289,34 @@ describe("advisory file locking", () => {
     const { sandboxes } = registry.listSandboxes();
     expect(sandboxes.length).toBe(20);
   });
+
+  it("clearAll removes all sandboxes and resets default", () => {
+    registry.registerSandbox({ name: "alpha" });
+    registry.registerSandbox({ name: "beta" });
+    registry.setDefault("beta");
+
+    registry.clearAll();
+
+    const { sandboxes, defaultSandbox } = registry.listSandboxes();
+    expect(sandboxes).toHaveLength(0);
+    expect(defaultSandbox).toBe(null);
+  });
+
+  it("clearAll persists empty state to disk", () => {
+    registry.registerSandbox({ name: "persist-me" });
+
+    registry.clearAll();
+
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes).toEqual({});
+    expect(data.defaultSandbox).toBe(null);
+  });
+
+  it("clearAll is safe to call on empty registry", () => {
+    registry.clearAll();
+
+    const { sandboxes, defaultSandbox } = registry.listSandboxes();
+    expect(sandboxes).toHaveLength(0);
+    expect(defaultSandbox).toBe(null);
+  });
 });
