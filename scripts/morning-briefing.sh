@@ -12,10 +12,14 @@
 set -euo pipefail
 
 # Source credentials (launchd doesn't load shell profiles).
-# Extract only export lines from ~/.zshrc since bash can't run zsh-specific syntax.
+# Extract only well-formed export lines from ~/.zshrc since bash can't run
+# zsh-specific syntax. Match 'export VAR="value"' or 'export VAR=value' where
+# the value is a single token or quoted string (no trailing garbage like ' -').
 # shellcheck disable=SC1090
 if [[ -f "$HOME/.zshrc" ]]; then
-  eval "$(grep '^export [A-Za-z_]' "$HOME/.zshrc" 2>/dev/null)" || true
+  while IFS= read -r line; do
+    eval "$line" 2>/dev/null || true
+  done < <(grep -E '^export [A-Za-z_][A-Za-z0-9_]*=(".*"|'\''.*'\''|[^ ]*)$' "$HOME/.zshrc" 2>/dev/null)
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
