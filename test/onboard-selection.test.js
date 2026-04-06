@@ -633,6 +633,96 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
+  it("returns to provider selection when Ollama manual entry chooses back", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-back-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "ollama-back-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"id":"resp_123"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["7", "2", "back", "1", ""];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-good"; };
+runner.run = () => ({ status: 0 });
+runner.runCapture = (command) => {
+  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
+  if (command.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
+  if (command.includes("localhost:8000/v1/models")) return "";
+  if (command.includes("api/generate")) return '{"response":"hello"}';
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "nvidia-prod");
+    assert.ok(payload.lines.some((line) => line.includes("Returning to provider selection.")));
+    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 2);
+    assert.equal(payload.messages.filter((message) => /Ollama model id: /.test(message)).length, 1);
+  });
+
   it("offers starter Ollama models when none are installed and pulls the selected model", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-bootstrap-"));
@@ -1829,9 +1919,11 @@ const runner = require(${runnerPath});
 
 const answers = ["", "", "retry", "nvapi-good"];
 const messages = [];
+const prompts = [];
 
-credentials.prompt = async (message) => {
+credentials.prompt = async (message, opts = {}) => {
   messages.push(message);
+  prompts.push({ message, secret: opts.secret === true });
   return answers.shift() || "";
 };
 runner.runCapture = () => "";
@@ -1847,7 +1939,7 @@ const { setupNim } = require(${onboardPath});
   console.error = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines, key: process.env.NVIDIA_API_KEY }));
+    originalLog(JSON.stringify({ result, messages, prompts, lines, key: process.env.NVIDIA_API_KEY }));
   } finally {
     console.log = originalLog;
     console.error = originalError;
@@ -1885,6 +1977,13 @@ const { setupNim } = require(${onboardPath});
         /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
       ),
     );
+    const retryPrompt = payload.prompts.find((entry) =>
+      /Type 'retry', 'back', or 'exit' \[retry\]: /.test(entry.message),
+    );
+    assert.deepEqual(retryPrompt, {
+      message: "  Type 'retry', 'back', or 'exit' [retry]: ",
+      secret: true,
+    });
     assert.ok(payload.messages.some((message) => /NVIDIA Endpoints API key: /.test(message)));
   });
 
