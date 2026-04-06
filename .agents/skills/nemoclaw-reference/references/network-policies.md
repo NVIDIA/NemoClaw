@@ -52,13 +52,13 @@ The following endpoint groups are allowed by default:
   - GET, POST, PATCH, PUT, DELETE
 
 * - `clawhub`
-  - `clawhub.com:443`
-  - `/usr/local/bin/openclaw`
+  - `clawhub.ai:443`
+  - `/usr/local/bin/openclaw`, `/usr/local/bin/node`
   - GET, POST
 
 * - `openclaw_api`
   - `openclaw.ai:443`
-  - `/usr/local/bin/openclaw`
+  - `/usr/local/bin/openclaw`, `/usr/local/bin/node`
   - GET, POST
 
 * - `openclaw_docs`
@@ -68,8 +68,8 @@ The following endpoint groups are allowed by default:
 
 * - `npm_registry`
   - `registry.npmjs.org:443`
-  - `/usr/local/bin/openclaw`, `/usr/local/bin/npm`
-  - GET only
+  - `/usr/local/bin/openclaw`, `/usr/local/bin/npm`, `/usr/local/bin/node`
+  - All methods, all paths
 
 * - `telegram`
   - `api.telegram.org:443`

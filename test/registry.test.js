@@ -149,7 +149,9 @@ describe("atomic writes", () => {
     // Stub renameSync so writeFileSync succeeds (temp file is created)
     // but the rename step throws — exercising the cleanup branch.
     const original = fs.renameSync;
-    fs.renameSync = () => { throw Object.assign(new Error("EACCES"), { code: "EACCES" }); };
+    fs.renameSync = () => {
+      throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+    };
     try {
       expect(() => registry.save({ sandboxes: {}, defaultSandbox: null })).toThrow("EACCES");
     } finally {
@@ -247,7 +249,9 @@ describe("advisory file locking", () => {
 
   it("concurrent writers do not corrupt the registry", () => {
     const { spawnSync } = require("child_process");
-    const registryPath = path.resolve(path.join(import.meta.dirname, "..", "bin", "lib", "registry.js"));
+    const registryPath = path.resolve(
+      path.join(import.meta.dirname, "..", "bin", "lib", "registry.js"),
+    );
     const homeDir = path.dirname(path.dirname(regFile));
     // Script that spawns 4 workers in parallel, each writing 5 sandboxes
     const orchestrator = `
@@ -284,5 +288,35 @@ describe("advisory file locking", () => {
     // All 20 sandboxes (4 workers × 5 each) must be present
     const { sandboxes } = registry.listSandboxes();
     expect(sandboxes.length).toBe(20);
+  });
+
+  it("clearAll removes all sandboxes and resets default", () => {
+    registry.registerSandbox({ name: "alpha" });
+    registry.registerSandbox({ name: "beta" });
+    registry.setDefault("beta");
+
+    registry.clearAll();
+
+    const { sandboxes, defaultSandbox } = registry.listSandboxes();
+    expect(sandboxes).toHaveLength(0);
+    expect(defaultSandbox).toBe(null);
+  });
+
+  it("clearAll persists empty state to disk", () => {
+    registry.registerSandbox({ name: "persist-me" });
+
+    registry.clearAll();
+
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes).toEqual({});
+    expect(data.defaultSandbox).toBe(null);
+  });
+
+  it("clearAll is safe to call on empty registry", () => {
+    registry.clearAll();
+
+    const { sandboxes, defaultSandbox } = registry.listSandboxes();
+    expect(sandboxes).toHaveLength(0);
+    expect(defaultSandbox).toBe(null);
   });
 });

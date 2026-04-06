@@ -2,7 +2,9 @@
 title:
   page: "Set Up the NemoClaw Telegram Bridge for Remote Agent Chat"
   nav: "Set Up Telegram Bridge"
-description: "Forward messages between Telegram and the sandboxed OpenClaw agent."
+description:
+  main: "Forward messages between Telegram and the sandboxed OpenClaw agent."
+  agent: "Forwards messages between Telegram and the sandboxed OpenClaw agent. Use when setting up a Telegram bot bridge, connecting a chat interface, or configuring Telegram integration."
 keywords: ["nemoclaw telegram bridge", "telegram bot openclaw agent"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "telegram", "deployment", "nemoclaw"]

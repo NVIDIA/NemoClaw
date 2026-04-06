@@ -29,9 +29,21 @@ function acquireLock() {
         fs.renameSync(ownerTmp, LOCK_OWNER);
       } catch (ownerErr) {
         // Remove the directory we just created so it doesn't look like a stale lock
-        try { fs.unlinkSync(ownerTmp); } catch { /* best effort */ }
-        try { fs.unlinkSync(LOCK_OWNER); } catch { /* best effort */ }
-        try { fs.rmdirSync(LOCK_DIR); } catch { /* best effort */ }
+        try {
+          fs.unlinkSync(ownerTmp);
+        } catch {
+          /* best effort */
+        }
+        try {
+          fs.unlinkSync(LOCK_OWNER);
+        } catch {
+          /* best effort */
+        }
+        try {
+          fs.rmdirSync(LOCK_DIR);
+        } catch {
+          /* best effort */
+        }
         throw ownerErr;
       }
       return;
@@ -85,11 +97,15 @@ function acquireLock() {
 }
 
 function releaseLock() {
-  try { fs.unlinkSync(LOCK_OWNER); } catch (err) {
+  try {
+    fs.unlinkSync(LOCK_OWNER);
+  } catch (err) {
     if (err.code !== "ENOENT") throw err;
   }
   // rmSync handles leftover tmp files from crashed acquireLock attempts
-  try { fs.rmSync(LOCK_DIR, { recursive: true, force: true }); } catch (err) {
+  try {
+    fs.rmSync(LOCK_DIR, { recursive: true, force: true });
+  } catch (err) {
     if (err.code !== "ENOENT") throw err;
   }
 }
@@ -104,12 +120,15 @@ function withLock(fn) {
   }
 }
 
+/** Load the sandbox registry from disk, returning an empty state if absent or corrupt. */
 function load() {
   try {
     if (fs.existsSync(REGISTRY_FILE)) {
       return JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf-8"));
     }
-  } catch { /* ignored */ }
+  } catch {
+    /* ignored */
+  }
   return { sandboxes: {}, defaultSandbox: null };
 }
 
@@ -123,16 +142,22 @@ function save(data) {
     fs.renameSync(tmp, REGISTRY_FILE);
   } catch (err) {
     // Clean up partial temp file on failure
-    try { fs.unlinkSync(tmp); } catch { /* best effort */ }
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* best effort */
+    }
     throw err;
   }
 }
 
+/** Return the sandbox entry for the given name, or null if not found. */
 function getSandbox(name) {
   const data = load();
   return data.sandboxes[name] || null;
 }
 
+/** Return the name of the default sandbox, falling back to the first registered one. */
 function getDefault() {
   const data = load();
   if (data.defaultSandbox && data.sandboxes[data.defaultSandbox]) {
@@ -143,6 +168,7 @@ function getDefault() {
   return names.length > 0 ? names[0] : null;
 }
 
+/** Register a new sandbox in the registry, setting it as default if none exists. */
 function registerSandbox(entry) {
   return withLock(() => {
     const data = load();
@@ -162,6 +188,7 @@ function registerSandbox(entry) {
   });
 }
 
+/** Merge updates into an existing sandbox entry. Returns false if the sandbox does not exist. */
 function updateSandbox(name, updates) {
   return withLock(() => {
     const data = load();
@@ -175,6 +202,7 @@ function updateSandbox(name, updates) {
   });
 }
 
+/** Remove a sandbox by name and reassign the default if necessary. */
 function removeSandbox(name) {
   return withLock(() => {
     const data = load();
@@ -189,6 +217,7 @@ function removeSandbox(name) {
   });
 }
 
+/** List all registered sandboxes and the current default. */
 function listSandboxes() {
   const data = load();
   return {
@@ -197,6 +226,7 @@ function listSandboxes() {
   };
 }
 
+/** Set the named sandbox as the default. Returns false if the sandbox does not exist. */
 function setDefault(name) {
   return withLock(() => {
     const data = load();
@@ -207,7 +237,15 @@ function setDefault(name) {
   });
 }
 
+/** Reset the registry to an empty state, removing all sandboxes and the default selection. */
+function clearAll() {
+  withLock(() => {
+    save({ sandboxes: {}, defaultSandbox: null });
+  });
+}
+
 module.exports = {
+  clearAll,
   load,
   save,
   getSandbox,
