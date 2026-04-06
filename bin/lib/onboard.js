@@ -64,6 +64,9 @@ const validation = require("../../dist/lib/validation");
 const urlUtils = require("../../dist/lib/url-utils");
 const buildContext = require("../../dist/lib/build-context");
 const dashboard = require("../../dist/lib/dashboard");
+const httpProbe = require("../../dist/lib/http-probe");
+const providerModels = require("../../dist/lib/provider-models");
+const validationRecovery = require("../../dist/lib/validation-recovery");
 const webSearch = require("../../dist/lib/web-search");
 
 /**
@@ -626,23 +629,7 @@ function hydrateCredentialEnv(envName) {
   return value || null;
 }
 
-function getCurlTimingArgs() {
-  return ["--connect-timeout", "10", "--max-time", "60"];
-}
-
-function summarizeCurlFailure(curlStatus = 0, stderr = "", body = "") {
-  const detail = compactText(stderr || body);
-  return detail
-    ? `curl failed (exit ${curlStatus}): ${detail.slice(0, 200)}`
-    : `curl failed (exit ${curlStatus})`;
-}
-
-function summarizeProbeFailure(body = "", status = 0, curlStatus = 0, stderr = "") {
-  if (curlStatus) {
-    return summarizeCurlFailure(curlStatus, stderr, body);
-  }
-  return summarizeProbeError(body, status);
-}
+const { getCurlTimingArgs, summarizeCurlFailure, summarizeProbeFailure, runCurlProbe } = httpProbe;
 
 function getNavigationChoice(value = "") {
   const normalized = String(value || "")
@@ -658,34 +645,7 @@ function exitOnboardFromPrompt() {
   process.exit(1);
 }
 
-function getTransportRecoveryMessage(failure = {}) {
-  const text = compactText(`${failure.message || ""} ${failure.stderr || ""}`).toLowerCase();
-  if (failure.curlStatus === 2 || /option .* is unknown|curl --help|curl --manual/.test(text)) {
-    return "  Validation hit a local curl invocation error. Retry after updating NemoClaw or use a different provider temporarily.";
-  }
-  if (failure.httpStatus === 429) {
-    return "  The provider is rate limiting validation requests right now.";
-  }
-  if (failure.httpStatus >= 500 && failure.httpStatus < 600) {
-    return "  The provider endpoint is reachable but currently failing upstream.";
-  }
-  if (failure.curlStatus === 6 || /could not resolve host|name or service not known/.test(text)) {
-    return "  Validation could not resolve the provider hostname. Check DNS, VPN, or the endpoint URL.";
-  }
-  if (failure.curlStatus === 7 || /connection refused|failed to connect/.test(text)) {
-    return "  Validation could not connect to the provider endpoint. Check the URL, proxy, or that the service is up.";
-  }
-  if (failure.curlStatus === 28 || /timed out|timeout/.test(text)) {
-    return "  Validation timed out before the provider replied. Retry, or check network/proxy health.";
-  }
-  if (failure.curlStatus === 35 || failure.curlStatus === 60 || /ssl|tls|certificate/.test(text)) {
-    return "  Validation hit a TLS/certificate error. Check HTTPS trust and whether the endpoint URL is correct.";
-  }
-  if (/proxy/.test(text)) {
-    return "  Validation hit a proxy/connectivity error. Check proxy environment settings and endpoint reachability.";
-  }
-  return "  Validation hit a network or transport error.";
-}
+const { getTransportRecoveryMessage, getProbeRecovery } = validationRecovery;
 
 // Validation functions — delegated to src/lib/validation.ts
 const {
@@ -695,96 +655,6 @@ const {
   validateNvidiaApiKeyValue,
   isSafeModelId,
 } = validation;
-
-function getProbeRecovery(probe, options = {}) {
-  const allowModelRetry = options.allowModelRetry === true;
-  const failures = Array.isArray(probe?.failures) ? probe.failures : [];
-  if (failures.length === 0) {
-    return { kind: "unknown", retry: "selection" };
-  }
-  if (failures.some((failure) => classifyValidationFailure(failure).kind === "credential")) {
-    return { kind: "credential", retry: "credential" };
-  }
-  const transportFailure = failures.find(
-    (failure) => classifyValidationFailure(failure).kind === "transport",
-  );
-  if (transportFailure) {
-    return { kind: "transport", retry: "retry", failure: transportFailure };
-  }
-  if (
-    allowModelRetry &&
-    failures.some((failure) => classifyValidationFailure(failure).kind === "model")
-  ) {
-    return { kind: "model", retry: "model" };
-  }
-  if (failures.some((failure) => classifyValidationFailure(failure).kind === "endpoint")) {
-    return { kind: "endpoint", retry: "selection" };
-  }
-  const fallback = classifyValidationFailure(failures[0]);
-  if (!allowModelRetry && fallback.kind === "model") {
-    return { kind: "unknown", retry: "selection" };
-  }
-  return fallback;
-}
-
-// eslint-disable-next-line complexity
-function runCurlProbe(argv) {
-  const bodyFile = secureTempFile("nemoclaw-curl-probe", ".json");
-  try {
-    const args = [...argv];
-    const url = args.pop();
-    const result = spawnSync("curl", [...args, "-o", bodyFile, "-w", "%{http_code}", url], {
-      cwd: ROOT,
-      encoding: "utf8",
-      timeout: 30_000,
-      env: {
-        ...process.env,
-      },
-    });
-    const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
-    if (result.error) {
-      const spawnError = /** @type {NodeJS.ErrnoException} */ (result.error);
-      const rawErrorCode = spawnError.errno ?? spawnError.code;
-      const errorCode = typeof rawErrorCode === "number" ? rawErrorCode : 1;
-      const errorMessage = compactText(
-        `${spawnError.message || String(spawnError)} ${String(result.stderr || "")}`,
-      );
-      return {
-        ok: false,
-        httpStatus: 0,
-        curlStatus: errorCode,
-        body,
-        stderr: errorMessage,
-        message: summarizeProbeFailure(body, 0, errorCode, errorMessage),
-      };
-    }
-    const status = Number(String(result.stdout || "").trim());
-    return {
-      ok: result.status === 0 && status >= 200 && status < 300,
-      httpStatus: Number.isFinite(status) ? status : 0,
-      curlStatus: result.status || 0,
-      body,
-      stderr: String(result.stderr || ""),
-      message: summarizeProbeFailure(
-        body,
-        status || 0,
-        result.status || 0,
-        String(result.stderr || ""),
-      ),
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      httpStatus: 0,
-      curlStatus: error?.status || 1,
-      body: "",
-      stderr: error?.message || String(error),
-      message: summarizeCurlFailure(error?.status || 1, error?.message || String(error)),
-    };
-  } finally {
-    cleanupTempDir(bodyFile, "nemoclaw-curl-probe");
-  }
-}
 
 // validateNvidiaApiKeyValue — see validation import above
 
@@ -824,7 +694,7 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
     console.log(
       `  ${label} authorization failed. Re-enter the API key or choose a different provider/model.`,
     );
-    const choice = (await prompt("  Type 'retry', 'back', or 'exit' [retry]: "))
+    const choice = (await prompt("  Type 'retry', 'back', or 'exit' [retry]: ", { secret: true }))
       .trim()
       .toLowerCase();
     if (choice === "back") {
@@ -917,7 +787,6 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
   const runOpts = { ignoreError: true, env, stdio: ["ignore", "pipe", "pipe"] };
   const createResult = runOpenshell(createArgs, runOpts);
   if (createResult.status === 0) {
-    console.log(`✓ Created provider ${name}`);
     return { ok: true };
   }
 
@@ -934,7 +803,6 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
       message: output,
     };
   }
-  console.log(`✓ Updated provider ${name}`);
   return { ok: true };
 }
 
@@ -1295,24 +1163,6 @@ function patchStagedDockerfile(
   fs.writeFileSync(dockerfilePath, dockerfile);
 }
 
-function summarizeProbeError(body, status) {
-  if (!body) return `HTTP ${status} with no response body`;
-  try {
-    const parsed = JSON.parse(body);
-    const message =
-      parsed?.error?.message ||
-      parsed?.error?.details ||
-      parsed?.message ||
-      parsed?.detail ||
-      parsed?.details;
-    if (message) return `HTTP ${status}: ${String(message)}`;
-  } catch {
-    /* non-JSON body — fall through to raw text */
-  }
-  const compact = String(body).replace(/\s+/g, " ").trim();
-  return `HTTP ${status}: ${compact.slice(0, 200)}`;
-}
-
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
   const probes = [
     {
@@ -1526,146 +1376,8 @@ async function validateCustomAnthropicSelection(
   return { ok: false, retry };
 }
 
-function fetchNvidiaEndpointModels(apiKey) {
-  try {
-    const result = runCurlProbe([
-      "-sS",
-      ...getCurlTimingArgs(),
-      "-H",
-      "Content-Type: application/json",
-      "-H",
-      `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`,
-      `${BUILD_ENDPOINT_URL}/models`,
-    ]);
-    if (!result.ok) {
-      return {
-        ok: false,
-        message: result.message,
-        status: result.httpStatus,
-        curlStatus: result.curlStatus,
-      };
-    }
-    const parsed = JSON.parse(result.body);
-    const ids = Array.isArray(parsed?.data)
-      ? parsed.data.map((item) => item && item.id).filter(Boolean)
-      : [];
-    return { ok: true, ids };
-  } catch (error) {
-    return { ok: false, message: error.message || String(error) };
-  }
-}
-
-function validateNvidiaEndpointModel(model, apiKey) {
-  const available = fetchNvidiaEndpointModels(apiKey);
-  if (!available.ok) {
-    return {
-      ok: false,
-      message: `Could not validate model against ${BUILD_ENDPOINT_URL}/models: ${available.message}`,
-    };
-  }
-  if (available.ids.includes(model)) {
-    return { ok: true };
-  }
-  return {
-    ok: false,
-    message: `Model '${model}' is not available from NVIDIA Endpoints. Checked ${BUILD_ENDPOINT_URL}/models.`,
-  };
-}
-
-function fetchOpenAiLikeModels(endpointUrl, apiKey) {
-  try {
-    const result = runCurlProbe([
-      "-sS",
-      ...getCurlTimingArgs(),
-      ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
-      `${String(endpointUrl).replace(/\/+$/, "")}/models`,
-    ]);
-    if (!result.ok) {
-      return {
-        ok: false,
-        status: result.httpStatus,
-        curlStatus: result.curlStatus,
-        message: result.message,
-      };
-    }
-    const parsed = JSON.parse(result.body);
-    const ids = Array.isArray(parsed?.data)
-      ? parsed.data.map((item) => item && item.id).filter(Boolean)
-      : [];
-    return { ok: true, ids };
-  } catch (error) {
-    return { ok: false, status: 0, message: error.message || String(error) };
-  }
-}
-
-function fetchAnthropicModels(endpointUrl, apiKey) {
-  try {
-    const result = runCurlProbe([
-      "-sS",
-      ...getCurlTimingArgs(),
-      "-H",
-      `x-api-key: ${normalizeCredentialValue(apiKey)}`,
-      "-H",
-      "anthropic-version: 2023-06-01",
-      `${String(endpointUrl).replace(/\/+$/, "")}/v1/models`,
-    ]);
-    if (!result.ok) {
-      return {
-        ok: false,
-        status: result.httpStatus,
-        curlStatus: result.curlStatus,
-        message: result.message,
-      };
-    }
-    const parsed = JSON.parse(result.body);
-    const ids = Array.isArray(parsed?.data)
-      ? parsed.data.map((item) => item && (item.id || item.name)).filter(Boolean)
-      : [];
-    return { ok: true, ids };
-  } catch (error) {
-    return { ok: false, status: 0, message: error.message || String(error) };
-  }
-}
-
-function validateAnthropicModel(endpointUrl, model, apiKey) {
-  const available = fetchAnthropicModels(endpointUrl, apiKey);
-  if (!available.ok) {
-    if (available.status === 404 || available.status === 405) {
-      return { ok: true, validated: false };
-    }
-    return {
-      ok: false,
-      message: `Could not validate model against ${String(endpointUrl).replace(/\/+$/, "")}/v1/models: ${available.message}`,
-    };
-  }
-  if (available.ids.includes(model)) {
-    return { ok: true, validated: true };
-  }
-  return {
-    ok: false,
-    message: `Model '${model}' is not available from Anthropic. Checked ${String(endpointUrl).replace(/\/+$/, "")}/v1/models.`,
-  };
-}
-
-function validateOpenAiLikeModel(label, endpointUrl, model, apiKey) {
-  const available = fetchOpenAiLikeModels(endpointUrl, apiKey);
-  if (!available.ok) {
-    if (available.status === 404 || available.status === 405) {
-      return { ok: true, validated: false };
-    }
-    return {
-      ok: false,
-      message: `Could not validate model against ${String(endpointUrl).replace(/\/+$/, "")}/models: ${available.message}`,
-    };
-  }
-  if (available.ids.includes(model)) {
-    return { ok: true, validated: true };
-  }
-  return {
-    ok: false,
-    message: `Model '${model}' is not available from ${label}. Checked ${String(endpointUrl).replace(/\/+$/, "")}/models.`,
-  };
-}
+const { validateNvidiaEndpointModel, validateAnthropicModel, validateOpenAiLikeModel } =
+  providerModels;
 
 async function promptManualModelId(promptLabel, errorLabel, validator = null) {
   while (true) {
@@ -2526,6 +2238,7 @@ async function createSandbox(
   preferredInferenceApi = null,
   sandboxNameOverride = null,
   webSearchConfig = null,
+  enabledChannels = null,
 ) {
   step(6, 8, "Creating sandbox");
 
@@ -2537,6 +2250,15 @@ async function createSandbox(
   // without provider attachments (security: prevents legacy raw-env-var leaks).
   const getMessagingToken = (envKey) =>
     getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
+
+  // When enabledChannels is provided (from the toggle picker), only include
+  // channels the user selected. When null (backward compat), include all.
+  const enabledEnvKeys =
+    enabledChannels != null
+      ? new Set(
+          MESSAGING_CHANNELS.filter((c) => enabledChannels.includes(c.name)).map((c) => c.envKey),
+        )
+      : null;
 
   const messagingTokenDefs = [
     {
@@ -2554,7 +2276,7 @@ async function createSandbox(
       envKey: "TELEGRAM_BOT_TOKEN",
       token: getMessagingToken("TELEGRAM_BOT_TOKEN"),
     },
-  ];
+  ].filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey));
   const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
 
   // Reconcile local registry state with the live OpenShell gateway state.
@@ -2657,8 +2379,9 @@ async function createSandbox(
   // Each channel with a userIdEnvKey in MESSAGING_CHANNELS may have a
   // comma-separated list of IDs (e.g. TELEGRAM_ALLOWED_IDS="123,456").
   const messagingAllowedIds = {};
+  const enabledTokenEnvKeys = new Set(messagingTokenDefs.map(({ envKey }) => envKey));
   for (const ch of MESSAGING_CHANNELS) {
-    if (ch.userIdEnvKey && process.env[ch.userIdEnvKey]) {
+    if (enabledTokenEnvKeys.has(ch.envKey) && ch.userIdEnvKey && process.env[ch.userIdEnvKey]) {
       const ids = process.env[ch.userIdEnvKey]
         .split(",")
         .map((s) => s.trim())
@@ -3581,7 +3304,7 @@ async function setupMessagingChannels() {
     } else {
       note("  [non-interactive] No messaging tokens configured. Skipping.");
     }
-    return;
+    return found;
   }
 
   // Single-keypress toggle selector — pre-select channels that already have tokens.
@@ -3674,7 +3397,7 @@ async function setupMessagingChannels() {
   const selected = Array.from(enabled);
   if (selected.length === 0) {
     console.log("  Skipping messaging channels.");
-    return;
+    return [];
   }
 
   // For each selected channel, prompt for token if not already set
@@ -3717,6 +3440,7 @@ async function setupMessagingChannels() {
     }
   }
   console.log("");
+  return selected;
 }
 
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
@@ -4459,7 +4183,7 @@ async function onboard(opts = {}) {
           }
         }
       }
-      await setupMessagingChannels();
+      const enabledChannels = await setupMessagingChannels();
 
       startRecordedStep("sandbox", { sandboxName, provider, model });
       sandboxName = await createSandbox(
@@ -4469,6 +4193,7 @@ async function onboard(opts = {}) {
         preferredInferenceApi,
         sandboxName,
         webSearchConfig,
+        enabledChannels,
       );
       onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
     }
@@ -4576,6 +4301,7 @@ module.exports = {
   startGatewayForRecovery,
   runCaptureOpenshell,
   setupInference,
+  setupMessagingChannels,
   setupNim,
   isInferenceRouteReady,
   isOpenclawReady,

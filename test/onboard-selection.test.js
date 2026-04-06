@@ -1829,9 +1829,11 @@ const runner = require(${runnerPath});
 
 const answers = ["", "", "retry", "nvapi-good"];
 const messages = [];
+const prompts = [];
 
-credentials.prompt = async (message) => {
+credentials.prompt = async (message, opts = {}) => {
   messages.push(message);
+  prompts.push({ message, secret: opts.secret === true });
   return answers.shift() || "";
 };
 runner.runCapture = () => "";
@@ -1847,7 +1849,7 @@ const { setupNim } = require(${onboardPath});
   console.error = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines, key: process.env.NVIDIA_API_KEY }));
+    originalLog(JSON.stringify({ result, messages, prompts, lines, key: process.env.NVIDIA_API_KEY }));
   } finally {
     console.log = originalLog;
     console.error = originalError;
@@ -1885,6 +1887,13 @@ const { setupNim } = require(${onboardPath});
         /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
       ),
     );
+    const retryPrompt = payload.prompts.find((entry) =>
+      /Type 'retry', 'back', or 'exit' \[retry\]: /.test(entry.message),
+    );
+    assert.deepEqual(retryPrompt, {
+      message: "  Type 'retry', 'back', or 'exit' [retry]: ",
+      secret: true,
+    });
     assert.ok(payload.messages.some((message) => /NVIDIA Endpoints API key: /.test(message)));
   });
 

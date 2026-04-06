@@ -82,11 +82,15 @@ describe("credential exposure in process arguments", () => {
     expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("SLACK_BOT_TOKEN"/);
   });
 
-  it("onboard.js curl probes use explicit timeouts", () => {
-    const src = fs.readFileSync(ONBOARD_JS, "utf-8");
+  it("onboard curl probes use explicit timeouts", () => {
+    const onboardSrc = fs.readFileSync(ONBOARD_JS, "utf-8");
+    const probeSrc = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "http-probe.ts"),
+      "utf-8",
+    );
 
-    expect(src).toMatch(/function getCurlTimingArgs\(\)/);
-    expect(src).toMatch(/"--connect-timeout", "10"/);
-    expect(src).toMatch(/"--max-time", "60"/);
+    expect(onboardSrc).toMatch(/http-probe/);
+    expect(probeSrc).toMatch(/"--connect-timeout", "10"/);
+    expect(probeSrc).toMatch(/"--max-time", "60"/);
   });
 });
