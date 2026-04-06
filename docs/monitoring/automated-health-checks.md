@@ -153,6 +153,26 @@ $ crontab -e
 
 Create a service and timer unit for more robust scheduling. See the systemd documentation for details.
 
+## HTML Status Page
+
+Generate a self-contained HTML dashboard from the health check results:
+
+```console
+$ ./scripts/health-check-html.sh --sandbox my-assistant --open
+```
+
+The page auto-refreshes every 60 seconds. Pair with a scheduler to keep it up to date:
+
+```console
+$ watch -n 60 ./scripts/health-check-html.sh --sandbox my-assistant
+```
+
+The generated file is written to `/tmp/nemoclaw-status.html` by default, or specify `--output /path/to/file`.
+
+## Telegram /status Command
+
+If you are running the Telegram bridge (`scripts/telegram-bridge.js`), send `/status` to the bot to get a health report directly in Telegram. This runs the same checks as the CLI script.
+
 ## Configuration
 
 | Flag | Description | Default |

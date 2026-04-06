@@ -17,7 +17,8 @@
  */
 
 const https = require("https");
-const { execFileSync, spawn } = require("child_process");
+const path = require("path");
+const { execFileSync, execFile, spawn } = require("child_process");
 const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
 const { shellQuote, validateName } = require("../bin/lib/runner");
 const { parseAllowedChatIds, isChatAllowed } = require("../bin/lib/chat-filter");
@@ -250,6 +251,7 @@ async function poll() {
             `🦀 *NemoClaw* — model: ${model}\n\n` +
               "Send me a message and I'll run it through the OpenClaw agent " +
               "inside an OpenShell sandbox.\n\n" +
+              "Commands:\n/status — check service health\n/reset — clear session\n\n" +
               "If the agent needs external access, the TUI will prompt for approval.",
             msg.message_id,
           );
@@ -260,6 +262,33 @@ async function poll() {
         if (msg.text === "/reset") {
           activeSessions.delete(chatId);
           await sendMessage(chatId, "Session reset.", msg.message_id);
+          continue;
+        }
+
+        // Handle /status — run health check and report results
+        if (msg.text === "/status") {
+          await sendTyping(chatId);
+          const healthScript = path.join(__dirname, "health-check.sh");
+          try {
+            const result = await new Promise((resolve, reject) => {
+              execFile(healthScript, ["--sandbox", SANDBOX, "--json"], { timeout: 60000 }, (err, stdout) => {
+                // health-check.sh exits 1 on failures — that's expected, not an error
+                if (err && !stdout) return reject(err);
+                resolve(stdout);
+              });
+            });
+            const data = JSON.parse(result);
+            const lines = data.checks.map((c) => {
+              const icon = c.status === "pass" ? "\u2705" : c.status === "fail" ? "\u274c" : "\u2796";
+              return `${icon} *${c.name}*: ${c.detail || "skipped"}`;
+            });
+            const summary = data.summary.failed === 0
+              ? `\u2705 All ${data.summary.passed} checks passed`
+              : `\u26a0\ufe0f ${data.summary.failed}/${data.summary.passed + data.summary.failed} checks failed`;
+            await sendMessage(chatId, `*NemoClaw Status* (${data.sandbox})\n\n${lines.join("\n")}\n\n${summary}`, msg.message_id);
+          } catch (err) {
+            await sendMessage(chatId, `Health check error: ${err.message}`, msg.message_id);
+          }
           continue;
         }
 
