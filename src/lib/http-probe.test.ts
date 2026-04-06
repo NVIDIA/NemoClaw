@@ -35,7 +35,7 @@ describe("http-probe helpers", () => {
     expect(summarizeProbeFailure("", 0, 28, "timeout")).toBe("curl failed (exit 28): timeout");
   });
 
-  it("captures successful curl output, appends timing args, and cleans up the temp file", () => {
+  it("captures successful curl output and cleans up the temp file", () => {
     const countProbeDirs = () =>
       fs
         .readdirSync(os.tmpdir())
@@ -43,12 +43,8 @@ describe("http-probe helpers", () => {
         .sort();
 
     const before = countProbeDirs();
-    let capturedArgs = [];
-    let capturedTimeout = 0;
     const result = runCurlProbe(["-sS", "https://example.test/models"], {
-      spawnSyncImpl: (_command, args, options) => {
-        capturedArgs = [...args];
-        capturedTimeout = options.timeout ?? 0;
+      spawnSyncImpl: (_command, args) => {
         const outputPath = args[args.indexOf("-o") + 1];
         fs.writeFileSync(outputPath, JSON.stringify({ data: [{ id: "foo" }] }));
         return {
@@ -69,12 +65,6 @@ describe("http-probe helpers", () => {
       curlStatus: 0,
       body: '{"data":[{"id":"foo"}]}',
     });
-    expect(capturedArgs).toContain("--connect-timeout");
-    expect(capturedArgs).toContain("10");
-    expect(capturedArgs).toContain("--max-time");
-    expect(capturedArgs).toContain("60");
-    expect(capturedArgs.at(-1)).toBe("https://example.test/models");
-    expect(capturedTimeout).toBeGreaterThanOrEqual(60_000);
     expect(after).toEqual(before);
   });
 

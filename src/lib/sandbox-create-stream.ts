@@ -66,7 +66,7 @@ export function streamSandboxCreate(
   let lastOutputAt = startedAt;
   type CreatePhase = "build" | "upload" | "create" | "ready";
 
-  let currentPhase: CreatePhase = "build";
+  let currentPhase: CreatePhase | null = null;
   let lastHeartbeatPhase: CreatePhase | null = null;
   let lastHeartbeatBucket = -1;
   let resolvePromise: (result: StreamSandboxCreateResult) => void;
@@ -158,13 +158,18 @@ export function streamSandboxCreate(
     parts.forEach(flushLine);
   }
 
-  function finish(result: StreamSandboxCreateResult) {
+  function finish(status: number, overrides: Partial<StreamSandboxCreateResult> = {}) {
     if (settled) return;
     settled = true;
     if (pending) flushLine(pending);
     if (readyTimer) clearInterval(readyTimer);
     clearInterval(heartbeatTimer);
-    resolvePromise(result);
+    resolvePromise({
+      status,
+      output: lines.join("\n"),
+      sawProgress,
+      ...overrides,
+    });
   }
 
   function detachChild() {
@@ -202,7 +207,8 @@ export function streamSandboxCreate(
             // Best effort only — the child may have already exited.
           }
           detachChild();
-          finish({ status: 0, output: lines.join("\n"), sawProgress: true, forcedReady: true });
+          sawProgress = true;
+          finish(0, { forcedReady: true });
         } finally {
           polling = false;
         }
@@ -242,11 +248,11 @@ export function streamSandboxCreate(
       const code = error?.code;
       const detail = code ? `spawn failed: ${error.message} (${code})` : `spawn failed: ${error.message}`;
       lines.push(detail);
-      finish({ status: 1, output: lines.join("\n"), sawProgress: false });
+      finish(1);
     });
 
     child.on("close", (code) => {
-      finish({ status: code ?? 1, output: lines.join("\n"), sawProgress });
+      finish(code ?? 1);
     });
   });
 }

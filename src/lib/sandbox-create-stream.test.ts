@@ -23,6 +23,19 @@ describe("sandbox-create-stream", () => {
     vi.useRealTimers();
   });
 
+  it("prints the initial build banner immediately", async () => {
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    const promise = streamSandboxCreate("echo create", process.env, {
+      logLine,
+      spawnImpl: () => child as never,
+    });
+
+    expect(logLine).toHaveBeenCalledWith("  Building sandbox image...");
+    child.emit("close", 0);
+    await promise;
+  });
+
   it("streams visible progress lines and returns the collected output", async () => {
     const child = new FakeChild();
     const logLine = vi.fn();
@@ -77,6 +90,23 @@ describe("sandbox-create-stream", () => {
     });
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
     expect(child.unref).toHaveBeenCalled();
+  });
+
+  it("flushes the final partial line before resolving", async () => {
+    const child = new FakeChild();
+    const promise = streamSandboxCreate("echo create", process.env, {
+      spawnImpl: () => child as never,
+      logLine: vi.fn(),
+    });
+
+    child.stdout.emit("data", Buffer.from("Created sandbox: demo"));
+    child.emit("close", 0);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 0,
+      output: "Created sandbox: demo",
+      sawProgress: true,
+    });
   });
 
   it("reports spawn errors cleanly", async () => {

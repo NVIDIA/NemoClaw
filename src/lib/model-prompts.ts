@@ -27,6 +27,7 @@ export const REMOTE_MODEL_OPTIONS: Record<string, string[]> = {
 export interface PromptValidationResult {
   ok: boolean;
   message?: string;
+  deferValidation?: boolean;
 }
 
 export interface ModelPromptOptions {
@@ -54,6 +55,13 @@ function getNavigationChoice(value = ""): "back" | "exit" | null {
 function exitOnboardFromPrompt(): never {
   console.log("  Exiting onboarding.");
   process.exit(1);
+}
+
+function shouldDeferValidationFailure(validation: PromptValidationResult): boolean {
+  return (
+    validation.deferValidation === true ||
+    /^Could not validate model against /i.test(String(validation.message || ""))
+  );
 }
 
 function resolvePromptOptions(options: ModelPromptOptions = {}) {
@@ -96,7 +104,12 @@ export async function promptManualModelId(
     if (validator) {
       const validation = validator(trimmed);
       if (!validation.ok) {
-        deps.errorLine(`  ${validation.message}`);
+        if (validation.message) {
+          deps.errorLine(`  ${validation.message}`);
+        }
+        if (shouldDeferValidationFailure(validation)) {
+          return trimmed;
+        }
         continue;
       }
     }
@@ -124,15 +137,20 @@ export async function promptCloudModel(options: ModelPromptOptions = {}): Promis
     deps.exitFn();
   }
   const index = parseInt(choice || "1", 10) - 1;
-  if (index >= 0 && index < deps.cloudModelOptions.length) {
+  if (Number.isFinite(index) && index >= 0 && index < deps.cloudModelOptions.length) {
     return deps.cloudModelOptions[index].id;
+  }
+
+  const nvidiaApiKey = deps.getCredentialFn("NVIDIA_API_KEY");
+  if (!nvidiaApiKey) {
+    deps.errorLine("  NVIDIA_API_KEY is required before validating a custom NVIDIA Endpoints model.");
+    return deps.backToSelection;
   }
 
   return promptManualModelId(
     "  NVIDIA Endpoints model id: ",
     "NVIDIA Endpoints",
-    (model) =>
-      deps.validateNvidiaEndpointModelFn(model, deps.getCredentialFn("NVIDIA_API_KEY") || ""),
+    (model) => deps.validateNvidiaEndpointModelFn(model, nvidiaApiKey),
     deps,
   );
 }
@@ -165,7 +183,7 @@ export async function promptRemoteModel(
     deps.exitFn();
   }
   const index = parseInt(choice || String(defaultIndex + 1), 10) - 1;
-  if (index >= 0 && index < modelOptions.length) {
+  if (Number.isFinite(index) && index >= 0 && index < modelOptions.length) {
     return modelOptions[index];
   }
 
@@ -196,7 +214,12 @@ export async function promptInputModel(
     if (validator) {
       const validation = validator(trimmed);
       if (!validation.ok) {
-        deps.errorLine(`  ${validation.message}`);
+        if (validation.message) {
+          deps.errorLine(`  ${validation.message}`);
+        }
+        if (shouldDeferValidationFailure(validation)) {
+          return trimmed;
+        }
         continue;
       }
     }

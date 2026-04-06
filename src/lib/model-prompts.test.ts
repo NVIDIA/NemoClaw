@@ -52,6 +52,37 @@ describe("model prompt helpers", () => {
     );
   });
 
+  it("returns back-to-selection with a clear message when the NVIDIA key is missing", async () => {
+    const errorLine = vi.fn();
+    const result = await promptCloudModel({
+      promptFn: promptSequence(["abc"]),
+      errorLine,
+      writeLine: vi.fn(),
+      cloudModelOptions: [{ id: "nemotron", label: "Nemotron" }],
+      getCredentialFn: () => null,
+    });
+
+    expect(result).toBe(BACK_TO_SELECTION);
+    expect(errorLine).toHaveBeenCalledWith(
+      "  NVIDIA_API_KEY is required before validating a custom NVIDIA Endpoints model.",
+    );
+  });
+
+  it("defers transient manual validation failures back to the caller flow", async () => {
+    const errorLine = vi.fn();
+    const result = await promptManualModelId(
+      "  Model: ",
+      "Provider",
+      () => ({ ok: false, message: "Could not validate model against /models: timeout" }),
+      { promptFn: promptSequence(["custom-model"]), errorLine },
+    );
+
+    expect(result).toBe("custom-model");
+    expect(errorLine).toHaveBeenCalledWith(
+      "  Could not validate model against /models: timeout",
+    );
+  });
+
   it("returns back-to-selection for manual ids and input prompts", async () => {
     await expect(
       promptManualModelId("  Model: ", "Provider", null, { promptFn: promptSequence(["back"]) }),
@@ -70,6 +101,15 @@ describe("model prompt helpers", () => {
     expect(result).toBe("gpt-5.4-mini");
   });
 
+  it("treats non-numeric curated selections as manual-entry fallback", async () => {
+    const result = await promptRemoteModel("OpenAI", "openai", "gpt-5.4-mini", null, {
+      promptFn: promptSequence(["abc", "custom-model"]),
+      writeLine: vi.fn(),
+    });
+
+    expect(result).toBe("custom-model");
+  });
+
   it("retries invalid input models until validation succeeds", async () => {
     const promptFn = promptSequence(["bad model", "other", "candidate"]);
     const errorLine = vi.fn();
@@ -83,5 +123,20 @@ describe("model prompt helpers", () => {
     expect(result).toBe("candidate");
     expect(errorLine).toHaveBeenCalledWith("  Invalid Custom model id.");
     expect(errorLine).toHaveBeenCalledWith("  try again");
+  });
+
+  it("returns input models immediately when validation should be deferred", async () => {
+    const errorLine = vi.fn();
+    const result = await promptInputModel(
+      "Custom",
+      "default-model",
+      () => ({ ok: false, message: "Could not validate model against /models: auth failed" }),
+      { promptFn: promptSequence(["candidate"]), errorLine },
+    );
+
+    expect(result).toBe("candidate");
+    expect(errorLine).toHaveBeenCalledWith(
+      "  Could not validate model against /models: auth failed",
+    );
   });
 });
