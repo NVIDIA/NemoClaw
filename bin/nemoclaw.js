@@ -678,6 +678,13 @@ async function ensureLiveSandboxOrExit(sandboxName) {
   }
   if (lookup.state === "missing") {
     registry.removeSandbox(sandboxName);
+    const session = onboardSession.loadSession();
+    if (session && session.sandboxName === sandboxName) {
+      onboardSession.updateSession((s) => {
+        s.sandboxName = null;
+        return s;
+      });
+    }
     console.error(`  Sandbox '${sandboxName}' is not present in the live OpenShell gateway.`);
     console.error("  Removed stale local registry entry.");
     console.error(
@@ -1047,6 +1054,13 @@ async function sandboxStatus(sandboxName) {
     console.log(lookup.output);
   } else if (lookup.state === "missing") {
     registry.removeSandbox(sandboxName);
+    const session = onboardSession.loadSession();
+    if (session && session.sandboxName === sandboxName) {
+      onboardSession.updateSession((s) => {
+        s.sandboxName = null;
+        return s;
+      });
+    }
     console.log("");
     console.log(`  Sandbox '${sandboxName}' is not present in the live OpenShell gateway.`);
     console.log("  Removed stale local registry entry.");
@@ -1239,6 +1253,13 @@ async function sandboxDestroy(sandboxName, args = []) {
   }
 
   const removed = registry.removeSandbox(sandboxName);
+  const session = onboardSession.loadSession();
+  if (session && session.sandboxName === sandboxName) {
+    onboardSession.updateSession((s) => {
+      s.sandboxName = null;
+      return s;
+    });
+  }
   if (
     (deleteResult.status === 0 || alreadyGone) &&
     removed &&
