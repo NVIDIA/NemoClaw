@@ -169,9 +169,19 @@ else
   fail "iptables not found — sandbox network policies will not be enforced: $OUT"
 fi
 
-# ── Test 11: Sandbox user cannot kill gateway-user processes ─────
+# ── Test 11: chattr is available for immutable hardening ─────────
 
-info "11. Sandbox user cannot kill gateway-user processes"
+info "11. chattr is available for immutable symlink hardening"
+OUT=$(run_as_root "command -v chattr 2>/dev/null || true")
+if [ -n "$OUT" ]; then
+  pass "chattr available at $OUT"
+else
+  fail "chattr not found — nemoclaw-start immutable hardening will be skipped"
+fi
+
+# ── Test 12: Sandbox user cannot kill gateway-user processes ─────
+
+info "12. Sandbox user cannot kill gateway-user processes"
 # Start a dummy process as gateway, try to kill it as sandbox
 OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
   gosu gateway sleep 60 &
@@ -187,9 +197,9 @@ else
   fail "sandbox CAN kill gateway processes: $OUT"
 fi
 
-# ── Test 12: Dangerous capabilities are dropped by entrypoint ────
+# ── Test 13: Dangerous capabilities are dropped by entrypoint ────
 
-info "12. Entrypoint drops dangerous capabilities from bounding set"
+info "13. Entrypoint drops dangerous capabilities from bounding set"
 # Run capsh directly with the same --drop flags as the entrypoint, then
 # check CapBnd. This avoids running the full entrypoint which starts
 # gateway services that fail in CI without a running OpenShell environment.

@@ -26,7 +26,12 @@ extensions = [
     "sphinxcontrib.mermaid",
     "json_output",
     "search_assets",
+    "sphinx_reredirects",
 ]
+
+redirects = {
+    "reference/inference-profiles": "../inference/inference-options.html",
+}
 
 autodoc_default_options = {
     "members": True,

@@ -482,6 +482,6 @@ The following patterns weaken security without providing meaningful benefit.
 - Customize the Network Policy (see the `nemoclaw-manage-policy` skill) for static and dynamic policy changes.
 - Approve or Deny Network Requests (see the `nemoclaw-manage-policy` skill) for the operator approval flow.
 - Sandbox Hardening (see the `nemoclaw-deploy-remote` skill) for container-level security measures.
-- Inference Profiles (see the `nemoclaw-reference` skill) for provider configuration details.
+- Inference Options (see the `nemoclaw-configure-inference` skill) for provider configuration details.
 - How It Works (see the `nemoclaw-overview` skill) for the protection layer architecture.
 <!-- - OpenShell [Security Best Practices](https://docs.nvidia.com/openshell/latest/security/best-practices.html) for the platform-level controls reference, including network namespace isolation, seccomp filters, SSRF protection, TLS termination, and gateway authentication. -->
