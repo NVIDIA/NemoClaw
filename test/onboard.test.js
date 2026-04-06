@@ -40,6 +40,7 @@ import {
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
 } from "../bin/lib/onboard";
+import { stageOptimizedSandboxBuildContext } from "../bin/lib/sandbox-build-context";
 import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
 
 describe("onboard helpers", () => {
@@ -563,6 +564,25 @@ describe("onboard helpers", () => {
       if (parentDir !== os.tmpdir() && path.basename(parentDir).startsWith("nemoclaw-sync-")) {
         fs.rmSync(parentDir, { recursive: true, force: true });
       }
+    }
+  });
+
+  it("stages only the files required to build the sandbox image", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-"));
+
+    try {
+      const { buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
+
+      expect(stagedDockerfile).toBe(path.join(buildCtx, "Dockerfile"));
+      expect(fs.existsSync(path.join(buildCtx, "nemoclaw", "package-lock.json"))).toBe(true);
+      expect(fs.existsSync(path.join(buildCtx, "nemoclaw", "src"))).toBe(true);
+      expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
+      expect(fs.existsSync(path.join(buildCtx, "scripts", "nemoclaw-start.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
+      expect(fs.existsSync(path.join(buildCtx, "nemoclaw", "node_modules"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
@@ -1300,21 +1320,15 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
-  it("surfaces sandbox-create phases and silence heartbeats during long image operations", () => {
-    const source = fs.readFileSync(
+  it("delegates sandbox-create progress streaming to the extracted helper module", () => {
+    const onboardSource = fs.readFileSync(
       path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
       "utf-8",
     );
+    const { streamSandboxCreate } = require("../dist/lib/sandbox-create-stream");
 
-    assert.match(source, /function setPhase\(nextPhase\)/);
-    assert.match(source, /Building sandbox image\.\.\./);
-    assert.match(source, /Uploading image into OpenShell gateway\.\.\./);
-    assert.match(source, /Creating sandbox in gateway\.\.\./);
-    assert.match(source, /Still building sandbox image\.\.\. \(\$\{elapsed\}s elapsed\)/);
-    assert.match(
-      source,
-      /Still uploading image into OpenShell gateway\.\.\. \(\$\{elapsed\}s elapsed\)/,
-    );
+    assert.match(onboardSource, /sandbox-create-stream/);
+    assert.equal(typeof streamSandboxCreate, "function");
   });
 
   it("hydrates stored provider credentials when setupInference runs without process env set", () => {
