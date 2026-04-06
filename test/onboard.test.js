@@ -40,6 +40,7 @@ import {
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
 } from "../bin/lib/onboard";
+import { stageOptimizedSandboxBuildContext } from "../bin/lib/sandbox-build-context";
 import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
 
 describe("onboard helpers", () => {
@@ -563,6 +564,25 @@ describe("onboard helpers", () => {
       if (parentDir !== os.tmpdir() && path.basename(parentDir).startsWith("nemoclaw-sync-")) {
         fs.rmSync(parentDir, { recursive: true, force: true });
       }
+    }
+  });
+
+  it("stages only the files required to build the sandbox image", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-"));
+
+    try {
+      const { buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
+
+      expect(stagedDockerfile).toBe(path.join(buildCtx, "Dockerfile"));
+      expect(fs.existsSync(path.join(buildCtx, "nemoclaw", "package-lock.json"))).toBe(true);
+      expect(fs.existsSync(path.join(buildCtx, "nemoclaw", "src"))).toBe(true);
+      expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
+      expect(fs.existsSync(path.join(buildCtx, "scripts", "nemoclaw-start.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
+      expect(fs.existsSync(path.join(buildCtx, "nemoclaw", "node_modules"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 

@@ -19,6 +19,7 @@ function envInt(name, fallback) {
   return Number.isFinite(n) ? Math.max(0, Math.round(n)) : fallback;
 }
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
+const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -1992,16 +1993,8 @@ async function createSandbox(
     registry.removeSandbox(sandboxName);
   }
 
-  // Stage build context
-  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
-  const stagedDockerfile = path.join(buildCtx, "Dockerfile");
-  fs.copyFileSync(path.join(ROOT, "Dockerfile"), stagedDockerfile);
-  copyBuildContextDir(path.join(ROOT, "nemoclaw"), path.join(buildCtx, "nemoclaw"));
-  copyBuildContextDir(
-    path.join(ROOT, "nemoclaw-blueprint"),
-    path.join(buildCtx, "nemoclaw-blueprint"),
-  );
-  copyBuildContextDir(path.join(ROOT, "scripts"), path.join(buildCtx, "scripts"));
+  // Stage only the files the Docker build actually consumes so uploads stay small.
+  const { buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(ROOT);
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
