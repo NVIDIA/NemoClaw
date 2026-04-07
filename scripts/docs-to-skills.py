@@ -50,6 +50,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -804,6 +805,15 @@ def build_skill_description(name: str, pages: list[DocPage]) -> str:
     return combined
 
 
+def yaml_scalar(value: str) -> str:
+    """Return a YAML-safe quoted scalar using JSON string escaping.
+
+    JSON strings are valid YAML 1.2 double-quoted scalars, which makes this a
+    lightweight way to safely emit frontmatter without adding a YAML library.
+    """
+    return json.dumps(value, ensure_ascii=False)
+
+
 def _to_third_person(sentence: str) -> str:
     """Convert an imperative sentence to third-person.
 
@@ -909,8 +919,8 @@ def generate_skill(
 
     # Frontmatter
     lines.append("---")
-    lines.append(f"name: {name}")
-    lines.append(f"description: {description}")
+    lines.append(f"name: {yaml_scalar(name)}")
+    lines.append(f"description: {yaml_scalar(description)}")
     lines.append("---")
     lines.append("")
 
