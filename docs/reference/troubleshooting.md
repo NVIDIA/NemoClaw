@@ -212,19 +212,21 @@ Follow these steps to reconnect.
    $ nemoclaw <name> connect
    ```
 
-1. Start auxiliary services (if needed).
+1. Start host auxiliary services (if needed).
 
-   If you use the Telegram bridge or cloudflared tunnel, start them again:
+   If you use the cloudflared tunnel started by `nemoclaw start`, start it again:
 
    ```console
    $ nemoclaw start
    ```
 
+   Telegram, Discord, and Slack are handled by OpenShell-managed channel messaging configured at onboarding, not by a separate bridge process from `nemoclaw start`.
+
 :::{admonition} If the sandbox does not recover
 :class: warning
 
 If the sandbox remains missing after restarting the gateway, run `nemoclaw onboard` to recreate it.
-The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox — workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
+The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox. Workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
 Back up your workspace first by following the instructions at [Back Up and Restore](../workspace/backup-restore.md).
 :::
 
@@ -253,6 +255,15 @@ $ nemoclaw <name> status
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
 Then verify the credential and base URL for the provider you selected during onboarding.
 
+### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
+
+This is expected behavior.
+`NEMOCLAW_DISABLE_DEVICE_AUTH` is a build-time setting used when NemoClaw creates the sandbox image.
+Changing or exporting it later does not rewrite the baked `openclaw.json` inside an existing sandbox.
+
+If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration.
+For the security trade-offs, refer to [Security Best Practices](../security/best-practices.md).
+
 ### Agent cannot reach an external host
 
 OpenShell blocks outbound connections to hosts not listed in the network policy.
@@ -274,3 +285,56 @@ $ nemoclaw <name> logs
 ```
 
 Use `--follow` to stream logs in real time while debugging.
+
+## Podman
+
+### `open /dev/kmsg: operation not permitted`
+
+This error appears when the Podman machine is running in rootless mode.
+K3s kubelet requires `/dev/kmsg` access for its OOM watcher, which is not available in rootless containers.
+
+Switch the Podman machine to rootful mode and restart:
+
+```console
+$ podman machine stop
+$ podman machine set --rootful
+$ podman machine start
+```
+
+Then destroy and recreate the gateway:
+
+```console
+$ openshell gateway destroy --name nemoclaw
+$ nemoclaw onboard
+```
+
+### Image push timeout with Podman
+
+When creating a sandbox, the 1.5 GB sandbox image push into K3s may time out through Podman's API socket.
+This is a known limitation of the bollard Docker client's default timeout.
+
+Manually push the image using the Docker CLI, which has no such timeout:
+
+```console
+$ docker images --format '{{.Repository}}:{{.Tag}}' | grep sandbox-from
+$ docker save <IMAGE_NAME:TAG> | \
+    docker exec -i openshell-cluster-nemoclaw \
+    ctr -a /run/k3s/containerd/containerd.sock -n k8s.io images import -
+```
+
+After the import completes, create the sandbox manually:
+
+```console
+$ openshell sandbox create --name my-assistant --from <IMAGE_NAME:TAG>
+```
+
+### Podman machine resources
+
+The default Podman machine has 2 GB RAM, which is insufficient for the sandbox image push and K3s cluster overhead.
+Allocate at least 8 GB RAM and 4 CPUs:
+
+```console
+$ podman machine stop
+$ podman machine set --cpus 6 --memory 8192
+$ podman machine start
+```

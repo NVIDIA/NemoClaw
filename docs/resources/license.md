@@ -1,6 +1,6 @@
 ---
 title:
-  page: "NemoClaw License — Apache 2.0"
+  page: "NemoClaw License: Apache 2.0"
   nav: "License"
 description:
   main: "Apache 2.0 license for the NemoClaw project."

@@ -20,7 +20,7 @@ It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime,
 > The project is shared to gather feedback and enable early experimentation.
 > We welcome issues and discussion from the community while the project evolves.
 
-NemoClaw adds guided onboarding, a hardened blueprint, state management, messaging bridges, routed inference, and layered protection on top of the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime. For the full feature list, refer to [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html). For the system diagram, component model, and blueprint lifecycle, refer to [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) and [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html).
+NemoClaw adds guided onboarding, a hardened blueprint, state management, OpenShell-managed channel messaging, routed inference, and layered protection on top of the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime. For the full feature list, refer to [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html). For the system diagram, component model, and blueprint lifecycle, refer to [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) and [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html).
 
 ## Getting Started
 
@@ -56,9 +56,9 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 
 | Platform | Supported runtimes | Notes |
 |----------|--------------------|-------|
-| Linux | Docker | Primary supported path. |
-| macOS (Apple Silicon) | Colima, Docker Desktop | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
-| macOS (Intel) | Docker Desktop | Start the runtime before running the installer. |
+| Linux | Docker, Podman | Primary supported path. |
+| macOS (Apple Silicon) | Colima, Docker Desktop, Podman | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
+| macOS (Intel) | Colima, Docker Desktop | Podman on Intel macOS is not yet supported. |
 | Windows WSL | Docker Desktop (WSL backend) | Supported target path. |
 | DGX Spark | Docker | Use the standard installer and `nemoclaw onboard`. |
 

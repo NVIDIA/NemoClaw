@@ -65,7 +65,8 @@ describe("http-probe helpers", () => {
       curlStatus: 0,
       body: '{"data":[{"id":"foo"}]}',
     });
-    expect(after).toEqual(before);
+    const leaked = after.filter((d) => !before.includes(d));
+    expect(leaked).toEqual([]);
   });
 
   it("reports spawn errors as curl failures", () => {

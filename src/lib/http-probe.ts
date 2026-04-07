@@ -10,20 +10,11 @@ import {
   type SpawnSyncReturns,
 } from "node:child_process";
 
+import type { ProbeResult } from "./onboard-types";
+import { ROOT } from "./paths";
 import { compactText } from "./url-utils";
 
-// runner.js is CJS — use require so we don't pull it into the TS build.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { ROOT } = require("../../bin/lib/runner");
-
-export interface CurlProbeResult {
-  ok: boolean;
-  httpStatus: number;
-  curlStatus: number;
-  body: string;
-  stderr: string;
-  message: string;
-}
+export type CurlProbeResult = ProbeResult;
 
 export interface CurlProbeOptions {
   cwd?: string;

@@ -1300,7 +1300,7 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*webSearchConfig,\s*enabledChannels,\s*\);/,
+      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*webSearchConfig,\s*enabledChannels,\s*fromDockerfile,\s*\);/,
     );
   });
 
@@ -1486,7 +1486,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -1591,7 +1591,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -2319,7 +2319,7 @@ runner.runCapture = (command) => {
     sandboxListCalls += 1;
     return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
   }
-  if (command.includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -2700,7 +2700,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -2827,7 +2827,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -3029,6 +3029,191 @@ const { setupMessagingChannels } = require(${onboardPath});
       assert.equal(channels.length, 0, "expected empty array when no tokens are set");
     },
   );
+
+  it("uses the custom Dockerfile parent directory as build context when --from is given", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-dockerfile-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "create-sandbox-from.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+
+    // Create a minimal custom Dockerfile in a temporary directory
+    const customBuildDir = path.join(tmpDir, "custom-image");
+    fs.mkdirSync(customBuildDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(customBuildDir, "Dockerfile"),
+      [
+        "FROM ubuntu:22.04",
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-super-49b-v1",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-super-49b-v1",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "RUN echo done",
+      ].join("\n"),
+    );
+    fs.writeFileSync(path.join(customBuildDir, "extra.txt"), "extra build context file");
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const customDockerfilePath = JSON.stringify(path.join(customBuildDir, "Dockerfile"));
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
+  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  return "";
+};
+registry.registerSandbox = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  const sandboxName = await createSandbox(null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${customDockerfilePath});
+  // Verify the staged build context contains the extra file from the custom dir
+  const createCmd = commands.find((e) => e.command.includes("'sandbox' 'create'"));
+  const fromMatch = createCmd && createCmd.command.match(/--from['\s]+'([^']+)'/);
+  let stagedDir = null;
+  let hasExtraFile = false;
+  if (fromMatch) {
+    const dockerfilePath = fromMatch[1];
+    stagedDir = require("node:path").dirname(dockerfilePath);
+    hasExtraFile = fs.existsSync(require("node:path").join(stagedDir, "extra.txt"));
+  }
+  console.log(JSON.stringify({ sandboxName, hasExtraFile }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payloadLine = result.stdout
+      .trim()
+      .split("\n")
+      .slice()
+      .reverse()
+      .find((line) => line.startsWith("{") && line.endsWith("}"));
+    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(payloadLine);
+    assert.equal(payload.sandboxName, "my-assistant");
+    assert.equal(
+      payload.hasExtraFile,
+      true,
+      "extra.txt from custom build context should be staged",
+    );
+  });
+
+  it("exits with an error when the --from Dockerfile path does not exist", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-missing-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "create-sandbox-missing.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const missingPath = JSON.stringify(path.join(tmpDir, "does-not-exist", "Dockerfile"));
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+
+runner.run = () => ({ status: 0 });
+runner.runCapture = () => "";
+registry.registerSandbox = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  await createSandbox(null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${missingPath});
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 1, "should exit 1 when fromDockerfile path is missing");
+    assert.match(result.stderr, /Custom Dockerfile not found/);
+  });
 
   it("re-prompts on invalid sandbox names instead of exiting in interactive mode", () => {
     const source = fs.readFileSync(

@@ -123,6 +123,6 @@ $ ls -la /sandbox/.openclaw/workspace/
 
 ## Next Steps
 
-- [Workspace Files overview](workspace-files.md) — learn what each file does
+- [Workspace Files overview](workspace-files.md) to learn what each file does
 - [Commands reference](../reference/commands.md)
 - [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity.md)

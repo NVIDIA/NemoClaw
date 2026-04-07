@@ -1,6 +1,6 @@
 ---
 title:
-  page: "NemoClaw Security Best Practices — Controls, Risks, and Posture Profiles"
+  page: "NemoClaw Security Best Practices: Controls, Risks, and Posture Profiles"
   nav: "Security Best Practices"
 description:
   main: "A risk framework for every configurable security control in NemoClaw: defaults, what you can change, and what happens if you do."
@@ -45,7 +45,7 @@ The following diagram shows the default posture immediately after `nemoclaw onbo
 
 ```{mermaid}
 flowchart TB
-    subgraph HOST["Your Machine — default posture after nemoclaw onboard"]
+    subgraph HOST["Your Machine: default posture after nemoclaw onboard"]
         direction TB
 
         YOU["👤 Operator"]
@@ -53,14 +53,14 @@ flowchart TB
         subgraph NC["NemoClaw + OpenShell"]
             direction TB
 
-            subgraph SB["Sandbox — the agent's isolated world"]
+            subgraph SB["Sandbox: the agent's isolated world"]
                 direction LR
                 PROC["⚙️ Process Layer<br/>Controls what the agent can execute"]
                 FS["📁 Filesystem Layer<br/>Controls what the agent can read and write"]
                 AGENT["🤖 Agent"]
             end
 
-            subgraph GW["Gateway — the gatekeeper"]
+            subgraph GW["Gateway: the gatekeeper"]
                 direction LR
                 NET["🌐 Network Layer<br/>Controls where the agent can connect"]
                 INF["🧠 Inference Layer<br/>Controls which AI models the agent can use"]
