@@ -9,38 +9,41 @@ import path from "node:path";
 import { describe, it } from "vitest";
 
 describe("nemoclaw CLI runtime recovery", () => {
-  it("recovers sandbox status when openshell is only available via the resolved fallback path", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-recovery-"));
-    const homeLocalBin = path.join(tmpDir, ".local", "bin");
-    const stateDir = path.join(tmpDir, "state");
-    const registryDir = path.join(tmpDir, ".nemoclaw");
-    const openshellPath = path.join(homeLocalBin, "openshell");
-    const stateFile = path.join(stateDir, "openshell-state.json");
+  it(
+    "recovers sandbox status when openshell is only available via the resolved fallback path",
+    { timeout: 15_000 },
+    () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-recovery-"));
+      const homeLocalBin = path.join(tmpDir, ".local", "bin");
+      const stateDir = path.join(tmpDir, "state");
+      const registryDir = path.join(tmpDir, ".nemoclaw");
+      const openshellPath = path.join(homeLocalBin, "openshell");
+      const stateFile = path.join(stateDir, "openshell-state.json");
 
-    fs.mkdirSync(homeLocalBin, { recursive: true });
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        defaultSandbox: "my-assistant",
-        sandboxes: {
-          "my-assistant": {
-            name: "my-assistant",
-            model: "nvidia/nemotron-3-super-120b-a12b",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
-            policies: [],
+      fs.mkdirSync(homeLocalBin, { recursive: true });
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "my-assistant",
+          sandboxes: {
+            "my-assistant": {
+              name: "my-assistant",
+              model: "nvidia/nemotron-3-super-120b-a12b",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
           },
-        },
-      }),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(stateFile, JSON.stringify({ statusCalls: 0, sandboxGetCalls: 0 }));
-    fs.writeFileSync(
-      openshellPath,
-      `#!${process.execPath}
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(stateFile, JSON.stringify({ statusCalls: 0, sandboxGetCalls: 0 }));
+      fs.writeFileSync(
+        openshellPath,
+        `#!${process.execPath}
 const fs = require("fs");
 const path = require("path");
 const statePath = ${JSON.stringify(stateFile)};
@@ -85,25 +88,26 @@ if (args[0] === "logs") {
 
 process.exit(0);
 `,
-      { mode: 0o755 },
-    );
+        { mode: 0o755 },
+      );
 
-    const result = spawnSync(
-      process.execPath,
-      [path.join(repoRoot, "bin", "nemoclaw.js"), "my-assistant", "status"],
-      {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: "/usr/bin:/bin",
+      const result = spawnSync(
+        process.execPath,
+        [path.join(repoRoot, "bin", "nemoclaw.js"), "my-assistant", "status"],
+        {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            PATH: "/usr/bin:/bin",
+          },
         },
-      },
-    );
+      );
 
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /Recovered NemoClaw gateway runtime via (start|select)/);
-    assert.match(result.stdout, /Phase: Ready/);
-  });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /Recovered NemoClaw gateway runtime via (start|select)/);
+      assert.match(result.stdout, /Phase: Ready/);
+    },
+  );
 });

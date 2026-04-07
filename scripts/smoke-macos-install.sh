@@ -132,6 +132,13 @@ select_runtime() {
       export DOCKER_HOST="unix://$socket_path"
       info "Using runtime 'colima' via $socket_path"
       ;;
+    podman)
+      local socket_path
+      socket_path="$(find_podman_socket || true)"
+      [ -n "$socket_path" ] || fail "Requested runtime 'podman', but no Podman socket was found."
+      export DOCKER_HOST="unix://$socket_path"
+      info "Using runtime 'podman' via $socket_path"
+      ;;
     docker-desktop)
       local socket_path
       socket_path="$(find_docker_desktop_socket || true)"
@@ -140,7 +147,7 @@ select_runtime() {
       info "Using runtime 'docker-desktop' via $socket_path"
       ;;
     *)
-      fail "Unsupported runtime '$RUNTIME'. Use 'colima' or 'docker-desktop'."
+      fail "Unsupported runtime '$RUNTIME'. Use 'colima', 'podman', or 'docker-desktop'."
       ;;
   esac
 }

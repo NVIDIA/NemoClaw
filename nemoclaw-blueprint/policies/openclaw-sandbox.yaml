@@ -159,13 +159,18 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/openclaw }
 
-  # npm registry — needed for `openclaw plugins install` and `npm install`
+  # npm registry — needed for `openclaw plugins install` and `npm install`.
+  # Read-only: agents only fetch packages, never publish.
   npm_registry:
     name: npm_registry
     endpoints:
       - host: registry.npmjs.org
         port: 443
-        access: full
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/npm }

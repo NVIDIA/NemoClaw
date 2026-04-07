@@ -30,18 +30,11 @@ function inferContainerRuntime(info = "") {
   return "unknown";
 }
 
-function isUnsupportedMacosRuntime(runtime, opts = {}) {
-  const platform = opts.platform ?? process.platform;
-  return platform === "darwin" && runtime === "podman";
-}
-
 function shouldPatchCoredns(runtime, opts = {}) {
-  // k3s CoreDNS defaults to a loopback DNS that pods can't reach.
-  // Patch it to use a real upstream on most Docker-based runtimes.
-  // On WSL2, the host DNS is not routable from k3s pods - skip the
-  // patch and let setup-dns-proxy.sh handle resolution instead.
+  // CoreDNS patching is needed for Colima and Podman (both use custom network bridges).
+  // On WSL2, the host DNS is not routable from k3s pods — skip and let setup-dns-proxy.sh handle it.
   if (isWsl(opts)) return false;
-  return runtime !== "unknown";
+  return runtime === "colima" || runtime === "podman";
 }
 
 function getColimaDockerSocketCandidates(opts = {}) {
@@ -57,6 +50,21 @@ function findColimaDockerSocket(opts = {}) {
   return getColimaDockerSocketCandidates(opts).find((socketPath) => existsSync(socketPath)) ?? null;
 }
 
+function getPodmanSocketCandidates(opts = {}) {
+  const home = opts.home ?? process.env.HOME ?? "/tmp";
+  const platform = opts.platform ?? process.platform;
+  const uid = opts.uid ?? process.getuid?.() ?? 1000;
+
+  if (platform === "darwin") {
+    return [
+      path.join(home, ".local/share/containers/podman/machine/podman.sock"),
+      "/var/run/docker.sock",
+    ];
+  }
+
+  return [`/run/user/${uid}/podman/podman.sock`, "/run/podman/podman.sock"];
+}
+
 function getDockerSocketCandidates(opts = {}) {
   const home = opts.home ?? process.env.HOME ?? "/tmp";
   const platform = opts.platform ?? process.platform;
@@ -64,7 +72,16 @@ function getDockerSocketCandidates(opts = {}) {
   if (platform === "darwin") {
     return [
       ...getColimaDockerSocketCandidates({ home }),
+      ...getPodmanSocketCandidates({ home, platform }),
       path.join(home, ".docker/run/docker.sock"),
+    ];
+  }
+
+  if (platform === "linux") {
+    return [
+      ...getPodmanSocketCandidates({ home, platform, uid: opts.uid }),
+      "/run/docker.sock",
+      "/var/run/docker.sock",
     ];
   }
 
@@ -100,8 +117,8 @@ module.exports = {
   findColimaDockerSocket,
   getColimaDockerSocketCandidates,
   getDockerSocketCandidates,
+  getPodmanSocketCandidates,
   inferContainerRuntime,
-  isUnsupportedMacosRuntime,
   isWsl,
   shouldPatchCoredns,
 };

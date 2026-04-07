@@ -1,6 +1,6 @@
 ---
-name: nemoclaw-get-started
-description: Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time.
+name: "nemoclaw-get-started"
+description: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time."
 ---
 
 # NemoClaw Get Started
