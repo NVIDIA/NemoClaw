@@ -2,7 +2,9 @@
 title:
   page: "Sandbox Image Hardening"
   nav: "Sandbox Hardening"
-description: "Security hardening measures applied to the NemoClaw sandbox container image."
+description:
+  main: "Security hardening measures applied to the NemoClaw sandbox container image."
+  agent: "Describes security hardening measures applied to the NemoClaw sandbox container image. Use when reviewing container security, Docker capabilities, process limits, or sandbox hardening controls."
 keywords: ["nemoclaw sandbox hardening", "container security", "docker capabilities", "process limits"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["nemoclaw", "sandboxing", "security"]
@@ -75,14 +77,14 @@ services:
       - /tmp:size=64m
 ```
 
-> **Note:** The `Dockerfile` itself cannot enforce `--cap-drop` — that is a
+> **Note:** The `Dockerfile` itself cannot enforce `--cap-drop`. That is a
 > runtime concern controlled by the container orchestrator. Always configure
 > capability dropping in your `docker run` flags, Compose file, or Kubernetes
 > `securityContext`.
 
 ## References
 
-- [#807](https://github.com/NVIDIA/NemoClaw/issues/807) — gcc in sandbox image
-- [#808](https://github.com/NVIDIA/NemoClaw/issues/808) — netcat in sandbox image
-- [#809](https://github.com/NVIDIA/NemoClaw/issues/809) — No process limit
-- [#797](https://github.com/NVIDIA/NemoClaw/issues/797) — Drop Linux capabilities
+- [#807](https://github.com/NVIDIA/NemoClaw/issues/807): gcc in sandbox image
+- [#808](https://github.com/NVIDIA/NemoClaw/issues/808): netcat in sandbox image
+- [#809](https://github.com/NVIDIA/NemoClaw/issues/809): No process limit
+- [#797](https://github.com/NVIDIA/NemoClaw/issues/797): Drop Linux capabilities

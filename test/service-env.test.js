@@ -7,45 +7,25 @@ import { mkdtempSync, writeFileSync, unlinkSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveOpenshell } from "../bin/lib/resolve-openshell";
+import { parseAllowedChatIds, isChatAllowed } from "../bin/lib/chat-filter.js";
 
 describe("service environment", () => {
   describe("start-services behavior", () => {
     const scriptPath = join(import.meta.dirname, "../scripts/start-services.sh");
 
-    it("starts local-only services without NVIDIA_API_KEY", () => {
+    it("starts without messaging-related warnings", () => {
       const workspace = mkdtempSync(join(tmpdir(), "nemoclaw-services-no-key-"));
       const result = execFileSync("bash", [scriptPath], {
         encoding: "utf-8",
         env: {
           ...process.env,
-          NVIDIA_API_KEY: "",
-          TELEGRAM_BOT_TOKEN: "",
           SANDBOX_NAME: "test-box",
           TMPDIR: workspace,
         },
       });
 
-      expect(result).not.toContain("NVIDIA_API_KEY required");
-      expect(result).toContain("TELEGRAM_BOT_TOKEN not set");
-      expect(result).toContain("Telegram:    not started (no token)");
-    });
-
-    it("warns and skips Telegram bridge when token is set without NVIDIA_API_KEY", () => {
-      const workspace = mkdtempSync(join(tmpdir(), "nemoclaw-services-missing-key-"));
-      const result = execFileSync("bash", [scriptPath], {
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          NVIDIA_API_KEY: "",
-          TELEGRAM_BOT_TOKEN: "test-token",
-          SANDBOX_NAME: "test-box",
-          TMPDIR: workspace,
-        },
-      });
-
-      expect(result).not.toContain("NVIDIA_API_KEY required");
-      expect(result).toContain("NVIDIA_API_KEY not set");
-      expect(result).toContain("Telegram:    not started (no token)");
+      // Messaging channels are now native to OpenClaw inside the sandbox
+      expect(result).toContain("Messaging:   via OpenClaw native channels");
     });
   });
 
@@ -150,6 +130,34 @@ describe("service environment", () => {
         },
       ).trim();
       expect(result).toBe("default");
+    });
+  });
+
+  describe("chat-filter module", () => {
+    it("parseAllowedChatIds parses comma-separated IDs with whitespace", () => {
+      expect(parseAllowedChatIds("111, 222 , 333")).toEqual(["111", "222", "333"]);
+    });
+
+    it("isChatAllowed filters blocked chat IDs", () => {
+      const allowed = parseAllowedChatIds("111,222");
+      expect(isChatAllowed(allowed, "111")).toBe(true);
+      expect(isChatAllowed(allowed, "222")).toBe(true);
+      expect(isChatAllowed(allowed, "333")).toBe(false);
+      expect(isChatAllowed(allowed, "999")).toBe(false);
+    });
+
+    it("parseAllowedChatIds handles single chat ID (no commas)", () => {
+      expect(parseAllowedChatIds("111")).toEqual(["111"]);
+    });
+
+    it("parseAllowedChatIds filters empty entries from trailing commas", () => {
+      expect(parseAllowedChatIds("111,,222,")).toEqual(["111", "222"]);
+    });
+
+    it("parseAllowedChatIds returns null when unset, isChatAllowed allows all", () => {
+      expect(parseAllowedChatIds(undefined)).toBeNull();
+      expect(parseAllowedChatIds("")).toBeNull();
+      expect(isChatAllowed(null, "anyid")).toBe(true);
     });
   });
 
