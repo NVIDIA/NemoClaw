@@ -95,15 +95,17 @@ Then retry onboarding.
 
 ### Cgroup v2 errors during onboard
 
-On Ubuntu 24.04, DGX Spark, and WSL2, Docker may not be configured for cgroup v2 delegation.
-The onboard preflight check detects this and fails with a clear error message.
+Older NemoClaw releases relied on a Docker cgroup workaround on Ubuntu 24.04, DGX Spark, and WSL2.
+Current OpenShell releases handle that behavior themselves, so NemoClaw no longer requires a Spark-specific setup step.
 
-Run the Spark setup script to fix the Docker cgroup configuration, then retry onboarding:
+If onboarding reports that Docker is missing or unreachable, fix Docker first and retry onboarding:
 
 ```console
-$ sudo nemoclaw setup-spark
 $ nemoclaw onboard
 ```
+
+If you are using Podman, NemoClaw warns and continues, but OpenShell officially documents Docker-based runtimes only.
+If onboarding or sandbox lifecycle fails, switch to Docker Desktop, Colima, or Docker Engine and rerun onboarding.
 
 ### Invalid sandbox name
 
@@ -218,6 +220,15 @@ $ nemoclaw <name> status
 
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
 Then verify the credential and base URL for the provider you selected during onboarding.
+
+### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
+
+This is expected behavior.
+`NEMOCLAW_DISABLE_DEVICE_AUTH` is a build-time setting used when NemoClaw creates the sandbox image.
+Changing or exporting it later does not rewrite the baked `openclaw.json` inside an existing sandbox.
+
+If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration.
+For the security trade-offs, refer to Security Best Practices (see the `nemoclaw-security-best` skill).
 
 ### Agent cannot reach an external host
 

@@ -110,13 +110,11 @@ $ nemoclaw deploy <instance-name>
 For SSH port-forwarding, the origin is typically `http://127.0.0.1:18789` (the
 default), so no extra configuration is needed.
 
-:::{note}
+:::{warning}
 On Brev, set `CHAT_UI_URL` in the launchable environment configuration so it is
 available when the installer builds the sandbox image. If `CHAT_UI_URL` is not
 set on a headless host, the compatibility wrapper prints a warning.
-:::
 
-:::{warning}
 `NEMOCLAW_DISABLE_DEVICE_AUTH` is also evaluated at image build time.
 If you disable device auth for a remote deployment, any device that can reach the dashboard origin can connect without pairing.
 Avoid this on internet-reachable or shared-network deployments.

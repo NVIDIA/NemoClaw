@@ -33,6 +33,21 @@ describe("provider model helpers", () => {
     expect(result).toEqual({ ok: true, ids: ["nemotron", "llama"] });
   });
 
+  it("returns explicit validated=true for NVIDIA model matches", () => {
+    const result = validateNvidiaEndpointModel("nemotron", "nvapi-x", {
+      runCurlProbeImpl: () => ({
+        ok: true,
+        httpStatus: 200,
+        curlStatus: 0,
+        body: JSON.stringify({ data: [{ id: "nemotron" }] }),
+        stderr: "",
+        message: "",
+      }),
+    });
+
+    expect(result).toEqual({ ok: true, validated: true });
+  });
+
   it("reports NVIDIA validation failures with the checked endpoint", () => {
     const result = validateNvidiaEndpointModel("missing", "nvapi-x", {
       runCurlProbeImpl: () => ({
@@ -47,6 +62,8 @@ describe("provider model helpers", () => {
 
     expect(result).toEqual({
       ok: false,
+      httpStatus: 200,
+      curlStatus: 0,
       message: `Model 'missing' is not available from NVIDIA Endpoints. Checked ${BUILD_ENDPOINT_URL}/models.`,
     });
   });
@@ -98,6 +115,26 @@ describe("provider model helpers", () => {
     ).toEqual({ ok: true, validated: false });
   });
 
+  it("preserves structured status fields through validation failures", () => {
+    const result = validateOpenAiLikeModel("Example", "https://example.test/v1", "gpt-4.1", "sk-x", {
+      runCurlProbeImpl: () => ({
+        ok: false,
+        httpStatus: 429,
+        curlStatus: 0,
+        body: "",
+        stderr: "",
+        message: "rate limited",
+      }),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      httpStatus: 429,
+      curlStatus: 0,
+      message: "Could not validate model against https://example.test/v1/models: rate limited",
+    });
+  });
+
   it("accepts Anthropic model ids from either id or name fields", () => {
     const result = fetchAnthropicModels("https://example.test", "sk-ant-x", {
       runCurlProbeImpl: () => ({
@@ -111,5 +148,45 @@ describe("provider model helpers", () => {
     });
 
     expect(result).toEqual({ ok: true, ids: ["claude-sonnet-4-6", "claude-haiku-4-5"] });
+  });
+
+  it("preserves probe status when model catalog JSON parsing fails", () => {
+    const result = fetchOpenAiLikeModels("https://example.test/v1", "sk-x", {
+      runCurlProbeImpl: () => ({
+        ok: true,
+        httpStatus: 502,
+        curlStatus: 7,
+        body: "not-json",
+        stderr: "",
+        message: "",
+      }),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      httpStatus: 502,
+      curlStatus: 7,
+      message: expect.stringMatching(/JSON|Unexpected token|not-json/i),
+    });
+  });
+
+  it("fails fast when the model catalog payload omits the top-level data array", () => {
+    const result = fetchOpenAiLikeModels("https://example.test/v1", "sk-x", {
+      runCurlProbeImpl: () => ({
+        ok: true,
+        httpStatus: 200,
+        curlStatus: 0,
+        body: JSON.stringify({ error: { message: "bad payload" } }),
+        stderr: "",
+        message: "",
+      }),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      httpStatus: 200,
+      curlStatus: 0,
+      message: "Unexpected model catalog response: expected a top-level data array",
+    });
   });
 });

@@ -167,5 +167,7 @@ The following environment variables configure optional services and local access
 | `TELEGRAM_BOT_TOKEN` | Bot token for the Telegram bridge. |
 | `ALLOWED_CHAT_IDS` | Comma-separated list of Telegram chat IDs allowed to message the agent. |
 | `CHAT_UI_URL` | URL for the optional chat UI endpoint. |
+| `NEMOCLAW_DISABLE_DEVICE_AUTH` | Build-time-only toggle that disables gateway device pairing when set to `1` before the sandbox image is created. |
 
 For normal setup and reconfiguration, prefer `nemoclaw onboard` over editing these files by hand.
+Do not treat `NEMOCLAW_DISABLE_DEVICE_AUTH` as a runtime setting for an already-created sandbox.

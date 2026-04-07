@@ -1,15 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ValidationFailureLike } from "./onboard-types";
 import { compactText } from "./url-utils";
 import { classifyValidationFailure, type ValidationClassification } from "./validation";
-
-export interface ValidationFailureLike {
-  httpStatus?: number;
-  curlStatus?: number;
-  message?: string;
-  stderr?: string;
-}
 
 export interface ProbeRecoveryOptions {
   allowModelRetry?: boolean;

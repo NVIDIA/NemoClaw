@@ -779,12 +779,29 @@ function exitWithSpawnResult(result) {
 
 async function onboard(args) {
   const { onboard: runOnboard } = require("./lib/onboard");
+
+  // Extract --from <path> before the unknown-arg validator: it takes a value
+  // so the set-based check would reject the value token as an unknown flag.
+  let fromDockerfile = null;
+  const fromIdx = args.indexOf("--from");
+  if (fromIdx !== -1) {
+    fromDockerfile = args[fromIdx + 1];
+    if (!fromDockerfile || fromDockerfile.startsWith("--")) {
+      console.error("  --from requires a path to a Dockerfile");
+      console.error(
+        `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
+      );
+      process.exit(1);
+    }
+    args = [...args.slice(0, fromIdx), ...args.slice(fromIdx + 2)];
+  }
+
   const allowedArgs = new Set(["--non-interactive", "--resume", NOTICE_ACCEPT_FLAG]);
   const unknownArgs = args.filter((arg) => !allowedArgs.has(arg));
   if (unknownArgs.length > 0) {
     console.error(`  Unknown onboard option(s): ${unknownArgs.join(", ")}`);
     console.error(
-      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [${NOTICE_ACCEPT_FLAG}]`,
+      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
     );
     process.exit(1);
   }
@@ -792,7 +809,7 @@ async function onboard(args) {
   const resume = args.includes("--resume");
   const acceptThirdPartySoftware =
     args.includes(NOTICE_ACCEPT_FLAG) || String(process.env[NOTICE_ACCEPT_ENV] || "") === "1";
-  await runOnboard({ nonInteractive, resume, acceptThirdPartySoftware });
+  await runOnboard({ nonInteractive, resume, fromDockerfile, acceptThirdPartySoftware });
 }
 
 async function setup(args = []) {
@@ -1262,6 +1279,7 @@ function help() {
 
   ${G}Getting Started:${R}
     ${B}nemoclaw onboard${R}                 Configure inference endpoint and credentials
+    nemoclaw onboard ${D}--from <Dockerfile>${R}  Use a custom Dockerfile for the sandbox image
                                     ${D}(non-interactive: ${NOTICE_ACCEPT_FLAG} or ${NOTICE_ACCEPT_ENV}=1)${R}
 
   ${G}Sandbox Management:${R}
