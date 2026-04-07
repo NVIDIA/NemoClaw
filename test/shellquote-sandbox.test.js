@@ -30,10 +30,7 @@ describe("sandboxName shell quoting in onboard.js", () => {
     let match;
     while ((match = callPattern.exec(src)) !== null) {
       const template = match[2];
-      if (
-        template.includes("${sandboxName}") &&
-        !template.includes("shellQuote(sandboxName)")
-      ) {
+      if (template.includes("${sandboxName}") && !template.includes("shellQuote(sandboxName)")) {
         const line = src.slice(0, match.index).split("\n").length;
         violations.push(`Line ${line}: ${match[0].slice(0, 120).trim()}`);
       }

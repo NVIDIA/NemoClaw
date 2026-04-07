@@ -1538,12 +1538,7 @@ async function preflight() {
   if (host.runtime !== "unknown") {
     console.log(`  ✓ Container runtime: ${host.runtime}`);
   }
-  if (host.isUnsupportedRuntime) {
-    console.warn(
-      "  ! Podman is not a supported OpenShell runtime. NemoClaw will continue, but your experience may vary.",
-    );
-    printRemediationActions(planHostRemediation(host));
-  }
+  // Podman is now supported — no unsupported runtime warning needed.
   if (host.notes.includes("Running under WSL")) {
     console.log("  ⓘ Running under WSL");
   }
@@ -2426,6 +2421,12 @@ async function setupNim(gpu) {
               console.error(
                 "  NVIDIA_API_KEY is required for NVIDIA Endpoints in non-interactive mode.",
               );
+              process.exit(1);
+            }
+            const keyError = validateNvidiaApiKeyValue(process.env.NVIDIA_API_KEY);
+            if (keyError) {
+              console.error(keyError);
+              console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
               process.exit(1);
             }
           } else {

@@ -130,25 +130,20 @@ describe("fix-coredns.sh", () => {
     expect(stat.mode & 0o100).toBeTruthy();
   });
 
-  it("works with any Docker host (not Colima-specific)", () => {
+  it("supports multiple container runtimes (not Colima-only)", () => {
     const content = fs.readFileSync(FIX_COREDNS, "utf-8");
-    expect(content).not.toContain("find_colima_docker_socket");
-    expect(content).toContain("detect_docker_host");
+    expect(content).toContain("DOCKER_HOST");
+    expect(content).toContain("find_podman_socket");
   });
 
-  it("resolves systemd-resolved upstreams when resolv.conf is loopback-only", () => {
+  it("delegates DNS resolution to resolve_coredns_upstream", () => {
     const content = fs.readFileSync(FIX_COREDNS, "utf-8");
-    expect(content).toContain("resolvectl");
-    expect(content).toContain("Current DNS Server");
+    expect(content).toContain("resolve_coredns_upstream");
   });
 
-  it("falls back to 8.8.8.8 only as last resort", () => {
+  it("validates UPSTREAM_DNS before use", () => {
     const content = fs.readFileSync(FIX_COREDNS, "utf-8");
-    const lines = content.split("\n");
-    const resolvectlLine = lines.findIndex((l) => l.includes("resolvectl"));
-    const fallbackLine = lines.findIndex((l) => l.includes('UPSTREAM_DNS="8.8.8.8"'));
-    expect(resolvectlLine).toBeGreaterThan(-1);
-    expect(fallbackLine).toBeGreaterThan(-1);
-    expect(fallbackLine).toBeGreaterThan(resolvectlLine);
+    expect(content).toContain("UPSTREAM_DNS");
+    expect(content).toContain("invalid characters");
   });
 });

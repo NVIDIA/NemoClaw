@@ -115,6 +115,111 @@ verify_config_integrity() {
   fi
 }
 
+_read_gateway_token() {
+  python3 - <<'PYTOKEN'
+import json
+try:
+    with open('/sandbox/.openclaw/openclaw.json') as f:
+        cfg = json.load(f)
+    print(cfg.get('gateway', {}).get('auth', {}).get('token', ''))
+except Exception:
+    print('')
+PYTOKEN
+}
+
+export_gateway_token() {
+  local token
+  token="$(_read_gateway_token)"
+  local marker_begin="# nemoclaw-gateway-token begin"
+  local marker_end="# nemoclaw-gateway-token end"
+
+  if [ -z "$token" ]; then
+    # Remove any stale marker blocks from rc files so revoked/old tokens
+    # are not re-exported in later interactive sessions.
+    unset OPENCLAW_GATEWAY_TOKEN
+    for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
+      if [ -f "$rc_file" ] && grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
+        local tmp
+        tmp="$(mktemp)"
+        awk -v b="$marker_begin" -v e="$marker_end" \
+          '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp"
+        cat "$tmp" >"$rc_file"
+        rm -f "$tmp"
+      fi
+    done
+    return
+  fi
+  export OPENCLAW_GATEWAY_TOKEN="$token"
+
+  # Persist to .bashrc/.profile so interactive sessions (openshell sandbox
+  # connect) also see the token — same pattern as the proxy config above.
+  # Shell-escape the token so quotes/dollars/backticks cannot break the
+  # sourced snippet or allow code injection.
+  local escaped_token
+  escaped_token="$(printf '%s' "$token" | sed "s/'/'\\\\''/g")"
+  local snippet
+  snippet="${marker_begin}
+export OPENCLAW_GATEWAY_TOKEN='${escaped_token}'
+${marker_end}"
+
+  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
+    if [ -f "$rc_file" ] && grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
+      local tmp
+      tmp="$(mktemp)"
+      awk -v b="$marker_begin" -v e="$marker_end" \
+        '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp"
+      printf '%s\n' "$snippet" >>"$tmp"
+      cat "$tmp" >"$rc_file"
+      rm -f "$tmp"
+    elif [ -w "$rc_file" ] || [ -w "$(dirname "$rc_file")" ]; then
+      printf '\n%s\n' "$snippet" >>"$rc_file"
+    fi
+  done
+}
+
+install_configure_guard() {
+  # Installs a shell function that intercepts `openclaw configure` inside the
+  # sandbox. The config is Landlock read-only — atomic writes to
+  # /sandbox/.openclaw/ fail with EACCES. Instead of a cryptic error, guide
+  # the user to the correct host-side workflow.
+  local marker_begin="# nemoclaw-configure-guard begin"
+  local marker_end="# nemoclaw-configure-guard end"
+  local snippet
+  read -r -d '' snippet <<'GUARD' || true
+# nemoclaw-configure-guard begin
+openclaw() {
+  case "$1" in
+    configure)
+      echo "Error: 'openclaw configure' cannot modify config inside the sandbox." >&2
+      echo "The sandbox config is read-only (Landlock enforced) for security." >&2
+      echo "" >&2
+      echo "To change your configuration, exit the sandbox and run:" >&2
+      echo "  nemoclaw onboard --resume" >&2
+      echo "" >&2
+      echo "This rebuilds the sandbox with your updated settings." >&2
+      return 1
+      ;;
+  esac
+  command openclaw "$@"
+}
+# nemoclaw-configure-guard end
+GUARD
+
+  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
+    if [ -f "$rc_file" ] && grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
+      local tmp
+      tmp="$(mktemp)"
+      awk -v b="$marker_begin" -v e="$marker_end" \
+        '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp"
+      printf '%s\n' "$snippet" >>"$tmp"
+      cat "$tmp" >"$rc_file"
+      rm -f "$tmp"
+    elif [ -w "$rc_file" ] || [ -w "$(dirname "$rc_file")" ]; then
+      printf '\n%s\n' "$snippet" >>"$rc_file"
+    fi
+  done
+}
+
 validate_openclaw_symlinks() {
   local entry name target expected
   for entry in /sandbox/.openclaw/*; do
@@ -161,6 +266,7 @@ harden_openclaw_symlinks() {
   fi
 }
 
+# Write an auth profile JSON for the NVIDIA API key so the gateway can authenticate.
 write_auth_profile() {
   if [ -z "${NVIDIA_API_KEY:-}" ]; then
     return
@@ -202,22 +308,11 @@ configure_messaging_channels() {
   return 0
 }
 
+# Print the local and remote dashboard URLs, appending the auth token if available.
 print_dashboard_urls() {
   local token chat_ui_base local_url remote_url
 
-  token="$(
-    python3 - <<'PYTOKEN'
-import json
-import os
-path = '/sandbox/.openclaw/openclaw.json'
-try:
-    cfg = json.load(open(path))
-except Exception:
-    print('')
-else:
-    print(cfg.get('gateway', {}).get('auth', {}).get('token', ''))
-PYTOKEN
-  )"
+  token="$(_read_gateway_token)"
 
   chat_ui_base="${CHAT_UI_URL%/}"
   local_url="http://127.0.0.1:${PUBLIC_PORT}/"
@@ -314,7 +409,8 @@ while time.time() < DEADLINE:
 else:
     print(f'[auto-pair] watcher timed out approvals={APPROVED}')
 PYAUTOPAIR
-  echo "[gateway] auto-pair watcher launched (pid $!)" >&2
+  AUTO_PAIR_PID=$!
+  echo "[gateway] auto-pair watcher launched (pid $AUTO_PAIR_PID)" >&2
 }
 
 # ── Proxy environment ────────────────────────────────────────────
@@ -393,6 +489,22 @@ if [ -w "$_SANDBOX_HOME" ]; then
   _write_proxy_snippet "${_SANDBOX_HOME}/.profile"
 fi
 
+# Forward SIGTERM/SIGINT to child processes for graceful shutdown.
+# This script is PID 1 — without a trap, signals interrupt wait and
+# children are orphaned until Docker sends SIGKILL after the grace period.
+cleanup() {
+  echo "[gateway] received signal, forwarding to children..." >&2
+  local gateway_status=0
+  kill -TERM "$GATEWAY_PID" 2>/dev/null || true
+  if [ -n "${AUTO_PAIR_PID:-}" ]; then
+    kill -TERM "$AUTO_PAIR_PID" 2>/dev/null || true
+  fi
+  wait "$GATEWAY_PID" 2>/dev/null || gateway_status=$?
+  if [ -n "${AUTO_PAIR_PID:-}" ]; then
+    wait "$AUTO_PAIR_PID" 2>/dev/null || true
+  fi
+  exit "$gateway_status"
+}
 # ── Main ─────────────────────────────────────────────────────────
 
 echo 'Setting up NemoClaw...' >&2
@@ -410,6 +522,8 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
+  export_gateway_token
+  install_configure_guard
   configure_messaging_channels
   validate_openclaw_symlinks
   write_auth_profile
@@ -431,8 +545,10 @@ if [ "$(id -u)" -ne 0 ]; then
   nohup "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
+  trap cleanup SIGTERM SIGINT
   start_auto_pair
   print_dashboard_urls
+
   wait "$GATEWAY_PID"
   exit $?
 fi
@@ -441,6 +557,8 @@ fi
 
 # Verify config integrity before starting anything
 verify_config_integrity
+export_gateway_token
+install_configure_guard
 
 # Inject messaging channel config if provider tokens are present.
 # Must run AFTER integrity check (to detect build-time tampering) and
@@ -483,6 +601,7 @@ harden_openclaw_symlinks
 nohup gosu gateway "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
 GATEWAY_PID=$!
 echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
+trap cleanup SIGTERM SIGINT
 
 start_auto_pair
 print_dashboard_urls

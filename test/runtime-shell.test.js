@@ -35,6 +35,7 @@ describe("shell runtime helpers", () => {
 
     const result = runShell(`source "${RUNTIME_SH}"; detect_docker_host`, {
       HOME: home,
+      DOCKER_HOST: "",
       NEMOCLAW_TEST_SOCKET_PATHS: `${colimaSocket}:${dockerDesktopSocket}`,
     });
 
@@ -49,6 +50,7 @@ describe("shell runtime helpers", () => {
 
     const result = runShell(`source "${RUNTIME_SH}"; detect_docker_host`, {
       HOME: home,
+      DOCKER_HOST: "",
       NEMOCLAW_TEST_SOCKET_PATHS: dockerDesktopSocket,
     });
 
@@ -107,14 +109,37 @@ describe("shell runtime helpers", () => {
     expect(result.stdout.trim()).toBe("podman");
   });
 
-  it("flags podman on macOS as unsupported", () => {
-    const result = runShell(`source "${RUNTIME_SH}"; is_unsupported_macos_runtime Darwin podman`);
+  it("detects Podman socket on macOS", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-shell-"));
+    const podmanSocket = path.join(home, ".local/share/containers/podman/machine/podman.sock");
+
+    const result = runShell(
+      `uname() { printf 'Darwin\\n'; }; source "${RUNTIME_SH}"; find_podman_socket`,
+      {
+        HOME: home,
+        NEMOCLAW_TEST_SOCKET_PATHS: podmanSocket,
+      },
+    );
+
     expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe(podmanSocket);
+    fs.rmSync(home, { recursive: true, force: true });
   });
 
-  it("does not flag podman on Linux", () => {
-    const result = runShell(`source "${RUNTIME_SH}"; is_unsupported_macos_runtime Linux podman`);
-    expect(result.status).not.toBe(0);
+  it("classifies a Podman DOCKER_HOST correctly", () => {
+    const result = runShell(
+      `source "${RUNTIME_SH}"; docker_host_runtime "unix:///run/user/1000/podman/podman.sock"`,
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("podman");
+  });
+
+  it("classifies a Podman machine socket correctly", () => {
+    const result = runShell(
+      `source "${RUNTIME_SH}"; docker_host_runtime "unix:///Users/test/.local/share/containers/podman/machine/podman.sock"`,
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("podman");
   });
 
   it("returns the vllm-local base URL", () => {

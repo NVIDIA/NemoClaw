@@ -93,9 +93,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 10 presets", () => {
+    it("returns all 11 presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(10);
+      expect(presets.length).toBe(11);
     });
 
     it("each preset has name and description", () => {
@@ -112,6 +112,7 @@ describe("policies", () => {
         .sort();
       const expected = [
         "brave",
+        "brew",
         "discord",
         "docker",
         "huggingface",
