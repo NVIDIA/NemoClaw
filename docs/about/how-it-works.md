@@ -92,9 +92,9 @@ Respect CLI boundaries
 Supply chain safety
 : Blueprint artifacts are immutable, versioned, and digest-verified before execution.
 
-OpenShell-native for new installs
-: For users without an existing OpenClaw installation, NemoClaw recommends `openshell sandbox create` directly
-  rather than forcing a plugin-driven bootstrap.
+OpenShell-backed lifecycle
+: NemoClaw orchestrates OpenShell resources under the hood, but `nemoclaw onboard`
+  is the supported operator entry point for creating or recreating NemoClaw-managed sandboxes.
 
 Reproducible setup
 : Running setup again recreates the sandbox from the same blueprint and policy definitions.
