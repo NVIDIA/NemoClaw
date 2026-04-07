@@ -32,6 +32,10 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 If you use nvm or fnm to manage Node.js, the installer may not update your current shell's PATH.
 If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
 
+> **Note:** The onboard flow builds the sandbox image with `NEMOCLAW_DISABLE_DEVICE_AUTH=1` so the dashboard is immediately usable during setup.
+> This is a build-time setting baked into the sandbox image, not a runtime knob.
+> If you export `NEMOCLAW_DISABLE_DEVICE_AUTH` after onboarding finishes, it has no effect on an existing sandbox.
+
 When the install completes, a summary confirms the running environment:
 
 ```text

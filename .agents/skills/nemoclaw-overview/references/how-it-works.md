@@ -1,23 +1,22 @@
 # How NemoClaw Works
 
-NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox.
-This page explains the key concepts about NemoClaw at a high level.
+This page explains how NemoClaw operates, which parts run where, how the blueprint drives OpenShell, and how inference and policy attach to the sandbox.
 
-## How It Fits Together
+## How the Pieces Connect
 
 The `nemoclaw` CLI is the primary entrypoint for setting up and managing sandboxed OpenClaw agents.
 It delegates heavy lifting to a versioned blueprint, a Python artifact that orchestrates sandbox creation, policy application, and inference provider setup through the OpenShell CLI.
 
-NemoClaw adds the following layers on top of OpenShell.
+Between your shell and the running sandbox, NemoClaw contributes these integration layers:
 
-| Layer | What it provides |
+| Layer | Role in the flow |
 |-------|------------------|
-| Onboarding | Guided setup that validates credentials, selects providers, and creates a working sandbox in one command. |
-| Blueprint | A hardened Dockerfile with security policies, capability drops, and least-privilege network rules. |
-| State management | Safe migration of agent state across machines with credential stripping and integrity verification. |
-| Messaging bridges | Host-side processes that connect Telegram, Discord, and Slack to the sandboxed agent. |
+| Onboarding | `nemoclaw onboard` validates credentials, selects providers, and drives blueprint execution until the sandbox is ready. |
+| Blueprint | Supplies the hardened image definition, default policies, capability posture, and orchestration steps the runner applies through OpenShell. |
+| State management | Migrates agent state across machines with credential stripping and integrity checks. |
+| Channel messaging | OpenShell-managed processes connect Telegram, Discord, Slack, and similar platforms to the agent. NemoClaw enables this through onboarding and blueprint wiring; delivery is not a separate NemoClaw host daemon. |
 
-OpenShell handles *how* to sandbox an agent securely. NemoClaw handles *what* goes in the sandbox and makes the setup accessible. For the full system diagram, see Architecture (see the `nemoclaw-reference` skill).
+For repository layout, file paths, and deeper diagrams, see Architecture (see the `nemoclaw-reference` skill).
 
 ```mermaid
 flowchart TB
@@ -124,6 +123,7 @@ For details on the baseline rules, refer to Network Policies (see the `nemoclaw-
 
 ## Next Steps
 
+- Read Ecosystem (see the `nemoclaw-overview` skill) for stack-level relationships and NemoClaw versus OpenShell-only paths.
 - Follow the Quickstart (see the `nemoclaw-get-started` skill) to launch your first sandbox.
 - Refer to the Architecture (see the `nemoclaw-reference` skill) for the full technical structure, including file layouts and the blueprint lifecycle.
-- Refer to Inference Profiles (see the `nemoclaw-reference` skill) for detailed provider configuration.
+- Refer to Inference Options (see the `nemoclaw-configure-inference` skill) for detailed provider configuration.

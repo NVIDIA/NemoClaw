@@ -1,6 +1,6 @@
 ---
 title:
-  page: "NemoClaw Security Best Practices — Controls, Risks, and Posture Profiles"
+  page: "NemoClaw Security Best Practices: Controls, Risks, and Posture Profiles"
   nav: "Security Best Practices"
 description:
   main: "A risk framework for every configurable security control in NemoClaw: defaults, what you can change, and what happens if you do."
@@ -45,7 +45,7 @@ The following diagram shows the default posture immediately after `nemoclaw onbo
 
 ```{mermaid}
 flowchart TB
-    subgraph HOST["Your Machine — default posture after nemoclaw onboard"]
+    subgraph HOST["Your Machine: default posture after nemoclaw onboard"]
         direction TB
 
         YOU["👤 Operator"]
@@ -53,14 +53,14 @@ flowchart TB
         subgraph NC["NemoClaw + OpenShell"]
             direction TB
 
-            subgraph SB["Sandbox — the agent's isolated world"]
+            subgraph SB["Sandbox: the agent's isolated world"]
                 direction LR
                 PROC["⚙️ Process Layer<br/>Controls what the agent can execute"]
                 FS["📁 Filesystem Layer<br/>Controls what the agent can read and write"]
                 AGENT["🤖 Agent"]
             end
 
-            subgraph GW["Gateway — the gatekeeper"]
+            subgraph GW["Gateway: the gatekeeper"]
                 direction LR
                 NET["🌐 Network Layer<br/>Controls where the agent can connect"]
                 INF["🧠 Inference Layer<br/>Controls which AI models the agent can use"]
@@ -504,6 +504,6 @@ The following patterns weaken security without providing meaningful benefit.
 - [Customize the Network Policy](../network-policy/customize-network-policy.md) for static and dynamic policy changes.
 - [Approve or Deny Network Requests](../network-policy/approve-network-requests.md) for the operator approval flow.
 - [Sandbox Hardening](../deployment/sandbox-hardening.md) for container-level security measures.
-- [Inference Profiles](../reference/inference-profiles.md) for provider configuration details.
+- [Inference Options](../inference/inference-options.md) for provider configuration details.
 - [How It Works](../about/how-it-works.md) for the protection layer architecture.
 <!-- - OpenShell [Security Best Practices](https://docs.nvidia.com/openshell/latest/security/best-practices.html) for the platform-level controls reference, including network namespace isolation, seccomp filters, SSRF protection, TLS termination, and gateway authentication. -->

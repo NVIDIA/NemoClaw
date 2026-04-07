@@ -326,6 +326,24 @@ remove_nemoclaw_alias_from_profile() {
   done
 }
 
+is_installer_managed_nemoclaw_shim() {
+  local shim_path="$1"
+  [ -f "$shim_path" ] || return 1
+
+  local contents=""
+  contents="$(cat "$shim_path" 2>/dev/null || true)"
+  local path_line="export PATH=\""
+  local path_suffix=":\$PATH\""
+  local exec_line="exec \""
+  local exec_suffix="/nemoclaw\" \"\$@\""
+  case "$contents" in
+    '#!/usr/bin/env bash'$'\n'"$path_line"*"$path_suffix"$'\n'"$exec_line"*"$exec_suffix")
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 remove_nemoclaw_cli() {
   if command -v npm >/dev/null 2>&1; then
     npm unlink -g nemoclaw >/dev/null 2>&1 || true
@@ -339,6 +357,8 @@ remove_nemoclaw_cli() {
   fi
 
   if [ -L "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
+    remove_path "${NEMOCLAW_SHIM_DIR}/nemoclaw"
+  elif is_installer_managed_nemoclaw_shim "${NEMOCLAW_SHIM_DIR}/nemoclaw"; then
     remove_path "${NEMOCLAW_SHIM_DIR}/nemoclaw"
   elif [ -f "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
     warn "Leaving ${NEMOCLAW_SHIM_DIR}/nemoclaw in place because it is not an installer-managed shim."
