@@ -13,10 +13,13 @@ ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 
 # Stage 1: Build TypeScript plugin from source
 FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d AS builder
-COPY nemoclaw/package.json nemoclaw/tsconfig.json /opt/nemoclaw/
+ENV NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
+COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json /opt/nemoclaw/
 COPY nemoclaw/src/ /opt/nemoclaw/src/
 WORKDIR /opt/nemoclaw
-RUN npm install && npm run build
+RUN npm ci && npm run build
 
 # Stage 2: Runtime image — pull cached base from GHCR
 FROM ${BASE_IMAGE}
@@ -26,6 +29,7 @@ RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
         netcat-openbsd netcat-traditional ncat 2>/dev/null || true) \
     && apt-get autoremove --purge -y \
     && rm -rf /var/lib/apt/lists/*
+
 
 # Copy built plugin and blueprint into the sandbox
 COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
@@ -55,6 +59,14 @@ ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
 ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
 ARG NEMOCLAW_WEB_CONFIG_B64=e30=
+# Base64-encoded JSON list of messaging channel names to pre-configure
+# (e.g. ["discord","telegram"]). Channels are added with placeholder tokens
+# so the L7 proxy can rewrite them at egress. Default: empty list.
+ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
+# Base64-encoded JSON map of channel→allowed sender IDs for DM allowlisting
+# (e.g. {"telegram":["123456789"]}). Channels with IDs get dmPolicy=allowlist;
+# channels without IDs keep the OpenClaw default (pairing). Default: empty map.
+ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 # Set to "1" to disable device-pairing auth (development/headless only).
 # Default: "0" (device auth enabled — secure by default).
 ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0
@@ -73,6 +85,8 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
     NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64} \
     NEMOCLAW_WEB_CONFIG_B64=${NEMOCLAW_WEB_CONFIG_B64} \
+    NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
+    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH}
 
 WORKDIR /sandbox
@@ -94,6 +108,11 @@ inference_base_url = os.environ['NEMOCLAW_INFERENCE_BASE_URL']; \
 inference_api = os.environ['NEMOCLAW_INFERENCE_API']; \
 inference_compat = json.loads(base64.b64decode(os.environ['NEMOCLAW_INFERENCE_COMPAT_B64']).decode('utf-8')); \
 web_config = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_WEB_CONFIG_B64', 'e30=') or 'e30=').decode('utf-8')); \
+msg_channels = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_CHANNELS_B64', 'W10=') or 'W10=').decode('utf-8')); \
+_allowed_ids = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_ALLOWED_IDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
+_token_keys = {'discord': 'token', 'telegram': 'botToken', 'slack': 'botToken'}; \
+_env_keys = {'discord': 'DISCORD_BOT_TOKEN', 'telegram': 'TELEGRAM_BOT_TOKEN', 'slack': 'SLACK_BOT_TOKEN'}; \
+_ch_cfg = {ch: {'accounts': {'main': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
 parsed = urlparse(chat_ui_url); \
 chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \
 origins = ['http://127.0.0.1:18789']; \
@@ -111,7 +130,7 @@ providers = { \
 config = { \
     'agents': {'defaults': {'model': {'primary': primary_model_ref}}}, \
     'models': {'mode': 'merge', 'providers': providers}, \
-    'channels': {'defaults': {'configWrites': False}}, \
+    'channels': dict({'defaults': {'configWrites': False}}, **_ch_cfg), \
     'gateway': { \
         'mode': 'local', \
         'controlUi': { \
@@ -158,6 +177,7 @@ RUN openclaw doctor --fix > /dev/null 2>&1 || true \
 # hadolint ignore=DL3002
 USER root
 RUN chown root:root /sandbox/.openclaw \
+    && rm -rf /root/.npm /sandbox/.npm \
     && find /sandbox/.openclaw -mindepth 1 -maxdepth 1 -exec chown -h root:root {} + \
     && chmod 755 /sandbox/.openclaw \
     && chmod 444 /sandbox/.openclaw/openclaw.json

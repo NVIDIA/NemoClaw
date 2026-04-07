@@ -6,9 +6,7 @@
  * output and determine recovery strategy.
  */
 
-// onboard-session is CJS — keep as require
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const onboardSession = require("../../bin/lib/onboard-session");
+import { loadSession } from "./onboard-session";
 
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
@@ -82,7 +80,7 @@ export function shouldAttemptGatewayRecovery({
 }
 
 export function getRecoveryCommand(): string {
-  const session = onboardSession.loadSession();
+  const session = loadSession();
   if (session && session.resumable !== false) {
     return "nemoclaw onboard --resume";
   }

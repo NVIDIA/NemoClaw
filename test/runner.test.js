@@ -456,15 +456,6 @@ describe("regression guards", () => {
     }
   });
 
-  it("telegram bridge validates SANDBOX_NAME on startup", () => {
-    const src = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "scripts", "telegram-bridge.js"),
-      "utf-8",
-    );
-    expect(src.includes("validateName(SANDBOX")).toBeTruthy();
-    expect(src.includes("execSync")).toBeFalsy();
-  });
-
   describe("credential exposure guards (#429)", () => {
     it("onboard createSandbox does not pass NVIDIA_API_KEY to sandbox env", () => {
       const fs = require("fs");
@@ -693,6 +684,18 @@ describe("regression guards", () => {
       expect(src).toContain("NEMOCLAW_DEPLOY_NO_CONNECT");
       expect(src).toContain("NEMOCLAW_DEPLOY_NO_START_SERVICES");
       expect(src).toContain("Skipping interactive sandbox connect");
+    });
+
+    it("deploy pins SSH host keys via TOFU instead of accept-new (#691)", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
+        "utf-8",
+      );
+      expect(src).not.toContain("StrictHostKeyChecking=accept-new");
+      expect(src).toContain("StrictHostKeyChecking=yes");
+      expect(src).toContain("ssh-keyscan");
+      expect(src).toContain("UserKnownHostsFile=");
+      expect(src).toContain("nemoclaw-ssh-");
     });
 
     it("deploy reports Brev failure states before SSH timeout", () => {

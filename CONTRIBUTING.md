@@ -73,7 +73,7 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 
 | Hook | What runs |
 |------|-----------|
-| **pre-commit** | File fixers, formatters, linters, Vitest (plugin) |
+| **pre-commit** | File fixers, formatters, linters, doc-to-skills regeneration, Vitest (plugin) |
 | **commit-msg** | commitlint (Conventional Commits) |
 | **pre-push** | TypeScript type check (`tsc --noEmit` for plugin, JS, and CLI) |
 
@@ -128,7 +128,9 @@ These generated skills let AI agents answer user questions and walk through proc
 Always edit pages in `docs/`.
 Never edit generated skill files under `.agents/skills/nemoclaw-*/` — your changes will be overwritten on the next run.
 
-After changing any page in `docs/`, regenerate the skills from the repo root:
+A pre-commit hook regenerates skills automatically whenever you commit changes to `docs/**/*.md` files. The hook runs `scripts/docs-to-skills.py` and stages the updated skills so they are included in the same commit. No manual step is needed for normal workflows.
+
+To regenerate skills manually (for example, after rebasing or outside of a commit), run from the repo root:
 
 ```bash
 python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw
