@@ -35,6 +35,7 @@ export interface SessionFailure {
 
 export interface SessionMetadata {
   gatewayName: string;
+  fromDockerfile: string | null;
 }
 
 export interface Session {
@@ -86,7 +87,7 @@ export interface SessionUpdates {
   nimContainer?: string;
   webSearchConfig?: WebSearchConfig | null;
   policyPresets?: string[];
-  metadata?: { gatewayName?: string };
+  metadata?: { gatewayName?: string; fromDockerfile?: string | null };
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -201,6 +202,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       : null,
     metadata: {
       gatewayName: overrides.metadata?.gatewayName || "nemoclaw",
+      fromDockerfile: overrides.metadata?.fromDockerfile || null,
     },
     steps: {
       ...defaultSteps(),
@@ -238,7 +240,10 @@ export function normalizeSession(data: unknown): Session | null {
     lastCompletedStep: typeof d.lastCompletedStep === "string" ? d.lastCompletedStep : null,
     failure: sanitizeFailure(d.failure as Record<string, unknown> | null),
     metadata: isObject(d.metadata)
-      ? ({ gatewayName: (d.metadata as Record<string, unknown>).gatewayName } as SessionMetadata)
+      ? ({
+          gatewayName: (d.metadata as Record<string, unknown>).gatewayName,
+          fromDockerfile: (d.metadata as Record<string, unknown>).fromDockerfile || null,
+        } as SessionMetadata)
       : undefined,
   } as Partial<Session>);
   normalized.resumable = d.resumable !== false;
@@ -424,6 +429,7 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {
       gatewayName: updates.metadata.gatewayName,
+      fromDockerfile: (typeof updates.metadata.fromDockerfile === "string" ? updates.metadata.fromDockerfile : null),
     };
   }
   return safe;

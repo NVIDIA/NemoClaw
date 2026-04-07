@@ -41,7 +41,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```console
-$ nemoclaw onboard
+$ nemoclaw onboard [--non-interactive] [--resume] [--from <Dockerfile>]
 ```
 
 The wizard prompts for a provider first, then collects the provider credential if needed.
@@ -81,6 +81,26 @@ Uppercase letters are automatically lowercased.
 
 Before creating the gateway, the wizard runs preflight checks.
 It verifies that Docker is reachable, warns on unsupported runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
+
+#### `--from <Dockerfile>`
+
+Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
+The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it.
+
+```console
+$ nemoclaw onboard --from path/to/Dockerfile
+```
+
+The file can have any name; if it is not already named `Dockerfile`, onboard copies it to `Dockerfile` inside the staged build context automatically.
+All NemoClaw build arguments (`NEMOCLAW_MODEL`, `NEMOCLAW_PROVIDER_KEY`, `NEMOCLAW_INFERENCE_BASE_URL`, etc.) are injected as `ARG` overrides at build time, so declare them in your Dockerfile if you need to reference them.
+
+In non-interactive mode, the path can also be supplied via the `NEMOCLAW_FROM_DOCKERFILE` environment variable:
+
+```console
+$ NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_FROM_DOCKERFILE=path/to/Dockerfile nemoclaw onboard
+```
+
+If a `--resume` is attempted with a different `--from` path than the original session, onboarding exits with a conflict error rather than silently building from the wrong image.
 
 ### `nemoclaw list`
 
