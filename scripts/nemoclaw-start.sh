@@ -531,6 +531,46 @@ if [ "$(id -u)" -ne 0 ]; then
   # The Docker build (Dockerfile) sets this up correctly, but the native curl
   # installer may create these directories as root, causing EACCES when openclaw
   # tries to write device-auth.json or other state files.  Ref: #692
+  # Ensure the identity symlink points from .openclaw/identity → .openclaw-data/identity.
+  # Uses early returns to keep each case flat.
+  ensure_identity_symlink() {
+    local data_dir="$1" openclaw_dir="$2"
+    local link_path="${openclaw_dir}/identity"
+    local target="${data_dir}/identity"
+    [ -d "$target" ] || return 0
+    mkdir -p "${openclaw_dir}" 2>/dev/null || true
+
+    # Already a correct symlink — nothing to do.
+    if [ -L "$link_path" ]; then
+      local current expected
+      current="$(readlink -f "$link_path" 2>/dev/null || true)"
+      expected="$(readlink -f "$target" 2>/dev/null || true)"
+      [ "$current" != "$expected" ] || return 0
+      ln -snf "$target" "$link_path" 2>/dev/null \
+        && echo "[setup] repaired identity symlink" >&2 \
+        || echo "[setup] could not repair identity symlink" >&2
+      return 0
+    fi
+
+    # Nothing exists yet — create the symlink.
+    if [ ! -e "$link_path" ]; then
+      ln -snf "$target" "$link_path" 2>/dev/null \
+        && echo "[setup] created identity symlink" >&2 \
+        || echo "[setup] could not create identity symlink" >&2
+      return 0
+    fi
+
+    # A non-symlink entry exists — back it up, then replace.
+    local backup
+    backup="${link_path}.bak.$(date +%s)"
+    if mv "$link_path" "$backup" 2>/dev/null \
+      && ln -snf "$target" "$link_path" 2>/dev/null; then
+      echo "[setup] replaced non-symlink identity path (backup: ${backup})" >&2
+    else
+      echo "[setup] could not replace ${link_path}; writes may fail" >&2
+    fi
+  }
+
   fix_openclaw_data_ownership() {
     local data_dir="${HOME}/.openclaw-data"
     local openclaw_dir="${HOME}/.openclaw"
@@ -540,42 +580,11 @@ if [ "$(id -u)" -ne 0 ]; then
       mkdir -p "${data_dir}/${sub}" 2>/dev/null || true
     done
     if find "$data_dir" ! -uid "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
-      if chown -R "$(id -u):$(id -g)" "$data_dir" 2>/dev/null; then
-        echo "[setup] fixed ownership on ${data_dir}" >&2
-      else
-        echo "[setup] could not fix ownership on ${data_dir}; writes may fail" >&2
-      fi
+      chown -R "$(id -u):$(id -g)" "$data_dir" 2>/dev/null \
+        && echo "[setup] fixed ownership on ${data_dir}" >&2 \
+        || echo "[setup] could not fix ownership on ${data_dir}; writes may fail" >&2
     fi
-    if [ -d "${data_dir}/identity" ]; then
-      mkdir -p "${openclaw_dir}" 2>/dev/null || true
-      if [ -L "${openclaw_dir}/identity" ]; then
-        local current_target expected_target
-        current_target="$(readlink -f "${openclaw_dir}/identity" 2>/dev/null || true)"
-        expected_target="$(readlink -f "${data_dir}/identity" 2>/dev/null || true)"
-        if [ "$current_target" != "$expected_target" ]; then
-          if ln -snf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null; then
-            echo "[setup] repaired identity symlink" >&2
-          else
-            echo "[setup] could not repair identity symlink" >&2
-          fi
-        fi
-      elif [ ! -e "${openclaw_dir}/identity" ]; then
-        if ln -snf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null; then
-          echo "[setup] created identity symlink" >&2
-        else
-          echo "[setup] could not create identity symlink" >&2
-        fi
-      else
-        local backup
-        backup="${openclaw_dir}/identity.bak.$(date +%s)"
-        if mv "${openclaw_dir}/identity" "$backup" 2>/dev/null \
-          && ln -snf "${data_dir}/identity" "${openclaw_dir}/identity" 2>/dev/null; then
-          echo "[setup] replaced non-symlink identity path (backup: ${backup})" >&2
-        else
-          echo "[setup] could not replace ${openclaw_dir}/identity; writes may fail" >&2
-        fi
-      fi
-    fi
+    ensure_identity_symlink "$data_dir" "$openclaw_dir"
   }
   fix_openclaw_data_ownership
   write_auth_profile
