@@ -1,6 +1,6 @@
 ---
 title:
-  page: "NemoClaw Quickstart — Install, Launch, and Run Your First Agent"
+  page: "NemoClaw Quickstart: Install, Launch, and Run Your First Agent"
   nav: "Quickstart"
 description:
   main: "Install NemoClaw, launch a sandbox, and run your first agent prompt."
