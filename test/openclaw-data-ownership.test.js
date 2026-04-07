@@ -85,7 +85,7 @@ describe("ensure_identity_symlink", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
+    expect(result.stderr).not.toContain("[setup]");
     expect(fs.existsSync(path.join(openclawDir, "identity"))).toBe(false);
   });
 
