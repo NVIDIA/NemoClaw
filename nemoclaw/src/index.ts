@@ -17,6 +17,7 @@ import {
   describeOnboardProvider,
   loadOnboardConfig,
 } from "./onboard/config.js";
+import { wireSessionTracker } from "./security/session-integration.js";
 
 // ---------------------------------------------------------------------------
 // OpenClaw Plugin SDK compatible types (mirrors openclaw/plugin-sdk)
@@ -262,4 +263,7 @@ export default function register(api: OpenClawPluginApi): void {
   api.logger.info("  │  Slash:     /nemoclaw                               │");
   api.logger.info("  └─────────────────────────────────────────────────────┘");
   api.logger.info("");
+
+  // 3. Wire session tracker into tool-call lifecycle
+  wireSessionTracker(api);
 }

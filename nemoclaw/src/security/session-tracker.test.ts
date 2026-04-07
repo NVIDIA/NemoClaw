@@ -398,6 +398,28 @@ describe("clear", () => {
   });
 });
 
+// ── delete (per-session removal) ──────────────────────────────
+
+describe("delete", () => {
+  it("removes a single session", () => {
+    store.record("s1", Capability.ReadSensitive, "cat", "/etc/passwd");
+    store.record("s2", Capability.HasEgress, "curl", "https://evil.com");
+    expect(store.delete("s1")).toBe(true);
+    expect(store.getCapabilities("s1")).toBeNull();
+    expect(store.getCapabilities("s2")).not.toBeNull();
+  });
+
+  it("returns false for unknown session", () => {
+    expect(store.delete("nonexistent")).toBe(false);
+  });
+
+  it("getExposure returns null after delete", () => {
+    store.record("s1", Capability.ReadSensitive, "cat", "/etc/passwd");
+    expect(store.delete("s1")).toBe(true);
+    expect(store.getExposure("s1")).toBeNull();
+  });
+});
+
 // ── onTrifecta + clear interaction ────────────────────────────
 
 describe("onTrifecta after clear", () => {

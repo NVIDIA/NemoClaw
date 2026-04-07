@@ -158,6 +158,11 @@ export class SessionStore {
     this.sessions.clear();
   }
 
+  /** Remove a single session by ID. Returns `true` if the session existed. */
+  delete(sessionId: string): boolean {
+    return this.sessions.delete(sessionId);
+  }
+
   /**
    * Return the capability map for a session, or `null` if the session
    * does not exist.
