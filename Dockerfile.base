@@ -1,0 +1,129 @@
+# NemoClaw sandbox base image — expensive, rarely-changing layers.
+#
+# Contains: node:22-slim, apt packages, gosu, user/group setup,
+# .openclaw directory structure, OpenClaw CLI, and PyYAML.
+#
+# Built on main merges and pushed to GHCR. The production Dockerfile
+# layers PR-specific code (plugin, blueprint, config) on top.
+#
+# ── Why these layers are safe to cache ──────────────────────────────────
+#
+# Everything in this file is either pinned to an exact version or is
+# structural (users, directories, symlinks) that doesn't depend on
+# NemoClaw application code. Specifically:
+#
+#   node:22-slim        — pinned by sha256 digest, checked weekly by
+#                          docker-pin-check.yaml
+#   apt packages        — pinned to exact Debian bookworm versions
+#   gosu 1.19           — pinned release + per-arch sha256 checksum
+#   gateway/sandbox     — OS users and groups; names and UIDs are a
+#     users               stable contract with OpenShell
+#   .openclaw dirs      — directory structure + symlinks are dictated by
+#     + symlinks          the OpenClaw CLI layout; new dirs are additive
+#                          (add them here and rebuild)
+#   openclaw CLI        — pinned to exact npm version (e.g., 2026.3.11)
+#   pyyaml              — pinned to exact pip version (6.0.3)
+#
+# Nothing here references NemoClaw plugin source, blueprint files,
+# startup scripts, or build-time config (model, provider, auth token).
+# Those all live in the production Dockerfile's thin top layers.
+#
+# ── When to rebuild ─────────────────────────────────────────────────────
+#
+# The base-image.yaml workflow rebuilds automatically on main merges that
+# touch this file. You need to edit this file (triggering a rebuild) when:
+#
+#   1. OpenClaw CLI version bump    — change the openclaw@version below
+#   2. New apt package needed       — add it to the apt-get install list
+#   3. gosu upgrade                 — update URL, checksum, and version
+#   4. node:22-slim digest rotated  — update-docker-pin.sh updates both
+#                                      Dockerfile and Dockerfile.base
+#   5. New .openclaw subdirectory   — add mkdir + symlink below
+#   6. PyYAML or other pip dep bump — change the version below
+#
+# For ad-hoc rebuilds (e.g., security patch), use workflow_dispatch on
+# the base-image workflow.
+#
+# Expected rebuild frequency: every few weeks to months, driven mostly
+# by OpenClaw CLI version bumps or the weekly docker-pin-check.
+# ────────────────────────────────────────────────────────────────────────
+
+FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3=3.11.2-1+b1 \
+        python3-pip=23.0.1+dfsg-1 \
+        python3-venv=3.11.2-1+b1 \
+        curl=7.88.1-10+deb12u14 \
+        git=1:2.39.5-0+deb12u3 \
+        ca-certificates=20230311+deb12u1 \
+        iproute2=6.1.0-3 \
+        iptables=1.8.9-2 \
+        libcap2-bin=1:2.66-4+deb12u2+b2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# gosu for privilege separation (gateway vs sandbox user).
+# Install from GitHub release with checksum verification instead of
+# Debian bookworm's ancient 1.14 (2020). Pinned to 1.19 (2025-09).
+# hadolint ignore=DL4006
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+        amd64) gosu_asset="gosu-amd64"; gosu_sha256="52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0" ;; \
+        arm64) gosu_asset="gosu-arm64"; gosu_sha256="3a8ef022d82c0bc4a98bcb144e77da714c25fcfa64dccc57f6aba7ae47ff1a44" ;; \
+        *) echo "Unsupported architecture for gosu: $arch" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
+    && echo "${gosu_sha256}  /usr/local/bin/gosu" | sha256sum -c - \
+    && chmod +x /usr/local/bin/gosu \
+    && gosu --version
+
+# Create sandbox user (matches OpenShell convention) and gateway user.
+# The gateway runs as 'gateway' so the 'sandbox' user (agent) cannot
+# kill it or restart it with a tampered HOME/config.
+RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
+    && groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
+    && mkdir -p /sandbox/.nemoclaw \
+    && chown -R sandbox:sandbox /sandbox
+
+# Split .openclaw into immutable config dir + writable state dir.
+# The policy makes /sandbox/.openclaw read-only via Landlock, so the agent
+# cannot modify openclaw.json, auth tokens, or CORS settings.  Writable
+# state (agents, plugins, etc.) lives in .openclaw-data, reached via symlinks.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/514
+RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
+        /sandbox/.openclaw-data/extensions \
+        /sandbox/.openclaw-data/workspace \
+        /sandbox/.openclaw-data/skills \
+        /sandbox/.openclaw-data/hooks \
+        /sandbox/.openclaw-data/identity \
+        /sandbox/.openclaw-data/devices \
+        /sandbox/.openclaw-data/canvas \
+        /sandbox/.openclaw-data/cron \
+        /sandbox/.openclaw-data/memory \
+        /sandbox/.openclaw-data/telegram \
+        /sandbox/.openclaw-data/credentials \
+    && mkdir -p /sandbox/.openclaw \
+    && ln -s /sandbox/.openclaw-data/agents /sandbox/.openclaw/agents \
+    && ln -s /sandbox/.openclaw-data/extensions /sandbox/.openclaw/extensions \
+    && ln -s /sandbox/.openclaw-data/workspace /sandbox/.openclaw/workspace \
+    && ln -s /sandbox/.openclaw-data/skills /sandbox/.openclaw/skills \
+    && ln -s /sandbox/.openclaw-data/hooks /sandbox/.openclaw/hooks \
+    && ln -s /sandbox/.openclaw-data/identity /sandbox/.openclaw/identity \
+    && ln -s /sandbox/.openclaw-data/devices /sandbox/.openclaw/devices \
+    && ln -s /sandbox/.openclaw-data/canvas /sandbox/.openclaw/canvas \
+    && ln -s /sandbox/.openclaw-data/cron /sandbox/.openclaw/cron \
+    && ln -s /sandbox/.openclaw-data/memory /sandbox/.openclaw/memory \
+    && touch /sandbox/.openclaw-data/update-check.json \
+    && ln -s /sandbox/.openclaw-data/update-check.json /sandbox/.openclaw/update-check.json \
+    && touch /sandbox/.openclaw-data/exec-approvals.json \
+    && ln -s /sandbox/.openclaw-data/exec-approvals.json /sandbox/.openclaw/exec-approvals.json \
+    && ln -s /sandbox/.openclaw-data/telegram /sandbox/.openclaw/telegram \
+    && ln -s /sandbox/.openclaw-data/credentials /sandbox/.openclaw/credentials \
+    && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
+
+# Install OpenClaw CLI + PyYAML for inline Python scripts in e2e tests.
+# When bumping the openclaw version, rebuild this base image.
+RUN npm install -g openclaw@2026.3.11 \
+    && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"

@@ -85,10 +85,14 @@ done
 TMPDIR_BASE="${TMPDIR:-/tmp}"
 COLLECT_DIR=$(mktemp -d "${TMPDIR_BASE}/nemoclaw-debug-XXXXXX")
 SANDBOX_SSH_CONFIG=""
+SANDBOX_SSH_KNOWN=""
 cleanup() {
   rm -rf "$COLLECT_DIR"
   if [ -n "$SANDBOX_SSH_CONFIG" ]; then
     rm -f "$SANDBOX_SSH_CONFIG"
+  fi
+  if [ -n "$SANDBOX_SSH_KNOWN" ]; then
+    rm -f "$SANDBOX_SSH_KNOWN"
   fi
 }
 trap cleanup EXIT
@@ -105,6 +109,16 @@ if command -v timeout >/dev/null 2>&1; then
   TIMEOUT_BIN="timeout"
 elif command -v gtimeout >/dev/null 2>&1; then
   TIMEOUT_BIN="gtimeout"
+fi
+
+SCRIPT_DIR=""
+REPO_ROOT=""
+ONBOARD_SESSION_HELPER=""
+SCRIPT_PATH="${BASH_SOURCE[0]:-}"
+if [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+  REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+  ONBOARD_SESSION_HELPER="${REPO_ROOT}/bin/lib/onboard-session.js"
 fi
 
 # Redact known sensitive patterns (API keys, tokens, passwords in env/args).
@@ -243,6 +257,24 @@ if [ "$QUICK" = false ]; then
   collect "openshell-gateway-info" openshell gateway info
 fi
 
+# -- Onboard session state --
+
+section "Onboard Session"
+if [ -n "$ONBOARD_SESSION_HELPER" ] && [ -f "$ONBOARD_SESSION_HELPER" ] && command -v node >/dev/null 2>&1; then
+  # shellcheck disable=SC2016
+  collect "onboard-session-summary" node -e '
+    const helper = require(process.argv[1]);
+    const summary = helper.summarizeForDebug();
+    if (!summary) {
+      process.stdout.write("No onboard session state found.\n");
+      process.exit(0);
+    }
+    process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+  ' "$ONBOARD_SESSION_HELPER"
+else
+  echo "  (onboard session helper not available, skipping)"
+fi
+
 # -- Sandbox internals (via SSH using openshell ssh-config) --
 
 if command -v openshell &>/dev/null \
@@ -256,7 +288,8 @@ if command -v openshell &>/dev/null \
   SANDBOX_SSH_CONFIG=$(mktemp "${TMPDIR_BASE}/nemoclaw-ssh-XXXXXX")
   if openshell sandbox ssh-config "$SANDBOX_NAME" >"$SANDBOX_SSH_CONFIG" 2>/dev/null; then
     SANDBOX_SSH_HOST="openshell-${SANDBOX_NAME}"
-    SANDBOX_SSH_OPTS=(-F "$SANDBOX_SSH_CONFIG" -o StrictHostKeyChecking=no -o ConnectTimeout=10)
+    SANDBOX_SSH_KNOWN=$(mktemp "${TMPDIR_BASE}/nemoclaw-ssh-known-XXXXXX")
+    SANDBOX_SSH_OPTS=(-F "$SANDBOX_SSH_CONFIG" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$SANDBOX_SSH_KNOWN" -o ConnectTimeout=10)
 
     collect "sandbox-ps" ssh "${SANDBOX_SSH_OPTS[@]}" "$SANDBOX_SSH_HOST" ps -ef
     collect "sandbox-free" ssh "${SANDBOX_SSH_OPTS[@]}" "$SANDBOX_SSH_HOST" free -m

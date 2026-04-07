@@ -1,11 +1,29 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Nightly full E2E: install → onboard → live inference against NVIDIA Endpoint API.
+# Nightly E2E tests:
+#
+#   cloud-e2e                Cloud inference (NVIDIA Endpoint API) on ubuntu-latest.
+#   cloud-experimental-e2e   Experimental cloud inference test (main script skips embedded
+#                            check-docs + final cleanup; follow-up steps run check-docs,
+#                            skip/05-network-policy.sh, then cleanup.sh --verify with if: always()).
+#   messaging-providers-e2e  Validates messaging credential provider/placeholder/L7-proxy chain
+#                            for Telegram + Discord. Uses fake tokens. See PR #1081.
+#   sandbox-survival-e2e     Sandbox survival across gateway restarts (onboard, inference,
+#                            gateway stop/start, verify sandbox + workspace + inference).
+#   gpu-e2e                  Local Ollama inference on a GPU self-hosted runner.
+#                            Controlled by the GPU_E2E_ENABLED repository variable.
+#                            Set vars.GPU_E2E_ENABLED to "true" in repo settings to enable.
+#   notify-on-failure        Auto-creates a GitHub issue when any E2E job fails.
+#
 # Runs directly on the runner (not inside Docker) because OpenShell bootstraps
 # a K3s cluster inside a privileged Docker container — nesting would break networking.
 #
-# Requires NVIDIA_API_KEY repository secret.
+# NVIDIA_API_KEY for cloud-e2e and cloud-experimental-e2e:
+#   - Repository secret: Settings → Secrets and variables → Actions → Repository secrets.
+#   - Environment secret: only available if the job sets `environment: <that environment name>`.
+#     (Storing the key under Environments / NVIDIA_API_KEY without `environment:` here leaves the
+#     variable empty in the job — repository secrets and environment secrets are separate.)
 # Only runs on schedule and manual dispatch — never on PRs (secret protection).
 
 name: nightly-e2e
@@ -23,7 +41,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  full-e2e:
+  cloud-e2e:
     if: github.repository == 'NVIDIA/NemoClaw'
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -31,10 +49,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Run full E2E test
+      - name: Run cloud E2E test
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-nightly"
           NEMOCLAW_RECREATE_SANDBOX: "1"
           GITHUB_TOKEN: ${{ github.token }}
@@ -47,3 +66,251 @@ jobs:
           name: install-log
           path: /tmp/nemoclaw-e2e-install.log
           if-no-files-found: ignore
+
+  cloud-experimental-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    # Main suite + check-docs + network-policy skip script can exceed 45m on cold runners.
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # Split Phase 5f (check-docs) and Phase 6 (cleanup) out of the main script so CI shows
+      # failures in dedicated steps; tear-down always runs last (if: always()).
+      - name: Run cloud-experimental E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          # Non-interactive install (expect-driven Phase 3 optional). Runner has no expect; Phase 5e TUI skips if expect is absent.
+          RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL: "0"
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_POLICY_MODE: "custom"
+          NEMOCLAW_POLICY_PRESETS: "npm,pypi"
+          RUN_E2E_CLOUD_EXPERIMENTAL_SKIP_FINAL_CLEANUP: "1"
+          RUN_E2E_CLOUD_EXPERIMENTAL_SKIP_CHECK_DOCS: "1"
+        run: bash test/e2e/test-e2e-cloud-experimental.sh
+
+      - name: Documentation checks (check-docs.sh)
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -f "$HOME/.bashrc" ]; then
+            # shellcheck source=/dev/null
+            source "$HOME/.bashrc" 2>/dev/null || true
+          fi
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          if [ -s "$NVM_DIR/nvm.sh" ]; then
+            # shellcheck source=/dev/null
+            . "$NVM_DIR/nvm.sh"
+          fi
+          if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+            export PATH="$HOME/.local/bin:$PATH"
+          fi
+          bash test/e2e/e2e-cloud-experimental/check-docs.sh
+
+      - name: Network policy checks (skip/05-network-policy.sh)
+        if: always()
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          SANDBOX_NAME: e2e-cloud-experimental
+          NEMOCLAW_SANDBOX_NAME: e2e-cloud-experimental
+        run: |
+          set -euo pipefail
+          if [ -f "$HOME/.bashrc" ]; then
+            # shellcheck source=/dev/null
+            source "$HOME/.bashrc" 2>/dev/null || true
+          fi
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          if [ -s "$NVM_DIR/nvm.sh" ]; then
+            # shellcheck source=/dev/null
+            . "$NVM_DIR/nvm.sh"
+          fi
+          if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+            export PATH="$HOME/.local/bin:$PATH"
+          fi
+          bash test/e2e/e2e-cloud-experimental/skip/05-network-policy.sh
+
+      - name: Tear down cloud-experimental sandbox (always)
+        if: always()
+        env:
+          SANDBOX_NAME: e2e-cloud-experimental
+          NEMOCLAW_SANDBOX_NAME: e2e-cloud-experimental
+        run: |
+          set -euo pipefail
+          if [ -f "$HOME/.bashrc" ]; then
+            # shellcheck source=/dev/null
+            source "$HOME/.bashrc" 2>/dev/null || true
+          fi
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          if [ -s "$NVM_DIR/nvm.sh" ]; then
+            # shellcheck source=/dev/null
+            . "$NVM_DIR/nvm.sh"
+          fi
+          if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+            export PATH="$HOME/.local/bin:$PATH"
+          fi
+          bash test/e2e/e2e-cloud-experimental/cleanup.sh --verify
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log-cloud-experimental
+          path: /tmp/nemoclaw-e2e-cloud-experimental-install.log
+          if-no-files-found: ignore
+
+  # ── Messaging Providers E2E ──────────────────────────────────
+  # Validates the full provider/placeholder/L7-proxy chain for messaging
+  # credentials (Telegram, Discord). Uses fake tokens by default — the L7
+  # proxy rewrites placeholders and the real API returns 401, proving the
+  # chain works. See: PR #1081
+  messaging-providers-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run messaging providers E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-msg-provider"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+          TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-e2e"
+          DISCORD_BOT_TOKEN: "test-fake-discord-token-e2e"
+        run: bash test/e2e/test-messaging-providers.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log-messaging-providers
+          path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore
+
+  # ── Sandbox survival (gateway restart recovery) ──────────────
+  sandbox-survival-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run sandbox survival E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-survival"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-sandbox-survival.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-survival-install-log
+          path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore
+
+  # ── GPU E2E (Ollama local inference) ──────────────────────────
+  # Enable by setting repository variable GPU_E2E_ENABLED=true
+  # (Settings → Secrets and variables → Actions → Variables)
+  #
+  # Runner labels: using 'self-hosted' for now. Refine to
+  # [self-hosted, linux, x64, gpu] once NVIDIA runner labels are confirmed.
+  gpu-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw' && vars.GPU_E2E_ENABLED == 'true'
+    runs-on: self-hosted
+    timeout-minutes: 60
+    env:
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-gpu-ollama"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_PROVIDER: "ollama"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Verify GPU availability
+        run: |
+          echo "=== GPU Info ==="
+          nvidia-smi
+          echo ""
+          echo "=== VRAM ==="
+          nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+          echo ""
+          echo "=== Docker ==="
+          docker info --format '{{.ServerVersion}}'
+
+      - name: Run GPU E2E test (Ollama local inference)
+        run: bash test/e2e/test-gpu-e2e.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-e2e-install-log
+          path: /tmp/nemoclaw-gpu-e2e-install.log
+          if-no-files-found: ignore
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-e2e-test-log
+          path: /tmp/nemoclaw-gpu-e2e-test.log
+          if-no-files-found: ignore
+
+  notify-on-failure:
+    runs-on: ubuntu-latest
+    needs: [cloud-e2e, cloud-experimental-e2e, messaging-providers-e2e, sandbox-survival-e2e, gpu-e2e]
+    if: ${{ always() && (needs.cloud-e2e.result == 'failure' || needs.cloud-experimental-e2e.result == 'failure' || needs.messaging-providers-e2e.result == 'failure' || needs.sandbox-survival-e2e.result == 'failure' || needs.gpu-e2e.result == 'failure') }}
+    permissions:
+      issues: write
+    steps:
+      - name: Create or update failure issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const title = 'Nightly E2E failed';
+
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'CI/CD',
+              per_page: 100,
+            });
+            const match = existing.find(i => !i.pull_request && i.title.startsWith(title));
+
+            if (match) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: match.number,
+                body: `Failed again on ${new Date().toISOString().split('T')[0]}.\n\n**Run:** ${runUrl}\n**Artifacts:** Check the run artifacts for install/test logs (artifact names vary by job).`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `${title} — ${new Date().toISOString().split('T')[0]}`,
+                body: `The nightly E2E pipeline failed.\n\n**Run:** ${runUrl}\n**Artifacts:** Check the run artifacts for install/test logs (artifact names vary by job).`,
+                labels: ['bug', 'CI/CD'],
+              });
+            }

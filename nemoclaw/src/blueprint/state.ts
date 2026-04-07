@@ -56,7 +56,7 @@ export function loadState(): NemoClawState {
 export function saveState(state: NemoClawState): void {
   ensureStateDir();
   state.updatedAt = new Date().toISOString();
-  if (!state.createdAt) state.createdAt = state.updatedAt;
+  state.createdAt ??= state.updatedAt;
   writeFileSync(statePath(), JSON.stringify(state, null, 2));
 }
 

@@ -17,14 +17,16 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+          - allow: { method: PUT, path: "/**" }
+          - allow: { method: PATCH, path: "/**" }
+          - allow: { method: DELETE, path: "/**" }
+      # WebSocket gateway — must use access: full (CONNECT tunnel) instead
+      # of protocol: rest. The proxy's HTTP idle timeout (~2 min) kills
+      # long-lived WebSocket connections; a CONNECT tunnel avoids
+      # HTTP-level timeouts entirely. See #409.
       - host: gateway.discord.gg
         port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+        access: full
       - host: cdn.discordapp.com
         port: 443
         protocol: rest
@@ -32,3 +34,13 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+      # Media/attachment access (read-only, proxied through Discord CDN)
+      - host: media.discordapp.net
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/node }

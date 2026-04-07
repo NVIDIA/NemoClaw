@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import type fs from "node:fs";
 import { loadState, saveState, clearState, type NemoClawState } from "./state.js";
 
 const store = new Map<string, string>();
 
 vi.mock("node:fs", async (importOriginal) => {
-  const original = await importOriginal();
+  const original = await importOriginal<typeof fs>();
   return {
     ...original,
     existsSync: (p: string) => store.has(p),

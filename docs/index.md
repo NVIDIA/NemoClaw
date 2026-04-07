@@ -2,7 +2,9 @@
 title:
   page: "NVIDIA NemoClaw Developer Guide"
   nav: "NemoClaw"
-description: "NemoClaw is an open source reference stack that simplifies running OpenClaw always-on assistants more safely, with a single command."
+description:
+  main: "NemoClaw is an open source reference stack that simplifies running OpenClaw always-on assistants more safely, with a single command."
+  agent: "Provides an open source reference stack that simplifies running OpenClaw always-on assistants more safely. Use when setting up NemoClaw, exploring the project, or looking for the landing page."
 keywords: ["nemoclaw open source reference stack", "openclaw always-on assistants", "nvidia openshell", "nvidia nemotron"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "inference_routing", "nemoclaw"]
@@ -25,10 +27,8 @@ status: published
 :end-before: <!-- end-badges -->
 ```
 
-```{include} _includes/alpha-statement.md
-```
-
 NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
+NemoClaw provides onboarding, lifecycle management, and management of OpenClaw within OpenShell containers.
 It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of NVIDIA Agent Toolkit, an environment designed for executing claws with additional security, and open source models like [NVIDIA Nemotron](https://build.nvidia.com).
 
 ## Get Started
@@ -100,7 +100,17 @@ Proceed to the [Quickstart](get-started/quickstart.md) for step-by-step instruct
 :link: about/overview
 :link-type: doc
 
-Learn what NemoClaw does and how it integrates OpenClaw with OpenShell.
+What NemoClaw is: capabilities, benefits, and typical uses.
+
++++
+{bdg-secondary}`Concept`
+:::
+
+:::{grid-item-card} Ecosystem
+:link: about/ecosystem
+:link-type: doc
+
+How OpenClaw, OpenShell, and NemoClaw form a stack and when to use NemoClaw versus OpenShell alone.
 
 +++
 {bdg-secondary}`Concept`
@@ -126,21 +136,21 @@ CLI commands for launching, connecting, monitoring, and managing sandboxes.
 {bdg-secondary}`Reference`
 :::
 
-:::{grid-item-card} Inference Profiles
-:link: reference/inference-profiles
+:::{grid-item-card} Inference Options
+:link: inference/inference-options
 :link-type: doc
 
-NVIDIA endpoint inference configuration and available models.
+Providers available during onboarding and how inference routing works.
 
 +++
-{bdg-secondary}`Reference`
+{bdg-secondary}`Concept`
 :::
 
 :::{grid-item-card} How It Works
 :link: about/how-it-works
 :link-type: doc
 
-High-level overview of the plugin, blueprint, sandbox, and inference routing.
+How NemoClaw runs: plugin, blueprint, OpenShell orchestration, routing, and policy layers.
 
 +++
 {bdg-secondary}`Concept`
@@ -176,6 +186,16 @@ Understand agent identity, memory, and configuration files that persist in the s
 {bdg-secondary}`Concept`
 :::
 
+:::{grid-item-card} Security Best Practices
+:link: security/best-practices
+:link-type: doc
+
+Controls reference, risk framework, and posture profiles for sandbox security.
+
++++
+{bdg-secondary}`Concept`
+:::
+
 :::{grid-item-card} How-To Guides
 :link: inference/switch-inference-providers
 :link-type: doc
@@ -187,6 +207,14 @@ Task-oriented guides for inference, deployment, and policy management.
 :::
 
 ::::
+
+---
+
+```{admonition} Notice and Disclaimer
+:class: warning
+
+This software automatically retrieves, accesses or interacts with external materials. Those retrieved materials are not distributed with this software and are governed solely by separate terms, conditions and licenses. You are solely responsible for finding, reviewing and complying with all applicable terms, conditions, and licenses, and for verifying the security, integrity and suitability of any retrieved materials for your specific use case. This software is provided "AS IS", without warranty of any kind. The author makes no representations or warranties regarding any retrieved materials, and assumes no liability for any losses, damages, liabilities or legal consequences from your use or inability to use this software or any retrieved materials. Use this software and the retrieved materials at your own risk.
+```
 
 ```{toctree}
 :hidden:
@@ -200,6 +228,7 @@ Home <self>
 
 Overview <about/overview>
 How It Works <about/how-it-works>
+Ecosystem <about/ecosystem>
 Release Notes <about/release-notes>
 ```
 
@@ -214,6 +243,8 @@ Quickstart <get-started/quickstart>
 :caption: Inference
 :hidden:
 
+Inference Options <inference/inference-options>
+Use Local Inference <inference/use-local-inference>
 Switch Inference Providers <inference/switch-inference-providers>
 ```
 
@@ -226,11 +257,19 @@ Customize the Network Policy <network-policy/customize-network-policy>
 ```
 
 ```{toctree}
+:caption: Security
+:hidden:
+
+Security Best Practices <security/best-practices>
+```
+
+```{toctree}
 :caption: Deployment
 :hidden:
 
 Deploy to a Remote GPU Instance <deployment/deploy-to-remote-gpu>
-Set Up the Telegram Bridge <deployment/set-up-telegram-bridge>
+Set Up Telegram <deployment/set-up-telegram-bridge>
+Sandbox Hardening <deployment/sandbox-hardening>
 ```
 
 ```{toctree}
@@ -254,7 +293,6 @@ Back Up and Restore <workspace/backup-restore>
 
 Architecture <reference/architecture>
 Commands <reference/commands>
-Inference Profiles <reference/inference-profiles>
 Network Policies <reference/network-policies>
 Troubleshooting <reference/troubleshooting>
 ```
@@ -263,6 +301,7 @@ Troubleshooting <reference/troubleshooting>
 :caption: Resources
 :hidden:
 
+Report Vulnerabilities <https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md>
 resources/license
 Discord <https://discord.gg/XFpfPv9Uvx>
 ```
