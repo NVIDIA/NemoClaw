@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "nemoclaw-docs": {
+      "command": "node",
+      "args": ["mcp-docs-server/index.js"],
+      "cwd": "/Users/abhi/Desktop/NemoClaw"
+    }
+  }
+}

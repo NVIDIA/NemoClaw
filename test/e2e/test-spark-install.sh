@@ -2,19 +2,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# DGX Spark install smoke: setup-spark (Docker cgroupns) + install.sh — parity with
-# test/integration/spark-install-cli.test.ts and spark-install.md Quick Start.
+# DGX Spark install smoke: standard install.sh path on a Spark-class Linux host.
 #
 # Prerequisites:
 #   - Linux (DGX Spark or similar); other OS exits immediately (fail)
 #   - Docker running
-#   - sudo (for scripts/setup-spark.sh) unless NEMOCLAW_E2E_SPARK_SKIP_SETUP=1
 #   - Same env your non-interactive install needs (e.g. NEMOCLAW_NON_INTERACTIVE=1, NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1, API keys, …)
 #
 # Environment:
 #   NEMOCLAW_NON_INTERACTIVE=1             — required (matches full-e2e install phase)
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required for non-interactive install/onboard
-#   NEMOCLAW_E2E_SPARK_SKIP_SETUP=1        — skip sudo setup-spark (host already configured)
 #   NEMOCLAW_E2E_PUBLIC_INSTALL=1          — use curl|bash instead of repo install.sh
 #   NEMOCLAW_INSTALL_SCRIPT_URL            — URL when using public install (default: nemoclaw.sh)
 #   INSTALL_LOG                            — log file (default: /tmp/nemoclaw-e2e-spark-install.log)
@@ -55,7 +52,6 @@ else
   exit 1
 fi
 
-SETUP_SCRIPT="$REPO/scripts/setup-spark.sh"
 INSTALL_LOG="${INSTALL_LOG:-/tmp/nemoclaw-e2e-spark-install.log}"
 
 section "Phase 0: Platform"
@@ -74,13 +70,6 @@ else
   exit 1
 fi
 
-if [ -f "$SETUP_SCRIPT" ]; then
-  pass "Found scripts/setup-spark.sh"
-else
-  fail "Missing $SETUP_SCRIPT"
-  exit 1
-fi
-
 if [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ]; then
   pass "NEMOCLAW_NON_INTERACTIVE=1"
 else
@@ -95,24 +84,13 @@ else
   exit 1
 fi
 
-section "Phase 2: Spark Docker setup (sudo)"
+section "Phase 2: Standard installer path"
 cd "$REPO" || {
   fail "cd to repo: $REPO"
   exit 1
 }
 
-if [ "${NEMOCLAW_E2E_SPARK_SKIP_SETUP:-0}" = "1" ]; then
-  info "Skipping sudo setup-spark (NEMOCLAW_E2E_SPARK_SKIP_SETUP=1)"
-  pass "setup-spark skipped"
-else
-  info "Running: sudo bash scripts/setup-spark.sh"
-  if sudo bash "$SETUP_SCRIPT"; then
-    pass "setup-spark completed"
-  else
-    fail "setup-spark failed"
-    exit 1
-  fi
-fi
+pass "Using generic installer flow without Spark-specific setup"
 
 section "Phase 3: Install NemoClaw (non-interactive)"
 info "Log: $INSTALL_LOG"

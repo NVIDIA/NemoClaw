@@ -53,7 +53,7 @@ exec_installer_from_ref() {
 
   if has_payload_marker "$payload_script"; then
     verify_downloaded_script "$payload_script" "versioned installer"
-    NEMOCLAW_INSTALL_REF="$ref" NEMOCLAW_INSTALL_TAG="$ref" NEMOCLAW_REPO_ROOT="$source_root" \
+    NEMOCLAW_INSTALL_REF="$ref" NEMOCLAW_INSTALL_TAG="$ref" NEMOCLAW_BOOTSTRAP_PAYLOAD=1 \
       bash "$payload_script" "$@"
     return
   fi

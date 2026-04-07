@@ -63,18 +63,34 @@ describe("credential exposure in process arguments", () => {
   it("onboard.js does not embed sandbox secrets in the sandbox create command line", () => {
     const src = fs.readFileSync(ONBOARD_JS, "utf-8");
 
-    expect(src).toMatch(/const sandboxEnv = \{ \.\.\.process\.env \};/);
+    // sandboxEnv must be built with a blocklist that strips all credential env vars.
+    // The blocklist derives provider keys from REMOTE_PROVIDER_CONFIG and adds
+    // messaging tokens explicitly. Verify both mechanisms are present.
+    const blocklistMatch = src.match(/const blockedSandboxEnvNames = new Set\(\[([\s\S]*?)\]\);/);
+    expect(blocklistMatch).not.toBeNull();
+    const blocklist = blocklistMatch[1];
+    // Provider credentials are derived from REMOTE_PROVIDER_CONFIG
+    expect(blocklist).toContain("REMOTE_PROVIDER_CONFIG");
+    // Messaging and additional credentials are listed explicitly
+    expect(blocklist).toContain('"BEDROCK_API_KEY"');
+    expect(blocklist).toContain('"DISCORD_BOT_TOKEN"');
+    expect(blocklist).toContain('"SLACK_BOT_TOKEN"');
+    expect(blocklist).toContain('"TELEGRAM_BOT_TOKEN"');
     expect(src).toMatch(/streamSandboxCreate\(createCommand, sandboxEnv(?:, \{)?/);
     expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("NVIDIA_API_KEY"/);
     expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("DISCORD_BOT_TOKEN"/);
     expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("SLACK_BOT_TOKEN"/);
   });
 
-  it("onboard.js curl probes use explicit timeouts", () => {
-    const src = fs.readFileSync(ONBOARD_JS, "utf-8");
+  it("onboard curl probes use explicit timeouts", () => {
+    const onboardSrc = fs.readFileSync(ONBOARD_JS, "utf-8");
+    const probeSrc = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "http-probe.ts"),
+      "utf-8",
+    );
 
-    expect(src).toMatch(/function getCurlTimingArgs\(\)/);
-    expect(src).toMatch(/"--connect-timeout", "10"/);
-    expect(src).toMatch(/"--max-time", "60"/);
+    expect(onboardSrc).toMatch(/http-probe/);
+    expect(probeSrc).toMatch(/"--connect-timeout", "10"/);
+    expect(probeSrc).toMatch(/"--max-time", "60"/);
   });
 });

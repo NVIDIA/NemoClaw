@@ -53,7 +53,7 @@ function getPresetEndpoints(content) {
   const regex = /host:\s*([^\s,}]+)/g;
   let match;
   while ((match = regex.exec(content)) !== null) {
-    hosts.push(match[1]);
+    hosts.push(match[1].replace(/^["']|["']$/g, ""));
   }
   return hosts;
 }
@@ -250,6 +250,11 @@ function applyPreset(sandboxName, presetName) {
 
   const currentPolicy = parseCurrentPolicy(rawPolicy);
   const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
+
+  const endpoints = getPresetEndpoints(presetContent);
+  if (endpoints.length > 0) {
+    console.log(`  Widening sandbox egress — adding: ${endpoints.join(", ")}`);
+  }
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
   const tmpFile = path.join(tmpDir, "policy.yaml");
