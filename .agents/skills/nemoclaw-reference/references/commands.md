@@ -193,17 +193,15 @@ For a remote Brev instance, SSH to the instance and run `openshell term` there, 
 
 ### `nemoclaw start`
 
-Start auxiliary services, such as the Telegram bridge and cloudflared tunnel.
+Start optional host auxiliary services. This is the cloudflared tunnel when `cloudflared` is installed (for a public URL to the dashboard). Channel messaging (Telegram, Discord, Slack) is not started here; it is configured during `nemoclaw onboard` and runs through OpenShell-managed constructs.
 
 ```console
 $ nemoclaw start
 ```
 
-Requires `TELEGRAM_BOT_TOKEN` for the Telegram bridge.
-
 ### `nemoclaw stop`
 
-Stop all auxiliary services.
+Stop host auxiliary services started by `nemoclaw start` (for example cloudflared).
 
 ```console
 $ nemoclaw stop
@@ -211,7 +209,7 @@ $ nemoclaw stop
 
 ### `nemoclaw status`
 
-Show the sandbox list and the status of auxiliary services.
+Show the sandbox list and the status of host auxiliary services (for example cloudflared).
 
 ```console
 $ nemoclaw status

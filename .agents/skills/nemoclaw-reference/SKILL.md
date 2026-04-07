@@ -9,7 +9,7 @@ Describes how NemoClaw combines a CLI plugin with a versioned blueprint to move 
 
 ## Reference
 
-- [NemoClaw Architecture — Plugin, Blueprint, and Sandbox Structure](references/architecture.md)
+- [NemoClaw Architecture: Plugin, Blueprint, and Sandbox Structure](references/architecture.md)
 - [NemoClaw CLI Commands Reference](references/commands.md)
-- [NemoClaw Network Policies — Baseline Rules and Operator Approval](references/network-policies.md)
+- [NemoClaw Network Policies: Baseline Rules and Operator Approval](references/network-policies.md)
 - [NemoClaw Troubleshooting Guide](references/troubleshooting.md)

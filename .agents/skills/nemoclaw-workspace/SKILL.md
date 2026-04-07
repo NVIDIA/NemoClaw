@@ -42,7 +42,7 @@ All workspace files reside inside the sandbox filesystem:
 ```
 
 > **Note:** The workspace directory is hidden (`.openclaw`).
-> The files are not at `/sandbox/SOUL.md` — use the full path when downloading or uploading.
+> The files are not at `/sandbox/SOUL.md`. Use the full path when downloading or uploading.
 
 ## Persistence Behavior
 
@@ -50,8 +50,8 @@ Understanding when these files persist and when they are lost is critical.
 
 | Event | Workspace files |
 |---|---|
-| Sandbox restart | **Preserved** — the sandbox PVC retains its data. |
-| `nemoclaw <name> destroy` | **Lost** — the sandbox and its PVC are deleted. |
+| Sandbox restart | **Preserved:** the sandbox PVC retains its data. |
+| `nemoclaw <name> destroy` | **Lost:** the sandbox and its PVC are deleted. |
 
 > **Warning:** Always back up your workspace files before running `nemoclaw <name> destroy`.
 > See Back Up and Restore (see the `nemoclaw-workspace` skill) for instructions.
@@ -61,8 +61,8 @@ Understanding when these files persist and when they are lost is critical.
 The agent reads these files at the start of every session.
 You can edit them in two ways:
 
-1. **Let the agent do it** — Ask your agent to update its persona, memory, or user context during a session.
-2. **Edit manually** — Use `openshell sandbox connect` to open a terminal inside the sandbox and edit files directly, or use `openshell sandbox upload` to push edited files from your host.
+1. **Let the agent do it:** Ask your agent to update its persona, memory, or user context during a session.
+2. **Edit manually:** Use `openshell sandbox connect` to open a terminal inside the sandbox and edit files directly, or use `openshell sandbox upload` to push edited files from your host.
 
 ## Prerequisites
 
