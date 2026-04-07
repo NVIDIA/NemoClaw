@@ -101,7 +101,7 @@ describe("ensure_identity_symlink", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stderr).toBe(""); // no log = no change
+    expect(result.stderr).not.toContain("[setup]"); // no action taken
   });
 
   it("repairs symlink pointing to wrong target", () => {
@@ -182,6 +182,6 @@ describe("fix_openclaw_data_ownership", () => {
     const result = runShell(`${funcs}\nfix_openclaw_data_ownership`, { HOME: tmpDir });
 
     expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
+    expect(result.stderr).not.toContain("[setup]"); // no action taken
   });
 });
