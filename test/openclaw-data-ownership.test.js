@@ -41,7 +41,7 @@ function runShell(script, env = {}) {
   return spawnSync("bash", ["-euo", "pipefail", "-c", script], {
     cwd: path.join(import.meta.dirname, ".."),
     encoding: "utf-8",
-    env: { PATH: process.env.PATH, ...env },
+    env: { PATH: process.env.PATH, PS1: "", BASH_ENV: "", ...env },
     timeout: 10_000,
   });
 }
