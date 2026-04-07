@@ -50,6 +50,12 @@ fs.rmSync(tmpDir, { recursive: true });
 // ── Helpers ──────────────────────────────────────────────────────────
 const servers = [];
 
+/**
+ * Create a local HTTPS test server with the given request handler.
+ *
+ * @param {Function} handler — Node.js (req, res) request handler
+ * @returns {Promise<{server: import("https").Server, port: number}>}
+ */
 function createServer(handler) {
   return new Promise((resolve) => {
     const server = https.createServer({ key, cert }, handler);
