@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   checkHostSupport,
   classifyLinuxHost,
+  classifyMacosHost,
   parseOsRelease,
 } from "../../dist/lib/host-support";
 
@@ -87,14 +88,14 @@ describe("checkHostSupport", () => {
     expect(result.code).toBe("UNKNOWN_VERSION");
   });
 
-  it("uses mocked macOS version detection", () => {
+  it("classifies macOS 14 as supported", () => {
     const result = checkHostSupport({
       platform: "darwin",
       getMacosVersionImpl: () => "14.5",
     });
 
-    expect(result.status).toBe("warning");
-    expect(result.code).toBe("UNSUPPORTED_OS");
+    expect(result.status).toBe("ok");
+    expect(result.code).toBe("SUPPORTED");
     expect(result.message).toContain("macOS 14");
   });
 
@@ -104,6 +105,44 @@ describe("checkHostSupport", () => {
       getMacosVersionImpl: () => "",
     });
 
+    expect(result.status).toBe("warning");
+    expect(result.code).toBe("UNKNOWN_VERSION");
+  });
+});
+
+describe("classifyMacosHost", () => {
+  it("marks macOS 15 (Sequoia) as supported", () => {
+    const result = classifyMacosHost("15.1");
+    expect(result.status).toBe("ok");
+    expect(result.code).toBe("SUPPORTED");
+  });
+
+  it("marks macOS 14 (Sonoma) as supported", () => {
+    const result = classifyMacosHost("14.5");
+    expect(result.status).toBe("ok");
+    expect(result.code).toBe("SUPPORTED");
+  });
+
+  it("marks macOS 13 (Ventura) as supported", () => {
+    const result = classifyMacosHost("13.0");
+    expect(result.status).toBe("ok");
+    expect(result.code).toBe("SUPPORTED");
+  });
+
+  it("marks macOS 12 (Monterey) as near EOL", () => {
+    const result = classifyMacosHost("12.7");
+    expect(result.status).toBe("warning");
+    expect(result.code).toBe("NEAR_EOL");
+  });
+
+  it("returns unknown-version for unparseable version", () => {
+    const result = classifyMacosHost("invalid");
+    expect(result.status).toBe("warning");
+    expect(result.code).toBe("UNKNOWN_VERSION");
+  });
+
+  it("returns unknown-version for empty string", () => {
+    const result = classifyMacosHost("");
     expect(result.status).toBe("warning");
     expect(result.code).toBe("UNKNOWN_VERSION");
   });

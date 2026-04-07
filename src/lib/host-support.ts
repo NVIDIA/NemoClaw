@@ -166,17 +166,39 @@ export function classifyMacosHost(version: string): HostSupportResult {
       version: "unknown",
       status: "warning",
       code: "UNKNOWN_VERSION",
-      message: "macOS detected but product version could not be determined; explicit support policy is not yet fully defined.",
+      message: "macOS detected but product version could not be determined.",
     };
   }
 
-  const major = version.split(".")[0] || version;
+  const major = parseInt(version.split(".")[0], 10);
+  if (isNaN(major)) {
+    return {
+      os: "macos",
+      version,
+      status: "warning",
+      code: "UNKNOWN_VERSION",
+      message: `macOS detected but version "${version}" could not be parsed.`,
+    };
+  }
+
+  // macOS 13 (Ventura) and later are supported — matches documented
+  // compatibility for Colima, Docker Desktop, and Podman runtimes.
+  if (major >= 13) {
+    return {
+      os: "macos",
+      version,
+      status: "ok",
+      code: "SUPPORTED",
+      message: `macOS ${major} detected: supported.`,
+    };
+  }
+
   return {
     os: "macos",
     version,
     status: "warning",
-    code: "UNSUPPORTED_OS",
-    message: `macOS ${major} detected: recognized host OS; explicit support policy not yet fully defined.`,
+    code: "NEAR_EOL",
+    message: `macOS ${major} detected: older macOS version; upgrade is recommended.`,
   };
 }
 
