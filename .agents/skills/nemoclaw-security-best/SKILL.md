@@ -1,6 +1,6 @@
 ---
-name: nemoclaw-security-best
-description: Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs.
+name: "nemoclaw-security-best"
+description: "Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs."
 ---
 
 # NemoClaw Security Best
@@ -32,7 +32,7 @@ The following diagram shows the default posture immediately after `nemoclaw onbo
 
 ```mermaid
 flowchart TB
-    subgraph HOST["Your Machine — default posture after nemoclaw onboard"]
+    subgraph HOST["Your Machine: default posture after nemoclaw onboard"]
         direction TB
 
         YOU["👤 Operator"]
@@ -40,14 +40,14 @@ flowchart TB
         subgraph NC["NemoClaw + OpenShell"]
             direction TB
 
-            subgraph SB["Sandbox — the agent's isolated world"]
+            subgraph SB["Sandbox: the agent's isolated world"]
                 direction LR
                 PROC["⚙️ Process Layer<br/>Controls what the agent can execute"]
                 FS["📁 Filesystem Layer<br/>Controls what the agent can read and write"]
                 AGENT["🤖 Agent"]
             end
 
-            subgraph GW["Gateway — the gatekeeper"]
+            subgraph GW["Gateway: the gatekeeper"]
                 direction LR
                 NET["🌐 Network Layer<br/>Controls where the agent can connect"]
                 INF["🧠 Inference Layer<br/>Controls which AI models the agent can use"]

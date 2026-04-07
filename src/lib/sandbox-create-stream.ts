@@ -3,9 +3,7 @@
 
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 
-// runner.js is CJS.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { ROOT } = require("../../bin/lib/runner");
+import { ROOT } from "./paths";
 
 export interface StreamSandboxCreateResult {
   status: number;
