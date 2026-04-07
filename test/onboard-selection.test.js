@@ -1870,6 +1870,106 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 2);
   });
 
+  it("fails early in non-interactive mode when NVIDIA_API_KEY is not an nvapi- key", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-build-noninteractive-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "build-noninteractive-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+
+    const script = String.raw`
+const fs = require("fs");
+const path = require("path");
+const Module = require("module");
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const prompts = [];
+credentials.prompt = async (message) => {
+  prompts.push(message);
+  throw new Error("unexpected prompt");
+};
+credentials.ensureApiKey = async () => {
+  throw new Error("unexpected ensureApiKey");
+};
+runner.runCapture = () => "";
+
+const onboardFile = ${onboardPath};
+const source = fs.readFileSync(onboardFile, "utf-8");
+const injected = source + "\nmodule.exports.__setNonInteractive = (value) => { NON_INTERACTIVE = value; };";
+const onboardModule = new Module(onboardFile, module);
+onboardModule.filename = onboardFile;
+onboardModule.paths = Module._nodeModulePaths(path.dirname(onboardFile));
+onboardModule._compile(injected, onboardFile);
+
+const { setupNim, __setNonInteractive } = onboardModule.exports;
+
+(async () => {
+  process.env.NVIDIA_API_KEY = "sk-test";
+  __setNonInteractive(true);
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalExit = process.exit;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  process.exit = (code) => {
+    const error = new Error("process.exit:" + code);
+    error.exitCode = code;
+    throw error;
+  };
+  try {
+    await setupNim(null);
+    originalLog(JSON.stringify({ completed: true, prompts, lines }));
+  } catch (error) {
+    originalLog(
+      JSON.stringify({
+        completed: false,
+        prompts,
+        lines,
+        message: error.message,
+        exitCode: error.exitCode ?? null,
+      }),
+    );
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+    process.exit = originalExit;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.completed, false);
+    assert.equal(payload.exitCode, 1);
+    assert.equal(payload.prompts.length, 0);
+    assert.ok(payload.lines.some((line) => line.includes("Invalid key. Must start with nvapi-")));
+    assert.ok(
+      payload.lines.some((line) =>
+        line.includes("Get a key from https://build.nvidia.com/settings/api-keys"),
+      ),
+    );
+  });
+
   it("lets users re-enter an NVIDIA API key after authorization failure without restarting selection", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-build-auth-retry-"));
