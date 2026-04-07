@@ -381,6 +381,54 @@ function getInstalledOpenshellVersion(versionOutput = null) {
   return match[1];
 }
 
+/**
+ * Compare two semver-like x.y.z strings. Returns true iff `left >= right`.
+ * Non-numeric or missing components are treated as 0.
+ */
+function versionGte(left = "0.0.0", right = "0.0.0") {
+  const lhs = String(left)
+    .split(".")
+    .map((part) => Number.parseInt(part, 10) || 0);
+  const rhs = String(right)
+    .split(".")
+    .map((part) => Number.parseInt(part, 10) || 0);
+  const length = Math.max(lhs.length, rhs.length);
+  for (let index = 0; index < length; index += 1) {
+    const a = lhs[index] || 0;
+    const b = rhs[index] || 0;
+    if (a > b) return true;
+    if (a < b) return false;
+  }
+  return true;
+}
+
+/**
+ * Read `min_openshell_version` from nemoclaw-blueprint/blueprint.yaml. Returns
+ * null if the blueprint or field is missing or unparseable — callers must
+ * treat null as "no constraint configured" so a malformed install does not
+ * become a hard onboard blocker. See #1317.
+ */
+function getBlueprintMinOpenshellVersion(rootDir = ROOT) {
+  try {
+    // Lazy require: yaml is already a dependency via bin/lib/policies.js but
+    // pulling it at module load would slow down `nemoclaw --help` for users
+    // who never reach the preflight path.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const YAML = require("yaml");
+    const blueprintPath = path.join(rootDir, "nemoclaw-blueprint", "blueprint.yaml");
+    if (!fs.existsSync(blueprintPath)) return null;
+    const raw = fs.readFileSync(blueprintPath, "utf8");
+    const parsed = YAML.parse(raw);
+    const value = parsed && parsed.min_openshell_version;
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    if (!/^[0-9]+\.[0-9]+\.[0-9]+/.test(trimmed)) return null;
+    return trimmed;
+  } catch {
+    return null;
+  }
+}
+
 function getStableGatewayImageRef(versionOutput = null) {
   const version = getInstalledOpenshellVersion(versionOutput);
   if (!version) return null;
@@ -1559,9 +1607,32 @@ async function preflight() {
       process.exit(1);
     }
   }
-  console.log(
-    `  ✓ openshell CLI: ${runCaptureOpenshell(["--version"], { ignoreError: true }) || "unknown"}`,
-  );
+  const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
+  console.log(`  ✓ openshell CLI: ${openshellVersionOutput || "unknown"}`);
+  // Enforce nemoclaw-blueprint/blueprint.yaml's min_openshell_version. Without
+  // this check, users can complete a full onboard against an OpenShell that
+  // pre-dates required CLI surface (e.g. `sandbox exec`, `--upload`) and hit
+  // silent failures inside the sandbox at runtime. See #1317.
+  const installedOpenshellVersion = getInstalledOpenshellVersion(openshellVersionOutput);
+  const minOpenshellVersion = getBlueprintMinOpenshellVersion();
+  if (
+    installedOpenshellVersion &&
+    minOpenshellVersion &&
+    !versionGte(installedOpenshellVersion, minOpenshellVersion)
+  ) {
+    console.error("");
+    console.error(
+      `  ✗ openshell ${installedOpenshellVersion} is below the minimum required by this NemoClaw release.`,
+    );
+    console.error(`    blueprint.yaml min_openshell_version: ${minOpenshellVersion}`);
+    console.error("");
+    console.error("    Upgrade openshell and retry:");
+    console.error("      https://github.com/NVIDIA/OpenShell/releases");
+    console.error("    Or remove the existing binary so the installer can re-fetch a current build:");
+    console.error("      command -v openshell && rm -f \"$(command -v openshell)\"");
+    console.error("");
+    process.exit(1);
+  }
   if (openshellInstall.futureShellPathHint) {
     console.log(
       `  Note: openshell was installed to ${openshellInstall.localBin} for this onboarding run.`,
@@ -4159,6 +4230,8 @@ module.exports = {
   getNavigationChoice,
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
+  getBlueprintMinOpenshellVersion,
+  versionGte,
   getRequestedModelHint,
   getRequestedProviderHint,
   getStableGatewayImageRef,

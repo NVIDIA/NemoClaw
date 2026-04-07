@@ -20,6 +20,8 @@ import {
   getFutureShellPathHint,
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
+  getBlueprintMinOpenshellVersion,
+  versionGte,
   getRequestedModelHint,
   getRequestedProviderHint,
   getRequestedSandboxNameHint,
@@ -299,6 +301,108 @@ describe("onboard helpers", () => {
       inferenceApi: "openai-responses",
       inferenceCompat: null,
     });
+  });
+
+  it("regression #1317: versionGte handles equal, greater, and lesser semvers", () => {
+    expect(versionGte("0.1.0", "0.1.0")).toBe(true);
+    expect(versionGte("0.1.0", "0.0.20")).toBe(true);
+    expect(versionGte("0.0.20", "0.1.0")).toBe(false);
+    expect(versionGte("1.2.3", "1.2.4")).toBe(false);
+    expect(versionGte("1.2.4", "1.2.3")).toBe(true);
+    expect(versionGte("0.0.21", "0.0.20")).toBe(true);
+    // Defensive: missing components default to 0
+    expect(versionGte("1.0", "1.0.0")).toBe(true);
+    expect(versionGte("", "0.0.0")).toBe(true);
+  });
+
+  it("regression #1317: getBlueprintMinOpenshellVersion reads min_openshell_version from blueprint.yaml", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-min-version-"));
+    const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(blueprintDir, "blueprint.yaml"),
+      [
+        'version: "0.1.0"',
+        'min_openshell_version: "0.1.0"',
+        'min_openclaw_version: "2026.3.0"',
+      ].join("\n"),
+    );
+    try {
+      expect(getBlueprintMinOpenshellVersion(tmpDir)).toBe("0.1.0");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1317: getBlueprintMinOpenshellVersion returns null on missing or unparseable blueprint", () => {
+    // Missing directory
+    const missingDir = path.join(os.tmpdir(), "nemoclaw-blueprint-missing-" + Date.now().toString());
+    expect(getBlueprintMinOpenshellVersion(missingDir)).toBe(null);
+
+    // Present file, missing field — must NOT block onboard
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-no-field-"));
+    const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(blueprintDir, "blueprint.yaml"),
+      'version: "0.1.0"\n',
+    );
+    try {
+      expect(getBlueprintMinOpenshellVersion(tmpDir)).toBe(null);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+
+    // Present file, malformed YAML — must NOT throw, just return null
+    const badDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-bad-yaml-"));
+    const badBlueprintDir = path.join(badDir, "nemoclaw-blueprint");
+    fs.mkdirSync(badBlueprintDir, { recursive: true });
+    fs.writeFileSync(path.join(badBlueprintDir, "blueprint.yaml"), "this is: : not valid: yaml: [");
+    try {
+      expect(getBlueprintMinOpenshellVersion(badDir)).toBe(null);
+    } finally {
+      fs.rmSync(badDir, { recursive: true, force: true });
+    }
+
+    // Present file, non-string value (yaml parses unquoted 1.5 as number) —
+    // must NOT block onboard, just return null
+    const wrongTypeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-wrong-type-"));
+    const wrongTypeBlueprintDir = path.join(wrongTypeDir, "nemoclaw-blueprint");
+    fs.mkdirSync(wrongTypeBlueprintDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(wrongTypeBlueprintDir, "blueprint.yaml"),
+      "min_openshell_version: 1.5\n",
+    );
+    try {
+      expect(getBlueprintMinOpenshellVersion(wrongTypeDir)).toBe(null);
+    } finally {
+      fs.rmSync(wrongTypeDir, { recursive: true, force: true });
+    }
+
+    // Present file, string value that doesn't look like x.y.z — must NOT
+    // block onboard. Defends against typos like "latest" or "0.1".
+    const badShapeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-bad-shape-"));
+    const badShapeBlueprintDir = path.join(badShapeDir, "nemoclaw-blueprint");
+    fs.mkdirSync(badShapeBlueprintDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(badShapeBlueprintDir, "blueprint.yaml"),
+      'min_openshell_version: "latest"\n',
+    );
+    try {
+      expect(getBlueprintMinOpenshellVersion(badShapeDir)).toBe(null);
+    } finally {
+      fs.rmSync(badShapeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1317: shipped blueprint.yaml exposes a parseable min_openshell_version", () => {
+    // Sanity check against the real on-disk blueprint so a future edit that
+    // accidentally drops or breaks the field is caught by CI rather than at
+    // a user's onboard time.
+    const repoRoot = path.resolve(__dirname, "..");
+    const v = getBlueprintMinOpenshellVersion(repoRoot);
+    expect(v).not.toBe(null);
+    expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(v)).toBe(true);
   });
 
   it("pins the gateway image to the installed OpenShell release version", () => {
