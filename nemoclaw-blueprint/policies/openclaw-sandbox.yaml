@@ -53,15 +53,16 @@ network_policies:
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+          - allow: { method: POST, path: "/v1/messages" }
+          - allow: { method: POST, path: "/v1/messages/batches" }
+          - allow: { method: GET, path: "/v1/messages/batches/**" }
+          - allow: { method: POST, path: "/v1/complete" }
       - host: statsig.anthropic.com
         port: 443
         protocol: rest
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
       - host: sentry.io
         port: 443
@@ -69,8 +70,8 @@ network_policies:
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+          - allow: { method: POST, path: "/api/*/envelope/**" }
+          - allow: { method: POST, path: "/api/*/store/**" }
     binaries:
       - { path: /usr/local/bin/claude }
 
@@ -83,16 +84,22 @@ network_policies:
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+          - allow: { method: POST, path: "/v1/chat/completions" }
+          - allow: { method: POST, path: "/v1/completions" }
+          - allow: { method: POST, path: "/v1/embeddings" }
+          - allow: { method: GET, path: "/v1/models" }
+          - allow: { method: GET, path: "/v1/models/**" }
       - host: inference-api.nvidia.com
         port: 443
         protocol: rest
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+          - allow: { method: POST, path: "/v1/chat/completions" }
+          - allow: { method: POST, path: "/v1/completions" }
+          - allow: { method: POST, path: "/v1/embeddings" }
+          - allow: { method: GET, path: "/v1/models" }
+          - allow: { method: GET, path: "/v1/models/**" }
     binaries:
       - { path: /usr/local/bin/claude }
       - { path: /usr/local/bin/openclaw }
