@@ -53,7 +53,7 @@ const servers = [];
 /**
  * Create a local HTTPS test server with the given request handler.
  *
- * @param {Function} handler — Node.js (req, res) request handler
+ * @param {import("http").RequestListener} handler - Node.js (req, res) request handler
  * @returns {Promise<{server: import("https").Server, port: number}>}
  */
 function createServer(handler) {
@@ -61,7 +61,8 @@ function createServer(handler) {
     const server = https.createServer({ key, cert }, handler);
     server.listen(0, "127.0.0.1", () => {
       servers.push(server);
-      const { port } = server.address();
+      const addr = server.address();
+      const port = /** @type {import("net").AddressInfo} */ (addr).port;
       resolve({ server, port });
     });
   });
@@ -165,8 +166,8 @@ describe("tgApi (bin/lib/telegram-api)", () => {
 
   it("handles connection refused (server down)", async () => {
     const tempServer = net.createServer();
-    await new Promise((r) => tempServer.listen(0, "127.0.0.1", r));
-    const { port } = tempServer.address();
+    await new Promise((r) => tempServer.listen(0, "127.0.0.1", () => r()));
+    const port = /** @type {import("net").AddressInfo} */ (tempServer.address()).port;
     await new Promise((resolve, reject) =>
       tempServer.close((err) => (err ? reject(err) : resolve())),
     );

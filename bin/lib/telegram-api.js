@@ -14,14 +14,14 @@ const DEFAULT_TIMEOUT_MS = 60000;
 /**
  * Call a Telegram Bot API method.
  *
- * @param {string} token  — Bot token from @BotFather
- * @param {string} method — API method name (e.g. "getUpdates")
- * @param {object} body   — JSON-serialisable request body
+ * @param {string} token  - Bot token from BotFather
+ * @param {string} method - API method name (e.g. "getUpdates")
+ * @param {object} body   - JSON-serialisable request body
  * @param {object} [opts]
- * @param {number} [opts.timeout]  — socket idle timeout in ms (default 60 000)
- * @param {string} [opts.hostname] — override hostname (useful for tests)
- * @param {number} [opts.port]     — override port (useful for tests)
- * @param {boolean} [opts.rejectUnauthorized] — TLS cert check (default true)
+ * @param {number} [opts.timeout]  - socket idle timeout in ms (default 60 000)
+ * @param {string} [opts.hostname] - override hostname (useful for tests)
+ * @param {number} [opts.port]     - override port (useful for tests)
+ * @param {boolean} [opts.rejectUnauthorized] - TLS cert check (default true)
  * @returns {Promise<object>} parsed JSON response
  */
 function tgApi(token, method, body, opts = {}) {
