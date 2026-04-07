@@ -52,14 +52,10 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | Container runtime | Supported runtime installed and running |
 | [OpenShell](https://github.com/NVIDIA/OpenShell) | Installed |
 
-#### OpenShell Compatibility
+#### OpenShell Lifecycle
 
-NemoClaw 0.1.0 supports OpenShell 0.0.7.
-During onboarding, NemoClaw derives the OpenShell gateway image from the installed `openshell` CLI version, so upgrading OpenShell independently can rebuild the sandbox with a different runtime layout than the current NemoClaw release expects.
-
-| NemoClaw | OpenShell | Notes |
-|----------|-----------|-------|
-| 0.1.0 | 0.0.7 | Use `nemoclaw onboard` to create or recreate NemoClaw-managed sandboxes. Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then re-onboard. |
+For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
+Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemoclaw onboard`.
 
 #### Container Runtimes
 
