@@ -43,7 +43,10 @@ const { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } = require("./lib/usage-notice");
 const { runDebugCommand } = require("../dist/lib/debug-command");
 const { executeDeploy } = require("../dist/lib/deploy");
 const { runStartCommand, runStopCommand } = require("../dist/lib/services-command");
-const { runUninstallCommand } = require("../dist/lib/uninstall-command");
+const {
+  buildVersionedUninstallUrl,
+  runUninstallCommand,
+} = require("../dist/lib/uninstall-command");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -65,8 +68,7 @@ const GLOBAL_COMMANDS = new Set([
   "-v",
 ]);
 
-const REMOTE_UNINSTALL_URL =
-  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh";
+const REMOTE_UNINSTALL_URL = buildVersionedUninstallUrl(getVersion());
 let OPENSHELL_BIN = null;
 const MIN_LOGS_OPENSHELL_VERSION = "0.0.7";
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";

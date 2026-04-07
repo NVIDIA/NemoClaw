@@ -6,6 +6,11 @@ import os from "node:os";
 import path from "node:path";
 import type { SpawnSyncReturns } from "node:child_process";
 
+export function buildVersionedUninstallUrl(version: string): string {
+  const stableVersion = String(version || "").trim().replace(/^v/, "").replace(/-.*/, "");
+  return `https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/tags/v${stableVersion}/uninstall.sh`;
+}
+
 export function resolveUninstallScript(
   candidates: string[],
   existsSyncImpl: (path: string) => boolean = fs.existsSync,

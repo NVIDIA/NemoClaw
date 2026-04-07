@@ -4,12 +4,22 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  buildVersionedUninstallUrl,
   exitWithSpawnResult,
   resolveUninstallScript,
   runUninstallCommand,
 } from "../../dist/lib/uninstall-command";
 
 describe("uninstall command", () => {
+  it("builds a version-pinned uninstall URL", () => {
+    expect(buildVersionedUninstallUrl("0.1.0")).toBe(
+      "https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/tags/v0.1.0/uninstall.sh",
+    );
+    expect(buildVersionedUninstallUrl("v0.1.0-3-gdeadbee")).toBe(
+      "https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/tags/v0.1.0/uninstall.sh",
+    );
+  });
+
   it("selects the first existing uninstall script", () => {
     const script = resolveUninstallScript(["/a", "/b"], (candidate) => candidate === "/b");
     expect(script).toBe("/b");
