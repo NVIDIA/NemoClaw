@@ -765,27 +765,39 @@ async function onboard(args) {
     if (!fromDockerfile || fromDockerfile.startsWith("--")) {
       console.error("  --from requires a path to a Dockerfile");
       console.error(
-        `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
+        `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
       );
       process.exit(1);
     }
     args = [...args.slice(0, fromIdx), ...args.slice(fromIdx + 2)];
   }
 
-  const allowedArgs = new Set(["--non-interactive", "--resume", NOTICE_ACCEPT_FLAG]);
+  const allowedArgs = new Set([
+    "--non-interactive",
+    "--resume",
+    "--recreate-sandbox",
+    NOTICE_ACCEPT_FLAG,
+  ]);
   const unknownArgs = args.filter((arg) => !allowedArgs.has(arg));
   if (unknownArgs.length > 0) {
     console.error(`  Unknown onboard option(s): ${unknownArgs.join(", ")}`);
     console.error(
-      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
+      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
     );
     process.exit(1);
   }
   const nonInteractive = args.includes("--non-interactive");
   const resume = args.includes("--resume");
+  const recreateSandbox = args.includes("--recreate-sandbox");
   const acceptThirdPartySoftware =
     args.includes(NOTICE_ACCEPT_FLAG) || String(process.env[NOTICE_ACCEPT_ENV] || "") === "1";
-  await runOnboard({ nonInteractive, resume, fromDockerfile, acceptThirdPartySoftware });
+  await runOnboard({
+    nonInteractive,
+    resume,
+    recreateSandbox,
+    fromDockerfile,
+    acceptThirdPartySoftware,
+  });
 }
 
 async function setup(args = []) {
