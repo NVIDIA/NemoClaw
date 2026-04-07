@@ -1,32 +1,94 @@
 ---
 name: nemoclaw-overview
-description: Describes how NemoClaw combines a CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox. Use when explaining the sandbox lifecycle, blueprint architecture, or how NemoClaw layers on top of OpenShell. Explains what NemoClaw does and how it fits with OpenClaw and OpenShell. Use when asking what NemoClaw is, how it works at a high level, or what the project provides. Lists changelogs and feature history for NemoClaw releases. Use when checking what changed in a release, looking up version history, or reviewing the changelog.
+description: Explains how OpenClaw, OpenShell, and NemoClaw form the ecosystem, NemoClaw’s position in the stack, and when to prefer NemoClaw versus integrating OpenShell and OpenClaw directly. Use when users ask about the relationship between OpenClaw, OpenShell, and NemoClaw, or when to use NemoClaw versus OpenShell. Describes how NemoClaw works internally: CLI, plugin, blueprint runner, OpenShell orchestration, inference routing, and protection layers. Use for sandbox lifecycle and architecture mechanics; not for product definition (Overview) or multi-project placement (Ecosystem). Explains what NemoClaw covers: onboarding, lifecycle management, and management of OpenClaw within OpenShell containers, plus capabilities and why it exists. Use when users ask what NemoClaw is or what the project provides. For ecosystem placement or OpenShell-only paths, use the Ecosystem page; for internal mechanics, use How It Works. Lists changelogs and feature history for NemoClaw releases. Use when checking what changed in a releas...
 ---
 
 # NemoClaw Overview
 
-Describes how NemoClaw combines a CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox. Use when explaining the sandbox lifecycle, blueprint architecture, or how NemoClaw layers on top of OpenShell.
+Explains how OpenClaw, OpenShell, and NemoClaw form the ecosystem, NemoClaw’s position in the stack, and when to prefer NemoClaw versus integrating OpenShell and OpenClaw directly. Use when users ask about the relationship between OpenClaw, OpenShell, and NemoClaw, or when to use NemoClaw versus OpenShell.
 
 ## Context
 
-NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox.
-This page explains the key concepts about NemoClaw at a high level.
+NemoClaw provides onboarding, lifecycle management, and management of OpenClaw within OpenShell containers.
 
-## How It Fits Together
+This page describes how the ecosystem is formed across projects, where NemoClaw sits relative to [OpenShell](https://github.com/NVIDIA/OpenShell) and [OpenClaw](https://openclaw.ai), and how to choose between NemoClaw and OpenShell.
+
+## How the Stack Fits Together
+
+Three pieces usually appear together in a NemoClaw deployment, each with a distinct scope:
+
+| Project | Scope |
+|---------|--------|
+| [OpenClaw](https://openclaw.ai) | The assistant: runtime, tools, memory, and behavior inside the container. It does not define the sandbox or the host gateway. |
+| [OpenShell](https://github.com/NVIDIA/OpenShell) | The execution environment: sandbox lifecycle, network and filesystem policy, inference routing, and the operator-facing `openshell` CLI for those primitives. |
+| NemoClaw | The NVIDIA reference stack that implements the definition above on the host: `nemoclaw` CLI and plugin, versioned blueprint, channel messaging configured for OpenShell-managed delivery, and state migration helpers so OpenClaw runs inside OpenShell in a documented, repeatable way. |
+
+NemoClaw sits above OpenShell in the operator workflow.
+It drives OpenShell APIs and CLI to create and configure the sandbox that runs OpenClaw.
+Models and endpoints sit behind OpenShell’s inference routing.
+NemoClaw onboarding wires provider choice into that routing.
+
+```mermaid
+flowchart TB
+    NC["🦞 NVIDIA NemoClaw<br/>CLI, plugin, blueprint"]
+    OS["🐚 NVIDIA OpenShell<br/>Gateway, policy, inference routing"]
+    OC["🦞 OpenClaw<br/>Assistant in sandbox"]
+
+    NC -->|orchestrates| OS
+    OS -->|isolates and runs| OC
+
+    classDef nv fill:#76b900,stroke:#333,color:#fff
+    classDef nvLight fill:#e6f2cc,stroke:#76b900,color:#1a1a1a
+    classDef nvDark fill:#333,stroke:#76b900,color:#fff
+
+    class NC nv
+    class OS nv
+    class OC nvDark
+
+    linkStyle 0 stroke:#76b900,stroke-width:2px
+    linkStyle 1 stroke:#76b900,stroke-width:2px
+```
+
+## NemoClaw Path versus OpenShell Path
+
+Both paths assume OpenShell can sandbox a workload.
+The difference is who owns the integration work.
+
+| Path | What it means |
+|------|---------------|
+| **NemoClaw path** | You adopt the reference stack. NemoClaw’s blueprint encodes a hardened image, default policies, and orchestration so `nemoclaw onboard` can stand up a known-good OpenClaw-on-OpenShell setup with less custom glue. |
+| **OpenShell path** | You use OpenShell as the platform and supply your own container, install steps for OpenClaw, policy YAML, provider setup, and any host bridges. OpenShell stays the sandbox and policy engine; nothing requires NemoClaw’s blueprint or CLI. |
+
+## When to Use Which
+
+Use the following table to decide when to use NemoClaw versus OpenShell.
+
+| Situation | Prefer |
+|-----------|--------|
+| You want OpenClaw with minimal assembly, NVIDIA defaults, and the documented install and onboard flow. | NemoClaw |
+| You need maximum flexibility: custom images, a layout that does not match the NemoClaw blueprint, or a workload outside this reference stack. | OpenShell with your own integration |
+| You are standardizing on the NVIDIA reference for always-on assistants with policy and inference routing. | NemoClaw |
+| You are building internal platform abstractions where the NemoClaw CLI or blueprint is not the right fit. | OpenShell (and your orchestration) |
+
+*Full details in `references/ecosystem.md`.*
+
+This page explains how NemoClaw operates, which parts run where, how the blueprint drives OpenShell, and how inference and policy attach to the sandbox.
+
+## How the Pieces Connect
 
 The `nemoclaw` CLI is the primary entrypoint for setting up and managing sandboxed OpenClaw agents.
 It delegates heavy lifting to a versioned blueprint, a Python artifact that orchestrates sandbox creation, policy application, and inference provider setup through the OpenShell CLI.
 
-NemoClaw adds the following layers on top of OpenShell.
+Between your shell and the running sandbox, NemoClaw contributes these integration layers:
 
-| Layer | What it provides |
+| Layer | Role in the flow |
 |-------|------------------|
-| Onboarding | Guided setup that validates credentials, selects providers, and creates a working sandbox in one command. |
-| Blueprint | A hardened Dockerfile with security policies, capability drops, and least-privilege network rules. |
-| State management | Safe migration of agent state across machines with credential stripping and integrity verification. |
-| Messaging bridges | Host-side processes that connect Telegram, Discord, and Slack to the sandboxed agent. |
+| Onboarding | `nemoclaw onboard` validates credentials, selects providers, and drives blueprint execution until the sandbox is ready. |
+| Blueprint | Supplies the hardened image definition, default policies, capability posture, and orchestration steps the runner applies through OpenShell. |
+| State management | Migrates agent state across machines with credential stripping and integrity checks. |
+| Channel messaging | OpenShell-managed processes connect Telegram, Discord, Slack, and similar platforms to the agent. NemoClaw enables this through onboarding and blueprint wiring; delivery is not a separate NemoClaw host daemon. |
 
-OpenShell handles *how* to sandbox an agent securely. NemoClaw handles *what* goes in the sandbox and makes the setup accessible. For the full system diagram, see Architecture (see the `nemoclaw-reference` skill).
+For repository layout, file paths, and deeper diagrams, see Architecture (see the `nemoclaw-reference` skill).
 
 ```mermaid
 flowchart TB
@@ -69,31 +131,34 @@ flowchart TB
 
 ## Design Principles
 
+NemoClaw architecture follows the following principles.
+
 *Full details in `references/how-it-works.md`.*
 
 NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants.
-It incorporates policy-based privacy and security guardrails, giving users control over their agents’ behavior and data handling.
+NemoClaw provides onboarding, lifecycle management, and management of OpenClaw within OpenShell containers.
+It incorporates policy-based privacy and security guardrails, giving you control over your agents’ behavior and data handling.
 This enables self-evolving claws to run more safely in clouds, on prem, RTX PCs and DGX Spark.
 
-NemoClaw uses open source models, such as [NVIDIA Nemotron](https://build.nvidia.com), alongside the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of the NVIDIA Agent Toolkit—a secure environment designed for executing claws more safely.
-By combining powerful open source models with built-in safety measures, NemoClaw simplifies and secures AI agent deployment.
+NemoClaw pairs open source and hosted models (for example [NVIDIA Nemotron](https://build.nvidia.com)) with a hardened sandbox, routed inference, and declarative egress policy so deployment stays safer and more repeatable.
+The sandbox runtime comes from [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell); NemoClaw adds the blueprint, `nemoclaw` CLI, onboarding, and related tooling as the reference way to run OpenClaw there.
 
 | Capability              | Description                                                                                                                                          |
 |-------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Sandbox OpenClaw        | Creates an OpenShell sandbox pre-configured for OpenClaw, with filesystem and network policies applied from the first boot.                   |
-| Route inference         | Configures OpenShell inference routing so agent traffic flows through cloud-hosted Nemotron 3 Super 120B via [build.nvidia.com](https://build.nvidia.com). |
+| Route inference         | Configures OpenShell inference routing so agent traffic goes to the provider and model you chose during onboarding (NVIDIA Endpoints, OpenAI, Anthropic, Gemini, compatible endpoints, local Ollama, and others). The agent uses `inference.local` inside the sandbox; credentials stay on the host. |
 | Manage the lifecycle    | Handles blueprint versioning, digest verification, and sandbox setup.                                                                                |
 
 ## Key Features
 
-NemoClaw provides the following capabilities on top of the OpenShell runtime.
+NemoClaw provides the following product capabilities.
 
 | Feature | Description |
 |---------|-------------|
 | Guided onboarding | Validates credentials, selects providers, and creates a working sandbox in one command. |
 | Hardened blueprint | A security-first Dockerfile with capability drops, least-privilege network rules, and declarative policy. |
 | State management | Safe migration of agent state across machines with credential stripping and integrity verification. |
-| Messaging bridges | Host-side processes that connect Telegram, Discord, and Slack to the sandboxed agent. |
+| Channel messaging | OpenShell-managed processes connect Telegram, Discord, Slack, and similar platforms to the sandboxed agent. NemoClaw configures channels during onboarding; OpenShell supplies the native constructs, credential flow, and runtime supervision. |
 | Routed inference | Provider-routed model calls through the OpenShell gateway, transparent to the agent. Supports NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and local Ollama. |
 | Layered protection | Network, filesystem, process, and inference controls that can be hot-reloaded or locked at creation. |
 
@@ -108,7 +173,7 @@ NemoClaw provides the following benefits.
 | Benefit                    | Description                                                                                                            |
 |----------------------------|------------------------------------------------------------------------------------------------------------------------|
 | Sandboxed execution        | Every agent runs inside an OpenShell sandbox with Landlock, seccomp, and network namespace isolation. No access is granted by default. |
-| NVIDIA Endpoint inference     | Agent traffic routes through cloud-hosted Nemotron 3 Super 120B via [build.nvidia.com](https://build.nvidia.com), transparent to the agent.          |
+| Routed inference           | Model traffic is routed through the OpenShell gateway to your selected provider, transparent to the agent. You can switch providers or models. Refer to Inference Options (see the `nemoclaw-configure-inference` skill).          |
 | Declarative network policy | Egress rules are defined in YAML. Unknown hosts are blocked and surfaced to the operator for approval.                 |
 | Single CLI                 | The `nemoclaw` command orchestrates the full stack: gateway, sandbox, inference provider, and network policy.           |
 | Blueprint lifecycle        | Versioned blueprints handle sandbox creation, digest verification, and reproducible setup.                             |
