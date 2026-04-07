@@ -178,9 +178,14 @@ const REMOTE_PROVIDER_CONFIG = {
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
 let NON_INTERACTIVE = false;
+let RECREATE_SANDBOX = false;
 
 function isNonInteractive() {
-  return NON_INTERACTIVE;
+  return NON_INTERACTIVE || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+}
+
+function isRecreateSandbox() {
+  return RECREATE_SANDBOX || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
 }
 
 function note(message) {
@@ -1549,12 +1554,7 @@ async function preflight() {
   if (host.runtime !== "unknown") {
     console.log(`  ✓ Container runtime: ${host.runtime}`);
   }
-  if (host.isUnsupportedRuntime) {
-    console.warn(
-      "  ! Podman is not a supported OpenShell runtime. NemoClaw will continue, but your experience may vary.",
-    );
-    printRemediationActions(planHostRemediation(host));
-  }
+  // Podman is now supported — no unsupported runtime warning needed.
   if (host.notes.includes("Running under WSL")) {
     console.log("  ⓘ Running under WSL");
   }
@@ -2019,34 +2019,59 @@ async function createSandbox(
       hasMessagingTokens &&
       messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
 
-    if (existingSandboxState === "ready" && process.env.NEMOCLAW_RECREATE_SANDBOX !== "1") {
-      if (needsProviderMigration) {
-        console.log(`  Sandbox '${sandboxName}' exists but messaging providers are not attached.`);
-        console.log("  Recreating to ensure credentials flow through the provider pipeline.");
-      } else {
-        // Upsert messaging providers even on reuse so credential changes take
-        // effect without requiring a full sandbox recreation. Only the
-        // --provider attachment flags need to be on the create path.
-        upsertMessagingProviders(messagingTokenDefs);
-        ensureDashboardForward(sandboxName, chatUiUrl);
-        if (isNonInteractive()) {
+    if (!isRecreateSandbox() && !needsProviderMigration) {
+      if (isNonInteractive()) {
+        if (existingSandboxState === "ready") {
+          // Upsert messaging providers even on reuse so credential changes take
+          // effect without requiring a full sandbox recreation.
+          upsertMessagingProviders(messagingTokenDefs);
           note(`  [non-interactive] Sandbox '${sandboxName}' exists and is ready — reusing it`);
-        } else {
-          console.log(`  Sandbox '${sandboxName}' already exists and is ready.`);
-          console.log("  Reusing existing sandbox.");
-          console.log("  Set NEMOCLAW_RECREATE_SANDBOX=1 to recreate it instead.");
+          note("  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to force recreation.");
+          ensureDashboardForward(sandboxName, chatUiUrl);
+          return sandboxName;
         }
-        return sandboxName;
+        console.error(`  Sandbox '${sandboxName}' already exists but is not ready.`);
+        console.error("  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to overwrite.");
+        process.exit(1);
+      }
+
+      if (existingSandboxState === "ready") {
+        console.log(`  Sandbox '${sandboxName}' already exists.`);
+        console.log("  Choosing 'n' will delete the existing sandbox and create a new one.");
+        const answer = await promptOrDefault("  Reuse existing sandbox? [Y/n]: ", null, "y");
+        const normalizedAnswer = answer.trim().toLowerCase();
+        if (normalizedAnswer !== "n" && normalizedAnswer !== "no") {
+          upsertMessagingProviders(messagingTokenDefs);
+          ensureDashboardForward(sandboxName, chatUiUrl);
+          return sandboxName;
+        }
+      } else {
+        console.log(`  Sandbox '${sandboxName}' exists but is not ready.`);
+        console.log("  Selecting 'n' will abort onboarding.");
+        const answer = await promptOrDefault(
+          "  Delete it and create a new one? [Y/n]: ",
+          null,
+          "y",
+        );
+        const normalizedAnswer = answer.trim().toLowerCase();
+        if (normalizedAnswer === "n" || normalizedAnswer === "no") {
+          console.log("  Aborting onboarding.");
+          process.exit(1);
+        }
       }
     }
 
-    if (existingSandboxState === "ready" && needsProviderMigration) {
-      note(`  Sandbox '${sandboxName}' exists — recreating to attach messaging providers.`);
+    if (needsProviderMigration) {
+      console.log(`  Sandbox '${sandboxName}' exists but messaging providers are not attached.`);
+      console.log("  Recreating to ensure credentials flow through the provider pipeline.");
     } else if (existingSandboxState === "ready") {
       note(`  Sandbox '${sandboxName}' exists and is ready — recreating by explicit request.`);
     } else {
       note(`  Sandbox '${sandboxName}' exists but is not ready — recreating it.`);
     }
+
+    note(`  Deleting and recreating sandbox '${sandboxName}'...`);
+
     // Destroy old sandbox
     runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
     registry.removeSandbox(sandboxName);
@@ -2237,7 +2262,7 @@ async function createSandbox(
   console.log("  Waiting for NemoClaw dashboard to become ready...");
   for (let i = 0; i < 15; i++) {
     const readyMatch = runCapture(
-      `openshell sandbox exec ${sandboxName} curl -sf http://localhost:18789/ 2>/dev/null || echo "no"`,
+      `openshell sandbox exec ${shellQuote(sandboxName)} curl -sf http://localhost:18789/ 2>/dev/null || echo "no"`,
       { ignoreError: true },
     );
     if (readyMatch && !readyMatch.includes("no")) {
@@ -2266,7 +2291,7 @@ async function createSandbox(
   // sandbox namespace can resolve hostnames (fixes #626).
   console.log("  Setting up sandbox DNS proxy...");
   run(
-    `bash "${path.join(SCRIPTS, "setup-dns-proxy.sh")}" ${GATEWAY_NAME} "${sandboxName}" 2>&1 || true`,
+    `bash "${path.join(SCRIPTS, "setup-dns-proxy.sh")}" ${shellQuote(GATEWAY_NAME)} ${shellQuote(sandboxName)} 2>&1 || true`,
     { ignoreError: true },
   );
 
@@ -2437,6 +2462,12 @@ async function setupNim(gpu) {
               console.error(
                 "  NVIDIA_API_KEY is required for NVIDIA Endpoints in non-interactive mode.",
               );
+              process.exit(1);
+            }
+            const keyError = validateNvidiaApiKeyValue(process.env.NVIDIA_API_KEY);
+            if (keyError) {
+              console.error(keyError);
+              console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
               process.exit(1);
             }
           } else {
@@ -3785,6 +3816,7 @@ function skippedStepMessage(stepName, detail, reason = "resume") {
 // eslint-disable-next-line complexity
 async function onboard(opts = {}) {
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+  RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   delete process.env.OPENSHELL_GATEWAY;
   const resume = opts.resume === true;
   // In non-interactive mode also accept the env var so CI pipelines can set it.

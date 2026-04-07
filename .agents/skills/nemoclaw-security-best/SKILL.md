@@ -1,6 +1,6 @@
 ---
-name: nemoclaw-security-best
-description: Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs.
+name: "nemoclaw-security-best"
+description: "Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs."
 ---
 
 # NemoClaw Security Best

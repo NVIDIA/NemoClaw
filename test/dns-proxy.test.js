@@ -84,10 +84,42 @@ describe("setup-dns-proxy.sh", () => {
   it("performs runtime verification of resolv.conf, iptables, and DNS resolution", () => {
     const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
     expect(content).toContain("cat /etc/resolv.conf");
-    expect(content).toContain("iptables -C OUTPUT");
+    expect(content).toContain("-C OUTPUT");
     expect(content).toContain("getent hosts");
     expect(content).toContain("VERIFY_PASS");
     expect(content).toContain("VERIFY_FAIL");
+  });
+
+  it("probes well-known paths when iptables is not on PATH (#557)", () => {
+    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
+    // Must check /sbin/iptables and /usr/sbin/iptables as fallback paths
+    expect(content).toContain("/sbin/iptables");
+    expect(content).toContain("/usr/sbin/iptables");
+    expect(content).toContain("IPTABLES_BIN");
+  });
+
+  it("uses discovered iptables binary for both rule insertion and verification", () => {
+    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
+    // The discovered IPTABLES_BIN should be used in the -C check and -I insert
+    expect(content).toContain('"$IPTABLES_BIN" -C OUTPUT');
+    expect(content).toContain('"$IPTABLES_BIN" -I OUTPUT');
+    // Verification step should also use the discovered binary
+    expect(content).toContain("IPTABLES_CHECK");
+  });
+
+  it("warns when iptables is not found at any path", () => {
+    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
+    expect(content).toContain("iptables not found in pod");
+    expect(content).toContain("Cannot add UDP DNS exception");
+  });
+
+  it("backs up resolv.conf before rewriting and restores on iptables failure", () => {
+    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
+    // Backup: save original resolv.conf once before any rewrite
+    expect(content).toContain("resolv.conf.orig");
+    expect(content).toContain("cp /etc/resolv.conf /tmp/resolv.conf.orig");
+    // Restore: copy backup back when iptables is not found
+    expect(content).toContain("cp /tmp/resolv.conf.orig /etc/resolv.conf");
   });
 });
 
@@ -98,25 +130,20 @@ describe("fix-coredns.sh", () => {
     expect(stat.mode & 0o100).toBeTruthy();
   });
 
-  it("works with any Docker host (not Colima-specific)", () => {
+  it("supports multiple container runtimes (not Colima-only)", () => {
     const content = fs.readFileSync(FIX_COREDNS, "utf-8");
-    expect(content).not.toContain("find_colima_docker_socket");
-    expect(content).toContain("detect_docker_host");
+    expect(content).toContain("DOCKER_HOST");
+    expect(content).toContain("find_podman_socket");
   });
 
-  it("resolves systemd-resolved upstreams when resolv.conf is loopback-only", () => {
+  it("delegates DNS resolution to resolve_coredns_upstream", () => {
     const content = fs.readFileSync(FIX_COREDNS, "utf-8");
-    expect(content).toContain("resolvectl");
-    expect(content).toContain("Current DNS Server");
+    expect(content).toContain("resolve_coredns_upstream");
   });
 
-  it("falls back to 8.8.8.8 only as last resort", () => {
+  it("validates UPSTREAM_DNS before use", () => {
     const content = fs.readFileSync(FIX_COREDNS, "utf-8");
-    const lines = content.split("\n");
-    const resolvectlLine = lines.findIndex((l) => l.includes("resolvectl"));
-    const fallbackLine = lines.findIndex((l) => l.includes('UPSTREAM_DNS="8.8.8.8"'));
-    expect(resolvectlLine).toBeGreaterThan(-1);
-    expect(fallbackLine).toBeGreaterThan(-1);
-    expect(fallbackLine).toBeGreaterThan(resolvectlLine);
+    expect(content).toContain("UPSTREAM_DNS");
+    expect(content).toContain("invalid characters");
   });
 });

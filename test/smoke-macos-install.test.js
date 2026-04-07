@@ -41,14 +41,29 @@ describe("macOS smoke install script guardrails", () => {
   });
 
   it("rejects unsupported runtimes", () => {
-    const result = spawnSync("bash", [SMOKE_SCRIPT, "--runtime", "podman"], {
+    const result = spawnSync("bash", [SMOKE_SCRIPT, "--runtime", "lxc"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
       env: { ...process.env, NVIDIA_API_KEY: "nvapi-test" },
     });
 
     expect(result.status).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/Unsupported runtime 'podman'/);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/Unsupported runtime 'lxc'/);
+  });
+
+  it("accepts podman as a runtime option", () => {
+    const result = spawnSync("bash", [SMOKE_SCRIPT, "--runtime", "podman"], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        NVIDIA_API_KEY: "nvapi-test",
+        HOME: "/tmp/nemoclaw-smoke-no-runtime",
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/no Podman socket was found/);
   });
 
   it("fails when a requested runtime socket is unavailable", () => {
