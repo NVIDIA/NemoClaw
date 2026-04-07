@@ -935,6 +935,26 @@ function patchStagedDockerfile(
     /^ARG NEMOCLAW_BUILD_ID=.*$/m,
     `ARG NEMOCLAW_BUILD_ID=${buildId}`,
   );
+  // Honor NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT exported in the host
+  // shell so the sandbox-side nemoclaw-start.sh sees them via $ENV at runtime.
+  // Without this, the host export is silently dropped at image build time and
+  // the sandbox falls back to the default 10.200.0.1:3128 proxy. See #1409.
+  const PROXY_HOST_RE = /^[A-Za-z0-9._:-]+$/;
+  const PROXY_PORT_RE = /^[0-9]{1,5}$/;
+  const proxyHostEnv = process.env.NEMOCLAW_PROXY_HOST;
+  if (proxyHostEnv && PROXY_HOST_RE.test(proxyHostEnv)) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_PROXY_HOST=.*$/m,
+      `ARG NEMOCLAW_PROXY_HOST=${proxyHostEnv}`,
+    );
+  }
+  const proxyPortEnv = process.env.NEMOCLAW_PROXY_PORT;
+  if (proxyPortEnv && PROXY_PORT_RE.test(proxyPortEnv)) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_PROXY_PORT=.*$/m,
+      `ARG NEMOCLAW_PROXY_PORT=${proxyPortEnv}`,
+    );
+  }
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_WEB_CONFIG_B64=.*$/m,
     `ARG NEMOCLAW_WEB_CONFIG_B64=${webSearch.buildWebSearchDockerConfig(

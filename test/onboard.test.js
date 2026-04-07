@@ -230,6 +230,151 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("regression #1409: bakes NEMOCLAW_PROXY_HOST/PORT env into the staged Dockerfile", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
+        "ARG NEMOCLAW_PROXY_PORT=3128",
+      ].join("\n"),
+    );
+
+    const priorHost = process.env.NEMOCLAW_PROXY_HOST;
+    const priorPort = process.env.NEMOCLAW_PROXY_PORT;
+    process.env.NEMOCLAW_PROXY_HOST = "1.2.3.4";
+    process.env.NEMOCLAW_PROXY_PORT = "9999";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-proxy",
+        "openai-api",
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_HOST=1\.2\.3\.4$/m);
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_PORT=9999$/m);
+    } finally {
+      if (priorHost === undefined) {
+        delete process.env.NEMOCLAW_PROXY_HOST;
+      } else {
+        process.env.NEMOCLAW_PROXY_HOST = priorHost;
+      }
+      if (priorPort === undefined) {
+        delete process.env.NEMOCLAW_PROXY_PORT;
+      } else {
+        process.env.NEMOCLAW_PROXY_PORT = priorPort;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1409: leaves Dockerfile defaults when proxy env is unset", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-default-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
+        "ARG NEMOCLAW_PROXY_PORT=3128",
+      ].join("\n"),
+    );
+
+    const priorHost = process.env.NEMOCLAW_PROXY_HOST;
+    const priorPort = process.env.NEMOCLAW_PROXY_PORT;
+    delete process.env.NEMOCLAW_PROXY_HOST;
+    delete process.env.NEMOCLAW_PROXY_PORT;
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-proxy-default",
+        "openai-api",
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      // Defaults must be preserved when no env override is in effect.
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_HOST=10\.200\.0\.1$/m);
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_PORT=3128$/m);
+    } finally {
+      if (priorHost !== undefined) process.env.NEMOCLAW_PROXY_HOST = priorHost;
+      if (priorPort !== undefined) process.env.NEMOCLAW_PROXY_PORT = priorPort;
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1409: rejects malformed NEMOCLAW_PROXY_HOST/PORT and keeps defaults", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-bad-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
+        "ARG NEMOCLAW_PROXY_PORT=3128",
+      ].join("\n"),
+    );
+
+    const priorHost = process.env.NEMOCLAW_PROXY_HOST;
+    const priorPort = process.env.NEMOCLAW_PROXY_PORT;
+    // Inject malicious values that could break out of the ARG line if not validated.
+    process.env.NEMOCLAW_PROXY_HOST = "1.2.3.4\nRUN rm -rf /";
+    process.env.NEMOCLAW_PROXY_PORT = "abcd";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-proxy-bad",
+        "openai-api",
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_HOST=10\.200\.0\.1$/m);
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_PORT=3128$/m);
+      assert.doesNotMatch(patched, /RUN rm -rf/);
+    } finally {
+      if (priorHost === undefined) {
+        delete process.env.NEMOCLAW_PROXY_HOST;
+      } else {
+        process.env.NEMOCLAW_PROXY_HOST = priorHost;
+      }
+      if (priorPort === undefined) {
+        delete process.env.NEMOCLAW_PROXY_PORT;
+      } else {
+        process.env.NEMOCLAW_PROXY_PORT = priorPort;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("patches the staged Dockerfile with Brave Search config when enabled", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-web-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
