@@ -212,19 +212,21 @@ Follow these steps to reconnect.
    $ nemoclaw <name> connect
    ```
 
-1. Start auxiliary services (if needed).
+1. Start host auxiliary services (if needed).
 
-   If you use the Telegram bridge or cloudflared tunnel, start them again:
+   If you use the cloudflared tunnel started by `nemoclaw start`, start it again:
 
    ```console
    $ nemoclaw start
    ```
 
+   Telegram, Discord, and Slack are handled by OpenShell-managed channel messaging configured at onboarding, not by a separate bridge process from `nemoclaw start`.
+
 :::{admonition} If the sandbox does not recover
 :class: warning
 
 If the sandbox remains missing after restarting the gateway, run `nemoclaw onboard` to recreate it.
-The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox — workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
+The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox. Workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
 Back up your workspace first by following the instructions at [Back Up and Restore](../workspace/backup-restore.md).
 :::
 

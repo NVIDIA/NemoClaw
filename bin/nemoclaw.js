@@ -40,6 +40,7 @@ const { getVersion } = require("./lib/version");
 const onboardSession = require("./lib/onboard-session");
 const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
 const { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } = require("./lib/usage-notice");
+const { runDebugCommand } = require("../dist/lib/debug-command");
 const { executeDeploy } = require("../dist/lib/deploy");
 const { runStartCommand, runStopCommand } = require("../dist/lib/services-command");
 const { runUninstallCommand } = require("../dist/lib/uninstall-command");
@@ -680,6 +681,13 @@ async function ensureLiveSandboxOrExit(sandboxName) {
   }
   if (lookup.state === "missing") {
     registry.removeSandbox(sandboxName);
+    const session = onboardSession.loadSession();
+    if (session && session.sandboxName === sandboxName) {
+      onboardSession.updateSession((s) => {
+        s.sandboxName = null;
+        return s;
+      });
+    }
     console.error(`  Sandbox '${sandboxName}' is not present in the live OpenShell gateway.`);
     console.error("  Removed stale local registry entry.");
     console.error(
@@ -769,12 +777,29 @@ function exitWithSpawnResult(result) {
 
 async function onboard(args) {
   const { onboard: runOnboard } = require("./lib/onboard");
+
+  // Extract --from <path> before the unknown-arg validator: it takes a value
+  // so the set-based check would reject the value token as an unknown flag.
+  let fromDockerfile = null;
+  const fromIdx = args.indexOf("--from");
+  if (fromIdx !== -1) {
+    fromDockerfile = args[fromIdx + 1];
+    if (!fromDockerfile || fromDockerfile.startsWith("--")) {
+      console.error("  --from requires a path to a Dockerfile");
+      console.error(
+        `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
+      );
+      process.exit(1);
+    }
+    args = [...args.slice(0, fromIdx), ...args.slice(fromIdx + 2)];
+  }
+
   const allowedArgs = new Set(["--non-interactive", "--resume", NOTICE_ACCEPT_FLAG]);
   const unknownArgs = args.filter((arg) => !allowedArgs.has(arg));
   if (unknownArgs.length > 0) {
     console.error(`  Unknown onboard option(s): ${unknownArgs.join(", ")}`);
     console.error(
-      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [${NOTICE_ACCEPT_FLAG}]`,
+      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
     );
     process.exit(1);
   }
@@ -782,7 +807,7 @@ async function onboard(args) {
   const resume = args.includes("--resume");
   const acceptThirdPartySoftware =
     args.includes(NOTICE_ACCEPT_FLAG) || String(process.env[NOTICE_ACCEPT_ENV] || "") === "1";
-  await runOnboard({ nonInteractive, resume, acceptThirdPartySoftware });
+  await runOnboard({ nonInteractive, resume, fromDockerfile, acceptThirdPartySoftware });
 }
 
 async function setup(args = []) {
@@ -839,47 +864,13 @@ function stop() {
 
 function debug(args) {
   const { runDebug } = require("./lib/debug");
-  const opts = {};
-  for (let i = 0; i < args.length; i++) {
-    switch (args[i]) {
-      case "--help":
-      case "-h":
-        console.log("Collect NemoClaw diagnostic information\n");
-        console.log("Usage: nemoclaw debug [--quick] [--output FILE] [--sandbox NAME]\n");
-        console.log("Options:");
-        console.log("  --quick, -q        Only collect minimal diagnostics");
-        console.log("  --output, -o FILE  Write a tarball to FILE");
-        console.log("  --sandbox NAME     Target sandbox name");
-        process.exit(0);
-        break;
-      case "--quick":
-      case "-q":
-        opts.quick = true;
-        break;
-      case "--output":
-      case "-o":
-        if (!args[i + 1] || args[i + 1].startsWith("-")) {
-          console.error("Error: --output requires a file path argument");
-          process.exit(1);
-        }
-        opts.output = args[++i];
-        break;
-      case "--sandbox":
-        if (!args[i + 1] || args[i + 1].startsWith("-")) {
-          console.error("Error: --sandbox requires a name argument");
-          process.exit(1);
-        }
-        opts.sandboxName = args[++i];
-        break;
-      default:
-        console.error(`Unknown option: ${args[i]}`);
-        process.exit(1);
-    }
-  }
-  if (!opts.sandboxName) {
-    opts.sandboxName = registry.listSandboxes().defaultSandbox || undefined;
-  }
-  runDebug(opts);
+  runDebugCommand(args, {
+    getDefaultSandbox: () => registry.listSandboxes().defaultSandbox || undefined,
+    runDebug,
+    log: console.log,
+    error: console.error,
+    exit: (code) => process.exit(code),
+  });
 }
 
 function uninstall(args) {
@@ -1010,6 +1001,13 @@ async function sandboxStatus(sandboxName) {
     console.log(lookup.output);
   } else if (lookup.state === "missing") {
     registry.removeSandbox(sandboxName);
+    const session = onboardSession.loadSession();
+    if (session && session.sandboxName === sandboxName) {
+      onboardSession.updateSession((s) => {
+        s.sandboxName = null;
+        return s;
+      });
+    }
     console.log("");
     console.log(`  Sandbox '${sandboxName}' is not present in the live OpenShell gateway.`);
     console.log("  Removed stale local registry entry.");
@@ -1202,6 +1200,13 @@ async function sandboxDestroy(sandboxName, args = []) {
   }
 
   const removed = registry.removeSandbox(sandboxName);
+  const session = onboardSession.loadSession();
+  if (session && session.sandboxName === sandboxName) {
+    onboardSession.updateSession((s) => {
+      s.sandboxName = null;
+      return s;
+    });
+  }
   if (
     (deleteResult.status === 0 || alreadyGone) &&
     removed &&
@@ -1225,6 +1230,7 @@ function help() {
 
   ${G}Getting Started:${R}
     ${B}nemoclaw onboard${R}                 Configure inference endpoint and credentials
+    nemoclaw onboard ${D}--from <Dockerfile>${R}  Use a custom Dockerfile for the sandbox image
                                     ${D}(non-interactive: ${NOTICE_ACCEPT_FLAG} or ${NOTICE_ACCEPT_ENV}=1)${R}
 
   ${G}Sandbox Management:${R}

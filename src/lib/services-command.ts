@@ -15,7 +15,7 @@ export interface StopCommandDeps {
   stopAll: (options: { sandboxName?: string }) => void;
 }
 
-const SAFE_SANDBOX_RE = /^[a-zA-Z0-9._-]+$/;
+const SAFE_SANDBOX_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
 export function resolveDefaultSandboxName(listSandboxes: () => SandboxSummary): string | undefined {
   const { defaultSandbox } = listSandboxes();

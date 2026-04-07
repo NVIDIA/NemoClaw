@@ -38,7 +38,7 @@ The current generated skills and their source pages are:
 
 | Skill | Source docs |
 |---|---|
-| `nemoclaw-overview` | `docs/about/overview.md`, `docs/about/how-it-works.md`, `docs/about/release-notes.md` |
+| `nemoclaw-overview` | `docs/about/overview.md`, `docs/about/ecosystem.md`, `docs/about/how-it-works.md`, `docs/about/release-notes.md` |
 | `nemoclaw-get-started` | `docs/get-started/quickstart.md` |
 | `nemoclaw-configure-inference` | `docs/inference/inference-options.md`, `docs/inference/use-local-inference.md`, `docs/inference/switch-inference-providers.md` |
 | `nemoclaw-manage-policy` | `docs/network-policy/customize-network-policy.md`, `docs/network-policy/approve-network-requests.md` |
@@ -122,7 +122,7 @@ make docs-live
 ```yaml
 ---
 title:
-  page: "NemoClaw Page Title — Subtitle with Context"
+  page: "NemoClaw Page Title: Subtitle with Context"
   nav: "Short Nav Title"
 description:
   main: "One-sentence summary for readers, SEO, and doc search snippets."
@@ -163,7 +163,7 @@ These patterns are common in LLM-generated text and erode trust with technical r
 | Pattern | Problem | Fix |
 |---|---|---|
 | Unnecessary bold | "This is a **critical** step" on routine instructions. | Reserve bold for UI labels, parameter names, and genuine warnings. |
-| Em dashes everywhere | "The gateway — which runs in Docker — creates sandboxes." | Use commas or split into two sentences. Em dashes are fine sparingly but should not appear multiple times per paragraph. |
+| Em dashes | "The gateway, which runs in Docker, creates sandboxes." | Do not use em dashes. Prefer commas, colons, or separate sentences. |
 | Superlatives | "OpenShell provides a powerful, robust, seamless experience." | Say what it does, not how great it is. |
 | Hedge words | "Simply run the command" or "You can easily configure..." | Drop the adverb. "Run the command." |
 | Emoji in prose | "Let's get started!" | No emoji in documentation prose. |
