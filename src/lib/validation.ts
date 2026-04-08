@@ -82,3 +82,44 @@ export function validateNvidiaApiKeyValue(key: string): string | null {
 export function isSafeModelId(value: string): boolean {
   return /^[A-Za-z0-9._:/-]+$/.test(value);
 }
+
+/**
+ * Detect NVIDIA Cloud Functions "Function not found for account" errors.
+ *
+ * NVIDIA Build (integrate.api.nvidia.com) returns this when a model is in the
+ * public catalog but is not deployed for the caller's account/org. The raw
+ * body looks like:
+ *
+ *   {"status":404,"title":"Not Found",
+ *    "detail":"Function '<uuid>': Not found for account '<account-id>'"}
+ *
+ * Detecting this lets the wizard surface an actionable error instead of the
+ * raw NVCF body. See issue #1601.
+ */
+export function isNvcfFunctionNotFoundForAccount(message: string): boolean {
+  return /Function\s+'[^']+':\s*Not found for account/i.test(String(message || ""));
+}
+
+/**
+ * Build the user-facing message for an NVCF "Function not found for account"
+ * failure. The model is in the catalog but cannot be invoked from this key.
+ */
+export function nvcfFunctionNotFoundMessage(model: string): string {
+  return (
+    `Model '${model}' is in the NVIDIA Build catalog but is not deployed for your account. ` +
+    "Pick a different model, or check the model card on https://build.nvidia.com to see " +
+    "if it requires org-level access."
+  );
+}
+
+/**
+ * Whether the wizard should skip probing the OpenAI Responses API entirely
+ * for the given inference provider. NVIDIA Build does not expose
+ * `/v1/responses` for any model — every probe to that path returns
+ * "404 page not found". Skipping the probe removes wasted round-trips and
+ * stops the failure-message noise from leaking into chat-completions errors.
+ * See issue #1601 (Bug 1).
+ */
+export function shouldSkipResponsesProbe(provider: string): boolean {
+  return provider === "nvidia-prod";
+}

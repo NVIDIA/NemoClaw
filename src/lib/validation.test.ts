@@ -9,6 +9,9 @@ import {
   classifySandboxCreateFailure,
   validateNvidiaApiKeyValue,
   isSafeModelId,
+  isNvcfFunctionNotFoundForAccount,
+  nvcfFunctionNotFoundMessage,
+  shouldSkipResponsesProbe,
 } from "../../dist/lib/validation";
 
 describe("classifyValidationFailure", () => {
@@ -151,5 +154,58 @@ describe("isSafeModelId", () => {
     expect(isSafeModelId("model name")).toBe(false);
     expect(isSafeModelId("model;rm -rf /")).toBe(false);
     expect(isSafeModelId("")).toBe(false);
+  });
+});
+
+describe("isNvcfFunctionNotFoundForAccount", () => {
+  it("matches the literal NVCF detail string from /v1/chat/completions", () => {
+    expect(
+      isNvcfFunctionNotFoundForAccount(
+        "Function '767b5b9a-3f9d-4c1d-86e8-fa861988cee7': Not found for account 'yBLCN5kgzhvIn_SHbXDVGyQ-wEuSUKmFoZaC_JpS30c'",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches when wrapped inside an HTTP error summary", () => {
+    expect(
+      isNvcfFunctionNotFoundForAccount("HTTP 404: Function 'abc123': Not found for account 'xyz'"),
+    ).toBe(true);
+  });
+
+  it("is case-insensitive on the 'Not found for account' clause", () => {
+    expect(isNvcfFunctionNotFoundForAccount("Function 'abc': not FOUND for ACCOUNT 'xyz'")).toBe(
+      true,
+    );
+  });
+
+  it("does not match generic 404 page-not-found bodies", () => {
+    expect(isNvcfFunctionNotFoundForAccount("404 page not found")).toBe(false);
+  });
+
+  it("does not match unrelated errors", () => {
+    expect(isNvcfFunctionNotFoundForAccount("Connection refused")).toBe(false);
+    expect(isNvcfFunctionNotFoundForAccount("")).toBe(false);
+  });
+});
+
+describe("nvcfFunctionNotFoundMessage", () => {
+  it("includes the model id and points the user at build.nvidia.com", () => {
+    const msg = nvcfFunctionNotFoundMessage("mistralai/mistral-large");
+    expect(msg).toContain("mistralai/mistral-large");
+    expect(msg).toContain("not deployed for your account");
+    expect(msg).toContain("https://build.nvidia.com");
+  });
+});
+
+describe("shouldSkipResponsesProbe", () => {
+  it("skips the Responses probe for nvidia-prod (Build does not expose /v1/responses)", () => {
+    expect(shouldSkipResponsesProbe("nvidia-prod")).toBe(true);
+  });
+
+  it("does not skip the Responses probe for other providers", () => {
+    expect(shouldSkipResponsesProbe("openai-api")).toBe(false);
+    expect(shouldSkipResponsesProbe("anthropic-api")).toBe(false);
+    expect(shouldSkipResponsesProbe("compatible-endpoint")).toBe(false);
+    expect(shouldSkipResponsesProbe("")).toBe(false);
   });
 });

@@ -510,6 +510,9 @@ const {
   classifySandboxCreateFailure,
   validateNvidiaApiKeyValue,
   isSafeModelId,
+  isNvcfFunctionNotFoundForAccount,
+  nvcfFunctionNotFoundMessage,
+  shouldSkipResponsesProbe,
 } = validation;
 
 // validateNvidiaApiKeyValue — see validation import above
@@ -1071,10 +1074,21 @@ function shouldRequireResponsesToolCalling(provider) {
   );
 }
 
+// shouldSkipResponsesProbe and isNvcfFunctionNotFoundForAccount /
+// nvcfFunctionNotFoundMessage — see validation import above. They live in
+// src/lib/validation.ts so they can be unit-tested independently.
+
+// Per-validation-probe curl timing. Tighter than the default 60s in
+// getCurlTimingArgs() because validation must not hang the wizard for a
+// minute on a misbehaving model. See issue #1601 (Bug 3).
+function getValidationProbeCurlArgs() {
+  return ["--connect-timeout", "10", "--max-time", "15"];
+}
+
 function probeResponsesToolCalling(endpointUrl, model, apiKey) {
   const result = runCurlProbe([
     "-sS",
-    ...getCurlTimingArgs(),
+    ...getValidationProbeCurlArgs(),
     "-H",
     "Content-Type: application/json",
     ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
@@ -1132,7 +1146,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
           execute: () =>
             runCurlProbe([
               "-sS",
-              ...getCurlTimingArgs(),
+              ...getValidationProbeCurlArgs(),
               "-H",
               "Content-Type: application/json",
               ...(apiKey
@@ -1147,27 +1161,31 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
             ]),
         };
 
-  const probes = [
-    responsesProbe,
-    {
-      name: "Chat Completions API",
-      api: "openai-completions",
-      execute: () =>
-        runCurlProbe([
-          "-sS",
-          ...getCurlTimingArgs(),
-          "-H",
-          "Content-Type: application/json",
-          ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
-          "-d",
-          JSON.stringify({
-            model,
-            messages: [{ role: "user", content: "Reply with exactly: OK" }],
-          }),
-          `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
-        ]),
-    },
-  ];
+  const chatCompletionsProbe = {
+    name: "Chat Completions API",
+    api: "openai-completions",
+    execute: () =>
+      runCurlProbe([
+        "-sS",
+        ...getValidationProbeCurlArgs(),
+        "-H",
+        "Content-Type: application/json",
+        ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+        "-d",
+        JSON.stringify({
+          model,
+          messages: [{ role: "user", content: "Reply with exactly: OK" }],
+        }),
+        `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
+      ]),
+  };
+
+  // NVIDIA Build does not expose /v1/responses; probing it always returns
+  // "404 page not found" and only adds noise to error messages. Skip it
+  // entirely for that provider. See issue #1601.
+  const probes = options.skipResponsesProbe
+    ? [chatCompletionsProbe]
+    : [responsesProbe, chatCompletionsProbe];
 
   const failures = [];
   for (const probe of probes) {
@@ -1181,6 +1199,20 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
       curlStatus: result.curlStatus,
       message: result.message,
     });
+  }
+
+  // Detect the NVCF "Function not found for account" error and reframe it
+  // with an actionable next step instead of dumping the raw NVCF body.
+  // See issue #1601 (Bug 2).
+  const accountFailure = failures.find((failure) =>
+    isNvcfFunctionNotFoundForAccount(failure.message),
+  );
+  if (accountFailure) {
+    return {
+      ok: false,
+      message: nvcfFunctionNotFoundMessage(model),
+      failures,
+    };
   }
 
   return {
@@ -2879,6 +2911,7 @@ async function setupNim(gpu) {
                   remoteConfig.helpUrl,
                   {
                     requireResponsesToolCalling: shouldRequireResponsesToolCalling(provider),
+                    skipResponsesProbe: shouldSkipResponsesProbe(provider),
                   },
                 );
                 if (validation.ok) {
@@ -2909,6 +2942,7 @@ async function setupNim(gpu) {
               remoteConfig.helpUrl,
               {
                 requireResponsesToolCalling: shouldRequireResponsesToolCalling(provider),
+                skipResponsesProbe: shouldSkipResponsesProbe(provider),
               },
             );
             if (validation.ok) {
