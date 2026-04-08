@@ -41,7 +41,40 @@
       "status": "caveated",
       "prd_priority": "P1",
       "ci_tested": false,
+      "_prd_note": "PRD tracks x86 and ARM (WOA) separately; treating as one entry until ARM is validated independently.",
       "notes": "Requires WSL2 with Docker Desktop backend."
+    },
+    {
+      "name": "DGX Station",
+      "runtimes": ["Docker"],
+      "status": "deferred",
+      "prd_priority": "P1",
+      "ci_tested": false,
+      "notes": "P1 per PRD. Setup path not yet validated."
+    },
+    {
+      "name": "RTX Spark",
+      "runtimes": ["Docker"],
+      "status": "deferred",
+      "prd_priority": "P1",
+      "ci_tested": false,
+      "notes": "P1 per PRD. Setup path not yet validated."
+    },
+    {
+      "name": "NVIDIA RTX",
+      "runtimes": ["Docker"],
+      "status": "deferred",
+      "prd_priority": "P1",
+      "ci_tested": false,
+      "notes": "P1 per PRD. Setup path not yet validated."
+    },
+    {
+      "name": "NVIDIA RTX Pro",
+      "runtimes": ["Docker"],
+      "status": "deferred",
+      "prd_priority": "P1",
+      "ci_tested": false,
+      "notes": "P1 per PRD. Setup path not yet validated."
     }
   ],
 

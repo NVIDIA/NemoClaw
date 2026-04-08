@@ -59,11 +59,17 @@ def load_matrix() -> dict:
 
 
 def generate_platform_table(platforms: list[dict]) -> str:
-    """Build a markdown table from platform entries."""
+    """Build a markdown table from platform entries.
+
+    Deferred entries are tracked in the metadata but excluded from
+    user-facing tables — they have no validated setup path yet.
+    """
     header = "| Platform | Tested runtimes | Status | Notes |"
     separator = "|----------|-----------------|--------|-------|"
     rows = []
     for p in platforms:
+        if p["status"] == "deferred":
+            continue
         runtimes = ", ".join(p["runtimes"])
         status = p["status"].capitalize()
         rows.append(f"| {p['name']} | {runtimes} | {status} | {p['notes']} |")
@@ -71,11 +77,16 @@ def generate_platform_table(platforms: list[dict]) -> str:
 
 
 def generate_provider_table(providers: list[dict]) -> str:
-    """Build a markdown table from provider entries."""
+    """Build a markdown table from provider entries.
+
+    Deferred entries are excluded from user-facing tables.
+    """
     header = "| Provider | Status | Endpoint type | Notes |"
     separator = "|----------|--------|---------------|-------|"
     rows = []
     for p in providers:
+        if p["status"] == "deferred":
+            continue
         status = p["status"].capitalize()
         rows.append(f"| {p['name']} | {status} | {p['endpoint_type']} | {p['notes']} |")
     return "\n".join([header, separator, *rows])
