@@ -38,6 +38,10 @@ export interface GatewayInference {
   model: string | null;
 }
 
+/**
+ * Return the inference routing config for a known provider, or null
+ * if the provider ID is not in the approved set.
+ */
 export function getProviderSelectionConfig(
   provider: string,
   model?: string,
@@ -120,12 +124,14 @@ export function getProviderSelectionConfig(
   }
 }
 
+/** Build the qualified `<managed-provider>/<model>` ref used by OpenClaw. */
 export function getOpenClawPrimaryModel(provider: string, model?: string): string {
   const resolvedModel =
     model || (provider === "ollama-local" ? DEFAULT_OLLAMA_MODEL : DEFAULT_CLOUD_MODEL);
   return `${MANAGED_PROVIDER_ID}/${resolvedModel}`;
 }
 
+/** Parse provider and model from `openshell inference get` CLI output. */
 export function parseGatewayInference(output: string | null | undefined): GatewayInference | null {
   if (!output) return null;
   // eslint-disable-next-line no-control-regex
