@@ -592,7 +592,7 @@ describe("onboard helpers", () => {
     // Sanity check against the real on-disk blueprint so a future edit that
     // accidentally drops or breaks the field is caught by CI rather than at
     // a user's onboard time.
-    const repoRoot = path.resolve(__dirname, "..");
+    const repoRoot = path.resolve(import.meta.dirname, "..");
     const v = getBlueprintMinOpenshellVersion(repoRoot);
     expect(v).not.toBe(null);
     expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(v)).toBe(true);

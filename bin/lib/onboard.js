@@ -421,7 +421,6 @@ function getBlueprintMinOpenshellVersion(rootDir = ROOT) {
     // Lazy require: yaml is already a dependency via bin/lib/policies.js but
     // pulling it at module load would slow down `nemoclaw --help` for users
     // who never reach the preflight path.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const YAML = require("yaml");
     const blueprintPath = path.join(rootDir, "nemoclaw-blueprint", "blueprint.yaml");
     if (!fs.existsSync(blueprintPath)) return null;
