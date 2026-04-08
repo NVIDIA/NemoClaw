@@ -95,6 +95,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/claude }
 
