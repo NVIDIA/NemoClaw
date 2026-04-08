@@ -1118,6 +1118,22 @@ function sandboxPolicyList(sandboxName) {
   console.log("");
 }
 
+function cleanupSandboxServices(sandboxName) {
+  // Stop host services (cloudflared) and clean up PID directory.
+  const { stopAll } = require("./lib/services");
+  stopAll({ sandboxName });
+  try {
+    fs.rmSync(`/tmp/nemoclaw-services-${sandboxName}`, { recursive: true, force: true });
+  } catch {
+    // PID directory may not exist — ignore.
+  }
+
+  // Delete messaging providers created during onboard.
+  for (const suffix of ["telegram-bridge", "discord-bridge", "slack-bridge"]) {
+    runOpenshell(["provider", "delete", `${sandboxName}-${suffix}`], { ignoreError: true });
+  }
+}
+
 async function sandboxDestroy(sandboxName, args = []) {
   const skipConfirm = args.includes("--yes") || args.includes("--force");
   if (!skipConfirm) {
@@ -1135,6 +1151,8 @@ async function sandboxDestroy(sandboxName, args = []) {
   const sb = registry.getSandbox(sandboxName);
   if (sb && sb.nimContainer) nim.stopNimContainerByName(sb.nimContainer);
   else nim.stopNimContainer(sandboxName);
+
+  cleanupSandboxServices(sandboxName);
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
