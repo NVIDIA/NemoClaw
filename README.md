@@ -67,12 +67,14 @@ Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway sta
 The following table lists tested platform and runtime combinations.
 Availability is not limited to these entries, but untested configurations may have issues.
 
+<!-- platform-matrix:begin -->
 | Platform | Tested runtimes | Status | Notes |
 |----------|-----------------|--------|-------|
 | Linux | Docker | Tested | Primary tested path. |
 | macOS (Apple Silicon) | Colima, Docker Desktop | Caveated | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
 | DGX Spark | Docker | Tested | Use the standard installer and `nemoclaw onboard`. |
 | Windows WSL2 | Docker Desktop (WSL backend) | Caveated | Requires WSL2 with Docker Desktop backend. |
+<!-- platform-matrix:end -->
 
 ### Install NemoClaw and Onboard OpenClaw Agent
 
