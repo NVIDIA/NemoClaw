@@ -2305,15 +2305,27 @@ async function createSandbox(
   run(`rm -rf "${buildCtx}"`, { ignoreError: true });
 
   if (createResult.status !== 0) {
-    console.error("");
-    console.error(`  Sandbox creation failed (exit ${createResult.status}).`);
-    if (createResult.output) {
+    const failure = classifySandboxCreateFailure(createResult.output);
+    if (failure.kind === "sandbox_create_incomplete") {
+      // The sandbox was created in the gateway but the create stream exited
+      // with a non-zero code (e.g. SSH 255).  Fall through to the ready-wait
+      // loop — the sandbox may still reach Ready on its own.
+      console.warn("");
+      console.warn(
+        `  Create stream exited with code ${createResult.status} after sandbox was created.`,
+      );
+      console.warn("  Checking whether the sandbox reaches Ready state...");
+    } else {
       console.error("");
-      console.error(createResult.output);
+      console.error(`  Sandbox creation failed (exit ${createResult.status}).`);
+      if (createResult.output) {
+        console.error("");
+        console.error(createResult.output);
+      }
+      console.error("  Try:  openshell sandbox list        # check gateway state");
+      printSandboxCreateRecoveryHints(createResult.output);
+      process.exit(createResult.status || 1);
     }
-    console.error("  Try:  openshell sandbox list        # check gateway state");
-    printSandboxCreateRecoveryHints(createResult.output);
-    process.exit(createResult.status || 1);
   }
 
   // Wait for sandbox to reach Ready state in k3s before registering.
