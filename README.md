@@ -1,3 +1,8 @@
+<!--
+  SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-License-Identifier: Apache-2.0
+-->
+
 # 🦞 NVIDIA NemoClaw: Reference Stack for Running OpenClaw in OpenShell
 
 <!-- start-badges -->
@@ -75,6 +80,10 @@ The script installs Node.js if it is not already present, then runs the guided o
 > **ℹ️ Note**
 >
 > NemoClaw creates a fresh OpenClaw instance inside the sandbox during the onboarding process.
+>
+> The installer runs as your normal user and does not require `sudo` or root.
+> It installs Node.js via nvm and NemoClaw via npm, both into user-local directories.
+> Docker must be installed and running before you run the installer. Installing Docker may require elevated privileges on Linux.
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash

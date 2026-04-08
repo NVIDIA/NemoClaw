@@ -92,6 +92,15 @@ To avoid these issues, install the prerequisites in the following order before r
 1. Install Xcode Command Line Tools (`xcode-select --install`). These are needed by the installer and Node.js toolchain.
 2. Install and start a supported container runtime (Docker Desktop or Colima). Without a running runtime, the installer cannot connect to Docker.
 
+### Permission errors during installation
+
+The NemoClaw installer does not require `sudo` or root.
+It installs Node.js via nvm and NemoClaw via npm, both into user-local directories.
+The installer also handles OpenShell installation automatically using a pinned release.
+
+If you see permission errors during installation, they typically come from Docker, not the NemoClaw installer itself.
+Docker must be installed and running before you run the installer, and installing Docker may require elevated privileges on Linux.
+
 ### npm install fails with permission errors
 
 If `npm install` fails with an `EACCES` permission error, do not run npm with `sudo`.
