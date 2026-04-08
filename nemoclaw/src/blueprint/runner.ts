@@ -68,6 +68,7 @@ interface InferenceProfile {
   model?: string;
   credential_env?: string;
   credential_default?: string;
+  timeout_secs?: number;
 }
 
 interface SandboxConfig {
@@ -296,9 +297,19 @@ export async function actionApply(
   });
 
   progress(70, "Setting inference route");
-  await runCmd(["openshell", "inference", "set", "--provider", providerName, "--model", model], {
-    reject: false,
-  });
+  const inferenceArgs = [
+    "openshell",
+    "inference",
+    "set",
+    "--provider",
+    providerName,
+    "--model",
+    model,
+  ];
+  if (inferenceCfg.timeout_secs !== undefined) {
+    inferenceArgs.push("--timeout", String(inferenceCfg.timeout_secs));
+  }
+  await runCmd(inferenceArgs, { reject: false });
 
   progress(85, "Saving run state");
   const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);

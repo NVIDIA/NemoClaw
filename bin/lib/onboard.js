@@ -18,6 +18,9 @@ function envInt(name, fallback) {
   const n = Number(raw);
   return Number.isFinite(n) ? Math.max(0, Math.round(n)) : fallback;
 }
+
+/** Inference timeout (seconds) for local providers (Ollama, vLLM, NIM). */
+const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 180);
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
 const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
 const {
@@ -3116,7 +3119,17 @@ async function setupInference(
       console.error(`  ${providerResult.message}`);
       process.exit(providerResult.status || 1);
     }
-    runOpenshell(["inference", "set", "--no-verify", "--provider", "vllm-local", "--model", model]);
+    runOpenshell([
+      "inference",
+      "set",
+      "--no-verify",
+      "--provider",
+      "vllm-local",
+      "--model",
+      model,
+      "--timeout",
+      String(LOCAL_INFERENCE_TIMEOUT_SECS),
+    ]);
   } else if (provider === "ollama-local") {
     const validation = validateLocalProvider(provider, runCapture);
     if (!validation.ok) {
@@ -3140,6 +3153,8 @@ async function setupInference(
       "ollama-local",
       "--model",
       model,
+      "--timeout",
+      String(LOCAL_INFERENCE_TIMEOUT_SECS),
     ]);
     console.log(`  Priming Ollama model: ${model}`);
     run(getOllamaWarmupCommand(model), { ignoreError: true });
