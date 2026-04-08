@@ -19,7 +19,7 @@ const SELECT_FROM_LIST_ITEMS = [
   { name: "pypi", description: "Python Package Index (PyPI) access" },
 ];
 
-function runPolicyAdd(confirmAnswer) {
+function runPolicyAdd(confirmAnswer, extraArgs = []) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-add-"));
   const scriptPath = path.join(tmpDir, "policy-add-check.js");
   const script = String.raw`
@@ -28,6 +28,8 @@ const policies = require(${POLICIES_PATH});
 const credentials = require(${CREDENTIALS_PATH});
 const calls = [];
 policies.selectFromList = async () => "pypi";
+policies.loadPreset = () => "network_policies:\n  pypi:\n    host: pypi.org\n";
+policies.getPresetEndpoints = () => ["pypi.org"];
 credentials.prompt = async (message) => {
   calls.push({ type: "prompt", message });
   return ${JSON.stringify(confirmAnswer)};
@@ -42,10 +44,10 @@ policies.getAppliedPresets = () => [];
 policies.applyPreset = (sandboxName, presetName) => {
   calls.push({ type: "apply", sandboxName, presetName });
 };
-process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-add"];
+process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-add", ...${JSON.stringify(extraArgs)}];
 require(${CLI_PATH});
 setImmediate(() => {
-  process.stdout.write(JSON.stringify(calls));
+  process.stdout.write("\n__CALLS__" + JSON.stringify(calls));
 });
 `;
 
@@ -93,9 +95,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 10 presets", () => {
+    it("returns all 11 presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(10);
+      expect(presets.length).toBe(11);
     });
 
     it("each preset has name and description", () => {
@@ -112,6 +114,7 @@ describe("policies", () => {
         .sort();
       const expected = [
         "brave",
+        "brew",
         "discord",
         "docker",
         "huggingface",
@@ -657,7 +660,7 @@ describe("policies", () => {
       const result = runPolicyAdd("y");
 
       expect(result.status).toBe(0);
-      const calls = JSON.parse(result.stdout.trim());
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim());
       expect(calls).toContainEqual({
         type: "prompt",
         message: "  Apply 'pypi' to sandbox 'test-sandbox'? [Y/n]: ",
@@ -673,12 +676,23 @@ describe("policies", () => {
       const result = runPolicyAdd("n");
 
       expect(result.status).toBe(0);
-      const calls = JSON.parse(result.stdout.trim());
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim());
       expect(calls).toContainEqual({
         type: "prompt",
         message: "  Apply 'pypi' to sandbox 'test-sandbox'? [Y/n]: ",
       });
       expect(calls.some((call) => call.type === "apply")).toBeFalsy();
+    });
+
+    it("does not prompt or apply when --dry-run is passed", () => {
+      const result = runPolicyAdd("y", ["--dry-run"]);
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim());
+      expect(calls.some((call) => call.type === "prompt")).toBeFalsy();
+      expect(calls.some((call) => call.type === "apply")).toBeFalsy();
+      expect(result.stdout).toMatch(/Endpoints that would be opened: pypi\.org/);
+      expect(result.stdout).toMatch(/--dry-run: no changes applied\./);
     });
   });
 });

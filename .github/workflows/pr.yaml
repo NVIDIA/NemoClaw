@@ -15,6 +15,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Detect which files changed so we can skip expensive jobs for docs-only PRs.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!**/*.md'
+              - '!docs/**'
+
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -26,7 +49,8 @@ jobs:
         uses: ./.github/actions/basic-checks
 
   sandbox-images-and-e2e:
-    needs: checks
+    needs: [checks, changes]
+    if: needs.changes.outputs.code == 'true'
     uses: ./.github/workflows/sandbox-images-and-e2e.yaml
     with:
       run_arm64: true

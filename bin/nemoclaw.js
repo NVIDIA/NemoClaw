@@ -41,6 +41,14 @@ const onboardSession = require("./lib/onboard-session");
 const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
 const { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } = require("./lib/usage-notice");
 const { runDebugCommand } = require("../dist/lib/debug-command");
+const {
+  captureOpenshellCommand,
+  getInstalledOpenshellVersion,
+  runOpenshellCommand,
+  stripAnsi,
+  versionGte,
+} = require("../dist/lib/openshell");
+const { listSandboxesCommand, showStatusCommand } = require("../dist/lib/inventory-commands");
 const { executeDeploy } = require("../dist/lib/deploy");
 const { runStartCommand, runStopCommand } = require("../dist/lib/services-command");
 const {
@@ -86,30 +94,24 @@ function getOpenshellBinary() {
 }
 
 function runOpenshell(args, opts = {}) {
-  const result = spawnSync(getOpenshellBinary(), args, {
+  return runOpenshellCommand(getOpenshellBinary(), args, {
     cwd: ROOT,
-    env: { ...process.env, ...opts.env },
-    encoding: "utf-8",
-    stdio: opts.stdio ?? "inherit",
+    env: opts.env,
+    stdio: opts.stdio,
+    ignoreError: opts.ignoreError,
+    errorLine: console.error,
+    exit: (code) => process.exit(code),
   });
-  if (result.status !== 0 && !opts.ignoreError) {
-    console.error(`  Command failed (exit ${result.status}): openshell ${args.join(" ")}`);
-    process.exit(result.status || 1);
-  }
-  return result;
 }
 
 function captureOpenshell(args, opts = {}) {
-  const result = spawnSync(getOpenshellBinary(), args, {
+  return captureOpenshellCommand(getOpenshellBinary(), args, {
     cwd: ROOT,
-    env: { ...process.env, ...opts.env },
-    encoding: "utf-8",
-    stdio: ["ignore", "pipe", "pipe"],
+    env: opts.env,
+    ignoreError: opts.ignoreError,
+    errorLine: console.error,
+    exit: (code) => process.exit(code),
   });
-  return {
-    status: result.status ?? 1,
-    output: `${result.stdout || ""}${opts.ignoreError ? "" : result.stderr || ""}`.trim(),
-  };
 }
 
 function cleanupGatewayAfterLastSandbox() {
@@ -143,36 +145,10 @@ function getSandboxDeleteOutcome(deleteResult) {
   };
 }
 
-function parseVersionFromText(value = "") {
-  const match = String(value || "").match(/([0-9]+\.[0-9]+\.[0-9]+)/);
-  return match ? match[1] : null;
-}
-
-function versionGte(left = "0.0.0", right = "0.0.0") {
-  const lhs = String(left)
-    .split(".")
-    .map((part) => Number.parseInt(part, 10) || 0);
-  const rhs = String(right)
-    .split(".")
-    .map((part) => Number.parseInt(part, 10) || 0);
-  const length = Math.max(lhs.length, rhs.length);
-  for (let index = 0; index < length; index += 1) {
-    const a = lhs[index] || 0;
-    const b = rhs[index] || 0;
-    if (a > b) return true;
-    if (a < b) return false;
-  }
-  return true;
-}
-
-function getInstalledOpenshellVersion() {
-  const versionResult = captureOpenshell(["--version"], { ignoreError: true });
-  return parseVersionFromText(versionResult.output);
-}
-
-function stripAnsi(value = "") {
-  // eslint-disable-next-line no-control-regex
-  return String(value).replace(/\x1b\[[0-9;]*m/g, "");
+function getInstalledOpenshellVersionOrNull() {
+  return getInstalledOpenshellVersion(getOpenshellBinary(), {
+    cwd: ROOT,
+  });
 }
 
 // ── Sandbox process health (OpenClaw gateway inside the sandbox) ─────────
@@ -789,27 +765,39 @@ async function onboard(args) {
     if (!fromDockerfile || fromDockerfile.startsWith("--")) {
       console.error("  --from requires a path to a Dockerfile");
       console.error(
-        `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
+        `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
       );
       process.exit(1);
     }
     args = [...args.slice(0, fromIdx), ...args.slice(fromIdx + 2)];
   }
 
-  const allowedArgs = new Set(["--non-interactive", "--resume", NOTICE_ACCEPT_FLAG]);
+  const allowedArgs = new Set([
+    "--non-interactive",
+    "--resume",
+    "--recreate-sandbox",
+    NOTICE_ACCEPT_FLAG,
+  ]);
   const unknownArgs = args.filter((arg) => !allowedArgs.has(arg));
   if (unknownArgs.length > 0) {
     console.error(`  Unknown onboard option(s): ${unknownArgs.join(", ")}`);
     console.error(
-      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
+      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
     );
     process.exit(1);
   }
   const nonInteractive = args.includes("--non-interactive");
   const resume = args.includes("--resume");
+  const recreateSandbox = args.includes("--recreate-sandbox");
   const acceptThirdPartySoftware =
     args.includes(NOTICE_ACCEPT_FLAG) || String(process.env[NOTICE_ACCEPT_ENV] || "") === "1";
-  await runOnboard({ nonInteractive, resume, fromDockerfile, acceptThirdPartySoftware });
+  await runOnboard({
+    nonInteractive,
+    resume,
+    recreateSandbox,
+    fromDockerfile,
+    acceptThirdPartySoftware,
+  });
 }
 
 async function setup(args = []) {
@@ -891,76 +879,24 @@ function uninstall(args) {
 }
 
 function showStatus() {
-  // Show sandbox registry
-  const { sandboxes, defaultSandbox } = registry.listSandboxes();
-  if (sandboxes.length > 0) {
-    const live = parseGatewayInference(
-      captureOpenshell(["inference", "get"], { ignoreError: true }).output,
-    );
-    console.log("");
-    console.log("  Sandboxes:");
-    for (const sb of sandboxes) {
-      const def = sb.name === defaultSandbox ? " *" : "";
-      const model = (live && live.model) || sb.model;
-      console.log(`    ${sb.name}${def}${model ? ` (${model})` : ""}`);
-    }
-    console.log("");
-  }
-
-  // Show service status
   const { showStatus: showServiceStatus } = require("./lib/services");
-  showServiceStatus({ sandboxName: defaultSandbox || undefined });
+  showStatusCommand({
+    listSandboxes: () => registry.listSandboxes(),
+    getLiveInference: () =>
+      parseGatewayInference(captureOpenshell(["inference", "get"], { ignoreError: true }).output),
+    showServiceStatus,
+    log: console.log,
+  });
 }
 
 async function listSandboxes() {
-  const recovery = await recoverRegistryEntries();
-  const { sandboxes, defaultSandbox } = recovery;
-  if (sandboxes.length === 0) {
-    console.log("");
-    const session = onboardSession.loadSession();
-    if (session?.sandboxName) {
-      console.log(
-        `  No sandboxes registered locally, but the last onboarded sandbox was '${session.sandboxName}'.`,
-      );
-      console.log(
-        "  Retry `nemoclaw <name> connect` or `nemoclaw <name> status` once the gateway/runtime is healthy.",
-      );
-    } else {
-      console.log("  No sandboxes registered. Run `nemoclaw onboard` to get started.");
-    }
-    console.log("");
-    return;
-  }
-
-  // Query live gateway inference once; prefer it over stale registry values.
-  const live = parseGatewayInference(
-    captureOpenshell(["inference", "get"], { ignoreError: true }).output,
-  );
-
-  console.log("");
-  if (recovery.recoveredFromSession) {
-    console.log("  Recovered sandbox inventory from the last onboard session.");
-    console.log("");
-  }
-  if (recovery.recoveredFromGateway > 0) {
-    console.log(
-      `  Recovered ${recovery.recoveredFromGateway} sandbox entr${recovery.recoveredFromGateway === 1 ? "y" : "ies"} from the live OpenShell gateway.`,
-    );
-    console.log("");
-  }
-  console.log("  Sandboxes:");
-  for (const sb of sandboxes) {
-    const def = sb.name === defaultSandbox ? " *" : "";
-    const model = (live && live.model) || sb.model || "unknown";
-    const provider = (live && live.provider) || sb.provider || "unknown";
-    const gpu = sb.gpuEnabled ? "GPU" : "CPU";
-    const presets = sb.policies && sb.policies.length > 0 ? sb.policies.join(", ") : "none";
-    console.log(`    ${sb.name}${def}`);
-    console.log(`      model: ${model}  provider: ${provider}  ${gpu}  policies: ${presets}`);
-  }
-  console.log("");
-  console.log("  * = default sandbox");
-  console.log("");
+  await listSandboxesCommand({
+    recoverRegistryEntries: () => recoverRegistryEntries(),
+    getLiveInference: () =>
+      parseGatewayInference(captureOpenshell(["inference", "get"], { ignoreError: true }).output),
+    loadLastSession: () => onboardSession.loadSession(),
+    log: console.log,
+  });
 }
 
 // ── Sandbox-scoped actions ───────────────────────────────────────
@@ -1099,7 +1035,7 @@ async function sandboxStatus(sandboxName) {
 }
 
 function sandboxLogs(sandboxName, follow) {
-  const installedVersion = getInstalledOpenshellVersion();
+  const installedVersion = getInstalledOpenshellVersionOrNull();
   if (installedVersion && !versionGte(installedVersion, MIN_LOGS_OPENSHELL_VERSION)) {
     printOldLogsCompatibilityGuidance(installedVersion);
     process.exit(1);
@@ -1141,13 +1077,27 @@ function sandboxLogs(sandboxName, follow) {
   exitWithSpawnResult(result);
 }
 
-async function sandboxPolicyAdd(sandboxName) {
+async function sandboxPolicyAdd(sandboxName, args = []) {
+  const dryRun = args.includes("--dry-run");
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
 
   const { prompt: askPrompt } = require("./lib/credentials");
   const answer = await policies.selectFromList(allPresets, { applied });
   if (!answer) return;
+
+  const presetContent = policies.loadPreset(answer);
+  if (!presetContent) return;
+
+  const endpoints = policies.getPresetEndpoints(presetContent);
+  if (endpoints.length > 0) {
+    console.log(`  Endpoints that would be opened: ${endpoints.join(", ")}`);
+  }
+
+  if (dryRun) {
+    console.log("  --dry-run: no changes applied.");
+    return;
+  }
 
   const confirm = await askPrompt(`  Apply '${answer}' to sandbox '${sandboxName}'? [Y/n]: `);
   if (confirm.toLowerCase() === "n") return;
@@ -1243,7 +1193,7 @@ function help() {
     nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
 
   ${G}Policy Presets:${R}
-    nemoclaw <name> policy-add       Add a network or filesystem policy preset
+    nemoclaw <name> policy-add       Add a network or filesystem policy preset ${D}(--dry-run to preview)${R}
     nemoclaw <name> policy-list      List presets ${D}(● = applied)${R}
 
   ${G}Compatibility Commands:${R}
@@ -1349,7 +1299,7 @@ const [cmd, ...args] = process.argv.slice(2);
         sandboxLogs(cmd, actionArgs.includes("--follow"));
         break;
       case "policy-add":
-        await sandboxPolicyAdd(cmd);
+        await sandboxPolicyAdd(cmd, actionArgs);
         break;
       case "policy-list":
         sandboxPolicyList(cmd);

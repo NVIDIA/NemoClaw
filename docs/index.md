@@ -261,6 +261,7 @@ Customize the Network Policy <network-policy/customize-network-policy>
 :hidden:
 
 Security Best Practices <security/best-practices>
+Credential Storage <security/credential-storage>
 ```
 
 ```{toctree}
