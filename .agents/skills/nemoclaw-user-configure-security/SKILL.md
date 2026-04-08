@@ -1,9 +1,9 @@
 ---
-name: "nemoclaw-security-best"
-description: "Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs."
+name: "nemoclaw-user-configure-security"
+description: "Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs. Explains where NemoClaw stores provider credentials, the file permissions it applies, and the operational security trade-offs of plaintext local storage. Use when reviewing credential handling or advising users how to secure stored API keys."
 ---
 
-# NemoClaw Security Best
+# NemoClaw User Configure Security
 
 Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs.
 
@@ -13,7 +13,7 @@ NemoClaw ships with deny-by-default security controls across four layers: networ
 You can tune every control, but each change shifts the risk profile.
 This page documents every configurable knob, its default, what it protects, the concrete risk of relaxing it, and a recommendation for common use cases.
 
-For background on how the layers fit together, refer to How It Works (see the `nemoclaw-overview` skill).
+For background on how the layers fit together, refer to How It Works (see the `nemoclaw-user-overview` skill).
 
 <!-- TODO: uncomment after the OpenShell docs are published
 :::{seealso}
@@ -79,3 +79,7 @@ flowchart TB
     style GW fill:#2a2a2a,stroke:#76b900,stroke-width:2px,color:#fff
 
 *Full details in `references/best-practices.md`.*
+
+## Reference
+
+- [NemoClaw Credential Storage](references/credential-storage.md)

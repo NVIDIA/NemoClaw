@@ -1,5 +1,5 @@
 ---
-name: find-review-pr
+name: nemoclaw-maintainer-find-review-pr
 description: Finds open GitHub PRs with security and priority-high labels, links each to its issue, detects duplicates (multiple PRs fixing the same issue), and presents a table of review candidates. Use when looking for the next PR to review. Trigger keywords - find pr, find review, next pr, pr to review, duplicate pr, security pr.
 user_invocable: true
 ---

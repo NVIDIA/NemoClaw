@@ -1,5 +1,5 @@
 ---
-name: cut-release-tag
+name: nemoclaw-maintainer-cut-release-tag
 description: Cut a new semver release tag on main, move the `latest` tag, and push. Use when cutting a release, tagging a version, shipping a build, or preparing a deployment. Trigger keywords - cut tag, release tag, new tag, cut release, tag version, ship it.
 user_invocable: true
 ---

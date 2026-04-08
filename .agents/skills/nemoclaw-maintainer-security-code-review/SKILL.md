@@ -1,5 +1,5 @@
 ---
-name: security-code-review
+name: nemoclaw-maintainer-security-code-review
 description: Performs a comprehensive security review of code changes in a GitHub PR or issue. Checks out the branch, analyzes changed files against a 9-category security checklist, and produces PASS/WARNING/FAIL verdicts. Use when reviewing pull requests for security vulnerabilities, hardcoded secrets, injection flaws, auth bypasses, or insecure configurations. Trigger keywords - security review, code review, appsec, vulnerability assessment, security audit, review PR security.
 user_invocable: true
 ---
