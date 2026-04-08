@@ -1299,7 +1299,7 @@ const [cmd, ...args] = process.argv.slice(2);
         sandboxLogs(cmd, actionArgs.includes("--follow"));
         break;
       case "policy-add":
-        await sandboxPolicyAdd(cmd);
+        await sandboxPolicyAdd(cmd, actionArgs);
         break;
       case "policy-list":
         sandboxPolicyList(cmd);
