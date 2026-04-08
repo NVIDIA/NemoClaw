@@ -545,7 +545,16 @@ function sanitizeConfigFile(configPath: string): void {
   const config = parsed as Record<string, unknown>;
   delete config["gateway"];
   const sanitized = stripCredentials(config) as Record<string, unknown>;
-  writeFileSync(configPath, JSON.stringify(sanitized, null, 2));
+  // SECURITY: pass `mode: 0o600` so the file is created with restricted
+  // permissions atomically. Without this option, `writeFileSync` creates the
+  // file at the default umask (typically 0o644 — world-readable) and we'd
+  // rely on the follow-up `chmodSync` to narrow it. That sequence is a
+  // textbook TOCTOU: any local user with `inotifywait` on the parent dir can
+  // race the chmod and read the (still-credential-bearing) config file.
+  // The follow-up chmod stays for the case where the file already existed
+  // at a wider mode — `writeFileSync({ mode })` only sets the mode on newly
+  // created files.
+  writeFileSync(configPath, JSON.stringify(sanitized, null, 2), { mode: 0o600 });
   chmodSync(configPath, 0o600);
 }
 
@@ -572,7 +581,13 @@ function copyDirectory(
 }
 
 function writeSnapshotManifest(snapshotDir: string, manifest: SnapshotManifest): void {
-  writeFileSync(path.join(snapshotDir, "snapshot.json"), JSON.stringify(manifest, null, 2));
+  // SECURITY: the snapshot manifest contains paths to credential-bearing
+  // config files (and, depending on the snapshot, can mirror those configs).
+  // It must not be world-readable. Created with mode 0o600 atomically,
+  // chmod after for the case where it already existed at a wider mode.
+  const manifestPath = path.join(snapshotDir, "snapshot.json");
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), { mode: 0o600 });
+  chmodSync(manifestPath, 0o600);
 }
 
 function readSnapshotManifest(snapshotDir: string): SnapshotManifest {
@@ -655,7 +670,9 @@ function prepareSandboxState(snapshotDir: string, manifest: SnapshotManifest): s
   delete (config as Record<string, unknown>)["gateway"];
 
   const configPath = path.join(preparedStateDir, "openclaw.json");
-  writeFileSync(configPath, JSON.stringify(config, null, 2));
+  // SECURITY: see sanitizeConfigFile comment — `mode: 0o600` is the
+  // atomic-creation guard against the writeFileSync→chmodSync TOCTOU race.
+  writeFileSync(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
   chmodSync(configPath, 0o600);
 
   // SECURITY: Strip all credentials from the bundle before it enters the sandbox.
@@ -896,7 +913,14 @@ export function restoreSnapshotToHost(
     if (manifest.hasExternalConfig && manifest.configPath) {
       const configSnapshotPath = path.join(snapshotDir, "config", "openclaw.json");
       mkdirSync(path.dirname(manifest.configPath), { recursive: true });
-      copyFileSync(configSnapshotPath, manifest.configPath);
+      // SECURITY: `copyFileSync` writes the destination at the default umask
+      // (typically 0o644 — world-readable) and we'd then narrow with chmod.
+      // That's a TOCTOU race for a credential-bearing config. Read the bytes
+      // and write them via `writeFileSync({ mode: 0o600 })` so the destination
+      // is created with restricted permissions atomically. The follow-up
+      // chmod stays for the case where the destination already existed at a
+      // wider mode (writeFileSync's mode option only fires on file creation).
+      writeFileSync(manifest.configPath, readFileSync(configSnapshotPath), { mode: 0o600 });
       chmodSync(manifest.configPath, 0o600);
       logger.info(`Restored external config to ${manifest.configPath}`);
     }
