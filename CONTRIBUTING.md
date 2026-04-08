@@ -51,6 +51,19 @@ The CLI (`bin/`, `scripts/`) is type-checked separately:
 npm run typecheck:cli   # or: npx tsc -p tsconfig.cli.json
 ```
 
+### Local Development Testing
+
+After building, return to the repository root and link the CLI so the `nemoclaw` command is available locally.
+If you followed the build step above, you are still inside `nemoclaw/` and must `cd ..` first:
+
+```bash
+cd ..                   # back to the repo root (from nemoclaw/ subdirectory)
+npm link
+nemoclaw --version      # verify the linked version
+```
+
+To unlink when you are done: `npm unlink -g nemoclaw`
+
 ## Main Tasks
 
 These are the primary `make` and `npm` targets for day-to-day development:
