@@ -68,6 +68,19 @@ describe("inference selection config", () => {
     });
   });
 
+  it("maps azure-openai to the sandbox inference route", () => {
+    expect(getProviderSelectionConfig("azure-openai", "gpt-4o")).toEqual({
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "gpt-4o",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: "AZURE_OPENAI_API_KEY",
+      provider: "azure-openai",
+      providerLabel: "Azure OpenAI",
+    });
+  });
+
   it("maps the remaining hosted providers to the sandbox inference route", () => {
     // Full-object assertion for one hosted provider to catch structural regressions
     expect(getProviderSelectionConfig("openai-api", "gpt-5.4-mini")).toEqual({
@@ -114,6 +127,7 @@ describe("inference selection config", () => {
       "nvidia-prod",
       "nvidia-nim",
       "openai-api",
+      "azure-openai",
       "anthropic-prod",
       "compatible-anthropic-endpoint",
       "gemini-api",
@@ -128,7 +142,6 @@ describe("inference selection config", () => {
       "bedrock",
       "vertex",
       "azure",
-      "azure-openai",
       "deepseek",
       "mistral",
       "cohere",
@@ -147,6 +160,7 @@ describe("inference selection config", () => {
 
   it("falls back to provider defaults when model is omitted", () => {
     expect(getProviderSelectionConfig("openai-api")?.model).toBe("gpt-5.4");
+    expect(getProviderSelectionConfig("azure-openai")?.model).toBe("gpt-4o");
     expect(getProviderSelectionConfig("anthropic-prod")?.model).toBe("claude-sonnet-4-6");
     expect(getProviderSelectionConfig("gemini-api")?.model).toBe("gemini-2.5-flash");
     expect(getProviderSelectionConfig("compatible-endpoint")?.model).toBe("custom-model");

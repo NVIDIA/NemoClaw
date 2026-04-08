@@ -296,7 +296,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "7", "custom/provider-model"];
+const answers = ["1", "8", "custom/provider-model"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -389,7 +389,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "7", "bad/model", "z-ai/glm5"];
+const answers = ["1", "8", "bad/model", "z-ai/glm5"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -488,7 +488,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-    const answers = ["6", "7", "gemini-custom"];
+    const answers = ["7", "8", "gemini-custom"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -574,7 +574,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7", "1"];
+const answers = ["8", "1"];
 const messages = [];
 const commands = [];
 
@@ -671,7 +671,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7", "2", "back", "1", ""];
+const answers = ["8", "2", "back", "1", ""];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -773,7 +773,7 @@ exit 0
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7", "1"];
+const answers = ["8", "1"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -880,7 +880,7 @@ exit 0
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7", "1", "2", "llama3.2:3b"];
+const answers = ["8", "1", "2", "llama3.2:3b"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -982,7 +982,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["2", "5", "bad-model", "gpt-5.4-mini"];
+const answers = ["2", "6", "bad-model", "gpt-5.4-mini"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1065,7 +1065,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["4", "4", "claude-bad", "claude-haiku-4-5"];
+const answers = ["5", "5", "claude-bad", "claude-haiku-4-5"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1160,7 +1160,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["4", "", "4", "2"];
+const answers = ["5", "", "5", "2"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1243,7 +1243,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["5", "https://proxy.example.com/v1/messages?token=secret#frag", "claude-sonnet-proxy"];
+const answers = ["6", "https://proxy.example.com/v1/messages?token=secret#frag", "claude-sonnet-proxy"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1338,7 +1338,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["3", "https://proxy.example.com/v1/chat/completions?token=secret#frag", "bad-model", "good-model"];
+const answers = ["4", "https://proxy.example.com/v1/chat/completions?token=secret#frag", "bad-model", "good-model"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1451,7 +1451,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["3", "https://proxy.example.com/v1", "custom-model"];
+const answers = ["4", "https://proxy.example.com/v1", "custom-model"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1535,7 +1535,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["3", "", "", ""];
+const answers = ["4", "", "", ""];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1631,7 +1631,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["5", "https://proxy.example.com/v1/messages?token=secret#frag", "bad-claude", "good-claude"];
+const answers = ["6", "https://proxy.example.com/v1/messages?token=secret#frag", "bad-claude", "good-claude"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1733,7 +1733,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["3", "https://proxy.example.com/v1", "back", "1", ""];
+const answers = ["4", "https://proxy.example.com/v1", "back", "1", ""];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -2360,7 +2360,7 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["4", "", "retry", "anthropic-good", ""];
+const answers = ["5", "", "retry", "anthropic-good", ""];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -2434,7 +2434,7 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["6", "", "retry", "gemini-good", ""];
+const answers = ["7", "", "retry", "gemini-good", ""];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -2510,7 +2510,7 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["3", "https://proxy.example.com/v1/chat/completions?token=secret#frag", "custom-model", "retry", "proxy-good", "custom-model"];
+const answers = ["4", "https://proxy.example.com/v1/chat/completions?token=secret#frag", "custom-model", "retry", "proxy-good", "custom-model"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -2600,7 +2600,7 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["5", "https://proxy.example.com/v1/messages?token=secret#frag", "claude-proxy", "retry", "anthropic-proxy-good", "claude-proxy"];
+const answers = ["6", "https://proxy.example.com/v1/messages?token=secret#frag", "claude-proxy", "retry", "anthropic-proxy-good", "claude-proxy"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -2711,12 +2711,12 @@ printf '%s' "$status"
       { mode: 0o755 },
     );
 
-    // vLLM is option 7 (build, openai, custom, anthropic, anthropicCompatible, gemini, vllm)
+    // vLLM is option 8 (build, openai, azureOpenAi, custom, anthropic, anthropicCompatible, gemini, vllm)
     const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7"];
+const answers = ["8"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -2810,7 +2810,7 @@ printf '%s' "$status"
       { mode: 0o755 },
     );
 
-    // NIM-local is option 7 (build, openai, custom, anthropic, anthropicCompatible, gemini, nim-local)
+    // NIM-local is option 8 (build, openai, azureOpenAi, custom, anthropic, anthropicCompatible, gemini, nim-local)
     // No ollama, no vLLM — only NIM-local shows up as experimental option
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -2824,8 +2824,8 @@ nimMod.containerName = () => "nemoclaw-nim-test";
 nimMod.startNimContainerByName = () => "container-123";
 nimMod.waitForNimHealth = () => true;
 
-// Select option 7 (nim-local), then model 1
-const answers = ["7", "1"];
+// Select option 8 (nim-local), then model 1
+const answers = ["8", "1"];
 const messages = [];
 
 credentials.prompt = async (message) => {

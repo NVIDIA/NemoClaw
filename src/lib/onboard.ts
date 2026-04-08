@@ -172,6 +172,17 @@ const REMOTE_PROVIDER_CONFIG = {
     defaultModel: "gemini-2.5-flash",
     skipVerify: true,
   },
+  azureOpenAi: {
+    label: "Azure OpenAI",
+    providerName: "azure-openai",
+    providerType: "openai",
+    credentialEnv: "AZURE_OPENAI_API_KEY",
+    endpointUrl: "",
+    helpUrl: "https://portal.azure.com/",
+    modelMode: "input",
+    defaultModel: "gpt-4o",
+    skipVerify: true,
+  },
   custom: {
     label: "Other OpenAI-compatible endpoint",
     providerName: "compatible-endpoint",
@@ -941,6 +952,7 @@ function getSandboxInferenceConfig(model, provider = null, preferredInferenceApi
 
   switch (provider) {
     case "openai-api":
+    case "azure-openai":
       providerKey = "openai";
       primaryModelRef = `openai/${model}`;
       break;
@@ -2919,6 +2931,7 @@ async function setupNim(gpu) {
   const options = [];
   options.push({ key: "build", label: "NVIDIA Endpoints" });
   options.push({ key: "openai", label: "OpenAI" });
+  options.push({ key: "azureOpenAi", label: "Azure OpenAI" });
   options.push({ key: "custom", label: "Other OpenAI-compatible endpoint" });
   options.push({ key: "anthropic", label: "Anthropic" });
   options.push({ key: "anthropicCompatible", label: "Other Anthropic-compatible endpoint" });
@@ -2995,7 +3008,31 @@ async function setupNim(gpu) {
         endpointUrl = remoteConfig.endpointUrl;
         preferredInferenceApi = null;
 
-        if (selected.key === "custom") {
+        if (selected.key === "azureOpenAi") {
+          const endpointInput = isNonInteractive()
+            ? (process.env.NEMOCLAW_ENDPOINT_URL || "").trim()
+            : await prompt(
+                "  Azure OpenAI endpoint URL (e.g., https://my-resource.openai.azure.com/v1): ",
+              );
+          const navigation = getNavigationChoice(endpointInput);
+          if (navigation === "back") {
+            console.log("  Returning to provider selection.");
+            console.log("");
+            continue selectionLoop;
+          }
+          if (navigation === "exit") {
+            exitOnboardFromPrompt();
+          }
+          endpointUrl = normalizeProviderBaseUrl(endpointInput, "openai");
+          if (!endpointUrl) {
+            console.error("  Endpoint URL is required for Azure OpenAI.");
+            if (isNonInteractive()) {
+              process.exit(1);
+            }
+            console.log("");
+            continue selectionLoop;
+          }
+        } else if (selected.key === "custom") {
           const _envUrl = (process.env.NEMOCLAW_ENDPOINT_URL || "").trim();
           const endpointInput = isNonInteractive()
             ? _envUrl
@@ -3145,7 +3182,7 @@ async function setupNim(gpu) {
               continue selectionLoop;
             }
 
-            if (selected.key === "custom") {
+            if (selected.key === "azureOpenAi" || selected.key === "custom") {
               const validation = await validateCustomOpenAiLikeSelection(
                 remoteConfig.label,
                 endpointUrl,
@@ -3539,6 +3576,7 @@ async function setupInference(
     provider === "nvidia-prod" ||
     provider === "nvidia-nim" ||
     provider === "openai-api" ||
+    provider === "azure-openai" ||
     provider === "anthropic-prod" ||
     provider === "compatible-anthropic-endpoint" ||
     provider === "gemini-api" ||
@@ -4819,6 +4857,7 @@ function printDashboard(sandboxName, model, provider, nimContainer = null, agent
   let providerLabel = provider;
   if (provider === "nvidia-prod" || provider === "nvidia-nim") providerLabel = "NVIDIA Endpoints";
   else if (provider === "openai-api") providerLabel = "OpenAI";
+  else if (provider === "azure-openai") providerLabel = "Azure OpenAI";
   else if (provider === "anthropic-prod") providerLabel = "Anthropic";
   else if (provider === "compatible-anthropic-endpoint")
     providerLabel = "Other Anthropic-compatible endpoint";

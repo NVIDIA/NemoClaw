@@ -140,6 +140,26 @@ network_policies:
       - { path: /usr/local/bin/claude }
       - { path: /usr/local/bin/openclaw }
 
+  azure_openai:
+    name: azure_openai
+    endpoints:
+      - host: "*.openai.azure.com"
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: POST, path: "/openai/deployments/*/chat/completions" }
+          - allow: { method: POST, path: "/openai/deployments/*/completions" }
+          - allow: { method: POST, path: "/openai/deployments/*/embeddings" }
+          - allow: { method: GET, path: "/openai/deployments" }
+          - allow: { method: GET, path: "/openai/deployments/**" }
+          - allow: { method: GET, path: "/openai/models" }
+          - allow: { method: GET, path: "/openai/models/**" }
+    binaries:
+      - { path: /usr/local/bin/claude }
+      - { path: /usr/local/bin/openclaw }
+
   # NOTE: github.com / api.github.com and the git/gh binaries used to
   # live in this base policy and were therefore granted to every
   # sandbox regardless of user opt-in. They have been moved into a

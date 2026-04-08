@@ -87,6 +87,13 @@ export function getProviderSelectionConfig(
         credentialEnv: "GEMINI_API_KEY",
         providerLabel: "Google Gemini",
       };
+    case "azure-openai":
+      return {
+        ...base,
+        model: model || "gpt-4o",
+        credentialEnv: "AZURE_OPENAI_API_KEY",
+        providerLabel: "Azure OpenAI",
+      };
     case "compatible-endpoint":
       return {
         ...base,
