@@ -75,6 +75,12 @@ ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0
 # Unique per build to ensure each image gets a fresh auth token.
 # Pass --build-arg NEMOCLAW_BUILD_ID=$(date +%s) to bust the cache.
 ARG NEMOCLAW_BUILD_ID=default
+# Sandbox egress proxy host/port. Defaults match the OpenShell-injected
+# gateway (10.200.0.1:3128). Operators on non-default networks can override
+# at sandbox creation time by exporting NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT
+# before running `nemoclaw onboard`. See #1409.
+ARG NEMOCLAW_PROXY_HOST=10.200.0.1
+ARG NEMOCLAW_PROXY_PORT=3128
 
 # SECURITY: Promote build-args to env vars so the Python script reads them
 # via os.environ, never via string interpolation into Python source code.
@@ -89,7 +95,9 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_WEB_CONFIG_B64=${NEMOCLAW_WEB_CONFIG_B64} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
-    NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH}
+    NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
+    NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
+    NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT}
 
 WORKDIR /sandbox
 USER sandbox

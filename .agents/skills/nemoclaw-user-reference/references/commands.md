@@ -83,7 +83,7 @@ Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters an
 Uppercase letters are automatically lowercased.
 
 Before creating the gateway, the wizard runs preflight checks.
-It verifies that Docker is reachable, warns on unsupported runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
+It verifies that Docker is reachable, warns on untested runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
 
 #### `--from <Dockerfile>`
 

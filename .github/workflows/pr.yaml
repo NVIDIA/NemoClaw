@@ -48,6 +48,9 @@ jobs:
       - name: Run basic checks
         uses: ./.github/actions/basic-checks
 
+      - name: Verify platform matrix is in sync
+        run: python3 scripts/generate-platform-docs.py --check
+
   sandbox-images-and-e2e:
     needs: [checks, changes]
     if: needs.changes.outputs.code == 'true'

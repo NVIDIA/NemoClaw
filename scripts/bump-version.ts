@@ -30,11 +30,25 @@ type BlueprintManifest = {
   [key: string]: unknown;
 };
 
+type DocsProjectJson = {
+  name?: string;
+  version?: string;
+  [key: string]: unknown;
+};
+
+type DocsVersionEntry = {
+  preferred?: boolean;
+  version: string;
+  url: string;
+};
+
 const REPO_ROOT = process.cwd();
 const ROOT_PACKAGE_JSON = path.join(REPO_ROOT, "package.json");
 const PLUGIN_PACKAGE_JSON = path.join(REPO_ROOT, "nemoclaw", "package.json");
 const BLUEPRINT_YAML = path.join(REPO_ROOT, "nemoclaw-blueprint", "blueprint.yaml");
 const DOCS_CONF = path.join(REPO_ROOT, "docs", "conf.py");
+const DOCS_PROJECT_JSON = path.join(REPO_ROOT, "docs", "project.json");
+const DOCS_VERSIONS_JSON = path.join(REPO_ROOT, "docs", "versions1.json");
 const INSTALL_SH = path.join(REPO_ROOT, "scripts", "install.sh");
 const README_MD = path.join(REPO_ROOT, "README.md");
 const QUICKSTART_MD = path.join(REPO_ROOT, "docs", "get-started", "quickstart.md");
@@ -44,6 +58,8 @@ const FILES_TO_STAGE = [
   PLUGIN_PACKAGE_JSON,
   BLUEPRINT_YAML,
   DOCS_CONF,
+  DOCS_PROJECT_JSON,
+  DOCS_VERSIONS_JSON,
   INSTALL_SH,
   ...VERSIONED_DOC_LINK_FILES,
 ];
@@ -79,6 +95,8 @@ function main(): void {
   updateBlueprintVersion(options.version);
   updateInstallScriptDefaultVersion(previousVersion, options.version);
   updateDocsConf(options.version);
+  updateDocsProjectJson(options.version);
+  updateDocsVersionsJson(options.version);
   updateDocsVersionLinks(nextDocsPublicUrl);
   updateInstallAndUninstallDocs(nextDocsVersion);
 
@@ -310,6 +328,66 @@ function updateDocsConf(nextVersion: string): void {
   writeFileSync(DOCS_CONF, updated, "utf8");
 }
 
+function updateDocsProjectJson(version: string): void {
+  const project = readJson<DocsProjectJson>(DOCS_PROJECT_JSON);
+  project.version = version;
+  writeFileSync(DOCS_PROJECT_JSON, `${JSON.stringify(project, null, 2)}\n`, "utf8");
+}
+
+function updateDocsVersionsJson(version: string): void {
+  const currentEntries = readDocsVersionsJson();
+  const filteredEntries = currentEntries.filter((entry) => entry.version !== version);
+  const nextEntries: DocsVersionEntry[] = [
+    {
+      preferred: true,
+      version,
+      url: buildDocsVersionUrl(version),
+    },
+    ...filteredEntries.map((entry) => ({
+      version: entry.version,
+      url: buildDocsVersionUrl(entry.version),
+    })),
+  ].slice(0, 10);
+
+  writeFileSync(DOCS_VERSIONS_JSON, `${JSON.stringify(nextEntries, null, 2)}\n`, "utf8");
+}
+
+function readDocsVersionsJson(): DocsVersionEntry[] {
+  try {
+    const parsed = JSON.parse(readText(DOCS_VERSIONS_JSON)) as unknown;
+    if (!Array.isArray(parsed)) {
+      throw new Error("docs/versions1.json must contain an array");
+    }
+    return parsed.map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        throw new Error("Invalid docs/versions1.json entry");
+      }
+      const candidate = entry as Partial<DocsVersionEntry>;
+      if (typeof candidate.version !== "string") {
+        throw new Error("Each docs/versions1.json entry must include a string version");
+      }
+      return {
+        preferred: candidate.preferred === true ? true : undefined,
+        version: candidate.version,
+        url:
+          typeof candidate.url === "string" && candidate.url.length > 0
+            ? candidate.url
+            : buildDocsVersionUrl(candidate.version),
+      };
+    });
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+}
+
+function buildDocsVersionUrl(version: string): string {
+  return `https://docs.nvidia.com/nemoclaw/${version}/`;
+}
+
 function updateDocsVersionLinks(nextDocsPublicUrl: string): void {
   for (const filePath of VERSIONED_DOC_LINK_FILES) {
     const current = readText(filePath);
@@ -362,6 +440,8 @@ function verifyVersionState(version: string, docsPublicUrl: string, docsDisplayV
 
   requireContains(INSTALL_SH, `DEFAULT_NEMOCLAW_VERSION="${version}"`);
   requireContains(DOCS_CONF, `release = "${version}"`);
+  assertEqual(readJson<DocsProjectJson>(DOCS_PROJECT_JSON).version, version, "docs/project.json version mismatch");
+  verifyDocsVersionsJson(version);
   requireContains(README_MD, docsPublicUrl);
   requireContains(README_MD, docsDisplayVersion);
   requireContains(QUICKSTART_MD, docsDisplayVersion);
@@ -406,7 +486,10 @@ function createReleasePr(options: Options, previousVersion: string, tagName: str
   git(["commit", "-m", `chore(release): bump version to ${tagName}`]);
   git(["push", "-u", "origin", options.branchName]);
 
-  const prBody = buildPrBody(previousVersion, options.version);
+  const prBody = buildPrBody(previousVersion, options.version, {
+    ranTests: !options.skipTests,
+    ranFormat: false,
+  });
   const prUrl = run(
     "gh",
     [
@@ -441,7 +524,12 @@ function gitRemoteBranchExists(branchName: string): boolean {
   return run("git", ["ls-remote", "--exit-code", "--heads", "origin", branchName], { allowFailure: true }).exitCode === 0;
 }
 
-function buildPrBody(previousVersion: string, nextVersion: string): string {
+type PrBodyOptions = {
+  ranTests: boolean;
+  ranFormat: boolean;
+};
+
+function buildPrBody(previousVersion: string, nextVersion: string, options: PrBodyOptions): string {
   const gitUserName = run("git", ["config", "user.name"]).trim();
   const gitUserEmail = run("git", ["config", "user.email"]).trim();
 
@@ -457,9 +545,6 @@ function buildPrBody(previousVersion: string, nextVersion: string): string {
     `Bump NemoClaw from ${previousVersion} to ${nextVersion} across the CLI package, plugin package,`,
     "blueprint manifest, installer defaults, and versioned docs references.",
     "",
-    "## Related Issue",
-    "Fixes #1577.",
-    "",
     "## Changes",
     `- bump release version from ${previousVersion} to ${nextVersion}`,
     "- update installer and docs version references to match the npm/package version",
@@ -472,8 +557,8 @@ function buildPrBody(previousVersion: string, nextVersion: string): string {
     "- [ ] Doc only. Includes code sample changes.",
     "",
     "## Testing",
-    "- [ ] `npx prek run --all-files` passes (or equivalently `make check`).",
-    "- [x] `npm test` passes.",
+    `- [${options.ranFormat ? "x" : " "}] \`npx prek run --all-files\` passes (or equivalently \`make check\`).`,
+    `- [${options.ranTests ? "x" : " "}] \`npm test\` passes.`,
     "- [ ] `make docs` builds without warnings. (for doc-only changes)",
     "",
     "## Checklist",
@@ -484,7 +569,7 @@ function buildPrBody(previousVersion: string, nextVersion: string): string {
     "- [ ] I have read and followed the [style guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md). (for doc-only changes)",
     "",
     "### Code Changes",
-    "- [x] Formatters applied — `npx prek run --all-files` auto-fixes formatting (or `make format` for targeted runs).",
+    `- [${options.ranFormat ? "x" : " "}] Formatters applied — \`npx prek run --all-files\` auto-fixes formatting (or \`make format\` for targeted runs).`,
     "- [ ] Tests added or updated for new or changed behavior.",
     "- [x] No secrets, API keys, or credentials committed.",
     "- [x] Doc pages updated for any user-facing behavior changes (new commands, changed defaults, new features, bug fixes that contradict existing docs).",
@@ -532,6 +617,43 @@ function requireContains(filePath: string, text: string): void {
   if (!readText(filePath).includes(text)) {
     throw new Error(`Expected ${relative(filePath)} to contain: ${text}`);
   }
+}
+
+function verifyDocsVersionsJson(expectedNewestVersion: string): void {
+  const entries = readJson<DocsVersionEntry[]>(DOCS_VERSIONS_JSON);
+  if (!Array.isArray(entries)) {
+    throw new Error("docs/versions1.json must contain an array");
+  }
+  if (entries.length === 0) {
+    throw new Error("docs/versions1.json must contain at least one version entry");
+  }
+  if (entries.length > 5) {
+    throw new Error(`docs/versions1.json must contain at most 5 entries; found ${entries.length}`);
+  }
+
+  entries.forEach((entry, index) => {
+    if (typeof entry.version !== "string" || entry.version.length === 0) {
+      throw new Error(`docs/versions1.json entry ${index} is missing a valid version`);
+    }
+    const expectedUrl = buildDocsVersionUrl(entry.version);
+    if (entry.url !== expectedUrl) {
+      throw new Error(
+        `docs/versions1.json entry ${index} has url '${entry.url}', expected '${expectedUrl}'`,
+      );
+    }
+    if (index === 0) {
+      if (entry.version !== expectedNewestVersion) {
+        throw new Error(
+          `docs/versions1.json first entry must be ${expectedNewestVersion}; found ${entry.version}`,
+        );
+      }
+      if (entry.preferred !== true) {
+        throw new Error("docs/versions1.json first entry must have preferred: true");
+      }
+    } else if ("preferred" in entry && entry.preferred !== undefined) {
+      throw new Error("Only the first docs/versions1.json entry may set preferred");
+    }
+  });
 }
 
 function verifyDocsLinks(filePath: string, expectedDocsPublicUrl: string): void {

@@ -35,7 +35,7 @@ info "Detected $OS_LABEL ($ARCH_LABEL)"
 
 # Minimum version required for sandbox persistence across gateway restarts
 # (deterministic k3s node name + workspace PVC: NVIDIA/OpenShell#739, #488)
-MIN_VERSION="0.0.22"
+MIN_VERSION="0.0.24"
 
 version_gte() {
   # Returns 0 (true) if $1 >= $2 — portable, no sort -V (BSD compat)

@@ -20,6 +20,8 @@ import {
   getFutureShellPathHint,
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
+  getBlueprintMinOpenshellVersion,
+  versionGte,
   getRequestedModelHint,
   getRequestedProviderHint,
   getRequestedSandboxNameHint,
@@ -278,6 +280,153 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("regression #1409: bakes NEMOCLAW_PROXY_HOST/PORT env into the staged Dockerfile", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
+        "ARG NEMOCLAW_PROXY_PORT=3128",
+      ].join("\n"),
+    );
+
+    const priorHost = process.env.NEMOCLAW_PROXY_HOST;
+    const priorPort = process.env.NEMOCLAW_PROXY_PORT;
+    process.env.NEMOCLAW_PROXY_HOST = "1.2.3.4";
+    process.env.NEMOCLAW_PROXY_PORT = "9999";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-proxy",
+        "openai-api",
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_HOST=1\.2\.3\.4$/m);
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_PORT=9999$/m);
+    } finally {
+      if (priorHost === undefined) {
+        delete process.env.NEMOCLAW_PROXY_HOST;
+      } else {
+        process.env.NEMOCLAW_PROXY_HOST = priorHost;
+      }
+      if (priorPort === undefined) {
+        delete process.env.NEMOCLAW_PROXY_PORT;
+      } else {
+        process.env.NEMOCLAW_PROXY_PORT = priorPort;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1409: leaves Dockerfile defaults when proxy env is unset", () => {
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-default-"),
+    );
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
+        "ARG NEMOCLAW_PROXY_PORT=3128",
+      ].join("\n"),
+    );
+
+    const priorHost = process.env.NEMOCLAW_PROXY_HOST;
+    const priorPort = process.env.NEMOCLAW_PROXY_PORT;
+    delete process.env.NEMOCLAW_PROXY_HOST;
+    delete process.env.NEMOCLAW_PROXY_PORT;
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-proxy-default",
+        "openai-api",
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      // Defaults must be preserved when no env override is in effect.
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_HOST=10\.200\.0\.1$/m);
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_PORT=3128$/m);
+    } finally {
+      if (priorHost !== undefined) process.env.NEMOCLAW_PROXY_HOST = priorHost;
+      if (priorPort !== undefined) process.env.NEMOCLAW_PROXY_PORT = priorPort;
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1409: rejects malformed NEMOCLAW_PROXY_HOST/PORT and keeps defaults", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-bad-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
+        "ARG NEMOCLAW_PROXY_PORT=3128",
+      ].join("\n"),
+    );
+
+    const priorHost = process.env.NEMOCLAW_PROXY_HOST;
+    const priorPort = process.env.NEMOCLAW_PROXY_PORT;
+    // Inject malicious values that could break out of the ARG line if not validated.
+    process.env.NEMOCLAW_PROXY_HOST = "1.2.3.4\nRUN rm -rf /";
+    process.env.NEMOCLAW_PROXY_PORT = "abcd";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-proxy-bad",
+        "openai-api",
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_HOST=10\.200\.0\.1$/m);
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_PORT=3128$/m);
+      assert.doesNotMatch(patched, /RUN rm -rf/);
+    } finally {
+      if (priorHost === undefined) {
+        delete process.env.NEMOCLAW_PROXY_HOST;
+      } else {
+        process.env.NEMOCLAW_PROXY_HOST = priorHost;
+      }
+      if (priorPort === undefined) {
+        delete process.env.NEMOCLAW_PROXY_PORT;
+      } else {
+        process.env.NEMOCLAW_PROXY_PORT = priorPort;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("patches the staged Dockerfile with Brave Search config when enabled", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-web-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
@@ -347,6 +496,108 @@ describe("onboard helpers", () => {
       inferenceApi: "openai-responses",
       inferenceCompat: null,
     });
+  });
+
+  it("regression #1317: versionGte handles equal, greater, and lesser semvers", () => {
+    expect(versionGte("0.1.0", "0.1.0")).toBe(true);
+    expect(versionGte("0.1.0", "0.0.20")).toBe(true);
+    expect(versionGte("0.0.20", "0.1.0")).toBe(false);
+    expect(versionGte("1.2.3", "1.2.4")).toBe(false);
+    expect(versionGte("1.2.4", "1.2.3")).toBe(true);
+    expect(versionGte("0.0.21", "0.0.20")).toBe(true);
+    // Defensive: missing components default to 0
+    expect(versionGte("1.0", "1.0.0")).toBe(true);
+    expect(versionGte("", "0.0.0")).toBe(true);
+  });
+
+  it("regression #1317: getBlueprintMinOpenshellVersion reads min_openshell_version from blueprint.yaml", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-min-version-"));
+    const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(blueprintDir, "blueprint.yaml"),
+      [
+        'version: "0.1.0"',
+        'min_openshell_version: "0.1.0"',
+        'min_openclaw_version: "2026.3.0"',
+      ].join("\n"),
+    );
+    try {
+      expect(getBlueprintMinOpenshellVersion(tmpDir)).toBe("0.1.0");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1317: getBlueprintMinOpenshellVersion returns null on missing or unparseable blueprint", () => {
+    // Missing directory
+    const missingDir = path.join(
+      os.tmpdir(),
+      "nemoclaw-blueprint-missing-" + Date.now().toString(),
+    );
+    expect(getBlueprintMinOpenshellVersion(missingDir)).toBe(null);
+
+    // Present file, missing field — must NOT block onboard
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-no-field-"));
+    const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.writeFileSync(path.join(blueprintDir, "blueprint.yaml"), 'version: "0.1.0"\n');
+    try {
+      expect(getBlueprintMinOpenshellVersion(tmpDir)).toBe(null);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+
+    // Present file, malformed YAML — must NOT throw, just return null
+    const badDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-bad-yaml-"));
+    const badBlueprintDir = path.join(badDir, "nemoclaw-blueprint");
+    fs.mkdirSync(badBlueprintDir, { recursive: true });
+    fs.writeFileSync(path.join(badBlueprintDir, "blueprint.yaml"), "this is: : not valid: yaml: [");
+    try {
+      expect(getBlueprintMinOpenshellVersion(badDir)).toBe(null);
+    } finally {
+      fs.rmSync(badDir, { recursive: true, force: true });
+    }
+
+    // Present file, non-string value (yaml parses unquoted 1.5 as number) —
+    // must NOT block onboard, just return null
+    const wrongTypeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-wrong-type-"));
+    const wrongTypeBlueprintDir = path.join(wrongTypeDir, "nemoclaw-blueprint");
+    fs.mkdirSync(wrongTypeBlueprintDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(wrongTypeBlueprintDir, "blueprint.yaml"),
+      "min_openshell_version: 1.5\n",
+    );
+    try {
+      expect(getBlueprintMinOpenshellVersion(wrongTypeDir)).toBe(null);
+    } finally {
+      fs.rmSync(wrongTypeDir, { recursive: true, force: true });
+    }
+
+    // Present file, string value that doesn't look like x.y.z — must NOT
+    // block onboard. Defends against typos like "latest" or "0.1".
+    const badShapeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-bad-shape-"));
+    const badShapeBlueprintDir = path.join(badShapeDir, "nemoclaw-blueprint");
+    fs.mkdirSync(badShapeBlueprintDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(badShapeBlueprintDir, "blueprint.yaml"),
+      'min_openshell_version: "latest"\n',
+    );
+    try {
+      expect(getBlueprintMinOpenshellVersion(badShapeDir)).toBe(null);
+    } finally {
+      fs.rmSync(badShapeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1317: shipped blueprint.yaml exposes a parseable min_openshell_version", () => {
+    // Sanity check against the real on-disk blueprint so a future edit that
+    // accidentally drops or breaks the field is caught by CI rather than at
+    // a user's onboard time.
+    const repoRoot = path.resolve(import.meta.dirname, "..");
+    const v = getBlueprintMinOpenshellVersion(repoRoot);
+    expect(v).not.toBe(null);
+    expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(v)).toBe(true);
   });
 
   it("pins the gateway image to the installed OpenShell release version", () => {

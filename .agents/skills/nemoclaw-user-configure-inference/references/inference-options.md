@@ -13,6 +13,22 @@ OpenShell intercepts inference traffic on the host and forwards it to the provid
 Provider credentials stay on the host.
 The sandbox does not receive your API key.
 
+## Provider Status
+
+<!-- provider-status:begin -->
+| Provider | Status | Endpoint type | Notes |
+|----------|--------|---------------|-------|
+| NVIDIA Endpoints | Tested | OpenAI-compatible | Hosted models on integrate.api.nvidia.com |
+| OpenAI | Tested | Native OpenAI-compatible | Uses OpenAI model IDs |
+| Other OpenAI-compatible endpoint | Tested | Custom OpenAI-compatible | For compatible proxies and gateways |
+| Anthropic | Tested | Native Anthropic | Uses anthropic-messages |
+| Other Anthropic-compatible endpoint | Tested | Custom Anthropic-compatible | For Claude proxies and compatible gateways |
+| Google Gemini | Tested | OpenAI-compatible | Uses Google's OpenAI-compatible endpoint |
+| Local Ollama | Caveated | Local Ollama API | Available when Ollama is installed or running on the host |
+| Local NVIDIA NIM | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable GPU |
+| Local vLLM | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` and a server already running on `localhost:8000` |
+<!-- provider-status:end -->
+
 ## Provider Options
 
 The onboard wizard presents the following provider options by default.

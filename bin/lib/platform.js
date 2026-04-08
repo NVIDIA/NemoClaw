@@ -5,6 +5,13 @@ const os = require("os");
 const path = require("path");
 
 function isWsl(opts = {}) {
+  // Explicit override — lets tests pin behavior regardless of the host kernel.
+  // Useful because the WSL detection below consults `os.release()`, which
+  // returns a "microsoft"-tagged string on WSL2 hosts even when env vars are
+  // unset. Without this override, any test calling functions that consult
+  // `isWsl()` becomes non-deterministic on WSL2 dev machines.
+  if (typeof opts.isWsl === "boolean") return opts.isWsl;
+
   const platform = opts.platform ?? process.platform;
   if (platform !== "linux") return false;
 

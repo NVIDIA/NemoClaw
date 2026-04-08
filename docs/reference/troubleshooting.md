@@ -44,8 +44,7 @@ Run `source ~/.bashrc` (or `source ~/.zshrc` for zsh), or open a new terminal wi
 ### Installer fails on unsupported platform
 
 The installer checks for a supported OS and architecture before proceeding.
-NemoClaw requires Linux Ubuntu 22.04 LTS or later.
-If you see an unsupported platform error, verify that you are running on a supported Linux distribution.
+If you see an unsupported platform error, verify that you are running on a tested platform listed in the Container Runtimes table in the quickstart guide.
 
 ### Node.js version is too old
 
@@ -141,8 +140,8 @@ If onboarding reports that Docker is missing or unreachable, fix Docker first an
 $ nemoclaw onboard
 ```
 
-If you are using Podman, NemoClaw warns and continues, but OpenShell officially documents Docker-based runtimes only.
-If onboarding or sandbox lifecycle fails, switch to Docker Desktop, Colima, or Docker Engine and rerun onboarding.
+Podman is not a tested runtime.
+If onboarding or sandbox lifecycle fails, switch to a tested runtime (Docker Desktop, Colima, or Docker Engine) and rerun onboarding.
 
 ### Invalid sandbox name
 
@@ -297,53 +296,6 @@ Use `--follow` to stream logs in real time while debugging.
 
 ## Podman
 
-### `open /dev/kmsg: operation not permitted`
-
-This error appears when the Podman machine is running in rootless mode.
-K3s kubelet requires `/dev/kmsg` access for its OOM watcher, which is not available in rootless containers.
-
-Switch the Podman machine to rootful mode and restart:
-
-```console
-$ podman machine stop
-$ podman machine set --rootful
-$ podman machine start
-```
-
-Then destroy and recreate the gateway:
-
-```console
-$ openshell gateway destroy --name nemoclaw
-$ nemoclaw onboard
-```
-
-### Image push timeout with Podman
-
-When creating a sandbox, the 1.5 GB sandbox image push into K3s may time out through Podman's API socket.
-This is a known limitation of the bollard Docker client's default timeout.
-
-Manually push the image using the Docker CLI, which has no such timeout:
-
-```console
-$ docker images --format '{{.Repository}}:{{.Tag}}' | grep sandbox-from
-$ docker save <IMAGE_NAME:TAG> | \
-    docker exec -i openshell-cluster-nemoclaw \
-    ctr -a /run/k3s/containerd/containerd.sock -n k8s.io images import -
-```
-
-After the import completes, create the sandbox manually:
-
-```console
-$ openshell sandbox create --name my-assistant --from <IMAGE_NAME:TAG>
-```
-
-### Podman machine resources
-
-The default Podman machine has 2 GB RAM, which is insufficient for the sandbox image push and K3s cluster overhead.
-Allocate at least 8 GB RAM and 4 CPUs:
-
-```console
-$ podman machine stop
-$ podman machine set --cpus 6 --memory 8192
-$ podman machine start
-```
+Podman is not a tested runtime.
+OpenShell officially documents Docker-based runtimes only.
+If you encounter issues with Podman, switch to a tested runtime (Docker Engine, Docker Desktop, or Colima) and rerun onboarding.
