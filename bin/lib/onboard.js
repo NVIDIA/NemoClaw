@@ -1193,19 +1193,26 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     if (result.ok) {
       return { ok: true, api: probe.api, label: probe.name };
     }
+    // Preserve the raw response body alongside the summarized message so the
+    // NVCF "Function not found for account" detector below can fall back to
+    // the raw body if summarizeProbeError ever stops surfacing the marker
+    // through `message`.
     failures.push({
       name: probe.name,
       httpStatus: result.httpStatus,
       curlStatus: result.curlStatus,
       message: result.message,
+      body: result.body,
     });
   }
 
   // Detect the NVCF "Function not found for account" error and reframe it
   // with an actionable next step instead of dumping the raw NVCF body.
   // See issue #1601 (Bug 2).
-  const accountFailure = failures.find((failure) =>
-    isNvcfFunctionNotFoundForAccount(failure.message),
+  const accountFailure = failures.find(
+    (failure) =>
+      isNvcfFunctionNotFoundForAccount(failure.message) ||
+      isNvcfFunctionNotFoundForAccount(failure.body),
   );
   if (accountFailure) {
     return {

@@ -195,6 +195,19 @@ describe("nvcfFunctionNotFoundMessage", () => {
     expect(msg).toContain("not deployed for your account");
     expect(msg).toContain("https://build.nvidia.com");
   });
+
+  it("opens with 'Model <id> not found' so classifyValidationFailure routes to the model recovery path", () => {
+    // classifyValidationFailure() in this same file matches /model.+not found/i
+    // and uses that to return { kind: "model", retry: "model" }. The reframed
+    // message must hit that regex so the wizard prompts the user to pick a
+    // different model instead of falling through to the generic recovery.
+    const msg = nvcfFunctionNotFoundMessage("mistralai/mistral-large");
+    expect(msg).toMatch(/model.+not found/i);
+    expect(classifyValidationFailure({ message: msg })).toEqual({
+      kind: "model",
+      retry: "model",
+    });
+  });
 });
 
 describe("shouldSkipResponsesProbe", () => {

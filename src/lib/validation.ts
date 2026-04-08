@@ -103,12 +103,17 @@ export function isNvcfFunctionNotFoundForAccount(message: string): boolean {
 /**
  * Build the user-facing message for an NVCF "Function not found for account"
  * failure. The model is in the catalog but cannot be invoked from this key.
+ *
+ * The wording deliberately starts with "Model '<id>' not found" so that
+ * `classifyValidationFailure()` matches its `model.+not found` regex and
+ * routes the user into the model-selection recovery path instead of
+ * collapsing to the generic `unknown`/`selection` branch.
  */
 export function nvcfFunctionNotFoundMessage(model: string): string {
   return (
-    `Model '${model}' is in the NVIDIA Build catalog but is not deployed for your account. ` +
-    "Pick a different model, or check the model card on https://build.nvidia.com to see " +
-    "if it requires org-level access."
+    `Model '${model}' not found — it is in the NVIDIA Build catalog but is not deployed ` +
+    "for your account. Pick a different model, or check the model card on " +
+    "https://build.nvidia.com to see if it requires org-level access."
   );
 }
 
