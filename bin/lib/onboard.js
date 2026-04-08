@@ -108,7 +108,7 @@ const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
-const BRAVE_SEARCH_HELP_URL = "https://api.search.brave.com/app/keys";
+const BRAVE_SEARCH_HELP_URL = "https://api-dashboard.search.brave.com/app/keys";
 
 const REMOTE_PROVIDER_CONFIG = {
   build: {
@@ -1653,7 +1653,9 @@ async function preflight() {
     console.log("  ⓘ Running under WSL");
   }
 
-  // OpenShell CLI
+  // OpenShell CLI — install if missing, upgrade if below minimum version.
+  // MIN_VERSION in install-openshell.sh handles the version gate; calling it
+  // when openshell already exists is safe (it exits early if version is OK).
   let openshellInstall = { localBin: null, futureShellPathHint: null };
   if (!isOpenshellInstalled()) {
     console.log("  openshell CLI not found. Installing...");
@@ -1662,6 +1664,37 @@ async function preflight() {
       console.error("  Failed to install openshell CLI.");
       console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
       process.exit(1);
+    }
+  } else {
+    // Ensure the installed version meets the minimum required by install-openshell.sh.
+    // The script itself is idempotent — it exits early if the version is already sufficient.
+    const currentVersion = getInstalledOpenshellVersion();
+    if (!currentVersion) {
+      console.log("  openshell version could not be determined. Reinstalling...");
+      openshellInstall = installOpenshell();
+      if (!openshellInstall.installed) {
+        console.error("  Failed to reinstall openshell CLI.");
+        console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+        process.exit(1);
+      }
+    } else {
+      const parts = currentVersion.split(".").map(Number);
+      const minParts = [0, 0, 24]; // must match MIN_VERSION in scripts/install-openshell.sh
+      const needsUpgrade =
+        parts[0] < minParts[0] ||
+        (parts[0] === minParts[0] && parts[1] < minParts[1]) ||
+        (parts[0] === minParts[0] && parts[1] === minParts[1] && parts[2] < minParts[2]);
+      if (needsUpgrade) {
+        console.log(
+          `  openshell ${currentVersion} is below minimum required version. Upgrading...`,
+        );
+        openshellInstall = installOpenshell();
+        if (!openshellInstall.installed) {
+          console.error("  Failed to upgrade openshell CLI.");
+          console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+          process.exit(1);
+        }
+      }
     }
   }
   console.log(
@@ -1699,6 +1732,45 @@ async function preflight() {
       registry.clearAll();
     }
     console.log("  ✓ Previous session cleaned up");
+  }
+
+  // Clean up orphaned Docker containers from interrupted onboard (e.g. Ctrl+C
+  // during gateway start). The container may still be running even though
+  // OpenShell has no metadata for it (gatewayReuseState === "missing").
+  if (gatewayReuseState === "missing") {
+    const containerName = `openshell-cluster-${GATEWAY_NAME}`;
+    const inspectResult = run(
+      `docker inspect --type container --format '{{.State.Status}}' ${containerName} 2>/dev/null`,
+      { ignoreError: true, suppressOutput: true },
+    );
+    if (inspectResult.status === 0) {
+      console.log("  Cleaning up orphaned gateway container...");
+      run(`docker stop ${containerName} >/dev/null 2>&1`, {
+        ignoreError: true,
+        suppressOutput: true,
+      });
+      run(`docker rm ${containerName} >/dev/null 2>&1`, {
+        ignoreError: true,
+        suppressOutput: true,
+      });
+      const postInspectResult = run(
+        `docker inspect --type container ${containerName} 2>/dev/null`,
+        {
+          ignoreError: true,
+          suppressOutput: true,
+        },
+      );
+      if (postInspectResult.status !== 0) {
+        run(
+          `docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs docker volume rm 2>/dev/null || true`,
+          { ignoreError: true, suppressOutput: true },
+        );
+        registry.clearAll();
+        console.log("  ✓ Orphaned gateway container removed");
+      } else {
+        console.warn("  ! Found an orphaned gateway container, but automatic cleanup failed.");
+      }
+    }
   }
 
   // Required ports — gateway (8080) and dashboard (18789)
@@ -2519,7 +2591,7 @@ async function setupNim(gpu) {
         if (selected.key === "custom") {
           const endpointInput = isNonInteractive()
             ? (process.env.NEMOCLAW_ENDPOINT_URL || "").trim()
-            : await prompt("  OpenAI-compatible base URL (e.g., https://openrouter.ai/api/v1): ");
+            : await prompt("  OpenAI-compatible base URL (e.g., https://openrouter.ai): ");
           const navigation = getNavigationChoice(endpointInput);
           if (navigation === "back") {
             console.log("  Returning to provider selection.");
