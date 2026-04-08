@@ -38,6 +38,12 @@ describe("isPrivateIp", () => {
     "100.64.0.1", // RFC 6598 CGNAT
     "100.127.255.254", // RFC 6598 CGNAT upper bound
     "::ffff:100.64.0.1", // IPv4-mapped IPv6 — CGNAT
+    "0.0.0.0", // RFC 1122 "This network"
+    "0.255.255.255", // RFC 1122 upper bound
+    "198.18.0.1", // RFC 2544 benchmark testing
+    "198.19.255.254", // RFC 2544 upper bound
+    "::ffff:0.0.0.0", // IPv4-mapped IPv6 — "This network"
+    "::ffff:198.18.0.1", // IPv4-mapped IPv6 — benchmark
   ])("detects private IP: %s", (ip) => {
     expect(isPrivateIp(ip)).toBe(true);
   });
