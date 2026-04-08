@@ -54,13 +54,14 @@ The sandbox does not receive your API key.
 ## Provider Options
 
 The onboard wizard presents the following provider options by default.
-The first six are always available.
+The first seven are always available.
 Ollama appears when it is installed or running on the host.
 
 | Option | Description | Curated models |
 |--------|-------------|----------------|
 | NVIDIA Endpoints | Routes to models hosted on [build.nvidia.com](https://build.nvidia.com). You can also enter any model ID from the catalog. Set `NVIDIA_API_KEY`. | Nemotron 3 Super 120B, Kimi K2.5, GLM-5, MiniMax M2.5, GPT-OSS 120B |
 | OpenAI | Routes to the OpenAI API. Set `OPENAI_API_KEY`. | `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.4-pro-2026-03-05` |
+| Azure OpenAI | Routes to an Azure OpenAI deployment. The wizard prompts for your resource endpoint URL (`https://<resource>.openai.azure.com/v1`) and a deployment model name. Set `AZURE_OPENAI_API_KEY`. | You provide the deployment model name. |
 | Other OpenAI-compatible endpoint | Routes to any server that implements `/v1/chat/completions`. If the endpoint also supports `/responses` with OpenClaw-style tool calling, NemoClaw can use that path; otherwise it falls back to `/chat/completions`. The wizard prompts for a base URL and model name. Works with OpenRouter, LocalAI, llama.cpp, or any compatible proxy. Set `COMPATIBLE_API_KEY`. | You provide the model name. |
 | Anthropic | Routes to the Anthropic Messages API. Set `ANTHROPIC_API_KEY`. | `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-6` |
 | Other Anthropic-compatible endpoint | Routes to any server that implements the Anthropic Messages API (`/v1/messages`). The wizard prompts for a base URL and model name. Set `COMPATIBLE_ANTHROPIC_API_KEY`. | You provide the model name. |
@@ -86,6 +87,7 @@ If validation fails, the wizard returns to provider selection.
 | Provider type | Validation method |
 |---|---|
 | OpenAI | Tries `/responses` first, then `/chat/completions`. |
+| Azure OpenAI | Tries `/responses` first with a tool-calling probe. Falls back to `/chat/completions` if the endpoint does not return a compatible tool call. |
 | NVIDIA Endpoints | Tries `/responses` first with a tool-calling probe that matches OpenClaw behavior. Falls back to `/chat/completions` if the endpoint does not return a compatible tool call. |
 | Google Gemini | Tries `/responses` first with a tool-calling probe that matches OpenClaw behavior. Falls back to `/chat/completions` if the endpoint does not return a compatible tool call. |
 | Other OpenAI-compatible endpoint | Tries `/responses` first with a tool-calling probe that matches OpenClaw behavior. Falls back to `/chat/completions` if the endpoint does not return a compatible tool call. |

@@ -47,6 +47,12 @@ $ openshell inference set --provider nvidia-prod --model nvidia/nemotron-3-super
 $ openshell inference set --provider openai-api --model gpt-5.4
 ```
 
+### Azure OpenAI
+
+```console
+$ openshell inference set --provider azure-openai --model <deployment-name>
+```
+
 ### Anthropic
 
 ```console

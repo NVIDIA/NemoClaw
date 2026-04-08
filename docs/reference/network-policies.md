@@ -63,6 +63,11 @@ The following endpoint groups are allowed by default:
   - `/usr/local/bin/claude`, `/usr/local/bin/openclaw`
   - POST to inference and embedding paths, GET to model listings
 
+* - `azure_openai`
+  - `*.openai.azure.com:443`
+  - `/usr/local/bin/claude`, `/usr/local/bin/openclaw`
+  - POST on `/openai/deployments/*/chat/completions`, `/openai/deployments/*/completions`, `/openai/deployments/*/embeddings`; GET on `/openai/deployments`, `/openai/deployments/**`, `/openai/models`, `/openai/models/**`
+
 * - `clawhub`
   - `clawhub.ai:443`
   - `/usr/local/bin/openclaw`, `/usr/local/bin/node`
