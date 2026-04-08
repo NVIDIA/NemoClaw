@@ -19,6 +19,8 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    permissions:
+      pull-requests: read
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
@@ -29,8 +31,10 @@ jobs:
         id: filter
         uses: dorny/paths-filter@v3
         with:
+          predicate-quantifier: every
           filters: |
             code:
+              - '**'
               - '!**/*.md'
               - '!docs/**'
 
