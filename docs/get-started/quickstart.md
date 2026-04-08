@@ -52,7 +52,6 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | Node.js    | 22.16 or later |
 | npm        | 10 or later |
 | Platform   | See below |
-| [OpenShell](https://github.com/NVIDIA/OpenShell) | Installed |
 
 :::{warning} OpenShell lifecycle
 For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
