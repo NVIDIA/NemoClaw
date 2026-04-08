@@ -107,8 +107,14 @@ def patch_file(path: Path, sentinel_name: str, table: str, check_only: bool) -> 
     """Replace content between sentinels. Returns True if file was changed."""
     text = path.read_text()
     begin = f"<!-- {sentinel_name}:begin -->"
+    end = f"<!-- {sentinel_name}:end -->"
     if begin not in text:
         return False
+
+    if end not in text:
+        raise ValueError(
+            f"{path.relative_to(REPO_ROOT)} has '{begin}' but no matching '{end}'"
+        )
 
     pattern = _sentinel_re(sentinel_name)
     replacement = f"<!-- {sentinel_name}:begin -->\n{table}\n<!-- {sentinel_name}:end -->"
@@ -143,6 +149,7 @@ def main():
 
     print(f"{'Checking' if args.check else 'Patching'} tables from {MATRIX_PATH.name}:")
     diffs = []
+    missing = []
     ok = []
 
     for sentinel_name, data_key, target_files in TABLES:
@@ -150,7 +157,8 @@ def main():
         table = generator(matrix[data_key])
         for path in target_files:
             if not path.exists():
-                print(f"  MISS {path.relative_to(REPO_ROOT)}")
+                print(f"  MISS {path.relative_to(REPO_ROOT)}", file=sys.stderr)
+                missing.append(path)
                 continue
             changed = patch_file(path, sentinel_name, table, check_only=args.check)
             if changed:
@@ -160,6 +168,10 @@ def main():
 
     for path in ok:
         print(f"  OK   {path.relative_to(REPO_ROOT)}")
+
+    if missing:
+        print(f"\n{len(missing)} configured target file(s) missing.", file=sys.stderr)
+        sys.exit(1)
 
     if args.check and diffs:
         print(f"\n{len(diffs)} file(s) out of sync. Run: python3 scripts/generate-platform-docs.py")
