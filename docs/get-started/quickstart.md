@@ -1,6 +1,6 @@
 ---
 title:
-  page: "NemoClaw Quickstart — Install, Launch, and Run Your First Agent"
+  page: "NemoClaw Quickstart: Install, Launch, and Run Your First Agent"
   nav: "Quickstart"
 description:
   main: "Install NemoClaw, launch a sandbox, and run your first agent prompt."
@@ -54,6 +54,11 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | npm        | 10 or later |
 | Container runtime | Supported runtime installed and running |
 | [OpenShell](https://github.com/NVIDIA/OpenShell) | Installed |
+
+:::{warning} OpenShell lifecycle
+For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
+Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemoclaw onboard`.
+:::
 
 ### Container Runtimes
 

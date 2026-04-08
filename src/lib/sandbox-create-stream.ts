@@ -3,9 +3,7 @@
 
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 
-// runner.js is CJS.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { ROOT } = require("../../bin/lib/runner");
+import { ROOT } from "./paths";
 
 export interface StreamSandboxCreateResult {
   status: number;
@@ -252,6 +250,18 @@ export function streamSandboxCreate(
     });
 
     child.on("close", (code) => {
+      // One last ready-check: the sandbox may have become Ready between the
+      // last poll tick and the stream exit (e.g. SSH 255 after "Created sandbox:").
+      if (code && code !== 0 && options.readyCheck) {
+        try {
+          if (options.readyCheck()) {
+            finish(0, { forcedReady: true });
+            return;
+          }
+        } catch {
+          // Ignore — fall through to normal exit handling.
+        }
+      }
       finish(code ?? 1);
     });
   });

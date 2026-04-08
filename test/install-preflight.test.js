@@ -587,6 +587,18 @@ fi
 exit 0
 `,
     );
+    // Stub systemctl so preflight sees docker service as inactive (not a
+    // group/permission issue).  Without this, a CI host whose real systemctl
+    // reports docker as active would trigger the docker-group remediation
+    // instead of the "Start Docker" path this test expects.
+    writeExecutable(
+      path.join(fakeBin, "systemctl"),
+      `#!/usr/bin/env bash
+if [ "$1" = "is-active" ] && [ "$2" = "docker" ]; then echo "inactive"; exit 3; fi
+if [ "$1" = "is-enabled" ] && [ "$2" = "docker" ]; then echo "disabled"; exit 1; fi
+exit 0
+`,
+    );
     writeNpmStub(
       fakeBin,
       `if [ "$1" = "pack" ]; then

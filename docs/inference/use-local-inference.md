@@ -85,6 +85,8 @@ If `NEMOCLAW_MODEL` is not set, NemoClaw selects a default model based on availa
 ## OpenAI-Compatible Server
 
 This option works with any server that implements `/v1/chat/completions`, including vLLM, TensorRT-LLM, llama.cpp, LocalAI, and others.
+If the server also supports `/v1/responses`, NemoClaw only favors that path when onboarding can verify tool-calling behavior that matches what OpenClaw actually sends.
+Otherwise NemoClaw falls back to `/v1/chat/completions`.
 
 Start your model server.
 The examples below use vLLM, but any OpenAI-compatible server works.
@@ -106,6 +108,8 @@ The wizard prompts for an API key.
 If your server does not require authentication, enter any non-empty string (for example, `dummy`).
 
 NemoClaw validates the endpoint by sending a test inference request before continuing.
+For OpenAI-compatible endpoints, the validation prefers `/responses` only when the probe produces a compatible function or tool call.
+Endpoints that return `200 OK` on `/responses` but do not format tool calls the way OpenClaw expects are configured to use `/chat/completions` instead.
 
 ### Non-Interactive Setup
 

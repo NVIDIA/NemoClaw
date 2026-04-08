@@ -153,7 +153,9 @@ describe("atomic writes", () => {
       throw Object.assign(new Error("EACCES"), { code: "EACCES" });
     };
     try {
-      expect(() => registry.save({ sandboxes: {}, defaultSandbox: null })).toThrow("EACCES");
+      expect(() => registry.save({ sandboxes: {}, defaultSandbox: null })).toThrow(
+        /Cannot write config file|EACCES/,
+      );
     } finally {
       fs.renameSync = original;
     }

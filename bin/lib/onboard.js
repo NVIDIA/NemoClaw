@@ -177,9 +177,14 @@ const REMOTE_PROVIDER_CONFIG = {
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
 let NON_INTERACTIVE = false;
+let RECREATE_SANDBOX = false;
 
 function isNonInteractive() {
-  return NON_INTERACTIVE;
+  return NON_INTERACTIVE || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+}
+
+function isRecreateSandbox() {
+  return RECREATE_SANDBOX || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
 }
 
 function note(message) {
@@ -963,40 +968,139 @@ function patchStagedDockerfile(
   fs.writeFileSync(dockerfilePath, dockerfile);
 }
 
-function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey) {
+function parseJsonObject(body) {
+  if (!body) return null;
+  try {
+    return JSON.parse(body);
+  } catch {
+    return null;
+  }
+}
+
+function hasResponsesToolCall(body) {
+  const parsed = parseJsonObject(body);
+  if (!parsed || !Array.isArray(parsed.output)) return false;
+
+  const stack = [...parsed.output];
+  while (stack.length > 0) {
+    const item = stack.pop();
+    if (!item || typeof item !== "object") continue;
+    if (item.type === "function_call" || item.type === "tool_call") return true;
+    if (Array.isArray(item.content)) {
+      stack.push(...item.content);
+    }
+  }
+
+  return false;
+}
+
+function shouldRequireResponsesToolCalling(provider) {
+  return (
+    provider === "nvidia-prod" || provider === "gemini-api" || provider === "compatible-endpoint"
+  );
+}
+
+function probeResponsesToolCalling(endpointUrl, model, apiKey) {
+  const result = runCurlProbe([
+    "-sS",
+    ...getCurlTimingArgs(),
+    "-H",
+    "Content-Type: application/json",
+    ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+    "-d",
+    JSON.stringify({
+      model,
+      input: "Call the emit_ok function with value OK. Do not answer with plain text.",
+      tool_choice: "required",
+      tools: [
+        {
+          type: "function",
+          name: "emit_ok",
+          description: "Returns the probe value for validation.",
+          parameters: {
+            type: "object",
+            properties: {
+              value: { type: "string" },
+            },
+            required: ["value"],
+            additionalProperties: false,
+          },
+        },
+      ],
+    }),
+    `${String(endpointUrl).replace(/\/+$/, "")}/responses`,
+  ]);
+
+  if (!result.ok) {
+    return result;
+  }
+  if (hasResponsesToolCall(result.body)) {
+    return result;
+  }
+  return {
+    ok: false,
+    httpStatus: result.httpStatus,
+    curlStatus: result.curlStatus,
+    body: result.body,
+    stderr: result.stderr,
+    message: `HTTP ${result.httpStatus}: Responses API did not return a tool call`,
+  };
+}
+
+function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
+  const responsesProbe =
+    options.requireResponsesToolCalling === true
+      ? {
+          name: "Responses API with tool calling",
+          api: "openai-responses",
+          execute: () => probeResponsesToolCalling(endpointUrl, model, apiKey),
+        }
+      : {
+          name: "Responses API",
+          api: "openai-responses",
+          execute: () =>
+            runCurlProbe([
+              "-sS",
+              ...getCurlTimingArgs(),
+              "-H",
+              "Content-Type: application/json",
+              ...(apiKey
+                ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`]
+                : []),
+              "-d",
+              JSON.stringify({
+                model,
+                input: "Reply with exactly: OK",
+              }),
+              `${String(endpointUrl).replace(/\/+$/, "")}/responses`,
+            ]),
+        };
+
   const probes = [
-    {
-      name: "Responses API",
-      api: "openai-responses",
-      url: `${String(endpointUrl).replace(/\/+$/, "")}/responses`,
-      body: JSON.stringify({
-        model,
-        input: "Reply with exactly: OK",
-      }),
-    },
+    responsesProbe,
     {
       name: "Chat Completions API",
       api: "openai-completions",
-      url: `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: "Reply with exactly: OK" }],
-      }),
+      execute: () =>
+        runCurlProbe([
+          "-sS",
+          ...getCurlTimingArgs(),
+          "-H",
+          "Content-Type: application/json",
+          ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+          "-d",
+          JSON.stringify({
+            model,
+            messages: [{ role: "user", content: "Reply with exactly: OK" }],
+          }),
+          `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
+        ]),
     },
   ];
 
   const failures = [];
   for (const probe of probes) {
-    const result = runCurlProbe([
-      "-sS",
-      ...getCurlTimingArgs(),
-      "-H",
-      "Content-Type: application/json",
-      ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
-      "-d",
-      probe.body,
-      probe.url,
-    ]);
+    const result = probe.execute();
     if (result.ok) {
       return { ok: true, api: probe.api, label: probe.name };
     }
@@ -1057,9 +1161,10 @@ async function validateOpenAiLikeSelection(
   credentialEnv = null,
   retryMessage = "Please choose a provider/model again.",
   helpUrl = null,
+  options = {},
 ) {
   const apiKey = credentialEnv ? getCredential(credentialEnv) : "";
-  const probe = probeOpenAiLikeEndpoint(endpointUrl, model, apiKey);
+  const probe = probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options);
   if (!probe.ok) {
     console.error(`  ${label} endpoint validation failed.`);
     console.error(`  ${probe.message}`);
@@ -1122,7 +1227,9 @@ async function validateCustomOpenAiLikeSelection(
   helpUrl = null,
 ) {
   const apiKey = getCredential(credentialEnv);
-  const probe = probeOpenAiLikeEndpoint(endpointUrl, model, apiKey);
+  const probe = probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, {
+    requireResponsesToolCalling: true,
+  });
   if (probe.ok) {
     console.log(`  ${probe.label} available — OpenClaw will use ${probe.api}.`);
     return { ok: true, api: probe.api };
@@ -1327,6 +1434,18 @@ function getResumeConfigConflicts(session, opts = {}) {
     });
   }
 
+  const requestedFrom = opts.fromDockerfile ? path.resolve(opts.fromDockerfile) : null;
+  const recordedFrom = session?.metadata?.fromDockerfile
+    ? path.resolve(session.metadata.fromDockerfile)
+    : null;
+  if (requestedFrom !== recordedFrom) {
+    conflicts.push({
+      field: "fromDockerfile",
+      requested: requestedFrom,
+      recorded: recordedFrom,
+    });
+  }
+
   return conflicts;
 }
 
@@ -1526,12 +1645,7 @@ async function preflight() {
   if (host.runtime !== "unknown") {
     console.log(`  ✓ Container runtime: ${host.runtime}`);
   }
-  if (host.isUnsupportedRuntime) {
-    console.warn(
-      "  ! Podman is not a supported OpenShell runtime. NemoClaw will continue, but your experience may vary.",
-    );
-    printRemediationActions(planHostRemediation(host));
-  }
+  // Podman is now supported — no unsupported runtime warning needed.
   if (host.notes.includes("Running under WSL")) {
     console.log("  ⓘ Running under WSL");
   }
@@ -1942,6 +2056,7 @@ async function createSandbox(
   sandboxNameOverride = null,
   webSearchConfig = null,
   enabledChannels = null,
+  fromDockerfile = null,
 ) {
   step(6, 8, "Creating sandbox");
 
@@ -1995,41 +2110,92 @@ async function createSandbox(
       hasMessagingTokens &&
       messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
 
-    if (existingSandboxState === "ready" && process.env.NEMOCLAW_RECREATE_SANDBOX !== "1") {
-      if (needsProviderMigration) {
-        console.log(`  Sandbox '${sandboxName}' exists but messaging providers are not attached.`);
-        console.log("  Recreating to ensure credentials flow through the provider pipeline.");
-      } else {
-        // Upsert messaging providers even on reuse so credential changes take
-        // effect without requiring a full sandbox recreation. Only the
-        // --provider attachment flags need to be on the create path.
-        upsertMessagingProviders(messagingTokenDefs);
-        ensureDashboardForward(sandboxName, chatUiUrl);
-        if (isNonInteractive()) {
+    if (!isRecreateSandbox() && !needsProviderMigration) {
+      if (isNonInteractive()) {
+        if (existingSandboxState === "ready") {
+          // Upsert messaging providers even on reuse so credential changes take
+          // effect without requiring a full sandbox recreation.
+          upsertMessagingProviders(messagingTokenDefs);
           note(`  [non-interactive] Sandbox '${sandboxName}' exists and is ready — reusing it`);
-        } else {
-          console.log(`  Sandbox '${sandboxName}' already exists and is ready.`);
-          console.log("  Reusing existing sandbox.");
-          console.log("  Set NEMOCLAW_RECREATE_SANDBOX=1 to recreate it instead.");
+          note("  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to force recreation.");
+          ensureDashboardForward(sandboxName, chatUiUrl);
+          return sandboxName;
         }
-        return sandboxName;
+        console.error(`  Sandbox '${sandboxName}' already exists but is not ready.`);
+        console.error("  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to overwrite.");
+        process.exit(1);
+      }
+
+      if (existingSandboxState === "ready") {
+        console.log(`  Sandbox '${sandboxName}' already exists.`);
+        console.log("  Choosing 'n' will delete the existing sandbox and create a new one.");
+        const answer = await promptOrDefault("  Reuse existing sandbox? [Y/n]: ", null, "y");
+        const normalizedAnswer = answer.trim().toLowerCase();
+        if (normalizedAnswer !== "n" && normalizedAnswer !== "no") {
+          upsertMessagingProviders(messagingTokenDefs);
+          ensureDashboardForward(sandboxName, chatUiUrl);
+          return sandboxName;
+        }
+      } else {
+        console.log(`  Sandbox '${sandboxName}' exists but is not ready.`);
+        console.log("  Selecting 'n' will abort onboarding.");
+        const answer = await promptOrDefault(
+          "  Delete it and create a new one? [Y/n]: ",
+          null,
+          "y",
+        );
+        const normalizedAnswer = answer.trim().toLowerCase();
+        if (normalizedAnswer === "n" || normalizedAnswer === "no") {
+          console.log("  Aborting onboarding.");
+          process.exit(1);
+        }
       }
     }
 
-    if (existingSandboxState === "ready" && needsProviderMigration) {
-      note(`  Sandbox '${sandboxName}' exists — recreating to attach messaging providers.`);
+    if (needsProviderMigration) {
+      console.log(`  Sandbox '${sandboxName}' exists but messaging providers are not attached.`);
+      console.log("  Recreating to ensure credentials flow through the provider pipeline.");
     } else if (existingSandboxState === "ready") {
       note(`  Sandbox '${sandboxName}' exists and is ready — recreating by explicit request.`);
     } else {
       note(`  Sandbox '${sandboxName}' exists but is not ready — recreating it.`);
     }
+
+    note(`  Deleting and recreating sandbox '${sandboxName}'...`);
+
     // Destroy old sandbox
     runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
     registry.removeSandbox(sandboxName);
   }
 
-  // Stage only the files the Docker build actually consumes so uploads stay small.
-  const { buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(ROOT);
+  // Stage build context — use the custom Dockerfile path when provided,
+  // otherwise use the optimised default that only sends what the build needs.
+  let buildCtx, stagedDockerfile;
+  if (fromDockerfile) {
+    const fromResolved = path.resolve(fromDockerfile);
+    if (!fs.existsSync(fromResolved)) {
+      console.error(`  Custom Dockerfile not found: ${fromResolved}`);
+      process.exit(1);
+    }
+    buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
+    stagedDockerfile = path.join(buildCtx, "Dockerfile");
+    // Copy the entire parent directory as build context.
+    fs.cpSync(path.dirname(fromResolved), buildCtx, {
+      recursive: true,
+      filter: (src) => {
+        const base = path.basename(src);
+        return !["node_modules", ".git", ".venv", "__pycache__"].includes(base);
+      },
+    });
+    // If the caller pointed at a file not named "Dockerfile", copy it to the
+    // location openshell expects (buildCtx/Dockerfile).
+    if (path.basename(fromResolved) !== "Dockerfile") {
+      fs.copyFileSync(fromResolved, stagedDockerfile);
+    }
+    console.log(`  Using custom Dockerfile: ${fromResolved}`);
+  } else {
+    ({ buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(ROOT));
+  }
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
@@ -2139,15 +2305,27 @@ async function createSandbox(
   run(`rm -rf "${buildCtx}"`, { ignoreError: true });
 
   if (createResult.status !== 0) {
-    console.error("");
-    console.error(`  Sandbox creation failed (exit ${createResult.status}).`);
-    if (createResult.output) {
+    const failure = classifySandboxCreateFailure(createResult.output);
+    if (failure.kind === "sandbox_create_incomplete") {
+      // The sandbox was created in the gateway but the create stream exited
+      // with a non-zero code (e.g. SSH 255).  Fall through to the ready-wait
+      // loop — the sandbox may still reach Ready on its own.
+      console.warn("");
+      console.warn(
+        `  Create stream exited with code ${createResult.status} after sandbox was created.`,
+      );
+      console.warn("  Checking whether the sandbox reaches Ready state...");
+    } else {
       console.error("");
-      console.error(createResult.output);
+      console.error(`  Sandbox creation failed (exit ${createResult.status}).`);
+      if (createResult.output) {
+        console.error("");
+        console.error(createResult.output);
+      }
+      console.error("  Try:  openshell sandbox list        # check gateway state");
+      printSandboxCreateRecoveryHints(createResult.output);
+      process.exit(createResult.status || 1);
     }
-    console.error("  Try:  openshell sandbox list        # check gateway state");
-    printSandboxCreateRecoveryHints(createResult.output);
-    process.exit(createResult.status || 1);
   }
 
   // Wait for sandbox to reach Ready state in k3s before registering.
@@ -2187,7 +2365,7 @@ async function createSandbox(
   console.log("  Waiting for NemoClaw dashboard to become ready...");
   for (let i = 0; i < 15; i++) {
     const readyMatch = runCapture(
-      `openshell sandbox exec ${sandboxName} curl -sf http://localhost:18789/ 2>/dev/null || echo "no"`,
+      `openshell sandbox exec ${shellQuote(sandboxName)} curl -sf http://localhost:18789/ 2>/dev/null || echo "no"`,
       { ignoreError: true },
     );
     if (readyMatch && !readyMatch.includes("no")) {
@@ -2216,7 +2394,7 @@ async function createSandbox(
   // sandbox namespace can resolve hostnames (fixes #626).
   console.log("  Setting up sandbox DNS proxy...");
   run(
-    `bash "${path.join(SCRIPTS, "setup-dns-proxy.sh")}" ${GATEWAY_NAME} "${sandboxName}" 2>&1 || true`,
+    `bash "${path.join(SCRIPTS, "setup-dns-proxy.sh")}" ${shellQuote(GATEWAY_NAME)} ${shellQuote(sandboxName)} 2>&1 || true`,
     { ignoreError: true },
   );
 
@@ -2389,6 +2567,12 @@ async function setupNim(gpu) {
               );
               process.exit(1);
             }
+            const keyError = validateNvidiaApiKeyValue(process.env.NVIDIA_API_KEY);
+            if (keyError) {
+              console.error(keyError);
+              console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
+              process.exit(1);
+            }
           } else {
             await ensureApiKey();
           }
@@ -2527,6 +2711,9 @@ async function setupNim(gpu) {
                   credentialEnv,
                   retryMessage,
                   remoteConfig.helpUrl,
+                  {
+                    requireResponsesToolCalling: shouldRequireResponsesToolCalling(provider),
+                  },
                 );
                 if (validation.ok) {
                   preferredInferenceApi = validation.api;
@@ -2554,6 +2741,9 @@ async function setupNim(gpu) {
               credentialEnv,
               "Please choose a provider/model again.",
               remoteConfig.helpUrl,
+              {
+                requireResponsesToolCalling: shouldRequireResponsesToolCalling(provider),
+              },
             );
             if (validation.ok) {
               preferredInferenceApi = validation.api;
@@ -3325,6 +3515,131 @@ function arePolicyPresetsApplied(sandboxName, selectedPresets = []) {
   return selectedPresets.every((preset) => applied.has(preset));
 }
 
+/**
+ * Raw-mode TUI preset selector.
+ * Keys: ↑/↓ or k/j to move, Space to toggle, a to select/unselect all, Enter to confirm.
+ * Falls back to a simple line-based prompt when stdin is not a TTY.
+ */
+async function presetsCheckboxSelector(allPresets, initialSelected) {
+  const selected = new Set(initialSelected);
+  const n = allPresets.length;
+
+  // ── Zero-presets guard ────────────────────────────────────────────
+  if (n === 0) {
+    console.log("  No policy presets are available.");
+    return [];
+  }
+
+  const GREEN_CHECK = USE_COLOR ? "[\x1b[32m✓\x1b[0m]" : "[✓]";
+
+  // ── Fallback: non-TTY or redirected stdout (piped input) ──────────
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    console.log("");
+    console.log("  Available policy presets:");
+    allPresets.forEach((p) => {
+      const marker = selected.has(p.name) ? GREEN_CHECK : "[ ]";
+      console.log(`    ${marker} ${p.name.padEnd(14)} — ${p.description}`);
+    });
+    console.log("");
+    const raw = await prompt("  Select presets (comma-separated names, Enter to skip): ");
+    if (!raw.trim()) {
+      console.log("  Skipping policy presets.");
+      return [];
+    }
+    const knownNames = new Set(allPresets.map((p) => p.name));
+    const chosen = [];
+    for (const name of raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)) {
+      if (knownNames.has(name)) {
+        chosen.push(name);
+      } else {
+        console.error(`  Unknown preset name ignored: ${name}`);
+      }
+    }
+    return chosen;
+  }
+
+  // ── Raw-mode TUI ─────────────────────────────────────────────────
+  let cursor = 0;
+
+  const HINT = "  ↑/↓ j/k  move    Space  toggle    a  all/none    Enter  confirm";
+
+  const renderLines = () => {
+    const lines = ["  Available policy presets:"];
+    allPresets.forEach((p, i) => {
+      const check = selected.has(p.name) ? GREEN_CHECK : "[ ]";
+      const arrow = i === cursor ? ">" : " ";
+      lines.push(`   ${arrow} ${check} ${p.name.padEnd(14)} — ${p.description}`);
+    });
+    lines.push("");
+    lines.push(HINT);
+    return lines;
+  };
+
+  // Initial paint
+  process.stdout.write("\n");
+  const initial = renderLines();
+  for (const line of initial) process.stdout.write(`${line}\n`);
+  let lineCount = initial.length;
+
+  const redraw = () => {
+    process.stdout.write(`\x1b[${lineCount}A`);
+    const lines = renderLines();
+    for (const line of lines) process.stdout.write(`\r\x1b[2K${line}\n`);
+    lineCount = lines.length;
+  };
+
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdin.setEncoding("utf8");
+
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stdin.removeListener("data", onData);
+      process.removeListener("SIGTERM", onSigterm);
+    };
+
+    const onSigterm = () => {
+      cleanup();
+      process.exit(1);
+    };
+    process.once("SIGTERM", onSigterm);
+
+    const onData = (key) => {
+      if (key === "\r" || key === "\n") {
+        cleanup();
+        process.stdout.write("\n");
+        resolve([...selected]);
+      } else if (key === "\x03") {
+        // Ctrl+C
+        cleanup();
+        process.exit(1);
+      } else if (key === "\x1b[A" || key === "k") {
+        cursor = (cursor - 1 + n) % n;
+        redraw();
+      } else if (key === "\x1b[B" || key === "j") {
+        cursor = (cursor + 1) % n;
+        redraw();
+      } else if (key === " ") {
+        const name = allPresets[cursor].name;
+        if (selected.has(name)) selected.delete(name);
+        else selected.add(name);
+        redraw();
+      } else if (key === "a") {
+        if (selected.size === n) selected.clear();
+        else for (const p of allPresets) selected.add(p.name);
+        redraw();
+      }
+    };
+
+    process.stdin.on("data", onData);
+  });
+}
+
 // eslint-disable-next-line complexity
 async function setupPoliciesWithSelection(sandboxName, options = {}) {
   const selectedPresets = Array.isArray(options.selectedPresets) ? options.selectedPresets : null;
@@ -3375,9 +3690,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
       }
     } else if (policyMode === "suggested" || policyMode === "default" || policyMode === "auto") {
       const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS);
-      if (envPresets.length > 0) {
-        chosen = envPresets;
-      }
+      if (envPresets.length > 0) chosen = envPresets;
     } else {
       console.error(`  Unsupported NEMOCLAW_POLICY_MODE: ${policyMode}`);
       console.error("  Valid values: suggested, custom, skip");
@@ -3419,46 +3732,14 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
     return chosen;
   }
 
-  console.log("");
-  console.log("  Available policy presets:");
-  allPresets.forEach((p) => {
-    const marker = applied.includes(p.name) ? "●" : "○";
-    const suggested = suggestions.includes(p.name) ? " (suggested)" : "";
-    console.log(`    ${marker} ${p.name} — ${p.description}${suggested}`);
-  });
-  console.log("");
-
-  const answer = await prompt(
-    `  Apply suggested presets (${suggestions.join(", ")})? [Y/n/list]: `,
-  );
-
-  if (answer.toLowerCase() === "n") {
-    console.log("  Skipping policy presets.");
-    return [];
-  }
-
-  let interactiveChoice = suggestions;
-  if (answer.toLowerCase() === "list") {
-    const custom = await prompt("  Enter preset names (comma-separated): ");
-    interactiveChoice = parsePolicyPresetEnv(custom);
-  }
-
-  const knownPresets = new Set(allPresets.map((p) => p.name));
-  let invalidPresets = interactiveChoice.filter((name) => !knownPresets.has(name));
-  while (invalidPresets.length > 0) {
-    console.error(`  Unknown policy preset(s): ${invalidPresets.join(", ")}`);
-    console.log("  Available presets:");
-    for (const p of allPresets) {
-      console.log(`    - ${p.name}`);
-    }
-    const retry = await prompt("  Enter preset names (comma-separated), or leave empty to skip: ");
-    if (!retry.trim()) {
-      console.log("  Skipping policy presets.");
-      return [];
-    }
-    interactiveChoice = parsePolicyPresetEnv(retry);
-    invalidPresets = interactiveChoice.filter((name) => !knownPresets.has(name));
-  }
+  // Interactive: raw-mode TUI checkbox selector
+  // Seed selection with already-applied presets and credential-based suggestions
+  const knownNames = new Set(allPresets.map((p) => p.name));
+  const initialSelected = [
+    ...applied.filter((name) => knownNames.has(name)),
+    ...suggestions.filter((name) => knownNames.has(name) && !applied.includes(name)),
+  ];
+  const interactiveChoice = await presetsCheckboxSelector(allPresets, initialSelected);
 
   if (onSelection) onSelection(interactiveChoice);
   if (!waitForSandboxReady(sandboxName)) {
@@ -3466,8 +3747,25 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
     process.exit(1);
   }
 
-  for (const name of interactiveChoice) {
-    policies.applyPreset(sandboxName, name);
+  const newlySelected = interactiveChoice.filter((name) => !applied.includes(name));
+  for (const name of newlySelected) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        policies.applyPreset(sandboxName, name);
+        break;
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        if (message.includes("Unimplemented")) {
+          console.error("  OpenShell policy updates are not supported by this gateway build.");
+          console.error("  This is a known issue tracked in NemoClaw #536.");
+          throw err;
+        }
+        if (!message.includes("sandbox not found") || attempt === 2) {
+          throw err;
+        }
+        sleep(2);
+      }
+    }
   }
   return interactiveChoice;
 }
@@ -3627,8 +3925,15 @@ function skippedStepMessage(stepName, detail, reason = "resume") {
 // eslint-disable-next-line complexity
 async function onboard(opts = {}) {
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+  RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   delete process.env.OPENSHELL_GATEWAY;
   const resume = opts.resume === true;
+  // In non-interactive mode also accept the env var so CI pipelines can set it.
+  // This is the explicitly requested value; on resume it may be absent and the
+  // session-recorded path is used instead (see below).
+  const requestedFromDockerfile =
+    opts.fromDockerfile ||
+    (isNonInteractive() ? process.env.NEMOCLAW_FROM_DOCKERFILE || null : null);
   const noticeAccepted = await ensureUsageNoticeConsent({
     nonInteractive: isNonInteractive(),
     acceptedByFlag: opts.acceptThirdPartySoftware === true,
@@ -3638,7 +3943,7 @@ async function onboard(opts = {}) {
     process.exit(1);
   }
   const lockResult = onboardSession.acquireOnboardLock(
-    `nemoclaw onboard${resume ? " --resume" : ""}${isNonInteractive() ? " --non-interactive" : ""}`,
+    `nemoclaw onboard${resume ? " --resume" : ""}${isNonInteractive() ? " --non-interactive" : ""}${requestedFromDockerfile ? ` --from ${requestedFromDockerfile}` : ""}`,
   );
   if (!lockResult.acquired) {
     console.error("  Another NemoClaw onboarding run is already in progress.");
@@ -3663,6 +3968,10 @@ async function onboard(opts = {}) {
 
   try {
     let session;
+    // Merged, absolute fromDockerfile: explicit flag/env takes precedence; on
+    // resume falls back to what the original session recorded so the same image
+    // is used even when --from is omitted from the resume invocation.
+    let fromDockerfile;
     if (resume) {
       session = onboardSession.loadSession();
       if (!session || session.resumable === false) {
@@ -3670,8 +3979,15 @@ async function onboard(opts = {}) {
         console.error("  Run: nemoclaw onboard");
         process.exit(1);
       }
+      const sessionFrom = session?.metadata?.fromDockerfile || null;
+      fromDockerfile = requestedFromDockerfile
+        ? path.resolve(requestedFromDockerfile)
+        : sessionFrom
+          ? path.resolve(sessionFrom)
+          : null;
       const resumeConflicts = getResumeConfigConflicts(session, {
         nonInteractive: isNonInteractive(),
+        fromDockerfile: requestedFromDockerfile,
       });
       if (resumeConflicts.length > 0) {
         for (const conflict of resumeConflicts) {
@@ -3679,6 +3995,20 @@ async function onboard(opts = {}) {
             console.error(
               `  Resumable state belongs to sandbox '${conflict.recorded}', not '${conflict.requested}'.`,
             );
+          } else if (conflict.field === "fromDockerfile") {
+            if (!conflict.recorded) {
+              console.error(
+                `  Session was started without --from; add --from '${conflict.requested}' to resume it.`,
+              );
+            } else if (!conflict.requested) {
+              console.error(
+                `  Session was started with --from '${conflict.recorded}'; rerun with that path to resume it.`,
+              );
+            } else {
+              console.error(
+                `  Session was started with --from '${conflict.recorded}', not '${conflict.requested}'.`,
+              );
+            }
           } else {
             console.error(
               `  Resumable state recorded ${conflict.field} '${conflict.recorded}', not '${conflict.requested}'.`,
@@ -3697,10 +4027,11 @@ async function onboard(opts = {}) {
       });
       session = onboardSession.loadSession();
     } else {
+      fromDockerfile = requestedFromDockerfile ? path.resolve(requestedFromDockerfile) : null;
       session = onboardSession.saveSession(
         onboardSession.createSession({
           mode: isNonInteractive() ? "non-interactive" : "interactive",
-          metadata: { gatewayName: "nemoclaw" },
+          metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
         }),
       );
     }
@@ -3899,6 +4230,7 @@ async function onboard(opts = {}) {
         sandboxName,
         webSearchConfig,
         enabledChannels,
+        fromDockerfile,
       );
       onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
     }
@@ -4011,9 +4343,11 @@ module.exports = {
   isInferenceRouteReady,
   isOpenclawReady,
   arePolicyPresetsApplied,
+  presetsCheckboxSelector,
   setupPoliciesWithSelection,
   summarizeCurlFailure,
   summarizeProbeFailure,
+  hasResponsesToolCall,
   upsertProvider,
   hydrateCredentialEnv,
   pruneKnownHostsEntries,

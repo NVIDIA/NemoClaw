@@ -1,6 +1,6 @@
 ---
 title:
-  page: "NemoClaw Network Policies — Baseline Rules and Operator Approval"
+  page: "NemoClaw Network Policies: Baseline Rules and Operator Approval"
   nav: "Network Policies"
 description:
   main: "Baseline network policy, filesystem rules, and operator approval flow."

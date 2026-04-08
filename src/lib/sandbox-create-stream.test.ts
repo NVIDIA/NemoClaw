@@ -109,6 +109,50 @@ describe("sandbox-create-stream", () => {
     });
   });
 
+  it("recovers when sandbox is ready at the moment the stream exits non-zero", async () => {
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    const promise = streamSandboxCreate("echo create", process.env, {
+      spawnImpl: () => child as never,
+      readyCheck: () => true, // sandbox is already Ready
+      pollIntervalMs: 60_000, // large interval so the poll doesn't fire first
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+      logLine,
+    });
+
+    child.stdout.emit("data", Buffer.from("Created sandbox: demo\n"));
+    // SSH 255 — stream exits non-zero after sandbox was created
+    child.emit("close", 255);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 0,
+      forcedReady: true,
+      sawProgress: true,
+    });
+  });
+
+  it("returns non-zero when readyCheck is false at close time", async () => {
+    const child = new FakeChild();
+    const promise = streamSandboxCreate("echo create", process.env, {
+      spawnImpl: () => child as never,
+      readyCheck: () => false, // sandbox is NOT ready
+      pollIntervalMs: 60_000,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+      logLine: vi.fn(),
+    });
+
+    child.stdout.emit("data", Buffer.from("Created sandbox: demo\n"));
+    child.emit("close", 255);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 255,
+      sawProgress: true,
+    });
+    expect((await promise).forcedReady).toBeUndefined();
+  });
+
   it("reports spawn errors cleanly", async () => {
     const child = new FakeChild();
     const promise = streamSandboxCreate("echo create", process.env, {
