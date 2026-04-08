@@ -64,14 +64,19 @@ def generate_platform_table(platforms: list[dict]) -> str:
     Deferred entries are tracked in the metadata but excluded from
     user-facing tables — they have no validated setup path yet.
     """
-    header = "| Platform | Tested runtimes | Status | Notes |"
-    separator = "|----------|-----------------|--------|-------|"
+    STATUS_LABELS = {
+        "tested": "Tested",
+        "caveated": "Tested with limitations",
+        "experimental": "Experimental",
+    }
+    header = "| OS | Container runtime | Status | Notes |"
+    separator = "|----|-------------------|--------|-------|"
     rows = []
     for p in platforms:
         if p["status"] == "deferred":
             continue
         runtimes = ", ".join(p["runtimes"])
-        status = p["status"].capitalize()
+        status = STATUS_LABELS.get(p["status"], p["status"].capitalize())
         rows.append(f"| {p['name']} | {runtimes} | {status} | {p['notes']} |")
     return "\n".join([header, separator, *rows])
 

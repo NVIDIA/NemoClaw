@@ -5,7 +5,7 @@
 
   "statuses": {
     "tested": "Validated by CI/QA. Primary path.",
-    "caveated": "Works with known limitations.",
+    "caveated": "Tested with limitations. See Notes.",
     "experimental": "Requires NEMOCLAW_EXPERIMENTAL=1.",
     "deferred": "Planned but not yet validated."
   },
