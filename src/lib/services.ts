@@ -13,6 +13,8 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
+import { DASHBOARD_PORT } from "./ports";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -246,7 +248,7 @@ export function stopAll(opts: ServiceOptions = {}): void {
 
 export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   const pidDir = resolvePidDir(opts);
-  const dashboardPort = opts.dashboardPort ?? (Number(process.env.DASHBOARD_PORT) || 18789);
+  const dashboardPort = opts.dashboardPort ?? DASHBOARD_PORT;
 
   ensurePidDir(pidDir);
 

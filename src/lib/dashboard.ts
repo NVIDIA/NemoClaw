@@ -5,9 +5,10 @@
  * Dashboard URL resolution and construction.
  */
 
+import { DASHBOARD_PORT } from "./ports";
 import { isLoopbackHostname } from "./url-utils";
 
-const CONTROL_UI_PORT = 18789;
+const CONTROL_UI_PORT = DASHBOARD_PORT;
 const CONTROL_UI_PATH = "/";
 
 export function resolveDashboardForwardTarget(
