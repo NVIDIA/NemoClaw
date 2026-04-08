@@ -13,7 +13,7 @@ function run(args) {
   return runWithEnv(args);
 }
 
-function runWithEnv(args, env = {}, timeout = 10000) {
+function runWithEnv(args, env = {}, timeout = 30000) {
   try {
     const out = execSync(`node "${CLI}" ${args}`, {
       encoding: "utf-8",

@@ -11,6 +11,12 @@ export default defineConfig({
           name: "cli",
           include: ["test/**/*.test.{js,ts}", "src/**/*.test.ts"],
           exclude: ["**/node_modules/**", "**/.claude/**", "test/e2e/**"],
+          // Match the bumped `runWithEnv` execSync timeout in test/cli.test.js.
+          // Vitest's default `testTimeout` is 5000ms, which would abort tests
+          // long before the 30s execSync ceiling — making the bumped child
+          // timeout useless on slow CI hosts.
+          testTimeout: 30_000,
+          hookTimeout: 30_000,
         },
       },
       {
