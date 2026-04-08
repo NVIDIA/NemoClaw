@@ -38,6 +38,12 @@ $ nvm use 22
 
 Then re-run the installer.
 
+### Image push fails with out-of-memory errors
+
+The sandbox image is approximately 2.4 GB compressed. During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline, which buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer.
+
+If you cannot add memory, configure at least 8 GB of swap to work around the issue at the cost of slower performance.
+
 ### Docker is not running
 
 The installer and onboard wizard require Docker to be running.
@@ -48,6 +54,15 @@ $ sudo systemctl start docker
 ```
 
 On macOS with Docker Desktop, open the Docker Desktop application and wait for it to finish starting before retrying.
+
+### macOS first-run failures
+
+The two most common first-run failures on macOS are missing developer tools and Docker connection errors.
+
+To avoid these issues, install the prerequisites in the following order before running the NemoClaw installer:
+
+1. Install Xcode Command Line Tools (`xcode-select --install`). These are needed by the installer and Node.js toolchain.
+2. Install and start a supported container runtime (Docker Desktop or Colima). Without a running runtime, the installer cannot connect to Docker.
 
 ### npm install fails with permission errors
 
@@ -80,15 +95,17 @@ Then retry onboarding.
 
 ### Cgroup v2 errors during onboard
 
-On Ubuntu 24.04, DGX Spark, and WSL2, Docker may not be configured for cgroup v2 delegation.
-The onboard preflight check detects this and fails with a clear error message.
+Older NemoClaw releases relied on a Docker cgroup workaround on Ubuntu 24.04, DGX Spark, and WSL2.
+Current OpenShell releases handle that behavior themselves, so NemoClaw no longer requires a Spark-specific setup step.
 
-Run the Spark setup script to fix the Docker cgroup configuration, then retry onboarding:
+If onboarding reports that Docker is missing or unreachable, fix Docker first and retry onboarding:
 
 ```console
-$ sudo nemoclaw setup-spark
 $ nemoclaw onboard
 ```
+
+If you are using Podman, NemoClaw warns and continues, but OpenShell officially documents Docker-based runtimes only.
+If onboarding or sandbox lifecycle fails, switch to Docker Desktop, Colima, or Docker Engine and rerun onboarding.
 
 ### Invalid sandbox name
 
@@ -115,7 +132,71 @@ If neither is found, verify that Colima is running:
 $ colima status
 ```
 
+### Sandbox creation killed by OOM (exit 137)
+
+On systems with 8 GB RAM or less and no swap configured, the sandbox image push can exhaust available memory and get killed by the Linux OOM killer (exit code 137).
+
+NemoClaw automatically detects low memory during onboarding and prompts to create a 4 GB swap file.
+If this automatic step fails or you are using a custom setup flow, create swap manually before running `nemoclaw onboard`:
+
+```console
+$ sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none
+$ sudo chmod 600 /swapfile
+$ sudo mkswap /swapfile
+$ sudo swapon /swapfile
+$ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+$ nemoclaw onboard
+```
+
 ## Runtime
+
+### Reconnect after a host reboot
+
+After a host reboot, the container runtime, OpenShell gateway, and sandbox may not be running.
+Follow these steps to reconnect.
+
+1. Start the container runtime.
+
+   - **Linux:** start Docker if it is not already running (`sudo systemctl start docker`)
+   - **macOS:** open Docker Desktop or start Colima (`colima start`)
+
+1. Check sandbox state.
+
+   ```console
+   $ openshell sandbox list
+   ```
+
+   If the sandbox shows `Ready`, skip to step 4.
+
+1. Restart the gateway (if needed).
+
+   If the sandbox is not listed or the command fails, restart the OpenShell gateway:
+
+   ```console
+   $ openshell gateway start --name nemoclaw
+   ```
+
+   Wait a few seconds, then re-check with `openshell sandbox list`.
+
+1. Reconnect.
+
+   ```console
+   $ nemoclaw <name> connect
+   ```
+
+1. Start host auxiliary services (if needed).
+
+   If you use the cloudflared tunnel started by `nemoclaw start`, start it again:
+
+   ```console
+   $ nemoclaw start
+   ```
+
+   Telegram, Discord, and Slack are handled by OpenShell-managed channel messaging configured at onboarding, not by a separate bridge process from `nemoclaw start`.
+
+> **If the sandbox does not recover:** If the sandbox remains missing after restarting the gateway, run `nemoclaw onboard` to recreate it.
+> The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox. Workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
+> Back up your workspace first by following the instructions at Back Up and Restore (see the `nemoclaw-workspace` skill).
 
 ### Sandbox shows as stopped
 
@@ -142,6 +223,15 @@ $ nemoclaw <name> status
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
 Then verify the credential and base URL for the provider you selected during onboarding.
 
+### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
+
+This is expected behavior.
+`NEMOCLAW_DISABLE_DEVICE_AUTH` is a build-time setting used when NemoClaw creates the sandbox image.
+Changing or exporting it later does not rewrite the baked `openclaw.json` inside an existing sandbox.
+
+If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration.
+For the security trade-offs, refer to Security Best Practices (see the `nemoclaw-configure-security` skill).
+
 ### Agent cannot reach an external host
 
 OpenShell blocks outbound connections to hosts not listed in the network policy.
@@ -163,3 +253,56 @@ $ nemoclaw <name> logs
 ```
 
 Use `--follow` to stream logs in real time while debugging.
+
+## Podman
+
+### `open /dev/kmsg: operation not permitted`
+
+This error appears when the Podman machine is running in rootless mode.
+K3s kubelet requires `/dev/kmsg` access for its OOM watcher, which is not available in rootless containers.
+
+Switch the Podman machine to rootful mode and restart:
+
+```console
+$ podman machine stop
+$ podman machine set --rootful
+$ podman machine start
+```
+
+Then destroy and recreate the gateway:
+
+```console
+$ openshell gateway destroy --name nemoclaw
+$ nemoclaw onboard
+```
+
+### Image push timeout with Podman
+
+When creating a sandbox, the 1.5 GB sandbox image push into K3s may time out through Podman's API socket.
+This is a known limitation of the bollard Docker client's default timeout.
+
+Manually push the image using the Docker CLI, which has no such timeout:
+
+```console
+$ docker images --format '{{.Repository}}:{{.Tag}}' | grep sandbox-from
+$ docker save <IMAGE_NAME:TAG> | \
+    docker exec -i openshell-cluster-nemoclaw \
+    ctr -a /run/k3s/containerd/containerd.sock -n k8s.io images import -
+```
+
+After the import completes, create the sandbox manually:
+
+```console
+$ openshell sandbox create --name my-assistant --from <IMAGE_NAME:TAG>
+```
+
+### Podman machine resources
+
+The default Podman machine has 2 GB RAM, which is insufficient for the sandbox image push and K3s cluster overhead.
+Allocate at least 8 GB RAM and 4 CPUs:
+
+```console
+$ podman machine stop
+$ podman machine set --cpus 6 --memory 8192
+$ podman machine start
+```

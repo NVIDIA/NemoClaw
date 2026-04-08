@@ -20,7 +20,7 @@ It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime,
 > The project is shared to gather feedback and enable early experimentation.
 > We welcome issues and discussion from the community while the project evolves.
 
-NemoClaw adds guided onboarding, a hardened blueprint, state management, messaging bridges, routed inference, and layered protection on top of the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime. For the full feature list, refer to [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html). For the system diagram, component model, and blueprint lifecycle, refer to [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) and [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html).
+NemoClaw adds guided onboarding, a hardened blueprint, state management, OpenShell-managed channel messaging, routed inference, and layered protection on top of the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime. For the full feature list, refer to [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html). For the system diagram, component model, and blueprint lifecycle, refer to [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) and [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html).
 
 ## Getting Started
 
@@ -52,15 +52,20 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 | Container runtime | Supported runtime installed and running |
 | [OpenShell](https://github.com/NVIDIA/OpenShell) | Installed |
 
+#### OpenShell Lifecycle
+
+For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
+Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemoclaw onboard`.
+
 #### Container Runtimes
 
 | Platform | Supported runtimes | Notes |
 |----------|--------------------|-------|
-| Linux | Docker | Primary supported path. |
-| macOS (Apple Silicon) | Colima, Docker Desktop | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
-| macOS (Intel) | Podman | Not supported yet. Depends on OpenShell support for Podman on macOS. |
+| Linux | Docker, Podman | Primary supported path. |
+| macOS (Apple Silicon) | Colima, Docker Desktop, Podman | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
+| macOS (Intel) | Colima, Docker Desktop | Podman on Intel macOS is not yet supported. |
 | Windows WSL | Docker Desktop (WSL backend) | Supported target path. |
-| DGX Spark | Docker | Refer to the [DGX Spark setup guide](https://github.com/NVIDIA/NemoClaw/blob/main/spark-install.md) for cgroup v2 and Docker configuration. |
+| DGX Spark | Docker | Use the standard installer and `nemoclaw onboard`. |
 
 ### Install NemoClaw and Onboard OpenClaw Agent
 
@@ -140,9 +145,10 @@ Refer to the following pages on the official documentation website for more info
 | [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html) | What NemoClaw does and how it fits together. |
 | [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) | Plugin, blueprint, sandbox lifecycle, and protection layers. |
 | [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html) | Plugin structure, blueprint lifecycle, sandbox environment, and host-side state. |
-| [Inference Profiles](https://docs.nvidia.com/nemoclaw/latest/reference/inference-profiles.html) | Supported providers, validation, and routed inference configuration. |
+| [Inference Options](https://docs.nvidia.com/nemoclaw/latest/inference/inference-options.html) | Supported providers, validation, and routed inference configuration. |
 | [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html) | Baseline rules, operator approval flow, and egress control. |
 | [Customize Network Policy](https://docs.nvidia.com/nemoclaw/latest/network-policy/customize-network-policy.html) | Static and dynamic policy changes, presets. |
+| [Security Best Practices](https://docs.nvidia.com/nemoclaw/latest/security/best-practices.html) | Controls reference, risk framework, and posture profiles for sandbox security. |
 | [Sandbox Hardening](https://docs.nvidia.com/nemoclaw/latest/deployment/sandbox-hardening.html) | Container security measures, capability drops, process limits. |
 | [CLI Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html) | Full NemoClaw CLI command reference. |
 | [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html) | Common issues and resolution steps. |
@@ -188,6 +194,10 @@ Use one of the private reporting channels described in [SECURITY.md](SECURITY.md
 - Use [GitHub's private vulnerability reporting](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configuring-private-vulnerability-reporting-for-a-repository) to submit a report directly on this repository.
 
 For security bulletins and PSIRT policies, visit the [NVIDIA Product Security](https://www.nvidia.com/en-us/security/) portal.
+
+## Notice and Disclaimer
+
+This software automatically retrieves, accesses or interacts with external materials. Those retrieved materials are not distributed with this software and are governed solely by separate terms, conditions and licenses. You are solely responsible for finding, reviewing and complying with all applicable terms, conditions, and licenses, and for verifying the security, integrity and suitability of any retrieved materials for your specific use case. This software is provided "AS IS", without warranty of any kind. The author makes no representations or warranties regarding any retrieved materials, and assumes no liability for any losses, damages, liabilities or legal consequences from your use or inability to use this software or any retrieved materials. Use this software and the retrieved materials at your own risk.
 
 ## License
 

@@ -147,6 +147,7 @@ info "Running onboard with an invalid policy mode to create resumable state..."
 
 FIRST_LOG="$(mktemp)"
 NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_RECREATE_SANDBOX=1 \
   NEMOCLAW_POLICY_MODE=invalid \
@@ -209,6 +210,7 @@ info "Running onboard --resume with NVIDIA_API_KEY removed from env..."
 RESUME_LOG="$(mktemp)"
 env -u NVIDIA_API_KEY \
   NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_POLICY_MODE=skip \
   node "$REPO/bin/nemoclaw.js" onboard --resume --non-interactive >"$RESUME_LOG" 2>&1

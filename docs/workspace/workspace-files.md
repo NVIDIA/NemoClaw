@@ -2,7 +2,9 @@
 title:
   page: "Workspace Files"
   nav: "Workspace Files"
-description: "What workspace files are, where they live, and how they persist across sandbox restarts."
+description:
+  main: "What workspace files are, where they live, and how they persist across sandbox restarts."
+  agent: "Explains what workspace files are, where they live, and how they persist across sandbox restarts. Use when asking about soul.md, identity.md, memory.md, agents.md, or sandbox file persistence."
 keywords: ["nemoclaw workspace files", "soul.md", "user.md", "identity.md", "agents.md", "memory.md", "sandbox persistence"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "workspace", "persistence", "nemoclaw"]
@@ -54,7 +56,7 @@ All workspace files reside inside the sandbox filesystem:
 
 :::{note}
 The workspace directory is hidden (`.openclaw`).
-The files are not at `/sandbox/SOUL.md` — use the full path when downloading or uploading.
+The files are not at `/sandbox/SOUL.md`. Use the full path when downloading or uploading.
 :::
 
 ## Persistence Behavior
@@ -63,8 +65,8 @@ Understanding when these files persist and when they are lost is critical.
 
 | Event | Workspace files |
 |---|---|
-| Sandbox restart | **Preserved** — the sandbox PVC retains its data. |
-| `nemoclaw <name> destroy` | **Lost** — the sandbox and its PVC are deleted. |
+| Sandbox restart | **Preserved:** the sandbox PVC retains its data. |
+| `nemoclaw <name> destroy` | **Lost:** the sandbox and its PVC are deleted. |
 
 :::{warning}
 Always back up your workspace files before running `nemoclaw <name> destroy`.
@@ -76,8 +78,8 @@ See [Back Up and Restore](backup-restore.md) for instructions.
 The agent reads these files at the start of every session.
 You can edit them in two ways:
 
-1. **Let the agent do it** — Ask your agent to update its persona, memory, or user context during a session.
-2. **Edit manually** — Use `openshell sandbox connect` to open a terminal inside the sandbox and edit files directly, or use `openshell sandbox upload` to push edited files from your host.
+1. **Let the agent do it:** Ask your agent to update its persona, memory, or user context during a session.
+2. **Edit manually:** Use `openshell sandbox connect` to open a terminal inside the sandbox and edit files directly, or use `openshell sandbox upload` to push edited files from your host.
 
 ## Next Steps
 

@@ -293,6 +293,57 @@ remove_openshell_resources() {
   run_optional "Destroyed gateway '${DEFAULT_GATEWAY}'" openshell gateway destroy -g "$DEFAULT_GATEWAY"
 }
 
+# Remove NemoClaw PATH/alias entries from shell profiles.
+# Handles both the current block-marker format (# NemoClaw PATH setup …
+# # end NemoClaw PATH setup) and the legacy single-line alias format
+# (# NemoClaw CLI alias + one alias line).
+remove_nemoclaw_alias_from_profile() {
+  local profiles=(
+    "$HOME/.bashrc"
+    "$HOME/.zshrc"
+    "$HOME/.profile"
+    "$HOME/.config/fish/config.fish"
+    "$HOME/.tcshrc"
+    "$HOME/.cshrc"
+  )
+  local p
+  for p in "${profiles[@]}"; do
+    [ -f "$p" ] || continue
+    local changed=false
+    # Current format: block between start/end markers.
+    if grep -qF '# NemoClaw PATH setup' "$p" 2>/dev/null; then
+      sed -i.bak '/^# NemoClaw PATH setup$/,/^# end NemoClaw PATH setup$/d' "$p" && rm -f "${p}.bak"
+      changed=true
+    fi
+    # Legacy format: marker + one alias line.
+    if grep -qF '# NemoClaw CLI alias' "$p" 2>/dev/null; then
+      sed -i.bak '/^# NemoClaw CLI alias$/{N;d;}' "$p" && rm -f "${p}.bak"
+      changed=true
+    fi
+    if [ "$changed" = true ]; then
+      info "Removed NemoClaw PATH entries from $p"
+    fi
+  done
+}
+
+is_installer_managed_nemoclaw_shim() {
+  local shim_path="$1"
+  [ -f "$shim_path" ] || return 1
+
+  local contents=""
+  contents="$(cat "$shim_path" 2>/dev/null || true)"
+  local path_line="export PATH=\""
+  local path_suffix=":\$PATH\""
+  local exec_line="exec \""
+  local exec_suffix="/nemoclaw\" \"\$@\""
+  case "$contents" in
+    '#!/usr/bin/env bash'$'\n'"$path_line"*"$path_suffix"$'\n'"$exec_line"*"$exec_suffix")
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 remove_nemoclaw_cli() {
   if command -v npm >/dev/null 2>&1; then
     npm unlink -g nemoclaw >/dev/null 2>&1 || true
@@ -307,9 +358,13 @@ remove_nemoclaw_cli() {
 
   if [ -L "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
     remove_path "${NEMOCLAW_SHIM_DIR}/nemoclaw"
+  elif is_installer_managed_nemoclaw_shim "${NEMOCLAW_SHIM_DIR}/nemoclaw"; then
+    remove_path "${NEMOCLAW_SHIM_DIR}/nemoclaw"
   elif [ -f "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
     warn "Leaving ${NEMOCLAW_SHIM_DIR}/nemoclaw in place because it is not an installer-managed shim."
   fi
+
+  remove_nemoclaw_alias_from_profile
 }
 
 remove_docker_resources() {

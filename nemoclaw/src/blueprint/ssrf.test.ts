@@ -35,6 +35,9 @@ describe("isPrivateIp", () => {
     "::ffff:10.0.0.1", // IPv4-mapped IPv6 — private 10/8
     "::ffff:192.168.1.1", // IPv4-mapped IPv6 — private 192.168/16
     "::ffff:172.16.0.1", // IPv4-mapped IPv6 — private 172.16/12
+    "100.64.0.1", // RFC 6598 CGNAT
+    "100.127.255.254", // RFC 6598 CGNAT upper bound
+    "::ffff:100.64.0.1", // IPv4-mapped IPv6 — CGNAT
   ])("detects private IP: %s", (ip) => {
     expect(isPrivateIp(ip)).toBe(true);
   });
@@ -173,6 +176,122 @@ describe("validateEndpointUrl", () => {
   it("preserves URL path", async () => {
     mockPublicDns();
     const url = "https://api.example.com/v1/chat/completions";
+    await expect(validateEndpointUrl(url)).resolves.toBe(url);
+  });
+});
+
+// ── Edge-case coverage ────────────────────────────────────────────
+
+describe("isPrivateIp – CIDR boundary precision", () => {
+  it.each([
+    ["172.15.255.255", false], // just below 172.16.0.0/12
+    ["172.16.0.0", true], // first address in 172.16.0.0/12
+    ["172.31.255.255", true], // last address in 172.16.0.0/12
+    ["172.32.0.0", false], // just above 172.16.0.0/12
+    ["169.253.255.255", false], // just below 169.254.0.0/16
+    ["169.254.0.0", true], // first address in 169.254.0.0/16
+    ["169.255.0.0", false], // just above 169.254.0.0/16
+    ["10.0.0.0", true], // first address in 10.0.0.0/8
+    ["11.0.0.0", false], // just above 10.0.0.0/8
+    ["126.255.255.255", false], // just below 127.0.0.0/8
+    ["128.0.0.0", false], // just above 127.0.0.0/8
+    ["192.167.255.255", false], // just below 192.168.0.0/16
+    ["192.169.0.0", false], // just above 192.168.0.0/16
+  ])("boundary %s → private=%s", (ip, expected) => {
+    expect(isPrivateIp(ip)).toBe(expected);
+  });
+});
+
+describe("isPrivateIp – IPv6 edge cases", () => {
+  it.each([
+    // link-local, multicast, and unspecified are treated as private/internal for SSRF protection
+    ["fe80::1", true],
+    ["ff02::1", true],
+    // zero address
+    ["::0", true],
+    // fc00::/7 (RFC 4193 Unique Local Addresses) boundaries
+    ["fbff::1", false], // just below fc00::/7
+    ["fc00::1", true], // first usable in fc00::/7 ULA range
+    ["fcff::1", true], // within fc00::/7 ULA range
+    ["fd00::0", true], // first address in fd00::/8 (within fc00::/7)
+    ["fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true], // last address in fc00::/7 ULA range
+    ["fe00::1", false], // just above fc00::/7 (link-local starts at fe80::)
+  ])("IPv6 %s → private=%s", (ip, expected) => {
+    expect(isPrivateIp(ip)).toBe(expected);
+  });
+
+  it.each([
+    "::ffff:169.254.169.254", // cloud metadata via IPv4-mapped IPv6
+    "::ffff:10.255.255.255", // 10/8 upper bound via IPv4-mapped
+    "::ffff:172.31.0.1", // 172.16/12 via IPv4-mapped
+  ])("detects IPv4-mapped private address: %s", (ip) => {
+    expect(isPrivateIp(ip)).toBe(true);
+  });
+
+  it.each([
+    "::ffff:8.8.4.4",
+    "::ffff:172.32.0.1", // just outside 172.16/12
+    "::ffff:11.0.0.1", // just outside 10/8
+  ])("allows IPv4-mapped public address: %s", (ip) => {
+    expect(isPrivateIp(ip)).toBe(false);
+  });
+});
+
+describe("validateEndpointUrl – DNS rebinding", () => {
+  it("rejects when ANY resolved address is private (mixed A records)", async () => {
+    mockLookup.mockResolvedValue([
+      { address: "93.184.216.34", family: 4 },
+      { address: "127.0.0.1", family: 4 },
+    ]);
+    await expect(validateEndpointUrl("https://rebind.attacker.com/api")).rejects.toThrow(
+      /private\/internal address/,
+    );
+  });
+
+  it("rejects when DNS returns private IPv6 among public IPv4", async () => {
+    mockLookup.mockResolvedValue([
+      { address: "93.184.216.34", family: 4 },
+      { address: "::1", family: 6 },
+    ]);
+    await expect(validateEndpointUrl("https://rebind.attacker.com/api")).rejects.toThrow(
+      /private\/internal address/,
+    );
+  });
+
+  it("allows when all resolved addresses are public", async () => {
+    mockLookup.mockResolvedValue([
+      { address: "93.184.216.34", family: 4 },
+      { address: "2607:f8b0:4004:800::200e", family: 6 },
+    ]);
+    await expect(validateEndpointUrl("https://cdn.example.com/v1")).resolves.toBe(
+      "https://cdn.example.com/v1",
+    );
+  });
+});
+
+describe("validateEndpointUrl – URL parsing edge cases", () => {
+  it("rejects data: URI", async () => {
+    await expect(validateEndpointUrl("data:text/html,<h1>hi</h1>")).rejects.toThrow(
+      /Unsupported URL scheme/,
+    );
+  });
+
+  it("allows URL with query parameters", async () => {
+    mockPublicDns();
+    const url = "https://api.example.com/v1?key=abc&model=gpt";
+    await expect(validateEndpointUrl(url)).resolves.toBe(url);
+  });
+
+  it("allows URL with fragment", async () => {
+    mockPublicDns();
+    const url = "https://api.example.com/v1#section";
+    await expect(validateEndpointUrl(url)).resolves.toBe(url);
+  });
+
+  it("allows URL with userinfo/basic auth", async () => {
+    mockPublicDns();
+    // URL parser extracts hostname correctly even with userinfo
+    const url = "https://user:pass@api.example.com/v1";
     await expect(validateEndpointUrl(url)).resolves.toBe(url);
   });
 });
