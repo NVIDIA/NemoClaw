@@ -401,7 +401,9 @@ describe("planHostRemediation", () => {
     expect(actions[0].id).toBe("docker_group_permission");
     expect(actions[0].kind).toBe("sudo");
     expect(actions[0].blocking).toBe(true);
-    expect(actions[0].commands[0]).toContain("sudo usermod -aG docker $USER");
+    expect(actions[0].commands[0]).toBe("sudo usermod -aG docker $USER");
+    expect(actions[0].commands[1]).toContain("newgrp docker");
+    expect(actions[0].commands[2]).toBe("nemoclaw onboard");
     expect(actions[0].reason).toContain("docker group");
   });
 

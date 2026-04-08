@@ -367,7 +367,8 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
           "Docker is installed and the service is running, but the current user cannot reach the daemon. " +
           "This usually means your user is not in the docker group.",
         commands: [
-          "sudo usermod -aG docker $USER && newgrp docker",
+          "sudo usermod -aG docker $USER",
+          "newgrp docker   # or log out and back in",
           "nemoclaw onboard",
         ],
         blocking: true,
