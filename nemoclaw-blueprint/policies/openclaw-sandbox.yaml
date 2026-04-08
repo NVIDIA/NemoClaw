@@ -95,9 +95,6 @@ network_policies:
         protocol: rest
         enforcement: enforce
         tls: terminate
-        rules:
-          - allow: { method: POST, path: "/api/*/envelope/**" }
-          - allow: { method: POST, path: "/api/*/store/**" }
     binaries:
       - { path: /usr/local/bin/claude }
 
