@@ -352,19 +352,42 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
       blocking: true,
     });
   } else if (!assessment.dockerReachable) {
-    actions.push({
-      id: "start_docker",
-      title: "Start Docker",
-      kind: "manual",
-      reason: "Docker is installed but NemoClaw could not talk to the Docker daemon.",
-      commands:
-        assessment.platform === "darwin"
-          ? ["Start Docker Desktop or Colima, then rerun `nemoclaw onboard`."]
-          : assessment.systemctlAvailable
-            ? ["sudo systemctl start docker", "nemoclaw onboard"]
-            : ["Start the Docker daemon, then rerun `nemoclaw onboard`."],
-      blocking: true,
-    });
+    // Distinguish "daemon not running" from "daemon running but the current
+    // user can't reach the socket". When systemd reports docker.service is
+    // active but `docker info` still fails, asking the user to start docker
+    // is misleading — the real fix is to grant socket access (typically by
+    // adding the user to the docker group). See issue #1574.
+    if (assessment.platform === "linux" && assessment.dockerServiceActive === true) {
+      actions.push({
+        id: "fix_docker_socket_permission",
+        title: "Grant Docker socket access",
+        kind: "manual",
+        reason:
+          "Docker daemon is running but NemoClaw could not talk to the Docker socket. " +
+          "This usually means your user does not have permission to access /var/run/docker.sock.",
+        commands: [
+          "sudo usermod -aG docker $USER",
+          "newgrp docker  # or log out and back in",
+          "docker info  # confirm the socket is reachable",
+          "nemoclaw onboard",
+        ],
+        blocking: true,
+      });
+    } else {
+      actions.push({
+        id: "start_docker",
+        title: "Start Docker",
+        kind: "manual",
+        reason: "Docker is installed but NemoClaw could not talk to the Docker daemon.",
+        commands:
+          assessment.platform === "darwin"
+            ? ["Start Docker Desktop or Colima, then rerun `nemoclaw onboard`."]
+            : assessment.systemctlAvailable
+              ? ["sudo systemctl start docker", "nemoclaw onboard"]
+              : ["Start the Docker daemon, then rerun `nemoclaw onboard`."],
+        blocking: true,
+      });
+    }
   }
 
   if (assessment.isUnsupportedRuntime) {

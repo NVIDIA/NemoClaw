@@ -375,6 +375,37 @@ describe("planHostRemediation", () => {
     expect(actions[0].commands).toContain("sudo systemctl start docker");
   });
 
+  it("flags socket permission instead of 'start docker' when daemon is active but unreachable (#1574)", () => {
+    const actions = planHostRemediation({
+      platform: "linux",
+      isWsl: false,
+      runtime: "unknown",
+      packageManager: "apt",
+      systemctlAvailable: true,
+      dockerServiceActive: true,
+      dockerServiceEnabled: true,
+      dockerInstalled: true,
+      dockerRunning: false,
+      dockerReachable: false,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "unknown",
+      dockerDefaultCgroupnsMode: "unknown",
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: false,
+      notes: [],
+    });
+
+    expect(actions[0].id).toBe("fix_docker_socket_permission");
+    expect(actions[0].blocking).toBe(true);
+    expect(actions[0].commands).toContain("sudo usermod -aG docker $USER");
+    // Must NOT suggest starting docker — that's the misleading message #1574 calls out.
+    expect(actions[0].commands).not.toContain("sudo systemctl start docker");
+    expect(actions[0].reason).toMatch(/socket/i);
+  });
+
   it("warns that podman is unsupported on macOS without blocking onboarding", () => {
     const actions = planHostRemediation({
       platform: "darwin",
