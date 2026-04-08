@@ -320,3 +320,60 @@ export async function ensureGithubToken(): Promise<void> {
   console.log("  Token saved to ~/.nemoclaw/credentials.json (mode 600)");
   console.log("");
 }
+
+export async function ensureJiraCredentials(): Promise<void> {
+  let url = getCredential("JIRA_BASE_URL");
+  let email = getCredential("JIRA_USER_EMAIL");
+  let token = getCredential("JIRA_API_TOKEN");
+
+  if (url && email && token) {
+    process.env.JIRA_BASE_URL = url;
+    process.env.JIRA_USER_EMAIL = email;
+    process.env.JIRA_API_TOKEN = token;
+    return;
+  }
+
+  console.log("");
+  console.log("  ┌─────────────────────────────────────────────────────────────────┐");
+  console.log("  │  Jira credentials required                                      │");
+  console.log("  │                                                                 │");
+  console.log("  │  1. Your Jira base URL (e.g. https://mycompany.atlassian.net)   │");
+  console.log("  │  2. Your Atlassian account email                                │");
+  console.log("  │  3. An Atlassian API token (account settings → security)        │");
+  console.log("  └─────────────────────────────────────────────────────────────────┘");
+  console.log("");
+
+  if (!url) {
+    url = normalizeCredentialValue(await prompt("  Jira Base URL: "));
+    if (!url) {
+      console.error("  Jira base URL is required.");
+      process.exit(1);
+    }
+    saveCredential("JIRA_BASE_URL", url);
+    process.env.JIRA_BASE_URL = url;
+  }
+
+  if (!email) {
+    email = normalizeCredentialValue(await prompt("  Atlassian account email: "));
+    if (!email) {
+      console.error("  Atlassian account email is required.");
+      process.exit(1);
+    }
+    saveCredential("JIRA_USER_EMAIL", email);
+    process.env.JIRA_USER_EMAIL = email;
+  }
+
+  if (!token) {
+    token = normalizeCredentialValue(await prompt("  Jira API Token: ", { secret: true }));
+    if (!token) {
+      console.error("  Jira API token is required.");
+      process.exit(1);
+    }
+    saveCredential("JIRA_API_TOKEN", token);
+    process.env.JIRA_API_TOKEN = token;
+  }
+
+  console.log("");
+  console.log("  Credentials saved to ~/.nemoclaw/credentials.json (mode 600)");
+  console.log("");
+}

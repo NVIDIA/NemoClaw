@@ -17,6 +17,9 @@ export interface DeployCredentials {
   ALLOWED_CHAT_IDS?: string | null;
   DISCORD_BOT_TOKEN?: string | null;
   SLACK_BOT_TOKEN?: string | null;
+  JIRA_BASE_URL?: string | null;
+  JIRA_USER_EMAIL?: string | null;
+  JIRA_API_TOKEN?: string | null;
 }
 
 export interface BrevInstanceStatus {
@@ -261,6 +264,9 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     ALLOWED_CHAT_IDS: getCredential("ALLOWED_CHAT_IDS"),
     DISCORD_BOT_TOKEN: getCredential("DISCORD_BOT_TOKEN"),
     SLACK_BOT_TOKEN: getCredential("SLACK_BOT_TOKEN"),
+    JIRA_BASE_URL: getCredential("JIRA_BASE_URL"),
+    JIRA_USER_EMAIL: getCredential("JIRA_USER_EMAIL"),
+    JIRA_API_TOKEN: getCredential("JIRA_API_TOKEN"),
   };
   const provider = inferDeployProvider(env.NEMOCLAW_PROVIDER, credentials);
   if (!provider) {

@@ -2668,6 +2668,12 @@ async function createSandbox(
   const sandboxEnv = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !blockedSandboxEnvNames.has(name)),
   );
+  const jiraUrl = getCredential("JIRA_BASE_URL") || process.env.JIRA_BASE_URL;
+  const jiraEmail = getCredential("JIRA_USER_EMAIL") || process.env.JIRA_USER_EMAIL;
+  const jiraToken = getCredential("JIRA_API_TOKEN") || process.env.JIRA_API_TOKEN;
+  if (jiraUrl) sandboxEnv.JIRA_BASE_URL = jiraUrl;
+  if (jiraEmail) sandboxEnv.JIRA_USER_EMAIL = jiraEmail;
+  if (jiraToken) sandboxEnv.JIRA_API_TOKEN = jiraToken;
   // Run without piping through awk — the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
@@ -3842,6 +3848,13 @@ function getSuggestedPolicyPresets({ enabledChannels = null, webSearchConfig = n
   maybeSuggestMessagingPreset("discord", "DISCORD_BOT_TOKEN");
 
   if (webSearchConfig) suggestions.push("brave");
+
+  if (getCredential("JIRA_API_TOKEN") || process.env.JIRA_API_TOKEN) {
+    suggestions.push("jira");
+    if (process.stdout.isTTY && !isNonInteractive() && process.env.CI !== "true") {
+      console.log("  Auto-detected: JIRA_API_TOKEN -> suggesting jira preset");
+    }
+  }
 
   return suggestions;
 }
