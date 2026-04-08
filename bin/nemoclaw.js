@@ -1077,13 +1077,27 @@ function sandboxLogs(sandboxName, follow) {
   exitWithSpawnResult(result);
 }
 
-async function sandboxPolicyAdd(sandboxName) {
+async function sandboxPolicyAdd(sandboxName, args = []) {
+  const dryRun = args.includes("--dry-run");
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
 
   const { prompt: askPrompt } = require("./lib/credentials");
   const answer = await policies.selectFromList(allPresets, { applied });
   if (!answer) return;
+
+  const presetContent = policies.loadPreset(answer);
+  if (!presetContent) return;
+
+  const endpoints = policies.getPresetEndpoints(presetContent);
+  if (endpoints.length > 0) {
+    console.log(`  Endpoints that would be opened: ${endpoints.join(", ")}`);
+  }
+
+  if (dryRun) {
+    console.log("  --dry-run: no changes applied.");
+    return;
+  }
 
   const confirm = await askPrompt(`  Apply '${answer}' to sandbox '${sandboxName}'? [Y/n]: `);
   if (confirm.toLowerCase() === "n") return;
@@ -1179,7 +1193,7 @@ function help() {
     nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
 
   ${G}Policy Presets:${R}
-    nemoclaw <name> policy-add       Add a network or filesystem policy preset
+    nemoclaw <name> policy-add       Add a network or filesystem policy preset ${D}(--dry-run to preview)${R}
     nemoclaw <name> policy-list      List presets ${D}(● = applied)${R}
 
   ${G}Compatibility Commands:${R}
@@ -1285,7 +1299,7 @@ const [cmd, ...args] = process.argv.slice(2);
         sandboxLogs(cmd, actionArgs.includes("--follow"));
         break;
       case "policy-add":
-        await sandboxPolicyAdd(cmd);
+        await sandboxPolicyAdd(cmd, actionArgs);
         break;
       case "policy-list":
         sandboxPolicyList(cmd);
