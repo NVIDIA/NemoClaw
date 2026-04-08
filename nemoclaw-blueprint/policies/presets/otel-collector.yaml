@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: otel-collector
+  description: "OpenTelemetry Collector push and pull access"
+
+network_policies:
+  otel:
+    name: otel
+    endpoints:
+      # gRPC receiver — requires full tunnel for bidirectional streaming
+      - host: "*.monitoring.svc.cluster.local"
+        port: 4317
+        access: full
+      # HTTP receiver — OTLP/HTTP endpoints
+      - host: "*.monitoring.svc.cluster.local"
+        port: 4318
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: POST, path: "/v1/traces" }
+          - allow: { method: POST, path: "/v1/metrics" }
+          - allow: { method: POST, path: "/v1/logs" }
+      # Prometheus exporter on collector (for self-monitoring)
+      - host: "*.monitoring.svc.cluster.local"
+        port: 9464
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/metrics" }
+    binaries:
+      - { path: /usr/local/bin/node }

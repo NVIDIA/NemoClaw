@@ -1,0 +1,72 @@
+{
+  "_meta": {
+    "schema_version": "1.0.0",
+    "extractor": "metrics_v1"
+  },
+  "project": ".claude",
+  "framework": "unknown",
+  "tokenizer": "o200k_base",
+  "artifacts": [
+    {
+      "name": "project_summary",
+      "path": "PROJECT_SUMMARY.json",
+      "entity_count": 0,
+      "source_file_count": 0,
+      "source_tokens": 0,
+      "output_tokens": 241,
+      "compression_ratio": null
+    },
+    {
+      "name": "commands",
+      "path": "COMMANDS.json",
+      "entity_count": 0,
+      "source_file_count": 0,
+      "source_tokens": 0,
+      "output_tokens": 65,
+      "compression_ratio": null
+    },
+    {
+      "name": "module_graph",
+      "path": "MODULE_GRAPH.json",
+      "entity_count": 0,
+      "source_file_count": 0,
+      "source_tokens": 0,
+      "output_tokens": 66,
+      "compression_ratio": null
+    },
+    {
+      "name": "api_index",
+      "path": "API_INDEX.json",
+      "entity_count": 0,
+      "source_file_count": 0,
+      "source_tokens": 0,
+      "output_tokens": 106,
+      "compression_ratio": null
+    },
+    {
+      "name": "route_index",
+      "path": "ROUTE_INDEX.json",
+      "entity_count": 0,
+      "source_file_count": 0,
+      "source_tokens": 0,
+      "output_tokens": 108,
+      "compression_ratio": null
+    },
+    {
+      "name": "config_index",
+      "path": "CONFIG_INDEX.json",
+      "entity_count": 0,
+      "source_file_count": 0,
+      "source_tokens": 0,
+      "output_tokens": 67,
+      "compression_ratio": null
+    }
+  ],
+  "repo": {
+    "source_file_count": 0,
+    "union_source_tokens": 0,
+    "bundle_tokens": 653,
+    "compression_ratio": 0.0,
+    "overlap_source_tokens": 0
+  }
+}

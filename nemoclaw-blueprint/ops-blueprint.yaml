@@ -1,0 +1,95 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+version: "0.1.0"
+min_openshell_version: "0.1.0"
+min_openclaw_version: "2026.3.0"
+digest: ""  # Computed at release time
+
+profiles:
+  - ops-default
+  - ops-nvidia
+  - ops-local
+
+description: |
+  Dark NOC Ops Blueprint: defines sandbox configuration for the
+  AI-assisted L2-L3 Technical Operations pipeline.
+  Extends the base NemoClaw blueprint with ops-specific inference
+  profiles and network policy additions for Prometheus, OTel,
+  Grafana, Microsoft Teams, and Qdrant.
+
+components:
+  sandbox:
+    image: "ghcr.io/nvidia/openshell-community/sandboxes/openclaw:latest"
+    name: "darknoc-ops"
+    forward_ports:
+      - 18789   # OpenClaw gateway
+      - 9464    # OTel collector self-monitoring
+
+  inference:
+    profiles:
+      ops-default:
+        provider_type: "openai"
+        provider_name: "azure-openai"
+        endpoint: ""
+        model: "gpt-4o"
+        credential_env: "AZURE_OPENAI_API_KEY"
+        dynamic_endpoint: true
+
+      ops-nvidia:
+        provider_type: "nvidia"
+        provider_name: "nvidia-inference"
+        endpoint: "https://integrate.api.nvidia.com/v1"
+        model: "nvidia/nemotron-3-super-120b-a12b"
+        credential_env: "NVIDIA_API_KEY"
+
+      ops-local:
+        provider_type: "openai"
+        provider_name: "vllm-local"
+        endpoint: "http://localhost:8000/v1"
+        model: "nvidia/nemotron-3-nano-30b-a3b"
+        credential_env: "OPENAI_API_KEY"
+        credential_default: "dummy"
+
+  policy:
+    base: "sandboxes/openclaw/policy.yaml"
+    additions:
+      prometheus_access:
+        name: prometheus_access
+        endpoints:
+          - host: "prometheus.monitoring.svc.cluster.local"
+            port: 9090
+            protocol: rest
+      otel_collector:
+        name: otel_collector
+        endpoints:
+          - host: "otel-collector.monitoring.svc.cluster.local"
+            port: 4317
+            protocol: grpc
+          - host: "otel-collector.monitoring.svc.cluster.local"
+            port: 4318
+            protocol: rest
+      grafana_access:
+        name: grafana_access
+        endpoints:
+          - host: "grafana.monitoring.svc.cluster.local"
+            port: 3000
+            protocol: rest
+      microsoft_teams:
+        name: microsoft_teams
+        endpoints:
+          - host: "graph.microsoft.com"
+            port: 443
+            protocol: rest
+          - host: "login.microsoftonline.com"
+            port: 443
+            protocol: rest
+      vector_db:
+        name: vector_db
+        endpoints:
+          - host: "qdrant.darknoc.svc.cluster.local"
+            port: 6333
+            protocol: rest
+          - host: "qdrant.darknoc.svc.cluster.local"
+            port: 6334
+            protocol: grpc

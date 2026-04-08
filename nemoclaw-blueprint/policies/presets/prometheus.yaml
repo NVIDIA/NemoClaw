@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: prometheus
+  description: "Prometheus API query access for ops pipeline metrics collection"
+
+network_policies:
+  prometheus:
+    name: prometheus
+    endpoints:
+      - host: "*.monitoring.svc.cluster.local"
+        port: 9090
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/api/v1/query" }
+          - allow: { method: GET, path: "/api/v1/query_range" }
+          - allow: { method: GET, path: "/api/v1/series" }
+          - allow: { method: GET, path: "/api/v1/labels" }
+          - allow: { method: GET, path: "/api/v1/label/*/values" }
+          - allow: { method: GET, path: "/api/v1/metadata" }
+          - allow: { method: POST, path: "/api/v1/query" }
+          - allow: { method: POST, path: "/api/v1/query_range" }
+    binaries:
+      - { path: /usr/local/bin/node }

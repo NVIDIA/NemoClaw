@@ -1,0 +1,35 @@
+{
+  "_meta": {
+    "schema_version": "1.0.0",
+    "generated_at": "2026-04-08T07:27:02+00:00",
+    "extractor": "project_summary_v1",
+    "source_files": []
+  },
+  "project_name": {
+    "value": ".claude",
+    "source": [],
+    "extractor": "project_summary_v1",
+    "confidence": 1.0
+  },
+  "framework": {
+    "value": "unknown",
+    "source": [],
+    "extractor": "project_summary_v1",
+    "confidence": 0.95
+  },
+  "tokenizer": {
+    "value": "o200k_base",
+    "source": [],
+    "extractor": "project_summary_v1",
+    "confidence": 1.0
+  },
+  "package_managers": {
+    "value": [],
+    "source": [],
+    "extractor": "project_summary_v1",
+    "confidence": 0.95
+  },
+  "languages": [],
+  "entrypoints": [],
+  "manifests": []
+}
