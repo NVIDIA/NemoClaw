@@ -22,8 +22,8 @@ function envInt(name, fallback) {
 
 /** Inference timeout (seconds) for local providers (Ollama, vLLM, NIM). */
 const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 180);
-const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("../../bin/lib/runner");
-const { stageOptimizedSandboxBuildContext } = require("../../bin/lib/sandbox-build-context");
+const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
+const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -33,46 +33,45 @@ const {
   getOllamaWarmupCommand,
   validateOllamaModel,
   validateLocalProvider,
-} = require("../../bin/lib/local-inference");
+} = require("./local-inference");
 const {
   DEFAULT_CLOUD_MODEL,
   getProviderSelectionConfig,
   parseGatewayInference,
-} = require("../../bin/lib/inference-config");
-const { inferContainerRuntime, isWsl, shouldPatchCoredns } = require("../../bin/lib/platform");
-const { resolveOpenshell } = require("../../bin/lib/resolve-openshell");
+} = require("./inference-config");
+const { inferContainerRuntime, isWsl, shouldPatchCoredns } = require("./platform");
+const { resolveOpenshell } = require("./resolve-openshell");
 const {
   prompt,
   ensureApiKey,
   getCredential,
   normalizeCredentialValue,
   saveCredential,
-} = require("../../bin/lib/credentials");
-const registry = require("../../bin/lib/registry");
-const nim = require("../../bin/lib/nim");
-const onboardSession = require("../../bin/lib/onboard-session");
-const policies = require("../../bin/lib/policies");
-const { ensureUsageNoticeConsent } = require("../../bin/lib/usage-notice");
+} = require("./credentials");
+const registry = require("./registry");
+const nim = require("./nim");
+const onboardSession = require("./onboard-session");
+const policies = require("./policies");
+const { ensureUsageNoticeConsent } = require("./usage-notice");
 const {
   assessHost,
   checkPortAvailable,
   ensureSwap,
   getMemoryInfo,
   planHostRemediation,
-} = require("../../bin/lib/preflight");
+} = require("./preflight");
 
-// Typed modules (compiled from src/lib/*.ts → dist/lib/*.js)
-const gatewayState = require("../../dist/lib/gateway-state");
-const validation = require("../../dist/lib/validation");
-const urlUtils = require("../../dist/lib/url-utils");
-const buildContext = require("../../dist/lib/build-context");
-const dashboard = require("../../dist/lib/dashboard");
-const httpProbe = require("../../dist/lib/http-probe");
-const modelPrompts = require("../../dist/lib/model-prompts");
-const providerModels = require("../../dist/lib/provider-models");
-const sandboxCreateStream = require("../../dist/lib/sandbox-create-stream");
-const validationRecovery = require("../../dist/lib/validation-recovery");
-const webSearch = require("../../dist/lib/web-search");
+const gatewayState = require("./gateway-state");
+const validation = require("./validation");
+const urlUtils = require("./url-utils");
+const buildContext = require("./build-context");
+const dashboard = require("./dashboard");
+const httpProbe = require("./http-probe");
+const modelPrompts = require("./model-prompts");
+const providerModels = require("./provider-models");
+const sandboxCreateStream = require("./sandbox-create-stream");
+const validationRecovery = require("./validation-recovery");
+const webSearch = require("./web-search");
 
 /**
  * Create a temp file inside a directory with a cryptographically random name.
@@ -419,7 +418,7 @@ function versionGte(left = "0.0.0", right = "0.0.0") {
  */
 function getBlueprintMinOpenshellVersion(rootDir = ROOT) {
   try {
-    // Lazy require: yaml is already a dependency via bin/lib/policies.js but
+    // Lazy require: yaml is already a dependency via the policy helpers but
     // pulling it at module load would slow down `nemoclaw --help` for users
     // who never reach the preflight path.
     const YAML = require("yaml");

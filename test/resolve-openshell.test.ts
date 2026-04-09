@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { resolveOpenshell } from "../bin/lib/resolve-openshell";
+import { resolveOpenshell } from "../dist/lib/resolve-openshell";
 
 describe("resolveOpenshell", () => {
   it("returns an absolute command -v result immediately", () => {

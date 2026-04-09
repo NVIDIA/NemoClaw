@@ -28,23 +28,23 @@ const {
   runInteractive,
   shellQuote,
   validateName,
-} = require("../bin/lib/runner");
-const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
-const { startGatewayForRecovery } = require("../bin/lib/onboard");
+} = require("./lib/runner");
+const { resolveOpenshell } = require("./lib/resolve-openshell");
+const { startGatewayForRecovery } = require("./lib/onboard");
 const {
   getCredential,
   deleteCredential,
   listCredentialKeys,
   prompt: askPrompt,
-} = require("../bin/lib/credentials");
-const registry = require("../bin/lib/registry");
-const nim = require("../bin/lib/nim");
-const policies = require("../bin/lib/policies");
-const { parseGatewayInference } = require("../bin/lib/inference-config");
-const { getVersion } = require("../bin/lib/version");
-const onboardSession = require("../bin/lib/onboard-session");
-const { parseLiveSandboxNames } = require("../bin/lib/runtime-recovery");
-const { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } = require("../bin/lib/usage-notice");
+} = require("./lib/credentials");
+const registry = require("./lib/registry");
+const nim = require("./lib/nim");
+const policies = require("./lib/policies");
+const { parseGatewayInference } = require("./lib/inference-config");
+const { getVersion } = require("./lib/version");
+const onboardSession = require("./lib/onboard-session");
+const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
+const { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } = require("./lib/usage-notice");
 const { runDebugCommand } = require("./lib/debug-command");
 const {
   captureOpenshellCommand,
@@ -769,7 +769,7 @@ function printDangerouslySkipPermissionsWarning() {
 // ── Commands ─────────────────────────────────────────────────────
 
 async function onboard(args) {
-  const { onboard: runOnboard } = require("../bin/lib/onboard");
+  const { onboard: runOnboard } = require("./lib/onboard");
 
   // Extract --from <path> before the unknown-arg validator: it takes a value
   // so the set-based check would reject the value token as an unknown flag.
@@ -855,7 +855,7 @@ async function deploy(instanceName) {
 }
 
 async function start() {
-  const { startAll } = require("../bin/lib/services");
+  const { startAll } = require("./lib/services");
   await runStartCommand({
     listSandboxes: () => registry.listSandboxes(),
     startAll,
@@ -863,7 +863,7 @@ async function start() {
 }
 
 function stop() {
-  const { stopAll } = require("../bin/lib/services");
+  const { stopAll } = require("./lib/services");
   runStopCommand({
     listSandboxes: () => registry.listSandboxes(),
     stopAll,
@@ -871,7 +871,7 @@ function stop() {
 }
 
 function debug(args) {
-  const { runDebug } = require("../bin/lib/debug");
+  const { runDebug } = require("./lib/debug");
   runDebugCommand(args, {
     getDefaultSandbox: () => registry.listSandboxes().defaultSandbox || undefined,
     runDebug,
@@ -975,7 +975,7 @@ async function credentialsCommand(args) {
 }
 
 function showStatus() {
-  const { showStatus: showServiceStatus } = require("../bin/lib/services");
+  const { showStatus: showServiceStatus } = require("./lib/services");
   showStatusCommand({
     listSandboxes: () => registry.listSandboxes(),
     getLiveInference: () =>
@@ -1001,7 +1001,7 @@ async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false 
   await ensureLiveSandboxOrExit(sandboxName);
   if (dangerouslySkipPermissions) {
     printDangerouslySkipPermissionsWarning();
-    const policies = require("../bin/lib/policies");
+    const policies = require("./lib/policies");
     policies.applyPermissivePolicy(sandboxName);
   }
   checkAndRecoverSandboxProcesses(sandboxName);
@@ -1223,7 +1223,7 @@ function sandboxPolicyList(sandboxName) {
 
 function cleanupSandboxServices(sandboxName) {
   // Stop host services (cloudflared) and clean up PID directory.
-  const { stopAll } = require("../bin/lib/services");
+  const { stopAll } = require("./lib/services");
   stopAll({ sandboxName });
   try {
     fs.rmSync(`/tmp/nemoclaw-services-${sandboxName}`, { recursive: true, force: true });
