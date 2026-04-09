@@ -76,14 +76,27 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: POST, path: "/**" }
+      # sentry.io is a multi-tenant SaaS — any authenticated client can POST
+      # to ANY Sentry project, not just NemoClaw's. Allowing POST /** turned
+      # the host into a generic exfiltration channel: a compromised agent
+      # could ship stack traces, env vars, file contents, etc. to a Sentry
+      # project controlled by an attacker via the public envelope endpoint
+      # (https://sentry.io/api/<any-project>/envelope/). Path-pattern
+      # restrictions cannot fix this because the project ID is part of the
+      # URL and there is no server-side allowlist of legitimate projects.
+      #
+      # Block POST entirely. GET stays allowed because it has no request
+      # body and is harmless for exfil. Side effect: Claude Code's crash
+      # telemetry to Sentry is silently dropped — that is the right
+      # tradeoff for a sandbox whose stated goal is preventing data egress.
+      # See #1437.
       - host: sentry.io
         port: 443
         protocol: rest
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: POST, path: "/api/*/envelope/**" }
-          - allow: { method: POST, path: "/api/*/store/**" }
+          - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/claude }
 

@@ -142,4 +142,50 @@ describe("base sandbox policy", () => {
     }
     expect(missingHosts).toEqual([]);
   });
+
+  // Walk every endpoint in every network_policies entry and return the
+  // entries whose host matches `hostMatcher`. Used by the regressions below.
+  type Rule = { allow?: { method?: string; path?: string } };
+  type Endpoint = { host?: string; rules?: Rule[] };
+  function findEndpoints(hostMatcher: (h: string) => boolean): Endpoint[] {
+    const out: Endpoint[] = [];
+    const np = (policy as Record<string, unknown>).network_policies;
+    if (!np || typeof np !== "object") return out;
+    for (const value of Object.values(np as Record<string, unknown>)) {
+      if (!value || typeof value !== "object") continue;
+      const endpoints = (value as { endpoints?: unknown }).endpoints;
+      if (!Array.isArray(endpoints)) continue;
+      for (const ep of endpoints) {
+        if (ep && typeof ep === "object" && typeof (ep as Endpoint).host === "string") {
+          if (hostMatcher((ep as Endpoint).host as string)) {
+            out.push(ep as Endpoint);
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  it("regression #1437: sentry.io has no POST allow rule (multi-tenant exfiltration vector)", () => {
+    const sentryEndpoints = findEndpoints((h) => h === "sentry.io");
+    expect(sentryEndpoints.length).toBeGreaterThan(0); // should still appear
+    for (const ep of sentryEndpoints) {
+      const rules = Array.isArray(ep.rules) ? ep.rules : [];
+      const hasPost = rules.some(
+        (r) => r && r.allow && typeof r.allow.method === "string" && r.allow.method.toUpperCase() === "POST",
+      );
+      expect(hasPost).toBe(false);
+    }
+  });
+
+  it("regression #1437: sentry.io retains GET (harmless, no body for exfil)", () => {
+    const sentryEndpoints = findEndpoints((h) => h === "sentry.io");
+    for (const ep of sentryEndpoints) {
+      const rules = Array.isArray(ep.rules) ? ep.rules : [];
+      const hasGet = rules.some(
+        (r) => r && r.allow && typeof r.allow.method === "string" && r.allow.method.toUpperCase() === "GET",
+      );
+      expect(hasGet).toBe(true);
+    }
+  });
 });
