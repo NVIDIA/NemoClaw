@@ -3824,13 +3824,22 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   const selectedPresets = Array.isArray(options.selectedPresets) ? options.selectedPresets : null;
   const onSelection = typeof options.onSelection === "function" ? options.onSelection : null;
   const webSearchConfig = options.webSearchConfig || null;
+  const enabledChannels = Array.isArray(options.enabledChannels) ? options.enabledChannels : null;
 
   step(8, 8, "Policy presets");
 
   const suggestions = ["pypi", "npm"];
-  if (getCredential("TELEGRAM_BOT_TOKEN")) suggestions.push("telegram");
-  if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) suggestions.push("slack");
-  if (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN)
+  if (getCredential("TELEGRAM_BOT_TOKEN") && (!enabledChannels || enabledChannels.includes("telegram")))
+    suggestions.push("telegram");
+  if (
+    (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) &&
+    (!enabledChannels || enabledChannels.includes("slack"))
+  )
+    suggestions.push("slack");
+  if (
+    (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN) &&
+    (!enabledChannels || enabledChannels.includes("discord"))
+  )
     suggestions.push("discord");
   if (webSearchConfig) suggestions.push("brave");
 
@@ -4453,6 +4462,7 @@ async function onboard(opts = {}) {
             ? recordedPolicyPresets
             : null,
         webSearchConfig,
+        enabledChannels,
         onSelection: (policyPresets) => {
           onboardSession.updateSession((current) => {
             current.policyPresets = policyPresets;
