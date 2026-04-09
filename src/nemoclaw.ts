@@ -757,6 +757,15 @@ function exitWithSpawnResult(result) {
   process.exit(1);
 }
 
+function printDangerouslySkipPermissionsWarning() {
+  console.error("");
+  console.error("  \u26a0  --dangerously-skip-permissions: sandbox security restrictions disabled.");
+  console.error("     Network:    all known endpoints open (no method/path filtering)");
+  console.error("     Filesystem: sandbox home directory is writable");
+  console.error("     Use for development/testing only.");
+  console.error("");
+}
+
 // ── Commands ─────────────────────────────────────────────────────
 
 async function onboard(args) {
@@ -771,7 +780,7 @@ async function onboard(args) {
     if (!fromDockerfile || fromDockerfile.startsWith("--")) {
       console.error("  --from requires a path to a Dockerfile");
       console.error(
-        `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
+        `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--dangerously-skip-permissions] [${NOTICE_ACCEPT_FLAG}]`,
       );
       process.exit(1);
     }
@@ -782,19 +791,21 @@ async function onboard(args) {
     "--non-interactive",
     "--resume",
     "--recreate-sandbox",
+    "--dangerously-skip-permissions",
     NOTICE_ACCEPT_FLAG,
   ]);
   const unknownArgs = args.filter((arg) => !allowedArgs.has(arg));
   if (unknownArgs.length > 0) {
     console.error(`  Unknown onboard option(s): ${unknownArgs.join(", ")}`);
     console.error(
-      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
+      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--dangerously-skip-permissions] [${NOTICE_ACCEPT_FLAG}]`,
     );
     process.exit(1);
   }
   const nonInteractive = args.includes("--non-interactive");
   const resume = args.includes("--resume");
   const recreateSandbox = args.includes("--recreate-sandbox");
+  const dangerouslySkipPermissions = args.includes("--dangerously-skip-permissions");
   const acceptThirdPartySoftware =
     args.includes(NOTICE_ACCEPT_FLAG) || String(process.env[NOTICE_ACCEPT_ENV] || "") === "1";
   await runOnboard({
@@ -803,6 +814,7 @@ async function onboard(args) {
     recreateSandbox,
     fromDockerfile,
     acceptThirdPartySoftware,
+    dangerouslySkipPermissions,
   });
 }
 
@@ -985,8 +997,13 @@ async function listSandboxes() {
 
 // ── Sandbox-scoped actions ───────────────────────────────────────
 
-async function sandboxConnect(sandboxName) {
+async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false } = {}) {
   await ensureLiveSandboxOrExit(sandboxName);
+  if (dangerouslySkipPermissions) {
+    printDangerouslySkipPermissionsWarning();
+    const policies = require("../bin/lib/policies");
+    policies.applyPermissivePolicy(sandboxName);
+  }
   checkAndRecoverSandboxProcesses(sandboxName);
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
     stdio: "inherit",
@@ -1009,6 +1026,9 @@ async function sandboxStatus(sandboxName) {
     console.log(`    Provider: ${(live && live.provider) || sb.provider || "unknown"}`);
     console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
+    if (sb.dangerouslySkipPermissions) {
+      console.log(`    Permissions: dangerously-skip-permissions (open)`);
+    }
   }
 
   const lookup = await getReconciledSandboxGatewayState(sandboxName);
@@ -1283,6 +1303,7 @@ function help() {
   ${G}Getting Started:${R}
     ${B}nemoclaw onboard${R}                 Configure inference endpoint and credentials
     nemoclaw onboard ${D}--from <Dockerfile>${R}  Use a custom Dockerfile for the sandbox image
+    nemoclaw onboard ${D}--dangerously-skip-permissions${R}  Apply maximally permissive sandbox policy
                                     ${D}(non-interactive: ${NOTICE_ACCEPT_FLAG} or ${NOTICE_ACCEPT_ENV}=1)${R}
 
   ${G}Sandbox Management:${R}
@@ -1397,7 +1418,9 @@ const [cmd, ...args] = process.argv.slice(2);
 
     switch (action) {
       case "connect":
-        await sandboxConnect(cmd);
+        await sandboxConnect(cmd, {
+          dangerouslySkipPermissions: actionArgs.includes("--dangerously-skip-permissions"),
+        });
         break;
       case "status":
         await sandboxStatus(cmd);

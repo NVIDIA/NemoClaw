@@ -93,11 +93,6 @@ The following endpoint groups are allowed by default:
   - `/usr/local/bin/openclaw`, `/usr/local/bin/npm`, `/usr/local/bin/node`
   - All methods, all paths
 
-* - `telegram`
-  - `api.telegram.org:443`
-  - Any binary
-  - GET, POST on `/bot*/**`
-
 :::
 
 All endpoints use TLS termination and are enforced at port 443.

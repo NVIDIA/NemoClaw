@@ -342,8 +342,39 @@ function selectFromList(items, { applied = [] } = {}) {
   });
 }
 
+const PERMISSIVE_POLICY_PATH = path.join(
+  ROOT,
+  "nemoclaw-blueprint",
+  "policies",
+  "openclaw-sandbox-permissive.yaml",
+);
+
+function applyPermissivePolicy(sandboxName) {
+  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
+  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
+    throw new Error(
+      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
+        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
+    );
+  }
+
+  if (!fs.existsSync(PERMISSIVE_POLICY_PATH)) {
+    throw new Error(`Permissive policy not found: ${PERMISSIVE_POLICY_PATH}`);
+  }
+
+  console.log("  Applying permissive policy (--dangerously-skip-permissions)...");
+  run(buildPolicySetCommand(PERMISSIVE_POLICY_PATH, sandboxName));
+  console.log("  Applied permissive policy.");
+
+  const sandbox = registry.getSandbox(sandboxName);
+  if (sandbox) {
+    registry.updateSandbox(sandboxName, { dangerouslySkipPermissions: true });
+  }
+}
+
 export {
   PRESETS_DIR,
+  PERMISSIVE_POLICY_PATH,
   listPresets,
   loadPreset,
   getPresetEndpoints,
@@ -353,6 +384,7 @@ export {
   buildPolicyGetCommand,
   mergePresetIntoPolicy,
   applyPreset,
+  applyPermissivePolicy,
   getAppliedPresets,
   selectFromList,
 };

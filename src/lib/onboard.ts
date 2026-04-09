@@ -2264,6 +2264,7 @@ async function createSandbox(
   webSearchConfig = null,
   enabledChannels = null,
   fromDockerfile = null,
+  dangerouslySkipPermissions = false,
 ) {
   step(6, 8, "Creating sandbox");
 
@@ -2406,7 +2407,9 @@ async function createSandbox(
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
-  const basePolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
+  const basePolicyPath = dangerouslySkipPermissions
+    ? path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml")
+    : path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
   const createArgs = [
     "--from",
     `${buildCtx}/Dockerfile`,
@@ -2595,6 +2598,7 @@ async function createSandbox(
   registry.registerSandbox({
     name: sandboxName,
     gpuEnabled: !!gpu,
+    dangerouslySkipPermissions: dangerouslySkipPermissions || undefined,
   });
 
   // DNS proxy — run a forwarder in the sandbox pod so the isolated
@@ -4147,6 +4151,16 @@ function skippedStepMessage(stepName, detail, reason = "resume") {
 async function onboard(opts = {}) {
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
+  const dangerouslySkipPermissions =
+    opts.dangerouslySkipPermissions || process.env.NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS === "1";
+  if (dangerouslySkipPermissions) {
+    console.error("");
+    console.error("  \u26a0  --dangerously-skip-permissions: sandbox security restrictions disabled.");
+    console.error("     Network:    all known endpoints open (no method/path filtering)");
+    console.error("     Filesystem: sandbox home directory is writable");
+    console.error("     Use for development/testing only.");
+    console.error("");
+  }
   delete process.env.OPENSHELL_GATEWAY;
   const resume = opts.resume === true;
   // In non-interactive mode also accept the env var so CI pipelines can set it.
@@ -4452,6 +4466,7 @@ async function onboard(opts = {}) {
         webSearchConfig,
         enabledChannels,
         fromDockerfile,
+        dangerouslySkipPermissions,
       );
       onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
     }
@@ -4469,45 +4484,56 @@ async function onboard(opts = {}) {
     const recordedPolicyPresets = Array.isArray(session?.policyPresets)
       ? session.policyPresets
       : null;
-    const resumePolicies =
-      resume && sandboxName && arePolicyPresetsApplied(sandboxName, recordedPolicyPresets || []);
-    if (resumePolicies) {
-      skippedStepMessage("policies", (recordedPolicyPresets || []).join(", "));
+    if (dangerouslySkipPermissions) {
+      step(8, 8, "Policy presets");
+      console.log("  Skipped — --dangerously-skip-permissions applies permissive base policy.");
       onboardSession.markStepComplete("policies", {
         sandboxName,
         provider,
         model,
-        policyPresets: recordedPolicyPresets || [],
+        policyPresets: [],
       });
     } else {
-      startRecordedStep("policies", {
-        sandboxName,
-        provider,
-        model,
-        policyPresets: recordedPolicyPresets || [],
-      });
-      const appliedPolicyPresets = await setupPoliciesWithSelection(sandboxName, {
-        selectedPresets:
-          resume &&
-          session?.steps?.policies?.status !== "complete" &&
-          Array.isArray(recordedPolicyPresets) &&
-          recordedPolicyPresets.length > 0
-            ? recordedPolicyPresets
-            : null,
-        webSearchConfig,
-        onSelection: (policyPresets) => {
-          onboardSession.updateSession((current) => {
-            current.policyPresets = policyPresets;
-            return current;
-          });
-        },
-      });
-      onboardSession.markStepComplete("policies", {
-        sandboxName,
-        provider,
-        model,
-        policyPresets: appliedPolicyPresets,
-      });
+      const resumePolicies =
+        resume && sandboxName && arePolicyPresetsApplied(sandboxName, recordedPolicyPresets || []);
+      if (resumePolicies) {
+        skippedStepMessage("policies", (recordedPolicyPresets || []).join(", "));
+        onboardSession.markStepComplete("policies", {
+          sandboxName,
+          provider,
+          model,
+          policyPresets: recordedPolicyPresets || [],
+        });
+      } else {
+        startRecordedStep("policies", {
+          sandboxName,
+          provider,
+          model,
+          policyPresets: recordedPolicyPresets || [],
+        });
+        const appliedPolicyPresets = await setupPoliciesWithSelection(sandboxName, {
+          selectedPresets:
+            resume &&
+            session?.steps?.policies?.status !== "complete" &&
+            Array.isArray(recordedPolicyPresets) &&
+            recordedPolicyPresets.length > 0
+              ? recordedPolicyPresets
+              : null,
+          webSearchConfig,
+          onSelection: (policyPresets) => {
+            onboardSession.updateSession((current) => {
+              current.policyPresets = policyPresets;
+              return current;
+            });
+          },
+        });
+        onboardSession.markStepComplete("policies", {
+          sandboxName,
+          provider,
+          model,
+          policyPresets: appliedPolicyPresets,
+        });
+      }
     }
 
     onboardSession.completeSession({ sandboxName, provider, model });

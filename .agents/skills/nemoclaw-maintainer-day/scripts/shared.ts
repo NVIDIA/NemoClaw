@@ -87,6 +87,33 @@ export function ghJson(args: string[]): unknown {
 }
 
 // ---------------------------------------------------------------------------
+// Required CI checks
+// ---------------------------------------------------------------------------
+
+// Checks triggered by `pull_request` events. First-time fork contributors
+// need a maintainer to click "Approve and run" before these execute.
+// If any are missing from statusCheckRollup, CI cannot be considered green.
+export const REQUIRED_CHECK_NAMES: string[] = [
+  "checks",       // pr.yaml — lint, typecheck, test
+  "commit-lint",  // commit-lint.yaml
+  "dco-check",    // dco-check.yaml
+];
+
+// ---------------------------------------------------------------------------
+// Status check types
+// ---------------------------------------------------------------------------
+
+/** Union of CheckRun and StatusContext fields from GitHub's statusCheckRollup. */
+export interface StatusCheck {
+  __typename?: string;
+  name?: string;       // CheckRun field
+  context?: string;    // StatusContext field
+  status?: string;     // CheckRun: COMPLETED, IN_PROGRESS, QUEUED, etc.
+  conclusion?: string; // CheckRun: SUCCESS, FAILURE, NEUTRAL, SKIPPED, etc.
+  state?: string;      // StatusContext: SUCCESS, FAILURE, PENDING, ERROR
+}
+
+// ---------------------------------------------------------------------------
 // Triage scoring weights
 //
 // Each weight reflects relative priority in the maintainer queue.

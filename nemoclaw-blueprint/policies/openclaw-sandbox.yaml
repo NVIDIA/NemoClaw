@@ -129,18 +129,12 @@ network_policies:
       - { path: /usr/local/bin/claude }
       - { path: /usr/local/bin/openclaw }
 
-  github:
-    name: github
-    endpoints:
-      - host: github.com
-        port: 443
-        access: full
-      - host: api.github.com
-        port: 443
-        access: full
-    binaries:
-      - { path: /usr/bin/gh }
-      - { path: /usr/bin/git }
+  # NOTE: github.com / api.github.com and the git/gh binaries used to
+  # live in this base policy and were therefore granted to every
+  # sandbox regardless of user opt-in. They have been moved into a
+  # discoverable preset (`presets/github.yaml`) so a sandbox only gets
+  # GitHub access when the user explicitly selects the `github` preset
+  # during onboard. See #1583.
 
   # ── OpenClaw "phone home" ────────────────────────────────────────────
   # Minimum viable set for OpenClaw to authenticate, discover plugins,
@@ -206,50 +200,4 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/npm }
-      - { path: /usr/local/bin/node }
-
-  # ── Messaging — pre-allowed for OpenClaw agent notifications ────
-  # Restricted to node processes to prevent arbitrary data exfiltration
-  # via curl, wget, python, etc. (See: #272)
-  telegram:
-    name: telegram
-    endpoints:
-      - host: api.telegram.org
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/bot*/**" }
-          - allow: { method: POST, path: "/bot*/**" }
-          - allow: { method: GET, path: "/file/bot*/**" }
-    binaries:
-      - { path: /usr/local/bin/node }
-
-  discord:
-    name: discord
-    endpoints:
-      - host: discord.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      # WebSocket gateway — must use access: full (CONNECT tunnel) instead
-      # of protocol: rest. The proxy's HTTP idle timeout (~2 min) kills
-      # long-lived WebSocket connections; a CONNECT tunnel avoids
-      # HTTP-level timeouts entirely. Matches presets/discord.yaml. See #409.
-      - host: gateway.discord.gg
-        port: 443
-        access: full
-      - host: cdn.discordapp.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-    binaries:
       - { path: /usr/local/bin/node }
