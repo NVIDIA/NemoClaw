@@ -563,17 +563,29 @@ describe("policies", () => {
       }
     });
 
-    it("package-manager presets use access: full (not tls: terminate)", () => {
-      // Package managers (pip, npm, yarn) use CONNECT tunneling which breaks
-      // under tls: terminate. Ensure these presets use access: full like the
-      // github policy in openclaw-sandbox.yaml.
+    it("package-manager presets use protocol: rest with read-only rules", () => {
+      // Package managers only need read access to install packages.
+      // Using access: full opens a raw CONNECT tunnel that allows
+      // PUT/POST (publish, exfiltrate). Restrict via rest rules.
       const packagePresets = ["pypi", "npm"];
       for (const name of packagePresets) {
         const content = policies.loadPreset(name);
         expect(content).toBeTruthy();
-        expect(content.includes("tls: terminate")).toBe(false);
-        expect(content.includes("access: full")).toBe(true);
+        expect(content.includes("access: full")).toBe(false);
+        expect(content.includes("protocol: rest")).toBe(true);
+        expect(content.includes("method: GET")).toBe(true);
+        // No write methods allowed
+        expect(content.includes("method: PUT")).toBe(false);
+        expect(content.includes("method: POST")).toBe(false);
+        expect(content.includes("method: DELETE")).toBe(false);
       }
+    });
+
+    it("pypi preset allows HEAD for pip lazy-wheel metadata checks", () => {
+      // pip and uv use HEAD requests for lazy wheel downloads and
+      // range-request support. GET-only would break pip install.
+      const content = policies.loadPreset("pypi");
+      expect(content.includes("method: HEAD")).toBe(true);
     });
 
     it("package-manager presets include binaries section", () => {

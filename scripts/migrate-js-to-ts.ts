@@ -194,38 +194,13 @@ function distSpecifierFor(oldRel: string, newRel: string): string {
   return ensureDotSlash(relative);
 }
 
-function extractNamedExports(content: string): string[] {
-  const match = content.match(/export\s*\{([\s\S]*?)\};/m);
-  if (!match) {
-    return [];
-  }
-  return match[1]
-    .split(",")
-    .map((name) => name.trim())
-    .filter(Boolean);
-}
-
-function buildExplicitWrapperExports(exportNames: string[]): string {
-  if (exportNames.length === 0) {
-    return "module.exports = mod;\n";
-  }
-  const lines = exportNames.map((name) => `  ${name}: mod.${name},`);
-  return `module.exports = {\n${lines.join("\n")}\n};\n`;
-}
-
-function buildWrapper(
-  oldRel: string,
-  newRel: string,
-  strategy: ShimStrategy,
-  exportNames: string[],
-): string {
+function buildWrapper(oldRel: string, newRel: string, strategy: ShimStrategy): string {
   const distSpecifier = distSpecifierFor(oldRel, newRel);
-  const explicitExports = buildExplicitWrapperExports(exportNames);
   switch (strategy) {
     case "simple":
-      return `${WRAPPER_HEADER}\n\nconst mod = require(${JSON.stringify(distSpecifier)});\n${explicitExports}`;
+      return `${WRAPPER_HEADER}\n\nmodule.exports = require(${JSON.stringify(distSpecifier)});\n`;
     case "cache-busting":
-      return `${WRAPPER_HEADER}\n\nconst distPath = require.resolve(${JSON.stringify(distSpecifier)});\ndelete require.cache[distPath];\nconst mod = require(distPath);\n${explicitExports}`;
+      return `${WRAPPER_HEADER}\n\nconst distPath = require.resolve(${JSON.stringify(distSpecifier)});\ndelete require.cache[distPath];\nmodule.exports = require(distPath);\n`;
     case "cli-launcher":
       return `#!/usr/bin/env node\n${WRAPPER_HEADER}\n\nrequire(${JSON.stringify(distSpecifier)});\n`;
     default: {
@@ -235,12 +210,8 @@ function buildWrapper(
   }
 }
 
-function rewriteNamedExports(content: string): string {
-  return content.replace(/module\.exports\s*=\s*\{([\s\S]*?)\};?\s*$/m, "export {$1};\n");
-}
-
 function rewriteMovedRuntimeContent(content: string, oldAbs: string, newAbs: string): string {
-  const rewrittenRequires = content.replace(
+  return content.replace(
     /(require(?:\.resolve)?\(\s*["'])([^"']+)(["']\s*\))/g,
     (match, prefix: string, specifier: string, suffix: string) => {
       if (!specifier.startsWith(".")) {
@@ -256,7 +227,6 @@ function rewriteMovedRuntimeContent(content: string, oldAbs: string, newAbs: str
       return `${prefix}${ensureDotSlash(rewritten)}${suffix}`;
     },
   );
-  return rewriteNamedExports(rewrittenRequires);
 }
 
 function renameTest(oldRel: string, apply: boolean) {
@@ -302,7 +272,7 @@ function moveRuntime(oldRel: string, newRel: string, strategy: ShimStrategy, app
   const withNoCheck = rewritten.startsWith("// @ts-nocheck")
     ? rewritten
     : `// @ts-nocheck\n${rewritten}`;
-  const wrapper = buildWrapper(oldRel, newRel, strategy, extractNamedExports(withNoCheck));
+  const wrapper = buildWrapper(oldRel, newRel, strategy);
 
   if (!apply) {
     console.log(`move runtime: ${oldRel} -> ${newRel} (${strategy})`);

@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Workspace Files
 
 OpenClaw stores agent identity, behavior, and memory in a set of Markdown files inside the sandbox.

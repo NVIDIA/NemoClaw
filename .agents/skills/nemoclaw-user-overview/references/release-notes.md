@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Release Notes
 
 NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use the following GitHub resources to track changes.
