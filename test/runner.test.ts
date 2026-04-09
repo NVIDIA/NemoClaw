@@ -701,7 +701,7 @@ describe("regression guards", () => {
 
     it("brev e2e suite includes a deploy-cli mode", () => {
       const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.js"),
+        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.ts"),
         "utf-8",
       );
       expect(src).toContain('TEST_SUITE === "deploy-cli"');
@@ -711,7 +711,7 @@ describe("regression guards", () => {
 
     it("brev e2e suite relies on an authenticated brev CLI instead of a Brev API token", () => {
       const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.js"),
+        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.ts"),
         "utf-8",
       );
       expect(src).toContain("const hasAuthenticatedBrev =");
@@ -722,7 +722,7 @@ describe("regression guards", () => {
 
     it("brev e2e suite no longer contains the old brev-setup compatibility path", () => {
       const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.js"),
+        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.ts"),
         "utf-8",
       );
       expect(src).not.toContain("scripts/brev-setup.sh");
