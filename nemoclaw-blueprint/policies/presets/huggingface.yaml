@@ -33,5 +33,12 @@ network_policies:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
     binaries:
+      # Sandbox base images install python3/node to one of two paths depending
+      # on distro: /usr/local/bin/* (manual install / nvm) or /usr/bin/*
+      # (Debian/Ubuntu apt). OPA does exact-path matching on the binary
+      # allowlist, so both must be present or the call is silently 403'd by
+      # the L7 proxy. See issue #481.
       - { path: /usr/local/bin/python3 }
+      - { path: /usr/bin/python3 }
       - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }

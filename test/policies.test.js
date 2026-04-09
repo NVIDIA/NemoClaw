@@ -592,18 +592,28 @@ describe("policies", () => {
       }
     });
 
-    it("communication presets allowlist both node paths used by sandbox base images (#481)", () => {
+    it("presets that gate on node allowlist both node paths used by sandbox base images (#481)", () => {
       // Sandbox base images install Node.js to /usr/local/bin/node (manual /
       // nvm) or /usr/bin/node (Debian/Ubuntu apt). OPA does exact-path
-      // matching, so both must be present in the communication preset
-      // binary allowlist or the bot is silently 403'd by the L7 proxy.
-      const communicationPresets = ["telegram", "discord", "slack"];
-      for (const name of communicationPresets) {
+      // matching, so both must be present in any preset whose binary allowlist
+      // gates on node, or the bot is silently 403'd by the L7 proxy.
+      const nodePresets = ["telegram", "discord", "slack", "outlook", "jira", "huggingface"];
+      for (const name of nodePresets) {
         const content = policies.loadPreset(name);
         expect(content).toBeTruthy();
         expect(content).toContain("/usr/local/bin/node");
         expect(content).toContain("/usr/bin/node");
       }
+    });
+
+    it("huggingface preset allowlists both python3 paths used by sandbox base images (#481)", () => {
+      // Same Debian/Ubuntu vs manual-install split applies to python3 — the
+      // huggingface preset gates on python3 for the inference SDK and must
+      // cover both /usr/local/bin/python3 and /usr/bin/python3.
+      const content = policies.loadPreset("huggingface");
+      expect(content).toBeTruthy();
+      expect(content).toContain("/usr/local/bin/python3");
+      expect(content).toContain("/usr/bin/python3");
     });
   });
 
