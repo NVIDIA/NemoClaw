@@ -334,6 +334,13 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+// File descriptor we hold across the lifetime of an acquired lock. On
+// release, fstat(fd).ino vs stat(path).ino confirms the on-disk path
+// still resolves to the file we created — closing the residual TOCTOU
+// window in the inode-only check by tying ownership to a live
+// descriptor rather than a value re-read from disk. See #1281.
+let heldLockFd: number | null = null;
+
 export function acquireOnboardLock(command: string | null = null): LockResult {
   ensureSessionDir();
   const payload = JSON.stringify(
@@ -355,9 +362,13 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
   const MAX_ATTEMPTS = 5;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    let fd: number;
     try {
-      fs.writeFileSync(LOCK_FILE, payload, { flag: "wx", mode: 0o600 });
-      return { acquired: true, lockFile: LOCK_FILE, stale: false };
+      // openSync(..., "wx", mode) is the atomic create-or-fail
+      // primitive. We hold the resulting fd at module scope so
+      // releaseOnboardLock() can later confirm the on-disk path still
+      // resolves to the same file we created (fstat ino vs stat ino).
+      fd = fs.openSync(LOCK_FILE, "wx", 0o600);
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") {
         throw error;
@@ -401,11 +412,25 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
       // Stale: unlink ONLY if the file on disk is still the same inode
       // we just read. If a concurrent process already cleaned up and
       // claimed the lock, the inode will have changed and we'll fall
-      // through to the next iteration where writeFileSync(wx) will
-      // either succeed (we win) or fail EEXIST against the new holder
-      // (and we re-read it).
+      // through to the next iteration where openSync(wx) will either
+      // succeed (we win) or fail EEXIST against the new holder (and we
+      // re-read it).
       unlinkIfInodeMatches(LOCK_FILE, staleInode);
+      continue;
     }
+
+    // Atomic create succeeded — write the payload and keep the fd open
+    // for the lifetime of the lock so releaseOnboardLock() can verify
+    // ownership via the live descriptor.
+    try {
+      fs.writeSync(fd, payload);
+    } catch (writeError) {
+      try { fs.closeSync(fd); } catch { /* ignore */ }
+      try { fs.unlinkSync(LOCK_FILE); } catch { /* ignore */ }
+      throw writeError;
+    }
+    heldLockFd = fd;
+    return { acquired: true, lockFile: LOCK_FILE, stale: false };
   }
 
   return { acquired: false, lockFile: LOCK_FILE, stale: true };
@@ -447,6 +472,46 @@ function unlinkIfInodeMatches(filePath: string, expectedInode: bigint | null): v
 }
 
 export function releaseOnboardLock(): void {
+  // Preferred path: we hold the fd from a successful acquireOnboardLock.
+  // Verify the on-disk path still resolves to the same file (fstat ino
+  // == stat ino) before unlinking. If they disagree, another process
+  // has already replaced the lock and we must NOT touch their file.
+  if (heldLockFd !== null) {
+    const fd = heldLockFd;
+    heldLockFd = null;
+    try {
+      const fdStat = fs.fstatSync(fd, { bigint: true });
+      let pathInode: bigint | null = null;
+      try {
+        const pathStat = fs.statSync(LOCK_FILE, { bigint: true });
+        pathInode = pathStat.ino;
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+          // Unexpected — fall through to closing the fd.
+        }
+      }
+      if (pathInode !== null && pathInode === fdStat.ino) {
+        try {
+          fs.unlinkSync(LOCK_FILE);
+        } catch (unlinkError: unknown) {
+          if ((unlinkError as NodeJS.ErrnoException)?.code !== "ENOENT") {
+            // Best effort — surfacing this would mask the real error.
+          }
+        }
+      }
+    } catch {
+      // fstat can fail if the fd was already closed somehow; nothing
+      // safe to do beyond closing it below.
+    } finally {
+      try { fs.closeSync(fd); } catch { /* ignore */ }
+    }
+    return;
+  }
+
+  // Fallback (no fd held — e.g., a test wrote the lock file directly,
+  // or a previous release already ran): preserve the legacy pid-based
+  // behavior so we never unlink a malformed lock and never unlink a
+  // lock owned by another pid.
   try {
     if (!fs.existsSync(LOCK_FILE)) return;
     let existing: LockInfo | null = null;

@@ -209,11 +209,17 @@ describe("onboard session", () => {
             args,
           );
           // Now swap the file: unlink + recreate produces a new inode.
+          // Use a DISTINCT live PID (the parent process — typically the
+          // shell that launched the test runner) so the assertions
+          // below can verify the mutual-exclusion loser path: if
+          // acquireOnboardLock confused the fresh claim with its own
+          // pid, this test would silently pass even though the
+          // contender should lose. See CodeRabbit feedback on PR #1656.
           fs.unlinkSync(session.LOCK_FILE);
           fs.writeFileSync(
             session.LOCK_FILE,
             JSON.stringify({
-              pid: process.pid,
+              pid: process.ppid,
               startedAt: new Date().toISOString(),
               command: "nemoclaw onboard (fresh claim from concurrent process)",
             }),
@@ -240,11 +246,14 @@ describe("onboard session", () => {
       // and NOT a new one written by acquireOnboardLock after a wrong
       // unlink.
       expect(onDisk.command).toContain("fresh claim from concurrent process");
-      // acquireOnboardLock may report success (it found its own pid in
-      // the fresh claim, which happens to be process.pid in this test
-      // simulation) or report a contender — what matters is that the
-      // fresh claim survived. We assert the survival above.
-      void result;
+      // The fresh claim is held by a different live PID (process.ppid),
+      // so acquireOnboardLock MUST report acquisition failure and
+      // surface that pid as the holder. This is the mutual-exclusion
+      // loser path — without it, the regression would only verify the
+      // fresh file survived, not that the contender correctly stood
+      // down.
+      expect(result.acquired).toBe(false);
+      expect(result.holderPid).toBe(process.ppid);
     } finally {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (fs as any).statSync = originalStatSync;
