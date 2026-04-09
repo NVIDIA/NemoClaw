@@ -1,6 +1,8 @@
 # NemoClaw on Kubernetes
 
 > **⚠️ Experimental**: This deployment method is intended for **trying out NemoClaw on Kubernetes**, not for production use. It requires a **privileged pod** running **Docker-in-Docker (DinD)** to create isolated sandbox environments. Operational requirements (storage, runtime, security policies) vary by cluster configuration.
+>
+> See **[SECURITY.md](./SECURITY.md)** for the specific patterns that make this manifest evaluation-only and what a production-ready deployment would look like instead.
 
 The sample manifest now uses a few safer defaults out of the box:
 
