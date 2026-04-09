@@ -188,4 +188,44 @@ describe("base sandbox policy", () => {
       expect(hasGet).toBe(true);
     }
   });
+
+  it("regression #1583: base policy does not silently grant GitHub access", () => {
+    // Until #1583, github.com / api.github.com plus the git/gh
+    // binaries lived in network_policies and were therefore included
+    // in every sandbox regardless of user opt-in. The fix moves the
+    // entry into a discoverable preset (`presets/github.yaml`). This
+    // assertion blocks the regression where someone re-adds a github
+    // entry to the base policy and silently re-grants every sandbox
+    // unscoped GitHub access.
+    const np = policy.network_policies as Record<string, unknown> | undefined;
+    expect(np && typeof np === "object" && "github" in np).toBe(false);
+
+    // Belt and braces: also assert no endpoint in any base-policy
+    // entry references github.com or api.github.com, so the
+    // regression can't be smuggled in under a renamed key.
+    const githubHosts = findEndpoints(
+      (h) => h === "github.com" || h === "api.github.com",
+    );
+    expect(githubHosts).toEqual([]);
+  });
+});
+
+describe("github preset", () => {
+  // The fix for #1583 was *only* meaningful if the github preset
+  // actually exists and is loadable — otherwise users have no way to
+  // opt in. Verify the preset file is present and well-formed.
+  const PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/github.yaml",
+    import.meta.url,
+  );
+
+  it("regression #1583: github preset file exists and parses", () => {
+    const raw = readFileSync(PRESET_PATH, "utf-8");
+    const parsed = YAML.parse(raw) as Record<string, unknown>;
+    expect(parsed).toEqual(expect.objectContaining({}));
+    const meta = parsed.preset as { name?: unknown } | undefined;
+    expect(meta?.name).toBe("github");
+    const np = parsed.network_policies as Record<string, unknown> | undefined;
+    expect(np && "github" in np).toBe(true);
+  });
 });
