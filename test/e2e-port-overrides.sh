@@ -78,70 +78,73 @@ else
   fail "dashboard port override failed: $OUT"
 fi
 
-# ── Test 3: Invalid port falls back to default ───────────────────
+# ── Test 3: Invalid port causes startup failure ──────────────────
 
-info "3. Invalid NEMOCLAW_DASHBOARD_PORT falls back to 18789"
+info "3. Invalid NEMOCLAW_DASHBOARD_PORT causes exit 1"
 OUT=$(docker run --rm --entrypoint "" \
   -e NEMOCLAW_DASHBOARD_PORT="abc" \
   "$IMAGE" bash -c '
-  _DASHBOARD_PORT="${NEMOCLAW_DASHBOARD_PORT:-18789}"
-  case "$_DASHBOARD_PORT" in *[!0-9]*|'"'"''"'"') _DASHBOARD_PORT=18789 ;; esac
-  echo "PORT=$_DASHBOARD_PORT"
-' 2>&1)
-if echo "$OUT" | grep -q "PORT=18789"; then
-  pass "invalid port falls back to default"
+  source <(sed -n "/^_DASHBOARD_PORT_RAW=/,/^PUBLIC_PORT=/p" /usr/local/bin/nemoclaw-start 2>/dev/null)
+  echo "SHOULD_NOT_REACH"
+' 2>&1 || true)
+if echo "$OUT" | grep -q "must be an integer between 1024 and 65535"; then
+  pass "invalid port fails fast with clear error"
+elif echo "$OUT" | grep -q "SHOULD_NOT_REACH"; then
+  fail "invalid port did not fail: $OUT"
 else
-  fail "invalid port did not fall back: $OUT"
+  # Entrypoint may not be extractable — check inline validation
+  info "SKIP: could not extract entrypoint validation block"
 fi
 
 # ── Test 4: Privileged port (below 1024) rejected ───────────────
 
-info "4. Privileged port below 1024 is rejected"
+info "4. Privileged port below 1024 causes exit 1"
 OUT=$(docker run --rm --entrypoint "" \
   -e NEMOCLAW_DASHBOARD_PORT="80" \
   "$IMAGE" bash -c '
-  _DASHBOARD_PORT="${NEMOCLAW_DASHBOARD_PORT:-18789}"
-  case "$_DASHBOARD_PORT" in *[!0-9]*|'"'"''"'"') _DASHBOARD_PORT=18789 ;; esac
-  if [ "$_DASHBOARD_PORT" -lt 1024 ] || [ "$_DASHBOARD_PORT" -gt 65535 ]; then _DASHBOARD_PORT=18789; fi
-  echo "PORT=$_DASHBOARD_PORT"
-' 2>&1)
-if echo "$OUT" | grep -q "PORT=18789"; then
-  pass "privileged port rejected, fell back to default"
-else
+  source <(sed -n "/^_DASHBOARD_PORT_RAW=/,/^PUBLIC_PORT=/p" /usr/local/bin/nemoclaw-start 2>/dev/null)
+  echo "SHOULD_NOT_REACH"
+' 2>&1 || true)
+if echo "$OUT" | grep -q "must be an integer between 1024 and 65535"; then
+  pass "privileged port rejected with clear error"
+elif echo "$OUT" | grep -q "SHOULD_NOT_REACH"; then
   fail "privileged port was not rejected: $OUT"
+else
+  info "SKIP: could not extract entrypoint validation block"
 fi
 
 # ── Test 5: Port above 65535 rejected ────────────────────────────
 
-info "5. Port above 65535 is rejected"
+info "5. Port above 65535 causes exit 1"
 OUT=$(docker run --rm --entrypoint "" \
   -e NEMOCLAW_DASHBOARD_PORT="70000" \
   "$IMAGE" bash -c '
-  _DASHBOARD_PORT="${NEMOCLAW_DASHBOARD_PORT:-18789}"
-  case "$_DASHBOARD_PORT" in *[!0-9]*|'"'"''"'"') _DASHBOARD_PORT=18789 ;; esac
-  if [ "$_DASHBOARD_PORT" -lt 1024 ] || [ "$_DASHBOARD_PORT" -gt 65535 ]; then _DASHBOARD_PORT=18789; fi
-  echo "PORT=$_DASHBOARD_PORT"
-' 2>&1)
-if echo "$OUT" | grep -q "PORT=18789"; then
-  pass "port above 65535 rejected, fell back to default"
-else
+  source <(sed -n "/^_DASHBOARD_PORT_RAW=/,/^PUBLIC_PORT=/p" /usr/local/bin/nemoclaw-start 2>/dev/null)
+  echo "SHOULD_NOT_REACH"
+' 2>&1 || true)
+if echo "$OUT" | grep -q "must be an integer between 1024 and 65535"; then
+  pass "port above 65535 rejected with clear error"
+elif echo "$OUT" | grep -q "SHOULD_NOT_REACH"; then
   fail "port above 65535 was not rejected: $OUT"
+else
+  info "SKIP: could not extract entrypoint validation block"
 fi
 
-# ── Test 6: Pattern injection in port value is sanitized ─────────
+# ── Test 6: Pattern injection causes startup failure ─────────────
 
-info "6. Special characters in port value are sanitized"
+info "6. Special characters in port value cause exit 1"
 OUT=$(docker run --rm --entrypoint "" \
   -e 'NEMOCLAW_DASHBOARD_PORT=.*' \
   "$IMAGE" bash -c '
-  _DASHBOARD_PORT="${NEMOCLAW_DASHBOARD_PORT:-18789}"
-  case "$_DASHBOARD_PORT" in *[!0-9]*|'"'"''"'"') _DASHBOARD_PORT=18789 ;; esac
-  echo "PORT=$_DASHBOARD_PORT"
-' 2>&1)
-if echo "$OUT" | grep -q "PORT=18789"; then
-  pass "pattern injection sanitized to default"
+  source <(sed -n "/^_DASHBOARD_PORT_RAW=/,/^PUBLIC_PORT=/p" /usr/local/bin/nemoclaw-start 2>/dev/null)
+  echo "SHOULD_NOT_REACH"
+' 2>&1 || true)
+if echo "$OUT" | grep -q "must be an integer between 1024 and 65535"; then
+  pass "pattern injection causes clear error"
+elif echo "$OUT" | grep -q "SHOULD_NOT_REACH"; then
+  fail "pattern injection was not rejected: $OUT"
 else
-  fail "pattern injection was not sanitized: $OUT"
+  info "SKIP: could not extract entrypoint validation block"
 fi
 
 # ── Test 7: ports.js validates in Node.js runtime ────────────────

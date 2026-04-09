@@ -140,17 +140,22 @@ case "${1:-}" in
   nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
 esac
 NEMOCLAW_CMD=("$@")
-# Validate NEMOCLAW_DASHBOARD_PORT if set (same range check as ports.js).
-_DASHBOARD_PORT="${NEMOCLAW_DASHBOARD_PORT:-18789}"
-case "$_DASHBOARD_PORT" in
-  *[!0-9]* | '')
-    echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT:-}' — using default 18789" >&2
-    _DASHBOARD_PORT=18789
-    ;;
-esac
-if [ "$_DASHBOARD_PORT" -lt 1024 ] || [ "$_DASHBOARD_PORT" -gt 65535 ]; then
-  echo "[SECURITY] NEMOCLAW_DASHBOARD_PORT=${_DASHBOARD_PORT} out of range (1024-65535) — using default 18789" >&2
+# Validate NEMOCLAW_DASHBOARD_PORT if set (same behavior as ports.js: fail fast).
+_DASHBOARD_PORT_RAW="${NEMOCLAW_DASHBOARD_PORT:-}"
+if [ -z "$_DASHBOARD_PORT_RAW" ]; then
   _DASHBOARD_PORT=18789
+else
+  _DASHBOARD_PORT="$(printf '%s' "$_DASHBOARD_PORT_RAW" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  case "$_DASHBOARD_PORT" in
+    *[!0-9]* | '')
+      echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$_DASHBOARD_PORT" -lt 1024 ] || [ "$_DASHBOARD_PORT" -gt 65535 ]; then
+    echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
+    exit 1
+  fi
 fi
 CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${_DASHBOARD_PORT}}"
 PUBLIC_PORT="$_DASHBOARD_PORT"
