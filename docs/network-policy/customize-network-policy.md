@@ -107,6 +107,7 @@ Available presets:
 | `brew` | Homebrew (Linuxbrew) package manager |
 | `discord` | Discord webhook API |
 | `huggingface` | Hugging Face inference router |
+| `heygen` | HeyGen video API (`api.heygen.com`), OAuth token endpoints on `api2.heygen.com`, uploads and files |
 | `jira` | Atlassian Jira API |
 | `npm` | npm and Yarn registries |
 | `outlook` | Microsoft 365 and Outlook |

@@ -75,6 +75,9 @@ describe("credential exposure in process arguments", () => {
     // Messaging and additional credentials are listed explicitly
     expect(blocklist).toContain('"BEDROCK_API_KEY"');
     expect(blocklist).toContain('"DISCORD_BOT_TOKEN"');
+    expect(blocklist).toContain('"HEYGEN_ACCESS_TOKEN"');
+    expect(blocklist).toContain('"HEYGEN_API_KEY"');
+    expect(blocklist).toContain('"HEYGEN_REFRESH_TOKEN"');
     expect(blocklist).toContain('"SLACK_BOT_TOKEN"');
     expect(blocklist).toContain('"TELEGRAM_BOT_TOKEN"');
     expect(src).toMatch(/streamSandboxCreate\(createCommand, sandboxEnv(?:, \{)?/);

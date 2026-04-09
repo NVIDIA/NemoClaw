@@ -95,10 +95,24 @@ selectFromList(items, options)
 }
 
 describe("policies", () => {
+  const EXPECTED_PRESET_NAMES = [
+    "brave",
+    "brew",
+    "discord",
+    "heygen",
+    "huggingface",
+    "jira",
+    "npm",
+    "outlook",
+    "pypi",
+    "slack",
+    "telegram",
+  ];
+
   describe("listPresets", () => {
-    it("returns all 10 presets", () => {
+    it("returns all expected presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(10);
+      expect(presets.length).toBe(EXPECTED_PRESET_NAMES.length);
     });
 
     it("each preset has name and description", () => {
@@ -113,18 +127,7 @@ describe("policies", () => {
         .listPresets()
         .map((p) => p.name)
         .sort();
-      const expected = [
-        "brave",
-        "brew",
-        "discord",
-        "huggingface",
-        "jira",
-        "npm",
-        "outlook",
-        "pypi",
-        "slack",
-        "telegram",
-      ];
+      const expected = [...EXPECTED_PRESET_NAMES].sort();
       expect(names).toEqual(expected);
     });
   });
@@ -160,6 +163,15 @@ describe("policies", () => {
       const content = policies.loadPreset("telegram");
       const hosts = policies.getPresetEndpoints(content);
       expect(hosts).toEqual(["api.telegram.org"]);
+    });
+
+    it("extracts hosts from heygen preset including api2 for OAuth", () => {
+      const content = policies.loadPreset("heygen");
+      const hosts = policies.getPresetEndpoints(content);
+      expect(hosts.includes("api.heygen.com")).toBe(true);
+      expect(hosts.includes("api2.heygen.com")).toBe(true);
+      expect(hosts.includes("upload.heygen.com")).toBe(true);
+      expect(hosts.includes("files.heygen.com")).toBe(true);
     });
 
     it("every preset has at least one endpoint", () => {

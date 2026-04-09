@@ -2482,6 +2482,9 @@ async function createSandbox(
     // Additional credentials not in REMOTE_PROVIDER_CONFIG
     "BEDROCK_API_KEY",
     "DISCORD_BOT_TOKEN",
+    "HEYGEN_ACCESS_TOKEN",
+    "HEYGEN_API_KEY",
+    "HEYGEN_REFRESH_TOKEN",
     "SLACK_BOT_TOKEN",
     "TELEGRAM_BOT_TOKEN",
   ]);
@@ -3606,6 +3609,17 @@ async function _setupPolicies(sandboxName) {
     suggestions.push("discord");
     console.log("  Auto-detected: DISCORD_BOT_TOKEN → suggesting discord preset");
   }
+  if (
+    getCredential("HEYGEN_API_KEY") ||
+    process.env.HEYGEN_API_KEY ||
+    getCredential("HEYGEN_ACCESS_TOKEN") ||
+    process.env.HEYGEN_ACCESS_TOKEN ||
+    getCredential("HEYGEN_REFRESH_TOKEN") ||
+    process.env.HEYGEN_REFRESH_TOKEN
+  ) {
+    suggestions.push("heygen");
+    console.log("  Auto-detected: HeyGen credentials → suggesting heygen preset");
+  }
 
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
@@ -3874,6 +3888,17 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) suggestions.push("slack");
   if (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN)
     suggestions.push("discord");
+  if (
+    getCredential("HEYGEN_API_KEY") ||
+    process.env.HEYGEN_API_KEY ||
+    getCredential("HEYGEN_ACCESS_TOKEN") ||
+    process.env.HEYGEN_ACCESS_TOKEN ||
+    getCredential("HEYGEN_REFRESH_TOKEN") ||
+    process.env.HEYGEN_REFRESH_TOKEN
+  ) {
+    suggestions.push("heygen");
+    console.log("  Auto-detected: HeyGen credentials → suggesting heygen preset");
+  }
   if (webSearchConfig) suggestions.push("brave");
 
   const allPresets = policies.listPresets();
