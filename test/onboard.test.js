@@ -331,7 +331,9 @@ describe("onboard helpers", () => {
   });
 
   it("regression #1409: leaves Dockerfile defaults when proxy env is unset", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-default-"));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-default-"),
+    );
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
     fs.writeFileSync(
       dockerfilePath,
@@ -529,17 +531,17 @@ describe("onboard helpers", () => {
 
   it("regression #1317: getBlueprintMinOpenshellVersion returns null on missing or unparseable blueprint", () => {
     // Missing directory
-    const missingDir = path.join(os.tmpdir(), "nemoclaw-blueprint-missing-" + Date.now().toString());
+    const missingDir = path.join(
+      os.tmpdir(),
+      "nemoclaw-blueprint-missing-" + Date.now().toString(),
+    );
     expect(getBlueprintMinOpenshellVersion(missingDir)).toBe(null);
 
     // Present file, missing field — must NOT block onboard
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-no-field-"));
     const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
     fs.mkdirSync(blueprintDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(blueprintDir, "blueprint.yaml"),
-      'version: "0.1.0"\n',
-    );
+    fs.writeFileSync(path.join(blueprintDir, "blueprint.yaml"), 'version: "0.1.0"\n');
     try {
       expect(getBlueprintMinOpenshellVersion(tmpDir)).toBe(null);
     } finally {
@@ -592,7 +594,7 @@ describe("onboard helpers", () => {
     // Sanity check against the real on-disk blueprint so a future edit that
     // accidentally drops or breaks the field is caught by CI rather than at
     // a user's onboard time.
-    const repoRoot = path.resolve(__dirname, "..");
+    const repoRoot = path.resolve(import.meta.dirname, "..");
     const v = getBlueprintMinOpenshellVersion(repoRoot);
     expect(v).not.toBe(null);
     expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(v)).toBe(true);
