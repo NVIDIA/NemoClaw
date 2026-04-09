@@ -206,6 +206,16 @@ Task-oriented guides for inference, deployment, and policy management.
 {bdg-secondary}`How-To`
 :::
 
+:::{grid-item-card} Agent Skills
+:link: resources/agent-skills
+:link-type: doc
+
+Use AI coding assistants with NemoClaw's built-in agent skills for guided setup and operation.
+
++++
+{bdg-secondary}`Resource`
+:::
+
 ::::
 
 ---
@@ -302,6 +312,7 @@ Troubleshooting <reference/troubleshooting>
 :caption: Resources
 :hidden:
 
+Agent Skills <resources/agent-skills>
 Report Vulnerabilities <https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md>
 resources/license
 Discord <https://discord.gg/XFpfPv9Uvx>
