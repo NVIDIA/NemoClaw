@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
 
-const ONBOARD_JS = path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js");
+const ONBOARD_JS = path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts");
 const RUNNER_TS = path.join(import.meta.dirname, "..", "nemoclaw", "src", "blueprint", "runner.ts");
 
 // Matches --credential followed by a value containing "=" (i.e. KEY=VALUE).
