@@ -20,6 +20,43 @@ describe("inventory commands", () => {
     );
   });
 
+  it("regression #1641: after destroy clears the session, list shows the onboard hint instead of resurrecting the sandbox", async () => {
+    // Reproduces the loop the reporter described in #1641: a sandbox
+    // is destroyed, registry is empty, the destroy code clears
+    // session.sandboxName to null (added in #1555), and the next
+    // `nemoclaw list` MUST NOT recover the destroyed sandbox from
+    // the session. Without the destroy-side clear, list would print
+    // "Recovered sandbox inventory from the last onboard session"
+    // and the user would loop between `list` (showing the sandbox)
+    // and `connect` (removing it as stale).
+    const lines: string[] = [];
+    await listSandboxesCommand({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [],
+        defaultSandbox: null,
+        recoveredFromSession: false,
+        recoveredFromGateway: 0,
+      }),
+      getLiveInference: () => null,
+      // Post-destroy session: sandboxName has been cleared. The
+      // session object itself still exists (other fields populated)
+      // but loadLastSession returning a session with sandboxName=null
+      // must NOT trip the "last onboarded sandbox was 'X'" hint.
+      loadLastSession: () => ({ sandboxName: null }),
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines).toContain(
+      "  No sandboxes registered. Run `nemoclaw onboard` to get started.",
+    );
+    expect(
+      lines.some((line) =>
+        line.includes("Recovered sandbox inventory from the last onboard session"),
+      ),
+    ).toBe(false);
+    expect(lines.some((line) => line.includes("last onboarded sandbox was"))).toBe(false);
+  });
+
   it("prints recovered sandbox inventory details", async () => {
     const lines: string[] = [];
     await listSandboxesCommand({
