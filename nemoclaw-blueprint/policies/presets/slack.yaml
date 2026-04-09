@@ -42,4 +42,10 @@ network_policies:
         port: 443
         access: full
     binaries:
+      # Sandbox base images install Node.js to one of two paths depending on
+      # distro: /usr/local/bin/node (manual install / nvm) or /usr/bin/node
+      # (Debian/Ubuntu apt). OPA does exact-path matching on the binary
+      # allowlist, so both must be present or the bot is silently 403'd by
+      # the L7 proxy. See issue #481.
       - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }

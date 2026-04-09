@@ -591,6 +591,20 @@ describe("policies", () => {
         expect(content.includes(expectedBinary)).toBe(true);
       }
     });
+
+    it("communication presets allowlist both node paths used by sandbox base images (#481)", () => {
+      // Sandbox base images install Node.js to /usr/local/bin/node (manual /
+      // nvm) or /usr/bin/node (Debian/Ubuntu apt). OPA does exact-path
+      // matching, so both must be present in the communication preset
+      // binary allowlist or the bot is silently 403'd by the L7 proxy.
+      const communicationPresets = ["telegram", "discord", "slack"];
+      for (const name of communicationPresets) {
+        const content = policies.loadPreset(name);
+        expect(content).toBeTruthy();
+        expect(content).toContain("/usr/local/bin/node");
+        expect(content).toContain("/usr/bin/node");
+      }
+    });
   });
 
   describe("selectFromList", () => {
