@@ -342,7 +342,9 @@ export async function actionApply(
 
 function validateRunId(rid: string): void {
   if (!/^[a-zA-Z0-9_-]+$/.test(rid)) {
-    throw new Error(`Invalid run ID: '${rid}'`);
+    throw new Error(
+      `Invalid run ID: must contain only alphanumeric characters, hyphens, and underscores`,
+    );
   }
 }
 
