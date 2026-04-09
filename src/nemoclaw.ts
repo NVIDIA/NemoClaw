@@ -6,7 +6,6 @@ const { execFileSync, spawnSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
-const { DASHBOARD_PORT } = require("../bin/lib/ports");
 
 // ---------------------------------------------------------------------------
 // Color / style — respects NO_COLOR and non-TTY environments.
@@ -87,7 +86,7 @@ const REMOTE_UNINSTALL_URL = buildVersionedUninstallUrl(getVersion());
 let OPENSHELL_BIN = null;
 const MIN_LOGS_OPENSHELL_VERSION = "0.0.7";
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
-const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
+const DASHBOARD_FORWARD_PORT = "18789";
 
 function getOpenshellBinary() {
   if (!OPENSHELL_BIN) {
@@ -209,14 +208,14 @@ function executeSandboxCommand(sandboxName, command) {
 
 /**
  * Check whether the OpenClaw gateway process is running inside the sandbox.
- * Uses the gateway's HTTP endpoint (dashboard port) as the source of truth,
+ * Uses the gateway's HTTP endpoint (port 18789) as the source of truth,
  * since the gateway runs as a separate user and pgrep may not see it.
  * Returns true (running), false (stopped), or null (cannot determine).
  */
 function isSandboxGatewayRunning(sandboxName) {
   const result = executeSandboxCommand(
     sandboxName,
-    `curl -sf --max-time 3 http://127.0.0.1:${DASHBOARD_PORT}/ > /dev/null 2>&1 && echo RUNNING || echo STOPPED`,
+    "curl -sf --max-time 3 http://127.0.0.1:18789/ > /dev/null 2>&1 && echo RUNNING || echo STOPPED",
   );
   if (!result) return null;
   if (result.stdout === "RUNNING") return true;
@@ -238,7 +237,7 @@ function recoverSandboxProcesses(sandboxName) {
     "[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null;",
     // Re-check liveness before touching anything — another caller may have
     // already recovered the gateway between our initial check and now (TOCTOU).
-    `if curl -sf --max-time 3 http://127.0.0.1:${DASHBOARD_PORT}/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;`,
+    "if curl -sf --max-time 3 http://127.0.0.1:18789/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;",
     // Clean stale lock files from the previous run (gateway checks these)
     "rm -rf /tmp/openclaw-*/gateway.*.lock 2>/dev/null;",
     // Clean stale temp files from the previous run
@@ -263,7 +262,7 @@ function recoverSandboxProcesses(sandboxName) {
 }
 
 /**
- * Re-establish the dashboard port forward (dashboard port) to the sandbox.
+ * Re-establish the dashboard port forward (18789) to the sandbox.
  */
 function ensureSandboxPortForward(sandboxName) {
   runOpenshell(["forward", "stop", DASHBOARD_FORWARD_PORT], { ignoreError: true });

@@ -24,7 +24,6 @@ function envInt(name, fallback) {
 const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 180);
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("../../bin/lib/runner");
 const { stageOptimizedSandboxBuildContext } = require("../../bin/lib/sandbox-build-context");
-const { DASHBOARD_PORT, GATEWAY_PORT, VLLM_PORT, OLLAMA_PORT } = require("../../bin/lib/ports");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -246,7 +245,7 @@ function getSandboxReuseState(sandboxName) {
 function repairRecordedSandbox(sandboxName) {
   if (!sandboxName) return;
   note(`  [resume] Cleaning up recorded sandbox '${sandboxName}' before recreating it.`);
-  runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+  runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
   runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
   registry.removeSandbox(sandboxName);
 }
@@ -1855,7 +1854,7 @@ async function preflight() {
   const gatewayReuseState = getGatewayReuseState(gatewayStatus, gwInfo, activeGatewayInfo);
   if (gatewayReuseState === "stale" || gatewayReuseState === "active-unnamed") {
     console.log("  Cleaning up previous NemoClaw session...");
-    runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+    runOpenshell(["forward", "stop", "18789"], { ignoreError: true });
     const destroyResult = runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], {
       ignoreError: true,
     });
@@ -1906,15 +1905,15 @@ async function preflight() {
     }
   }
 
-  // Required ports — gateway and the dashboard port
+  // Required ports — gateway (8080) and dashboard (18789)
   const requiredPorts = [
-    { port: GATEWAY_PORT, label: "OpenShell gateway" },
-    { port: DASHBOARD_PORT, label: "NemoClaw dashboard" },
+    { port: 8080, label: "OpenShell gateway" },
+    { port: 18789, label: "NemoClaw dashboard" },
   ];
   for (const { port, label } of requiredPorts) {
     const portCheck = await checkPortAvailable(port);
     if (!portCheck.ok) {
-      if ((port === GATEWAY_PORT || port === DASHBOARD_PORT) && gatewayReuseState === "healthy") {
+      if ((port === 8080 || port === 18789) && gatewayReuseState === "healthy") {
         console.log(`  ✓ Port ${port} already owned by healthy NemoClaw runtime (${label})`);
         continue;
       }
@@ -2573,7 +2572,7 @@ async function createSandbox(
   console.log("  Waiting for NemoClaw dashboard to become ready...");
   for (let i = 0; i < 15; i++) {
     const readyMatch = runCapture(
-      `openshell sandbox exec ${shellQuote(sandboxName)} curl -sf http://localhost:${DASHBOARD_PORT}/ 2>/dev/null || echo "no"`,
+      `openshell sandbox exec ${shellQuote(sandboxName)} curl -sf http://localhost:18789/ 2>/dev/null || echo "no"`,
       { ignoreError: true },
     );
     if (readyMatch && !readyMatch.includes("no")) {
@@ -2587,7 +2586,7 @@ async function createSandbox(
     }
   }
 
-  // Release any stale forward on the dashboard port before claiming it for the new sandbox.
+  // Release any stale forward on port 18789 before claiming it for the new sandbox.
   // A previous onboard run may have left the port forwarded to a different sandbox,
   // which would silently prevent the new sandbox's dashboard from being reachable.
   ensureDashboardForward(sandboxName, chatUiUrl);
@@ -2637,10 +2636,10 @@ async function setupNim(gpu) {
 
   // Detect local inference options
   const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
-  const ollamaRunning = !!runCapture(`curl -sf http://localhost:${OLLAMA_PORT}/api/tags 2>/dev/null`, {
+  const ollamaRunning = !!runCapture("curl -sf http://localhost:11434/api/tags 2>/dev/null", {
     ignoreError: true,
   });
-  const vllmRunning = !!runCapture(`curl -sf http://localhost:${VLLM_PORT}/v1/models 2>/dev/null`, {
+  const vllmRunning = !!runCapture("curl -sf http://localhost:8000/v1/models 2>/dev/null", {
     ignoreError: true,
   });
   const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
@@ -2658,7 +2657,7 @@ async function setupNim(gpu) {
     options.push({
       key: "ollama",
       label:
-        `Local Ollama (localhost:${OLLAMA_PORT})${ollamaRunning ? " — running" : ""}` +
+        `Local Ollama (localhost:11434)${ollamaRunning ? " — running" : ""}` +
         (ollamaRunning ? " (suggested)" : ""),
     });
   }
@@ -3049,11 +3048,11 @@ async function setupNim(gpu) {
           // On WSL2, binding to 0.0.0.0 creates a dual-stack socket that Docker
           // cannot reach via host-gateway. The default 127.0.0.1 binding works
           // because WSL2 relays IPv4-only sockets to the Windows host.
-          const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} `;
+          const ollamaEnv = isWsl() ? "" : "OLLAMA_HOST=0.0.0.0:11434 ";
           run(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
           sleep(2);
         }
-        console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
+        console.log("  ✓ Using Ollama on localhost:11434");
         provider = "ollama-local";
         credentialEnv = "OPENAI_API_KEY";
         endpointUrl = getLocalProviderBaseUrl(provider);
@@ -3108,9 +3107,9 @@ async function setupNim(gpu) {
         console.log("  Installing Ollama via Homebrew...");
         run("brew install ollama", { ignoreError: true });
         console.log("  Starting Ollama...");
-        run(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+        run("OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &", { ignoreError: true });
         sleep(2);
-        console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
+        console.log("  ✓ Using Ollama on localhost:11434");
         provider = "ollama-local";
         credentialEnv = "OPENAI_API_KEY";
         endpointUrl = getLocalProviderBaseUrl(provider);
@@ -3161,12 +3160,12 @@ async function setupNim(gpu) {
         }
         break;
       } else if (selected.key === "vllm") {
-        console.log(`  ✓ Using existing vLLM on localhost:${VLLM_PORT}`);
+        console.log("  ✓ Using existing vLLM on localhost:8000");
         provider = "vllm-local";
         credentialEnv = "OPENAI_API_KEY";
         endpointUrl = getLocalProviderBaseUrl(provider);
         // Query vLLM for the actual model ID
-        const vllmModelsRaw = runCapture(`curl -sf http://localhost:${VLLM_PORT}/v1/models 2>/dev/null`, {
+        const vllmModelsRaw = runCapture("curl -sf http://localhost:8000/v1/models 2>/dev/null", {
           ignoreError: true,
         });
         try {
@@ -3184,7 +3183,7 @@ async function setupNim(gpu) {
           }
         } catch {
           console.error(
-            `  Could not query vLLM models endpoint. Is vLLM running on localhost:${VLLM_PORT}?`,
+            "  Could not query vLLM models endpoint. Is vLLM running on localhost:8000?",
           );
           process.exit(1);
         }
@@ -3994,7 +3993,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
 
 // ── Dashboard ────────────────────────────────────────────────────
 
-const CONTROL_UI_PORT = DASHBOARD_PORT;
+const CONTROL_UI_PORT = 18789;
 
 // Dashboard helpers — delegated to src/lib/dashboard.ts
 // isLoopbackHostname — see urlUtils import above
@@ -4077,7 +4076,7 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
 
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
-  // console.log(`  Dashboard    http://localhost:${DASHBOARD_PORT}/`);
+  // console.log(`  Dashboard    http://localhost:18789/`);
   console.log(`  Sandbox      ${sandboxName} (Landlock + seccomp + netns)`);
   console.log(`  Model        ${model} (${providerLabel})`);
   console.log(`  NIM          ${nimLabel}`);
