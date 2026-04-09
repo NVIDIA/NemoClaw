@@ -32,6 +32,53 @@ fi
 # into commands executed by the entrypoint or auto-pair watcher.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# Redirect tool caches and state to /tmp so they don't fail on the read-only
+# /sandbox home directory (#804). Without these, tools would try to create
+# dotfiles (~/.npm, ~/.cache, ~/.bash_history, ~/.gitconfig, ~/.local, ~/.claude)
+# in the Landlock read-only home and fail.
+#
+# IMPORTANT: This array is the single source of truth for tool-cache redirects.
+# The same entries are emitted into /tmp/nemoclaw-proxy-env.sh (see below) so
+# that `openshell sandbox connect` sessions also pick up the redirects.
+_TOOL_REDIRECTS=(
+  'npm_config_cache=/tmp/.npm-cache'
+  'XDG_CACHE_HOME=/tmp/.cache'
+  'XDG_CONFIG_HOME=/tmp/.config'
+  'XDG_DATA_HOME=/tmp/.local/share'
+  'XDG_STATE_HOME=/tmp/.local/state'
+  'XDG_RUNTIME_DIR=/tmp/.runtime'
+  'NODE_REPL_HISTORY=/tmp/.node_repl_history'
+  'HISTFILE=/tmp/.bash_history'
+  'GIT_CONFIG_GLOBAL=/tmp/.gitconfig'
+  'GNUPGHOME=/tmp/.gnupg'
+  'PYTHONUSERBASE=/tmp/.local'
+  'PYTHONHISTFILE=/tmp/.python_history'
+  'CLAUDE_CONFIG_DIR=/tmp/.claude'
+  'npm_config_prefix=/tmp/npm-global'
+)
+for _redir in "${_TOOL_REDIRECTS[@]}"; do
+  export "${_redir?}"
+done
+
+# Pre-create redirected directories to prevent ownership conflicts.
+# In root mode: the gateway starts first (as gateway user) and inherits these
+# env vars — if it creates a dir first, it would be gateway:gateway 755 and
+# the sandbox user couldn't write subdirs later. Creating them as root with
+# explicit sandbox ownership ensures the sandbox user always has write access.
+# In non-root mode: we're already the sandbox user, so mkdir -p is sufficient —
+# directories are owned by us automatically. Using install -o would fail with
+# EPERM because only root can chown. Ref: #804
+if [ "$(id -u)" -eq 0 ]; then
+  install -d -o sandbox -g sandbox -m 755 \
+    /tmp/.npm-cache /tmp/.cache /tmp/.config /tmp/.local/share \
+    /tmp/.local/state /tmp/.runtime /tmp/.gnupg /tmp/.claude \
+    /tmp/npm-global
+else
+  mkdir -p /tmp/.npm-cache /tmp/.cache /tmp/.config /tmp/.local/share \
+    /tmp/.local/state /tmp/.runtime /tmp/.gnupg /tmp/.claude \
+    /tmp/npm-global
+fi
+
 # ── Drop unnecessary Linux capabilities ──────────────────────────
 # CIS Docker Benchmark 5.3: containers should not run with default caps.
 # OpenShell manages the container runtime so we cannot pass --cap-drop=ALL
@@ -96,6 +143,7 @@ NEMOCLAW_CMD=("$@")
 CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:18789}"
 PUBLIC_PORT=18789
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
+_SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
 
 # ── Config integrity check ──────────────────────────────────────
 # The config hash was pinned at build time. If it doesn't match,
@@ -439,55 +487,40 @@ export no_proxy="$_NO_PROXY_VAL"
 # OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
 # time a user connects via `openshell sandbox connect`.  The connect path spawns
 # `/bin/bash -i` (interactive, non-login), which sources ~/.bashrc — NOT
-# ~/.profile or /etc/profile.d/*.  Write the full proxy config to ~/.bashrc so
-# interactive sessions see the correct values.
+# ~/.profile or /etc/profile.d/*.
+#
+# The /sandbox home directory is Landlock read-only (#804), so we write the proxy
+# config to /tmp/nemoclaw-proxy-env.sh. The pre-built .bashrc and .profile
+# source this file automatically.
+#
+# SECURITY: /tmp has the sticky bit, so when running as root the sandbox user
+# cannot delete or replace this root-owned file. In non-root mode privilege
+# separation is already disabled, so this is an accepted limitation.
 #
 # Both uppercase and lowercase variants are required: Node.js undici prefers
 # lowercase (no_proxy) over uppercase (NO_PROXY) when both are set.
 # curl/wget use uppercase.  gRPC C-core uses lowercase.
-#
-# Also write to ~/.profile for login-shell paths (e.g. `sandbox create -- cmd`
-# which spawns `bash -lc`).
-#
-# Idempotency: begin/end markers delimit the block so it can be replaced
-# on restart if NEMOCLAW_PROXY_HOST/PORT change, without duplicating.
-_PROXY_MARKER_BEGIN="# nemoclaw-proxy-config begin"
-_PROXY_MARKER_END="# nemoclaw-proxy-config end"
-_PROXY_SNIPPET="${_PROXY_MARKER_BEGIN}
-export HTTP_PROXY=\"$_PROXY_URL\"
-export HTTPS_PROXY=\"$_PROXY_URL\"
-export NO_PROXY=\"$_NO_PROXY_VAL\"
-export http_proxy=\"$_PROXY_URL\"
-export https_proxy=\"$_PROXY_URL\"
-export no_proxy=\"$_NO_PROXY_VAL\"
-${_PROXY_MARKER_END}"
-
-if [ "$(id -u)" -eq 0 ]; then
-  _SANDBOX_HOME=$(getent passwd sandbox 2>/dev/null | cut -d: -f6)
-  _SANDBOX_HOME="${_SANDBOX_HOME:-/sandbox}"
-else
-  _SANDBOX_HOME="${HOME:-/sandbox}"
-fi
-
-_write_proxy_snippet() {
-  local target="$1"
-  if [ -f "$target" ] && grep -qF "$_PROXY_MARKER_BEGIN" "$target" 2>/dev/null; then
-    local tmp
-    tmp="$(mktemp)"
-    awk -v b="$_PROXY_MARKER_BEGIN" -v e="$_PROXY_MARKER_END" \
-      '$0==b{s=1;next} $0==e{s=0;next} !s' "$target" >"$tmp"
-    printf '%s\n' "$_PROXY_SNIPPET" >>"$tmp"
-    cat "$tmp" >"$target"
-    rm -f "$tmp"
-    return 0
-  fi
-  printf '\n%s\n' "$_PROXY_SNIPPET" >>"$target"
-}
-
-if [ -w "$_SANDBOX_HOME" ]; then
-  _write_proxy_snippet "${_SANDBOX_HOME}/.bashrc"
-  _write_proxy_snippet "${_SANDBOX_HOME}/.profile"
-fi
+_PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
+# Remove any pre-existing file/symlink to prevent symlink-following attacks,
+# then write a fresh file.
+rm -f "$_PROXY_ENV_FILE" 2>/dev/null || true
+{
+  cat <<PROXYEOF
+# Proxy configuration (overrides narrow OpenShell defaults on connect)
+export HTTP_PROXY="$_PROXY_URL"
+export HTTPS_PROXY="$_PROXY_URL"
+export NO_PROXY="$_NO_PROXY_VAL"
+export http_proxy="$_PROXY_URL"
+export https_proxy="$_PROXY_URL"
+export no_proxy="$_NO_PROXY_VAL"
+PROXYEOF
+  # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
+  echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
+  for _redir in "${_TOOL_REDIRECTS[@]}"; do
+    echo "export ${_redir?}"
+  done
+} >"$_PROXY_ENV_FILE"
+chmod 644 "$_PROXY_ENV_FILE"
 
 # Forward SIGTERM/SIGINT to child processes for graceful shutdown.
 # This script is PID 1 — without a trap, signals interrupt wait and
@@ -508,7 +541,12 @@ cleanup() {
 # ── Main ─────────────────────────────────────────────────────────
 
 echo 'Setting up NemoClaw...' >&2
-[ -f .env ] && chmod 600 .env
+# Best-effort: .env may not exist, and /sandbox is Landlock read-only (#804).
+if [ -f .env ]; then
+  if ! chmod 600 .env 2>/dev/null; then
+    echo "[SECURITY WARNING] Could not restrict .env permissions — file may be world-readable (read-only filesystem)" >&2
+  fi
+fi
 
 # ── Non-root fallback ──────────────────────────────────────────
 # OpenShell runs containers with --security-opt=no-new-privileges, which

@@ -18,6 +18,9 @@ function envInt(name, fallback) {
   const n = Number(raw);
   return Number.isFinite(n) ? Math.max(0, Math.round(n)) : fallback;
 }
+
+/** Inference timeout (seconds) for local providers (Ollama, vLLM, NIM). */
+const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 180);
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
 const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
 const {
@@ -105,7 +108,7 @@ const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
-const BRAVE_SEARCH_HELP_URL = "https://api.search.brave.com/app/keys";
+const BRAVE_SEARCH_HELP_URL = "https://api-dashboard.search.brave.com/app/keys";
 
 const REMOTE_PROVIDER_CONFIG = {
   build: {
@@ -384,6 +387,53 @@ function getInstalledOpenshellVersion(versionOutput = null) {
   const match = output.match(/openshell\s+([0-9]+\.[0-9]+\.[0-9]+)/i);
   if (!match) return null;
   return match[1];
+}
+
+/**
+ * Compare two semver-like x.y.z strings. Returns true iff `left >= right`.
+ * Non-numeric or missing components are treated as 0.
+ */
+function versionGte(left = "0.0.0", right = "0.0.0") {
+  const lhs = String(left)
+    .split(".")
+    .map((part) => Number.parseInt(part, 10) || 0);
+  const rhs = String(right)
+    .split(".")
+    .map((part) => Number.parseInt(part, 10) || 0);
+  const length = Math.max(lhs.length, rhs.length);
+  for (let index = 0; index < length; index += 1) {
+    const a = lhs[index] || 0;
+    const b = rhs[index] || 0;
+    if (a > b) return true;
+    if (a < b) return false;
+  }
+  return true;
+}
+
+/**
+ * Read `min_openshell_version` from nemoclaw-blueprint/blueprint.yaml. Returns
+ * null if the blueprint or field is missing or unparseable — callers must
+ * treat null as "no constraint configured" so a malformed install does not
+ * become a hard onboard blocker. See #1317.
+ */
+function getBlueprintMinOpenshellVersion(rootDir = ROOT) {
+  try {
+    // Lazy require: yaml is already a dependency via bin/lib/policies.js but
+    // pulling it at module load would slow down `nemoclaw --help` for users
+    // who never reach the preflight path.
+    const YAML = require("yaml");
+    const blueprintPath = path.join(rootDir, "nemoclaw-blueprint", "blueprint.yaml");
+    if (!fs.existsSync(blueprintPath)) return null;
+    const raw = fs.readFileSync(blueprintPath, "utf8");
+    const parsed = YAML.parse(raw);
+    const value = parsed && parsed.min_openshell_version;
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    if (!/^[0-9]+\.[0-9]+\.[0-9]+/.test(trimmed)) return null;
+    return trimmed;
+  } catch {
+    return null;
+  }
 }
 
 function getStableGatewayImageRef(versionOutput = null) {
@@ -940,6 +990,26 @@ function patchStagedDockerfile(
     /^ARG NEMOCLAW_BUILD_ID=.*$/m,
     `ARG NEMOCLAW_BUILD_ID=${buildId}`,
   );
+  // Honor NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT exported in the host
+  // shell so the sandbox-side nemoclaw-start.sh sees them via $ENV at runtime.
+  // Without this, the host export is silently dropped at image build time and
+  // the sandbox falls back to the default 10.200.0.1:3128 proxy. See #1409.
+  const PROXY_HOST_RE = /^[A-Za-z0-9._:-]+$/;
+  const PROXY_PORT_RE = /^[0-9]{1,5}$/;
+  const proxyHostEnv = process.env.NEMOCLAW_PROXY_HOST;
+  if (proxyHostEnv && PROXY_HOST_RE.test(proxyHostEnv)) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_PROXY_HOST=.*$/m,
+      `ARG NEMOCLAW_PROXY_HOST=${proxyHostEnv}`,
+    );
+  }
+  const proxyPortEnv = process.env.NEMOCLAW_PROXY_PORT;
+  if (proxyPortEnv && PROXY_PORT_RE.test(proxyPortEnv)) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_PROXY_PORT=.*$/m,
+      `ARG NEMOCLAW_PROXY_PORT=${proxyPortEnv}`,
+    );
+  }
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_WEB_CONFIG_B64=.*$/m,
     `ARG NEMOCLAW_WEB_CONFIG_B64=${webSearch.buildWebSearchDockerConfig(
@@ -1650,7 +1720,9 @@ async function preflight() {
     console.log("  ⓘ Running under WSL");
   }
 
-  // OpenShell CLI
+  // OpenShell CLI — install if missing, upgrade if below minimum version.
+  // MIN_VERSION in install-openshell.sh handles the version gate; calling it
+  // when openshell already exists is safe (it exits early if version is OK).
   let openshellInstall = { localBin: null, futureShellPathHint: null };
   if (!isOpenshellInstalled()) {
     console.log("  openshell CLI not found. Installing...");
@@ -1660,10 +1732,66 @@ async function preflight() {
       console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
       process.exit(1);
     }
+  } else {
+    // Ensure the installed version meets the minimum required by install-openshell.sh.
+    // The script itself is idempotent — it exits early if the version is already sufficient.
+    const currentVersion = getInstalledOpenshellVersion();
+    if (!currentVersion) {
+      console.log("  openshell version could not be determined. Reinstalling...");
+      openshellInstall = installOpenshell();
+      if (!openshellInstall.installed) {
+        console.error("  Failed to reinstall openshell CLI.");
+        console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+        process.exit(1);
+      }
+    } else {
+      const parts = currentVersion.split(".").map(Number);
+      const minParts = [0, 0, 24]; // must match MIN_VERSION in scripts/install-openshell.sh
+      const needsUpgrade =
+        parts[0] < minParts[0] ||
+        (parts[0] === minParts[0] && parts[1] < minParts[1]) ||
+        (parts[0] === minParts[0] && parts[1] === minParts[1] && parts[2] < minParts[2]);
+      if (needsUpgrade) {
+        console.log(
+          `  openshell ${currentVersion} is below minimum required version. Upgrading...`,
+        );
+        openshellInstall = installOpenshell();
+        if (!openshellInstall.installed) {
+          console.error("  Failed to upgrade openshell CLI.");
+          console.error("  Install manually: https://github.com/NVIDIA/OpenShell/releases");
+          process.exit(1);
+        }
+      }
+    }
   }
-  console.log(
-    `  ✓ openshell CLI: ${runCaptureOpenshell(["--version"], { ignoreError: true }) || "unknown"}`,
-  );
+  const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
+  console.log(`  ✓ openshell CLI: ${openshellVersionOutput || "unknown"}`);
+  // Enforce nemoclaw-blueprint/blueprint.yaml's min_openshell_version. Without
+  // this check, users can complete a full onboard against an OpenShell that
+  // pre-dates required CLI surface (e.g. `sandbox exec`, `--upload`) and hit
+  // silent failures inside the sandbox at runtime. See #1317.
+  const installedOpenshellVersion = getInstalledOpenshellVersion(openshellVersionOutput);
+  const minOpenshellVersion = getBlueprintMinOpenshellVersion();
+  if (
+    installedOpenshellVersion &&
+    minOpenshellVersion &&
+    !versionGte(installedOpenshellVersion, minOpenshellVersion)
+  ) {
+    console.error("");
+    console.error(
+      `  ✗ openshell ${installedOpenshellVersion} is below the minimum required by this NemoClaw release.`,
+    );
+    console.error(`    blueprint.yaml min_openshell_version: ${minOpenshellVersion}`);
+    console.error("");
+    console.error("    Upgrade openshell and retry:");
+    console.error("      https://github.com/NVIDIA/OpenShell/releases");
+    console.error(
+      "    Or remove the existing binary so the installer can re-fetch a current build:",
+    );
+    console.error('      command -v openshell && rm -f "$(command -v openshell)"');
+    console.error("");
+    process.exit(1);
+  }
   if (openshellInstall.futureShellPathHint) {
     console.log(
       `  Note: openshell was installed to ${openshellInstall.localBin} for this onboarding run.`,
@@ -1696,6 +1824,45 @@ async function preflight() {
       registry.clearAll();
     }
     console.log("  ✓ Previous session cleaned up");
+  }
+
+  // Clean up orphaned Docker containers from interrupted onboard (e.g. Ctrl+C
+  // during gateway start). The container may still be running even though
+  // OpenShell has no metadata for it (gatewayReuseState === "missing").
+  if (gatewayReuseState === "missing") {
+    const containerName = `openshell-cluster-${GATEWAY_NAME}`;
+    const inspectResult = run(
+      `docker inspect --type container --format '{{.State.Status}}' ${containerName} 2>/dev/null`,
+      { ignoreError: true, suppressOutput: true },
+    );
+    if (inspectResult.status === 0) {
+      console.log("  Cleaning up orphaned gateway container...");
+      run(`docker stop ${containerName} >/dev/null 2>&1`, {
+        ignoreError: true,
+        suppressOutput: true,
+      });
+      run(`docker rm ${containerName} >/dev/null 2>&1`, {
+        ignoreError: true,
+        suppressOutput: true,
+      });
+      const postInspectResult = run(
+        `docker inspect --type container ${containerName} 2>/dev/null`,
+        {
+          ignoreError: true,
+          suppressOutput: true,
+        },
+      );
+      if (postInspectResult.status !== 0) {
+        run(
+          `docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs docker volume rm 2>/dev/null || true`,
+          { ignoreError: true, suppressOutput: true },
+        );
+        registry.clearAll();
+        console.log("  ✓ Orphaned gateway container removed");
+      } else {
+        console.warn("  ! Found an orphaned gateway container, but automatic cleanup failed.");
+      }
+    }
   }
 
   // Required ports — gateway (8080) and dashboard (18789)
@@ -2516,7 +2683,7 @@ async function setupNim(gpu) {
         if (selected.key === "custom") {
           const endpointInput = isNonInteractive()
             ? (process.env.NEMOCLAW_ENDPOINT_URL || "").trim()
-            : await prompt("  OpenAI-compatible base URL (e.g., https://openrouter.ai/api/v1): ");
+            : await prompt("  OpenAI-compatible base URL (e.g., https://openrouter.ai): ");
           const navigation = getNavigationChoice(endpointInput);
           if (navigation === "back") {
             console.log("  Returning to provider selection.");
@@ -3116,7 +3283,17 @@ async function setupInference(
       console.error(`  ${providerResult.message}`);
       process.exit(providerResult.status || 1);
     }
-    runOpenshell(["inference", "set", "--no-verify", "--provider", "vllm-local", "--model", model]);
+    runOpenshell([
+      "inference",
+      "set",
+      "--no-verify",
+      "--provider",
+      "vllm-local",
+      "--model",
+      model,
+      "--timeout",
+      String(LOCAL_INFERENCE_TIMEOUT_SECS),
+    ]);
   } else if (provider === "ollama-local") {
     const validation = validateLocalProvider(provider, runCapture);
     if (!validation.ok) {
@@ -3140,6 +3317,8 @@ async function setupInference(
       "ollama-local",
       "--model",
       model,
+      "--timeout",
+      String(LOCAL_INFERENCE_TIMEOUT_SECS),
     ]);
     console.log(`  Priming Ollama model: ${model}`);
     run(getOllamaWarmupCommand(model), { ignoreError: true });
@@ -4311,6 +4490,8 @@ module.exports = {
   getNavigationChoice,
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
+  getBlueprintMinOpenshellVersion,
+  versionGte,
   getRequestedModelHint,
   getRequestedProviderHint,
   getStableGatewayImageRef,

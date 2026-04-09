@@ -68,6 +68,40 @@ describe("nemoclaw-start non-root fallback", () => {
   });
 });
 
+describe("nemoclaw-start _SANDBOX_HOME variable (#1609)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("defines _SANDBOX_HOME before first use", () => {
+    const defPos = src.indexOf('_SANDBOX_HOME="/sandbox"');
+    expect(defPos).toBeGreaterThan(-1);
+
+    // All usages must come after the definition
+    const usages = [...src.matchAll(/\$\{?_SANDBOX_HOME\}?/g)];
+    expect(usages.length).toBeGreaterThanOrEqual(3);
+    for (const m of usages) {
+      // Skip the definition line itself
+      if (m.index === defPos) continue;
+      expect(m.index).toBeGreaterThan(defPos);
+    }
+  });
+
+  it("uses _SANDBOX_HOME for rc file paths in export_gateway_token", () => {
+    const exportFn = src.match(/export_gateway_token\(\) \{([\s\S]*?)^\}/m);
+    expect(exportFn).toBeTruthy();
+    expect(exportFn[1]).toContain("${_SANDBOX_HOME}/.bashrc");
+    expect(exportFn[1]).toContain("${_SANDBOX_HOME}/.profile");
+  });
+
+  it("uses _SANDBOX_HOME for rc file paths in install_configure_guard", () => {
+    const guardFn = src.match(
+      /install_configure_guard\(\) \{([\s\S]*?)^validate_openclaw_symlinks/m,
+    );
+    expect(guardFn).toBeTruthy();
+    expect(guardFn[1]).toContain("${_SANDBOX_HOME}/.bashrc");
+    expect(guardFn[1]).toContain("${_SANDBOX_HOME}/.profile");
+  });
+});
+
 describe("nemoclaw-start gateway token export (#1114)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 

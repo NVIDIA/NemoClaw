@@ -41,7 +41,9 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 WORKDIR /opt/nemoclaw
 RUN npm ci --omit=dev
 
-# Set up blueprint for local resolution
+# Set up blueprint for local resolution.
+# Blueprints are immutable at runtime; DAC protection (root ownership) is applied
+# later since /sandbox/.nemoclaw is Landlock read_write for plugin state (#804).
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
@@ -73,6 +75,12 @@ ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0
 # Unique per build to ensure each image gets a fresh auth token.
 # Pass --build-arg NEMOCLAW_BUILD_ID=$(date +%s) to bust the cache.
 ARG NEMOCLAW_BUILD_ID=default
+# Sandbox egress proxy host/port. Defaults match the OpenShell-injected
+# gateway (10.200.0.1:3128). Operators on non-default networks can override
+# at sandbox creation time by exporting NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT
+# before running `nemoclaw onboard`. See #1409.
+ARG NEMOCLAW_PROXY_HOST=10.200.0.1
+ARG NEMOCLAW_PROXY_PORT=3128
 
 # SECURITY: Promote build-args to env vars so the Python script reads them
 # via os.environ, never via string interpolation into Python source code.
@@ -87,7 +95,9 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_WEB_CONFIG_B64=${NEMOCLAW_WEB_CONFIG_B64} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
-    NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH}
+    NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
+    NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
+    NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT}
 
 WORKDIR /sandbox
 USER sandbox
@@ -176,6 +186,28 @@ RUN openclaw doctor --fix > /dev/null 2>&1 || true \
 # The writable state lives in .openclaw-data, reached via the symlinks.
 # hadolint ignore=DL3002
 USER root
+
+# Ensure .openclaw-data subdirs and symlinks exist for logs, credentials, and
+# sandbox. These are defined in Dockerfile.base but the GHCR base image may
+# not have been rebuilt yet. Idempotent — harmless once the base catches up.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/804
+RUN mkdir -p /sandbox/.openclaw-data/logs \
+        /sandbox/.openclaw-data/credentials \
+        /sandbox/.openclaw-data/sandbox \
+    && chown sandbox:sandbox /sandbox/.openclaw-data/logs \
+        /sandbox/.openclaw-data/credentials \
+        /sandbox/.openclaw-data/sandbox \
+    && for dir in logs credentials sandbox; do \
+        if [ -L "/sandbox/.openclaw/$dir" ]; then true; \
+        elif [ -e "/sandbox/.openclaw/$dir" ]; then \
+            cp -a "/sandbox/.openclaw/$dir/." "/sandbox/.openclaw-data/$dir/" 2>/dev/null || true; \
+            rm -rf "/sandbox/.openclaw/$dir"; \
+            ln -s "/sandbox/.openclaw-data/$dir" "/sandbox/.openclaw/$dir"; \
+        else \
+            ln -s "/sandbox/.openclaw-data/$dir" "/sandbox/.openclaw/$dir"; \
+        fi; \
+    done
+
 RUN chown root:root /sandbox/.openclaw \
     && rm -rf /root/.npm /sandbox/.npm \
     && find /sandbox/.openclaw -mindepth 1 -maxdepth 1 -exec chown -h root:root {} + \
@@ -188,6 +220,26 @@ RUN chown root:root /sandbox/.openclaw \
 RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
     && chmod 444 /sandbox/.openclaw/.config-hash \
     && chown root:root /sandbox/.openclaw/.config-hash
+
+# DAC-protect .nemoclaw directory: /sandbox/.nemoclaw is Landlock read_write
+# (for plugin state/config), but the parent and blueprints are immutable at
+# runtime. Root ownership on the parent prevents the agent from renaming or
+# replacing the root-owned blueprints directory. Only state/, migration/,
+# snapshots/, and config.json are sandbox-owned for runtime writes.
+# Sticky bit (1755): OpenShell's prepare_filesystem() chowns read_write paths
+# to run_as_user at sandbox start, flipping this dir to sandbox:sandbox.
+# The sticky bit survives the chown and prevents the sandbox user from
+# renaming or deleting root-owned entries (blueprints/).
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/804
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/1607
+RUN chown root:root /sandbox/.nemoclaw \
+    && chmod 1755 /sandbox/.nemoclaw \
+    && chown -R root:root /sandbox/.nemoclaw/blueprints \
+    && chmod -R 755 /sandbox/.nemoclaw/blueprints \
+    && mkdir -p /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
+    && chown sandbox:sandbox /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
+    && touch /sandbox/.nemoclaw/config.json \
+    && chown sandbox:sandbox /sandbox/.nemoclaw/config.json
 
 # Entrypoint runs as root to start the gateway as the gateway user,
 # then drops to sandbox for agent commands. See nemoclaw-start.sh.
