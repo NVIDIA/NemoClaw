@@ -191,22 +191,15 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/openclaw }
 
-  # npm registry — needed for `openclaw plugins install` and `npm install`.
-  # Read-only: agents only fetch packages, never publish.
-  npm_registry:
-    name: npm_registry
-    endpoints:
-      - host: registry.npmjs.org
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-    binaries:
-      - { path: /usr/local/bin/openclaw }
-      - { path: /usr/local/bin/npm }
-      - { path: /usr/local/bin/node }
+  # NOTE: registry.npmjs.org and the npm/node binaries used to live
+  # here as `npm_registry` and were therefore granted to every sandbox
+  # regardless of whether the user picked the `npm` preset during
+  # onboard. That created the regression in #1458 where a sandbox
+  # onboarded with NO policies could still run `npm install` (while
+  # `pip install` was correctly rejected). The entry has been removed
+  # from the base policy; users who need npm should select the `npm`
+  # preset (`presets/npm.yaml`) during onboard or apply it later via
+  # `openshell policy set`. See #1458.
 
   # ── Messaging — pre-allowed for OpenClaw agent notifications ────
   # Restricted to node processes to prevent arbitrary data exfiltration

@@ -188,4 +188,21 @@ describe("base sandbox policy", () => {
       expect(hasGet).toBe(true);
     }
   });
+
+  it("regression #1458: base policy does not silently grant npm registry access", () => {
+    // Until #1458, registry.npmjs.org and the npm/node binaries lived
+    // in network_policies.npm_registry, so a sandbox onboarded with
+    // ZERO policy presets could still run `npm install` (while
+    // `pip install` was correctly rejected because PyPI was only in
+    // the pypi preset). Removing the entry restores parity: neither
+    // npm nor pypi are reachable until the user opts into the
+    // matching preset. This assertion blocks a re-add by name AND a
+    // smuggle-in via a renamed key that still references the npm
+    // registry host.
+    const np = policy.network_policies as Record<string, unknown> | undefined;
+    expect(np && typeof np === "object" && "npm_registry" in np).toBe(false);
+
+    const npmHosts = findEndpoints((h) => h === "registry.npmjs.org");
+    expect(npmHosts).toEqual([]);
+  });
 });
