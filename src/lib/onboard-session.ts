@@ -346,7 +346,15 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
     2,
   );
 
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // The retry budget here used to be 2, which is the bare minimum needed
+  // for "see-stale → cleanup → reclaim". With the inode-verified cleanup
+  // below it can take a few additional spins under contention because
+  // multiple concurrent stale-cleaners can race and lose to each other
+  // before one reclaims, so give the loop a little more room.
+  // See issue #1281.
+  const MAX_ATTEMPTS = 5;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
       fs.writeFileSync(LOCK_FILE, payload, { flag: "wx", mode: 0o600 });
       return { acquired: true, lockFile: LOCK_FILE, stale: false };
@@ -355,8 +363,17 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
         throw error;
       }
 
+      // Capture both the parsed lock and the inode so we can verify the
+      // file we're about to unlink is STILL the same stale file we read.
+      // Without the inode check, two concurrent processes can both read
+      // the same stale lock, and the slower one will unlink the fresh
+      // lock the faster one just claimed, breaking mutual exclusion.
+      // See issue #1281.
       let existing: LockInfo | null;
+      let staleInode: bigint | null;
       try {
+        const stat = fs.statSync(LOCK_FILE, { bigint: true });
+        staleInode = stat.ino;
         existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
       } catch (readError: unknown) {
         if ((readError as NodeJS.ErrnoException)?.code === "ENOENT") {
@@ -365,9 +382,12 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
         throw readError;
       }
       if (!existing) {
+        // Malformed lock file — leave it on disk (a human or another
+        // process may be mid-write) and retry. Pre-#1281 behavior
+        // preserved: never unlink a malformed lock automatically.
         continue;
       }
-      if (existing && isProcessAlive(existing.pid)) {
+      if (isProcessAlive(existing.pid)) {
         return {
           acquired: false,
           lockFile: LOCK_FILE,
@@ -378,17 +398,52 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
         };
       }
 
-      try {
-        fs.unlinkSync(LOCK_FILE);
-      } catch (unlinkError: unknown) {
-        if ((unlinkError as NodeJS.ErrnoException)?.code !== "ENOENT") {
-          throw unlinkError;
-        }
-      }
+      // Stale: unlink ONLY if the file on disk is still the same inode
+      // we just read. If a concurrent process already cleaned up and
+      // claimed the lock, the inode will have changed and we'll fall
+      // through to the next iteration where writeFileSync(wx) will
+      // either succeed (we win) or fail EEXIST against the new holder
+      // (and we re-read it).
+      unlinkIfInodeMatches(LOCK_FILE, staleInode);
     }
   }
 
   return { acquired: false, lockFile: LOCK_FILE, stale: true };
+}
+
+/**
+ * Unlink LOCK_FILE only if its current inode equals `expectedInode`.
+ * The dual stat-then-unlink is the only portable POSIX primitive Node
+ * exposes for this — there's no atomic "unlink-if-inode" syscall — so
+ * a sufficiently unlucky race can still slip through. The window is
+ * orders of magnitude smaller than the unconditional unlink it
+ * replaces, and the outer loop will detect a wrong unlink on its next
+ * `writeFileSync(wx)` attempt because either we re-create the file
+ * or we observe the new lock with a different inode.
+ */
+function unlinkIfInodeMatches(filePath: string, expectedInode: bigint | null): void {
+  if (expectedInode === null) {
+    return;
+  }
+  try {
+    const stat = fs.statSync(filePath, { bigint: true });
+    if (stat.ino !== expectedInode) {
+      // Someone else replaced the file. Leave it alone.
+      return;
+    }
+  } catch (statError: unknown) {
+    if ((statError as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return;
+    }
+    throw statError;
+  }
+  try {
+    fs.unlinkSync(filePath);
+  } catch (unlinkError: unknown) {
+    if ((unlinkError as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      throw unlinkError;
+    }
+  }
 }
 
 export function releaseOnboardLock(): void {
