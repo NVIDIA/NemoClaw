@@ -10,7 +10,32 @@ type Options = {
   head: string;
 };
 
+type ChangedFile = {
+  status: string;
+  filePath: string;
+};
+
 const RUNTIME_MOVES = moveMap.runtimeMoves as Record<string, string>;
+const REMOVED_SHIM_MOVES: Record<string, string> = {
+  "bin/lib/chat-filter.js": "src/lib/chat-filter.ts",
+  "bin/lib/config-io.js": "src/lib/config-io.ts",
+  "bin/lib/debug.js": "src/lib/debug.ts",
+  "bin/lib/inference-config.js": "src/lib/inference-config.ts",
+  "bin/lib/local-inference.js": "src/lib/local-inference.ts",
+  "bin/lib/nim.js": "src/lib/nim.ts",
+  "bin/lib/onboard-session.js": "src/lib/onboard-session.ts",
+  "bin/lib/platform.js": "src/lib/platform.ts",
+  "bin/lib/preflight.js": "src/lib/preflight.ts",
+  "bin/lib/registry.js": "src/lib/registry.ts",
+  "bin/lib/resolve-openshell.js": "src/lib/resolve-openshell.ts",
+  "bin/lib/runtime-recovery.js": "src/lib/runtime-recovery.ts",
+  "bin/lib/sandbox-build-context.js": "src/lib/sandbox-build-context.ts",
+  "bin/lib/services.js": "src/lib/services.ts",
+  "bin/lib/version.js": "src/lib/version.ts",
+  "bin/lib/onboard.js": "src/lib/onboard.ts",
+  "bin/lib/policies.js": "src/lib/policies.ts",
+  "bin/lib/runner.js": "src/lib/runner.ts",
+};
 
 function parseArgs(argv: string[]): Options {
   let base = "origin/main";
@@ -39,24 +64,37 @@ function parseArgs(argv: string[]): Options {
 }
 
 function printHelp() {
-  console.log(`Usage: npm run ts-migration:guard -- --base origin/main [--head HEAD]\n\nFails when a PR edits legacy migrated JS paths instead of the canonical TS files.`);
+  console.log(`Usage: npm run ts-migration:guard -- --base origin/main [--head HEAD]\n\nFails when a PR edits migrated legacy JS paths or removed compatibility shims instead of the canonical TS files.`);
 }
 
 function runGit(args: string[]): string {
   return String(execFileSync("git", args, { encoding: "utf8" })).trim();
 }
 
-function getChangedFiles(base: string, head: string): string[] {
-  const output = runGit(["diff", "--name-only", `${base}...${head}`]);
+function getChangedFiles(base: string, head: string): ChangedFile[] {
+  const output = runGit(["diff", "--name-status", `${base}...${head}`]);
   if (!output) {
     return [];
   }
-  return output.split("\n").filter(Boolean);
+  return output
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [status, ...rest] = line.split("\t");
+      return {
+        status,
+        filePath: rest[rest.length - 1] || "",
+      };
+    })
+    .filter((entry) => Boolean(entry.filePath));
 }
 
 function canonicalPathFor(filePath: string): string | null {
   if (filePath in RUNTIME_MOVES) {
     return RUNTIME_MOVES[filePath];
+  }
+  if (filePath in REMOVED_SHIM_MOVES) {
+    return REMOVED_SHIM_MOVES[filePath];
   }
   if (/^test\/.*\.test\.js$/.test(filePath)) {
     return filePath.replace(/\.js$/, ".ts");
@@ -74,7 +112,8 @@ function main() {
 
   const changedFiles = getChangedFiles(options.base, options.head);
   const legacyEdits = changedFiles
-    .map((filePath) => ({ filePath, canonical: canonicalPathFor(filePath) }))
+    .filter((entry) => !entry.status.startsWith("D"))
+    .map((entry) => ({ filePath: entry.filePath, canonical: canonicalPathFor(entry.filePath) }))
     .filter((entry) => entry.canonical !== null);
 
   if (legacyEdits.length === 0) {
