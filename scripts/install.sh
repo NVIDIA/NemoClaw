@@ -369,6 +369,52 @@ spin() {
 
 command_exists() { command -v "$1" &>/dev/null; }
 
+readonly -a NEMOCLAW_REEXEC_PRESERVE_ENV=(
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE
+  NEMOCLAW_BOOTSTRAP_PAYLOAD
+  NEMOCLAW_INSTALL_REF
+  NEMOCLAW_INSTALL_REEXECED
+  NEMOCLAW_INSTALL_TAG
+  NEMOCLAW_NON_INTERACTIVE
+  NEMOCLAW_POLICY_MODE
+  NEMOCLAW_PROVIDER
+  NEMOCLAW_REPO_ROOT
+  NEMOCLAW_SANDBOX_NAME
+)
+
+reexec_as_invoking_user() {
+  if ((EUID != 0)) || [[ -z "${SUDO_USER:-}" ]] || [[ "${NEMOCLAW_INSTALL_REEXECED:-}" == "1" ]]; then
+    return 0
+  fi
+
+  local preserve_env script_path
+  script_path="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]:-$0}")"
+  preserve_env="$(
+    IFS=,
+    printf '%s' "${NEMOCLAW_REEXEC_PRESERVE_ENV[*]}"
+  )"
+
+  info "Installer was started with sudo — continuing as ${SUDO_USER} for user-level setup"
+  export NEMOCLAW_INSTALL_REEXECED=1
+  exec sudo --preserve-env="$preserve_env" -H -u "$SUDO_USER" bash "$script_path" "$@"
+}
+
+detect_jetson() {
+  local gpu_name
+  gpu_name="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
+
+  if [[ "$gpu_name" == "NVIDIA Thor" ]]; then
+    printf "%s" "thor"
+  elif [[ "$gpu_name" == "Orin (nvgpu)" ]]; then
+    printf "%s" "orin"
+  fi
+}
+
+detect_sudo() {
+  # 0 if sudo
+  ((EUID == 0))
+}
+
 MIN_NODE_VERSION="22.16.0"
 MIN_NPM_MAJOR=10
 RUNTIME_REQUIREMENT_MSG="NemoClaw requires Node.js >=${MIN_NODE_VERSION} and npm >=${MIN_NPM_MAJOR}."
@@ -752,6 +798,49 @@ fix_npm_permissions() {
   ok "npm configured for user-local installs (~/.npm-global)"
 }
 
+configure_jetson_host() {
+  local family="$1"
+
+  info "Jetson ${family} detected — applying required host configuration"
+
+  if ! detect_sudo; then
+    error "You are running this on a Jetson, sudo access is required to enable necessary kernel modules. Please run this again with sudo."
+  fi
+
+  case "$family" in
+    orin)
+      update-alternatives --set iptables /usr/sbin/iptables-legacy
+
+      if [[ -f /etc/docker/daemon.json ]]; then
+        sed -i '/"iptables": false,/d; /"bridge": "none"/d; s/"default-runtime": "nvidia",/"default-runtime": "nvidia"/' /etc/docker/daemon.json
+      else
+        warn "/etc/docker/daemon.json not found — skipping Docker daemon patch"
+      fi
+      ;;
+    thor) ;;
+    *)
+      error "Unsupported Jetson family: $family"
+      ;;
+  esac
+
+  modprobe br_netfilter
+  sysctl -w net.bridge.bridge-nf-call-iptables=1 >/dev/null
+
+  if [[ "$family" == "orin" ]]; then
+    systemctl restart docker
+  fi
+
+  ok "Jetson ${family} host configuration applied"
+}
+
+run_jetson_setup_step() {
+  local family="$1"
+  [[ -n "$family" ]] || return 0
+
+  step 0 "Jetson Setup"
+  configure_jetson_host "$family"
+}
+
 # ---------------------------------------------------------------------------
 # 3. NemoClaw
 # ---------------------------------------------------------------------------
@@ -1112,6 +1201,8 @@ post_install_message() {
 # Main
 # ---------------------------------------------------------------------------
 main() {
+  local jetson_family=""
+
   # Parse flags
   NON_INTERACTIVE=""
   ACCEPT_THIRD_PARTY_SOFTWARE=""
@@ -1141,8 +1232,22 @@ main() {
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
 
+  if detect_gpu; then
+    jetson_family="$(detect_jetson)"
+  fi
+
+  if ((EUID == 0)) && [[ -n "${SUDO_USER:-}" ]] && [[ "${NEMOCLAW_INSTALL_REEXECED:-}" != "1" ]]; then
+    _INSTALL_START=$SECONDS
+    print_banner
+    run_jetson_setup_step "$jetson_family"
+    reexec_as_invoking_user "$@"
+  fi
+
   _INSTALL_START=$SECONDS
-  print_banner
+  if [[ "${NEMOCLAW_INSTALL_REEXECED:-}" != "1" ]]; then
+    print_banner
+    run_jetson_setup_step "$jetson_family"
+  fi
 
   step 1 "Node.js"
   install_nodejs
