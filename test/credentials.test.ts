@@ -74,6 +74,8 @@ describe("credential prompts", () => {
 
   it("deleteCredential removes a stored key and leaves the file mode intact", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    // Isolate from real environment so getCredential only checks the file.
+    vi.stubEnv("NVIDIA_API_KEY", "");
     const credentials = await importCredentialsModule(home);
 
     credentials.saveCredential("NVIDIA_API_KEY", "nvapi-bad-key");
