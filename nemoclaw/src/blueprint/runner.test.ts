@@ -553,16 +553,14 @@ describe("runner", () => {
 
     // ── Path traversal rejection ──────────────────────────────────
 
-    it.each([
-      "../../etc",
-      "../tmp",
-      "valid.with.dots",
-      "foo\x00bar",
-      "/absolute/path",
-      "",
-    ])("rejects malicious run ID: %j", (rid) => {
-      expect(() => actionStatus(rid)).toThrow(/Invalid run ID/);
-    });
+    it.each(["../../etc", "../tmp", "valid.with.dots", "foo\x00bar", "/absolute/path"])(
+      "rejects malicious run ID: %j",
+      (rid) => {
+        expect(() => {
+          actionStatus(rid);
+        }).toThrow(/Invalid run ID/);
+      },
+    );
 
     it("accepts a legitimate hyphenated run ID", () => {
       const rid = "nc-20260406-abc12345";
@@ -627,16 +625,12 @@ describe("runner", () => {
 
     // ── Path traversal rejection ──────────────────────────────────
 
-    it.each([
-      "../../etc",
-      "../tmp",
-      "valid.with.dots",
-      "foo\x00bar",
-      "/absolute/path",
-      "",
-    ])("rejects malicious run ID: %j", async (rid) => {
-      await expect(actionRollback(rid)).rejects.toThrow(/Invalid run ID/);
-    });
+    it.each(["../../etc", "../tmp", "valid.with.dots", "foo\x00bar", "/absolute/path", ""])(
+      "rejects malicious run ID: %j",
+      async (rid) => {
+        await expect(actionRollback(rid)).rejects.toThrow(/Invalid run ID/);
+      },
+    );
 
     it("defaults sandbox_name to 'openclaw' when not in plan", async () => {
       const runDir = `${RUNS_DIR}/nc-run-1`;
