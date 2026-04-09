@@ -189,3 +189,57 @@ describe("base sandbox policy", () => {
     }
   });
 });
+
+describe("huggingface preset", () => {
+  // The huggingface preset used to allow POST /** on huggingface.co,
+  // which let an agent that found an HF token in the environment
+  // publish models, datasets, and create repositories via
+  // /api/repos/create and friends. Inference Provider traffic flows
+  // through router.huggingface.co, not huggingface.co, so the POST
+  // rule was never required for read-only `from_pretrained` flows.
+  // The fix removes the POST rule from huggingface.co (download-only).
+  // These tests block a regression where someone re-adds it.
+  // See #1432.
+  const HUGGINGFACE_PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/huggingface.yaml",
+    import.meta.url,
+  );
+  const huggingfacePreset = YAML.parse(
+    readFileSync(HUGGINGFACE_PRESET_PATH, "utf-8"),
+  ) as Record<string, unknown>;
+
+  type Rule = { allow?: { method?: string; path?: string } };
+  type Endpoint = { host?: string; rules?: Rule[] };
+
+  function presetEndpoints(): Endpoint[] {
+    const np = huggingfacePreset.network_policies as Record<string, unknown> | undefined;
+    if (!np) return [];
+    const hf = np.huggingface as { endpoints?: unknown } | undefined;
+    return Array.isArray(hf?.endpoints) ? (hf!.endpoints as Endpoint[]) : [];
+  }
+
+  it("regression #1432: huggingface.co has no POST allow rule", () => {
+    const endpoints = presetEndpoints().filter((ep) => ep.host === "huggingface.co");
+    expect(endpoints.length).toBeGreaterThan(0);
+    for (const ep of endpoints) {
+      const rules = Array.isArray(ep.rules) ? ep.rules : [];
+      const hasPost = rules.some(
+        (r) =>
+          r && r.allow && typeof r.allow.method === "string" && r.allow.method.toUpperCase() === "POST",
+      );
+      expect(hasPost).toBe(false);
+    }
+  });
+
+  it("regression #1432: huggingface.co retains GET so downloads still work", () => {
+    const endpoints = presetEndpoints().filter((ep) => ep.host === "huggingface.co");
+    for (const ep of endpoints) {
+      const rules = Array.isArray(ep.rules) ? ep.rules : [];
+      const hasGet = rules.some(
+        (r) =>
+          r && r.allow && typeof r.allow.method === "string" && r.allow.method.toUpperCase() === "GET",
+      );
+      expect(hasGet).toBe(true);
+    }
+  });
+});
