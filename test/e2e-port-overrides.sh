@@ -50,7 +50,7 @@ run_in_container() {
 # ── Test 1: Entrypoint has correct default port ──────────────────
 
 info "1. Default dashboard port is 18789 in entrypoint"
-OUT=$(run_in_container 'grep -o "NEMOCLAW_DASHBOARD_PORT:-[0-9]*" /usr/local/bin/nemoclaw-start | head -1')
+OUT=$(run_in_container 'grep "_DASHBOARD_PORT=18789" /usr/local/bin/nemoclaw-start | head -1')
 if echo "$OUT" | grep -q "18789"; then
   pass "default dashboard port is 18789"
 else
@@ -187,7 +187,7 @@ OUT=$(docker run --rm --entrypoint "" \
 ' 2>&1 || true)
 if echo "$OUT" | grep -q "ERROR=.*Invalid port"; then
   pass "Node.js rejects invalid port with clear error"
-elif echo "$OUT" | grep -qi "MODULE_NOT_FOUND"; then
+elif echo "$OUT" | grep -qi "cannot find module\|MODULE_NOT_FOUND"; then
   info "SKIP: ports.js not found in image"
 else
   fail "Node.js did not reject invalid port: $OUT"
