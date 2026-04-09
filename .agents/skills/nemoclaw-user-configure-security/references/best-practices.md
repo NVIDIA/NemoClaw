@@ -449,7 +449,6 @@ Use for always-on assistants with minimal external access.
 Use when the agent needs package registries, Docker Hub, or broader GitHub access during development tasks.
 
 - Apply the `pypi` and `npm` presets for package installation.
-- Apply the `docker` preset if the agent builds or pulls container images.
 - Keep binary restrictions on all presets.
 - Review the agent's network activity periodically with `openshell term`.
 - Use operator approval for any endpoint not covered by a preset.
