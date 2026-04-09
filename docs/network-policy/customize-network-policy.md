@@ -2,7 +2,9 @@
 title:
   page: "Customize the NemoClaw Sandbox Network Policy"
   nav: "Customize Network Policy"
-description: "Add, remove, or modify allowed endpoints in the sandbox policy."
+description:
+  main: "Add, remove, or modify allowed endpoints in the sandbox policy."
+  agent: "Adds, removes, or modifies allowed endpoints in the sandbox policy. Use when customizing network policy, changing egress rules, or configuring sandbox endpoint access."
 keywords: ["customize nemoclaw network policy", "sandbox egress policy configuration"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "network_policy", "security", "nemoclaw"]
@@ -101,9 +103,10 @@ Available presets:
 
 | Preset | Endpoints |
 |--------|-----------|
+| `brave` | Brave Search API |
+| `brew` | Homebrew (Linuxbrew) package manager |
 | `discord` | Discord webhook API |
-| `docker` | Docker Hub, NVIDIA container registry |
-| `huggingface` | Hugging Face model registry |
+| `huggingface` | Hugging Face inference router |
 | `jira` | Atlassian Jira API |
 | `npm` | npm and Yarn registries |
 | `outlook` | Microsoft 365 and Outlook |

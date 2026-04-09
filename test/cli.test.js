@@ -39,6 +39,7 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Getting Started")).toBeTruthy();
     expect(r.out.includes("Sandbox Management")).toBeTruthy();
     expect(r.out.includes("Policy Presets")).toBeTruthy();
+    expect(r.out.includes("Compatibility Commands")).toBeTruthy();
   });
 
   it("--help exits 0", () => {
@@ -111,7 +112,8 @@ describe("CLI dispatch", () => {
 
     expect(r.code).toBe(0);
     expect(r.out).not.toContain("NVIDIA API Key required");
-    expect(fs.readFileSync(markerFile, "utf8")).toContain("start-services.sh");
+    // Services module now runs in-process (no bash shelling)
+    expect(r.out).toContain("NemoClaw Services");
   });
 
   it("unknown onboard option exits 1", () => {
@@ -126,6 +128,12 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
   });
 
+  it("accepts the third-party software flag in onboard CLI parsing", () => {
+    const r = run("onboard --yes-i-accept-third-party-software --non-interactiv");
+    expect(r.code).toBe(1);
+    expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
+  });
+
   it("setup forwards unknown options into onboard parsing", () => {
     const r = run("setup --non-interactiv");
     expect(r.code).toBe(1);
@@ -134,9 +142,17 @@ describe("CLI dispatch", () => {
   });
 
   it("setup forwards --resume into onboard parsing", () => {
-    const r = run("setup --resume");
+    const r = run("setup --resume --non-interactive --yes-i-accept-third-party-software");
     expect(r.code).toBe(1);
     expect(r.out.includes("deprecated")).toBeTruthy();
+    expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
+  });
+
+  it("setup-spark is a deprecated compatibility alias for onboard", () => {
+    const r = run("setup-spark --resume --non-interactive --yes-i-accept-third-party-software");
+    expect(r.code).toBe(1);
+    expect(r.out.includes("setup-spark` is deprecated")).toBeTruthy();
+    expect(r.out.includes("Use `nemoclaw onboard` instead")).toBeTruthy();
     expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
   });
 
@@ -540,6 +556,67 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("forward stop 18789");
     expect(fs.readFileSync(openshellLog, "utf8")).toContain("gateway destroy -g nemoclaw");
     expect(fs.readFileSync(bashLog, "utf8")).toContain("docker volume ls -q --filter");
+  });
+
+  it("deletes messaging providers when destroying a sandbox", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-providers-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellLog = path.join(home, "openshell.log");
+    const bashLog = path.join(home, "bash.log");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(openshellLog)}`,
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        '  printf "NAME STATUS\\n" >> "$log_file"',
+        "  exit 0",
+        "fi",
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "bash"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(bashLog)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha destroy --yes", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    const log = fs.readFileSync(openshellLog, "utf8");
+    expect(log).toContain("provider delete alpha-telegram-bridge");
+    expect(log).toContain("provider delete alpha-discord-bridge");
+    expect(log).toContain("provider delete alpha-slack-bridge");
   });
 
   it("passes plain logs through without the tail flag", () => {

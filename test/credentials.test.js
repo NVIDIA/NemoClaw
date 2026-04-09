@@ -14,7 +14,9 @@ async function importCredentialsModule(home) {
   vi.doUnmock("readline");
   vi.stubEnv("HOME", home);
   const module = await import("../bin/lib/credentials.js");
-  return module.default ?? module;
+  /** @type {any} */
+  const resolved = module.default ?? module;
+  return resolved;
 }
 
 afterEach(() => {
@@ -41,6 +43,11 @@ describe("credential prompts", () => {
       fs.readFileSync(path.join(home, ".nemoclaw", "credentials.json"), "utf-8"),
     );
     expect(saved).toEqual({ TEST_API_KEY: "nvapi-saved-key" });
+
+    const dirMode = fs.statSync(path.join(home, ".nemoclaw")).mode & 0o777;
+    const fileMode = fs.statSync(path.join(home, ".nemoclaw", "credentials.json")).mode & 0o777;
+    expect(dirMode).toBe(0o700);
+    expect(fileMode).toBe(0o600);
   });
 
   it("prefers environment credentials and ignores malformed credential files", async () => {
@@ -62,6 +69,41 @@ describe("credential prompts", () => {
     credentials.saveCredential("EMPTY_VALUE", " \r\n ");
     expect(credentials.getCredential("MISSING_VALUE")).toBe(null);
     expect(credentials.getCredential("EMPTY_VALUE")).toBe(null);
+  });
+
+  it("deleteCredential removes a stored key and leaves the file mode intact", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credentials = await importCredentialsModule(home);
+
+    credentials.saveCredential("NVIDIA_API_KEY", "nvapi-bad-key");
+    credentials.saveCredential("OTHER_KEY", "other-value");
+    const credsFile = path.join(home, ".nemoclaw", "credentials.json");
+    expect(fs.statSync(credsFile).mode & 0o777).toBe(0o600);
+    expect(credentials.listCredentialKeys()).toEqual(["NVIDIA_API_KEY", "OTHER_KEY"]);
+
+    expect(credentials.deleteCredential("NVIDIA_API_KEY")).toBe(true);
+    expect(fs.statSync(credsFile).mode & 0o777).toBe(0o600);
+    expect(credentials.getCredential("NVIDIA_API_KEY")).toBe(null);
+    expect(credentials.listCredentialKeys()).toEqual(["OTHER_KEY"]);
+    expect(credentials.getCredential("OTHER_KEY")).toBe("other-value");
+
+    // Removing the same key twice is a no-op that returns false.
+    expect(credentials.deleteCredential("NVIDIA_API_KEY")).toBe(false);
+  });
+
+  it("deleteCredential returns false when no credentials file exists", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.deleteCredential("ANYTHING")).toBe(false);
+  });
+
+  it("listCredentialKeys returns sorted key names without exposing values", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.listCredentialKeys()).toEqual([]);
+    credentials.saveCredential("ZETA", "z");
+    credentials.saveCredential("ALPHA", "a");
+    expect(credentials.listCredentialKeys()).toEqual(["ALPHA", "ZETA"]);
   });
 
   it("exits cleanly when answers are staged through a pipe", () => {
@@ -89,18 +131,19 @@ describe("credential prompts", () => {
 
   it("settles the outer prompt promise on secret prompt errors", () => {
     const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "bin", "lib", "credentials.js"),
+      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
       "utf-8",
     );
 
     expect(source).toMatch(/return new Promise\(\(resolve, reject\) => \{/);
-    expect(source).toMatch(/reject\(err\);\s*process\.kill\(process\.pid, "SIGINT"\);/);
-    expect(source).toMatch(/reject\(err\);\s*\}\);/);
+    expect(source).toContain("promptSecret(question)");
+    expect(source).toContain('process.kill(process.pid, "SIGINT")');
+    expect(source).toMatch(/reject\((err|error)\);/);
   });
 
   it("re-raises SIGINT from standard readline prompts instead of treating it like an empty answer", () => {
     const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "bin", "lib", "credentials.js"),
+      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
       "utf-8",
     );
 
@@ -114,7 +157,7 @@ describe("credential prompts", () => {
     expect(credentials.normalizeCredentialValue("  nvapi-good-key\r\n")).toBe("nvapi-good-key");
 
     const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "bin", "lib", "credentials.js"),
+      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
       "utf-8",
     );
     expect(source).toMatch(/while \(true\) \{/);
@@ -124,7 +167,7 @@ describe("credential prompts", () => {
 
   it("masks secret input with asterisks while preserving the underlying value", () => {
     const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "bin", "lib", "credentials.js"),
+      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
       "utf-8",
     );
 

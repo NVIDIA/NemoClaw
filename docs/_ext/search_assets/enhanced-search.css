@@ -1271,7 +1271,7 @@ html[data-theme="dark"] .topic-badge:hover {
 }
 
 .result-breakdown::before {
-    content: '— ';
+    content: '- ';
 }
 
 /* ===== KEYBOARD NAVIGATION FOCUS STATES ===== */

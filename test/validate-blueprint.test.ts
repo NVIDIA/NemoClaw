@@ -83,4 +83,109 @@ describe("base sandbox policy", () => {
   it("has 'network_policies'", () => {
     expect("network_policies" in policy).toBe(true);
   });
+
+  it("no endpoint rule uses wildcard method", () => {
+    const np = policy.network_policies as Record<string, Record<string, unknown>>;
+    const violations: string[] = [];
+    for (const [policyName, cfg] of Object.entries(np)) {
+      const endpoints = cfg.endpoints as Array<Record<string, unknown>> | undefined;
+      if (!endpoints) continue;
+      for (const ep of endpoints) {
+        const rules = ep.rules as Array<Record<string, Record<string, string>>> | undefined;
+        if (!rules) continue;
+        for (const rule of rules) {
+          const method = rule.allow?.method;
+          if (method === "*") {
+            violations.push(`${policyName} → ${ep.host}: method "*"`);
+          }
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it("every endpoint with rules has protocol: rest and enforcement: enforce", () => {
+    const np = policy.network_policies as Record<string, Record<string, unknown>>;
+    const violations: string[] = [];
+    for (const [policyName, cfg] of Object.entries(np)) {
+      const endpoints = cfg.endpoints as Array<Record<string, unknown>> | undefined;
+      if (!endpoints) continue;
+      for (const ep of endpoints) {
+        if (!ep.rules) continue;
+        if (ep.protocol !== "rest") {
+          violations.push(`${policyName} → ${ep.host}: missing protocol: rest`);
+        }
+        if (ep.enforcement !== "enforce") {
+          violations.push(`${policyName} → ${ep.host}: missing enforcement: enforce`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it("allows NVIDIA embeddings on both NVIDIA inference hosts", () => {
+    const np = policy.network_policies as Record<string, Record<string, unknown>>;
+    const endpoints =
+      np.nvidia?.endpoints as
+        | Array<{ host?: string; rules?: Array<{ allow?: { method?: string; path?: string } }> }>
+        | undefined;
+    const missingHosts: string[] = [];
+    for (const host of ["integrate.api.nvidia.com", "inference-api.nvidia.com"]) {
+      const endpoint = endpoints?.find((entry) => entry.host === host);
+      const hasEmbeddingsRule = endpoint?.rules?.some(
+        (rule) =>
+          rule.allow?.method === "POST" && rule.allow?.path === "/v1/embeddings",
+      );
+      if (!hasEmbeddingsRule) {
+        missingHosts.push(host);
+      }
+    }
+    expect(missingHosts).toEqual([]);
+  });
+
+  // Walk every endpoint in every network_policies entry and return the
+  // entries whose host matches `hostMatcher`. Used by the regressions below.
+  type Rule = { allow?: { method?: string; path?: string } };
+  type Endpoint = { host?: string; rules?: Rule[] };
+  function findEndpoints(hostMatcher: (h: string) => boolean): Endpoint[] {
+    const out: Endpoint[] = [];
+    const np = (policy as Record<string, unknown>).network_policies;
+    if (!np || typeof np !== "object") return out;
+    for (const value of Object.values(np as Record<string, unknown>)) {
+      if (!value || typeof value !== "object") continue;
+      const endpoints = (value as { endpoints?: unknown }).endpoints;
+      if (!Array.isArray(endpoints)) continue;
+      for (const ep of endpoints) {
+        if (ep && typeof ep === "object" && typeof (ep as Endpoint).host === "string") {
+          if (hostMatcher((ep as Endpoint).host as string)) {
+            out.push(ep as Endpoint);
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  it("regression #1437: sentry.io has no POST allow rule (multi-tenant exfiltration vector)", () => {
+    const sentryEndpoints = findEndpoints((h) => h === "sentry.io");
+    expect(sentryEndpoints.length).toBeGreaterThan(0); // should still appear
+    for (const ep of sentryEndpoints) {
+      const rules = Array.isArray(ep.rules) ? ep.rules : [];
+      const hasPost = rules.some(
+        (r) => r && r.allow && typeof r.allow.method === "string" && r.allow.method.toUpperCase() === "POST",
+      );
+      expect(hasPost).toBe(false);
+    }
+  });
+
+  it("regression #1437: sentry.io retains GET (harmless, no body for exfil)", () => {
+    const sentryEndpoints = findEndpoints((h) => h === "sentry.io");
+    for (const ep of sentryEndpoints) {
+      const rules = Array.isArray(ep.rules) ? ep.rules : [];
+      const hasGet = rules.some(
+        (r) => r && r.allow && typeof r.allow.method === "string" && r.allow.method.toUpperCase() === "GET",
+      );
+      expect(hasGet).toBe(true);
+    }
+  });
 });

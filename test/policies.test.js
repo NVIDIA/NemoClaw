@@ -2,14 +2,102 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, it, expect, vi } from "vitest";
+import { spawnSync } from "node:child_process";
 import policies from "../bin/lib/policies";
+
+const REPO_ROOT = path.join(import.meta.dirname, "..");
+const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "bin", "nemoclaw.js"));
+const CREDENTIALS_PATH = JSON.stringify(path.join(REPO_ROOT, "bin", "lib", "credentials.js"));
+const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "bin", "lib", "policies.js"));
+const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "bin", "lib", "registry.js"));
+const SELECT_FROM_LIST_ITEMS = [
+  { name: "npm", description: "npm and Yarn registry access" },
+  { name: "pypi", description: "Python Package Index (PyPI) access" },
+];
+
+function runPolicyAdd(confirmAnswer, extraArgs = []) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-add-"));
+  const scriptPath = path.join(tmpDir, "policy-add-check.js");
+  const script = String.raw`
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+const credentials = require(${CREDENTIALS_PATH});
+const calls = [];
+policies.selectFromList = async () => "pypi";
+policies.loadPreset = () => "network_policies:\n  pypi:\n    host: pypi.org\n";
+policies.getPresetEndpoints = () => ["pypi.org"];
+credentials.prompt = async (message) => {
+  calls.push({ type: "prompt", message });
+  return ${JSON.stringify(confirmAnswer)};
+};
+registry.getSandbox = (name) => (name === "test-sandbox" ? { name } : null);
+registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
+policies.listPresets = () => [
+  { name: "npm", description: "npm and Yarn registry access" },
+  { name: "pypi", description: "Python Package Index (PyPI) access" },
+];
+policies.getAppliedPresets = () => [];
+policies.applyPreset = (sandboxName, presetName) => {
+  calls.push({ type: "apply", sandboxName, presetName });
+};
+process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-add", ...${JSON.stringify(extraArgs)}];
+require(${CLI_PATH});
+setImmediate(() => {
+  process.stdout.write("\n__CALLS__" + JSON.stringify(calls));
+});
+`;
+
+  fs.writeFileSync(scriptPath, script);
+
+  return spawnSync(process.execPath, [scriptPath], {
+    cwd: REPO_ROOT,
+    encoding: "utf-8",
+    env: {
+      ...process.env,
+      HOME: tmpDir,
+    },
+  });
+}
+
+function runSelectFromList(input, { applied = [] } = {}) {
+  const script = String.raw`
+const { selectFromList } = require(${POLICIES_PATH});
+const items = JSON.parse(process.env.NEMOCLAW_TEST_ITEMS);
+const options = JSON.parse(process.env.NEMOCLAW_TEST_OPTIONS || "{}");
+
+selectFromList(items, options)
+  .then((value) => {
+    process.stdout.write(String(value) + "\n");
+  })
+  .catch((error) => {
+    const message = error && error.message ? error.message : String(error);
+    process.stderr.write(message);
+    process.exit(1);
+  });
+`;
+
+  return spawnSync(process.execPath, ["-e", script], {
+    cwd: REPO_ROOT,
+    encoding: "utf-8",
+    timeout: 5000,
+    input,
+    env: {
+      ...process.env,
+      NEMOCLAW_TEST_ITEMS: JSON.stringify(SELECT_FROM_LIST_ITEMS),
+      NEMOCLAW_TEST_OPTIONS: JSON.stringify({ applied }),
+    },
+  });
+}
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 9 presets", () => {
+    it("returns all 10 presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(9);
+      expect(presets.length).toBe(10);
     });
 
     it("each preset has name and description", () => {
@@ -25,8 +113,9 @@ describe("policies", () => {
         .map((p) => p.name)
         .sort();
       const expected = [
+        "brave",
+        "brew",
         "discord",
-        "docker",
         "huggingface",
         "jira",
         "npm",
@@ -77,6 +166,82 @@ describe("policies", () => {
         const content = policies.loadPreset(p.name);
         const hosts = policies.getPresetEndpoints(content);
         expect(hosts.length > 0).toBeTruthy();
+      }
+    });
+
+    it("strips surrounding quotes from hostnames", () => {
+      const yaml = "host: \"example.com\"\n  host: 'other.com'";
+      const hosts = policies.getPresetEndpoints(yaml);
+      expect(hosts).toEqual(["example.com", "other.com"]);
+    });
+  });
+
+  describe("applyPreset disclosure logging", () => {
+    it("logs egress endpoints before applying", () => {
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("exit");
+      });
+
+      try {
+        try {
+          policies.applyPreset("test-sandbox", "npm");
+        } catch {
+          /* applyPreset may throw if sandbox not running — we only care about the log */
+        }
+        const messages = logSpy.mock.calls.map((c) => c[0]);
+        expect(
+          messages.some((m) => typeof m === "string" && m.includes("Widening sandbox egress")),
+        ).toBe(true);
+      } finally {
+        logSpy.mockRestore();
+        errSpy.mockRestore();
+        exitSpy.mockRestore();
+      }
+    });
+
+    it("does not log when preset does not exist", () => {
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      try {
+        policies.applyPreset("test-sandbox", "nonexistent");
+        const messages = logSpy.mock.calls.map((c) => c[0]);
+        expect(
+          messages.some((m) => typeof m === "string" && m.includes("Widening sandbox egress")),
+        ).toBe(false);
+      } finally {
+        logSpy.mockRestore();
+        errSpy.mockRestore();
+      }
+    });
+
+    it("does not log when preset exists but has no host entries", () => {
+      const noHostPreset =
+        "preset:\n  name: empty\n\nnetwork_policies:\n  empty_rule:\n    name: empty_rule\n    endpoints: []\n";
+      const loadSpy = vi.spyOn(policies, "loadPreset").mockReturnValue(noHostPreset);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("exit");
+      });
+
+      try {
+        try {
+          policies.applyPreset("test-sandbox", "empty");
+        } catch {
+          /* applyPreset may throw if sandbox not running */
+        }
+        const messages = logSpy.mock.calls.map((c) => c[0]);
+        expect(
+          messages.some((m) => typeof m === "string" && m.includes("Widening sandbox egress")),
+        ).toBe(false);
+      } finally {
+        loadSpy.mockRestore();
+        logSpy.mockRestore();
+        errSpy.mockRestore();
+        exitSpy.mockRestore();
       }
     });
   });
@@ -398,17 +563,29 @@ describe("policies", () => {
       }
     });
 
-    it("package-manager presets use access: full (not tls: terminate)", () => {
-      // Package managers (pip, npm, yarn) use CONNECT tunneling which breaks
-      // under tls: terminate. Ensure these presets use access: full like the
-      // github policy in openclaw-sandbox.yaml.
+    it("package-manager presets use protocol: rest with read-only rules", () => {
+      // Package managers only need read access to install packages.
+      // Using access: full opens a raw CONNECT tunnel that allows
+      // PUT/POST (publish, exfiltrate). Restrict via rest rules.
       const packagePresets = ["pypi", "npm"];
       for (const name of packagePresets) {
         const content = policies.loadPreset(name);
         expect(content).toBeTruthy();
-        expect(content.includes("tls: terminate")).toBe(false);
-        expect(content.includes("access: full")).toBe(true);
+        expect(content.includes("access: full")).toBe(false);
+        expect(content.includes("protocol: rest")).toBe(true);
+        expect(content.includes("method: GET")).toBe(true);
+        // No write methods allowed
+        expect(content.includes("method: PUT")).toBe(false);
+        expect(content.includes("method: POST")).toBe(false);
+        expect(content.includes("method: DELETE")).toBe(false);
       }
+    });
+
+    it("pypi preset allows HEAD for pip lazy-wheel metadata checks", () => {
+      // pip and uv use HEAD requests for lazy wheel downloads and
+      // range-request support. GET-only would break pip install.
+      const content = policies.loadPreset("pypi");
+      expect(content.includes("method: HEAD")).toBe(true);
     });
 
     it("package-manager presets include binaries section", () => {
@@ -424,6 +601,109 @@ describe("policies", () => {
         expect(content.includes("binaries:")).toBe(true);
         expect(content.includes(expectedBinary)).toBe(true);
       }
+    });
+  });
+
+  describe("selectFromList", () => {
+    it("returns preset name by number from stdin input", () => {
+      const result = runSelectFromList("1\n");
+
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toBe("npm");
+      expect(result.stderr).toContain("Choose preset [1]:");
+    });
+
+    it("uses the first preset as the default when input is empty", () => {
+      const result = runSelectFromList("\n");
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("Choose preset [1]:");
+      expect(result.stdout.trim()).toBe("npm");
+    });
+
+    it("defaults to the first not-applied preset", () => {
+      const result = runSelectFromList("\n", { applied: ["npm"] });
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("Choose preset [2]:");
+      expect(result.stdout.trim()).toBe("pypi");
+    });
+
+    it("rejects selecting an already-applied preset", () => {
+      const result = runSelectFromList("1\n", { applied: ["npm"] });
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("Preset 'npm' is already applied.");
+      expect(result.stdout.trim()).toBe("null");
+    });
+
+    it("rejects out-of-range preset number", () => {
+      const result = runSelectFromList("99\n");
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("Invalid preset number.");
+      expect(result.stdout.trim()).toBe("null");
+    });
+
+    it("rejects non-numeric preset input", () => {
+      const result = runSelectFromList("npm\n");
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("Invalid preset number.");
+      expect(result.stdout.trim()).toBe("null");
+    });
+
+    it("prints numbered list with applied markers, legend, and default prompt", () => {
+      const result = runSelectFromList("2\n", { applied: ["npm"] });
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toMatch(/Available presets:/);
+      expect(result.stderr).toMatch(/1\) ● npm — npm and Yarn registry access/);
+      expect(result.stderr).toMatch(/2\) ○ pypi — Python Package Index \(PyPI\) access/);
+      expect(result.stderr).toMatch(/● applied, ○ not applied/);
+      expect(result.stderr).toMatch(/Choose preset \[2\]:/);
+      expect(result.stdout.trim()).toBe("pypi");
+    });
+  });
+
+  describe("policy-add confirmation", () => {
+    it("prompts for confirmation before applying a preset", () => {
+      const result = runPolicyAdd("y");
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim());
+      expect(calls).toContainEqual({
+        type: "prompt",
+        message: "  Apply 'pypi' to sandbox 'test-sandbox'? [Y/n]: ",
+      });
+      expect(calls).toContainEqual({
+        type: "apply",
+        sandboxName: "test-sandbox",
+        presetName: "pypi",
+      });
+    });
+
+    it("skips applying the preset when confirmation is declined", () => {
+      const result = runPolicyAdd("n");
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim());
+      expect(calls).toContainEqual({
+        type: "prompt",
+        message: "  Apply 'pypi' to sandbox 'test-sandbox'? [Y/n]: ",
+      });
+      expect(calls.some((call) => call.type === "apply")).toBeFalsy();
+    });
+
+    it("does not prompt or apply when --dry-run is passed", () => {
+      const result = runPolicyAdd("y", ["--dry-run"]);
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim());
+      expect(calls.some((call) => call.type === "prompt")).toBeFalsy();
+      expect(calls.some((call) => call.type === "apply")).toBeFalsy();
+      expect(result.stdout).toMatch(/Endpoints that would be opened: pypi\.org/);
+      expect(result.stdout).toMatch(/--dry-run: no changes applied\./);
     });
   });
 });

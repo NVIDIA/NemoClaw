@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 version: "0.1.0"
-min_openshell_version: "0.1.0"
+min_openshell_version: "0.0.24"
 min_openclaw_version: "2026.3.0"
 digest: ""  # Computed at release time
 
@@ -45,6 +45,7 @@ components:
         endpoint: "http://nim-service.local:8000/v1"
         model: "nvidia/nemotron-3-super-120b-a12b"
         credential_env: "NIM_API_KEY"
+        timeout_secs: 180
 
       vllm:
         provider_type: "openai"
@@ -53,6 +54,7 @@ components:
         model: "nvidia/nemotron-3-nano-30b-a3b"
         credential_env: "OPENAI_API_KEY"
         credential_default: "dummy"
+        timeout_secs: 180
 
   policy:
     base: "sandboxes/openclaw/policy.yaml"

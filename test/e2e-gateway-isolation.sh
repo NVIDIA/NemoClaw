@@ -147,7 +147,7 @@ fi
 
 info "9. All .openclaw symlinks point to .openclaw-data"
 FAILED_LINKS=""
-for link in agents extensions workspace skills hooks identity devices canvas cron; do
+for link in agents extensions workspace skills hooks identity devices canvas cron memory logs credentials sandbox telegram; do
   OUT=$(run_as_root "readlink -f /sandbox/.openclaw/$link")
   if [ "$OUT" != "/sandbox/.openclaw-data/$link" ]; then
     FAILED_LINKS="$FAILED_LINKS $link->$OUT"
@@ -169,9 +169,19 @@ else
   fail "iptables not found — sandbox network policies will not be enforced: $OUT"
 fi
 
-# ── Test 11: Sandbox user cannot kill gateway-user processes ─────
+# ── Test 11: chattr is available for immutable hardening ─────────
 
-info "11. Sandbox user cannot kill gateway-user processes"
+info "11. chattr is available for immutable symlink hardening"
+OUT=$(run_as_root "command -v chattr 2>/dev/null || true")
+if [ -n "$OUT" ]; then
+  pass "chattr available at $OUT"
+else
+  fail "chattr not found — nemoclaw-start immutable hardening will be skipped"
+fi
+
+# ── Test 12: Sandbox user cannot kill gateway-user processes ─────
+
+info "12. Sandbox user cannot kill gateway-user processes"
 # Start a dummy process as gateway, try to kill it as sandbox
 OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
   gosu gateway sleep 60 &
@@ -187,9 +197,9 @@ else
   fail "sandbox CAN kill gateway processes: $OUT"
 fi
 
-# ── Test 12: Dangerous capabilities are dropped by entrypoint ────
+# ── Test 13: Dangerous capabilities are dropped by entrypoint ────
 
-info "12. Entrypoint drops dangerous capabilities from bounding set"
+info "13. Entrypoint drops dangerous capabilities from bounding set"
 # Run capsh directly with the same --drop flags as the entrypoint, then
 # check CapBnd. This avoids running the full entrypoint which starts
 # gateway services that fail in CI without a running OpenShell environment.
@@ -216,6 +226,146 @@ else
   else
     fail "could not verify capability state: $OUT"
   fi
+fi
+
+# ── Test 13: Sandbox user cannot write to .nemoclaw parent ────────
+# Note: /sandbox itself is sandbox-owned (DAC allows writes). Landlock makes it
+# read-only in production — tested in checks/04-landlock-readonly.sh instead.
+
+info "13. Sandbox user cannot create files in /sandbox/.nemoclaw"
+OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/testfile 2>&1 || echo BLOCKED")
+if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
+  pass "sandbox cannot create files in .nemoclaw parent (root-owned)"
+else
+  fail "sandbox CAN create files in .nemoclaw parent: $OUT"
+fi
+
+# ── Test 14: Sandbox user cannot modify blueprints ────────────────
+
+info "14. Sandbox user cannot modify blueprints"
+OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/blueprints/testfile 2>&1 || echo BLOCKED")
+if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
+  pass "sandbox cannot write to blueprints (root-owned)"
+else
+  fail "sandbox CAN write to blueprints: $OUT"
+fi
+
+# ── Test 15: Sandbox user CAN write to .nemoclaw/state ────────────
+
+info "15. Sandbox user can write to .nemoclaw/state"
+OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/state/testfile && echo OK || echo FAILED")
+if echo "$OUT" | grep -q "OK"; then
+  pass "sandbox can write to .nemoclaw/state (sandbox-owned)"
+else
+  fail "sandbox cannot write to .nemoclaw/state: $OUT"
+fi
+
+# ── Test 16: Sandbox user CAN write to .openclaw-data ─────────────
+
+info "16. Sandbox user can write to .openclaw-data"
+OUT=$(run_as_sandbox "touch /sandbox/.openclaw-data/testfile && echo OK || echo FAILED")
+if echo "$OUT" | grep -q "OK"; then
+  pass "sandbox can write to .openclaw-data (sandbox-owned)"
+else
+  fail "sandbox cannot write to .openclaw-data: $OUT"
+fi
+
+# ── Test 17: Sandbox user cannot rename/delete blueprints dir ─────
+
+info "17. Sandbox user cannot rename blueprints directory"
+OUT=$(run_as_sandbox "mv /sandbox/.nemoclaw/blueprints /sandbox/.nemoclaw/blueprints-evil 2>&1 || echo BLOCKED")
+if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
+  pass "sandbox cannot rename blueprints (parent is root-owned)"
+else
+  fail "sandbox CAN rename blueprints: $OUT"
+fi
+
+# ── Test 18: Sandbox user CAN write to .nemoclaw/migration ────────
+
+info "18. Sandbox user can write to .nemoclaw/migration"
+OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/migration/testfile && echo OK || echo FAILED")
+if echo "$OUT" | grep -q "OK"; then
+  pass "sandbox can write to .nemoclaw/migration (sandbox-owned)"
+else
+  fail "sandbox cannot write to .nemoclaw/migration: $OUT"
+fi
+
+# ── Test 19: Sandbox user CAN write to .nemoclaw/snapshots ────────
+
+info "19. Sandbox user can write to .nemoclaw/snapshots"
+OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/snapshots/testfile && echo OK || echo FAILED")
+if echo "$OUT" | grep -q "OK"; then
+  pass "sandbox can write to .nemoclaw/snapshots (sandbox-owned)"
+else
+  fail "sandbox cannot write to .nemoclaw/snapshots: $OUT"
+fi
+
+# ── Test 20: Sandbox user CAN write to .nemoclaw/staging ──────────
+
+info "20. Sandbox user can write to .nemoclaw/staging"
+OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/staging/testfile && echo OK || echo FAILED")
+if echo "$OUT" | grep -q "OK"; then
+  pass "sandbox can write to .nemoclaw/staging (sandbox-owned)"
+else
+  fail "sandbox cannot write to .nemoclaw/staging: $OUT"
+fi
+
+# ── Test 21: Sandbox user CAN write to .nemoclaw/config.json ──────
+
+info "21. Sandbox user can write to .nemoclaw/config.json"
+OUT=$(run_as_sandbox "echo '{}' > /sandbox/.nemoclaw/config.json && echo OK || echo FAILED")
+if echo "$OUT" | grep -q "OK"; then
+  pass "sandbox can write to .nemoclaw/config.json (sandbox-owned)"
+else
+  fail "sandbox cannot write to .nemoclaw/config.json: $OUT"
+fi
+
+# ── Test 22: Sandbox user cannot create new files in .openclaw ────
+
+info "22. Sandbox user cannot create new files in .openclaw directory"
+OUT=$(run_as_sandbox "touch /sandbox/.openclaw/newfile 2>&1 || echo BLOCKED")
+if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
+  pass "sandbox cannot create new files in .openclaw (root-owned dir)"
+else
+  fail "sandbox CAN create new files in .openclaw: $OUT"
+fi
+
+# ── Test 23: .bashrc sources proxy-env from /tmp ──────────────────
+# Requires base image with pre-built .bashrc (#804). Skip gracefully
+# if the file doesn't exist yet (base image not rebuilt).
+
+info "23. .bashrc sources proxy config from /tmp"
+OUT=$(run_as_sandbox "cat /sandbox/.bashrc 2>/dev/null || echo MISSING")
+if echo "$OUT" | grep -q "/tmp/nemoclaw-proxy-env.sh"; then
+  pass ".bashrc sources /tmp/nemoclaw-proxy-env.sh"
+elif echo "$OUT" | grep -q "MISSING\|No such file"; then
+  info "SKIP: .bashrc not present (base image needs rebuild for #804)"
+else
+  fail ".bashrc does not source from expected path: $OUT"
+fi
+
+# ── Test 24: .profile sources proxy-env from /tmp ─────────────────
+
+info "24. .profile sources proxy config from /tmp"
+OUT=$(run_as_sandbox "cat /sandbox/.profile 2>/dev/null || echo MISSING")
+if echo "$OUT" | grep -q "/tmp/nemoclaw-proxy-env.sh"; then
+  pass ".profile sources /tmp/nemoclaw-proxy-env.sh"
+elif echo "$OUT" | grep -q "MISSING\|No such file"; then
+  info "SKIP: .profile not present (base image needs rebuild for #804)"
+else
+  fail ".profile does not source from expected path: $OUT"
+fi
+
+# ── Test 25: Non-root mode executes without gosu ──────────────────
+# The entrypoint detects uid != 0, skips gosu, and execs the command directly.
+# Verifies the non-root fallback path works after read-only /sandbox (#804).
+
+info "25. Non-root mode executes command without gosu"
+OUT=$(docker run --rm --user 1000:1000 "$IMAGE" echo "NON_ROOT_EXEC_OK" 2>&1 || true)
+if echo "$OUT" | grep -q "NON_ROOT_EXEC_OK"; then
+  pass "non-root mode executed command directly (no gosu)"
+else
+  fail "non-root command execution failed: $OUT"
 fi
 
 # ── Summary ──────────────────────────────────────────────────────
