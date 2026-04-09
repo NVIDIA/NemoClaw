@@ -4388,6 +4388,7 @@ async function onboard(opts = {}) {
       });
     }
 
+    let enabledChannels = null;
     const sandboxReuseState = getSandboxReuseState(sandboxName);
     const resumeSandbox =
       resume && session?.steps?.sandbox?.status === "complete" && sandboxReuseState === "ready";
@@ -4407,7 +4408,7 @@ async function onboard(opts = {}) {
           }
         }
       }
-      const enabledChannels = await setupMessagingChannels();
+      enabledChannels = await setupMessagingChannels();
 
       startRecordedStep("sandbox", { sandboxName, provider, model });
       sandboxName = await createSandbox(
