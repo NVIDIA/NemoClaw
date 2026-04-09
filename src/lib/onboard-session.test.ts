@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-session-"));
 const require = createRequire(import.meta.url);
 // Clear both the shim and the dist module so HOME changes take effect.
 const shimPath = require.resolve("../../bin/lib/onboard-session");
@@ -15,8 +14,14 @@ const distPath = require.resolve("../../dist/lib/onboard-session");
 const originalHome = process.env.HOME;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let session: any;
+let tmpDir: string;
 
 beforeEach(() => {
+  // Recreate tmpDir per test so lock artifacts (and any other on-disk state)
+  // from a previous test cannot leak into this one. Without this, malformed
+  // lock files left behind by releaseOnboardLock() make lock tests
+  // order-dependent. See issue #1284.
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-session-"));
   process.env.HOME = tmpDir;
   delete require.cache[shimPath];
   delete require.cache[distPath];
@@ -28,6 +33,7 @@ beforeEach(() => {
 afterEach(() => {
   delete require.cache[shimPath];
   delete require.cache[distPath];
+  fs.rmSync(tmpDir, { recursive: true, force: true });
   if (originalHome === undefined) {
     delete process.env.HOME;
   } else {

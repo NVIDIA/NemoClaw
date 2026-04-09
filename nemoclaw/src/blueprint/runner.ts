@@ -15,7 +15,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 import { execa } from "execa";
 import YAML from "yaml";
@@ -340,13 +340,30 @@ export async function actionApply(
   log(`Inference: ${providerName} -> ${model} @ ${endpoint}`);
 }
 
+function validateRunId(rid: string): void {
+  if (!/^[a-zA-Z0-9_-]+$/.test(rid)) {
+    throw new Error(
+      `Invalid run ID: must contain only alphanumeric characters, hyphens, and underscores`,
+    );
+  }
+}
+
+function safeRunDir(runsDir: string, rid: string): string {
+  validateRunId(rid);
+  const resolved = join(runsDir, rid);
+  if (!resolved.startsWith(runsDir + sep)) {
+    throw new Error("Run ID resolves outside expected directory");
+  }
+  return resolved;
+}
+
 export function actionStatus(rid?: string): void {
   emitRunId();
   const runsDir = join(homedir(), ".nemoclaw", "state", "runs");
 
   let runDir: string;
   if (rid) {
-    runDir = join(runsDir, rid);
+    runDir = safeRunDir(runsDir, rid);
   } else {
     let runs: string[];
     try {
@@ -373,7 +390,8 @@ export function actionStatus(rid?: string): void {
 export async function actionRollback(rid: string): Promise<void> {
   emitRunId();
 
-  const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
+  const runsDir = join(homedir(), ".nemoclaw", "state", "runs");
+  const stateDir = safeRunDir(runsDir, rid);
   try {
     readdirSync(stateDir);
   } catch {

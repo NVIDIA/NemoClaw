@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Network Policies
 
 NemoClaw runs with a deny-by-default network policy.
@@ -70,11 +72,6 @@ The following endpoint groups are allowed by default:
   - `registry.npmjs.org:443`
   - `/usr/local/bin/openclaw`, `/usr/local/bin/npm`, `/usr/local/bin/node`
   - All methods, all paths
-
-* - `telegram`
-  - `api.telegram.org:443`
-  - Any binary
-  - GET, POST on `/bot*/**`
 
 :::
 

@@ -898,39 +898,62 @@ install_nemoclaw() {
 # ---------------------------------------------------------------------------
 # 4. Verify
 # ---------------------------------------------------------------------------
+
+# Verify that a nemoclaw binary is the real NemoClaw CLI and not the broken
+# placeholder npm package (npmjs.org/nemoclaw 0.1.0 — 249 bytes, no build
+# artifacts).  The real CLI prints "nemoclaw v<semver>" on --version.
+# Mirrors the isOpenshellCLI() pattern from resolve-openshell.js (PR #970).
+is_real_nemoclaw_cli() {
+  local bin_path="${1:-nemoclaw}"
+  local version_output
+  version_output="$("$bin_path" --version 2>/dev/null)" || return 1
+  # Real CLI outputs: "nemoclaw v0.1.0" (or any semver, with optional pre-release)
+  [[ "$version_output" =~ ^nemoclaw[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+}
+
 verify_nemoclaw() {
   if command_exists nemoclaw; then
-    NEMOCLAW_READY_NOW=true
-    ensure_nemoclaw_shim || true
-    info "Verified: nemoclaw is available at $(command -v nemoclaw)"
-    return 0
+    if is_real_nemoclaw_cli "$(command -v nemoclaw)"; then
+      NEMOCLAW_READY_NOW=true
+      ensure_nemoclaw_shim || true
+      info "Verified: nemoclaw is available at $(command -v nemoclaw)"
+      return 0
+    else
+      warn "Found nemoclaw at $(command -v nemoclaw) but it is not the real NemoClaw CLI."
+      warn "This is likely the broken placeholder npm package."
+      npm uninstall -g nemoclaw 2>/dev/null || true
+    fi
   fi
 
   local npm_bin
   npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
 
   if [[ -n "$npm_bin" && -x "$npm_bin/nemoclaw" ]]; then
-    ensure_nemoclaw_shim || true
-    if command_exists nemoclaw; then
-      NEMOCLAW_READY_NOW=true
-      info "Verified: nemoclaw is available at $(command -v nemoclaw)"
-      return 0
-    fi
+    if is_real_nemoclaw_cli "$npm_bin/nemoclaw"; then
+      ensure_nemoclaw_shim || true
+      if command_exists nemoclaw; then
+        NEMOCLAW_READY_NOW=true
+        info "Verified: nemoclaw is available at $(command -v nemoclaw)"
+        return 0
+      fi
 
-    NEMOCLAW_RECOVERY_PROFILE="$(detect_shell_profile)"
-    if [[ -x "$NEMOCLAW_SHIM_DIR/nemoclaw" ]]; then
-      NEMOCLAW_RECOVERY_EXPORT_DIR="$NEMOCLAW_SHIM_DIR"
+      NEMOCLAW_RECOVERY_PROFILE="$(detect_shell_profile)"
+      if [[ -x "$NEMOCLAW_SHIM_DIR/nemoclaw" ]]; then
+        NEMOCLAW_RECOVERY_EXPORT_DIR="$NEMOCLAW_SHIM_DIR"
+      else
+        NEMOCLAW_RECOVERY_EXPORT_DIR="$npm_bin"
+      fi
+      warn "Found nemoclaw at $npm_bin/nemoclaw but this shell still cannot resolve it."
+      warn "Onboarding will be skipped until PATH is updated."
+      return 0
     else
-      NEMOCLAW_RECOVERY_EXPORT_DIR="$npm_bin"
+      warn "Found nemoclaw at $npm_bin/nemoclaw but it is not the real NemoClaw CLI."
+      npm uninstall -g nemoclaw 2>/dev/null || true
     fi
-    warn "Found nemoclaw at $npm_bin/nemoclaw but this shell still cannot resolve it."
-    warn "Onboarding will be skipped until PATH is updated."
-    return 0
-  else
-    warn "Could not locate the nemoclaw executable."
-    warn "Try running:  npm install -g git+https://github.com/NVIDIA/NemoClaw.git"
   fi
 
+  warn "Could not locate the nemoclaw executable."
+  warn "Try re-running:  curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash"
   error "Installation failed: nemoclaw binary not found."
 }
 
