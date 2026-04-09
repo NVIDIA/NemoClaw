@@ -140,8 +140,20 @@ case "${1:-}" in
   nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
 esac
 NEMOCLAW_CMD=("$@")
-CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${NEMOCLAW_DASHBOARD_PORT:-18789}}"
-PUBLIC_PORT="${NEMOCLAW_DASHBOARD_PORT:-18789}"
+# Validate NEMOCLAW_DASHBOARD_PORT if set (same range check as ports.js).
+_DASHBOARD_PORT="${NEMOCLAW_DASHBOARD_PORT:-18789}"
+case "$_DASHBOARD_PORT" in
+  *[!0-9]* | '')
+    echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT:-}' — using default 18789" >&2
+    _DASHBOARD_PORT=18789
+    ;;
+esac
+if [ "$_DASHBOARD_PORT" -lt 1024 ] || [ "$_DASHBOARD_PORT" -gt 65535 ]; then
+  echo "[SECURITY] NEMOCLAW_DASHBOARD_PORT=${_DASHBOARD_PORT} out of range (1024-65535) — using default 18789" >&2
+  _DASHBOARD_PORT=18789
+fi
+CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${_DASHBOARD_PORT}}"
+PUBLIC_PORT="$_DASHBOARD_PORT"
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
 
