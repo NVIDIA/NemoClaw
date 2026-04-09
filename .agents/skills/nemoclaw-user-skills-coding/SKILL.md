@@ -58,7 +58,7 @@ The following user skills ship with NemoClaw.
 | `nemoclaw-user-workspace` | Back up and restore OpenClaw workspace files (soul.md, identity.md, memory.md, agents.md) and understand file persistence across sandbox restarts. |
 | `nemoclaw-user-reference` | CLI command reference, plugin and blueprint architecture, baseline network policies, and troubleshooting guide. |
 
-## Use a Skill
+## Example Questions and Triggered Skills
 
 After opening the cloned repository in your coding assistant, ask a NemoClaw question in natural language.
 The assistant matches your question to the relevant skill and follows the guidance it contains.

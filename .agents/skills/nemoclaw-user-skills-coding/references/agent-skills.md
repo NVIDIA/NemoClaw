@@ -49,7 +49,7 @@ The following user skills ship with NemoClaw.
 | `nemoclaw-user-workspace` | Back up and restore OpenClaw workspace files (soul.md, identity.md, memory.md, agents.md) and understand file persistence across sandbox restarts. |
 | `nemoclaw-user-reference` | CLI command reference, plugin and blueprint architecture, baseline network policies, and troubleshooting guide. |
 
-## Use a Skill
+## Example Questions and Triggered Skills
 
 After opening the cloned repository in your coding assistant, ask a NemoClaw question in natural language.
 The assistant matches your question to the relevant skill and follows the guidance it contains.
@@ -69,10 +69,10 @@ Examples of questions your assistant can answer with these skills:
 
 You can also reference a skill directly by name if you know which one you need.
 
-## Use the Skills with AI Coding Assistants
+## AI Coding Assistants that You Can Use with NemoClaw Skills
 
-Agent skills follow the [Agent Skills standard](https://agentskills.io/skill-creation/best-practices) and [Claude Skills best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices).
-They are compatible with the following AI coding assistants.
+The NemoClaw agent skills follow the [Agent Skills best practices](https://agentskills.io/skill-creation/best-practices) and the [Claude Skills best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices).
+The following table shows how each AI coding assistant can use the NemoClaw skills.
 
 | Assistant | Skill discovery |
 |-----------|----------------|
