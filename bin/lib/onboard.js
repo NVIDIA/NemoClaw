@@ -421,7 +421,6 @@ function getBlueprintMinOpenshellVersion(rootDir = ROOT) {
     // Lazy require: yaml is already a dependency via bin/lib/policies.js but
     // pulling it at module load would slow down `nemoclaw --help` for users
     // who never reach the preflight path.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const YAML = require("yaml");
     const blueprintPath = path.join(rootDir, "nemoclaw-blueprint", "blueprint.yaml");
     if (!fs.existsSync(blueprintPath)) return null;
@@ -1786,8 +1785,10 @@ async function preflight() {
     console.error("");
     console.error("    Upgrade openshell and retry:");
     console.error("      https://github.com/NVIDIA/OpenShell/releases");
-    console.error("    Or remove the existing binary so the installer can re-fetch a current build:");
-    console.error("      command -v openshell && rm -f \"$(command -v openshell)\"");
+    console.error(
+      "    Or remove the existing binary so the installer can re-fetch a current build:",
+    );
+    console.error('      command -v openshell && rm -f "$(command -v openshell)"');
     console.error("");
     process.exit(1);
   }

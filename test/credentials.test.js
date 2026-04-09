@@ -71,6 +71,41 @@ describe("credential prompts", () => {
     expect(credentials.getCredential("EMPTY_VALUE")).toBe(null);
   });
 
+  it("deleteCredential removes a stored key and leaves the file mode intact", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credentials = await importCredentialsModule(home);
+
+    credentials.saveCredential("NVIDIA_API_KEY", "nvapi-bad-key");
+    credentials.saveCredential("OTHER_KEY", "other-value");
+    const credsFile = path.join(home, ".nemoclaw", "credentials.json");
+    expect(fs.statSync(credsFile).mode & 0o777).toBe(0o600);
+    expect(credentials.listCredentialKeys()).toEqual(["NVIDIA_API_KEY", "OTHER_KEY"]);
+
+    expect(credentials.deleteCredential("NVIDIA_API_KEY")).toBe(true);
+    expect(fs.statSync(credsFile).mode & 0o777).toBe(0o600);
+    expect(credentials.getCredential("NVIDIA_API_KEY")).toBe(null);
+    expect(credentials.listCredentialKeys()).toEqual(["OTHER_KEY"]);
+    expect(credentials.getCredential("OTHER_KEY")).toBe("other-value");
+
+    // Removing the same key twice is a no-op that returns false.
+    expect(credentials.deleteCredential("NVIDIA_API_KEY")).toBe(false);
+  });
+
+  it("deleteCredential returns false when no credentials file exists", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.deleteCredential("ANYTHING")).toBe(false);
+  });
+
+  it("listCredentialKeys returns sorted key names without exposing values", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.listCredentialKeys()).toEqual([]);
+    credentials.saveCredential("ZETA", "z");
+    credentials.saveCredential("ALPHA", "a");
+    expect(credentials.listCredentialKeys()).toEqual(["ALPHA", "ZETA"]);
+  });
+
   it("exits cleanly when answers are staged through a pipe", () => {
     const script = `
       set -euo pipefail

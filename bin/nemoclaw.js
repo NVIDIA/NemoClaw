@@ -31,7 +31,12 @@ const {
 } = require("./lib/runner");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
 const { startGatewayForRecovery } = require("./lib/onboard");
-const { getCredential } = require("./lib/credentials");
+const {
+  getCredential,
+  deleteCredential,
+  listCredentialKeys,
+  prompt: askPrompt,
+} = require("./lib/credentials");
 const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
@@ -69,6 +74,7 @@ const GLOBAL_COMMANDS = new Set([
   "status",
   "debug",
   "uninstall",
+  "credentials",
   "help",
   "--help",
   "-h",
@@ -878,6 +884,84 @@ function uninstall(args) {
   });
 }
 
+async function credentialsCommand(args) {
+  const sub = args[0];
+  if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
+    console.log("");
+    console.log("  Usage: nemoclaw credentials <subcommand>");
+    console.log("");
+    console.log("  Subcommands:");
+    console.log("    list                  List stored credential keys (values are not printed)");
+    console.log("    reset <KEY> [--yes]   Remove a stored credential so onboard re-prompts");
+    console.log("");
+    console.log("  Stored at ~/.nemoclaw/credentials.json (mode 600)");
+    console.log("");
+    return;
+  }
+
+  if (sub === "list") {
+    const keys = listCredentialKeys();
+    if (keys.length === 0) {
+      console.log("  No stored credentials.");
+      return;
+    }
+    console.log("  Stored credentials:");
+    for (const k of keys) {
+      console.log(`    ${k}`);
+    }
+    return;
+  }
+
+  if (sub === "reset") {
+    const key = args[1];
+    // Validate that <KEY> is a real positional argument, not a flag like
+    // `--yes` that the user passed without a key. Without this guard, the
+    // missing-key path would mistakenly look up '--yes' as a credential.
+    if (!key || key.startsWith("-")) {
+      console.error("  Usage: nemoclaw credentials reset <KEY> [--yes]");
+      console.error("  Run 'nemoclaw credentials list' to see stored keys.");
+      process.exit(1);
+    }
+    // Reject unknown trailing arguments to keep scripted use predictable.
+    const extraArgs = args.slice(2).filter((arg) => arg !== "--yes" && arg !== "-y");
+    if (extraArgs.length > 0) {
+      console.error(`  Unknown argument(s) for credentials reset: ${extraArgs.join(", ")}`);
+      console.error("  Usage: nemoclaw credentials reset <KEY> [--yes]");
+      process.exit(1);
+    }
+    // Only consult the persisted credentials file — getCredential() falls back
+    // to process.env, which would let an env-only key pass this check even
+    // though there is nothing on disk to delete.
+    if (!listCredentialKeys().includes(key)) {
+      console.error(`  No stored credential found for '${key}'.`);
+      process.exit(1);
+    }
+    const skipPrompt = args.includes("--yes") || args.includes("-y");
+    if (!skipPrompt) {
+      const answer = (await askPrompt(`  Remove stored credential '${key}'? [y/N]: `))
+        .trim()
+        .toLowerCase();
+      if (answer !== "y" && answer !== "yes") {
+        console.log("  Cancelled.");
+        return;
+      }
+    }
+    const removed = deleteCredential(key);
+    if (removed) {
+      console.log(`  Removed '${key}' from ~/.nemoclaw/credentials.json`);
+      console.log("  Re-run 'nemoclaw onboard' to enter a new value.");
+    } else {
+      console.error(`  No stored credential found for '${key}'.`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  console.error(`  Unknown credentials subcommand: ${sub}`);
+  console.error("  Run 'nemoclaw credentials help' for usage.");
+  process.exit(1);
+}
+
 function showStatus() {
   const { showStatus: showServiceStatus } = require("./lib/services");
   showStatusCommand({
@@ -1082,7 +1166,6 @@ async function sandboxPolicyAdd(sandboxName, args = []) {
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
 
-  const { prompt: askPrompt } = require("./lib/credentials");
   const answer = await policies.selectFromList(allPresets, { applied });
   if (!answer) return;
 
@@ -1137,7 +1220,6 @@ function cleanupSandboxServices(sandboxName) {
 async function sandboxDestroy(sandboxName, args = []) {
   const skipConfirm = args.includes("--yes") || args.includes("--force");
   if (!skipConfirm) {
-    const { prompt: askPrompt } = require("./lib/credentials");
     const answer = await askPrompt(
       `  ${YW}Destroy sandbox '${sandboxName}'?${R} This cannot be undone. [y/N]: `,
     );
@@ -1228,6 +1310,10 @@ function help() {
     nemoclaw debug [--quick]         Collect diagnostics for bug reports
     nemoclaw debug --output FILE     Save diagnostics tarball for GitHub issues
 
+  ${G}Credentials:${R}
+    nemoclaw credentials list        List stored credential keys
+    nemoclaw credentials reset <KEY> Remove a stored credential so onboard re-prompts
+
   Cleanup:
     nemoclaw uninstall [flags]       Run uninstall.sh (local first, curl fallback)
 
@@ -1283,6 +1369,9 @@ const [cmd, ...args] = process.argv.slice(2);
         break;
       case "uninstall":
         uninstall(args);
+        break;
+      case "credentials":
+        await credentialsCommand(args);
         break;
       case "list":
         await listSandboxes();

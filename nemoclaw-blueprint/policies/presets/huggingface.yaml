@@ -24,7 +24,7 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
-      - host: api-inference.huggingface.co
+      - host: router.huggingface.co
         port: 443
         protocol: rest
         enforcement: enforce
