@@ -3,6 +3,9 @@ name: "nemoclaw-user-configure-security"
 description: "Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs. Explains where NemoClaw stores provider credentials, the file permissions it applies, and the operational security trade-offs of plaintext local storage. Use when reviewing credential handling or advising users how to secure stored API keys."
 ---
 
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # NemoClaw User Configure Security
 
 Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs.

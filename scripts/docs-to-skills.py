@@ -877,6 +877,17 @@ CONTENT_TYPE_ROLE = {
 }
 
 
+def markdown_spdx_header() -> str:
+    """Return the SPDX header for generated Markdown files."""
+    return "\n".join(
+        [
+            "<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->",
+            "<!-- SPDX-License-Identifier: Apache-2.0 -->",
+            "",
+        ]
+    )
+
+
 def generate_skill(
     name: str,
     pages: list[DocPage],
@@ -922,6 +933,8 @@ def generate_skill(
     lines.append(f"name: {yaml_scalar(name)}")
     lines.append(f"description: {yaml_scalar(description)}")
     lines.append("---")
+    lines.append("")
+    lines.append(markdown_spdx_header().rstrip("\n"))
     lines.append("")
 
     # Title
@@ -1081,12 +1094,15 @@ def generate_skill(
             skill_md.rstrip("\n") + "\n", encoding="utf-8"
         )
 
+        spdx_ref = markdown_spdx_header()
+
+
         if ref_files:
             refs_dir = skill_dir / "references"
             refs_dir.mkdir(exist_ok=True)
             for fname, content in ref_files.items():
                 (refs_dir / fname).write_text(
-                    content.rstrip("\n") + "\n", encoding="utf-8"
+                    spdx_ref + content.rstrip("\n") + "\n", encoding="utf-8"
                 )
 
     return summary
