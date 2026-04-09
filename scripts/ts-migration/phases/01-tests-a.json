@@ -1,0 +1,9 @@
+{
+  "renameTests": [
+    "test/check-docs-links.test.js",
+    "test/security-method-wildcards.test.js",
+    "test/security-binaries-restriction.test.js",
+    "test/skills-frontmatter.test.js",
+    "test/shellquote-sandbox.test.js"
+  ]
+}
