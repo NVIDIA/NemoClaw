@@ -62,8 +62,8 @@ Run `git pull` after each NemoClaw release to pick up new and updated skills.
 The following user skills ship with NemoClaw.
 
 ```{include} ../../.agents/skills/nemoclaw-skills-guide/SKILL.md
-:start-after: "<!-- user-skills-table:begin -->"
-:end-before: "<!-- user-skills-table:end -->"
+:start-after: <!-- user-skills-table:begin -->
+:end-before: <!-- user-skills-table:end -->
 ```
 
 ## Use a Skill

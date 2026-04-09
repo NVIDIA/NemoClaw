@@ -46,27 +46,28 @@ Run `git pull` after each NemoClaw release to pick up new and updated skills.
 
 The following user skills ship with NemoClaw.
 
----
-name: "nemoclaw-skills-guide"
-description: "Start here. Introduces what NemoClaw is, what agent skills are available, and which skill to use for a given task. Use when discovering NemoClaw capabilities, choosing the right skill, or orienting in the project. Trigger keywords - skills, capabilities, what can I do, help, guide, index, overview, start here."
----
+| Skill | Summary |
+|-------|---------|
+| `nemoclaw-user-overview` | What NemoClaw is, ecosystem placement (OpenClaw + OpenShell + NemoClaw), how it works internally, and release notes. |
+| `nemoclaw-user-get-started` | Install NemoClaw, launch a sandbox, and run the first agent prompt. |
+| `nemoclaw-user-configure-inference` | Choose inference providers during onboarding, switch models without restarting, and set up local inference servers (Ollama, vLLM, TensorRT-LLM, NIM). |
+| `nemoclaw-user-manage-policy` | Approve or deny blocked egress requests in the TUI and customize the sandbox network policy (add, remove, or modify allowed endpoints). |
+| `nemoclaw-user-monitor-sandbox` | Check sandbox health, read logs, and trace agent behavior to diagnose problems. |
+| `nemoclaw-user-deploy-remote` | Deploy NemoClaw to a remote GPU instance, set up the Telegram bridge, and review sandbox container hardening. |
+| `nemoclaw-user-configure-security` | Review the risk framework for every configurable security control, understand credential storage, and assess posture trade-offs. |
+| `nemoclaw-user-workspace` | Back up and restore OpenClaw workspace files (soul.md, identity.md, memory.md, agents.md) and understand file persistence across sandbox restarts. |
+| `nemoclaw-user-reference` | CLI command reference, plugin and blueprint architecture, baseline network policies, and troubleshooting guide. |
 
-# NemoClaw Skills Guide
+## Use a Skill
 
-NVIDIA NemoClaw runs OpenClaw always-on assistants inside hardened OpenShell sandboxes with NVIDIA inference (Nemotron).
-It provides CLI tooling, guided onboarding, a security blueprint, routed inference, and workspace management.
+After opening the cloned repository in your coding assistant, ask a NemoClaw question in natural language.
+The assistant matches your question to the relevant skill and follows the guidance it contains.
 
-This guide lists every agent skill shipped with NemoClaw, organized by audience.
-Load the specific skill you need after identifying it here.
+Examples of questions your assistant can answer with these skills:
 
-## Skill Buckets
-
-Skills are grouped into three buckets by audience.
-The prefix in each skill name indicates who it is for.
-
-### `nemoclaw-user-*` (9 skills)
-
-For end users operating a NemoClaw sandbox.
-Covers installation, inference configuration, network policy management, monitoring, remote deployment, security configuration, workspace management, and reference material.
+| Question | Skill triggered |
+|----------|-----------------|
+| "How do I install NemoClaw?" | `nemoclaw-user-get-started` |
+| "Switch my inference provider to Ollama." | `nemoclaw-user-configure-inference` |
 
 *Full details in `references/agent-skills.md`.*
