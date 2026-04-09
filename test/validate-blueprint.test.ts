@@ -61,6 +61,31 @@ describe("blueprint.yaml", () => {
     expect(digestMatch).not.toBeNull();
   });
 
+  it("regression #1438: top-level digest field is populated and matches the image digest", () => {
+    // The top-level `digest:` field at the top of blueprint.yaml is
+    // documented as "Computed at release time" and was empty on main,
+    // which left blueprint-level integrity unverifiable. Mirror the
+    // sandbox image manifest digest into the top-level field so any
+    // consumer can read a single field to know what's pinned, and so
+    // a future contributor can't bump one without bumping the other.
+    const topLevelDigest = typeof bp.digest === "string" ? bp.digest : "";
+    expect(topLevelDigest.length).toBeGreaterThan(0);
+    // Must be a sha256:<64-hex> string.
+    expect(topLevelDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+
+    const sandbox = (bp.components as Record<string, unknown> | undefined)?.sandbox as
+      | { image?: unknown }
+      | undefined;
+    const image = typeof sandbox?.image === "string" ? sandbox.image : "";
+    const imageDigestMatch = image.match(/@sha256:([0-9a-f]{64})$/);
+    expect(imageDigestMatch).not.toBeNull();
+    const imageDigest = `sha256:${imageDigestMatch?.[1] ?? ""}`;
+
+    // The two digests must agree. If a future bump touches one but not
+    // the other, this assertion catches it before merge.
+    expect(topLevelDigest).toBe(imageDigest);
+  });
+
   for (const name of declared) {
     describe(`profile '${name}'`, () => {
       it("has a definition", () => {
