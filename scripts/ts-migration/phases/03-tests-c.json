@@ -1,0 +1,9 @@
+{
+  "renameTests": [
+    "test/registry.test.js",
+    "test/runtime-shell.test.js",
+    "test/openclaw-data-ownership.test.js",
+    "test/dns-proxy.test.js",
+    "test/uninstall.test.js"
+  ]
+}

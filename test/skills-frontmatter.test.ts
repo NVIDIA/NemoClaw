@@ -65,7 +65,6 @@ describe("repo skill markdown files", () => {
   }
 
   const skillFiles = generatedUserSkillFiles.filter((file) => path.basename(file) === "SKILL.md");
-
   for (const skillFile of skillFiles) {
     const relPath = path.relative(repoRoot, skillFile);
 
