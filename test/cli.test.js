@@ -558,6 +558,67 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(bashLog, "utf8")).toContain("docker volume ls -q --filter");
   });
 
+  it("deletes messaging providers when destroying a sandbox", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-providers-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellLog = path.join(home, "openshell.log");
+    const bashLog = path.join(home, "bash.log");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(openshellLog)}`,
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        '  printf "NAME STATUS\\n" >> "$log_file"',
+        "  exit 0",
+        "fi",
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "bash"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(bashLog)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha destroy --yes", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    const log = fs.readFileSync(openshellLog, "utf8");
+    expect(log).toContain("provider delete alpha-telegram-bridge");
+    expect(log).toContain("provider delete alpha-discord-bridge");
+    expect(log).toContain("provider delete alpha-slack-bridge");
+  });
+
   it("passes plain logs through without the tail flag", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-plain-"));
     const localBin = path.join(home, "bin");

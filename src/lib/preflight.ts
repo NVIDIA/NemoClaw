@@ -352,19 +352,42 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
       blocking: true,
     });
   } else if (!assessment.dockerReachable) {
-    actions.push({
-      id: "start_docker",
-      title: "Start Docker",
-      kind: "manual",
-      reason: "Docker is installed but NemoClaw could not talk to the Docker daemon.",
-      commands:
-        assessment.platform === "darwin"
-          ? ["Start Docker Desktop or Colima, then rerun `nemoclaw onboard`."]
-          : assessment.systemctlAvailable
-            ? ["sudo systemctl start docker", "nemoclaw onboard"]
-            : ["Start the Docker daemon, then rerun `nemoclaw onboard`."],
-      blocking: true,
-    });
+    // On Linux, if the systemd service is already active but the daemon is
+    // unreachable, the most likely cause is a permissions / docker-group issue
+    // rather than a stopped service.
+    const likelyGroupIssue =
+      assessment.platform === "linux" && assessment.dockerServiceActive === true;
+
+    if (likelyGroupIssue) {
+      actions.push({
+        id: "docker_group_permission",
+        title: "Add user to docker group",
+        kind: "sudo",
+        reason:
+          "Docker is installed and the service is running, but the current user cannot reach the daemon. " +
+          "This usually means your user is not in the docker group.",
+        commands: [
+          "sudo usermod -aG docker $USER",
+          "newgrp docker   # or log out and back in",
+          "nemoclaw onboard",
+        ],
+        blocking: true,
+      });
+    } else {
+      actions.push({
+        id: "start_docker",
+        title: "Start Docker",
+        kind: "manual",
+        reason: "Docker is installed but NemoClaw could not talk to the Docker daemon.",
+        commands:
+          assessment.platform === "darwin"
+            ? ["Start Docker Desktop or Colima, then rerun `nemoclaw onboard`."]
+            : assessment.systemctlAvailable
+              ? ["sudo systemctl start docker", "nemoclaw onboard"]
+              : ["Start the Docker daemon, then rerun `nemoclaw onboard`."],
+        blocking: true,
+      });
+    }
   }
 
   if (assessment.isUnsupportedRuntime) {

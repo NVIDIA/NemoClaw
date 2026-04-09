@@ -1,0 +1,137 @@
+{
+  "$comment": "Single source of truth for tested platforms and providers. Scripts read this to generate README and docs tables. QA/CI update this file; docs are derived.",
+  "version": "1.0",
+  "updated": "2026-04-08",
+
+  "statuses": {
+    "tested": "Validated by CI/QA. Primary path.",
+    "caveated": "Tested with limitations. See Notes.",
+    "experimental": "Requires NEMOCLAW_EXPERIMENTAL=1.",
+    "deferred": "Planned but not yet validated."
+  },
+
+  "platforms": [
+    {
+      "name": "Linux",
+      "runtimes": ["Docker"],
+      "status": "tested",
+      "prd_priority": "P0",
+      "ci_tested": true,
+      "notes": "Primary tested path."
+    },
+    {
+      "name": "macOS (Apple Silicon)",
+      "runtimes": ["Colima", "Docker Desktop"],
+      "status": "caveated",
+      "prd_priority": "P0",
+      "ci_tested": true,
+      "notes": "Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer."
+    },
+    {
+      "name": "DGX Spark",
+      "runtimes": ["Docker"],
+      "status": "tested",
+      "prd_priority": "P1",
+      "ci_tested": true,
+      "notes": "Use the standard installer and `nemoclaw onboard`."
+    },
+    {
+      "name": "Windows WSL2",
+      "runtimes": ["Docker Desktop (WSL backend)"],
+      "status": "caveated",
+      "prd_priority": "P1",
+      "ci_tested": false,
+      "_prd_note": "PRD tracks x86 and ARM (WOA) separately; treating as one entry until ARM is validated independently.",
+      "notes": "Requires WSL2 with Docker Desktop backend."
+    },
+    {
+      "name": "DGX Station",
+      "runtimes": ["Docker"],
+      "status": "deferred",
+      "prd_priority": "P1",
+      "ci_tested": false,
+      "notes": "P1 per PRD. Setup path not yet validated."
+    },
+    {
+      "name": "RTX Spark",
+      "runtimes": ["Docker"],
+      "status": "deferred",
+      "prd_priority": "P1",
+      "ci_tested": false,
+      "notes": "P1 per PRD. Setup path not yet validated."
+    },
+    {
+      "name": "NVIDIA RTX",
+      "runtimes": ["Docker"],
+      "status": "deferred",
+      "prd_priority": "P1",
+      "ci_tested": false,
+      "notes": "P1 per PRD. Setup path not yet validated."
+    },
+    {
+      "name": "NVIDIA RTX Pro",
+      "runtimes": ["Docker"],
+      "status": "deferred",
+      "prd_priority": "P1",
+      "ci_tested": false,
+      "notes": "P1 per PRD. Setup path not yet validated."
+    }
+  ],
+
+  "providers": [
+    {
+      "name": "NVIDIA Endpoints",
+      "status": "tested",
+      "endpoint_type": "OpenAI-compatible",
+      "notes": "Hosted models on integrate.api.nvidia.com"
+    },
+    {
+      "name": "OpenAI",
+      "status": "tested",
+      "endpoint_type": "Native OpenAI-compatible",
+      "notes": "Uses OpenAI model IDs"
+    },
+    {
+      "name": "Other OpenAI-compatible endpoint",
+      "status": "tested",
+      "endpoint_type": "Custom OpenAI-compatible",
+      "notes": "For compatible proxies and gateways"
+    },
+    {
+      "name": "Anthropic",
+      "status": "tested",
+      "endpoint_type": "Native Anthropic",
+      "notes": "Uses anthropic-messages"
+    },
+    {
+      "name": "Other Anthropic-compatible endpoint",
+      "status": "tested",
+      "endpoint_type": "Custom Anthropic-compatible",
+      "notes": "For Claude proxies and compatible gateways"
+    },
+    {
+      "name": "Google Gemini",
+      "status": "tested",
+      "endpoint_type": "OpenAI-compatible",
+      "notes": "Uses Google's OpenAI-compatible endpoint"
+    },
+    {
+      "name": "Local Ollama",
+      "status": "caveated",
+      "endpoint_type": "Local Ollama API",
+      "notes": "Available when Ollama is installed or running on the host"
+    },
+    {
+      "name": "Local NVIDIA NIM",
+      "status": "experimental",
+      "endpoint_type": "Local OpenAI-compatible",
+      "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable GPU"
+    },
+    {
+      "name": "Local vLLM",
+      "status": "experimental",
+      "endpoint_type": "Local OpenAI-compatible",
+      "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` and a server already running on `localhost:8000`"
+    }
+  ]
+}

@@ -95,7 +95,7 @@ mermaid_init_js = (
 
 html_domain_indices = False
 html_use_index = False
-html_extra_path = ["project.json"]
+html_extra_path = ["project.json", "versions1.json"]
 highlight_language = "console"
 
 html_theme_options = {
@@ -104,6 +104,10 @@ html_theme_options = {
         "&#x1F514; NVIDIA NemoClaw is <strong>alpha software</strong>. APIs and behavior"
         " may change without notice. Do not use in production."
     ),
+    "switcher": {
+        "json_url": "../versions1.json",
+        "version_match": release,
+    },
     "icon_links": [
         {
             "name": "NemoClaw GitHub",

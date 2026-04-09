@@ -102,8 +102,10 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
         /sandbox/.openclaw-data/canvas \
         /sandbox/.openclaw-data/cron \
         /sandbox/.openclaw-data/memory \
-        /sandbox/.openclaw-data/telegram \
+        /sandbox/.openclaw-data/logs \
         /sandbox/.openclaw-data/credentials \
+        /sandbox/.openclaw-data/sandbox \
+        /sandbox/.openclaw-data/telegram \
     && mkdir -p /sandbox/.openclaw \
     && ln -s /sandbox/.openclaw-data/agents /sandbox/.openclaw/agents \
     && ln -s /sandbox/.openclaw-data/extensions /sandbox/.openclaw/extensions \
@@ -115,13 +117,31 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
     && ln -s /sandbox/.openclaw-data/canvas /sandbox/.openclaw/canvas \
     && ln -s /sandbox/.openclaw-data/cron /sandbox/.openclaw/cron \
     && ln -s /sandbox/.openclaw-data/memory /sandbox/.openclaw/memory \
+    && ln -s /sandbox/.openclaw-data/logs /sandbox/.openclaw/logs \
+    && ln -s /sandbox/.openclaw-data/credentials /sandbox/.openclaw/credentials \
+    && ln -s /sandbox/.openclaw-data/sandbox /sandbox/.openclaw/sandbox \
     && touch /sandbox/.openclaw-data/update-check.json \
     && ln -s /sandbox/.openclaw-data/update-check.json /sandbox/.openclaw/update-check.json \
     && touch /sandbox/.openclaw-data/exec-approvals.json \
     && ln -s /sandbox/.openclaw-data/exec-approvals.json /sandbox/.openclaw/exec-approvals.json \
     && ln -s /sandbox/.openclaw-data/telegram /sandbox/.openclaw/telegram \
-    && ln -s /sandbox/.openclaw-data/credentials /sandbox/.openclaw/credentials \
     && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
+
+# Pre-create shell init files for the sandbox user.
+# The /sandbox home directory is Landlock read-only at runtime (#804), so these
+# files must exist at build time. Runtime proxy config is written by the
+# entrypoint to /tmp/nemoclaw-proxy-env.sh (root-owned, sticky-bit protected)
+# and sourced from here on every interactive session.
+# hadolint ignore=SC2028
+RUN printf '%s\n' \
+        '# Source runtime proxy config (Landlock read-only home, #804)' \
+        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        > /sandbox/.bashrc \
+    && printf '%s\n' \
+        '# Source runtime proxy config (Landlock read-only home, #804)' \
+        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        > /sandbox/.profile \
+    && chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile
 
 # Install OpenClaw CLI + PyYAML for inline Python scripts in e2e tests.
 # When bumping the openclaw version, rebuild this base image.

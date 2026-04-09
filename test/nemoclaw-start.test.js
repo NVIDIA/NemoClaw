@@ -68,6 +68,134 @@ describe("nemoclaw-start non-root fallback", () => {
   });
 });
 
+describe("nemoclaw-start _SANDBOX_HOME variable (#1609)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("defines _SANDBOX_HOME before first use", () => {
+    const defPos = src.indexOf('_SANDBOX_HOME="/sandbox"');
+    expect(defPos).toBeGreaterThan(-1);
+
+    // All usages must come after the definition
+    const usages = [...src.matchAll(/\$\{?_SANDBOX_HOME\}?/g)];
+    expect(usages.length).toBeGreaterThanOrEqual(3);
+    for (const m of usages) {
+      // Skip the definition line itself
+      if (m.index === defPos) continue;
+      expect(m.index).toBeGreaterThan(defPos);
+    }
+  });
+
+  it("uses _SANDBOX_HOME for rc file paths in export_gateway_token", () => {
+    const exportFn = src.match(/export_gateway_token\(\) \{([\s\S]*?)^\}/m);
+    expect(exportFn).toBeTruthy();
+    expect(exportFn[1]).toContain("${_SANDBOX_HOME}/.bashrc");
+    expect(exportFn[1]).toContain("${_SANDBOX_HOME}/.profile");
+  });
+
+  it("uses _SANDBOX_HOME for rc file paths in install_configure_guard", () => {
+    const guardFn = src.match(
+      /install_configure_guard\(\) \{([\s\S]*?)^validate_openclaw_symlinks/m,
+    );
+    expect(guardFn).toBeTruthy();
+    expect(guardFn[1]).toContain("${_SANDBOX_HOME}/.bashrc");
+    expect(guardFn[1]).toContain("${_SANDBOX_HOME}/.profile");
+  });
+});
+
+describe("nemoclaw-start gateway token export (#1114)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("defines _read_gateway_token helper used by both export and dashboard", () => {
+    expect(src).toMatch(/_read_gateway_token\(\) \{/);
+    // export_gateway_token calls the helper
+    expect(src).toMatch(/token="\$\(_read_gateway_token\)"/);
+    // print_dashboard_urls also calls the helper
+    const dashboardFn = src.match(/print_dashboard_urls\(\) \{([\s\S]*?)^\}/m);
+    expect(dashboardFn).toBeTruthy();
+    expect(dashboardFn[1]).toContain("_read_gateway_token");
+  });
+
+  it("uses with-open context manager in the Python snippet", () => {
+    const helperFn = src.match(/_read_gateway_token\(\) \{([\s\S]*?)^\}/m);
+    expect(helperFn).toBeTruthy();
+    expect(helperFn[1]).toContain("with open(");
+  });
+
+  it("unsets stale OPENCLAW_GATEWAY_TOKEN when token is empty", () => {
+    const exportFn = src.match(/export_gateway_token\(\) \{([\s\S]*?)^\}/m);
+    expect(exportFn).toBeTruthy();
+    const body = exportFn[1];
+    // Must unset before returning on empty token
+    const unsetPos = body.indexOf("unset OPENCLAW_GATEWAY_TOKEN");
+    const returnPos = body.indexOf("return");
+    expect(unsetPos).toBeGreaterThan(-1);
+    expect(returnPos).toBeGreaterThan(-1);
+    expect(unsetPos).toBeLessThan(returnPos);
+  });
+
+  it("shell-escapes the token before embedding in rc snippet", () => {
+    const exportFn = src.match(/export_gateway_token\(\) \{([\s\S]*?)^\}/m);
+    expect(exportFn).toBeTruthy();
+    const body = exportFn[1];
+    // Must use single quotes around the escaped token value
+    expect(body).toContain("escaped_token");
+    expect(body).toMatch(/export OPENCLAW_GATEWAY_TOKEN='\$\{escaped_token\}'/);
+  });
+
+  it("calls export_gateway_token in both root and non-root paths", () => {
+    const calls = src.match(/export_gateway_token/g) || [];
+    // definition + 2 call sites
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("nemoclaw-start configure guard (#1114)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("defines install_configure_guard function", () => {
+    expect(src).toMatch(/install_configure_guard\(\) \{/);
+  });
+
+  it("intercepts openclaw configure with an actionable error", () => {
+    // The guard installs a heredoc containing a shell function — extract the
+    // full block between the function definition and the next top-level function.
+    const guardBlock = src.match(
+      /install_configure_guard\(\) \{([\s\S]*?)^validate_openclaw_symlinks/m,
+    );
+    expect(guardBlock).toBeTruthy();
+    const body = guardBlock[1];
+    expect(body).toContain("configure)");
+    expect(body).toContain("nemoclaw onboard --resume");
+    expect(body).toContain("return 1");
+  });
+
+  it("passes non-configure subcommands through to the real binary", () => {
+    const guardBlock = src.match(
+      /install_configure_guard\(\) \{([\s\S]*?)^validate_openclaw_symlinks/m,
+    );
+    expect(guardBlock).toBeTruthy();
+    expect(guardBlock[1]).toContain('command openclaw "$@"');
+  });
+
+  it("uses idempotent marker blocks", () => {
+    const guardBlock = src.match(
+      /install_configure_guard\(\) \{([\s\S]*?)^validate_openclaw_symlinks/m,
+    );
+    expect(guardBlock).toBeTruthy();
+    const body = guardBlock[1];
+    expect(body).toContain("nemoclaw-configure-guard begin");
+    expect(body).toContain("nemoclaw-configure-guard end");
+    // Uses awk to strip existing block before re-inserting
+    expect(body).toContain("awk");
+  });
+
+  it("calls install_configure_guard in both root and non-root paths", () => {
+    const calls = src.match(/install_configure_guard/g) || [];
+    // definition + 2 call sites
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
 describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -126,5 +254,57 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
     expect(allowedClientsPos).toBeGreaterThan(-1);
     expect(whilePos).toBeGreaterThan(-1);
     expect(allowedClientsPos).toBeLessThan(whilePos);
+  });
+});
+
+describe("nemoclaw-start signal handling", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("defines cleanup() as a single top-level function", () => {
+    const matches = src.match(/^cleanup\(\)/gm);
+    expect(matches).toHaveLength(1);
+  });
+
+  it("cleanup() forwards SIGTERM to both GATEWAY_PID and AUTO_PAIR_PID", () => {
+    const cleanup = src.match(/cleanup\(\) \{[\s\S]*?^}/m)?.[0];
+    expect(cleanup).toBeDefined();
+    expect(cleanup).toMatch(/kill -TERM "\$GATEWAY_PID"/);
+    expect(cleanup).toMatch(/kill -TERM "\$AUTO_PAIR_PID"/);
+  });
+
+  it("cleanup() waits for both child processes", () => {
+    const cleanup = src.match(/cleanup\(\) \{[\s\S]*?^}/m)?.[0];
+    expect(cleanup).toMatch(/wait "\$GATEWAY_PID"/);
+    expect(cleanup).toMatch(/wait "\$AUTO_PAIR_PID"/);
+  });
+
+  it("cleanup() exits with the gateway exit status", () => {
+    const cleanup = src.match(/cleanup\(\) \{[\s\S]*?^}/m)?.[0];
+    expect(cleanup).toMatch(/exit "\$gateway_status"/);
+  });
+
+  it("registers trap before start_auto_pair in non-root path", () => {
+    // trap must appear before start_auto_pair within the non-root block
+    const nonRootBlock = src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then[\s\S]*?^fi$/m)?.[0];
+    expect(nonRootBlock).toBeDefined();
+    const trapIdx = nonRootBlock.indexOf("trap cleanup SIGTERM SIGINT");
+    const autoIdx = nonRootBlock.indexOf("start_auto_pair");
+    expect(trapIdx).toBeGreaterThan(-1);
+    expect(autoIdx).toBeGreaterThan(-1);
+    expect(trapIdx).toBeLessThan(autoIdx);
+  });
+
+  it("registers trap before start_auto_pair in root path", () => {
+    // In the root path (after the non-root fi), trap must precede start_auto_pair
+    const rootBlock = src.split(/^fi$/m).slice(-1)[0];
+    const trapIdx = rootBlock.indexOf("trap cleanup SIGTERM SIGINT");
+    const autoIdx = rootBlock.indexOf("start_auto_pair");
+    expect(trapIdx).toBeGreaterThan(-1);
+    expect(autoIdx).toBeGreaterThan(-1);
+    expect(trapIdx).toBeLessThan(autoIdx);
+  });
+
+  it("captures AUTO_PAIR_PID from background process", () => {
+    expect(src).toMatch(/AUTO_PAIR_PID=\$!/);
   });
 });

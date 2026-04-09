@@ -20,6 +20,8 @@ import {
   getFutureShellPathHint,
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
+  getBlueprintMinOpenshellVersion,
+  versionGte,
   getRequestedModelHint,
   getRequestedProviderHint,
   getRequestedSandboxNameHint,
@@ -29,6 +31,7 @@ import {
   getStableGatewayImageRef,
   isGatewayHealthy,
   classifyValidationFailure,
+  hasResponsesToolCall,
   isLoopbackHostname,
   normalizeProviderBaseUrl,
   parsePolicyPresetEnv,
@@ -162,6 +165,53 @@ describe("onboard helpers", () => {
     ).toEqual({ kind: "model", retry: "model" });
   });
 
+  it("detects tool-calling responses payloads conservatively", () => {
+    expect(
+      hasResponsesToolCall(
+        JSON.stringify({
+          output: [
+            {
+              type: "function_call",
+              name: "emit_ok",
+              arguments: '{"value":"OK"}',
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasResponsesToolCall(
+        JSON.stringify({
+          output: [
+            {
+              type: "message",
+              content: [
+                {
+                  type: "function_call",
+                  name: "emit_ok",
+                  arguments: '{"value":"OK"}',
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasResponsesToolCall(
+        JSON.stringify({
+          output: [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: "OK" }],
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(hasResponsesToolCall("{")).toBe(false);
+  });
+
   it("normalizes anthropic-compatible base URLs with a trailing /v1", () => {
     expect(normalizeProviderBaseUrl("https://proxy.example.com/v1", "anthropic")).toBe(
       "https://proxy.example.com",
@@ -226,6 +276,153 @@ describe("onboard helpers", () => {
       assert.match(patched, /^ARG NEMOCLAW_INFERENCE_BASE_URL=https:\/\/inference\.local$/m);
       assert.match(patched, /^ARG NEMOCLAW_INFERENCE_API=anthropic-messages$/m);
     } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1409: bakes NEMOCLAW_PROXY_HOST/PORT env into the staged Dockerfile", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
+        "ARG NEMOCLAW_PROXY_PORT=3128",
+      ].join("\n"),
+    );
+
+    const priorHost = process.env.NEMOCLAW_PROXY_HOST;
+    const priorPort = process.env.NEMOCLAW_PROXY_PORT;
+    process.env.NEMOCLAW_PROXY_HOST = "1.2.3.4";
+    process.env.NEMOCLAW_PROXY_PORT = "9999";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-proxy",
+        "openai-api",
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_HOST=1\.2\.3\.4$/m);
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_PORT=9999$/m);
+    } finally {
+      if (priorHost === undefined) {
+        delete process.env.NEMOCLAW_PROXY_HOST;
+      } else {
+        process.env.NEMOCLAW_PROXY_HOST = priorHost;
+      }
+      if (priorPort === undefined) {
+        delete process.env.NEMOCLAW_PROXY_PORT;
+      } else {
+        process.env.NEMOCLAW_PROXY_PORT = priorPort;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1409: leaves Dockerfile defaults when proxy env is unset", () => {
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-default-"),
+    );
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
+        "ARG NEMOCLAW_PROXY_PORT=3128",
+      ].join("\n"),
+    );
+
+    const priorHost = process.env.NEMOCLAW_PROXY_HOST;
+    const priorPort = process.env.NEMOCLAW_PROXY_PORT;
+    delete process.env.NEMOCLAW_PROXY_HOST;
+    delete process.env.NEMOCLAW_PROXY_PORT;
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-proxy-default",
+        "openai-api",
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      // Defaults must be preserved when no env override is in effect.
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_HOST=10\.200\.0\.1$/m);
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_PORT=3128$/m);
+    } finally {
+      if (priorHost !== undefined) process.env.NEMOCLAW_PROXY_HOST = priorHost;
+      if (priorPort !== undefined) process.env.NEMOCLAW_PROXY_PORT = priorPort;
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1409: rejects malformed NEMOCLAW_PROXY_HOST/PORT and keeps defaults", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-bad-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
+        "ARG NEMOCLAW_PROXY_PORT=3128",
+      ].join("\n"),
+    );
+
+    const priorHost = process.env.NEMOCLAW_PROXY_HOST;
+    const priorPort = process.env.NEMOCLAW_PROXY_PORT;
+    // Inject malicious values that could break out of the ARG line if not validated.
+    process.env.NEMOCLAW_PROXY_HOST = "1.2.3.4\nRUN rm -rf /";
+    process.env.NEMOCLAW_PROXY_PORT = "abcd";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-proxy-bad",
+        "openai-api",
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_HOST=10\.200\.0\.1$/m);
+      assert.match(patched, /^ARG NEMOCLAW_PROXY_PORT=3128$/m);
+      assert.doesNotMatch(patched, /RUN rm -rf/);
+    } finally {
+      if (priorHost === undefined) {
+        delete process.env.NEMOCLAW_PROXY_HOST;
+      } else {
+        process.env.NEMOCLAW_PROXY_HOST = priorHost;
+      }
+      if (priorPort === undefined) {
+        delete process.env.NEMOCLAW_PROXY_PORT;
+      } else {
+        process.env.NEMOCLAW_PROXY_PORT = priorPort;
+      }
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
@@ -299,6 +496,108 @@ describe("onboard helpers", () => {
       inferenceApi: "openai-responses",
       inferenceCompat: null,
     });
+  });
+
+  it("regression #1317: versionGte handles equal, greater, and lesser semvers", () => {
+    expect(versionGte("0.1.0", "0.1.0")).toBe(true);
+    expect(versionGte("0.1.0", "0.0.20")).toBe(true);
+    expect(versionGte("0.0.20", "0.1.0")).toBe(false);
+    expect(versionGte("1.2.3", "1.2.4")).toBe(false);
+    expect(versionGte("1.2.4", "1.2.3")).toBe(true);
+    expect(versionGte("0.0.21", "0.0.20")).toBe(true);
+    // Defensive: missing components default to 0
+    expect(versionGte("1.0", "1.0.0")).toBe(true);
+    expect(versionGte("", "0.0.0")).toBe(true);
+  });
+
+  it("regression #1317: getBlueprintMinOpenshellVersion reads min_openshell_version from blueprint.yaml", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-min-version-"));
+    const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(blueprintDir, "blueprint.yaml"),
+      [
+        'version: "0.1.0"',
+        'min_openshell_version: "0.1.0"',
+        'min_openclaw_version: "2026.3.0"',
+      ].join("\n"),
+    );
+    try {
+      expect(getBlueprintMinOpenshellVersion(tmpDir)).toBe("0.1.0");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1317: getBlueprintMinOpenshellVersion returns null on missing or unparseable blueprint", () => {
+    // Missing directory
+    const missingDir = path.join(
+      os.tmpdir(),
+      "nemoclaw-blueprint-missing-" + Date.now().toString(),
+    );
+    expect(getBlueprintMinOpenshellVersion(missingDir)).toBe(null);
+
+    // Present file, missing field — must NOT block onboard
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-no-field-"));
+    const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.writeFileSync(path.join(blueprintDir, "blueprint.yaml"), 'version: "0.1.0"\n');
+    try {
+      expect(getBlueprintMinOpenshellVersion(tmpDir)).toBe(null);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+
+    // Present file, malformed YAML — must NOT throw, just return null
+    const badDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-bad-yaml-"));
+    const badBlueprintDir = path.join(badDir, "nemoclaw-blueprint");
+    fs.mkdirSync(badBlueprintDir, { recursive: true });
+    fs.writeFileSync(path.join(badBlueprintDir, "blueprint.yaml"), "this is: : not valid: yaml: [");
+    try {
+      expect(getBlueprintMinOpenshellVersion(badDir)).toBe(null);
+    } finally {
+      fs.rmSync(badDir, { recursive: true, force: true });
+    }
+
+    // Present file, non-string value (yaml parses unquoted 1.5 as number) —
+    // must NOT block onboard, just return null
+    const wrongTypeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-wrong-type-"));
+    const wrongTypeBlueprintDir = path.join(wrongTypeDir, "nemoclaw-blueprint");
+    fs.mkdirSync(wrongTypeBlueprintDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(wrongTypeBlueprintDir, "blueprint.yaml"),
+      "min_openshell_version: 1.5\n",
+    );
+    try {
+      expect(getBlueprintMinOpenshellVersion(wrongTypeDir)).toBe(null);
+    } finally {
+      fs.rmSync(wrongTypeDir, { recursive: true, force: true });
+    }
+
+    // Present file, string value that doesn't look like x.y.z — must NOT
+    // block onboard. Defends against typos like "latest" or "0.1".
+    const badShapeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-bad-shape-"));
+    const badShapeBlueprintDir = path.join(badShapeDir, "nemoclaw-blueprint");
+    fs.mkdirSync(badShapeBlueprintDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(badShapeBlueprintDir, "blueprint.yaml"),
+      'min_openshell_version: "latest"\n',
+    );
+    try {
+      expect(getBlueprintMinOpenshellVersion(badShapeDir)).toBe(null);
+    } finally {
+      fs.rmSync(badShapeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1317: shipped blueprint.yaml exposes a parseable min_openshell_version", () => {
+    // Sanity check against the real on-disk blueprint so a future edit that
+    // accidentally drops or breaks the field is caught by CI rather than at
+    // a user's onboard time.
+    const repoRoot = path.resolve(import.meta.dirname, "..");
+    const v = getBlueprintMinOpenshellVersion(repoRoot);
+    expect(v).not.toBe(null);
+    expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(v)).toBe(true);
   });
 
   it("pins the gateway image to the installed OpenShell release version", () => {
@@ -1486,7 +1785,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -1591,7 +1890,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -1686,6 +1985,7 @@ runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
   if (command.includes("'provider' 'get'")) return "Provider: discord-bridge";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (command.includes("sandbox exec") && command.includes("curl")) return "ok";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -1985,6 +2285,518 @@ const { createSandbox } = require(${onboardPath});
         providerUpserts.some((e) => e.command.includes("my-assistant-slack-bridge")),
         "should upsert slack provider on reuse to refresh credentials",
       );
+    },
+  );
+
+  it(
+    "non-interactive exits with error when existing sandbox is not ready",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-noninteractive-notready-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "noninteractive-notready.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const childProcess = require("node:child_process");
+
+runner.run = (command) => {
+  if (command.includes("'sandbox' 'delete'")) {
+    throw new Error("unexpected sandbox delete");
+  }
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  // Existing sandbox that is NOT ready
+  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
+  if (command.includes("'sandbox' 'list'")) return "my-assistant NotReady";
+  return "";
+};
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+childProcess.spawn = () => {
+  throw new Error("unexpected sandbox create");
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  console.log("ERROR_DID_NOT_EXIT");
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const env = {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      };
+      delete env["NEMOCLAW_RECREATE_SANDBOX"];
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env,
+      });
+
+      assert.notEqual(result.status, 0, "expected non-zero exit for not-ready sandbox");
+      assert.ok(
+        !result.stdout.includes("ERROR_DID_NOT_EXIT"),
+        "should have exited before reaching sandbox create",
+      );
+      const output = (result.stdout || "") + (result.stderr || "");
+      assert.ok(
+        output.includes("--recreate-sandbox") || output.includes("NEMOCLAW_RECREATE_SANDBOX"),
+        "should hint about --recreate-sandbox flag",
+      );
+    },
+  );
+
+  it(
+    "recreate-sandbox flag forces deletion and recreation of a ready sandbox",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-flag-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "recreate-flag.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
+  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  if (command.includes("'forward' 'list'")) return "";
+  if (command.includes("sandbox exec") && command.includes("curl")) return "ok";
+  return "";
+};
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.registerSandbox = () => true;
+registry.removeSandbox = () => true;
+
+const preflight = require(${JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"))});
+preflight.checkPortAvailable = async () => ({ ok: true });
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  console.log(JSON.stringify({ sandboxName, commands }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+
+      assert.ok(
+        payload.commands.some((entry) => entry.command.includes("'sandbox' 'delete'")),
+        "should delete existing sandbox when --recreate-sandbox is set",
+      );
+      assert.ok(
+        payload.commands.some((entry) => entry.command.includes("'sandbox' 'create'")),
+        "should create a new sandbox when --recreate-sandbox is set",
+      );
+    },
+  );
+
+  it(
+    "interactive mode prompts before reusing an existing ready sandbox",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-interactive-reuse-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "interactive-reuse.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const credentials = require(${credentialsPath});
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
+  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  return "";
+};
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+
+// Mock prompt to return "y" (reuse)
+credentials.prompt = async () => "y";
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  console.log(JSON.stringify({ sandboxName, commands }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      // Run WITHOUT NEMOCLAW_NON_INTERACTIVE to exercise interactive path
+      const env = {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      };
+      delete env["NEMOCLAW_NON_INTERACTIVE"];
+      delete env["NEMOCLAW_RECREATE_SANDBOX"];
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env,
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+
+      assert.equal(payload.sandboxName, "my-assistant", "should reuse when user answers y");
+      assert.ok(
+        payload.commands.every((entry) => !entry.command.includes("'sandbox' 'create'")),
+        "should NOT recreate sandbox when user chooses to reuse",
+      );
+      assert.ok(
+        payload.commands.every((entry) => !entry.command.includes("'sandbox' 'delete'")),
+        "should NOT delete sandbox when user chooses to reuse",
+      );
+      assert.ok(
+        result.stdout.includes("already exists"),
+        "should show 'already exists' message in interactive mode",
+      );
+    },
+  );
+
+  it(
+    "interactive mode deletes and recreates sandbox when user declines reuse",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-interactive-decline-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "interactive-decline.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const credentials = require(${credentialsPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
+  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  if (command.includes("'forward' 'list'")) return "";
+  if (command.includes("sandbox exec") && command.includes("curl")) return "ok";
+  return "";
+};
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.registerSandbox = () => true;
+registry.removeSandbox = () => true;
+
+const preflight = require(${JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"))});
+preflight.checkPortAvailable = async () => ({ ok: true });
+
+// Mock prompt to return "n" (decline reuse)
+credentials.prompt = async () => "n";
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  console.log(JSON.stringify({ sandboxName, commands }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      // Run WITHOUT NEMOCLAW_NON_INTERACTIVE to exercise interactive path
+      const env = {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      };
+      delete env["NEMOCLAW_NON_INTERACTIVE"];
+      delete env["NEMOCLAW_RECREATE_SANDBOX"];
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env,
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+
+      assert.ok(
+        payload.commands.some((entry) => entry.command.includes("'sandbox' 'delete'")),
+        "should delete existing sandbox when user declines reuse",
+      );
+      assert.ok(
+        payload.commands.some((entry) => entry.command.includes("'sandbox' 'create'")),
+        "should create a new sandbox when user declines reuse",
+      );
+      assert.ok(
+        result.stdout.includes("already exists"),
+        "should show 'already exists' message before prompting",
+      );
+    },
+  );
+
+  it(
+    "interactive mode auto-recreates when existing sandbox is not ready",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-interactive-notready-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "interactive-notready.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const credentials = require(${credentialsPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const commands = [];
+let sandboxDeleted = false;
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  if (command.includes("'sandbox' 'delete'")) sandboxDeleted = true;
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  // Existing sandbox that is NOT ready initially, becomes Ready after recreation
+  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
+  if (command.includes("'sandbox' 'list'")) {
+    return sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
+  }
+  if (command.includes("'forward' 'list'")) return "";
+  if (command.includes("sandbox exec") && command.includes("curl")) return "ok";
+  return "";
+};
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.registerSandbox = () => true;
+registry.removeSandbox = () => true;
+
+const preflight = require(${JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"))});
+preflight.checkPortAvailable = async () => ({ ok: true });
+
+// User confirms recreation when prompted
+credentials.prompt = async () => "y";
+
+const fakeSpawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+childProcess.spawn = fakeSpawn;
+
+// Also patch spawn inside the compiled sandbox-create-stream module.
+// It imports spawn at load time from "node:child_process", so patching the
+// childProcess object above does not reach it. Patch the cached module
+// directly so streamSandboxCreate (called by createSandbox) doesn't spawn
+// a real bash process that tries to hit a live gateway.
+const sandboxCreateStreamMod = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "sandbox-create-stream.js"))});
+const _origStreamCreate = sandboxCreateStreamMod.streamSandboxCreate;
+sandboxCreateStreamMod.streamSandboxCreate = (command, env, options = {}) => {
+  return _origStreamCreate(command, env, { ...options, spawnImpl: fakeSpawn });
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  console.log(JSON.stringify({ sandboxName, commands }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      // Run WITHOUT NEMOCLAW_NON_INTERACTIVE to exercise interactive path
+      const env = {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      };
+      delete env["NEMOCLAW_NON_INTERACTIVE"];
+      delete env["NEMOCLAW_RECREATE_SANDBOX"];
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env,
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+
+      assert.ok(
+        payload.commands.some((entry) => entry.command.includes("'sandbox' 'delete'")),
+        "should delete not-ready sandbox after user confirms",
+      );
+      assert.ok(
+        payload.commands.some((entry) => entry.command.includes("'sandbox' 'create'")),
+        "should recreate sandbox when existing one is not ready",
+      );
+      assert.ok(result.stdout.includes("not ready"), "should mention sandbox is not ready");
     },
   );
 
@@ -2319,7 +3131,7 @@ runner.runCapture = (command) => {
     sandboxListCalls += 1;
     return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
   }
-  if (command.includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -2700,7 +3512,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -2827,7 +3639,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -3085,7 +3897,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
