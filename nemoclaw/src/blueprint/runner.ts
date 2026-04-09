@@ -21,22 +21,7 @@ import { execa } from "execa";
 import YAML from "yaml";
 
 import { validateEndpointUrl } from "./ssrf.js";
-
-/** Dashboard port — validated from NEMOCLAW_DASHBOARD_PORT env var, defaults to 18789. */
-function parseDashboardPort(): number {
-  const raw = process.env.NEMOCLAW_DASHBOARD_PORT;
-  if (raw === undefined || raw === "") return 18789;
-  const trimmed = raw.trim();
-  if (!/^\d+$/.test(trimmed)) {
-    throw new Error(`Invalid NEMOCLAW_DASHBOARD_PORT="${raw}" — must be 1024-65535`);
-  }
-  const parsed = Number(trimmed);
-  if (parsed < 1024 || parsed > 65535) {
-    throw new Error(`Invalid NEMOCLAW_DASHBOARD_PORT="${raw}" — must be 1024-65535`);
-  }
-  return parsed;
-}
-const DASHBOARD_PORT = parseDashboardPort();
+import { DASHBOARD_PORT } from "../lib/ports.js";
 
 type Action = "plan" | "apply" | "status" | "rollback";
 
