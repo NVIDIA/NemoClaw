@@ -822,6 +822,12 @@ resolve_openclaw_version() {
         print substr($0, RSTART + 9, RLENGTH - 9)
         exit
       }
+      match($0, /ARG[[:space:]]+OPENCLAW_VERSION[[:space:]]*=[[:space:]]*[0-9][0-9.]+/) {
+        line = substr($0, RSTART, RLENGTH)
+        sub(/^[^=]+=[[:space:]]*/, "", line)
+        print line
+        exit
+      }
     ' "$dockerfile_base"
   fi
 }
