@@ -54,7 +54,7 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
     return;
   }
 
-  const live = deps.getLiveInference();
+  deps.getLiveInference();
 
   log("");
   if (recovery.recoveredFromSession) {
@@ -86,7 +86,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
   const log = deps.log ?? console.log;
   const { sandboxes, defaultSandbox } = deps.listSandboxes();
   if (sandboxes.length > 0) {
-    const live = deps.getLiveInference();
+    deps.getLiveInference();
     log("");
     log("  Sandboxes:");
     for (const sb of sandboxes) {
