@@ -262,7 +262,7 @@ repos:
 
       - id: test-skills-yaml
         name: Test (skills YAML)
-        entry: npx vitest run test/skills-frontmatter.test.js
+        entry: npx vitest run test/skills-frontmatter.test.ts
         language: system
         pass_filenames: false
         files: ^(\.agents/skills/|docs/.*\.md$|scripts/docs-to-skills\.py$|test/skills-frontmatter\.test\.js$)

@@ -35,6 +35,7 @@ Covers drafting documentation updates from recent commits.
 
 ### User Skills
 
+<!-- user-skills-table:begin -->
 | Skill | Summary |
 |-------|---------|
 | `nemoclaw-user-overview` | What NemoClaw is, ecosystem placement (OpenClaw + OpenShell + NemoClaw), how it works internally, and release notes. |
@@ -46,6 +47,7 @@ Covers drafting documentation updates from recent commits.
 | `nemoclaw-user-configure-security` | Review the risk framework for every configurable security control, understand credential storage, and assess posture trade-offs. |
 | `nemoclaw-user-workspace` | Back up and restore OpenClaw workspace files (soul.md, identity.md, memory.md, agents.md) and understand file persistence across sandbox restarts. |
 | `nemoclaw-user-reference` | CLI command reference, plugin and blueprint architecture, baseline network policies, and troubleshooting guide. |
+<!-- user-skills-table:end -->
 
 ### Maintainer Skills
 

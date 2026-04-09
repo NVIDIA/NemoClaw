@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 version: "0.1.0"
-min_openshell_version: "0.1.0"
+min_openshell_version: "0.0.24"
 min_openclaw_version: "2026.3.0"
 digest: ""  # Computed at release time
 

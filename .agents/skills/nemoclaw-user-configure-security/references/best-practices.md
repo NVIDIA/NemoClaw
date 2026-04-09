@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Security Best Practices
 
 NemoClaw ships with deny-by-default security controls across four layers: network, filesystem, process, and inference.
