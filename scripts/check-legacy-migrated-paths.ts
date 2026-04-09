@@ -15,6 +15,12 @@ type ChangedFile = {
   filePath: string;
 };
 
+type GuardedPath = {
+  filePath: string;
+  canonical: string;
+  kind: "migrated-runtime" | "removed-shim" | "migrated-test";
+};
+
 const RUNTIME_MOVES = moveMap.runtimeMoves as Record<string, string>;
 const REMOVED_SHIM_MOVES: Record<string, string> = {
   "bin/lib/chat-filter.js": "src/lib/chat-filter.ts",
@@ -89,15 +95,27 @@ function getChangedFiles(base: string, head: string): ChangedFile[] {
     .filter((entry) => Boolean(entry.filePath));
 }
 
-function canonicalPathFor(filePath: string): string | null {
+function classifyGuardedPath(filePath: string): GuardedPath | null {
   if (filePath in RUNTIME_MOVES) {
-    return RUNTIME_MOVES[filePath];
+    return {
+      filePath,
+      canonical: RUNTIME_MOVES[filePath],
+      kind: "migrated-runtime",
+    };
   }
   if (filePath in REMOVED_SHIM_MOVES) {
-    return REMOVED_SHIM_MOVES[filePath];
+    return {
+      filePath,
+      canonical: REMOVED_SHIM_MOVES[filePath],
+      kind: "removed-shim",
+    };
   }
   if (/^test\/.*\.test\.js$/.test(filePath)) {
-    return filePath.replace(/\.js$/, ".ts");
+    return {
+      filePath,
+      canonical: filePath.replace(/\.js$/, ".ts"),
+      kind: "migrated-test",
+    };
   }
   return null;
 }
@@ -113,19 +131,32 @@ function main() {
   const changedFiles = getChangedFiles(options.base, options.head);
   const legacyEdits = changedFiles
     .filter((entry) => !entry.status.startsWith("D"))
-    .map((entry) => ({ filePath: entry.filePath, canonical: canonicalPathFor(entry.filePath) }))
-    .filter((entry) => entry.canonical !== null);
+    .map((entry) => classifyGuardedPath(entry.filePath))
+    .filter((entry): entry is GuardedPath => entry !== null);
 
   if (legacyEdits.length === 0) {
-    console.log("No edits to migrated legacy paths detected.");
+    console.log("No edits to migrated legacy paths or removed compatibility shims detected.");
     return;
   }
 
-  console.error("Legacy migrated paths were edited in this PR.");
+  const migratedPaths = legacyEdits.filter((entry) => entry.kind !== "removed-shim");
+  const removedShims = legacyEdits.filter((entry) => entry.kind === "removed-shim");
+
+  console.error("Guarded legacy paths were edited in this PR.");
   console.error("");
-  console.error("Edit the canonical TS files instead:");
-  for (const entry of legacyEdits) {
-    console.error(`  ${entry.filePath} -> ${entry.canonical}`);
+  if (migratedPaths.length > 0) {
+    console.error("Migrated legacy paths must be edited via their canonical TS files:");
+    for (const entry of migratedPaths) {
+      console.error(`  ${entry.filePath} -> ${entry.canonical}`);
+    }
+    console.error("");
+  }
+  if (removedShims.length > 0) {
+    console.error("Removed compatibility shims must not be reintroduced or edited directly:");
+    for (const entry of removedShims) {
+      console.error(`  ${entry.filePath} -> ${entry.canonical}`);
+    }
+    console.error("");
   }
   console.error("");
   console.error("To port a stale branch automatically, run:");
