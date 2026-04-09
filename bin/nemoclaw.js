@@ -914,9 +914,19 @@ async function credentialsCommand(args) {
 
   if (sub === "reset") {
     const key = args[1];
-    if (!key) {
+    // Validate that <KEY> is a real positional argument, not a flag like
+    // `--yes` that the user passed without a key. Without this guard, the
+    // missing-key path would mistakenly look up '--yes' as a credential.
+    if (!key || key.startsWith("-")) {
       console.error("  Usage: nemoclaw credentials reset <KEY> [--yes]");
       console.error("  Run 'nemoclaw credentials list' to see stored keys.");
+      process.exit(1);
+    }
+    // Reject unknown trailing arguments to keep scripted use predictable.
+    const extraArgs = args.slice(2).filter((arg) => arg !== "--yes" && arg !== "-y");
+    if (extraArgs.length > 0) {
+      console.error(`  Unknown argument(s) for credentials reset: ${extraArgs.join(", ")}`);
+      console.error("  Usage: nemoclaw credentials reset <KEY> [--yes]");
       process.exit(1);
     }
     // Only consult the persisted credentials file — getCredential() falls back
