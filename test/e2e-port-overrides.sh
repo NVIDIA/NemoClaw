@@ -246,6 +246,63 @@ else
   fail "boundary port 65535 rejected: $OUT"
 fi
 
+# ── Test 12: NIM container maps host port to fixed internal 8000 ──
+# The NIM container always listens on 8000 internally. The docker run
+# command must map VLLM_PORT (host) to 8000 (container), not VLLM_PORT
+# to VLLM_PORT. Ref: CodeRabbit critical finding on nim.ts.
+
+info "12. NIM docker run maps host port to container internal 8000"
+OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+  # Check nim.ts compiled output for the docker run port mapping
+  NIM_FILE=$(find / -path "*/dist/lib/nim.js" -type f 2>/dev/null | head -1)
+  if [ -z "$NIM_FILE" ]; then
+    NIM_FILE=$(find / -path "*/lib/nim.ts" -type f 2>/dev/null | head -1)
+  fi
+  if [ -z "$NIM_FILE" ]; then
+    echo "NIM_NOT_FOUND"
+  else
+    # The port mapping should be ${port}:8000, NOT ${port}:${VLLM_PORT}
+    if grep -q ":8000" "$NIM_FILE" 2>/dev/null; then
+      echo "INTERNAL_PORT_OK"
+    else
+      echo "INTERNAL_PORT_BAD"
+    fi
+  fi
+' 2>&1 || true)
+if echo "$OUT" | grep -q "INTERNAL_PORT_OK"; then
+  pass "NIM container maps to internal port 8000"
+elif echo "$OUT" | grep -q "NIM_NOT_FOUND"; then
+  info "SKIP: nim.js/nim.ts not found in image"
+else
+  fail "NIM container port mapping incorrect: $OUT"
+fi
+
+# ── Test 13: docker port queries container internal 8000 ─────────
+
+info "13. NIM status queries docker port on internal 8000"
+OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+  NIM_FILE=$(find / -path "*/dist/lib/nim.js" -type f 2>/dev/null | head -1)
+  if [ -z "$NIM_FILE" ]; then
+    NIM_FILE=$(find / -path "*/lib/nim.ts" -type f 2>/dev/null | head -1)
+  fi
+  if [ -z "$NIM_FILE" ]; then
+    echo "NIM_NOT_FOUND"
+  else
+    if grep -q "docker port.*8000" "$NIM_FILE" 2>/dev/null; then
+      echo "DOCKER_PORT_QUERY_OK"
+    else
+      echo "DOCKER_PORT_QUERY_BAD"
+    fi
+  fi
+' 2>&1 || true)
+if echo "$OUT" | grep -q "DOCKER_PORT_QUERY_OK"; then
+  pass "NIM status queries docker port 8000 (container internal)"
+elif echo "$OUT" | grep -q "NIM_NOT_FOUND"; then
+  info "SKIP: nim.js/nim.ts not found in image"
+else
+  fail "NIM docker port query incorrect: $OUT"
+fi
+
 # ── Summary ──────────────────────────────────────────────────────
 
 echo ""
