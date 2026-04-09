@@ -205,6 +205,22 @@ $ NEMOCLAW_EXPERIMENTAL=1 \
 
 To select a specific model, set `NEMOCLAW_MODEL`.
 
+## Timeout Configuration
+
+Local inference requests use a default timeout of 180 seconds.
+Large prompts on hardware such as DGX Spark can exceed shorter timeouts, so NemoClaw sets a higher default for local providers (Ollama, vLLM, NIM).
+
+To override the timeout, set the `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` environment variable before onboarding:
+
+```console
+$ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
+$ nemoclaw onboard
+```
+
+The value is in seconds.
+This setting is baked into the sandbox at build time.
+Changing it after onboarding requires re-running `nemoclaw onboard`.
+
 ## Verify the Configuration
 
 After onboarding completes, confirm the active provider and model.

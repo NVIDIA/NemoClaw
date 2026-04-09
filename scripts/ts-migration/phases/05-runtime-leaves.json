@@ -1,0 +1,10 @@
+{
+  "moveRuntime": {
+    "bin/lib/platform.js": "src/lib/platform.ts",
+    "bin/lib/sandbox-build-context.js": "src/lib/sandbox-build-context.ts"
+  },
+  "shimStrategy": {
+    "bin/lib/platform.js": "simple",
+    "bin/lib/sandbox-build-context.js": "simple"
+  }
+}

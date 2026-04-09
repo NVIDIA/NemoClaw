@@ -142,4 +142,144 @@ describe("base sandbox policy", () => {
     }
     expect(missingHosts).toEqual([]);
   });
+
+  // Walk every endpoint in every network_policies entry and return the
+  // entries whose host matches `hostMatcher`. Used by the regressions below.
+  type Rule = { allow?: { method?: string; path?: string } };
+  type Endpoint = { host?: string; rules?: Rule[] };
+  function findEndpoints(hostMatcher: (h: string) => boolean): Endpoint[] {
+    const out: Endpoint[] = [];
+    const np = (policy as Record<string, unknown>).network_policies;
+    if (!np || typeof np !== "object") return out;
+    for (const value of Object.values(np as Record<string, unknown>)) {
+      if (!value || typeof value !== "object") continue;
+      const endpoints = (value as { endpoints?: unknown }).endpoints;
+      if (!Array.isArray(endpoints)) continue;
+      for (const ep of endpoints) {
+        if (ep && typeof ep === "object" && typeof (ep as Endpoint).host === "string") {
+          if (hostMatcher((ep as Endpoint).host as string)) {
+            out.push(ep as Endpoint);
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  it("regression #1437: sentry.io has no POST allow rule (multi-tenant exfiltration vector)", () => {
+    const sentryEndpoints = findEndpoints((h) => h === "sentry.io");
+    expect(sentryEndpoints.length).toBeGreaterThan(0); // should still appear
+    for (const ep of sentryEndpoints) {
+      const rules = Array.isArray(ep.rules) ? ep.rules : [];
+      const hasPost = rules.some(
+        (r) => r && r.allow && typeof r.allow.method === "string" && r.allow.method.toUpperCase() === "POST",
+      );
+      expect(hasPost).toBe(false);
+    }
+  });
+
+  it("regression #1437: sentry.io retains GET (harmless, no body for exfil)", () => {
+    const sentryEndpoints = findEndpoints((h) => h === "sentry.io");
+    for (const ep of sentryEndpoints) {
+      const rules = Array.isArray(ep.rules) ? ep.rules : [];
+      const hasGet = rules.some(
+        (r) => r && r.allow && typeof r.allow.method === "string" && r.allow.method.toUpperCase() === "GET",
+      );
+      expect(hasGet).toBe(true);
+    }
+  });
+
+  it("regression #1583: base policy does not silently grant GitHub access", () => {
+    // Until #1583, github.com / api.github.com plus the git/gh
+    // binaries lived in network_policies and were therefore included
+    // in every sandbox regardless of user opt-in. The fix moves the
+    // entry into a discoverable preset (`presets/github.yaml`). This
+    // assertion blocks the regression where someone re-adds a github
+    // entry to the base policy and silently re-grants every sandbox
+    // unscoped GitHub access.
+    const np = policy.network_policies as Record<string, unknown> | undefined;
+    expect(np && typeof np === "object" && "github" in np).toBe(false);
+
+    // Belt and braces: also assert no endpoint in any base-policy
+    // entry references github.com or api.github.com, so the
+    // regression can't be smuggled in under a renamed key.
+    const githubHosts = findEndpoints(
+      (h) => h === "github.com" || h === "api.github.com",
+    );
+    expect(githubHosts).toEqual([]);
+  });
+});
+
+describe("github preset", () => {
+  // The fix for #1583 was *only* meaningful if the github preset
+  // actually exists and is loadable — otherwise users have no way to
+  // opt in. Verify the preset file is present and well-formed.
+  const PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/github.yaml",
+    import.meta.url,
+  );
+
+  it("regression #1583: github preset file exists and parses", () => {
+    const raw = readFileSync(PRESET_PATH, "utf-8");
+    const parsed = YAML.parse(raw) as Record<string, unknown>;
+    expect(parsed).toEqual(expect.objectContaining({}));
+    const meta = parsed.preset as { name?: unknown } | undefined;
+    expect(meta?.name).toBe("github");
+    const np = parsed.network_policies as Record<string, unknown> | undefined;
+    expect(np && "github" in np).toBe(true);
+  });
+});
+
+describe("huggingface preset", () => {
+  // The huggingface preset used to allow POST /** on huggingface.co,
+  // which let an agent that found an HF token in the environment
+  // publish models, datasets, and create repositories via
+  // /api/repos/create and friends. Inference Provider traffic flows
+  // through router.huggingface.co, not huggingface.co, so the POST
+  // rule was never required for read-only `from_pretrained` flows.
+  // The fix removes the POST rule from huggingface.co (download-only).
+  // These tests block a regression where someone re-adds it.
+  // See #1432.
+  const HUGGINGFACE_PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/huggingface.yaml",
+    import.meta.url,
+  );
+  const huggingfacePreset = YAML.parse(
+    readFileSync(HUGGINGFACE_PRESET_PATH, "utf-8"),
+  ) as Record<string, unknown>;
+
+  type Rule = { allow?: { method?: string; path?: string } };
+  type Endpoint = { host?: string; rules?: Rule[] };
+
+  function presetEndpoints(): Endpoint[] {
+    const np = huggingfacePreset.network_policies as Record<string, unknown> | undefined;
+    if (!np) return [];
+    const hf = np.huggingface as { endpoints?: unknown } | undefined;
+    return Array.isArray(hf?.endpoints) ? (hf!.endpoints as Endpoint[]) : [];
+  }
+
+  it("regression #1432: huggingface.co has no POST allow rule", () => {
+    const endpoints = presetEndpoints().filter((ep) => ep.host === "huggingface.co");
+    expect(endpoints.length).toBeGreaterThan(0);
+    for (const ep of endpoints) {
+      const rules = Array.isArray(ep.rules) ? ep.rules : [];
+      const hasPost = rules.some(
+        (r) =>
+          r && r.allow && typeof r.allow.method === "string" && r.allow.method.toUpperCase() === "POST",
+      );
+      expect(hasPost).toBe(false);
+    }
+  });
+
+  it("regression #1432: huggingface.co retains GET so downloads still work", () => {
+    const endpoints = presetEndpoints().filter((ep) => ep.host === "huggingface.co");
+    for (const ep of endpoints) {
+      const rules = Array.isArray(ep.rules) ? ep.rules : [];
+      const hasGet = rules.some(
+        (r) =>
+          r && r.allow && typeof r.allow.method === "string" && r.allow.method.toUpperCase() === "GET",
+      );
+      expect(hasGet).toBe(true);
+    }
+  });
 });
