@@ -12,7 +12,8 @@ type Options = {
 
 type ChangedFile = {
   status: string;
-  filePath: string;
+  oldPath: string | null;
+  newPath: string;
 };
 
 type GuardedPath = {
@@ -86,28 +87,30 @@ function getChangedFiles(base: string, head: string): ChangedFile[] {
     .split("\n")
     .filter(Boolean)
     .map((line) => {
-      const [status, ...rest] = line.split("\t");
+      const [status = "", firstPath = "", secondPath = ""] = line.split("\t");
+      const isRenameOrCopy = /^[RC]/.test(status);
       return {
         status,
-        filePath: rest[rest.length - 1] || "",
+        oldPath: isRenameOrCopy ? firstPath : null,
+        newPath: isRenameOrCopy ? secondPath : firstPath,
       };
     })
-    .filter((entry) => Boolean(entry.filePath));
+    .filter((entry) => Boolean(entry.newPath));
 }
 
 function classifyGuardedPath(filePath: string): GuardedPath | null {
-  if (filePath in RUNTIME_MOVES) {
-    return {
-      filePath,
-      canonical: RUNTIME_MOVES[filePath],
-      kind: "migrated-runtime",
-    };
-  }
   if (filePath in REMOVED_SHIM_MOVES) {
     return {
       filePath,
       canonical: REMOVED_SHIM_MOVES[filePath],
       kind: "removed-shim",
+    };
+  }
+  if (filePath in RUNTIME_MOVES) {
+    return {
+      filePath,
+      canonical: RUNTIME_MOVES[filePath],
+      kind: "migrated-runtime",
     };
   }
   if (/^test\/.*\.test\.js$/.test(filePath)) {
@@ -129,10 +132,15 @@ function main() {
   }
 
   const changedFiles = getChangedFiles(options.base, options.head);
-  const legacyEdits = changedFiles
-    .filter((entry) => !entry.status.startsWith("D"))
-    .map((entry) => classifyGuardedPath(entry.filePath))
-    .filter((entry): entry is GuardedPath => entry !== null);
+  const legacyEdits = Array.from(
+    new Map(
+      changedFiles
+        .filter((entry) => !entry.status.startsWith("D"))
+        .flatMap((entry) => [entry.oldPath, entry.newPath])
+        .filter((filePath): filePath is string => Boolean(filePath))
+        .map((filePath) => [filePath, classifyGuardedPath(filePath)]),
+    ).values(),
+  ).filter((entry): entry is GuardedPath => entry !== null);
 
   if (legacyEdits.length === 0) {
     console.log("No edits to migrated legacy paths or removed compatibility shims detected.");
