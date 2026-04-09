@@ -177,6 +177,9 @@ fi
 if [ "$1" = "run" ]; then
   exit 0
 fi
+if [ "$1" = "uninstall" ]; then
+  exit 0
+fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
@@ -184,7 +187,7 @@ if [ "$1" = "onboard" ]; then
   exit 0
 fi
 if [ "$1" = "--version" ]; then
-  echo "v0.1.0-test"
+  echo "nemoclaw v0.1.0-test"
   exit 0
 fi
 exit 0
@@ -277,6 +280,9 @@ fi
 if [ "$1" = "run" ]; then
   exit 0
 fi
+if [ "$1" = "uninstall" ]; then
+  exit 0
+fi
 if [ "$1" = "link" ]; then
   exit 0
 fi
@@ -300,7 +306,7 @@ exit 98
 
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).not.toBe(0);
-    expect(output).toMatch(new RegExp(GITHUB_INSTALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    expect(output).toMatch(/curl -fsSL https:\/\/www\.nvidia\.com\/nemoclaw\.sh \| bash/);
     expect(output).not.toMatch(/npm install -g nemoclaw/);
   });
 
@@ -427,7 +433,8 @@ if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" 
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
-if [ "$1" = "onboard" ] || [ "$1" = "--version" ]; then exit 0; fi
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
+if [ "$1" = "onboard" ]; then exit 0; fi
 exit 0
 EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
@@ -518,6 +525,7 @@ if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" 
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
 printf '%s\\n' "$*" >> "$NEMOCLAW_ONBOARD_LOG"
 exit 0
 EOS
@@ -612,6 +620,7 @@ if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" 
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
 printf '%s\\n' "$*" >> "$NEMOCLAW_ONBOARD_LOG"
 exit 0
 EOS
@@ -674,6 +683,7 @@ if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" 
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
 printf '%s\\n' "$*" >> "$NEMOCLAW_ONBOARD_LOG"
 exit 0
 EOS
@@ -760,6 +770,7 @@ if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" 
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
 printf '%s\\n' "$*" >> "$NEMOCLAW_ONBOARD_LOG"
 exit 0
 EOS
@@ -830,6 +841,7 @@ if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" 
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
 printf '%s\\n' "$*" >> "$NEMOCLAW_ONBOARD_LOG"
 exit 0
 EOS
@@ -976,6 +988,9 @@ fi
 if [ "$1" = "run" ]; then
   exit 0
 fi
+if [ "$1" = "uninstall" ]; then
+  exit 0
+fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
@@ -983,7 +998,7 @@ if [ "$1" = "onboard" ]; then
   exit 0
 fi
 if [ "$1" = "--version" ]; then
-  echo "v0.1.0-test"
+  echo "nemoclaw v0.1.0-test"
   exit 0
 fi
 exit 0
@@ -1103,12 +1118,14 @@ fi
 if [ "$1" = "run" ]; then
   exit 0
 fi
+if [ "$1" = "uninstall" ]; then
+  exit 0
+fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
-if [ "$1" = "onboard" ] || [ "$1" = "--version" ]; then
-  exit 0
-fi
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
+if [ "$1" = "onboard" ]; then exit 0; fi
 exit 0
 EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
@@ -1200,7 +1217,8 @@ if [ "$1" = "install" ] || [ "$1" = "run" ]; then exit 0; fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
-if [ "$1" = "onboard" ] || [ "$1" = "--version" ]; then exit 0; fi
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
+if [ "$1" = "onboard" ]; then exit 0; fi
 exit 0
 EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
@@ -1317,7 +1335,8 @@ if [ "$1" = "install" ] || [ "$1" = "run" ]; then exit 0; fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
-if [ "$1" = "onboard" ] || [ "$1" = "--version" ]; then exit 0; fi
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
+if [ "$1" = "onboard" ]; then exit 0; fi
 exit 0
 EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
@@ -1422,7 +1441,8 @@ if [ "$1" = "install" ] || [ "$1" = "run" ]; then exit 0; fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
-if [ "$1" = "onboard" ] || [ "$1" = "--version" ]; then exit 0; fi
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
+if [ "$1" = "onboard" ]; then exit 0; fi
 exit 0
 EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"
@@ -1892,10 +1912,11 @@ if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then echo "$N
 if [ "$1" = "pack" ]; then exit 1; fi
 if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then exit 0; fi
 if [ "$1" = "run" ]; then exit 0; fi
+if [ "$1" = "uninstall" ]; then exit 0; fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
 #!/usr/bin/env bash
-if [ "$1" = "--version" ]; then echo "v0.5.0-test"; exit 0; fi
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.5.0-test"; exit 0; fi
 exit 0
 EOS
   chmod +x "$NPM_PREFIX/bin/nemoclaw"

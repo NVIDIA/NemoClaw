@@ -1,6 +1,7 @@
 # Commands
 
-The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes. It is installed when you run `npm install -g nemoclaw`.
+The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes.
+It is installed automatically by the installer (`curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`).
 
 ## `/nemoclaw` Slash Command
 
@@ -167,9 +168,20 @@ $ nemoclaw my-assistant destroy
 
 Add a policy preset to a sandbox.
 Presets extend the baseline network policy with additional endpoints.
+Before applying, the command shows which endpoints the preset would open and prompts for confirmation.
 
 ```console
 $ nemoclaw my-assistant policy-add
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview the endpoints a preset would open without applying changes |
+
+Use `--dry-run` to audit a preset before applying it:
+
+```console
+$ nemoclaw my-assistant policy-add --dry-run
 ```
 
 ### `nemoclaw <name> policy-list`
@@ -241,6 +253,28 @@ $ nemoclaw debug [--quick] [--sandbox NAME] [--output PATH]
 | `--quick` | Collect minimal diagnostics only |
 | `--sandbox NAME` | Target a specific sandbox (default: auto-detect) |
 | `--output PATH` | Write diagnostics tarball to the given path |
+
+### `nemoclaw credentials list`
+
+List the names of all credentials stored in `~/.nemoclaw/credentials.json`.
+Values are not printed.
+
+```console
+$ nemoclaw credentials list
+```
+
+### `nemoclaw credentials reset <KEY>`
+
+Remove a stored credential by name.
+After removal, re-running `nemoclaw onboard` re-prompts for that key.
+
+```console
+$ nemoclaw credentials reset NVIDIA_API_KEY
+```
+
+| Flag | Description |
+|------|-------------|
+| `--yes`, `-y` | Skip the confirmation prompt |
 
 ### `nemoclaw uninstall`
 

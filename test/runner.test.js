@@ -604,7 +604,7 @@ describe("regression guards", () => {
       const normalized = normalize(src, "#");
       return normalized.split("\n").filter((line) => {
         const t = line.trim();
-        if (t.startsWith("printf") || t.startsWith("echo")) return false;
+        if (t.startsWith("printf") || t.startsWith("echo") || t.startsWith("warn")) return false;
         return shellViolationRe.test(t);
       });
     };

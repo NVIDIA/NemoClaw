@@ -82,6 +82,18 @@ $ sudo systemctl start docker
 
 On macOS with Docker Desktop, open the Docker Desktop application and wait for it to finish starting before retrying.
 
+### Docker permission denied on Linux
+
+On Linux, if the Docker daemon is running but you see "permission denied" errors, your user may not be in the `docker` group.
+Add your user and activate the group in the current shell:
+
+```console
+$ sudo usermod -aG docker $USER
+$ newgrp docker
+```
+
+Then retry `nemoclaw onboard`.
+
 ### macOS first-run failures
 
 The two most common first-run failures on macOS are missing developer tools and Docker connection errors.
@@ -263,6 +275,14 @@ $ nemoclaw <name> status
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
 Then verify the credential and base URL for the provider you selected during onboarding.
 
+For local providers (Ollama, vLLM, NIM), the default timeout is 180 seconds.
+If large prompts still cause timeouts, increase it with `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` before re-running onboard:
+
+```console
+$ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
+$ nemoclaw onboard
+```
+
 ### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
 
 This is expected behavior.
@@ -271,6 +291,26 @@ Changing or exporting it later does not rewrite the baked `openclaw.json` inside
 
 If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration.
 For the security trade-offs, refer to [Security Best Practices](../security/best-practices.md).
+
+### Sandbox lost after gateway restart
+
+Sandboxes created with OpenShell versions older than 0.0.24 can become unreachable after a gateway restart because SSH secrets were not persisted.
+Running `nemoclaw onboard` automatically upgrades OpenShell to 0.0.24 or later during the preflight check.
+After the upgrade, recreate the sandbox with `nemoclaw onboard`.
+
+### Agent cannot reach external hosts through a proxy
+
+NemoClaw uses a default proxy address of `10.200.0.1:3128` (the OpenShell-injected gateway).
+If your environment uses a different proxy, set `NEMOCLAW_PROXY_HOST` and `NEMOCLAW_PROXY_PORT` before onboarding:
+
+```console
+$ export NEMOCLAW_PROXY_HOST=proxy.example.com
+$ export NEMOCLAW_PROXY_PORT=8080
+$ nemoclaw onboard
+```
+
+These are build-time settings baked into the sandbox image.
+Changing them after onboarding requires re-running `nemoclaw onboard` to rebuild the image.
 
 ### Agent cannot reach an external host
 

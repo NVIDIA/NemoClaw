@@ -103,7 +103,23 @@ default), so no extra configuration is needed.
 > If you disable device auth for a remote deployment, any device that can reach the dashboard origin can connect without pairing.
 > Avoid this on internet-reachable or shared-network deployments.
 
-## Step 7: GPU Configuration
+## Step 7: Proxy Configuration
+
+NemoClaw routes sandbox traffic through a gateway proxy that defaults to `10.200.0.1:3128`.
+If your network requires a different proxy, set `NEMOCLAW_PROXY_HOST` and `NEMOCLAW_PROXY_PORT` before onboarding:
+
+```console
+$ export NEMOCLAW_PROXY_HOST=proxy.example.com
+$ export NEMOCLAW_PROXY_PORT=8080
+$ nemoclaw onboard
+```
+
+These values are baked into the sandbox image at build time.
+Only alphanumeric characters, dots, hyphens, and colons are accepted for the host.
+The port must be numeric (0-65535).
+Changing the proxy after onboarding requires re-running `nemoclaw onboard`.
+
+## Step 8: GPU Configuration
 
 The deploy script uses the `NEMOCLAW_GPU` environment variable to select the GPU type.
 The default value is `a2-highgpu-1g:nvidia-tesla-a100:1`.
@@ -122,12 +138,12 @@ NemoClaw configures those channels during `nemoclaw onboard`. Tokens are registe
 `nemoclaw start` does not start Telegram (or other chat bridges). It only starts optional host services such as the cloudflared tunnel when that binary is present.
 For details, refer to Commands (see the `nemoclaw-user-reference` skill).
 
-## Step 8: Create a Telegram Bot
+## Step 9: Create a Telegram Bot
 
 Open Telegram and send `/newbot` to [@BotFather](https://t.me/BotFather).
 Follow the prompts to create a bot and copy the bot token.
 
-## Step 9: Provide the Bot Token and Optional Allowlist
+## Step 10: Provide the Bot Token and Optional Allowlist
 
 Onboarding reads Telegram credentials from either host environment variables or the NemoClaw credential store (`getCredential` / `saveCredential` in the onboard flow). You do not have to export variables if you enter the token when the wizard asks.
 
@@ -150,7 +166,7 @@ Press **1** to toggle Telegram on or off, then **Enter** when done.
 If the token is not already in the environment or credential store, the wizard prompts for it and saves it to the store.
 If `TELEGRAM_ALLOWED_IDS` is not set, the wizard can prompt for allowed sender IDs for Telegram DMs (you can leave this blank and rely on OpenClaw pairing instead).
 
-## Step 10: Run `nemoclaw onboard`
+## Step 11: Run `nemoclaw onboard`
 
 Complete the rest of the wizard so the blueprint can create OpenShell providers (for example `<sandbox>-telegram-bridge`), bake channel configuration into the image (`NEMOCLAW_MESSAGING_CHANNELS_B64`), and start the sandbox.
 
@@ -160,12 +176,12 @@ If you add or change `TELEGRAM_BOT_TOKEN` (or toggle channels) after a sandbox a
 
 For a full first-time flow, refer to Quickstart (see the `nemoclaw-user-get-started` skill).
 
-## Step 11: Confirm Delivery
+## Step 12: Confirm Delivery
 
 After the sandbox is running, send a message to your bot in Telegram.
 If something fails, use `openshell term` on the host, check gateway logs, and verify network policy allows the Telegram API (see Customize the Network Policy (see the `nemoclaw-user-manage-policy` skill) and the `telegram` preset).
 
-## Step 12: `nemoclaw start` (cloudflared Only)
+## Step 13: `nemoclaw start` (cloudflared Only)
 
 `nemoclaw start` starts cloudflared when it is installed, which can expose the dashboard with a public URL.
 It does not affect Telegram connectivity.
