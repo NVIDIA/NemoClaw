@@ -1,3 +1,4 @@
+// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -410,26 +411,29 @@ describe("regression guards", () => {
     }
   });
 
-  it("no duplicate shellQuote definitions in bin/", () => {
-    const binDir = path.join(import.meta.dirname, "..", "bin");
+  it("keeps a single shellQuote definition in the root CLI codebase", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const searchRoots = [path.join(repoRoot, "bin"), path.join(repoRoot, "src")];
     const files = [];
     function walk(dir) {
       for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
         if (f.isDirectory() && f.name !== "node_modules") walk(path.join(dir, f.name));
-        else if (f.name.endsWith(".js")) files.push(path.join(dir, f.name));
+        else if (f.name.endsWith(".js") || f.name.endsWith(".ts")) files.push(path.join(dir, f.name));
       }
     }
-    walk(binDir);
+    for (const root of searchRoots) {
+      walk(root);
+    }
 
     const defs = [];
     for (const file of files) {
       const src = fs.readFileSync(file, "utf-8");
       if (src.includes("function shellQuote")) {
-        defs.push(file.replace(binDir, "bin"));
+        defs.push(path.relative(repoRoot, file));
       }
     }
     expect(defs).toHaveLength(1);
-    expect(defs[0].includes("runner")).toBeTruthy();
+    expect(defs[0]).toBe(path.join("src", "lib", "runner.ts"));
   });
 
   it("CLI rejects malicious sandbox names before shell commands (e2e)", () => {
