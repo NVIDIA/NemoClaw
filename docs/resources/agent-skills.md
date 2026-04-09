@@ -20,7 +20,7 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# Agent Skills for AI Coding Assistants
+# NemoClaw Agent Skills for AI Coding Assistants
 
 NemoClaw ships agent skills that are generated directly from this documentation.
 Each skill is a converted version of one or more doc pages, structured so AI coding assistants can consume it as context.
@@ -30,7 +30,7 @@ Ask your assistant a question about NemoClaw and it responds with the same guida
 Skills cover installation, inference configuration, network policy management, monitoring, deployment, security, workspace management, and the CLI reference.
 
 :::{note}
-If you are a contributor and have cloned the full NemoClaw repository, the full set of skills are already available at the project root.
+If you are a contributor and have cloned the full NemoClaw repository, the full set of skills including contributor and maintainer skills are already available at the project root.
 Open the `NemoClaw` directory in your coding assistant and the skills load automatically.
 This page is for users who installed NemoClaw with the installer and do not have a local clone.
 :::
@@ -52,7 +52,7 @@ The assistant discovers the skills in `.agents/skills/` and uses them to answer 
 You can keep the skills inside the cloned directory or copy `.agents/skills/` to a global location (such as `~/.cursor/skills/` or `~/.claude/skills/`) so they are available across all your projects.
 The choice depends on whether you want NemoClaw skills scoped to one workspace or accessible everywhere.
 
-## Update Skills
+## Update the Skills
 
 The sparse checkout filter is saved, so `git pull` fetches only updated skills without downloading the full source tree.
 Run `git pull` after each NemoClaw release to pick up new and updated skills.
@@ -86,9 +86,10 @@ Examples of questions your assistant can answer with these skills:
 
 You can also reference a skill directly by name if you know which one you need.
 
-## Supported Assistants
+## Use the Skills with AI Coding Assistants
 
-Agent skills use a format compatible with the following AI coding assistants.
+Agent skills follow the [Agent Skills standard](https://agentskills.io/skill-creation/best-practices) and [Claude Skills best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices).
+They are compatible with the following AI coding assistants.
 
 | Assistant | Skill discovery |
 |-----------|----------------|

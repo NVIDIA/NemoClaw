@@ -16,7 +16,7 @@ This means you can interact with the full NemoClaw documentation as skills insid
 Ask your assistant a question about NemoClaw and it responds with the same guidance found in these docs, adapted to your current situation.
 Skills cover installation, inference configuration, network policy management, monitoring, deployment, security, workspace management, and the CLI reference.
 
-> **Note:** If you are a contributor and have cloned the full NemoClaw repository, the full set of skills are already available at the project root.
+> **Note:** If you are a contributor and have cloned the full NemoClaw repository, the full set of skills including contributor and maintainer skills are already available at the project root.
 > Open the `NemoClaw` directory in your coding assistant and the skills load automatically.
 > This page is for users who installed NemoClaw with the installer and do not have a local clone.
 
@@ -37,7 +37,7 @@ The assistant discovers the skills in `.agents/skills/` and uses them to answer 
 You can keep the skills inside the cloned directory or copy `.agents/skills/` to a global location (such as `~/.cursor/skills/` or `~/.claude/skills/`) so they are available across all your projects.
 The choice depends on whether you want NemoClaw skills scoped to one workspace or accessible everywhere.
 
-## Update Skills
+## Update the Skills
 
 The sparse checkout filter is saved, so `git pull` fetches only updated skills without downloading the full source tree.
 Run `git pull` after each NemoClaw release to pick up new and updated skills.

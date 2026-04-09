@@ -1,4 +1,4 @@
-# Agent Skills for AI Coding Assistants
+# NemoClaw Agent Skills for AI Coding Assistants
 
 NemoClaw ships agent skills that are generated directly from this documentation.
 Each skill is a converted version of one or more doc pages, structured so AI coding assistants can consume it as context.
@@ -7,7 +7,7 @@ This means you can interact with the full NemoClaw documentation as skills insid
 Ask your assistant a question about NemoClaw and it responds with the same guidance found in these docs, adapted to your current situation.
 Skills cover installation, inference configuration, network policy management, monitoring, deployment, security, workspace management, and the CLI reference.
 
-> **Note:** If you are a contributor and have cloned the full NemoClaw repository, the full set of skills are already available at the project root.
+> **Note:** If you are a contributor and have cloned the full NemoClaw repository, the full set of skills including contributor and maintainer skills are already available at the project root.
 > Open the `NemoClaw` directory in your coding assistant and the skills load automatically.
 > This page is for users who installed NemoClaw with the installer and do not have a local clone.
 
@@ -28,7 +28,7 @@ The assistant discovers the skills in `.agents/skills/` and uses them to answer 
 You can keep the skills inside the cloned directory or copy `.agents/skills/` to a global location (such as `~/.cursor/skills/` or `~/.claude/skills/`) so they are available across all your projects.
 The choice depends on whether you want NemoClaw skills scoped to one workspace or accessible everywhere.
 
-## Update Skills
+## Update the Skills
 
 The sparse checkout filter is saved, so `git pull` fetches only updated skills without downloading the full source tree.
 Run `git pull` after each NemoClaw release to pick up new and updated skills.
@@ -60,10 +60,10 @@ The prefix in each skill name indicates who it is for.
 For end users operating a NemoClaw sandbox.
 Covers installation, inference configuration, network policy management, monitoring, remote deployment, security configuration, workspace management, and reference material.
 
-### `nemoclaw-maintainer-*` (3 skills)
+### `nemoclaw-maintainer-*` (6 skills)
 
 For project maintainers.
-Covers cutting releases, finding PRs to review, and performing security code reviews.
+Covers the daily maintainer cadence (morning standup, daytime loop, evening handoff), cutting releases, finding PRs to review, and performing security code reviews.
 
 ### `nemoclaw-contributor-*` (1 skill)
 
@@ -74,6 +74,7 @@ Covers drafting documentation updates from recent commits.
 
 ### User Skills
 
+<!-- user-skills-table:begin -->
 | Skill | Summary |
 |-------|---------|
 | `nemoclaw-user-overview` | What NemoClaw is, ecosystem placement (OpenClaw + OpenShell + NemoClaw), how it works internally, and release notes. |
@@ -85,11 +86,15 @@ Covers drafting documentation updates from recent commits.
 | `nemoclaw-user-configure-security` | Review the risk framework for every configurable security control, understand credential storage, and assess posture trade-offs. |
 | `nemoclaw-user-workspace` | Back up and restore OpenClaw workspace files (soul.md, identity.md, memory.md, agents.md) and understand file persistence across sandbox restarts. |
 | `nemoclaw-user-reference` | CLI command reference, plugin and blueprint architecture, baseline network policies, and troubleshooting guide. |
+<!-- user-skills-table:end -->
 
 ### Maintainer Skills
 
 | Skill | Summary |
 |-------|---------|
+| `nemoclaw-maintainer-morning` | Morning standup: triage the backlog, determine the day's target version, label selected items, surface stragglers, and output the daily plan. |
+| `nemoclaw-maintainer-day` | Daytime loop: pick the highest-value version-targeted item and execute the right workflow (merge gate, salvage, security sweep, test gaps, hotspot cooling, or sequencing). Designed for `/loop`. |
+| `nemoclaw-maintainer-evening` | End-of-day handoff: check version progress, bump stragglers to the next patch, generate a QA handoff summary, and cut the release tag. |
 | `nemoclaw-maintainer-cut-release-tag` | Cut an annotated semver tag on main, move the `latest` floating tag, and push both to origin. |
 | `nemoclaw-maintainer-find-review-pr` | Find open PRs labeled security + priority-high, link each to its issue, detect duplicates, and present a review summary. |
 | `nemoclaw-maintainer-security-code-review` | Perform a 9-category security review of a PR or issue, producing per-category PASS/WARNING/FAIL verdicts. |
@@ -100,28 +105,23 @@ Covers drafting documentation updates from recent commits.
 |-------|---------|
 | `nemoclaw-contributor-update-docs` | Scan recent git commits for user-facing changes and draft or update the corresponding documentation pages. |
 
-## Quick Decision Guide
+## Getting Started
 
-Use this table to jump directly to the right skill.
+Ask the user which role best describes them:
 
-| I want to... | Load this skill |
-|---------------|-----------------|
-| Install NemoClaw or onboard for the first time | `nemoclaw-user-get-started` |
-| Understand what NemoClaw is or how it fits together | `nemoclaw-user-overview` |
-| Switch my inference provider or model | `nemoclaw-user-configure-inference` |
-| Set up a local model server (Ollama, vLLM, NIM) | `nemoclaw-user-configure-inference` |
-| Approve or deny a blocked network request | `nemoclaw-user-manage-policy` |
-| Add or remove endpoints from the network policy | `nemoclaw-user-manage-policy` |
-| Check sandbox logs, status, or health | `nemoclaw-user-monitor-sandbox` |
-| Deploy to a remote GPU or cloud instance | `nemoclaw-user-deploy-remote` |
-| Set up Telegram or a chat bridge | `nemoclaw-user-deploy-remote` |
-| Review security controls or credential storage | `nemoclaw-user-configure-security` |
-| Back up or restore workspace files | `nemoclaw-user-workspace` |
-| Look up a CLI command or troubleshoot an error | `nemoclaw-user-reference` |
-| Cut a new release tag | `nemoclaw-maintainer-cut-release-tag` |
-| Find the next PR to review | `nemoclaw-maintainer-find-review-pr` |
-| Security review a pull request | `nemoclaw-maintainer-security-code-review` |
-| Update docs after landing code changes | `nemoclaw-contributor-update-docs` |
+- **User** — operating a NemoClaw sandbox (running, configuring, monitoring).
+- **Contributor** — contributing code or docs to the NemoClaw project.
+- **Maintainer** — triaging, reviewing, releasing, and managing the project day-to-day.
+
+Skills are cumulative. Each role includes the skills from the roles above it:
+
+| Role | Skills included | Count | Start with |
+|------|----------------|-------|------------|
+| User | `nemoclaw-user-*` | 9 | `nemoclaw-user-get-started` |
+| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 10 | `nemoclaw-user-overview` |
+| Maintainer | All skills | 16 | `nemoclaw-maintainer-morning` |
+
+After identifying the role, present the applicable skills from the Skill Catalog above and recommend the starting skill.
 
 ## Use a Skill
 
@@ -143,9 +143,10 @@ Examples of questions your assistant can answer with these skills:
 
 You can also reference a skill directly by name if you know which one you need.
 
-## Supported Assistants
+## Use the Skills with AI Coding Assistants
 
-Agent skills use a format compatible with the following AI coding assistants.
+Agent skills follow the [Agent Skills standard](https://agentskills.io/skill-creation/best-practices) and [Claude Skills best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices).
+They are compatible with the following AI coding assistants.
 
 | Assistant | Skill discovery |
 |-----------|----------------|
