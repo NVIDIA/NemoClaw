@@ -129,18 +129,12 @@ network_policies:
       - { path: /usr/local/bin/claude }
       - { path: /usr/local/bin/openclaw }
 
-  github:
-    name: github
-    endpoints:
-      - host: github.com
-        port: 443
-        access: full
-      - host: api.github.com
-        port: 443
-        access: full
-    binaries:
-      - { path: /usr/bin/gh }
-      - { path: /usr/bin/git }
+  # NOTE: github.com / api.github.com and the git/gh binaries used to
+  # live in this base policy and were therefore granted to every
+  # sandbox regardless of user opt-in. They have been moved into a
+  # discoverable preset (`presets/github.yaml`) so a sandbox only gets
+  # GitHub access when the user explicitly selects the `github` preset
+  # during onboard. See #1583.
 
   # ── OpenClaw "phone home" ────────────────────────────────────────────
   # Minimum viable set for OpenClaw to authenticate, discover plugins,

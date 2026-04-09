@@ -1948,21 +1948,20 @@ describe("CLI dispatch", () => {
 });
 
 describe("list shows live gateway inference", () => {
-  it("prefers live inference model/provider over stale registry values", () => {
+  it("shows stored sandbox inference instead of live gateway inference", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-live-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
-    // Registry has no model/provider (mimics post-onboard before inference setup)
     fs.writeFileSync(
       path.join(registryDir, "sandboxes.json"),
       JSON.stringify({
         sandboxes: {
           test: {
             name: "test",
-            model: null,
-            provider: null,
+            model: "configured-model",
+            provider: "configured-provider",
             gpuEnabled: true,
             policies: ["pypi", "npm"],
           },
@@ -1971,7 +1970,7 @@ describe("list shows live gateway inference", () => {
       }),
       { mode: 0o600 },
     );
-    // Stub openshell: inference get returns live provider/model
+    // Stub openshell: inference get returns a different live provider/model
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
@@ -1994,9 +1993,10 @@ describe("list shows live gateway inference", () => {
     });
 
     expect(r.code).toBe(0);
-    expect(r.out).toContain("nvidia/nemotron-3-super-120b-a12b");
-    expect(r.out).toContain("nvidia-prod");
-    expect(r.out).not.toContain("unknown");
+    expect(r.out).toContain("configured-model");
+    expect(r.out).toContain("configured-provider");
+    expect(r.out).not.toContain("nvidia/nemotron-3-super-120b-a12b");
+    expect(r.out).not.toContain("nvidia-prod");
   });
 
   it("falls back to registry values when openshell inference get fails", () => {

@@ -38,6 +38,18 @@ describe("registry", () => {
     expect(registry.getDefault()).toBe("alpha");
   });
 
+  it("stores provided model/provider at registration time", () => {
+    registry.registerSandbox({
+      name: "alpha",
+      gpuEnabled: false,
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      provider: "nvidia-prod",
+    });
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes.alpha.model).toBe("nvidia/nemotron-3-super-120b-a12b");
+    expect(data.sandboxes.alpha.provider).toBe("nvidia-prod");
+  });
+
   it("first registered becomes default", () => {
     registry.registerSandbox({ name: "first" });
     registry.registerSandbox({ name: "second" });

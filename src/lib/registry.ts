@@ -14,6 +14,7 @@ export interface SandboxEntry {
   provider?: string | null;
   gpuEnabled?: boolean;
   policies?: string[];
+  dangerouslySkipPermissions?: boolean;
 }
 
 export interface SandboxRegistry {
@@ -156,6 +157,8 @@ export function registerSandbox(entry: SandboxEntry): void {
       provider: entry.provider || null,
       gpuEnabled: entry.gpuEnabled || false,
       policies: entry.policies || [],
+      dangerouslySkipPermissions:
+        entry.dangerouslySkipPermissions === true ? true : undefined,
     };
     if (!data.defaultSandbox) {
       data.defaultSandbox = entry.name;
