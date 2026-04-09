@@ -3829,7 +3829,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   step(8, 8, "Policy presets");
 
   const suggestions = ["pypi", "npm"];
-  if (getCredential("TELEGRAM_BOT_TOKEN") && (!enabledChannels || enabledChannels.includes("telegram")))
+  if ((getCredential("TELEGRAM_BOT_TOKEN") || process.env.TELEGRAM_BOT_TOKEN) && (!enabledChannels || enabledChannels.includes("telegram")))
     suggestions.push("telegram");
   if (
     (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) &&
@@ -4394,6 +4394,9 @@ async function onboard(opts = {}) {
       resume && session?.steps?.sandbox?.status === "complete" && sandboxReuseState === "ready";
     if (resumeSandbox) {
       skippedStepMessage("sandbox", sandboxName);
+      enabledChannels = Array.isArray(session?.steps?.sandbox?.enabledChannels)
+        ? session.steps.sandbox.enabledChannels
+        : null;
     } else {
       if (resume && session?.steps?.sandbox?.status === "complete") {
         if (sandboxReuseState === "not_ready") {
@@ -4409,6 +4412,12 @@ async function onboard(opts = {}) {
         }
       }
       enabledChannels = await setupMessagingChannels();
+      onboardSession.updateSession((current) => {
+        if (!current.steps) current.steps = {};
+        if (!current.steps.sandbox) current.steps.sandbox = {};
+        current.steps.sandbox.enabledChannels = enabledChannels;
+        return current;
+      });
 
       startRecordedStep("sandbox", { sandboxName, provider, model });
       sandboxName = await createSandbox(
@@ -4421,7 +4430,7 @@ async function onboard(opts = {}) {
         enabledChannels,
         fromDockerfile,
       );
-      onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
+      onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer, enabledChannels });
     }
 
     const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
