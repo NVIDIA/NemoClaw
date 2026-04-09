@@ -198,7 +198,7 @@ export function startNimContainerByName(name: string, model: string, port = VLLM
 
   console.log(`  Starting NIM container: ${name}`);
   run(
-    `docker run -d --gpus all -p ${Number(port)}:${VLLM_PORT} --name ${qn} --shm-size 16g ${shellQuote(image)}`,
+    `docker run -d --gpus all -p ${Number(port)}:8000 --name ${qn} --shm-size 16g ${shellQuote(image)}`,
   );
   return name;
 }
@@ -258,7 +258,7 @@ export function nimStatusByName(name: string, port?: number): NimStatus {
     if (state === "running") {
       let resolvedHostPort = port != null ? Number(port) : 0;
       if (!resolvedHostPort) {
-        const mapping = runCapture(`docker port ${qn} ${VLLM_PORT} 2>/dev/null`, {
+        const mapping = runCapture(`docker port ${qn} 8000 2>/dev/null`, {
           ignoreError: true,
         });
         const m = mapping && mapping.match(/:(\d+)\s*$/);
