@@ -18,7 +18,12 @@ description: |
 
 components:
   sandbox:
-    image: "ghcr.io/nvidia/openshell-community/sandboxes/openclaw:latest"
+    # Pinned to a specific image digest so a future registry compromise or an
+    # accidental :latest force-push cannot silently swap the sandbox image.
+    # Ref: #1438. The digest below was the resolved sha256 of the :latest tag
+    # at the time of this commit; release tooling should bump it together with
+    # the top-level `digest:` field on every release.
+    image: "ghcr.io/nvidia/openshell-community/sandboxes/openclaw@sha256:b3d832b596ab6b7184a9dcb4ae93337ca32851a4f93b00765cc12de26baa3a9a"
     name: "openclaw"
     forward_ports:
       - 18789

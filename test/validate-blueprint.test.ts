@@ -41,6 +41,26 @@ describe("blueprint.yaml", () => {
     expect(Object.keys(defined!).length).toBeGreaterThan(0);
   });
 
+  it("regression #1438: sandbox image is pinned by digest, not by mutable tag", () => {
+    // The blueprint MUST NOT pull a sandbox image by a mutable tag like
+    // ":latest" — a registry compromise or accidental force-push could
+    // silently swap the image. Pin via @sha256:... so the image cannot
+    // change without a corresponding blueprint update.
+    const sandbox = (bp.components as Record<string, unknown> | undefined)?.sandbox as
+      | { image?: unknown }
+      | undefined;
+    const image = typeof sandbox?.image === "string" ? sandbox.image : "";
+    expect(image.length).toBeGreaterThan(0);
+    expect(image).toContain("@sha256:");
+    // Belt and braces: explicitly forbid the ":latest" tag form even if the
+    // image string has been rearranged.
+    expect(image).not.toMatch(/:latest$/);
+    expect(image).not.toMatch(/:latest@/);
+    // The digest itself must be a 64-hex sha256.
+    const digestMatch = image.match(/@sha256:([0-9a-f]{64})$/);
+    expect(digestMatch).not.toBeNull();
+  });
+
   for (const name of declared) {
     describe(`profile '${name}'`, () => {
       it("has a definition", () => {
