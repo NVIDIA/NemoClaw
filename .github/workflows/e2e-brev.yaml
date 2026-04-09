@@ -144,12 +144,27 @@ jobs:
           cache: npm
 
       - name: Install Brev CLI
+        env:
+          BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
         run: |
           # Brev CLI v0.6.322+ — CPU instances use `brev search cpu | brev create`
           # Startup scripts use `brev create --startup-script @file` (not brev start --cpu)
           curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.322/brev-cli_0.6.322_linux_amd64.tar.gz"
           tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
           chmod +x /usr/local/bin/brev
+          # Brev CLI does not read BREV_API_TOKEN from env — it requires
+          # ~/.brev/credentials.json. The login call was removed in #1470
+          # (374a847d), breaking CI. Write the credentials file so `brev ls`
+          # works in the test harness's hasAuthenticatedBrev check.
+          if [ -z "${BREV_API_TOKEN:-}" ]; then
+            echo "::error::BREV_API_TOKEN is empty — cannot authenticate Brev CLI."
+            exit 1
+          fi
+          mkdir -p ~/.brev
+          umask 077
+          printf '{"refresh_token":"%s"}' "$BREV_API_TOKEN" > ~/.brev/credentials.json
+          chmod 600 ~/.brev/credentials.json
+          brev ls >/dev/null
 
       - name: Install dependencies
         run: npm install --ignore-scripts

@@ -1,3 +1,4 @@
+// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -397,39 +398,39 @@ describe("regression guards", () => {
     }
   });
 
-  it("nemoclaw.js does not use execSync", () => {
-    const src = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
-      "utf-8",
-    );
+  it("nemoclaw.ts does not use execSync", () => {
+    const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"), "utf-8");
     const lines = src.split("\n");
     for (let i = 0; i < lines.length; i += 1) {
       if (lines[i].includes("execSync") && !lines[i].includes("execFileSync")) {
-        expect.unreachable(`bin/nemoclaw.js:${i + 1} uses execSync — use execFileSync instead`);
+        expect.unreachable(`src/nemoclaw.ts:${i + 1} uses execSync — use execFileSync instead`);
       }
     }
   });
 
-  it("no duplicate shellQuote definitions in bin/", () => {
-    const binDir = path.join(import.meta.dirname, "..", "bin");
+  it("keeps a single shellQuote definition in the root CLI codebase", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const searchRoots = [path.join(repoRoot, "bin"), path.join(repoRoot, "src")];
     const files = [];
     function walk(dir) {
       for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
         if (f.isDirectory() && f.name !== "node_modules") walk(path.join(dir, f.name));
-        else if (f.name.endsWith(".js")) files.push(path.join(dir, f.name));
+        else if (f.name.endsWith(".js") || f.name.endsWith(".ts")) files.push(path.join(dir, f.name));
       }
     }
-    walk(binDir);
+    for (const root of searchRoots) {
+      walk(root);
+    }
 
     const defs = [];
     for (const file of files) {
       const src = fs.readFileSync(file, "utf-8");
       if (src.includes("function shellQuote")) {
-        defs.push(file.replace(binDir, "bin"));
+        defs.push(path.relative(repoRoot, file));
       }
     }
     expect(defs).toHaveLength(1);
-    expect(defs[0].includes("runner")).toBeTruthy();
+    expect(defs[0]).toBe(path.join("src", "lib", "runner.ts"));
   });
 
   it("CLI rejects malicious sandbox names before shell commands (e2e)", () => {
@@ -459,10 +460,7 @@ describe("regression guards", () => {
   describe("credential exposure guards (#429)", () => {
     it("onboard createSandbox does not pass NVIDIA_API_KEY to sandbox env", () => {
       const fs = require("fs");
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
-        "utf-8",
-      );
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"), "utf-8");
       // Find the envArgs block in createSandbox — it should not contain NVIDIA_API_KEY
       const envArgsMatch = src.match(/const envArgs = \[[\s\S]*?\];/);
       expect(envArgsMatch).toBeTruthy();
@@ -471,19 +469,13 @@ describe("regression guards", () => {
 
     it("onboard clears NVIDIA_API_KEY from process.env after setupInference", () => {
       const fs = require("fs");
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "bin", "lib", "onboard.js"),
-        "utf-8",
-      );
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"), "utf-8");
       expect(src.includes("delete process.env.NVIDIA_API_KEY")).toBeTruthy();
     });
 
     it("setupSpark is a compatibility alias that does not shell out to sudo", () => {
       const fs = require("fs");
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
-        "utf-8",
-      );
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"), "utf-8");
       expect(src).toContain("`nemoclaw setup-spark` is deprecated.");
       expect(src).toContain("await onboard(args);");
       expect(src).not.toContain('sudo bash "${SCRIPTS}/setup-spark.sh"');
@@ -650,11 +642,8 @@ describe("regression guards", () => {
         path.join(import.meta.dirname, "..", "src", "lib", "deploy.ts"),
         "utf-8",
       );
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
-        "utf-8",
-      );
-      expect(src).toContain('const { executeDeploy } = require("../dist/lib/deploy")');
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"), "utf-8");
+      expect(src).toContain('const { executeDeploy } = require("./lib/deploy")');
       expect(tsSrc).toContain("export function inferDeployProvider(");
       expect(tsSrc).toContain("export function buildDeployEnvLines(");
       expect(tsSrc).toContain(
@@ -741,11 +730,8 @@ describe("regression guards", () => {
       expect(src).not.toContain("SKIP_VLLM=1");
     });
 
-    it("bin/nemoclaw.js does not pipe curl to shell", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
-        "utf-8",
-      );
+    it("src/nemoclaw.ts does not pipe curl to shell", () => {
+      const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"), "utf-8");
       expect(findJsViolations(src)).toEqual([]);
     });
   });
