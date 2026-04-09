@@ -242,11 +242,14 @@ function renameTest(oldRel: string, apply: boolean) {
   if (fs.existsSync(newAbs)) {
     fail(`destination already exists: ${newRel}`);
   }
+  const original = fs.readFileSync(oldAbs, "utf8");
+  const updated = original.startsWith("// @ts-nocheck") ? original : `// @ts-nocheck\n${original}`;
   if (!apply) {
     console.log(`rename test: ${oldRel} -> ${newRel}`);
     return;
   }
-  fs.renameSync(oldAbs, newAbs);
+  fs.writeFileSync(newAbs, updated);
+  fs.unlinkSync(oldAbs);
   console.log(`renamed test: ${oldRel} -> ${newRel}`);
 }
 
