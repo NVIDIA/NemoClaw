@@ -10,6 +10,15 @@ export default [
       "nemoclaw/**",
       "node_modules/**",
       "docs/_build/**",
+      // Compiled output of `npm run build:cli` (tsc → dist/). The
+      // generated files contain `// eslint-disable-next-line` comments
+      // that reference TypeScript-eslint rules which are not loaded by
+      // this config (the source-side config that owns those rules
+      // lives in the nemoclaw/ sub-project), so linting dist/ produces
+      // spurious "rule not found" errors after a local build. dist/ is
+      // also gitignored — there is no scenario in which it should be
+      // linted.
+      "dist/**",
     ],
   },
 
