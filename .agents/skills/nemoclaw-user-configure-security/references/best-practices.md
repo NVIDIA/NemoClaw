@@ -130,7 +130,7 @@ If someone replaces a binary while the sandbox runs, the hash mismatch triggers 
 
 | Aspect | Detail |
 |---|---|
-| Default | Each endpoint restricts access to specific binaries. For example, only `/usr/bin/gh` and `/usr/bin/git` can reach `github.com`. Binary paths support glob patterns (`*` matches one path component, `**` matches recursively). |
+| Default | Each endpoint restricts access to specific binaries. For example, the `github` preset restricts access so only `/usr/bin/gh` and `/usr/bin/git` can reach `github.com`. Binary paths support glob patterns (`*` matches one path component, `**` matches recursively). |
 | What you can change | Add binaries to an endpoint entry, or omit the `binaries` field to allow any executable. |
 | Risk if relaxed | Removing binary restrictions lets any process in the sandbox reach the endpoint. An agent could use `curl`, `wget`, or a Python script to exfiltrate data to an allowed host, bypassing the intended usage pattern. |
 | Recommendation | Always scope endpoints to the binaries that need them. If the agent needs a host from a new binary, add that binary explicitly rather than removing the restriction. |
@@ -175,13 +175,15 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 
 | Preset | What it enables | Key risk |
 |---|---|---|
+| `brave` | Brave Search API. | Agent can issue search queries. |
+| `brew` | Homebrew (Linuxbrew) package manager. | Allows installing arbitrary Homebrew packages, which may contain malicious code. |
 | `discord` | Discord REST API, WebSocket gateway, CDN. | CDN endpoint (`cdn.discordapp.com`) allows GET to any path. WebSocket uses `access: full` (no inspection). |
-| `docker` | Docker Hub, NVIDIA container registry. | Allows pulling arbitrary container images into the sandbox. |
-| `huggingface` | Hugging Face model registry. | Allows downloading arbitrary models and datasets. |
+| `github` | GitHub and GitHub REST API. | Gives agent read/write access to repositories and issues via `gh` and `git`. |
+| `huggingface` | Hugging Face Hub (download-only) and inference router. | Allows downloading arbitrary models and datasets. POST is restricted to the inference router only. |
 | `jira` | Atlassian Jira API. | Gives agent read/write access to project issues and comments. |
-| `npm` | npm and Yarn registries. | Allows installing arbitrary npm packages, which may contain malicious code. |
+| `npm` | npm and Yarn registries (GET-only). | Allows installing arbitrary npm packages, which may contain malicious code. Publishing is blocked. |
 | `outlook` | Microsoft 365, Outlook. | Gives agent access to email. |
-| `pypi` | Python Package Index. | Allows installing arbitrary Python packages, which may contain malicious code. |
+| `pypi` | Python Package Index (GET and HEAD only). | Allows installing arbitrary Python packages, which may contain malicious code. Publishing is blocked. |
 | `slack` | Slack API, Socket Mode, webhooks. | WebSocket uses `access: full`. Agent can post to any channel the bot token has access to. |
 | `telegram` | Telegram Bot API. | Agent can send messages to any chat the bot token has access to. |
 
