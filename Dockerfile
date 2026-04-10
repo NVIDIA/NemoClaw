@@ -232,7 +232,8 @@ RUN mkdir -p /sandbox/.openclaw-data/logs \
         else \
             ln -s "/sandbox/.openclaw-data/$dir" "/sandbox/.openclaw/$dir"; \
         fi; \
-    done
+    done \
+    && ln -sf /sandbox/.openclaw-data/media /sandbox/.openclaw-data/workspace/media
 
 RUN chown root:root /sandbox/.openclaw \
     && rm -rf /root/.npm /sandbox/.npm \
