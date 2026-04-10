@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent / "_ext"))
 
 project = "NVIDIA NemoClaw Developer Guide"
 this_year = date.today().year
-copyright = f"2025-{this_year}, NVIDIA Corporation"
+copyright = f"{this_year}, NVIDIA Corporation"
 author = "NVIDIA Corporation"
 release = "latest"
 
