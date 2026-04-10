@@ -41,6 +41,21 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 WORKDIR /opt/nemoclaw
 RUN npm ci --omit=dev
 
+# Patch OpenClaw media fetch to use env proxy instead of DNS-pinned direct
+# connect. Inside the OpenShell sandbox all egress must go through the L7
+# proxy (10.200.0.1:3128) for credential placeholder resolution. OpenClaw's
+# SSRF guard defaults to strict mode (DNS pinning + direct connect) which
+# bypasses the proxy and fails in the sandboxed netns. Switching to
+# trusted_env_proxy mode makes media downloads (Telegram photos, etc.) route
+# through the proxy like all other traffic. See: docs/investigation/
+# telegram-media-download-fix.md
+# hadolint ignore=SC2016,DL3059
+RUN find /usr/local/lib/node_modules/openclaw/dist/ -name '*.js' \
+    -exec grep -q 'withStrictGuardedFetchMode' {} \; \
+    -exec sed -i \
+        -e 's|import { n as withStrictGuardedFetchMode, t as fetchWithSsrFGuard }|import { n as withStrictGuardedFetchMode, r as withTrustedEnvProxyGuardedFetchMode, t as fetchWithSsrFGuard }|g' \
+        -e 's|fetchWithSsrFGuard(withStrictGuardedFetchMode({|fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({|g' {} \;
+
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
 # later since /sandbox/.nemoclaw is Landlock read_write for plugin state (#804).
@@ -132,7 +147,7 @@ _allowed_ids = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_AL
 _discord_guilds = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_DISCORD_GUILDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
 _token_keys = {'discord': 'token', 'telegram': 'botToken', 'slack': 'botToken'}; \
 _env_keys = {'discord': 'DISCORD_BOT_TOKEN', 'telegram': 'TELEGRAM_BOT_TOKEN', 'slack': 'SLACK_BOT_TOKEN'}; \
-_ch_cfg = {ch: {'accounts': {'default': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, **({'groupPolicy': 'open'} if ch == 'telegram' else {}), **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
+_ch_cfg = {ch: {'accounts': {'default': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, **({'proxy': 'http://10.200.0.1:3128'} if ch in ('telegram', 'discord', 'slack') else {}), **({'groupPolicy': 'open'} if ch == 'telegram' else {}), **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
 _ch_cfg['discord'].update({'groupPolicy': 'allowlist', 'guilds': _discord_guilds}) if 'discord' in _ch_cfg and _discord_guilds else None; \
 parsed = urlparse(chat_ui_url); \
 chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \
@@ -203,10 +218,12 @@ USER root
 RUN mkdir -p /sandbox/.openclaw-data/logs \
         /sandbox/.openclaw-data/credentials \
         /sandbox/.openclaw-data/sandbox \
+        /sandbox/.openclaw-data/media \
     && chown sandbox:sandbox /sandbox/.openclaw-data/logs \
         /sandbox/.openclaw-data/credentials \
         /sandbox/.openclaw-data/sandbox \
-    && for dir in logs credentials sandbox; do \
+        /sandbox/.openclaw-data/media \
+    && for dir in logs credentials sandbox media; do \
         if [ -L "/sandbox/.openclaw/$dir" ]; then true; \
         elif [ -e "/sandbox/.openclaw/$dir" ]; then \
             cp -a "/sandbox/.openclaw/$dir/." "/sandbox/.openclaw-data/$dir/" 2>/dev/null || true; \
