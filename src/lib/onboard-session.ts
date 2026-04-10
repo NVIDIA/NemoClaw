@@ -35,6 +35,7 @@ export interface SessionFailure {
 
 export interface SessionMetadata {
   gatewayName: string;
+  fromDockerfile: string | null;
 }
 
 export interface Session {
@@ -48,6 +49,7 @@ export interface Session {
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
+  agent: string | null;
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
@@ -86,7 +88,7 @@ export interface SessionUpdates {
   nimContainer?: string;
   webSearchConfig?: WebSearchConfig | null;
   policyPresets?: string[];
-  metadata?: { gatewayName?: string };
+  metadata?: { gatewayName?: string; fromDockerfile?: string | null };
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -111,6 +113,7 @@ function defaultSteps(): Record<string, StepState> {
     provider_selection: { status: "pending", startedAt: null, completedAt: null, error: null },
     inference: { status: "pending", startedAt: null, completedAt: null, error: null },
     openclaw: { status: "pending", startedAt: null, completedAt: null, error: null },
+    agent_setup: { status: "pending", startedAt: null, completedAt: null, error: null },
     policies: { status: "pending", startedAt: null, completedAt: null, error: null },
   };
 }
@@ -185,6 +188,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     lastStepStarted: overrides.lastStepStarted || null,
     lastCompletedStep: overrides.lastCompletedStep || null,
     failure: overrides.failure || null,
+    agent: overrides.agent || null,
     sandboxName: overrides.sandboxName || null,
     provider: overrides.provider || null,
     model: overrides.model || null,
@@ -201,6 +205,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       : null,
     metadata: {
       gatewayName: overrides.metadata?.gatewayName || "nemoclaw",
+      fromDockerfile: overrides.metadata?.fromDockerfile || null,
     },
     steps: {
       ...defaultSteps(),
@@ -218,6 +223,7 @@ export function normalizeSession(data: unknown): Session | null {
     mode: typeof d.mode === "string" ? d.mode : undefined,
     startedAt: typeof d.startedAt === "string" ? d.startedAt : undefined,
     updatedAt: typeof d.updatedAt === "string" ? d.updatedAt : undefined,
+    agent: typeof d.agent === "string" ? d.agent : null,
     sandboxName: typeof d.sandboxName === "string" ? d.sandboxName : null,
     provider: typeof d.provider === "string" ? d.provider : null,
     model: typeof d.model === "string" ? d.model : null,
@@ -238,7 +244,10 @@ export function normalizeSession(data: unknown): Session | null {
     lastCompletedStep: typeof d.lastCompletedStep === "string" ? d.lastCompletedStep : null,
     failure: sanitizeFailure(d.failure as Record<string, unknown> | null),
     metadata: isObject(d.metadata)
-      ? ({ gatewayName: (d.metadata as Record<string, unknown>).gatewayName } as SessionMetadata)
+      ? ({
+          gatewayName: (d.metadata as Record<string, unknown>).gatewayName,
+          fromDockerfile: (d.metadata as Record<string, unknown>).fromDockerfile || null,
+        } as SessionMetadata)
       : undefined,
   } as Partial<Session>);
   normalized.resumable = d.resumable !== false;
@@ -424,6 +433,7 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {
       gatewayName: updates.metadata.gatewayName,
+      fromDockerfile: (typeof updates.metadata.fromDockerfile === "string" ? updates.metadata.fromDockerfile : null),
     };
   }
   return safe;

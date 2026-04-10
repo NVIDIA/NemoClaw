@@ -1,6 +1,6 @@
 ---
 title:
-  page: "NemoClaw Network Policies — Baseline Rules and Operator Approval"
+  page: "NemoClaw Network Policies: Baseline Rules and Operator Approval"
   nav: "Network Policies"
 description:
   main: "Baseline network policy, filesystem rules, and operator approval flow."
@@ -63,16 +63,6 @@ The following endpoint groups are allowed by default:
   - `/usr/local/bin/claude`, `/usr/local/bin/openclaw`
   - All methods
 
-* - `github`
-  - `github.com:443`
-  - `/usr/bin/gh`, `/usr/bin/git`
-  - All methods, all paths
-
-* - `github_rest_api`
-  - `api.github.com:443`
-  - `/usr/bin/gh`
-  - GET, POST, PATCH, PUT, DELETE
-
 * - `clawhub`
   - `clawhub.ai:443`
   - `/usr/local/bin/openclaw`, `/usr/local/bin/node`
@@ -93,14 +83,15 @@ The following endpoint groups are allowed by default:
   - `/usr/local/bin/openclaw`, `/usr/local/bin/npm`, `/usr/local/bin/node`
   - All methods, all paths
 
-* - `telegram`
-  - `api.telegram.org:443`
-  - Any binary
-  - GET, POST on `/bot*/**`
-
 :::
 
 All endpoints use TLS termination and are enforced at port 443.
+
+:::{note}
+GitHub access (`github.com`, `api.github.com`) is not included in the baseline policy.
+Apply the `github` preset during onboarding if your agent needs GitHub access.
+See [Customize the Network Policy](../network-policy/customize-network-policy.md).
+:::
 
 ### Inference
 

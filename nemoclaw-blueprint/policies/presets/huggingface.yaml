@@ -15,8 +15,15 @@ network_policies:
         enforcement: enforce
         tls: terminate
         rules:
+          # Download-only. POST /** used to be allowed here, which let
+          # any sandboxed agent that happened to find an HF token in
+          # the environment publish models, datasets, and create
+          # repositories on the Hub via /api/repos/create and friends.
+          # Inference traffic flows through router.huggingface.co
+          # (declared below), not huggingface.co, so the POST rule
+          # was never required for read-only `from_pretrained` use.
+          # See #1432.
           - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
       - host: cdn-lfs.huggingface.co
         port: 443
         protocol: rest
