@@ -117,6 +117,13 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("NemoClaw Services");
   });
 
+  it("onboard --help exits 0 and shows usage", () => {
+    const r = run("onboard --help");
+    expect(r.code).toBe(0);
+    expect(r.out.includes("Usage: nemoclaw onboard")).toBeTruthy();
+    expect(r.out.includes("--from <Dockerfile>")).toBeTruthy();
+  });
+
   it("unknown onboard option exits 1", () => {
     const r = run("onboard --non-interactiv");
     expect(r.code).toBe(1);
@@ -135,6 +142,14 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
   });
 
+  it("setup --help exits 0 and shows onboard usage", () => {
+    const r = run("setup --help");
+    expect(r.code).toBe(0);
+    expect(r.out.includes("setup` is deprecated")).toBeTruthy();
+    expect(r.out.includes("Usage: nemoclaw onboard")).toBeTruthy();
+    expect(r.out.includes("Unknown onboard option")).toBeFalsy();
+  });
+
   it("setup forwards unknown options into onboard parsing", () => {
     const r = run("setup --non-interactiv");
     expect(r.code).toBe(1);
@@ -147,6 +162,15 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(1);
     expect(r.out.includes("deprecated")).toBeTruthy();
     expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
+  });
+
+  it("setup-spark --help exits 0 and shows onboard usage", () => {
+    const r = run("setup-spark --help");
+    expect(r.code).toBe(0);
+    expect(r.out.includes("setup-spark` is deprecated")).toBeTruthy();
+    expect(r.out.includes("Use `nemoclaw onboard` instead")).toBeTruthy();
+    expect(r.out.includes("Usage: nemoclaw onboard")).toBeTruthy();
+    expect(r.out.includes("Unknown onboard option")).toBeFalsy();
   });
 
   it("setup-spark is a deprecated compatibility alias for onboard", () => {
