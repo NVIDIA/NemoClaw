@@ -472,6 +472,16 @@ ensure_nemoclaw_shim() {
   fi
   node_dir="$(dirname "$node_path")"
 
+  # If npm placed the binary at the same path as the shim target (e.g. when
+  # npm_config_prefix=$HOME/.local), writing a shim would overwrite the real
+  # binary with a script that exec's itself — an infinite loop.  In that case
+  # the binary is already where it needs to be; skip shim creation.
+  if [[ "$cli_path" -ef "$shim_path" ]]; then
+    refresh_path
+    ensure_local_bin_in_profile
+    return 0
+  fi
+
   mkdir -p "$NEMOCLAW_SHIM_DIR"
   cat >"$shim_path" <<EOF
 #!/usr/bin/env bash

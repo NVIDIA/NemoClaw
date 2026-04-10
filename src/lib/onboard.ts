@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Interactive onboarding wizard — 7 steps from zero to running sandbox.
+// Interactive onboarding wizard — 8 steps from zero to running sandbox.
 // Supports non-interactive mode via --non-interactive flag or
 // NEMOCLAW_NON_INTERACTIVE=1 env var for CI/CD pipelines.
 
@@ -61,6 +61,7 @@ const {
   getMemoryInfo,
   planHostRemediation,
 } = require("../../bin/lib/preflight");
+const agentOnboard = require("../../bin/lib/agent-onboard");
 
 // Typed modules (compiled from src/lib/*.ts → dist/lib/*.js)
 const gatewayState = require("../../dist/lib/gateway-state");
@@ -1557,6 +1558,16 @@ function getResumeConfigConflicts(session, opts = {}) {
     });
   }
 
+  const requestedAgent = opts.agent || process.env.NEMOCLAW_AGENT || null;
+  const recordedAgent = session?.agent || null;
+  if (requestedAgent && recordedAgent && requestedAgent !== recordedAgent) {
+    conflicts.push({
+      field: "agent",
+      requested: requestedAgent,
+      recorded: recordedAgent,
+    });
+  }
+
   return conflicts;
 }
 
@@ -2265,12 +2276,14 @@ async function createSandbox(
   webSearchConfig = null,
   enabledChannels = null,
   fromDockerfile = null,
+  agent = null,
   dangerouslySkipPermissions = false,
 ) {
   step(6, 8, "Creating sandbox");
 
   const sandboxName = sandboxNameOverride || (await promptValidatedSandboxName());
-  const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const effectivePort = agent ? agent.forwardPort : CONTROL_UI_PORT;
+  const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${effectivePort}`;
 
   // Check whether messaging providers will be needed — this must happen before
   // the sandbox reuse decision so we can detect stale sandboxes that were created
@@ -2402,15 +2415,27 @@ async function createSandbox(
       fs.copyFileSync(fromResolved, stagedDockerfile);
     }
     console.log(`  Using custom Dockerfile: ${fromResolved}`);
+  } else if (agent) {
+    const agentBuild = agentOnboard.createAgentSandbox(agent);
+    buildCtx = agentBuild.buildCtx;
+    stagedDockerfile = agentBuild.stagedDockerfile;
   } else {
     ({ buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(ROOT));
   }
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
-  const basePolicyPath = dangerouslySkipPermissions
-    ? path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml")
-    : path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
+  const globalPermissivePath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml");
+  let basePolicyPath;
+  if (dangerouslySkipPermissions) {
+    // Permissive mode: use agent-specific permissive policy if available,
+    // otherwise fall back to the global permissive policy.
+    const agentPermissive = agent && agentOnboard.getAgentPermissivePolicyPath(agent);
+    basePolicyPath = agentPermissive || globalPermissivePath;
+  } else {
+    const defaultPolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
+    basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
+  }
   const createArgs = [
     "--from",
     `${buildCtx}/Dockerfile`,
@@ -2599,6 +2624,7 @@ async function createSandbox(
   registry.registerSandbox({
     name: sandboxName,
     gpuEnabled: !!gpu,
+    agent: agent ? agent.name : null,
     dangerouslySkipPermissions: dangerouslySkipPermissions || undefined,
   });
 
@@ -4006,7 +4032,8 @@ const { resolveDashboardForwardTarget, buildControlUiUrls } = dashboard;
 
 function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
   const forwardTarget = resolveDashboardForwardTarget(chatUiUrl);
-  runOpenshell(["forward", "stop", String(CONTROL_UI_PORT)], { ignoreError: true });
+  const portToStop = String(new URL(chatUiUrl).port || CONTROL_UI_PORT);
+  runOpenshell(["forward", "stop", portToStop], { ignoreError: true });
   // Use stdio "ignore" to prevent spawnSync from waiting on inherited pipe fds.
   // The --background flag forks a child that inherits stdout/stderr; if those are
   // pipes, spawnSync blocks until the background process exits (never).
@@ -4062,7 +4089,7 @@ function fetchGatewayAuthTokenFromSandbox(sandboxName) {
 
 // buildControlUiUrls — see dashboard import above
 
-function printDashboard(sandboxName, model, provider, nimContainer = null) {
+function printDashboard(sandboxName, model, provider, nimContainer = null, agent = null) {
   const nimStat = nimContainer ? nim.nimStatusByName(nimContainer) : nim.nimStatus(sandboxName);
   const nimLabel = nimStat.running ? "running" : "not running";
 
@@ -4090,7 +4117,9 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
   console.log(`  Status:      nemoclaw ${sandboxName} status`);
   console.log(`  Logs:        nemoclaw ${sandboxName} logs --follow`);
   console.log("");
-  if (token) {
+  if (agent) {
+    agentOnboard.printDashboardUi(sandboxName, token, agent, { note, buildControlUiUrls });
+  } else if (token) {
     console.log("  OpenClaw UI (tokenized URL; treat it like a password)");
     console.log(`  Port ${CONTROL_UI_PORT} must be forwarded before opening this URL.`);
     for (const url of buildControlUiUrls(token)) {
@@ -4224,12 +4253,17 @@ async function onboard(opts = {}) {
       const resumeConflicts = getResumeConfigConflicts(session, {
         nonInteractive: isNonInteractive(),
         fromDockerfile: requestedFromDockerfile,
+        agent: opts.agent || null,
       });
       if (resumeConflicts.length > 0) {
         for (const conflict of resumeConflicts) {
           if (conflict.field === "sandbox") {
             console.error(
               `  Resumable state belongs to sandbox '${conflict.recorded}', not '${conflict.requested}'.`,
+            );
+          } else if (conflict.field === "agent") {
+            console.error(
+              `  Session was started with agent '${conflict.recorded}', not '${conflict.requested}'.`,
             );
           } else if (conflict.field === "fromDockerfile") {
             if (!conflict.recorded) {
@@ -4288,6 +4322,14 @@ async function onboard(opts = {}) {
     if (isNonInteractive()) note("  (non-interactive mode)");
     if (resume) note("  (resume mode)");
     console.log("  ===================");
+
+    const agent = agentOnboard.resolveAgent({ agentFlag: opts.agent, session });
+    if (agent) {
+      onboardSession.updateSession((s) => {
+        s.agent = agent.name;
+        return s;
+      });
+    }
 
     let gpu;
     const resumePreflight = resume && session?.steps?.preflight?.status === "complete";
@@ -4467,19 +4509,33 @@ async function onboard(opts = {}) {
         webSearchConfig,
         enabledChannels,
         fromDockerfile,
+        agent,
         dangerouslySkipPermissions,
       );
       onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
     }
 
-    const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
-    if (resumeOpenclaw) {
-      skippedStepMessage("openclaw", sandboxName);
-      onboardSession.markStepComplete("openclaw", { sandboxName, provider, model });
+    if (agent) {
+      await agentOnboard.handleAgentSetup(sandboxName, model, provider, agent, resume, session, {
+        step,
+        runCaptureOpenshell,
+        openshellShellCommand,
+        buildSandboxConfigSyncScript,
+        writeSandboxConfigSyncFile,
+        cleanupTempDir,
+        startRecordedStep,
+        skippedStepMessage,
+      });
     } else {
-      startRecordedStep("openclaw", { sandboxName, provider, model });
-      await setupOpenclaw(sandboxName, model, provider);
-      onboardSession.markStepComplete("openclaw", { sandboxName, provider, model });
+      const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
+      if (resumeOpenclaw) {
+        skippedStepMessage("openclaw", sandboxName);
+        onboardSession.markStepComplete("openclaw", { sandboxName, provider, model });
+      } else {
+        startRecordedStep("openclaw", { sandboxName, provider, model });
+        await setupOpenclaw(sandboxName, model, provider);
+        onboardSession.markStepComplete("openclaw", { sandboxName, provider, model });
+      }
     }
 
     const recordedPolicyPresets = Array.isArray(session?.policyPresets)
@@ -4539,7 +4595,7 @@ async function onboard(opts = {}) {
 
     onboardSession.completeSession({ sandboxName, provider, model });
     completed = true;
-    printDashboard(sandboxName, model, provider, nimContainer);
+    printDashboard(sandboxName, model, provider, nimContainer, agent);
   } finally {
     releaseOnboardLock();
   }
