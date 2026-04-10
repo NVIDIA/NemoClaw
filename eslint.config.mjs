@@ -2,15 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import js from "@eslint/js";
+import tsParser from "@typescript-eslint/parser";
 
 export default [
   // Ignore build artifacts, vendored code, and the nemoclaw sub-project (has its own config)
   {
-    ignores: [
-      "nemoclaw/**",
-      "node_modules/**",
-      "docs/_build/**",
-    ],
+    ignores: ["nemoclaw/**", "node_modules/**", "dist/**", "docs/_build/**"],
   },
 
   // ── bin/ and scripts/ — CommonJS, Node.js ──────────────────────────────
@@ -38,9 +35,12 @@ export default [
     },
     rules: {
       ...js.configs.recommended.rules,
-      "no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" }],
+      "no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
+      ],
       // Cyclomatic complexity — ratchet down to 15 as we refactor suppressed functions
-      "complexity": ["error", { max: 20 }],
+      complexity: ["error", { max: 20 }],
     },
   },
 
@@ -66,7 +66,36 @@ export default [
     },
     rules: {
       ...js.configs.recommended.rules,
-      "no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" }],
+      "no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
+      ],
+    },
+  },
+
+  // ── test/ — TypeScript syntax, Node.js runtime ─────────────────────────
+  {
+    ...js.configs.recommended,
+    files: ["test/**/*.ts"],
+    languageOptions: {
+      parser: tsParser,
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: {
+        require: "readonly",
+        process: "readonly",
+        console: "readonly",
+        Buffer: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        setInterval: "readonly",
+        clearInterval: "readonly",
+        URL: "readonly",
+      },
+    },
+    rules: {
+      ...js.configs.recommended.rules,
+      "no-unused-vars": "off",
     },
   },
 
@@ -97,7 +126,10 @@ export default [
     },
     rules: {
       ...js.configs.recommended.rules,
-      "no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" }],
+      "no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
+      ],
     },
   },
 ];
