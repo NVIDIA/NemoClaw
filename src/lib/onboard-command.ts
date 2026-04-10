@@ -81,6 +81,7 @@ export function parseOnboardArgs(
     const knownAgents = deps.listAgents?.() ?? [];
     if (knownAgents.length > 0 && !knownAgents.includes(agentValue)) {
       error(`  Unknown agent '${agentValue}'. Available: ${knownAgents.join(", ")}`);
+      printOnboardUsage(error, noticeAcceptFlag);
       exit(1);
     }
     agent = agentValue;

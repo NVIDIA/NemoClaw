@@ -7,7 +7,7 @@ import {
   parseOnboardArgs,
   runDeprecatedOnboardAliasCommand,
   runOnboardCommand,
-} from "../../dist/lib/onboard-command";
+} from "./onboard-command";
 
 describe("onboard command", () => {
   it("parses onboard flags", () => {
@@ -212,6 +212,7 @@ describe("onboard command", () => {
       ),
     ).toThrow("exit:1");
     expect(errors.join("\n")).toContain("Unknown agent 'bogus'");
+    expect(errors.join("\n")).toContain("Usage: nemoclaw onboard");
   });
 
   it("prints the setup-spark deprecation text before delegating", async () => {
