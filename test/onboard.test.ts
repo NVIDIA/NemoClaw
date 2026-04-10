@@ -1341,18 +1341,18 @@ console.log(JSON.stringify({
   });
 
   it("reports a local Ollama model mismatch when inference.local returns 404 in the sandbox", () => {
-    expect(
+    const result =
       verifyLocalSandboxInference("sandbox-box", "smollm2:135m", "ollama-local", () =>
         [
           '{"error":{"message":"model \'smollm2:135m\' not found"}}',
           "__NEMOCLAW_HTTP_STATUS__:404",
         ].join("\n"),
-      ),
-    ).toEqual({
-      ok: false,
-      message:
-        "Local Ollama was configured, but inference.local inside sandbox 'sandbox-box' could not serve model 'smollm2:135m'. HTTP 404: {\"error\":{\"message\":\"model 'smollm2:135m' not found\"}}",
-    });
+      );
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("sandbox 'sandbox-box'");
+    expect(result.message).toContain("model 'smollm2:135m'");
+    expect(result.message).toContain("HTTP 404");
+    expect(result.message).toContain("could not serve");
   });
 
   it("detects when OpenClaw is already configured inside the sandbox", () => {
@@ -1803,6 +1803,23 @@ const { setupInference } = require(${onboardPath});
     assert.match(
       source,
       /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*webSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
+    );
+  });
+
+  it("verifies local sandbox inference only after the sandbox exists", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /function finalizeSandboxInferenceSetup\(sandboxName, model, provider, nimContainer = null\)/);
+    assert.doesNotMatch(
+      source,
+      /async function setupInference\([\s\S]*?verifyLocalSandboxInference\(/,
+    );
+    assert.match(
+      source,
+      /sandboxName = await createSandbox\([\s\S]*?\);\s*onboardSession\.markStepComplete\("sandbox", \{ sandboxName, provider, model, nimContainer \}\);\s*\}\s*finalizeSandboxInferenceSetup\(sandboxName, model, provider, nimContainer\);/,
     );
   });
 

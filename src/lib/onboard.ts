@@ -848,6 +848,20 @@ function verifyLocalSandboxInference(
   };
 }
 
+function finalizeSandboxInferenceSetup(sandboxName, model, provider, nimContainer = null) {
+  const sandboxProbe = verifyLocalSandboxInference(sandboxName, model, provider);
+  if (!sandboxProbe.ok) {
+    console.error(`  ${sandboxProbe.message}`);
+    process.exit(1);
+  }
+
+  const sandboxUpdate = { model, provider };
+  if (nimContainer) {
+    sandboxUpdate.nimContainer = nimContainer;
+  }
+  registry.updateSandbox(sandboxName, sandboxUpdate);
+}
+
 function sandboxExistsInGateway(sandboxName) {
   const output = runCaptureOpenshell(["sandbox", "get", sandboxName], { ignoreError: true });
   return Boolean(output);
@@ -3425,7 +3439,7 @@ async function setupNim(gpu) {
 
 // eslint-disable-next-line complexity
 async function setupInference(
-  sandboxName,
+  _sandboxName,
   model,
   provider,
   endpointUrl = null,
@@ -3572,12 +3586,6 @@ async function setupInference(
   }
 
   verifyInferenceRoute(provider, model);
-  const sandboxProbe = verifyLocalSandboxInference(sandboxName, model, provider);
-  if (!sandboxProbe.ok) {
-    console.error(`  ${sandboxProbe.message}`);
-    process.exit(1);
-  }
-  registry.updateSandbox(sandboxName, { model, provider });
   console.log(`  ✓ Inference route set: ${provider} / ${model}`);
   return { ok: true };
 }
@@ -4651,9 +4659,6 @@ async function onboard(opts = {}) {
         isInferenceRouteReady(provider, model);
       if (resumeInference) {
         skippedStepMessage("inference", `${provider} / ${model}`);
-        if (nimContainer) {
-          registry.updateSandbox(sandboxName, { nimContainer });
-        }
         onboardSession.markStepComplete("inference", {
           sandboxName,
           provider,
@@ -4675,9 +4680,6 @@ async function onboard(opts = {}) {
       if (inferenceResult?.retry === "selection") {
         forceProviderSelection = true;
         continue;
-      }
-      if (nimContainer) {
-        registry.updateSandbox(sandboxName, { nimContainer });
       }
       onboardSession.markStepComplete("inference", { sandboxName, provider, model, nimContainer });
       break;
@@ -4747,6 +4749,8 @@ async function onboard(opts = {}) {
       );
       onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
     }
+
+    finalizeSandboxInferenceSetup(sandboxName, model, provider, nimContainer);
 
     if (agent) {
       await agentOnboard.handleAgentSetup(sandboxName, model, provider, agent, resume, session, {
