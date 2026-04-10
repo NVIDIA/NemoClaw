@@ -7,8 +7,8 @@ import { execSync, execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, unlinkSync, readFileSync, lstatSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveOpenshell } from "../bin/lib/resolve-openshell";
-import { parseAllowedChatIds, isChatAllowed } from "../bin/lib/chat-filter.js";
+import { resolveOpenshell } from "../dist/lib/resolve-openshell";
+import { parseAllowedChatIds, isChatAllowed } from "../dist/lib/chat-filter.js";
 
 describe("service environment", () => {
   describe("start-services behavior", () => {

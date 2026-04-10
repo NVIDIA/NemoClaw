@@ -9,9 +9,9 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { runCapture } from "../bin/lib/runner";
+import { runCapture } from "../dist/lib/runner";
 
-const runnerPath = path.join(import.meta.dirname, "..", "bin", "lib", "runner");
+const runnerPath = path.join(import.meta.dirname, "..", "dist", "lib", "runner.js");
 
 describe("runner helpers", () => {
   it("does not let child commands consume installer stdin", () => {
@@ -476,8 +476,8 @@ describe("regression guards", () => {
     it("setupSpark is a compatibility alias that does not shell out to sudo", () => {
       const fs = require("fs");
       const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"), "utf-8");
-      expect(src).toContain("`nemoclaw setup-spark` is deprecated.");
-      expect(src).toContain("await onboard(args);");
+      expect(src).toContain("runDeprecatedOnboardAliasCommand");
+      expect(src).toContain('kind: "setup-spark"');
       expect(src).not.toContain('sudo bash "${SCRIPTS}/setup-spark.sh"');
     });
 

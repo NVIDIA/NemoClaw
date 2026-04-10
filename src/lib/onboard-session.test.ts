@@ -8,8 +8,6 @@ import path from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-// Clear both the shim and the dist module so HOME changes take effect.
-const shimPath = require.resolve("../../bin/lib/onboard-session");
 const distPath = require.resolve("../../dist/lib/onboard-session");
 const originalHome = process.env.HOME;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -23,7 +21,6 @@ beforeEach(() => {
   // order-dependent. See issue #1284.
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-session-"));
   process.env.HOME = tmpDir;
-  delete require.cache[shimPath];
   delete require.cache[distPath];
   session = require("../../dist/lib/onboard-session");
   session.clearSession();
@@ -31,7 +28,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  delete require.cache[shimPath];
   delete require.cache[distPath];
   fs.rmSync(tmpDir, { recursive: true, force: true });
   if (originalHome === undefined) {

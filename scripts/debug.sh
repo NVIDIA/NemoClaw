@@ -118,7 +118,7 @@ SCRIPT_PATH="${BASH_SOURCE[0]:-}"
 if [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
   SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
   REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-  ONBOARD_SESSION_HELPER="${REPO_ROOT}/bin/lib/onboard-session.js"
+  ONBOARD_SESSION_HELPER="${REPO_ROOT}/dist/lib/onboard-session.js"
 fi
 
 # Redact known sensitive patterns (API keys, tokens, passwords in env/args).

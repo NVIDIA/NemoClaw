@@ -14,8 +14,8 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 
 | Path | Language | Purpose |
 |------|----------|---------|
-| `bin/` | JavaScript (CJS) | CLI entry point (`nemoclaw.js`) and library modules |
-| `bin/lib/` | JavaScript (CJS) | Core CLI logic: onboard, credentials, inference, policies, preflight, runner |
+| `bin/` | JavaScript (CJS) | CLI launcher (`nemoclaw.js`) and small compatibility helpers |
+| `src/lib/` | TypeScript | Core CLI logic: onboard, credentials, inference, policies, preflight, runner |
 | `nemoclaw/` | TypeScript | Plugin project (Commander CLI extension for OpenClaw) |
 | `nemoclaw/src/blueprint/` | TypeScript | Runner, snapshot, SSRF validation, state management |
 | `nemoclaw/src/commands/` | TypeScript | Slash commands, migration state |
@@ -47,12 +47,12 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 
 ### Dual-Language Stack
 
-- **CLI and plugin**: JavaScript (CJS in `bin/`, ESM in `test/`) and TypeScript (`nemoclaw/src/`)
+- **CLI and plugin**: TypeScript (`src/`, `nemoclaw/src/`) with a small CommonJS launcher in `bin/`; ESM in `test/`
 - **Blueprint**: YAML configuration (`nemoclaw-blueprint/`)
 - **Docs**: Sphinx/MyST Markdown
 - **Tooling scripts**: Bash and Python
 
-The `bin/` directory uses CommonJS intentionally — it's the CLI entry point that must work without a build step. The `nemoclaw/` plugin uses TypeScript and requires compilation.
+The `bin/` directory uses CommonJS intentionally for the launcher and a few compatibility helpers so the CLI still has a stable executable entry point. The main CLI implementation lives in `src/` and compiles to `dist/`. The `nemoclaw/` plugin uses TypeScript and requires compilation.
 
 ### Testing Strategy
 
@@ -105,7 +105,7 @@ For shell scripts use `#` comments. For Markdown use HTML comments.
 
 ### JavaScript
 
-- `bin/` and `scripts/`: **CommonJS** (`require`/`module.exports`), Node.js 22.16+
+- `bin/` launcher and remaining `scripts/*.js`: **CommonJS** (`require`/`module.exports`), Node.js 22.16+
 - `test/`: **ESM** (`import`/`export`)
 - ESLint config in `eslint.config.mjs`
 - Cyclomatic complexity limit: 20 (ratcheting down to 15)
@@ -149,8 +149,8 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 
 **Adding a CLI command:**
 
-- Entry point: `bin/nemoclaw.js` (routes to `bin/lib/` modules)
-- Keep `bin/lib/` modules as CommonJS
+- Entry point: `bin/nemoclaw.js` (launches the compiled CLI in `dist/`)
+- Main CLI implementation lives in `src/lib/` and compiles to `dist/lib/`
 - Add tests in `test/`
 
 **Adding a plugin feature:**

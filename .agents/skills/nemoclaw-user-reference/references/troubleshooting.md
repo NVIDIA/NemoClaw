@@ -242,6 +242,9 @@ Check the active provider and endpoint:
 $ nemoclaw <name> status
 ```
 
+For local Ollama and local vLLM, `nemoclaw <name> status` also prints an `Inference` line that probes the host-side health endpoint directly.
+If that line shows `unreachable`, start the local backend first and then retry the request.
+
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
 Then verify the credential and base URL for the provider you selected during onboarding.
 
@@ -261,6 +264,48 @@ Changing or exporting it later does not rewrite the baked `openclaw.json` inside
 
 If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration.
 For the security trade-offs, refer to Security Best Practices (see the `nemoclaw-user-configure-security` skill).
+
+### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
+
+This is expected in NemoClaw-managed sandboxes.
+NemoClaw bakes channel entries into `/sandbox/.openclaw/openclaw.json` at image build time, and OpenShell keeps that path read-only at runtime.
+
+As a result, commands that try to rewrite the baked config from inside the sandbox, including `openclaw doctor --fix`, cannot repair Discord, Telegram, or Slack channel entries in place.
+
+If your Discord channel config is wrong, rerun onboarding so NemoClaw rebuilds the sandbox image with the correct messaging selection.
+Do not treat a failed `doctor --fix` run as proof that the Discord gateway path itself is broken.
+
+If `openclaw doctor` reports that it moved Telegram single-account values under `channels.telegram.accounts.default`, rerun onboarding and rebuild the sandbox rather than trying to patch `openclaw.json` in place.
+Current NemoClaw rebuilds bake Telegram in the account-based layout and set Telegram group chats to `groupPolicy: open`, which avoids the empty `groupAllowFrom` warning path for default group-chat access.
+
+### Discord bot logs in, but the channel still does not work
+
+Separate the problem into two parts:
+
+1. Baked config and provider wiring
+
+   Check that onboarding selected Discord and that the sandbox was created with the Discord messaging provider attached.
+   If Discord was skipped during onboarding, rerun onboarding and select Discord again.
+
+1. Native Discord gateway path
+
+   Successful login alone does not prove that Discord works end to end.
+   Discord also needs a working gateway connection to `gateway.discord.gg`.
+   If logs show errors such as `getaddrinfo EAI_AGAIN gateway.discord.gg`, repeated reconnect loops, or a `400` response while probing the gateway path, the problem is usually in the native gateway/proxy path rather than in the baked config.
+
+Common signs of a native gateway-path failure:
+
+- REST calls to `discord.com` succeed, but the Discord channel never becomes healthy
+- `gateway.discord.gg` fails with DNS resolution errors
+- the WebSocket path returns `400` instead of opening a tunnel
+- native command deployment fails even though the bot token itself is valid
+
+In that case:
+
+- keep the Discord policy preset applied
+- verify the sandbox was created with the Discord provider attached
+- inspect gateway logs and blocked requests with `openshell term`
+- treat the failure as a native Discord gateway problem, not as a bridge startup problem
 
 ### Sandbox lost after gateway restart
 

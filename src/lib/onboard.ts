@@ -22,8 +22,8 @@ function envInt(name, fallback) {
 
 /** Inference timeout (seconds) for local providers (Ollama, vLLM, NIM). */
 const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 180);
-const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("../../bin/lib/runner");
-const { stageOptimizedSandboxBuildContext } = require("../../bin/lib/sandbox-build-context");
+const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
+const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -33,47 +33,46 @@ const {
   getOllamaWarmupCommand,
   validateOllamaModel,
   validateLocalProvider,
-} = require("../../bin/lib/local-inference");
+} = require("./local-inference");
 const {
   DEFAULT_CLOUD_MODEL,
   getProviderSelectionConfig,
   parseGatewayInference,
-} = require("../../bin/lib/inference-config");
-const { inferContainerRuntime, isWsl, shouldPatchCoredns } = require("../../bin/lib/platform");
-const { resolveOpenshell } = require("../../bin/lib/resolve-openshell");
+} = require("./inference-config");
+const { inferContainerRuntime, isWsl, shouldPatchCoredns } = require("./platform");
+const { resolveOpenshell } = require("./resolve-openshell");
 const {
   prompt,
   ensureApiKey,
   getCredential,
   normalizeCredentialValue,
   saveCredential,
-} = require("../../bin/lib/credentials");
-const registry = require("../../bin/lib/registry");
-const nim = require("../../bin/lib/nim");
-const onboardSession = require("../../bin/lib/onboard-session");
-const policies = require("../../bin/lib/policies");
-const { ensureUsageNoticeConsent } = require("../../bin/lib/usage-notice");
+} = require("./credentials");
+const registry = require("./registry");
+const nim = require("./nim");
+const onboardSession = require("./onboard-session");
+const policies = require("./policies");
+const { ensureUsageNoticeConsent } = require("./usage-notice");
 const {
   assessHost,
   checkPortAvailable,
   ensureSwap,
   getMemoryInfo,
   planHostRemediation,
-} = require("../../bin/lib/preflight");
-const agentOnboard = require("../../bin/lib/agent-onboard");
+} = require("./preflight");
+const agentOnboard = require("./agent-onboard");
 
-// Typed modules (compiled from src/lib/*.ts → dist/lib/*.js)
-const gatewayState = require("../../dist/lib/gateway-state");
-const validation = require("../../dist/lib/validation");
-const urlUtils = require("../../dist/lib/url-utils");
-const buildContext = require("../../dist/lib/build-context");
-const dashboard = require("../../dist/lib/dashboard");
-const httpProbe = require("../../dist/lib/http-probe");
-const modelPrompts = require("../../dist/lib/model-prompts");
-const providerModels = require("../../dist/lib/provider-models");
-const sandboxCreateStream = require("../../dist/lib/sandbox-create-stream");
-const validationRecovery = require("../../dist/lib/validation-recovery");
-const webSearch = require("../../dist/lib/web-search");
+const gatewayState = require("./gateway-state");
+const validation = require("./validation");
+const urlUtils = require("./url-utils");
+const buildContext = require("./build-context");
+const dashboard = require("./dashboard");
+const httpProbe = require("./http-probe");
+const modelPrompts = require("./model-prompts");
+const providerModels = require("./provider-models");
+const sandboxCreateStream = require("./sandbox-create-stream");
+const validationRecovery = require("./validation-recovery");
+const webSearch = require("./web-search");
 
 /**
  * Create a temp file inside a directory with a cryptographically random name.
@@ -110,7 +109,7 @@ const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
-const BRAVE_SEARCH_HELP_URL = "https://api-dashboard.search.brave.com/app/keys";
+const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
 
 const REMOTE_PROVIDER_CONFIG = {
   build: {
@@ -178,6 +177,8 @@ const REMOTE_PROVIDER_CONFIG = {
     skipVerify: true,
   },
 };
+
+const DISCORD_SNOWFLAKE_RE = /^[0-9]{17,19}$/;
 
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
@@ -420,7 +421,7 @@ function versionGte(left = "0.0.0", right = "0.0.0") {
  */
 function getBlueprintMinOpenshellVersion(rootDir = ROOT) {
   try {
-    // Lazy require: yaml is already a dependency via bin/lib/policies.js but
+    // Lazy require: yaml is already a dependency via the policy helpers but
     // pulling it at module load would slow down `nemoclaw --help` for users
     // who never reach the preflight path.
     const YAML = require("yaml");
@@ -965,6 +966,7 @@ function patchStagedDockerfile(
   webSearchConfig = null,
   messagingChannels = [],
   messagingAllowedIds = {},
+  discordGuilds = {},
 ) {
   const { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat } =
     getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -1038,6 +1040,12 @@ function patchStagedDockerfile(
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=.*$/m,
       `ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${encodeDockerJsonArg(messagingAllowedIds)}`,
+    );
+  }
+  if (Object.keys(discordGuilds).length > 0) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_DISCORD_GUILDS_B64=.*$/m,
+      `ARG NEMOCLAW_DISCORD_GUILDS_B64=${encodeDockerJsonArg(discordGuilds)}`,
     );
   }
   fs.writeFileSync(dockerfilePath, dockerfile);
@@ -2477,12 +2485,45 @@ async function createSandbox(
   const messagingAllowedIds = {};
   const enabledTokenEnvKeys = new Set(messagingTokenDefs.map(({ envKey }) => envKey));
   for (const ch of MESSAGING_CHANNELS) {
-    if (enabledTokenEnvKeys.has(ch.envKey) && ch.userIdEnvKey && process.env[ch.userIdEnvKey]) {
+    if (
+      enabledTokenEnvKeys.has(ch.envKey) &&
+      ch.allowIdsMode === "dm" &&
+      ch.userIdEnvKey &&
+      process.env[ch.userIdEnvKey]
+    ) {
       const ids = process.env[ch.userIdEnvKey]
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
       if (ids.length > 0) messagingAllowedIds[ch.name] = ids;
+    }
+  }
+  const discordGuilds = {};
+  if (enabledTokenEnvKeys.has("DISCORD_BOT_TOKEN")) {
+    const serverIds = (process.env.DISCORD_SERVER_IDS || process.env.DISCORD_SERVER_ID || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const userIds = (process.env.DISCORD_ALLOWED_IDS || process.env.DISCORD_USER_ID || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const serverId of serverIds) {
+      if (!DISCORD_SNOWFLAKE_RE.test(serverId)) {
+        console.warn(`  Warning: Discord server ID '${serverId}' does not look like a snowflake.`);
+      }
+    }
+    for (const userId of userIds) {
+      if (!DISCORD_SNOWFLAKE_RE.test(userId)) {
+        console.warn(`  Warning: Discord user ID '${userId}' does not look like a snowflake.`);
+      }
+    }
+    const requireMention = process.env.DISCORD_REQUIRE_MENTION !== "0";
+    for (const serverId of serverIds) {
+      discordGuilds[serverId] = {
+        requireMention,
+        ...(userIds.length > 0 ? { users: userIds } : {}),
+      };
     }
   }
   patchStagedDockerfile(
@@ -2495,6 +2536,7 @@ async function createSandbox(
     webSearchConfig,
     activeMessagingChannels,
     messagingAllowedIds,
+    discordGuilds,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
@@ -3419,6 +3461,7 @@ const MESSAGING_CHANNELS = [
     userIdEnvKey: "TELEGRAM_ALLOWED_IDS",
     userIdHelp: "Send /start to @userinfobot on Telegram to get your numeric user ID.",
     userIdLabel: "Telegram User ID (for DM access)",
+    allowIdsMode: "dm",
   },
   {
     name: "discord",
@@ -3426,6 +3469,18 @@ const MESSAGING_CHANNELS = [
     description: "Discord bot messaging",
     help: "Discord Developer Portal → Applications → Bot → Reset/Copy Token.",
     label: "Discord Bot Token",
+    serverIdEnvKey: "DISCORD_SERVER_ID",
+    serverIdHelp:
+      "Enable Developer Mode in Discord, then right-click your server and copy the Server ID.",
+    serverIdLabel: "Discord Server ID (for guild workspace access)",
+    requireMentionEnvKey: "DISCORD_REQUIRE_MENTION",
+    requireMentionHelp:
+      "Choose whether the bot should reply only when @mentioned or to all messages in this server.",
+    userIdEnvKey: "DISCORD_USER_ID",
+    userIdHelp:
+      "Optional: enable Developer Mode in Discord, then right-click your user/avatar and copy the User ID. Leave blank to allow any member of the configured server to message the bot.",
+    userIdLabel: "Discord User ID (optional guild allowlist)",
+    allowIdsMode: "guild",
   },
   {
     name: "slack",
@@ -3568,8 +3623,39 @@ async function setupMessagingChannels() {
         continue;
       }
     }
-    // Prompt for user/sender ID if the channel supports DM allowlisting
-    if (ch.userIdEnvKey) {
+    if (ch.serverIdEnvKey) {
+      const existingServerIds = process.env[ch.serverIdEnvKey] || "";
+      if (existingServerIds) {
+        console.log(`  ✓ ${ch.name} — server ID already set: ${existingServerIds}`);
+      } else {
+        console.log(`  ${ch.serverIdHelp}`);
+        const serverId = (await prompt(`  ${ch.serverIdLabel}: `)).trim();
+        if (serverId) {
+          process.env[ch.serverIdEnvKey] = serverId;
+          console.log(`  ✓ ${ch.name} server ID saved`);
+        } else {
+          console.log(`  Skipped ${ch.name} server ID (guild channels stay disabled)`);
+        }
+      }
+    }
+    if (ch.requireMentionEnvKey && ch.serverIdEnvKey && process.env[ch.serverIdEnvKey]) {
+      const existingRequireMention = process.env[ch.requireMentionEnvKey];
+      if (existingRequireMention === "0" || existingRequireMention === "1") {
+        const mode = existingRequireMention === "0" ? "all messages" : "@mentions only";
+        console.log(`  ✓ ${ch.name} — reply mode already set: ${mode}`);
+      } else {
+        console.log(`  ${ch.requireMentionHelp}`);
+        const answer = (await prompt("  Reply only when @mentioned? [Y/n]: "))
+          .trim()
+          .toLowerCase();
+        process.env[ch.requireMentionEnvKey] = answer === "n" || answer === "no" ? "0" : "1";
+        const mode =
+          process.env[ch.requireMentionEnvKey] === "0" ? "all messages" : "@mentions only";
+        console.log(`  ✓ ${ch.name} reply mode saved: ${mode}`);
+      }
+    }
+    // Prompt for user/sender ID when the channel supports allowlisting
+    if (ch.userIdEnvKey && (!ch.serverIdEnvKey || process.env[ch.serverIdEnvKey])) {
       const existingIds = process.env[ch.userIdEnvKey] || "";
       if (existingIds) {
         console.log(`  ✓ ${ch.name} — allowed IDs already set: ${existingIds}`);
@@ -3580,13 +3666,43 @@ async function setupMessagingChannels() {
           process.env[ch.userIdEnvKey] = userId;
           console.log(`  ✓ ${ch.name} user ID saved`);
         } else {
-          console.log(`  Skipped ${ch.name} user ID (bot will require manual pairing)`);
+          const skippedReason =
+            ch.allowIdsMode === "guild"
+              ? "any member in the configured server can message the bot"
+              : "bot will require manual pairing";
+          console.log(`  Skipped ${ch.name} user ID (${skippedReason})`);
         }
       }
     }
   }
   console.log("");
   return selected;
+}
+
+function getSuggestedPolicyPresets({ enabledChannels = null, webSearchConfig = null } = {}) {
+  const suggestions = ["pypi", "npm"];
+  const usesExplicitMessagingSelection = Array.isArray(enabledChannels);
+
+  const maybeSuggestMessagingPreset = (channel, envKey) => {
+    if (usesExplicitMessagingSelection) {
+      if (enabledChannels.includes(channel)) suggestions.push(channel);
+      return;
+    }
+    if (getCredential(envKey) || process.env[envKey]) {
+      suggestions.push(channel);
+      if (process.stdout.isTTY && !isNonInteractive() && process.env.CI !== "true") {
+        console.log(`  Auto-detected: ${envKey} -> suggesting ${channel} preset`);
+      }
+    }
+  };
+
+  maybeSuggestMessagingPreset("telegram", "TELEGRAM_BOT_TOKEN");
+  maybeSuggestMessagingPreset("slack", "SLACK_BOT_TOKEN");
+  maybeSuggestMessagingPreset("discord", "DISCORD_BOT_TOKEN");
+
+  if (webSearchConfig) suggestions.push("brave");
+
+  return suggestions;
 }
 
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
@@ -3618,24 +3734,9 @@ async function setupOpenclaw(sandboxName, model, provider) {
 // ── Step 7: Policy presets ───────────────────────────────────────
 
 // eslint-disable-next-line complexity
-async function _setupPolicies(sandboxName) {
+async function _setupPolicies(sandboxName, options = {}) {
   step(8, 8, "Policy presets");
-
-  const suggestions = ["pypi", "npm"];
-
-  // Auto-detect based on env tokens
-  if (getCredential("TELEGRAM_BOT_TOKEN")) {
-    suggestions.push("telegram");
-    console.log("  Auto-detected: TELEGRAM_BOT_TOKEN → suggesting telegram preset");
-  }
-  if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) {
-    suggestions.push("slack");
-    console.log("  Auto-detected: SLACK_BOT_TOKEN → suggesting slack preset");
-  }
-  if (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN) {
-    suggestions.push("discord");
-    console.log("  Auto-detected: DISCORD_BOT_TOKEN → suggesting discord preset");
-  }
+  const suggestions = getSuggestedPolicyPresets(options);
 
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
@@ -3896,15 +3997,11 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   const selectedPresets = Array.isArray(options.selectedPresets) ? options.selectedPresets : null;
   const onSelection = typeof options.onSelection === "function" ? options.onSelection : null;
   const webSearchConfig = options.webSearchConfig || null;
+  const enabledChannels = Array.isArray(options.enabledChannels) ? options.enabledChannels : null;
 
   step(8, 8, "Policy presets");
 
-  const suggestions = ["pypi", "npm"];
-  if (getCredential("TELEGRAM_BOT_TOKEN")) suggestions.push("telegram");
-  if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) suggestions.push("slack");
-  if (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN)
-    suggestions.push("discord");
-  if (webSearchConfig) suggestions.push("brave");
+  const suggestions = getSuggestedPolicyPresets({ enabledChannels, webSearchConfig });
 
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
@@ -4232,6 +4329,7 @@ async function onboard(opts = {}) {
 
   try {
     let session;
+    let selectedMessagingChannels = [];
     // Merged, absolute fromDockerfile: explicit flag/env takes precedence; on
     // resume falls back to what the original session recorded so the same image
     // is used even when --from is omitted from the resume invocation.
@@ -4496,9 +4594,12 @@ async function onboard(opts = {}) {
           }
         }
       }
-      const enabledChannels = await setupMessagingChannels();
-
       startRecordedStep("sandbox", { sandboxName, provider, model });
+      selectedMessagingChannels = await setupMessagingChannels();
+      onboardSession.updateSession((current) => {
+        current.messagingChannels = selectedMessagingChannels;
+        return current;
+      });
       sandboxName = await createSandbox(
         gpu,
         model,
@@ -4506,7 +4607,7 @@ async function onboard(opts = {}) {
         preferredInferenceApi,
         sandboxName,
         webSearchConfig,
-        enabledChannels,
+        selectedMessagingChannels,
         fromDockerfile,
         agent,
         dangerouslySkipPermissions,
@@ -4542,7 +4643,7 @@ async function onboard(opts = {}) {
       : null;
     if (dangerouslySkipPermissions) {
       step(8, 8, "Policy presets");
-      console.log("  Skipped — --dangerously-skip-permissions applies permissive base policy.");
+      policies.applyPermissivePolicy(sandboxName);
       onboardSession.markStepComplete("policies", {
         sandboxName,
         provider,
@@ -4575,6 +4676,7 @@ async function onboard(opts = {}) {
             recordedPolicyPresets.length > 0
               ? recordedPolicyPresets
               : null,
+          enabledChannels: selectedMessagingChannels,
           webSearchConfig,
           onSelection: (policyPresets) => {
             onboardSession.updateSession((current) => {
@@ -4648,6 +4750,7 @@ module.exports = {
   isInferenceRouteReady,
   isOpenclawReady,
   arePolicyPresetsApplied,
+  getSuggestedPolicyPresets,
   presetsCheckboxSelector,
   setupPoliciesWithSelection,
   summarizeCurlFailure,
