@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# NemoClaw Audit Chain — Tamper-Evident Hash-Chained Audit Log
+# NemoClaw Audit Chain: Tamper-Evident Hash-Chained Audit Log
 
 The audit chain module writes tamper-evident log entries in JSONL format.
 
@@ -95,14 +95,14 @@ Returns `{ valid: true, entries: 0 }` for empty or nonexistent files.
 Read entries with `seq >= since`, up to `limit`.
 When `limit` is omitted or zero, all matching entries are returned.
 
-Malformed lines are silently skipped.
+Skips malformed lines.
 
 ### `tailEntries(path: string, n?: number): AuditEntry[]`
 
 Return the last `n` entries from the audit file.
 Defaults to 50 when `n` is omitted or non-positive.
 
-Malformed lines are silently skipped.
+Skips malformed lines.
 
 ### `AuditEntry`
 
@@ -130,4 +130,4 @@ interface VerifyResult {
 
 ## Next Steps
 
-- See {doc}`/reference/architecture` for how security modules integrate into the NemoClaw plugin.
+- See NemoClaw Architecture: Plugin, Blueprint, and Sandbox Structure (see the `nemoclaw-user-reference` skill) for how security modules integrate into the NemoClaw plugin.

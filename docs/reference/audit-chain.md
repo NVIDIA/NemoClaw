@@ -1,8 +1,10 @@
 ---
 title:
-  page: "NemoClaw Audit Chain — Tamper-Evident Hash-Chained Audit Log"
+  page: "NemoClaw Audit Chain: Tamper-Evident Hash-Chained Audit Log"
   nav: "Audit Chain"
-description: "Reference for the tamper-evident audit chain module that writes SHA-256 hash-chained JSONL entries and provides verify, export, and tail utilities."
+description:
+  main: "Reference for the tamper-evident audit chain module that writes SHA-256 hash-chained JSONL entries and provides verify, export, and tail utilities."
+  agent: "References for the tamper-evident audit chain module that writes SHA-256 hash-chained JSONL entries and provides verify, export, and tail utilities. Use when looking up audit chain entry format, hash chaining behavior, or the verify/export/tail API."
 keywords: ["nemoclaw audit chain", "hash chain", "tamper detection", "audit log"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "security", "audit", "integrity"]
@@ -18,7 +20,7 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# NemoClaw Audit Chain — Tamper-Evident Hash-Chained Audit Log
+# NemoClaw Audit Chain: Tamper-Evident Hash-Chained Audit Log
 
 The audit chain module writes tamper-evident log entries in JSONL format.
 
@@ -113,14 +115,14 @@ Returns `{ valid: true, entries: 0 }` for empty or nonexistent files.
 Read entries with `seq >= since`, up to `limit`.
 When `limit` is omitted or zero, all matching entries are returned.
 
-Malformed lines are silently skipped.
+Skips malformed lines.
 
 ### `tailEntries(path: string, n?: number): AuditEntry[]`
 
 Return the last `n` entries from the audit file.
 Defaults to 50 when `n` is omitted or non-positive.
 
-Malformed lines are silently skipped.
+Skips malformed lines.
 
 ### `AuditEntry`
 
@@ -148,4 +150,4 @@ interface VerifyResult {
 
 ## Next Steps
 
-- See {doc}`/reference/architecture` for how security modules integrate into the NemoClaw plugin.
+- See [NemoClaw Architecture: Plugin, Blueprint, and Sandbox Structure](architecture.md) for how security modules integrate into the NemoClaw plugin.
