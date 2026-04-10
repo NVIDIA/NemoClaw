@@ -113,6 +113,7 @@ function defaultSteps(): Record<string, StepState> {
     provider_selection: { status: "pending", startedAt: null, completedAt: null, error: null },
     inference: { status: "pending", startedAt: null, completedAt: null, error: null },
     openclaw: { status: "pending", startedAt: null, completedAt: null, error: null },
+    agent_setup: { status: "pending", startedAt: null, completedAt: null, error: null },
     policies: { status: "pending", startedAt: null, completedAt: null, error: null },
   };
 }
