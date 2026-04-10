@@ -84,12 +84,14 @@ done
 if [ "$(id -u)" -eq 0 ]; then
   install -d -o sandbox -g sandbox -m 755 \
     /tmp/.npm-cache /tmp/.cache /tmp/.config /tmp/.local/share \
-    /tmp/.local/state /tmp/.runtime /tmp/.gnupg /tmp/.claude \
+    /tmp/.local/state /tmp/.runtime /tmp/.claude \
     /tmp/npm-global
+  install -d -o sandbox -g sandbox -m 700 /tmp/.gnupg
 else
   mkdir -p /tmp/.npm-cache /tmp/.cache /tmp/.config /tmp/.local/share \
-    /tmp/.local/state /tmp/.runtime /tmp/.gnupg /tmp/.claude \
+    /tmp/.local/state /tmp/.runtime /tmp/.claude \
     /tmp/npm-global
+  install -d -m 700 /tmp/.gnupg
 fi
 
 # ── Drop unnecessary Linux capabilities ──────────────────────────
