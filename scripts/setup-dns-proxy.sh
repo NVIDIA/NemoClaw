@@ -14,6 +14,8 @@
 #      (10.200.0.1:53), forwarding to the real CoreDNS pod IP.
 #   2. Add an iptables rule in the sandbox namespace to allow UDP
 #      to the gateway on port 53 (the only non-proxy exception).
+#      Sandbox images may not have iptables on PATH, so we probe
+#      well-known paths (/sbin, /usr/sbin) to find the binary.
 #   3. Update the sandbox's /etc/resolv.conf to point to 10.200.0.1.
 #
 # Requires: sandbox must be in Ready state. Run after sandbox creation.
@@ -163,25 +165,63 @@ sleep 2
 # OpenShell's sandbox network policy rejects all non-proxy traffic
 # (only TCP to 10.200.0.1:3128 is allowed). Insert a rule at the top
 # of the OUTPUT chain to allow UDP to the gateway on port 53.
+#
+# Sandbox images may not have iptables on PATH (e.g. minimal images
+# ship it in /sbin or /usr/sbin without updating PATH). We run
+# `ip netns exec` from the *pod*, so the binary is resolved from the
+# pod's filesystem — probe well-known paths to find it.  See #557.
 
 SANDBOX_NS="$(kctl exec -n openshell "$POD" -- sh -c \
   "ls /run/netns/ 2>/dev/null | grep sandbox | head -1" 2>/dev/null || true)"
 
-if [ -n "$SANDBOX_NS" ]; then
-  kctl exec -n openshell "$POD" -- \
-    ip netns exec "$SANDBOX_NS" \
-    iptables -C OUTPUT -p udp -d "$VETH_GW" --dport 53 -j ACCEPT 2>/dev/null \
-    || kctl exec -n openshell "$POD" -- \
-      ip netns exec "$SANDBOX_NS" \
-      iptables -I OUTPUT 1 -p udp -d "$VETH_GW" --dport 53 -j ACCEPT
+if [ -z "$SANDBOX_NS" ]; then
+  echo "WARNING: Could not find sandbox network namespace. DNS may not work."
+else
+  # Find iptables binary — check PATH first, then well-known locations.
+  # The sandbox image may not include iptables at all, but the pod's
+  # root filesystem (which ip-netns-exec inherits) usually has it in
+  # /sbin or /usr/sbin even when those dirs are not on PATH.
+  IPTABLES_BIN=""
+  for candidate in iptables /sbin/iptables /usr/sbin/iptables; do
+    if kctl exec -n openshell "$POD" -- sh -c "test -x \"\$(command -v $candidate 2>/dev/null || echo $candidate)\"" 2>/dev/null; then
+      IPTABLES_BIN="$candidate"
+      break
+    fi
+  done
 
-  # ── Step 5: Update sandbox resolv.conf ────────────────────────────
+  # Back up the original resolv.conf before we touch it. On reruns the
+  # file may already contain our rewritten content, so only save once.
   kctl exec -n openshell "$POD" -- \
     ip netns exec "$SANDBOX_NS" sh -c "
-      printf 'nameserver ${VETH_GW}\noptions ndots:5\n' > /etc/resolv.conf
-    "
-else
-  echo "WARNING: Could not find sandbox network namespace. DNS may not work."
+      [ -f /tmp/resolv.conf.orig ] || cp /etc/resolv.conf /tmp/resolv.conf.orig
+    " 2>/dev/null || true
+
+  if [ -n "$IPTABLES_BIN" ]; then
+    kctl exec -n openshell "$POD" -- \
+      ip netns exec "$SANDBOX_NS" \
+      "$IPTABLES_BIN" -C OUTPUT -p udp -d "$VETH_GW" --dport 53 -j ACCEPT 2>/dev/null \
+      || kctl exec -n openshell "$POD" -- \
+        ip netns exec "$SANDBOX_NS" \
+        "$IPTABLES_BIN" -I OUTPUT 1 -p udp -d "$VETH_GW" --dport 53 -j ACCEPT
+
+    # ── Step 5: Update sandbox resolv.conf ──────────────────────────
+    # Only rewrite resolv.conf when the iptables rule was added.
+    # Without the UDP exception, pointing resolv.conf at the forwarder
+    # would make DNS queries silently time out instead of failing fast
+    # with the system default resolver — a worse failure mode.
+    kctl exec -n openshell "$POD" -- \
+      ip netns exec "$SANDBOX_NS" sh -c "
+        printf 'nameserver ${VETH_GW}\noptions ndots:5\n' > /etc/resolv.conf
+      "
+  else
+    echo "WARNING: iptables not found in pod (checked PATH, /sbin, /usr/sbin)."
+    echo "WARNING: Cannot add UDP DNS exception. Sandbox DNS resolution will not work."
+    # Restore original resolv.conf in case a previous run overwrote it.
+    kctl exec -n openshell "$POD" -- \
+      ip netns exec "$SANDBOX_NS" sh -c "
+        [ -f /tmp/resolv.conf.orig ] && cp /tmp/resolv.conf.orig /etc/resolv.conf
+      " 2>/dev/null || true
+  fi
 fi
 
 # ── Step 6: Runtime verification ─────────────────────────────────────
@@ -221,8 +261,9 @@ if [ -n "$SANDBOX_NS" ]; then
     VERIFY_FAIL=$((VERIFY_FAIL + 1))
   fi
 
-  # 6c. iptables UDP DNS rule present
-  if sb_exec iptables -C OUTPUT -p udp -d "$VETH_GW" --dport 53 -j ACCEPT 2>/dev/null; then
+  # 6c. iptables UDP DNS rule present (use discovered binary path)
+  IPTABLES_CHECK="${IPTABLES_BIN:-iptables}"
+  if sb_exec "$IPTABLES_CHECK" -C OUTPUT -p udp -d "$VETH_GW" --dport 53 -j ACCEPT 2>/dev/null; then
     echo "  [PASS] iptables: UDP ${VETH_GW}:53 ACCEPT rule present"
     VERIFY_PASS=$((VERIFY_PASS + 1))
   else
@@ -245,5 +286,5 @@ fi
 
 echo "  DNS verification: ${VERIFY_PASS} passed, ${VERIFY_FAIL} failed"
 if [ "$VERIFY_FAIL" -gt 0 ]; then
-  echo "WARNING: DNS setup incomplete. Sandbox DNS resolution may not work. See issue #626."
+  echo "WARNING: DNS setup incomplete. Sandbox DNS resolution may not work. See issue #626, #557."
 fi

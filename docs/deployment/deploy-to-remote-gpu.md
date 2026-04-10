@@ -65,7 +65,7 @@ The legacy compatibility flow performs the following steps on the VM:
 1. Installs Docker and the NVIDIA Container Toolkit if a GPU is present.
 2. Installs the OpenShell CLI.
 3. Runs `nemoclaw onboard` (the setup wizard) to create the gateway, register providers, and launch the sandbox.
-4. Starts auxiliary services, such as the Telegram bridge and cloudflared tunnel, when those tools are available.
+4. Starts optional host auxiliary services (for example the cloudflared tunnel) when `cloudflared` is available. Channel messaging is configured during onboarding and runs through OpenShell-managed processes, not through `nemoclaw start`.
 
 By default, the compatibility wrapper asks Brev to provision on `gcp`. Override this with `NEMOCLAW_BREV_PROVIDER` if you need a different Brev cloud provider.
 
@@ -120,6 +120,22 @@ If you disable device auth for a remote deployment, any device that can reach th
 Avoid this on internet-reachable or shared-network deployments.
 :::
 
+## Proxy Configuration
+
+NemoClaw routes sandbox traffic through a gateway proxy that defaults to `10.200.0.1:3128`.
+If your network requires a different proxy, set `NEMOCLAW_PROXY_HOST` and `NEMOCLAW_PROXY_PORT` before onboarding:
+
+```console
+$ export NEMOCLAW_PROXY_HOST=proxy.example.com
+$ export NEMOCLAW_PROXY_PORT=8080
+$ nemoclaw onboard
+```
+
+These values are baked into the sandbox image at build time.
+Only alphanumeric characters, dots, hyphens, and colons are accepted for the host.
+The port must be numeric (0-65535).
+Changing the proxy after onboarding requires re-running `nemoclaw onboard`.
+
 ## GPU Configuration
 
 The deploy script uses the `NEMOCLAW_GPU` environment variable to select the GPU type.
@@ -133,6 +149,6 @@ $ nemoclaw deploy <instance-name>
 
 ## Related Topics
 
-- [Set Up the Telegram Bridge](set-up-telegram-bridge.md) to interact with the remote agent through Telegram.
+- [Set Up Telegram](set-up-telegram-bridge.md) to connect Telegram through OpenShell-managed channel messaging.
 - [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity.md) for sandbox monitoring tools.
 - [Commands](../reference/commands.md) for the full `deploy` command reference.

@@ -377,7 +377,7 @@ function collectNetwork(collectDir: string): void {
 
 function collectOnboardSession(collectDir: string, repoDir: string): void {
   section("Onboard Session");
-  const helperPath = join(repoDir, "bin", "lib", "onboard-session.js");
+  const helperPath = join(repoDir, "dist", "lib", "onboard-session.js");
   if (!existsSync(helperPath) || !commandExists("node")) {
     console.log("  (onboard session helper not available, skipping)");
     return;

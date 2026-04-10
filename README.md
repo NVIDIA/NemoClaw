@@ -1,3 +1,8 @@
+<!--
+  SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-License-Identifier: Apache-2.0
+-->
+
 # 🦞 NVIDIA NemoClaw: Reference Stack for Running OpenClaw in OpenShell
 
 <!-- start-badges -->
@@ -20,7 +25,7 @@ It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime,
 > The project is shared to gather feedback and enable early experimentation.
 > We welcome issues and discussion from the community while the project evolves.
 
-NemoClaw adds guided onboarding, a hardened blueprint, state management, messaging bridges, routed inference, and layered protection on top of the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime. For the full feature list, refer to [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html). For the system diagram, component model, and blueprint lifecycle, refer to [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) and [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html).
+NemoClaw adds guided onboarding, a hardened blueprint, state management, OpenShell-managed channel messaging, routed inference, and layered protection on top of the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime. For the full feature list, refer to [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html). For the system diagram, component model, and blueprint lifecycle, refer to [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) and [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html).
 
 ## Getting Started
 
@@ -46,21 +51,28 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 
 | Dependency | Version                          |
 |------------|----------------------------------|
-| Linux      | Ubuntu 22.04 LTS or later |
 | Node.js    | 22.16 or later |
 | npm        | 10 or later |
-| Container runtime | Supported runtime installed and running |
-| [OpenShell](https://github.com/NVIDIA/OpenShell) | Installed |
+| Platform   | See below |
+
+#### OpenShell Lifecycle
+
+For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
+Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemoclaw onboard`.
 
 #### Container Runtimes
 
-| Platform | Supported runtimes | Notes |
-|----------|--------------------|-------|
-| Linux | Docker | Primary supported path. |
-| macOS (Apple Silicon) | Colima, Docker Desktop | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
-| macOS (Intel) | Docker Desktop | Start the runtime before running the installer. |
-| Windows WSL | Docker Desktop (WSL backend) | Supported target path. |
-| DGX Spark | Docker | Use the standard installer and `nemoclaw onboard`. |
+The following table lists tested platform and runtime combinations.
+Availability is not limited to these entries, but untested configurations may have issues.
+
+<!-- platform-matrix:begin -->
+| OS | Container runtime | Status | Notes |
+|----|-------------------|--------|-------|
+| Linux | Docker | Tested | Primary tested path. |
+| macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
+| DGX Spark | Docker | Tested | Use the standard installer and `nemoclaw onboard`. |
+| Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. |
+<!-- platform-matrix:end -->
 
 ### Install NemoClaw and Onboard OpenClaw Agent
 
@@ -70,6 +82,10 @@ The script installs Node.js if it is not already present, then runs the guided o
 > **ℹ️ Note**
 >
 > NemoClaw creates a fresh OpenClaw instance inside the sandbox during the onboarding process.
+>
+> The installer runs as your normal user and does not require `sudo` or root.
+> It installs Node.js via nvm and NemoClaw via npm, both into user-local directories.
+> Docker must be installed and running before you run the installer. Installing Docker may require elevated privileges on Linux.
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash

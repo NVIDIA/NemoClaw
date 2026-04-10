@@ -10,7 +10,7 @@ const {
   collectBuildContextStats,
   stageLegacySandboxBuildContext,
   stageOptimizedSandboxBuildContext,
-} = require("../bin/lib/sandbox-build-context");
+} = require("../dist/lib/sandbox-build-context");
 
 function parseArgs(argv) {
   const args = {
@@ -72,7 +72,9 @@ function dockerBuild(repoRoot, stageFn, label, noCache) {
   try {
     run("docker", args);
     const elapsedSeconds = Number(process.hrtime.bigint() - startedAt) / 1e9;
-    const imageBytes = Number(run("docker", ["image", "inspect", imageTag, "--format", "{{.Size}}"]));
+    const imageBytes = Number(
+      run("docker", ["image", "inspect", imageTag, "--format", "{{.Size}}"]),
+    );
     return {
       label,
       buildCtx,
@@ -122,16 +124,34 @@ function printSummary(results) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const currentRepo = path.resolve(args.currentRepo);
-  const currentHead = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: currentRepo, encoding: "utf8" }).trim();
-  const currentDirty = execFileSync("git", ["status", "--short"], { cwd: currentRepo, encoding: "utf8" }).trim().length > 0;
+  const currentHead = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+    cwd: currentRepo,
+    encoding: "utf8",
+  }).trim();
+  const currentDirty =
+    execFileSync("git", ["status", "--short"], { cwd: currentRepo, encoding: "utf8" }).trim()
+      .length > 0;
   const currentLabel = currentDirty ? `${currentHead} + dirty` : currentHead;
   const mainWorktree = makeTempWorktree(args.mainRef, currentRepo);
 
   try {
-    const mainLabel = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: mainWorktree, encoding: "utf8" }).trim();
+    const mainLabel = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: mainWorktree,
+      encoding: "utf8",
+    }).trim();
     const results = [
-      dockerBuild(mainWorktree, stageLegacySandboxBuildContext, `main (${mainLabel})`, args.noCache),
-      dockerBuild(currentRepo, stageOptimizedSandboxBuildContext, `candidate (${currentLabel})`, args.noCache),
+      dockerBuild(
+        mainWorktree,
+        stageLegacySandboxBuildContext,
+        `main (${mainLabel})`,
+        args.noCache,
+      ),
+      dockerBuild(
+        currentRepo,
+        stageOptimizedSandboxBuildContext,
+        `candidate (${currentLabel})`,
+        args.noCache,
+      ),
     ];
     printSummary(results);
   } finally {
