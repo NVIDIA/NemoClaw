@@ -82,13 +82,8 @@ function runCapture(cmd, opts = {}) {
  * in CLI log and error output. Covers NVIDIA API keys, bearer tokens,
  * generic API key assignments, and base64-style long tokens.
  */
-const SECRET_PATTERNS = [
-  /nvapi-[A-Za-z0-9_-]{10,}/g,
-  /nvcf-[A-Za-z0-9_-]{10,}/g,
-  /ghp_[A-Za-z0-9_-]{10,}/g,
-  /(?<=Bearer\s+)[A-Za-z0-9_.+/=-]{10,}/gi,
-  /(?<=(?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]['"]?)[A-Za-z0-9_.+/=-]{10,}/gi,
-];
+// Single source of truth for secret patterns — see secret-patterns.ts
+const { SECRET_PATTERNS } = require("./secret-patterns");
 
 /**
  * Partially redact a matched secret string: keep the first 4 chars and replace
