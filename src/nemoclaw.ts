@@ -990,6 +990,18 @@ async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false 
     policies.applyPermissivePolicy(sandboxName);
   }
   checkAndRecoverSandboxProcesses(sandboxName);
+  // Print a one-shot hint before dropping the user into the sandbox
+  // shell so a fresh user knows the first thing to type. Without this,
+  // `nemoclaw <name> connect` lands on a bare bash prompt and users
+  // ask "now what?" — see #465. Suppress the hint when stdout isn't a
+  // TTY so scripted callers don't get noise in their pipelines.
+  if (process.stdout.isTTY && !["1", "true"].includes(String(process.env.NEMOCLAW_NO_CONNECT_HINT || ""))) {
+    console.log("");
+    console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
+    console.log(`  ${D}Inside the sandbox, run \`openclaw tui\` to start chatting with the agent.${R}`);
+    console.log(`  ${D}Type \`exit\` (or Ctrl-D) to return to the host shell.${R}`);
+    console.log("");
+  }
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
     stdio: "inherit",
     cwd: ROOT,
@@ -1220,10 +1232,11 @@ function sandboxPolicyList(sandboxName) {
   console.log("");
 }
 
-function cleanupSandboxServices(sandboxName) {
-  // Stop host services (cloudflared) and clean up PID directory.
-  const { stopAll } = require("./lib/services");
-  stopAll({ sandboxName });
+function cleanupSandboxServices(sandboxName, { stopHostServices = false } = {}) {
+  if (stopHostServices) {
+    const { stopAll } = require("./lib/services");
+    stopAll({ sandboxName });
+  }
   try {
     fs.rmSync(`/tmp/nemoclaw-services-${sandboxName}`, { recursive: true, force: true });
   } catch {
@@ -1239,9 +1252,10 @@ function cleanupSandboxServices(sandboxName) {
 async function sandboxDestroy(sandboxName, args = []) {
   const skipConfirm = args.includes("--yes") || args.includes("--force");
   if (!skipConfirm) {
-    const answer = await askPrompt(
-      `  ${YW}Destroy sandbox '${sandboxName}'?${R} This cannot be undone. [y/N]: `,
-    );
+    console.log(`  ${YW}Destroy sandbox '${sandboxName}'?${R}`);
+    console.log("  This will permanently delete the sandbox and all workspace files inside it.");
+    console.log("  This cannot be undone.");
+    const answer = await askPrompt("  Type 'yes' to confirm, or press Enter to cancel [y/N]: ");
     if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
       console.log("  Cancelled.");
       return;
@@ -1252,8 +1266,6 @@ async function sandboxDestroy(sandboxName, args = []) {
   const sb = registry.getSandbox(sandboxName);
   if (sb && sb.nimContainer) nim.stopNimContainerByName(sb.nimContainer);
   else nim.stopNimContainer(sandboxName);
-
-  cleanupSandboxServices(sandboxName);
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
@@ -1269,6 +1281,13 @@ async function sandboxDestroy(sandboxName, args = []) {
     console.error(`  Failed to destroy sandbox '${sandboxName}'.`);
     process.exit(deleteResult.status || 1);
   }
+
+  const shouldStopHostServices =
+    (deleteResult.status === 0 || alreadyGone) &&
+    registry.listSandboxes().sandboxes.length === 1 &&
+    !!registry.getSandbox(sandboxName);
+
+  cleanupSandboxServices(sandboxName, { stopHostServices: shouldStopHostServices });
 
   const removed = registry.removeSandbox(sandboxName);
   const session = onboardSession.loadSession();
