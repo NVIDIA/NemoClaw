@@ -16,7 +16,12 @@
 version: 1
 
 filesystem_policy:
-  include_workdir: true
+  # SECURITY: must be false. When true, OpenShell adds WORKDIR (/sandbox) to
+  # read_write automatically, which overrides our read_only entry below because
+  # Landlock grants the union of all matching rules. All needed writable paths
+  # are declared explicitly in read_write.
+  # Ref: https://github.com/NVIDIA/NemoClaw/issues/804
+  include_workdir: false
   read_only:
     - /usr
     - /lib
@@ -25,16 +30,23 @@ filesystem_policy:
     - /app
     - /etc
     - /var/log
+    - /sandbox                      # Home directory — read-only to prevent agents
+                                    # from creating arbitrary files or modifying
+                                    # their own runtime environment. Writable state
+                                    # is restricted to /sandbox/.openclaw-data.
+                                    # Ref: https://github.com/NVIDIA/NemoClaw/issues/804
     - /sandbox/.openclaw            # Immutable gateway config — prevents agent
                                     # from tampering with auth tokens or CORS.
                                     # Writable state (agents, plugins) lives in
                                     # /sandbox/.openclaw-data via symlinks.
                                     # Ref: https://github.com/NVIDIA/NemoClaw/issues/514
   read_write:
-    - /sandbox
     - /tmp
     - /dev/null
     - /sandbox/.openclaw-data       # Writable agent/plugin state (symlinked from .openclaw)
+    - /sandbox/.nemoclaw            # Plugin state and config (state.ts, config.ts).
+                                    # Blueprints are root-owned; sticky bit (1755)
+                                    # on parent prevents rename/delete (#1607).
 
 landlock:
   compatibility: best_effort
@@ -53,16 +65,31 @@ network_policies:
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+          - allow: { method: POST, path: "/v1/messages" }
+          - allow: { method: POST, path: "/v1/messages/batches" }
+          - allow: { method: GET, path: "/v1/messages/batches/**" }
+          - allow: { method: POST, path: "/v1/complete" }
       - host: statsig.anthropic.com
         port: 443
         protocol: rest
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+      # sentry.io is a multi-tenant SaaS — any authenticated client can POST
+      # to ANY Sentry project, not just NemoClaw's. Allowing POST /** turned
+      # the host into a generic exfiltration channel: a compromised agent
+      # could ship stack traces, env vars, file contents, etc. to a Sentry
+      # project controlled by an attacker via the public envelope endpoint
+      # (https://sentry.io/api/<any-project>/envelope/). Path-pattern
+      # restrictions cannot fix this because the project ID is part of the
+      # URL and there is no server-side allowlist of legitimate projects.
+      #
+      # Block POST entirely. GET stays allowed because it has no request
+      # body and is harmless for exfil. Side effect: Claude Code's crash
+      # telemetry to Sentry is silently dropped — that is the right
+      # tradeoff for a sandbox whose stated goal is preventing data egress.
+      # See #1437.
       - host: sentry.io
         port: 443
         protocol: rest
@@ -70,7 +97,6 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
     binaries:
       - { path: /usr/local/bin/claude }
 
@@ -83,32 +109,32 @@ network_policies:
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+          - allow: { method: POST, path: "/v1/chat/completions" }
+          - allow: { method: POST, path: "/v1/completions" }
+          - allow: { method: POST, path: "/v1/embeddings" }
+          - allow: { method: GET, path: "/v1/models" }
+          - allow: { method: GET, path: "/v1/models/**" }
       - host: inference-api.nvidia.com
         port: 443
         protocol: rest
         enforcement: enforce
         tls: terminate
         rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+          - allow: { method: POST, path: "/v1/chat/completions" }
+          - allow: { method: POST, path: "/v1/completions" }
+          - allow: { method: POST, path: "/v1/embeddings" }
+          - allow: { method: GET, path: "/v1/models" }
+          - allow: { method: GET, path: "/v1/models/**" }
     binaries:
       - { path: /usr/local/bin/claude }
       - { path: /usr/local/bin/openclaw }
 
-  github:
-    name: github
-    endpoints:
-      - host: github.com
-        port: 443
-        access: full
-      - host: api.github.com
-        port: 443
-        access: full
-    binaries:
-      - { path: /usr/bin/gh }
-      - { path: /usr/bin/git }
+  # NOTE: github.com / api.github.com and the git/gh binaries used to
+  # live in this base policy and were therefore granted to every
+  # sandbox regardless of user opt-in. They have been moved into a
+  # discoverable preset (`presets/github.yaml`) so a sandbox only gets
+  # GitHub access when the user explicitly selects the `github` preset
+  # during onboard. See #1583.
 
   # ── OpenClaw "phone home" ────────────────────────────────────────────
   # Minimum viable set for OpenClaw to authenticate, discover plugins,
@@ -159,60 +185,19 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/openclaw }
 
-  # npm registry — needed for `openclaw plugins install` and `npm install`
+  # npm registry — needed for `openclaw plugins install` and `npm install`.
+  # Read-only: agents only fetch packages, never publish.
   npm_registry:
     name: npm_registry
     endpoints:
       - host: registry.npmjs.org
         port: 443
-        access: full
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/npm }
-      - { path: /usr/local/bin/node }
-
-  # ── Messaging — pre-allowed for OpenClaw agent notifications ────
-  # Restricted to node processes to prevent arbitrary data exfiltration
-  # via curl, wget, python, etc. (See: #272)
-  telegram:
-    name: telegram
-    endpoints:
-      - host: api.telegram.org
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/bot*/**" }
-          - allow: { method: POST, path: "/bot*/**" }
-          - allow: { method: GET, path: "/file/bot*/**" }
-    binaries:
-      - { path: /usr/local/bin/node }
-
-  discord:
-    name: discord
-    endpoints:
-      - host: discord.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      # WebSocket gateway — must use access: full (CONNECT tunnel) instead
-      # of protocol: rest. The proxy's HTTP idle timeout (~2 min) kills
-      # long-lived WebSocket connections; a CONNECT tunnel avoids
-      # HTTP-level timeouts entirely. Matches presets/discord.yaml. See #409.
-      - host: gateway.discord.gg
-        port: 443
-        access: full
-      - host: cdn.discordapp.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-    binaries:
       - { path: /usr/local/bin/node }

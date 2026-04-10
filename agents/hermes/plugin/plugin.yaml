@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: nemoclaw
+version: "0.0.11"
+description: "NemoClaw sandbox integration for Hermes running inside OpenShell"
+author: "NVIDIA Corporation"
+manifest_version: 1

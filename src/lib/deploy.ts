@@ -47,7 +47,40 @@ export interface DeployExecutionOptions {
   exit: (code: number) => never;
 }
 
-const SSH_HOST_KEY_ARGS = ["-o", "StrictHostKeyChecking=accept-new", "-o", "LogLevel=ERROR"];
+// SSH host key verification helper — resolves the real hostname from SSH config
+// (brev aliases aren't DNS-resolvable) and returns it for ssh-keyscan.
+export function resolveRealHost(
+  name: string,
+  execFileSync: DeployExecutionOptions["execFileSync"],
+): string {
+  const sshConfigOut = execFileSync("ssh", ["-G", name], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  return (
+    sshConfigOut
+      .split("\n")
+      .find((l) => l.startsWith("hostname "))
+      ?.split(" ")[1] || name
+  );
+}
+
+// Build SSH options that enforce strict host key checking against a pinned known_hosts file.
+export function buildSshOpts(knownHostsFile: string, shellQuote: (v: string) => string): string {
+  return `-o UserKnownHostsFile=${shellQuote(knownHostsFile)} -o StrictHostKeyChecking=yes -o LogLevel=ERROR`;
+}
+
+// Build SSH argument array for execFileSync calls with pinned host key verification.
+export function buildSshArgs(knownHostsFile: string): string[] {
+  return [
+    "-o",
+    `UserKnownHostsFile=${knownHostsFile}`,
+    "-o",
+    "StrictHostKeyChecking=yes",
+    "-o",
+    "LogLevel=ERROR",
+  ];
+}
 
 export function inferDeployProvider(
   explicitProvider: string | undefined,
@@ -296,102 +329,123 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     spawnSync("sleep", ["3"]);
   }
 
+  // ── SSH trust-on-first-use (TOFU) ──────────────────────────────
+  // Pin the host key on first contact via ssh-keyscan, then verify all
+  // subsequent connections against it. We keyscan first (not a probe with
+  // StrictHostKeyChecking=no) to avoid a TOCTOU window where an attacker
+  // could interpose between an unauthenticated probe and key capture.
+  // Ref: https://github.com/NVIDIA/NemoClaw/issues/691
+  const khDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ssh-"));
+  const knownHostsFile = path.join(khDir, "known_hosts");
+  const realHost = resolveRealHost(name, execFileSync);
+
   stdoutWrite("  Waiting for SSH ");
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 60; i++) {
     try {
-      execFileSync(
-        "ssh",
-        ["-o", "ConnectTimeout=5", ...SSH_HOST_KEY_ARGS, name, "echo", "ok"],
-        { encoding: "utf-8", stdio: "ignore" },
-      );
-      stdoutWrite(" ✓\n");
-      break;
-    } catch {
-      if (i === 29) {
-        stdoutWrite("\n");
-        return fail([`  Timed out waiting for SSH to ${name}`], error, exit);
+      const hostKeys = execFileSync("ssh-keyscan", ["-T", "5", "-H", realHost], {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      if (hostKeys.trim()) {
+        fs.writeFileSync(knownHostsFile, hostKeys, { mode: 0o600 });
+        stdoutWrite(" ✓\n");
+        break;
       }
-      stdoutWrite(".");
-      spawnSync("sleep", ["3"]);
+    } catch {
+      /* keyscan failed, retry */
     }
+    if (i === 59) {
+      stdoutWrite("\n");
+      fs.rmSync(khDir, { recursive: true, force: true });
+      return fail(
+        [`  Timed out waiting for SSH to ${name} (keyscan failed after 60 attempts)`],
+        error,
+        exit,
+      );
+    }
+    stdoutWrite(".");
+    spawnSync("sleep", ["3"]);
   }
 
-  const remoteHome = execFileSync(
-    "ssh",
-    [...SSH_HOST_KEY_ARGS, name, "echo", "$HOME"],
-    { encoding: "utf-8" },
-  ).trim();
-  const remoteDir = `${remoteHome}/nemoclaw`;
+  const sshOpts = buildSshOpts(knownHostsFile, shellQuote);
+  const sshArgs = buildSshArgs(knownHostsFile);
 
-  log("  Syncing NemoClaw to VM...");
-  run(
-    `ssh -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR ${qname} 'mkdir -p ${shellQuote(remoteDir)}'`,
-  );
-  run(
-    `rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .venv -e "ssh -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR" "${rootDir}/" ${qname}:${shellQuote(`${remoteDir}/`)}`,
-  );
-
-  const envLines = buildDeployEnvLines({
-    env,
-    sandboxName,
-    provider,
-    credentials,
-    shellQuote,
-  });
-  const envDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-"));
-  const envTmp = path.join(envDir, "env");
-  fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
   try {
+    const remoteHome = execFileSync("ssh", [...sshArgs, name, "echo", "$HOME"], {
+      encoding: "utf-8",
+    }).trim();
+    const remoteDir = `${remoteHome}/nemoclaw`;
+
+    log("  Syncing NemoClaw to VM...");
+    run(`ssh ${sshOpts} ${qname} 'mkdir -p ${shellQuote(remoteDir)}'`);
     run(
-      `scp -q -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR ${shellQuote(envTmp)} ${qname}:${shellQuote(`${remoteDir}/.env`)}`,
+      `rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .venv -e "ssh ${sshOpts}" "${rootDir}/" ${qname}:${shellQuote(`${remoteDir}/`)}`,
     );
-    run(
-      `ssh -q -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR ${qname} 'chmod 600 ${shellQuote(`${remoteDir}/.env`)}'`,
+
+    const envLines = buildDeployEnvLines({
+      env,
+      sandboxName,
+      provider,
+      credentials,
+      shellQuote,
+    });
+    const envDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-"));
+    const envTmp = path.join(envDir, "env");
+    fs.writeFileSync(envTmp, envLines.join("\n") + "\n", { mode: 0o600 });
+    try {
+      run(`scp -q ${sshOpts} ${shellQuote(envTmp)} ${qname}:${shellQuote(`${remoteDir}/.env`)}`);
+      run(
+        `ssh -q ${sshOpts} ${qname} 'chmod 600 ${shellQuote(`${remoteDir}/.env`)}'`,
+      );
+    } finally {
+      try {
+        fs.unlinkSync(envTmp);
+      } catch {
+        /* ignored */
+      }
+      try {
+        fs.rmdirSync(envDir);
+      } catch {
+        /* ignored */
+      }
+    }
+
+    log("  Running setup...");
+    runInteractive(
+      `ssh -t ${sshOpts} ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && bash scripts/install.sh --non-interactive --yes-i-accept-third-party-software'`,
+    );
+
+    if (
+      !skipStartServices &&
+      (credentials.TELEGRAM_BOT_TOKEN ||
+        credentials.DISCORD_BOT_TOKEN ||
+        credentials.SLACK_BOT_TOKEN)
+    ) {
+      log("  Starting services...");
+      run(
+        `ssh ${sshOpts} ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && bash scripts/start-services.sh'`,
+      );
+    }
+
+    if (skipStartServices) {
+      log("  Skipping service startup (NEMOCLAW_DEPLOY_NO_START_SERVICES=1).");
+    }
+
+    if (skipConnect) {
+      log("");
+      log("  Skipping interactive sandbox connect (NEMOCLAW_DEPLOY_NO_CONNECT=1).");
+      log(`  Remote sandbox: ${sandboxName}`);
+      log(`  Connect later with: ssh ${name} 'openshell sandbox connect ${sandboxName}'`);
+      return;
+    }
+
+    log("");
+    log("  Connecting to sandbox...");
+    log("");
+    runInteractive(
+      `ssh -t ${sshOpts} ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && openshell sandbox connect ${shellQuote(sandboxName)}'`,
     );
   } finally {
-    try {
-      fs.unlinkSync(envTmp);
-    } catch {
-      /* ignored */
-    }
-    try {
-      fs.rmdirSync(envDir);
-    } catch {
-      /* ignored */
-    }
+    fs.rmSync(khDir, { recursive: true, force: true });
   }
-
-  log("  Running setup...");
-  runInteractive(
-    `ssh -t -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && bash scripts/install.sh --non-interactive --yes-i-accept-third-party-software'`,
-  );
-
-  if (
-    !skipStartServices &&
-    (credentials.TELEGRAM_BOT_TOKEN || credentials.DISCORD_BOT_TOKEN || credentials.SLACK_BOT_TOKEN)
-  ) {
-    log("  Starting services...");
-    run(
-      `ssh -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && bash scripts/start-services.sh'`,
-    );
-  }
-
-  if (skipStartServices) {
-    log("  Skipping service startup (NEMOCLAW_DEPLOY_NO_START_SERVICES=1).");
-  }
-
-  if (skipConnect) {
-    log("");
-    log("  Skipping interactive sandbox connect (NEMOCLAW_DEPLOY_NO_CONNECT=1).");
-    log(`  Remote sandbox: ${sandboxName}`);
-    log(`  Connect later with: ssh ${name} 'openshell sandbox connect ${sandboxName}'`);
-    return;
-  }
-
-  log("");
-  log("  Connecting to sandbox...");
-  log("");
-  runInteractive(
-    `ssh -t -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR ${qname} 'cd ${shellQuote(remoteDir)} && set -a && . .env && set +a && openshell sandbox connect ${shellQuote(sandboxName)}'`,
-  );
 }

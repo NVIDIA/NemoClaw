@@ -19,7 +19,10 @@ network_policies:
           - allow: { method: POST, path: "/**" }
           - allow: { method: PUT, path: "/**" }
           - allow: { method: PATCH, path: "/**" }
-          - allow: { method: DELETE, path: "/**" }
+          # DELETE only on message and reaction endpoints — not all paths
+          # Reaction DELETE requires an extra path segment: /reactions/{emoji}/@me or /{user_id}
+          - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*" }
+          - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*/reactions/*/*" }
       # WebSocket gateway — must use access: full (CONNECT tunnel) instead
       # of protocol: rest. The proxy's HTTP idle timeout (~2 min) kills
       # long-lived WebSocket connections; a CONNECT tunnel avoids
