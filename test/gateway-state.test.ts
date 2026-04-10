@@ -91,6 +91,12 @@ describe("isGatewayHealthy", () => {
     const wrongName = GW_INFO_ACTIVE.replace("nemoclaw", "other-gw");
     expect(isGatewayHealthy("", GW_INFO_NAMED, wrongName)).toBe(false);
   });
+
+  it("does not trigger fallback when status is non-empty", () => {
+    // Non-empty status that lacks Connected/Server Status should not fall through to fallback
+    const nonEmptyStatus = "some unexpected output";
+    expect(isGatewayHealthy(nonEmptyStatus, GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(false);
+  });
 });
 
 describe("getGatewayReuseState", () => {

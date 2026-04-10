@@ -93,7 +93,8 @@ export function isGatewayHealthy(
 
   // Fallback: status is empty (ARM64/non-TTY) but gateway info confirms
   // the named gateway exists and has an active endpoint
-  if (namedGatewayKnown && activeInfo && activeGatewayName === GATEWAY_NAME) return true;
+  const statusEmpty = typeof statusOutput === 'string' && stripAnsi(statusOutput).trim().length === 0;
+  if (statusEmpty && namedGatewayKnown && activeInfo && activeGatewayName === GATEWAY_NAME) return true;
 
   return false;
 }
