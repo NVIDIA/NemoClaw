@@ -3,9 +3,6 @@
 
 import { describe, it, expect } from "vitest";
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
-
-const require = createRequire(import.meta.url);
 
 import {
   CONTAINER_REACHABILITY_IMAGE,

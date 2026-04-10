@@ -263,6 +263,70 @@ function resolveOllamaContainerRoute(endpoint, runCapture) {
   return null;
 }
 
+function getUnavailableLocalProviderResult(provider, endpoint) {
+  switch (provider) {
+    case "vllm-local":
+      return {
+        ok: false,
+        message: "Local vLLM was selected, but nothing is responding on http://localhost:8000.",
+      };
+    case "ollama-local": {
+      const unavailableTarget = endpoint?.displayTarget || "localhost:11434";
+      return {
+        ok: false,
+        message:
+          `Local Ollama was selected, but nothing is responding on ${unavailableTarget}. ` +
+          "Set NEMOCLAW_OLLAMA_BASE_URL if Ollama is reachable on a different host.",
+      };
+    }
+    default:
+      return { ok: false, message: "The selected local inference provider is unavailable." };
+  }
+}
+
+function getContainerUnavailableLocalProviderResult(provider, endpoint) {
+  switch (provider) {
+    case "vllm-local":
+      return {
+        ok: false,
+        message:
+          "Local vLLM is responding on localhost, but containers cannot reach http://host.openshell.internal:8000. Ensure the server is reachable from containers, not only from the host shell.",
+      };
+    case "ollama-local": {
+      const routeTargets = getOllamaRouteCandidates(endpoint);
+      const message =
+        endpoint?.source === "wsl-host" || endpoint?.source === "override"
+          ? `Local Ollama is responding on ${endpoint.displayTarget}, but containers cannot reach ${routeTargets.join(", ")}. Ensure Docker Desktop hostnames are available and the Windows firewall allows access to that host and port from containers.`
+          : "Local Ollama is responding on localhost, but containers cannot reach http://host.openshell.internal:11434. Ensure Ollama listens on 0.0.0.0:11434 instead of 127.0.0.1 so sandboxes can reach it.";
+      return { ok: false, message };
+    }
+    default:
+      return { ok: false, message: "The selected local inference provider is unavailable from containers." };
+  }
+}
+
+function validateContainerReachability(provider, runCapture, opts, endpoint) {
+  if (provider === "ollama-local") {
+    const resolvedEndpoint = resolveOllamaContainerRoute(endpoint, runCapture);
+    if (resolvedEndpoint) {
+      return opts.returnEndpoint ? { ok: true, endpoint: resolvedEndpoint } : { ok: true };
+    }
+    return getContainerUnavailableLocalProviderResult(provider, endpoint);
+  }
+
+  const containerCommand = getLocalProviderContainerReachabilityCheck(provider, { ...opts, runCapture, endpoint });
+  if (!containerCommand) {
+    return { ok: true };
+  }
+
+  const containerOutput = runCapture(containerCommand, { ignoreError: true });
+  if (containerOutput) {
+    return { ok: true };
+  }
+
+  return getContainerUnavailableLocalProviderResult(provider, endpoint);
+}
+
 function validateLocalProvider(provider, runCapture, opts = {}) {
   const endpoint =
     provider === "ollama-local" ? opts.endpoint || resolveOllamaEndpoint(runCapture, opts) : opts.endpoint || null;
@@ -275,64 +339,10 @@ function validateLocalProvider(provider, runCapture, opts = {}) {
     ? "resolved"
     : runCapture(command, { ignoreError: true });
   if (!output) {
-    switch (provider) {
-      case "vllm-local":
-        return {
-          ok: false,
-          message: "Local vLLM was selected, but nothing is responding on http://localhost:8000.",
-        };
-      case "ollama-local": {
-        const unavailableTarget = endpoint?.displayTarget || "localhost:11434";
-        return {
-          ok: false,
-          message:
-            `Local Ollama was selected, but nothing is responding on ${unavailableTarget}. ` +
-            "Set NEMOCLAW_OLLAMA_BASE_URL if Ollama is reachable on a different host.",
-        };
-      }
-      default:
-        return { ok: false, message: "The selected local inference provider is unavailable." };
-    }
+    return getUnavailableLocalProviderResult(provider, endpoint);
   }
 
-  const resolvedEndpoint = provider === "ollama-local"
-    ? resolveOllamaContainerRoute(endpoint, runCapture)
-    : null;
-  if (provider === "ollama-local") {
-    if (resolvedEndpoint) {
-      return opts.returnEndpoint ? { ok: true, endpoint: resolvedEndpoint } : { ok: true };
-    }
-  } else {
-    const containerCommand = getLocalProviderContainerReachabilityCheck(provider, { ...opts, runCapture, endpoint });
-    if (!containerCommand) {
-      return { ok: true };
-    }
-
-    const containerOutput = runCapture(containerCommand, { ignoreError: true });
-    if (containerOutput) {
-      return { ok: true };
-    }
-  }
-
-  switch (provider) {
-    case "vllm-local":
-      return {
-        ok: false,
-        message:
-          "Local vLLM is responding on localhost, but containers cannot reach http://host.openshell.internal:8000. Ensure the server is reachable from containers, not only from the host shell.",
-      };
-    case "ollama-local": {
-      const routeTargets = getOllamaRouteCandidates(endpoint);
-      // Removed unused variable routeTarget
-      const message =
-        endpoint?.source === "wsl-host" || endpoint?.source === "override"
-          ? `Local Ollama is responding on ${endpoint.displayTarget}, but containers cannot reach ${routeTargets.join(", ")}. Ensure Docker Desktop hostnames are available and the Windows firewall allows access to that host and port from containers.`
-          : "Local Ollama is responding on localhost, but containers cannot reach http://host.openshell.internal:11434. Ensure Ollama listens on 0.0.0.0:11434 instead of 127.0.0.1 so sandboxes can reach it.";
-      return { ok: false, message };
-    }
-    default:
-      return { ok: false, message: "The selected local inference provider is unavailable from containers." };
-  }
+  return validateContainerReachability(provider, runCapture, opts, endpoint);
 }
 
 function parseOllamaList(output) {
