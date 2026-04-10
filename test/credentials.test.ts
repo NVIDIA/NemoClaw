@@ -76,6 +76,7 @@ describe("credential prompts", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     // Isolate from real environment so getCredential only checks the file.
     vi.stubEnv("NVIDIA_API_KEY", "");
+    vi.stubEnv("OTHER_KEY", "");
     const credentials = await importCredentialsModule(home);
 
     credentials.saveCredential("NVIDIA_API_KEY", "nvapi-bad-key");

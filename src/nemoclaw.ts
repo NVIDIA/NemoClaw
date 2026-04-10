@@ -60,6 +60,7 @@ const {
   buildVersionedUninstallUrl,
   runUninstallCommand,
 } = require("./lib/uninstall-command");
+const agentRuntime = require("../bin/lib/agent-runtime");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -213,9 +214,11 @@ function executeSandboxCommand(sandboxName, command) {
  * Returns true (running), false (stopped), or null (cannot determine).
  */
 function isSandboxGatewayRunning(sandboxName) {
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const probeUrl = agentRuntime.getHealthProbeUrl(agent);
   const result = executeSandboxCommand(
     sandboxName,
-    "curl -sf --max-time 3 http://127.0.0.1:18789/ > /dev/null 2>&1 && echo RUNNING || echo STOPPED",
+    `curl -sf --max-time 3 ${shellQuote(probeUrl)} > /dev/null 2>&1 && echo RUNNING || echo STOPPED`,
   );
   if (!result) return null;
   if (result.stdout === "RUNNING") return true;
@@ -229,29 +232,33 @@ function isSandboxGatewayRunning(sandboxName) {
  * in the background. Returns true on success.
  */
 function recoverSandboxProcesses(sandboxName) {
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const agentScript = agentRuntime.buildRecoveryScript(agent);
   // The recovery script runs as the sandbox user (non-root). This matches
   // the non-root fallback path in nemoclaw-start.sh — no privilege
   // separation, but the gateway runs and inference works.
-  const script = [
-    // Source proxy config (written to .bashrc by nemoclaw-start on first boot)
-    "[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null;",
-    // Re-check liveness before touching anything — another caller may have
-    // already recovered the gateway between our initial check and now (TOCTOU).
-    "if curl -sf --max-time 3 http://127.0.0.1:18789/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;",
-    // Clean stale lock files from the previous run (gateway checks these)
-    "rm -rf /tmp/openclaw-*/gateway.*.lock 2>/dev/null;",
-    // Clean stale temp files from the previous run
-    "rm -f /tmp/gateway.log /tmp/auto-pair.log;",
-    "touch /tmp/gateway.log; chmod 600 /tmp/gateway.log;",
-    "touch /tmp/auto-pair.log; chmod 600 /tmp/auto-pair.log;",
-    // Resolve and start gateway
-    'OPENCLAW="$(command -v openclaw)";',
-    'if [ -z "$OPENCLAW" ]; then echo OPENCLAW_MISSING; exit 1; fi;',
-    'nohup "$OPENCLAW" gateway run > /tmp/gateway.log 2>&1 &',
-    "GPID=$!; sleep 2;",
-    // Verify the gateway actually started (didn't crash immediately)
-    'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; cat /tmp/gateway.log 2>/dev/null | tail -5; fi',
-  ].join(" ");
+  const script =
+    agentScript ||
+    [
+      // Source proxy config (written to .bashrc by nemoclaw-start on first boot)
+      "[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null;",
+      // Re-check liveness before touching anything — another caller may have
+      // already recovered the gateway between our initial check and now (TOCTOU).
+      "if curl -sf --max-time 3 http://127.0.0.1:18789/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;",
+      // Clean stale lock files from the previous run (gateway checks these)
+      "rm -rf /tmp/openclaw-*/gateway.*.lock 2>/dev/null;",
+      // Clean stale temp files from the previous run
+      "rm -f /tmp/gateway.log /tmp/auto-pair.log;",
+      "touch /tmp/gateway.log; chmod 600 /tmp/gateway.log;",
+      "touch /tmp/auto-pair.log; chmod 600 /tmp/auto-pair.log;",
+      // Resolve and start gateway
+      'OPENCLAW="$(command -v openclaw)";',
+      'if [ -z "$OPENCLAW" ]; then echo OPENCLAW_MISSING; exit 1; fi;',
+      'nohup "$OPENCLAW" gateway run > /tmp/gateway.log 2>&1 &',
+      "GPID=$!; sleep 2;",
+      // Verify the gateway actually started (didn't crash immediately)
+      'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; cat /tmp/gateway.log 2>/dev/null | tail -5; fi',
+    ].join(" ");
 
   const result = executeSandboxCommand(sandboxName, script);
   if (!result) return false;
@@ -262,11 +269,14 @@ function recoverSandboxProcesses(sandboxName) {
 }
 
 /**
- * Re-establish the dashboard port forward (18789) to the sandbox.
+ * Re-establish the dashboard port forward to the sandbox.
+ * Uses the agent's forward port when a non-OpenClaw agent is active.
  */
 function ensureSandboxPortForward(sandboxName) {
-  runOpenshell(["forward", "stop", DASHBOARD_FORWARD_PORT], { ignoreError: true });
-  runOpenshell(["forward", "start", "--background", DASHBOARD_FORWARD_PORT, sandboxName], {
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const port = agent ? String(agent.forwardPort) : DASHBOARD_FORWARD_PORT;
+  runOpenshell(["forward", "stop", port], { ignoreError: true });
+  runOpenshell(["forward", "start", "--background", port, sandboxName], {
     ignoreError: true,
   });
 }
@@ -286,9 +296,10 @@ function checkAndRecoverSandboxProcesses(sandboxName, { quiet = false } = {}) {
   }
 
   // Gateway not running — attempt recovery
+  const _recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
   if (!quiet) {
     console.log("");
-    console.log("  OpenClaw gateway is not running inside the sandbox (sandbox likely restarted).");
+    console.log(`  ${agentRuntime.getAgentDisplayName(_recoveryAgent)} gateway is not running inside the sandbox (sandbox likely restarted).`);
     console.log("  Recovering...");
   }
 
@@ -306,13 +317,13 @@ function checkAndRecoverSandboxProcesses(sandboxName, { quiet = false } = {}) {
     }
     ensureSandboxPortForward(sandboxName);
     if (!quiet) {
-      console.log(`  ${G}✓${R} OpenClaw gateway restarted inside sandbox.`);
+      console.log(`  ${G}✓${R} ${agentRuntime.getAgentDisplayName(_recoveryAgent)} gateway restarted inside sandbox.`);
       console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
     }
   } else if (!quiet) {
-    console.error("  Could not restart OpenClaw gateway automatically.");
+    console.error(`  Could not restart ${agentRuntime.getAgentDisplayName(_recoveryAgent)} gateway automatically.`);
     console.error("  Connect to the sandbox and run manually:");
-    console.error("    nohup openclaw gateway run > /tmp/gateway.log 2>&1 &");
+    console.error(`    ${agentRuntime.getGatewayCommand(_recoveryAgent)}`);
   }
 
   return { checked: true, wasRunning: false, recovered };
@@ -330,6 +341,7 @@ function buildRecoveredSandboxEntry(name, metadata = {}) {
         ? metadata.policyPresets
         : [],
     nimContainer: metadata.nimContainer || null,
+    agent: metadata.agent || null,
   };
 }
 
@@ -780,11 +792,28 @@ async function onboard(args) {
     if (!fromDockerfile || fromDockerfile.startsWith("--")) {
       console.error("  --from requires a path to a Dockerfile");
       console.error(
-        `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--dangerously-skip-permissions] [${NOTICE_ACCEPT_FLAG}]`,
+        `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
       );
       process.exit(1);
     }
     args = [...args.slice(0, fromIdx), ...args.slice(fromIdx + 2)];
+  }
+
+  let agentFlag = null;
+  const agentIdx = args.indexOf("--agent");
+  if (agentIdx !== -1) {
+    agentFlag = args[agentIdx + 1];
+    if (!agentFlag || agentFlag.startsWith("--")) {
+      console.error("  --agent requires a name");
+      process.exit(1);
+    }
+    const { listAgents } = require("../bin/lib/agent-defs");
+    const knownAgents = listAgents();
+    if (!knownAgents.includes(agentFlag)) {
+      console.error(`  Unknown agent '${agentFlag}'. Available: ${knownAgents.join(", ")}`);
+      process.exit(1);
+    }
+    args = [...args.slice(0, agentIdx), ...args.slice(agentIdx + 2)];
   }
 
   const allowedArgs = new Set([
@@ -798,7 +827,7 @@ async function onboard(args) {
   if (unknownArgs.length > 0) {
     console.error(`  Unknown onboard option(s): ${unknownArgs.join(", ")}`);
     console.error(
-      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--dangerously-skip-permissions] [${NOTICE_ACCEPT_FLAG}]`,
+      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [--dangerously-skip-permissions] [${NOTICE_ACCEPT_FLAG}]`,
     );
     process.exit(1);
   }
@@ -814,6 +843,7 @@ async function onboard(args) {
     recreateSandbox,
     fromDockerfile,
     acceptThirdPartySoftware,
+    agent: agentFlag,
     dangerouslySkipPermissions,
   });
 }
@@ -1108,20 +1138,22 @@ async function sandboxStatus(sandboxName) {
   if (lookup.state === "present") {
     const processCheck = checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
     if (processCheck.checked) {
+      const _sa = agentRuntime.getSessionAgent(sandboxName);
+      const _saName = agentRuntime.getAgentDisplayName(_sa);
       if (processCheck.wasRunning) {
-        console.log(`    OpenClaw: ${G}running${R}`);
+        console.log(`    ${_saName}: ${G}running${R}`);
       } else if (processCheck.recovered) {
-        console.log(`    OpenClaw: ${G}recovered${R} (gateway restarted after sandbox restart)`);
+        console.log(`    ${_saName}: ${G}recovered${R} (gateway restarted after sandbox restart)`);
       } else {
-        console.log(`    OpenClaw: ${_RD}not running${R}`);
+        console.log(`    ${_saName}: ${_RD}not running${R}`);
         console.log("");
-        console.log("  The sandbox is alive but the OpenClaw gateway process is not running.");
+        console.log(`  The sandbox is alive but the ${_saName} gateway process is not running.`);
         console.log("  This typically happens after a gateway restart (e.g., laptop close/open).");
         console.log("");
         console.log("  To recover, run:");
         console.log(`    ${D}nemoclaw ${sandboxName} connect${R}  (auto-recovers on connect)`);
         console.log("  Or manually inside the sandbox:");
-        console.log(`    ${D}nohup openclaw gateway run > /tmp/gateway.log 2>&1 &${R}`);
+        console.log(`    ${D}${agentRuntime.getGatewayCommand(_sa)}${R}`);
       }
     }
   }
@@ -1303,7 +1335,6 @@ function help() {
   ${G}Getting Started:${R}
     ${B}nemoclaw onboard${R}                 Configure inference endpoint and credentials
     nemoclaw onboard ${D}--from <Dockerfile>${R}  Use a custom Dockerfile for the sandbox image
-    nemoclaw onboard ${D}--dangerously-skip-permissions${R}  Apply maximally permissive sandbox policy
                                     ${D}(non-interactive: ${NOTICE_ACCEPT_FLAG} or ${NOTICE_ACCEPT_ENV}=1)${R}
 
   ${G}Sandbox Management:${R}

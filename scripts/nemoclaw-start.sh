@@ -15,6 +15,19 @@
 #   NEMOCLAW_DISABLE_DEVICE_AUTH  Build-time only. Set to "1" to skip device-pairing auth
 #                                 (development/headless). Has no runtime effect — openclaw.json
 #                                 is baked at image build and verified by hash at startup.
+#   NEMOCLAW_MODEL_OVERRIDE       Override the primary model at startup without rebuilding
+#                                 the sandbox image. Must match the model configured on
+#                                 the gateway via `openshell inference set`.
+#   NEMOCLAW_INFERENCE_API_OVERRIDE  Override the inference API type when switching between
+#                                 provider families (e.g., "anthropic-messages" or
+#                                 "openai-completions"). Only needed for cross-provider switches.
+#   NEMOCLAW_CONTEXT_WINDOW        Override the model's context window size (e.g., "32768").
+#   NEMOCLAW_MAX_TOKENS            Override the model's max output tokens (e.g., "8192").
+#   NEMOCLAW_REASONING             Set to "true" to enable reasoning mode for the model.
+#                                 Required for reasoning models (o1, Claude with thinking).
+#   NEMOCLAW_CORS_ORIGIN           Add a browser origin to allowedOrigins at startup without
+#                                 rebuilding. Useful for custom domains/ports (e.g.,
+#                                 "https://my-server.example.com:8443").
 
 set -euo pipefail
 
@@ -71,12 +84,14 @@ done
 if [ "$(id -u)" -eq 0 ]; then
   install -d -o sandbox -g sandbox -m 755 \
     /tmp/.npm-cache /tmp/.cache /tmp/.config /tmp/.local/share \
-    /tmp/.local/state /tmp/.runtime /tmp/.gnupg /tmp/.claude \
+    /tmp/.local/state /tmp/.runtime /tmp/.claude \
     /tmp/npm-global
+  install -d -o sandbox -g sandbox -m 700 /tmp/.gnupg
 else
   mkdir -p /tmp/.npm-cache /tmp/.cache /tmp/.config /tmp/.local/share \
-    /tmp/.local/state /tmp/.runtime /tmp/.gnupg /tmp/.claude \
+    /tmp/.local/state /tmp/.runtime /tmp/.claude \
     /tmp/npm-global
+  install -d -m 700 /tmp/.gnupg
 fi
 
 # ── Drop unnecessary Linux capabilities ──────────────────────────
@@ -161,6 +176,203 @@ verify_config_integrity() {
     echo "[SECURITY] Actual hash:   $(sha256sum /sandbox/.openclaw/openclaw.json)" >&2
     return 1
   fi
+}
+
+# ── Runtime model/provider override ──────────────────────────────
+# Patches openclaw.json at startup when NEMOCLAW_MODEL_OVERRIDE is set,
+# allowing model or provider changes without rebuilding the sandbox image.
+# Runs AFTER integrity check (detects build-time tampering) and BEFORE
+# chattr +i (locks the file permanently). Recomputes the config hash so
+# future integrity checks pass.
+#
+# SECURITY: These env vars come from the host (Docker/OpenShell), not from
+# inside the sandbox. The agent cannot set them. Landlock locks the file
+# after this function runs. Same trust model as NEMOCLAW_LOCAL_INFERENCE_TIMEOUT.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/759
+
+apply_model_override() {
+  # Any of these env vars trigger a config patch
+  [ -n "${NEMOCLAW_MODEL_OVERRIDE:-}" ] \
+    || [ -n "${NEMOCLAW_INFERENCE_API_OVERRIDE:-}" ] \
+    || [ -n "${NEMOCLAW_CONTEXT_WINDOW:-}" ] \
+    || [ -n "${NEMOCLAW_MAX_TOKENS:-}" ] \
+    || [ -n "${NEMOCLAW_REASONING:-}" ] \
+    || return 0
+
+  # SECURITY: Only root can write to /sandbox/.openclaw (root:root 444).
+  # In non-root mode the sandbox user cannot modify the config.
+  if [ "$(id -u)" -ne 0 ]; then
+    printf '[SECURITY] Model/inference overrides ignored — requires root (non-root mode cannot write to config)\n' >&2
+    return 0
+  fi
+
+  local config_file="/sandbox/.openclaw/openclaw.json"
+  local hash_file="/sandbox/.openclaw/.config-hash"
+
+  # SECURITY: Refuse to write through symlinks to prevent symlink-following attacks.
+  # Symlink validation (validate_openclaw_symlinks) runs later, so guard here too.
+  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing model override — config or hash path is a symlink\n' >&2
+    return 1
+  fi
+
+  local model_override="$NEMOCLAW_MODEL_OVERRIDE"
+  local api_override="${NEMOCLAW_INFERENCE_API_OVERRIDE:-}"
+
+  # SECURITY: Validate inputs — reject control characters and enforce length limit.
+  if printf '%s' "$model_override" | grep -qP '[\x00-\x1f\x7f]'; then
+    printf '[SECURITY] NEMOCLAW_MODEL_OVERRIDE contains control characters — refusing\n' >&2
+    return 1
+  fi
+  if [ "${#model_override}" -gt 256 ]; then
+    printf '[SECURITY] NEMOCLAW_MODEL_OVERRIDE exceeds 256 characters — refusing\n' >&2
+    return 1
+  fi
+
+  # SECURITY: Allowlist inference API types to prevent unexpected routing.
+  if [ -n "$api_override" ]; then
+    case "$api_override" in
+      openai-completions | anthropic-messages) ;;
+      *)
+        printf '[SECURITY] NEMOCLAW_INFERENCE_API_OVERRIDE must be "openai-completions" or "anthropic-messages", got "%s"\n' "$api_override" >&2
+        return 1
+        ;;
+    esac
+  fi
+
+  local context_window="${NEMOCLAW_CONTEXT_WINDOW:-}"
+  local max_tokens="${NEMOCLAW_MAX_TOKENS:-}"
+  local reasoning="${NEMOCLAW_REASONING:-}"
+
+  # Validate numeric values
+  if [ -n "$context_window" ] && ! printf '%s' "$context_window" | grep -qE '^[0-9]+$'; then
+    printf '[SECURITY] NEMOCLAW_CONTEXT_WINDOW must be a positive integer, got "%s"\n' "$context_window" >&2
+    return 1
+  fi
+  if [ -n "$max_tokens" ] && ! printf '%s' "$max_tokens" | grep -qE '^[0-9]+$'; then
+    printf '[SECURITY] NEMOCLAW_MAX_TOKENS must be a positive integer, got "%s"\n' "$max_tokens" >&2
+    return 1
+  fi
+  # Validate reasoning is true/false
+  if [ -n "$reasoning" ]; then
+    case "$reasoning" in
+      true | false) ;;
+      *)
+        printf '[SECURITY] NEMOCLAW_REASONING must be "true" or "false", got "%s"\n' "$reasoning" >&2
+        return 1
+        ;;
+    esac
+  fi
+
+  [ -n "$model_override" ] && printf '[config] Applying model override: %s\n' "$model_override" >&2
+  [ -n "$api_override" ] && printf '[config] Applying inference API override: %s\n' "$api_override" >&2
+  [ -n "$context_window" ] && printf '[config] Applying context window override: %s\n' "$context_window" >&2
+  [ -n "$max_tokens" ] && printf '[config] Applying max tokens override: %s\n' "$max_tokens" >&2
+  [ -n "$reasoning" ] && printf '[config] Applying reasoning override: %s\n' "$reasoning" >&2
+
+  NEMOCLAW_CONTEXT_WINDOW="$context_window" \
+    NEMOCLAW_MAX_TOKENS="$max_tokens" \
+    NEMOCLAW_REASONING="$reasoning" \
+    python3 - "$config_file" "$model_override" "$api_override" <<'PYOVERRIDE'
+import json, os, sys
+
+config_file, model_override, api_override = sys.argv[1], sys.argv[2], sys.argv[3]
+context_window = os.environ.get("NEMOCLAW_CONTEXT_WINDOW", "")
+max_tokens = os.environ.get("NEMOCLAW_MAX_TOKENS", "")
+reasoning = os.environ.get("NEMOCLAW_REASONING", "")
+
+with open(config_file) as f:
+    cfg = json.load(f)
+
+# Patch primary model reference
+if model_override:
+    cfg["agents"]["defaults"]["model"]["primary"] = model_override
+
+# Patch model properties in provider config
+for pkey, pval in cfg.get("models", {}).get("providers", {}).items():
+    for m in pval.get("models", []):
+        if model_override:
+            m["id"] = model_override
+            m["name"] = model_override
+        if context_window:
+            m["contextWindow"] = int(context_window)
+        if max_tokens:
+            m["maxTokens"] = int(max_tokens)
+        if reasoning:
+            m["reasoning"] = reasoning == "true"
+
+    # Patch inference API type if overridden (cross-provider switch)
+    if api_override:
+        pval["api"] = api_override
+
+with open(config_file, "w") as f:
+    json.dump(cfg, f, indent=2)
+PYOVERRIDE
+
+  # Recompute config hash so integrity check passes on next startup
+  (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
+  printf '[SECURITY] Config hash recomputed after model override\n' >&2
+}
+
+# ── Runtime CORS origin override ──────────────────────────────────
+# Adds a browser origin to gateway.controlUi.allowedOrigins at startup
+# without rebuilding the sandbox image. Useful for custom domains/ports.
+# Same trust model as model override: host-set env var, applied before
+# chattr +i, hash recomputed.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/719
+
+apply_cors_override() {
+  [ -n "${NEMOCLAW_CORS_ORIGIN:-}" ] || return 0
+
+  if [ "$(id -u)" -ne 0 ]; then
+    printf '[SECURITY] NEMOCLAW_CORS_ORIGIN ignored — requires root (non-root mode cannot write to config)\n' >&2
+    return 0
+  fi
+
+  local config_file="/sandbox/.openclaw/openclaw.json"
+  local hash_file="/sandbox/.openclaw/.config-hash"
+
+  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing CORS override — config or hash path is a symlink\n' >&2
+    return 1
+  fi
+
+  local cors_origin="$NEMOCLAW_CORS_ORIGIN"
+
+  if printf '%s' "$cors_origin" | grep -qP '[\x00-\x1f\x7f]'; then
+    printf '[SECURITY] NEMOCLAW_CORS_ORIGIN contains control characters — refusing\n' >&2
+    return 1
+  fi
+  if [ "${#cors_origin}" -gt 256 ]; then
+    printf '[SECURITY] NEMOCLAW_CORS_ORIGIN exceeds 256 characters — refusing\n' >&2
+    return 1
+  fi
+  if ! printf '%s' "$cors_origin" | grep -qE '^https?://'; then
+    printf '[SECURITY] NEMOCLAW_CORS_ORIGIN must start with http:// or https://, got "%s"\n' "$cors_origin" >&2
+    return 1
+  fi
+
+  printf '[config] Adding CORS origin: %s\n' "$cors_origin" >&2
+
+  python3 - "$config_file" "$cors_origin" <<'PYCORS'
+import json, sys
+
+config_file, cors_origin = sys.argv[1], sys.argv[2]
+
+with open(config_file) as f:
+    cfg = json.load(f)
+
+origins = cfg.get("gateway", {}).get("controlUi", {}).get("allowedOrigins", [])
+if cors_origin not in origins:
+    origins.append(cors_origin)
+    cfg.setdefault("gateway", {}).setdefault("controlUi", {})["allowedOrigins"] = origins
+
+with open(config_file, "w") as f:
+    json.dump(cfg, f, indent=2)
+PYCORS
+
+  (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
+  printf '[config] Config hash recomputed after CORS override\n' >&2
 }
 
 _read_gateway_token() {
@@ -560,6 +772,8 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
+  apply_model_override
+  apply_cors_override
   export_gateway_token
   install_configure_guard
   configure_messaging_channels
@@ -656,6 +870,8 @@ fi
 
 # Verify config integrity before starting anything
 verify_config_integrity
+apply_model_override
+apply_cors_override
 export_gateway_token
 install_configure_guard
 

@@ -24,6 +24,7 @@
     "prepublishOnly": "cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
   "dependencies": {
+    "js-yaml": "^4.1.1",
     "p-retry": "^4.6.2",
     "yaml": "^2.8.3"
   },
@@ -53,7 +54,7 @@
     "@commitlint/config-conventional": "^20.5.0",
     "@eslint/js": "^10.0.1",
     "@j178/prek": "^0.3.6",
-    "@types/node": "^25.5.0",
+    "@types/node": "^25.5.2",
     "@typescript-eslint/parser": "^8.58.1",
     "@vitest/coverage-v8": "^4.1.0",
     "eslint": "^10.1.0",
