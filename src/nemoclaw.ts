@@ -2620,6 +2620,7 @@ function backupAll() {
 
 // ── Help ─────────────────────────────────────────────────────────
 
+/** Print CLI usage with all commands, flags, and reconfiguration guidance. */
 function help() {
   console.log(`
   ${B}${G}NemoClaw${R}  ${D}v${getVersion()}${R}
@@ -2686,6 +2687,19 @@ function help() {
     --yes                            Skip the confirmation prompt
     --keep-openshell                 Leave the openshell binary installed
     --delete-models                  Remove NemoClaw-pulled Ollama models
+
+  ${G}Reconfiguration (after onboard):${R}
+    ${D}Change inference model at runtime (no re-onboard needed):${R}
+      openshell inference set -g nemoclaw -m <model> -p <provider>
+
+    ${D}Add network presets (e.g. Telegram, GitHub) to a running sandbox:${R}
+      nemoclaw <name> policy-add
+
+    ${D}Change credentials, messaging channels, or sandbox image settings:${R}
+      nemoclaw credentials reset <KEY>   ${D}then${R}   nemoclaw onboard
+
+    ${D}openclaw.json is read-only inside the sandbox (Landlock enforced).${R}
+    ${D}To change OpenClaw settings, re-run nemoclaw onboard to rebuild the sandbox.${R}
 
   ${D}Powered by NVIDIA OpenShell · Nemotron · Agent Toolkit
   Credentials saved in ~/.nemoclaw/credentials.json (mode 600)${R}
