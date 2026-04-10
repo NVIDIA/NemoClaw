@@ -8,6 +8,12 @@ import {
   SECRET_PATTERNS,
   EXPECTED_SHELL_PREFIXES,
 } from "../src/lib/secret-patterns";
+import { redact as debugRedact } from "../src/lib/debug";
+// runner.ts uses CJS exports — import via dist
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { redact: runnerRedact } = require("../dist/lib/runner");
 
 const DEBUG_SH = readFileSync(
   join(import.meta.dirname, "..", "scripts", "debug.sh"),
@@ -39,13 +45,20 @@ describe("secret redaction consistency (#1736)", () => {
   describe("runner.ts redacts all token types", () => {
     for (const { name, token } of TEST_TOKENS) {
       it(`redacts ${name}`, () => {
-        let text = `error: authentication failed with ${token}`;
-        for (const pattern of SECRET_PATTERNS) {
-          const fresh = new RegExp(pattern.source, pattern.flags);
-          text = text.replace(fresh, (m: string) =>
-            m.slice(0, 4) + "*".repeat(Math.min(m.length - 4, 20)),
-          );
-        }
+        const text = runnerRedact(
+          `error: authentication failed with ${token}`,
+        );
+        expect(text).not.toContain(token);
+      });
+    }
+  });
+
+  describe("debug.ts redacts all token types", () => {
+    for (const { name, token } of TEST_TOKENS) {
+      it(`redacts ${name}`, () => {
+        const text = debugRedact(
+          `error: authentication failed with ${token}`,
+        );
         expect(text).not.toContain(token);
       });
     }
