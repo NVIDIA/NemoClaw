@@ -47,6 +47,10 @@ const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
 const { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } = require("./lib/usage-notice");
 const { runDebugCommand } = require("./lib/debug-command");
 const {
+  runDeprecatedOnboardAliasCommand,
+  runOnboardCommand,
+} = require("./lib/onboard-command");
+const {
   captureOpenshellCommand,
   getInstalledOpenshellVersion,
   runOpenshellCommand,
@@ -780,88 +784,38 @@ function printDangerouslySkipPermissionsWarning() {
 
 // ── Commands ─────────────────────────────────────────────────────
 
-async function onboard(args) {
+function buildOnboardCommandDeps(args) {
   const { onboard: runOnboard } = require("./lib/onboard");
+  const { listAgents } = require("./lib/agent-defs");
+  return {
+    args,
+    noticeAcceptFlag: NOTICE_ACCEPT_FLAG,
+    noticeAcceptEnv: NOTICE_ACCEPT_ENV,
+    env: process.env,
+    runOnboard,
+    listAgents,
+    log: console.log,
+    error: console.error,
+    exit: (code) => process.exit(code),
+  };
+}
 
-  // Extract --from <path> before the unknown-arg validator: it takes a value
-  // so the set-based check would reject the value token as an unknown flag.
-  let fromDockerfile = null;
-  const fromIdx = args.indexOf("--from");
-  if (fromIdx !== -1) {
-    fromDockerfile = args[fromIdx + 1];
-    if (!fromDockerfile || fromDockerfile.startsWith("--")) {
-      console.error("  --from requires a path to a Dockerfile");
-      console.error(
-        `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
-      );
-      process.exit(1);
-    }
-    args = [...args.slice(0, fromIdx), ...args.slice(fromIdx + 2)];
-  }
-
-  let agentFlag = null;
-  const agentIdx = args.indexOf("--agent");
-  if (agentIdx !== -1) {
-    agentFlag = args[agentIdx + 1];
-    if (!agentFlag || agentFlag.startsWith("--")) {
-      console.error("  --agent requires a name");
-      process.exit(1);
-    }
-    const { listAgents } = require("../bin/lib/agent-defs");
-    const knownAgents = listAgents();
-    if (!knownAgents.includes(agentFlag)) {
-      console.error(`  Unknown agent '${agentFlag}'. Available: ${knownAgents.join(", ")}`);
-      process.exit(1);
-    }
-    args = [...args.slice(0, agentIdx), ...args.slice(agentIdx + 2)];
-  }
-
-  const allowedArgs = new Set([
-    "--non-interactive",
-    "--resume",
-    "--recreate-sandbox",
-    "--dangerously-skip-permissions",
-    NOTICE_ACCEPT_FLAG,
-  ]);
-  const unknownArgs = args.filter((arg) => !allowedArgs.has(arg));
-  if (unknownArgs.length > 0) {
-    console.error(`  Unknown onboard option(s): ${unknownArgs.join(", ")}`);
-    console.error(
-      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [--dangerously-skip-permissions] [${NOTICE_ACCEPT_FLAG}]`,
-    );
-    process.exit(1);
-  }
-  const nonInteractive = args.includes("--non-interactive");
-  const resume = args.includes("--resume");
-  const recreateSandbox = args.includes("--recreate-sandbox");
-  const dangerouslySkipPermissions = args.includes("--dangerously-skip-permissions");
-  const acceptThirdPartySoftware =
-    args.includes(NOTICE_ACCEPT_FLAG) || String(process.env[NOTICE_ACCEPT_ENV] || "") === "1";
-  await runOnboard({
-    nonInteractive,
-    resume,
-    recreateSandbox,
-    fromDockerfile,
-    acceptThirdPartySoftware,
-    agent: agentFlag,
-    dangerouslySkipPermissions,
-  });
+async function onboard(args) {
+  await runOnboardCommand(buildOnboardCommandDeps(args));
 }
 
 async function setup(args = []) {
-  console.log("");
-  console.log("  ⚠  `nemoclaw setup` is deprecated. Use `nemoclaw onboard` instead.");
-  console.log("");
-  await onboard(args);
+  await runDeprecatedOnboardAliasCommand({
+    ...buildOnboardCommandDeps(args),
+    kind: "setup",
+  });
 }
 
 async function setupSpark(args = []) {
-  console.log("");
-  console.log("  ⚠  `nemoclaw setup-spark` is deprecated.");
-  console.log("  Current OpenShell releases handle the old DGX Spark cgroup issue themselves.");
-  console.log("  Use `nemoclaw onboard` instead.");
-  console.log("");
-  await onboard(args);
+  await runDeprecatedOnboardAliasCommand({
+    ...buildOnboardCommandDeps(args),
+    kind: "setup-spark",
+  });
 }
 
 async function deploy(instanceName) {
