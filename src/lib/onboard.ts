@@ -4573,13 +4573,22 @@ async function onboard(opts = {}) {
     }
 
     const sandboxReuseState = getSandboxReuseState(sandboxName);
+    const webSearchConfigChanged = Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
     const resumeSandbox =
-      resume && session?.steps?.sandbox?.status === "complete" && sandboxReuseState === "ready";
+      resume && 
+      !webSearchConfigChanged && 
+      session?.steps?.sandbox?.status === "complete" && 
+      sandboxReuseState === "ready";
     if (resumeSandbox) {
       skippedStepMessage("sandbox", sandboxName);
     } else {
       if (resume && session?.steps?.sandbox?.status === "complete") {
-        if (sandboxReuseState === "not_ready") {
+        if (webSearchConfigChanged) {
+          note("  [resume] Web Search configuration changed; recreating sandbox.");
+          if (sandboxName) {
+            registry.removeSandbox(sandboxName);
+          }
+        } else if (sandboxReuseState === "not_ready") {
           note(
             `  [resume] Recorded sandbox '${sandboxName}' exists but is not ready; recreating it.`,
           );
