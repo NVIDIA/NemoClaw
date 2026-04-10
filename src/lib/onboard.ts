@@ -22,6 +22,12 @@ function envInt(name, fallback) {
 
 /** Inference timeout (seconds) for local providers (Ollama, vLLM, NIM). */
 const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 180);
+/** Retry budget for sandbox-local inference.local verification. */
+const LOCAL_SANDBOX_PROBE_ATTEMPTS = envInt("NEMOCLAW_LOCAL_SANDBOX_PROBE_ATTEMPTS", 3);
+/** Delay between retryable sandbox-local inference.local probes. */
+const LOCAL_SANDBOX_PROBE_DELAY_SECS = envInt("NEMOCLAW_LOCAL_SANDBOX_PROBE_DELAY", 2);
+/** curl --max-time bound (seconds) for sandbox-local inference.local probes. */
+const LOCAL_SANDBOX_PROBE_MAX_TIME_SECS = envInt("NEMOCLAW_LOCAL_SANDBOX_PROBE_MAX_TIME", 20);
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
 const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
 const {
@@ -731,6 +737,21 @@ function isInferenceRouteReady(provider, model) {
   return Boolean(live && live.provider === provider && live.model === model);
 }
 
+/**
+ * @typedef {Object} SandboxInferenceProbeResult
+ * @property {boolean} ok
+ * @property {boolean} [retryable]
+ * @property {string} [message]
+ */
+
+/** @typedef {typeof runCaptureOpenshell} SandboxProbeRunner */
+
+/**
+ * Parse the response from a sandbox-local `inference.local` probe.
+ *
+ * @param {string | undefined} output
+ * @returns {SandboxInferenceProbeResult}
+ */
 function parseSandboxInferenceProbe(output) {
   if (!output) {
     return {
@@ -787,6 +808,15 @@ function parseSandboxInferenceProbe(output) {
   };
 }
 
+/**
+ * Confirm that sandbox-local `inference.local` can serve the selected local model.
+ *
+ * @param {string | undefined} sandboxName
+ * @param {string} model
+ * @param {string} provider
+ * @param {SandboxProbeRunner} [runCaptureOpenshellImpl]
+ * @returns {SandboxInferenceProbeResult}
+ */
 function verifyLocalSandboxInference(
   sandboxName,
   model,
@@ -809,7 +839,7 @@ function verifyLocalSandboxInference(
     message: "inference.local did not return a response.",
   };
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= LOCAL_SANDBOX_PROBE_ATTEMPTS; attempt += 1) {
     const output = runCaptureOpenshellImpl(
       [
         "sandbox",
@@ -818,7 +848,7 @@ function verifyLocalSandboxInference(
         "curl",
         "-sS",
         "--max-time",
-        "20",
+        String(LOCAL_SANDBOX_PROBE_MAX_TIME_SECS),
         "https://inference.local/v1/chat/completions",
         "-H",
         "Content-Type: application/json",
@@ -836,10 +866,10 @@ function verifyLocalSandboxInference(
       return { ok: true };
     }
     lastResult = result;
-    if (!result.retryable || attempt === 3) {
+    if (!result.retryable || attempt === LOCAL_SANDBOX_PROBE_ATTEMPTS) {
       break;
     }
-    sleep(2);
+    sleep(LOCAL_SANDBOX_PROBE_DELAY_SECS);
   }
 
   return {
@@ -850,6 +880,14 @@ function verifyLocalSandboxInference(
   };
 }
 
+/**
+ * Persist local-provider sandbox metadata only after the in-sandbox probe succeeds.
+ *
+ * @param {string} sandboxName
+ * @param {string} model
+ * @param {string} provider
+ * @param {string | null} [nimContainer]
+ */
 function finalizeSandboxInferenceSetup(sandboxName, model, provider, nimContainer = null) {
   const sandboxProbe = verifyLocalSandboxInference(sandboxName, model, provider);
   if (!sandboxProbe.ok) {
