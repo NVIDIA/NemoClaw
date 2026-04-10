@@ -1,4 +1,4 @@
-# NemoClaw Session Tracker — Detect Multi-Step Exfiltration Attacks
+# NemoClaw Session Tracker: Detect Multi-Step Exfiltration Attacks
 
 The session tracker module detects multi-step exfiltration attacks by tracking three capability classes per agent session.
 

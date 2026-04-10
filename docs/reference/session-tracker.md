@@ -1,8 +1,10 @@
 ---
 title:
-  page: "NemoClaw Session Tracker — Detect Multi-Step Exfiltration Attacks"
+  page: "NemoClaw Session Tracker: Detect Multi-Step Exfiltration Attacks"
   nav: "Session Tracker"
-description: "Reference for the behavioral session tracker that detects multi-step exfiltration attacks by tracking three capability classes per agent session."
+description:
+  main: "Reference for the behavioral session tracker that detects multi-step exfiltration attacks by tracking three capability classes per agent session."
+  agent: "Session tracker API reference covering trifecta detection (read_sensitive + ingested_untrusted + has_egress), risk classification, event storage, and exposure queries. Use when looking up session tracking behavior, capability classes, or the SessionStore API."
 keywords: ["nemoclaw session tracker", "trifecta detection", "behavioral tracking", "exfiltration detection"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "security", "session", "trifecta"]
@@ -18,7 +20,7 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# NemoClaw Session Tracker — Detect Multi-Step Exfiltration Attacks
+# NemoClaw Session Tracker: Detect Multi-Step Exfiltration Attacks
 
 The session tracker module detects multi-step exfiltration attacks by tracking three capability classes per agent session.
 
