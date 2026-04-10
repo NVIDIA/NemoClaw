@@ -41,6 +41,7 @@ const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
 const { parseGatewayInference } = require("./lib/inference-config");
+const { probeLocalProviderHealth } = require("./lib/local-inference");
 const { getVersion } = require("./lib/version");
 const onboardSession = require("./lib/onboard-session");
 const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
@@ -1003,11 +1004,23 @@ async function sandboxStatus(sandboxName) {
   const live = parseGatewayInference(
     captureOpenshell(["inference", "get"], { ignoreError: true }).output,
   );
+  const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
+  const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
+  const localInferenceHealth =
+    typeof currentProvider === "string" ? probeLocalProviderHealth(currentProvider) : null;
   if (sb) {
     console.log("");
     console.log(`  Sandbox: ${sb.name}`);
-    console.log(`    Model:    ${(live && live.model) || sb.model || "unknown"}`);
-    console.log(`    Provider: ${(live && live.provider) || sb.provider || "unknown"}`);
+    console.log(`    Model:    ${currentModel}`);
+    console.log(`    Provider: ${currentProvider}`);
+    if (localInferenceHealth) {
+      console.log(
+        `    Inference: ${localInferenceHealth.ok ? `${G}healthy${R}` : `${_RD}unreachable${R}`} (${localInferenceHealth.endpoint})`,
+      );
+      if (!localInferenceHealth.ok) {
+        console.log(`      ${localInferenceHealth.detail}`);
+      }
+    }
     console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
     if (sb.dangerouslySkipPermissions) {

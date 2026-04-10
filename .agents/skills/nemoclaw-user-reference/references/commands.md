@@ -144,6 +144,8 @@ $ nemoclaw my-assistant connect
 ### `nemoclaw <name> status`
 
 Show sandbox status, health, and inference configuration.
+For local Ollama and local vLLM routes, the command also probes the host-side health endpoint and reports whether the backend is reachable.
+If the backend is down, the output includes an `Inference: unreachable` line with the local URL and a remediation hint.
 
 ```console
 $ nemoclaw my-assistant status
