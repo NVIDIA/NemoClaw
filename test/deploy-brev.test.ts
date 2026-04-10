@@ -19,6 +19,7 @@ function runWithEnv(args: string, env: Record<string, string> = {}, timeout = 25
         HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-brev-home-")),
         NEMOCLAW_HEALTH_POLL_COUNT: "1",
         NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+        NEMOCLAW_DEPLOY_NO_CONNECT: "1",
         ...env,
       },
     });
@@ -64,7 +65,22 @@ function setupDeployStubs({ brevLsOutput = "" }: { brevLsOutput?: string } = {})
     "fi",
     "exit 0",
   ]);
-  writeStub(localBin, "ssh", ["#!/usr/bin/env bash", "exit 0"]);
+  writeStub(localBin, "ssh", [
+    "#!/usr/bin/env bash",
+    'if [ "$1" = "-G" ]; then',
+    "  printf 'hostname 127.0.0.1\\n'",
+    "  exit 0",
+    "fi",
+    'if [ "${@: -2:1}" = "echo" ] && [ "${@: -1}" = "$HOME" ]; then',
+    '  printf "%s\\n" "$HOME"',
+    "  exit 0",
+    "fi",
+    "exit 0",
+  ]);
+  writeStub(localBin, "ssh-keyscan", [
+    "#!/usr/bin/env bash",
+    'printf "%s\\n" "127.0.0.1 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyForDeployHarness"',
+  ]);
   writeStub(localBin, "rsync", ["#!/usr/bin/env bash", "exit 0"]);
   writeStub(localBin, "scp", ["#!/usr/bin/env bash", "exit 0"]);
 
