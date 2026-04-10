@@ -1795,6 +1795,26 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
+  it("activates permissive policy via policy set when dangerouslySkipPermissions is true", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // The dangerouslySkipPermissions branch must call applyPermissivePolicy to
+    // activate the policy via `openshell policy set --wait`.  Without this,
+    // the base policy from sandbox create stays in Pending status (#897).
+    assert.match(
+      source,
+      /if \(dangerouslySkipPermissions\) \{\s*step\(8, 8, "Policy presets"\);\s*policies\.applyPermissivePolicy\(sandboxName\);/,
+    );
+    // Must NOT just print a skip message without activating the policy.
+    assert.doesNotMatch(
+      source,
+      /dangerouslySkipPermissions\)[\s\S]*?Skipped —.*permissive base policy/,
+    );
+  });
+
   it("delegates sandbox-create progress streaming to the extracted helper module", () => {
     const onboardSource = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
