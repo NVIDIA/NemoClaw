@@ -40,7 +40,7 @@ done
 
 # ── Seed index.md (only if missing) ─────────────────────────────
 if [ ! -f "${WIKI_DIR}/index.md" ]; then
-  cat > "${WIKI_DIR}/index.md" <<'EOF'
+  cat >"${WIKI_DIR}/index.md" <<'EOF'
 ---
 title: Wiki Index
 category: index
@@ -75,7 +75,7 @@ fi
 
 # ── Seed log.md (only if missing) ───────────────────────────────
 if [ ! -f "${WIKI_DIR}/log.md" ]; then
-  cat > "${WIKI_DIR}/log.md" <<EOF
+  cat >"${WIKI_DIR}/log.md" <<EOF
 ---
 title: Wiki Log
 category: log
@@ -94,7 +94,7 @@ fi
 
 # ── Seed overview.md (only if missing) ──────────────────────────
 if [ ! -f "${WIKI_DIR}/overview.md" ]; then
-  cat > "${WIKI_DIR}/overview.md" <<EOF
+  cat >"${WIKI_DIR}/overview.md" <<EOF
 ---
 title: Overview
 category: overview
