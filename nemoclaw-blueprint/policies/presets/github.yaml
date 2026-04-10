@@ -19,12 +19,56 @@ network_policies:
   github:
     name: github
     endpoints:
+      # git transport (clone, fetch, push) over smart HTTP.
+      # POST scoped to git-upload-pack / git-receive-pack only.
       - host: github.com
         port: 443
-        access: full
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**/git-upload-pack" }
+          - allow: { method: POST, path: "/**/git-receive-pack" }
+      # REST API: GET is unrestricted; writes scoped to PR/issue
+      # workflows and git ref/content operations. DELETE excluded to
+      # block destructive ops (repo deletion, branch force-delete,
+      # org membership changes).
       - host: api.github.com
         port: 443
-        access: full
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          # PR workflow
+          - allow: { method: POST, path: "/repos/*/*/pulls" }
+          - allow: { method: PATCH, path: "/repos/*/*/pulls/*" }
+          - allow: { method: PUT, path: "/repos/*/*/pulls/*/merge" }
+          - allow: { method: PUT, path: "/repos/*/*/pulls/*/update-branch" }
+          - allow: { method: POST, path: "/repos/*/*/pulls/*/reviews" }
+          - allow: { method: POST, path: "/repos/*/*/pulls/*/requested_reviewers" }
+          # Issues
+          - allow: { method: POST, path: "/repos/*/*/issues" }
+          - allow: { method: PATCH, path: "/repos/*/*/issues/*" }
+          - allow: { method: POST, path: "/repos/*/*/issues/*/comments" }
+          # Labels
+          - allow: { method: POST, path: "/repos/*/*/labels" }
+          - allow: { method: PATCH, path: "/repos/*/*/labels/*" }
+          # Milestones
+          - allow: { method: POST, path: "/repos/*/*/milestones" }
+          - allow: { method: PATCH, path: "/repos/*/*/milestones/*" }
+          # Releases
+          - allow: { method: POST, path: "/repos/*/*/releases" }
+          - allow: { method: PATCH, path: "/repos/*/*/releases/*" }
+          # Forks
+          - allow: { method: POST, path: "/repos/*/*/forks" }
+          # Branch creation and file commits via API
+          - allow: { method: POST, path: "/repos/*/*/git/refs" }
+          - allow: { method: PATCH, path: "/repos/*/*/git/refs/**" }
+          - allow: { method: PUT, path: "/repos/*/*/contents/**" }
+          # Manual workflow dispatch (gh workflow run)
+          - allow: { method: POST, path: "/repos/*/*/actions/workflows/*/dispatches" }
     binaries:
       - { path: /usr/bin/gh }
       - { path: /usr/bin/git }
