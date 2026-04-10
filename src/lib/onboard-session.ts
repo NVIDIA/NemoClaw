@@ -253,7 +253,9 @@ export function normalizeSession(data: unknown): Session | null {
     failure: sanitizeFailure(d.failure as Record<string, unknown> | null),
     metadata: isObject(d.metadata)
       ? ({
-          gatewayName: (d.metadata as Record<string, unknown>).gatewayName,
+          gatewayName: typeof (d.metadata as Record<string, unknown>).gatewayName === "string"
+            ? (d.metadata as Record<string, unknown>).gatewayName
+            : "nemoclaw",
           fromDockerfile: (d.metadata as Record<string, unknown>).fromDockerfile || null,
         } as SessionMetadata)
       : undefined,

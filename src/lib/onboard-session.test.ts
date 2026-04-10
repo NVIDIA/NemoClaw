@@ -172,6 +172,17 @@ describe("onboard session", () => {
     expect(loaded.metadata.token).toBeUndefined();
   });
 
+  it("drops non-string gatewayName during normalization", () => {
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({ version: 1, metadata: { gatewayName: 123 } }),
+    );
+    const loaded = session.loadSession();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.metadata.gatewayName).toBe("nemoclaw");
+  });
+
   it("returns null for corrupt session data", () => {
     fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
     fs.writeFileSync(session.SESSION_FILE, "not-json");
