@@ -771,13 +771,7 @@ function isAffirmativeAnswer(value) {
   );
 }
 
-function printBraveExposureWarning() {
-  console.log("");
-  for (const line of webSearch.getBraveExposureWarningLines()) {
-    console.log(`  ${line}`);
-  }
-  console.log("");
-}
+
 
 function validateBraveSearchApiKey(apiKey) {
   return runCurlProbe([
@@ -882,7 +876,6 @@ async function configureWebSearch(existingConfig = null) {
       return null;
     }
     note("  [non-interactive] Brave Web Search requested.");
-    printBraveExposureWarning();
     const validation = validateBraveSearchApiKey(braveApiKey);
     if (!validation.ok) {
       console.error("  Brave Search API key validation failed.");
@@ -895,8 +888,6 @@ async function configureWebSearch(existingConfig = null) {
     process.env[webSearch.BRAVE_API_KEY_ENV] = braveApiKey;
     return { fetchEnabled: true };
   }
-
-  printBraveExposureWarning();
   const enableAnswer = await prompt("  Enable Brave Web Search? [y/N]: ");
   if (!isAffirmativeAnswer(enableAnswer)) {
     return null;
@@ -1019,10 +1010,7 @@ function patchStagedDockerfile(
   }
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_WEB_CONFIG_B64=.*$/m,
-    `ARG NEMOCLAW_WEB_CONFIG_B64=${webSearch.buildWebSearchDockerConfig(
-      webSearchConfig,
-      webSearchConfig ? getCredential(webSearch.BRAVE_API_KEY_ENV) : null,
-    )}`,
+    `ARG NEMOCLAW_WEB_CONFIG_B64=${webSearch.buildWebSearchDockerConfig(webSearchConfig)}`,
   );
   // Onboard flow expects immediate dashboard access without device pairing,
   // so disable device auth for images built during onboard (see #1217).
@@ -2324,6 +2312,14 @@ async function createSandbox(
       token: getMessagingToken("TELEGRAM_BOT_TOKEN"),
     },
   ].filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey));
+
+  if (webSearchConfig) {
+    messagingTokenDefs.push({
+      name: `${sandboxName}-brave-search`,
+      envKey: webSearch.BRAVE_API_KEY_ENV,
+      token: getCredential(webSearch.BRAVE_API_KEY_ENV),
+    });
+  }
   const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
 
   // Reconcile local registry state with the live OpenShell gateway state.
