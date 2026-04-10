@@ -21,7 +21,7 @@
     "ts-migration:bulk-fix-prs": "tsx scripts/ts-migration-bulk-fix-prs.ts",
     "ts-migration:guard": "tsx scripts/check-legacy-migrated-paths.ts",
     "bump:version": "tsx scripts/bump-version.ts",
-    "prepare": "if command -v tsc >/dev/null 2>&1 || [ -x node_modules/.bin/tsc ]; then npm run build:cli; fi && npm install --omit=dev --ignore-scripts 2>/dev/null || true && if [ -d .git ]; then if command -v prek >/dev/null 2>&1; then prek install; elif [ -d node_modules/@j178/prek ]; then echo \"ERROR: prek package found but binary not in PATH\" && exit 1; else echo \"Skipping git hook setup (prek not installed)\"; fi; fi",
+    "prepare": "if command -v tsc >/dev/null 2>&1 || [ -x node_modules/.bin/tsc ]; then npm run build:cli; fi && npm install --omit=dev --ignore-scripts 2>/dev/null || true && if [ -d .git ]; then if command -v prek >/dev/null 2>&1; then prek install; else echo \"Skipping git hook setup (prek not installed)\"; fi; fi",
     "prepublishOnly": "cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
   "dependencies": {

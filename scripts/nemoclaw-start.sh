@@ -549,6 +549,13 @@ os.chmod(path, 0o600)
 PYAUTH
 }
 
+harden_auth_profiles() {
+  if [ -d "${HOME}/.openclaw" ]; then
+    # Enforce 600 for all auth profiles across all agents
+    find -L "${HOME}/.openclaw" -type f -name "auth-profiles.json" -exec chmod 600 {} + 2>/dev/null || true
+  fi
+}
+
 configure_messaging_channels() {
   # Channel entries are baked into openclaw.json at image build time via
   # NEMOCLAW_MESSAGING_CHANNELS_B64 (see Dockerfile). Placeholder tokens
@@ -840,6 +847,7 @@ if [ "$(id -u)" -ne 0 ]; then
   }
   fix_openclaw_data_ownership
   write_auth_profile
+  harden_auth_profiles
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     exec "${NEMOCLAW_CMD[@]}"
@@ -881,7 +889,8 @@ install_configure_guard
 configure_messaging_channels
 
 # Write auth profile as sandbox user (needs writable .openclaw-data)
-gosu sandbox bash -c "$(declare -f write_auth_profile); write_auth_profile"
+# and recursively re-tighten any auth-profiles.json files under ~/.openclaw.
+gosu sandbox bash -c "$(declare -f write_auth_profile harden_auth_profiles); write_auth_profile; harden_auth_profiles"
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
