@@ -1555,6 +1555,88 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Sandbox: alpha")).toBeTruthy();
   });
 
+  it("shows a clear local inference warning when Ollama is down", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-local-inference-down-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "llama3.2:1b",
+            provider: "ollama-local",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        "  echo 'Sandbox: alpha'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "alpha" ]; then',
+        "  exit 1",
+        "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo",
+        "  echo '  Provider: ollama-local'",
+        "  echo '  Model: llama3.2:1b'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "curl"),
+      [
+        "#!/usr/bin/env bash",
+        'out=""',
+        'url=""',
+        'while [ "$#" -gt 0 ]; do',
+        '  case "$1" in',
+        '    -o) out="$2"; shift 2 ;;',
+        '    -w|--connect-timeout|--max-time) shift 2 ;;',
+        '    -s|-S|-sS|-f) shift ;;',
+        '    http://*|https://*) url="$1"; shift ;;',
+        '    *) shift ;;',
+        '  esac',
+        'done',
+        'if [ -n "$out" ]; then : > "$out"; fi',
+        'if echo "$url" | grep -q "11434/api/tags"; then',
+        '  printf "000"',
+        '  exit 7',
+        'fi',
+        'printf "000"',
+        'exit 7',
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha status", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Inference:");
+    expect(r.out).toContain("unreachable");
+    expect(r.out).toContain("Start Ollama and retry");
+    expect(r.out).toContain("http://localhost:11434/api/tags");
+  });
+
   it("does not treat a different connected gateway as a healthy nemoclaw gateway", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-mixed-gateway-"));
     const localBin = path.join(home, "bin");
