@@ -604,7 +604,7 @@ describe("onboard helpers", () => {
         { fetchEnabled: true },
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
-      const expected = buildWebSearchDockerConfig({ fetchEnabled: true }, "brv-test-key");
+      const expected = buildWebSearchDockerConfig({ fetchEnabled: true });
       assert.match(
         patched,
         new RegExp(
