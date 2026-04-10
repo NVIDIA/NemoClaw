@@ -7,7 +7,7 @@
  */
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { shellQuote } = require("../../bin/lib/runner");
+const { shellQuote } = require("./runner");
 
 import { VLLM_PORT, OLLAMA_PORT } from "./ports";
 

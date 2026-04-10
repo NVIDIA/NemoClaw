@@ -16,9 +16,9 @@ import path from "node:path";
 
 import { DASHBOARD_PORT } from "./ports";
 
-// runner.js is CJS — use require so we don't pull it into the TS build.
+// runner.ts still uses CommonJS-style exports — use require here.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { runCapture } = require("../../bin/lib/runner");
+const { runCapture } = require("./runner");
 
 // ── Types ────────────────────────────────────────────────────────
 

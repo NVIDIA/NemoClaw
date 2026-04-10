@@ -7,8 +7,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const ONBOARD_PATH = JSON.stringify(path.join(REPO_ROOT, "bin", "lib", "onboard.js"));
-const CREDENTIALS_PATH = JSON.stringify(path.join(REPO_ROOT, "bin", "lib", "credentials.js"));
+const ONBOARD_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "onboard.js"));
+const CREDENTIALS_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "credentials.js"));
 
 const SAMPLE_PRESETS = [
   { name: "npm", description: "npm and Yarn registry access" },

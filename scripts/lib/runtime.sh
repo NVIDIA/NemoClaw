@@ -268,6 +268,8 @@ check_local_provider_health() {
 
   local vllm_port="${NEMOCLAW_VLLM_PORT:-8000}"
   local ollama_port="${NEMOCLAW_OLLAMA_PORT:-11434}"
+  _validate_port NEMOCLAW_VLLM_PORT "$vllm_port" || return 1
+  _validate_port NEMOCLAW_OLLAMA_PORT "$ollama_port" || return 1
   case "$provider" in
     vllm-local)
       curl -sf "http://localhost:${vllm_port}/v1/models" >/dev/null 2>&1

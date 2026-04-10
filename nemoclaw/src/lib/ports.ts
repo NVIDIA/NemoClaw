@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Port parsing for the NemoClaw plugin.
- * Mirrors src/lib/ports.ts in the CLI — kept in sync intentionally.
+ * Dashboard port parsing for the NemoClaw plugin.
+ * Mirrors the parsePort() logic from src/lib/ports.ts in the CLI.
+ * Only DASHBOARD_PORT is needed by the plugin (runner.ts).
  */
 
 export function parsePort(envVar: string, fallback: number): number {
