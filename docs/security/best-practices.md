@@ -161,7 +161,7 @@ Endpoint rules restrict allowed HTTP methods and URL paths.
 
 | Aspect | Detail |
 |---|---|
-| Default | Most endpoints allow GET and POST on `/**`. Some allow GET only (read-only), such as `docs.openclaw.ai`. |
+| Default | Some endpoints allow GET and POST on `/**` (for example, `clawhub.ai`). Others restrict methods and paths to specific API routes (for example, `api.anthropic.com` allows POST only to inference paths). Read-only endpoints such as `docs.openclaw.ai` and `sentry.io` allow GET only. The `npm_registry` baseline entry and the `npm`/`pypi` presets are GET-only (plus HEAD for PyPI). |
 | What you can change | Add methods (PUT, DELETE, PATCH) or restrict paths to specific prefixes. |
 | Risk if relaxed | Allowing all methods on an API endpoint gives the agent write and delete access. For example, allowing DELETE on `api.github.com` lets the agent delete repositories. |
 | Recommendation | Use GET-only rules for endpoints that the agent only reads. Add write methods only for endpoints where the agent must create or modify resources. Restrict paths to specific API routes when possible. |
@@ -361,6 +361,30 @@ The Dockerfile removes compilers and network probes from the runtime image.
 | What you can change | Modify the Dockerfile to keep these tools, or install them at runtime if package manager access is allowed. |
 | Risk if relaxed | A compiler lets the agent build arbitrary native code, including kernel exploits or custom network tools. `netcat` enables arbitrary TCP connections that bypass HTTP-level policy enforcement. |
 | Recommendation | Keep build tools removed. If the agent needs to compile code, run the build in a separate, purpose-built container and copy artifacts into the sandbox. |
+
+### Image Digest Pinning
+
+The blueprint references the sandbox image by an immutable `@sha256:` digest instead of a mutable tag such as `:latest`.
+A registry compromise or accidental force-push cannot silently swap the sandbox image.
+
+| Aspect | Detail |
+|---|---|
+| Default | `nemoclaw-blueprint/blueprint.yaml` pins the sandbox image by digest. A CI regression test blocks any mutable-tag reference from merging. |
+| What you can change | Contributors bumping the sandbox image must update the digest in `blueprint.yaml`. Release tooling should rewrite the digest automatically. |
+| Risk if relaxed | Reverting to a mutable tag (`:latest`) allows a registry-side change to replace the sandbox image without any blueprint update, which is a supply-chain risk. |
+| Recommendation | Always reference the sandbox image by digest. If you build a custom image with `nemoclaw onboard --from`, the digest constraint does not apply to your local build. |
+
+### Auth Profile Permissions
+
+The entrypoint and migration flows enforce `chmod 600` on all `auth-profiles.json` files under `~/.openclaw`.
+This prevents other users on the host from reading stored credentials.
+
+| Aspect | Detail |
+|---|---|
+| Default | `600` permissions applied recursively at startup and after migration restores. |
+| What you can change | This is not a user-facing knob. The entrypoint enforces it. |
+| Risk if relaxed | Looser permissions let other users or processes on the host read provider API keys and tokens stored in auth profiles. |
+| Recommendation | No action needed. If you see a `permission denied` error when reading auth profiles, verify that you are running as the same user who created them. |
 
 ## Gateway Authentication Controls
 
