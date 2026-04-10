@@ -2550,6 +2550,7 @@ async function createSandbox(
     "DISCORD_BOT_TOKEN",
     "SLACK_BOT_TOKEN",
     "TELEGRAM_BOT_TOKEN",
+    webSearch.BRAVE_API_KEY_ENV,
   ]);
   const sandboxEnv = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !blockedSandboxEnvNames.has(name)),
