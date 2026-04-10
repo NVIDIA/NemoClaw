@@ -4575,9 +4575,9 @@ async function onboard(opts = {}) {
     const sandboxReuseState = getSandboxReuseState(sandboxName);
     const webSearchConfigChanged = Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
     const resumeSandbox =
-      resume && 
-      !webSearchConfigChanged && 
-      session?.steps?.sandbox?.status === "complete" && 
+      resume &&
+      !webSearchConfigChanged &&
+      session?.steps?.sandbox?.status === "complete" &&
       sandboxReuseState === "ready";
     if (resumeSandbox) {
       skippedStepMessage("sandbox", sandboxName);
