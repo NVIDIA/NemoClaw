@@ -188,6 +188,9 @@ The following environment variables configure optional services and local access
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token you provide before `nemoclaw onboard`. OpenShell stores it in a provider; the sandbox receives placeholders, not the raw secret. |
 | `TELEGRAM_ALLOWED_IDS` | Comma-separated Telegram user or chat IDs for allowlists when onboarding applies channel restrictions. |
+| `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-...`) you provide before `nemoclaw onboard`. Stored as an OpenShell provider; never passed directly to the sandbox. |
+| `SLACK_APP_TOKEN` | Slack app-level token (`xapp-...`) required for Socket Mode. Stored alongside `SLACK_BOT_TOKEN` during onboarding. |
+| `SLACK_ALLOWED_CHANNELS` | Comma-separated Slack channel IDs to allowlist (e.g. `C012AB3CD,C987ZY6XW`). Baked into the sandbox image at build time. When unset, no channels are allowed by default. |
 | `CHAT_UI_URL` | URL for the optional chat UI endpoint. |
 | `NEMOCLAW_DISABLE_DEVICE_AUTH` | Build-time-only toggle that disables gateway device pairing when set to `1` before the sandbox image is created. |
 

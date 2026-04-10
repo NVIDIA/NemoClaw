@@ -986,6 +986,7 @@ function patchStagedDockerfile(
   messagingChannels = [],
   messagingAllowedIds = {},
   discordGuilds = {},
+  slackAllowedChannels = [],
 ) {
   const { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat } =
     getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -1062,6 +1063,12 @@ function patchStagedDockerfile(
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_DISCORD_GUILDS_B64=.*$/m,
       `ARG NEMOCLAW_DISCORD_GUILDS_B64=${encodeDockerJsonArg(discordGuilds)}`,
+    );
+  }
+  if (slackAllowedChannels.length > 0) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_SLACK_ALLOWED_CHANNELS_B64=.*$/m,
+      `ARG NEMOCLAW_SLACK_ALLOWED_CHANNELS_B64=${encodeDockerJsonArg(slackAllowedChannels)}`,
     );
   }
   fs.writeFileSync(dockerfilePath, dockerfile);
@@ -2662,6 +2669,16 @@ async function createSandbox(
       };
     }
   }
+  // Build Slack channel allowlist from SLACK_ALLOWED_CHANNELS env var.
+  // Stored separately from messagingAllowedIds because it maps to openclaw.json
+  // `channels.slack.accounts.default.channels` rather than dmPolicy/allowFrom.
+  const slackAllowedChannels = [];
+  if (enabledTokenEnvKeys.has("SLACK_BOT_TOKEN") && process.env.SLACK_ALLOWED_CHANNELS) {
+    const ids = process.env.SLACK_ALLOWED_CHANNELS.split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    slackAllowedChannels.push(...ids);
+  }
   patchStagedDockerfile(
     stagedDockerfile,
     model,
@@ -2673,6 +2690,7 @@ async function createSandbox(
     activeMessagingChannels,
     messagingAllowedIds,
     discordGuilds,
+    slackAllowedChannels,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
@@ -3686,8 +3704,13 @@ const MESSAGING_CHANNELS = [
     label: "Slack Bot Token",
     appTokenEnvKey: "SLACK_APP_TOKEN",
     appTokenHelp:
-      "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
+      "Slack API → Your Apps → Basic Information → App-Level Tokens → Generate (scope: connections:write). Required for Socket Mode (xapp-...).",
     appTokenLabel: "Slack App Token (Socket Mode)",
+    userIdEnvKey: "SLACK_ALLOWED_CHANNELS",
+    userIdHelp:
+      "Optional: comma-separated Slack channel IDs to allowlist (e.g. C012AB3CD,C987ZY6XW). Leave blank to block all channels until added manually.",
+    userIdLabel: "Slack Channel IDs (optional allowlist)",
+    allowIdsMode: "channel",
   },
 ];
 

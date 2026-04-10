@@ -1,6 +1,6 @@
 ---
 name: "nemoclaw-user-deploy-remote"
-description: "Explains how to run NemoClaw on a remote GPU instance, including the deprecated Brev compatibility path and the preferred installer plus onboard flow. Describes security hardening measures applied to the NemoClaw sandbox container image. Use when reviewing container security, Docker capabilities, process limits, or sandbox hardening controls. Explains how Telegram reaches the sandboxed OpenClaw agent through OpenShell-managed processes and onboarding-time channel configuration. Use when setting up Telegram, a chat interface, or messaging integration without relying on nemoclaw start for bridges."
+description: "Explains how to run NemoClaw on a remote GPU instance, including the deprecated Brev compatibility path and the preferred installer plus onboard flow. Describes security hardening measures applied to the NemoClaw sandbox container image. Use when reviewing container security, Docker capabilities, process limits, or sandbox hardening controls. Explains how Slack reaches the sandboxed OpenClaw agent through OpenShell-managed processes and onboarding-time channel configuration. Use when setting up Slack, a chat interface, or messaging integration. Explains how Telegram reaches the sandboxed OpenClaw agent through OpenShell-managed processes and onboarding-time channel configuration. Use when setting up Telegram, a chat interface, or messaging integration without relying on nemoclaw start for bridges."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -15,6 +15,8 @@ Explains how to run NemoClaw on a remote GPU instance, including the deprecated 
 - The [Brev CLI](https://brev.nvidia.com) installed and authenticated.
 - A provider credential for the inference backend you want to use during onboarding.
 - NemoClaw installed locally if you plan to use the deprecated `nemoclaw deploy` wrapper. Otherwise, install NemoClaw directly on the remote host after provisioning it.
+- A Slack workspace where you can install apps.
+- NemoClaw installed and `openshell` available on your host.
 - A machine where you can run `nemoclaw onboard` (local or remote host that runs the gateway and sandbox).
 - A Telegram bot token from [BotFather](https://t.me/BotFather).
 
@@ -135,18 +137,105 @@ $ nemoclaw deploy <instance-name>
 
 ---
 
+NemoClaw supports Slack via Socket Mode — a persistent WebSocket connection that does not require a public URL or inbound firewall rules. The bot and app tokens are stored by OpenShell as secure providers; the sandbox receives placeholder values, not the raw secrets.
+
+## Step 9: Create a Slack App
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) and click **Create New App → From scratch**.
+2. Give the app a name and select your workspace.
+
+### Enable Socket Mode
+
+1. In the app settings sidebar, select **Socket Mode** and toggle it on.
+2. Under **App-Level Tokens**, click **Generate Token and Scopes**.
+3. Give the token a name, add the `connections:write` scope, and click **Generate**.
+4. Copy the token — it starts with `xapp-`. This is your `SLACK_APP_TOKEN`.
+
+### Add Bot Scopes
+
+1. In the sidebar select **OAuth & Permissions**.
+2. Under **Bot Token Scopes** add at minimum: `chat:write`, `channels:history`, `channels:read`, `app_mentions:read`.
+3. Click **Install to Workspace** and copy the **Bot User OAuth Token** (starts with `xoxb-`). This is your `SLACK_BOT_TOKEN`.
+
+### Enable Event Subscriptions
+
+1. In the sidebar select **Event Subscriptions** and toggle on **Enable Events**.
+2. Under **Subscribe to bot events** add: `message.channels`, `app_mention`.
+3. Save changes.
+
+## Step 10: Provide Tokens and Optional Channel Allowlist
+
+Onboarding reads Slack credentials from either host environment variables or the NemoClaw credential store. You do not have to export variables if you enter the tokens when the wizard asks.
+
+### Option A: Environment variables (CI, scripts, or before you start the wizard)
+
+```console
+$ export SLACK_BOT_TOKEN=xoxb-...
+$ export SLACK_APP_TOKEN=xapp-...
+```
+
+Optional comma-separated channel ID allowlist. When set, only messages from these channels trigger the agent. Leave blank to block all channels (the default `groupPolicy` is `allowlist` with no channels configured):
+
+```console
+$ export SLACK_ALLOWED_CHANNELS="C012AB3CD,C987ZY6XW"
+```
+
+Channel IDs are stable identifiers — find them in Slack by right-clicking a channel, selecting **View channel details**, and copying the ID from the bottom of the **About** tab.
+
+### Option B: Interactive `nemoclaw onboard`
+
+When the wizard reaches **Messaging channels**, it lists Telegram, Discord, and Slack.
+Toggle Slack on, then enter the bot token and app token when prompted.
+If `SLACK_ALLOWED_CHANNELS` is not set, the wizard prompts for channel IDs — you can leave this blank and add channels later by re-running `nemoclaw onboard --recreate-sandbox`.
+
+## Step 11: Run `nemoclaw onboard`
+
+```console
+$ nemoclaw onboard
+```
+
+NemoClaw bakes channel configuration into the sandbox image at build time (`NEMOCLAW_SLACK_ALLOWED_CHANNELS_B64`), creates an OpenShell provider for the bot token, and starts the sandbox.
+
+Channel entries in `/sandbox/.openclaw/openclaw.json` are fixed at image build time. Landlock keeps that path read-only at runtime, so you cannot patch messaging config inside a running sandbox.
+
+If you add or change tokens or channel IDs after a sandbox already exists, re-run:
+
+```console
+$ SLACK_ALLOWED_CHANNELS="C012AB3CD" nemoclaw onboard --recreate-sandbox
+```
+
+## Step 12: Apply the Slack Network Policy Preset
+
+The `slack` policy preset opens the required egress endpoints (Slack REST API, Socket Mode WebSocket). Apply it after onboarding if it was not selected during the wizard:
+
+```console
+$ nemoclaw <sandbox-name> policy-add
+```
+
+Select `slack` from the menu.
+
+## Step 13: Confirm Delivery
+
+After the sandbox is running, invite the bot to one of your allowlisted channels in Slack and send a message. If the bot does not respond, check:
+
+- The channel ID in `SLACK_ALLOWED_CHANNELS` matches the channel you are posting in.
+- The `slack` policy preset is applied (`nemoclaw <sandbox-name> policy-list`).
+- Gateway logs inside the sandbox: `openshell sandbox connect <sandbox-name>` then `tail -f /tmp/gateway.log`.
+
+---
+
 Telegram, Discord, and Slack reach your agent through OpenShell-managed processes and gateway constructs.
 NemoClaw configures those channels during `nemoclaw onboard`. Tokens are registered with OpenShell providers, channel configuration is baked into the sandbox image, and runtime delivery stays under OpenShell control.
 
 `nemoclaw start` does not start Telegram (or other chat bridges). It only starts optional host services such as the cloudflared tunnel when that binary is present.
 For details, refer to Commands (see the `nemoclaw-user-reference` skill).
 
-## Step 9: Create a Telegram Bot
+## Step 14: Create a Telegram Bot
 
 Open Telegram and send `/newbot` to [@BotFather](https://t.me/BotFather).
 Follow the prompts to create a bot and copy the bot token.
 
-## Step 10: Provide the Bot Token and Optional Allowlist
+## Step 15: Provide the Bot Token and Optional Allowlist
 
 Onboarding reads Telegram credentials from either host environment variables or the NemoClaw credential store (`getCredential` / `saveCredential` in the onboard flow). You do not have to export variables if you enter the token when the wizard asks.
 
@@ -171,7 +260,7 @@ If `TELEGRAM_ALLOWED_IDS` is not set, the wizard can prompt for allowed sender I
 NemoClaw applies that allowlist to Telegram DMs only.
 Group chats stay open by default so rebuilt sandboxes do not silently drop Telegram group messages because of an empty group allowlist.
 
-## Step 11: Run `nemoclaw onboard`
+## Step 16: Run `nemoclaw onboard`
 
 Complete the rest of the wizard so the blueprint can create OpenShell providers (for example `<sandbox>-telegram-bridge`), bake channel configuration into the image (`NEMOCLAW_MESSAGING_CHANNELS_B64`), and start the sandbox.
 
@@ -181,12 +270,12 @@ If you add or change `TELEGRAM_BOT_TOKEN` (or toggle channels) after a sandbox a
 
 For a full first-time flow, refer to Quickstart (see the `nemoclaw-user-get-started` skill).
 
-## Step 12: Confirm Delivery
+## Step 17: Confirm Delivery
 
 After the sandbox is running, send a message to your bot in Telegram.
 If something fails, use `openshell term` on the host, check gateway logs, and verify network policy allows the Telegram API (see Customize the Network Policy (see the `nemoclaw-user-manage-policy` skill) and the `telegram` preset).
 
-## Step 13: `nemoclaw start` (cloudflared Only)
+## Step 18: `nemoclaw start` (cloudflared Only)
 
 `nemoclaw start` starts cloudflared when it is installed, which can expose the dashboard with a public URL.
 It does not affect Telegram connectivity.

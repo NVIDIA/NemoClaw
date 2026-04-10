@@ -231,6 +231,56 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("patches the staged Dockerfile with Slack channel allowlist", () => {
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-slack-channels-"),
+    );
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
+        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
+        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+        "ARG NEMOCLAW_SLACK_ALLOWED_CHANNELS_B64=W10=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-slack-channels",
+        "openai-api",
+        null,
+        null,
+        ["slack"],
+        {},
+        {},
+        ["C012AB3CD", "C987ZY6XW"],
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_MESSAGING_CHANNELS_B64=/m);
+      const channelsLine = patched
+        .split("\n")
+        .find((line) => line.startsWith("ARG NEMOCLAW_SLACK_ALLOWED_CHANNELS_B64="));
+      assert.ok(channelsLine, "expected slack allowed channels build arg");
+      const encoded = channelsLine.split("=")[1];
+      const decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+      assert.deepEqual(decoded, ["C012AB3CD", "C987ZY6XW"]);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("patches the staged Dockerfile with Discord guild config that allows all server members", () => {
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-discord-open-"),
