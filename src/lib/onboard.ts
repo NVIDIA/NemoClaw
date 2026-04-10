@@ -711,6 +711,15 @@ function verifyInferenceRoute(_provider, _model) {
     console.error("  OpenShell inference route was not configured.");
     process.exit(1);
   }
+  if (_provider && _model && !isInferenceRouteReady(_provider, _model)) {
+    const live = parseGatewayInference(output);
+    const liveProvider = live?.provider || "unknown";
+    const liveModel = live?.model || "unknown";
+    console.error(
+      `  OpenShell inference route mismatch. Expected ${_provider} / ${_model}, got ${liveProvider} / ${liveModel}.`,
+    );
+    process.exit(1);
+  }
 }
 
 function isInferenceRouteReady(provider, model) {
@@ -718,6 +727,125 @@ function isInferenceRouteReady(provider, model) {
     runCaptureOpenshell(["inference", "get"], { ignoreError: true }),
   );
   return Boolean(live && live.provider === provider && live.model === model);
+}
+
+function parseSandboxInferenceProbe(output) {
+  if (!output) {
+    return {
+      ok: false,
+      retryable: true,
+      message: "inference.local did not return a response.",
+    };
+  }
+
+  const statusMarker = "__NEMOCLAW_HTTP_STATUS__:";
+  const markerIndex = output.lastIndexOf(statusMarker);
+  const body = markerIndex === -1 ? output.trim() : output.slice(0, markerIndex).trim();
+  const statusText =
+    markerIndex === -1 ? "" : output.slice(markerIndex + statusMarker.length).trim();
+  const status = Number.parseInt(statusText, 10);
+
+  if (!Number.isFinite(status)) {
+    return {
+      ok: false,
+      retryable: true,
+      message: "inference.local did not report an HTTP status.",
+    };
+  }
+
+  if (status !== 200) {
+    const detail = compactText(body) || `HTTP ${status}`;
+    return {
+      ok: false,
+      retryable: [408, 425, 429, 500, 502, 503, 504].includes(status),
+      message: `HTTP ${status}: ${detail}`,
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(body || "{}");
+    if (parsed?.error) {
+      return {
+        ok: false,
+        retryable: false,
+        message: compactText(JSON.stringify(parsed.error)) || "inference.local returned an error.",
+      };
+    }
+    if (Array.isArray(parsed?.choices) || Array.isArray(parsed?.output) || typeof parsed?.id === "string") {
+      return { ok: true };
+    }
+  } catch {
+    // handled below
+  }
+
+  return {
+    ok: false,
+    retryable: false,
+    message: `Unexpected inference.local response: ${compactText(body) || "empty body"}`,
+  };
+}
+
+function verifyLocalSandboxInference(
+  sandboxName,
+  model,
+  provider,
+  runCaptureOpenshellImpl = runCaptureOpenshell,
+) {
+  if (!sandboxName || (provider !== "ollama-local" && provider !== "vllm-local")) {
+    return { ok: true };
+  }
+
+  const providerLabel = provider === "ollama-local" ? "Local Ollama" : "Local vLLM";
+  const payload = JSON.stringify({
+    model,
+    messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+    max_tokens: 8,
+  });
+  let lastResult = {
+    ok: false,
+    retryable: false,
+    message: "inference.local did not return a response.",
+  };
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const output = runCaptureOpenshellImpl(
+      [
+        "sandbox",
+        "exec",
+        sandboxName,
+        "curl",
+        "-sS",
+        "--max-time",
+        "20",
+        "https://inference.local/v1/chat/completions",
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        payload,
+        "-o",
+        "-",
+        "-w",
+        "\\n__NEMOCLAW_HTTP_STATUS__:%{http_code}",
+      ],
+      { ignoreError: true },
+    );
+    const result = parseSandboxInferenceProbe(output);
+    if (result.ok) {
+      return { ok: true };
+    }
+    lastResult = result;
+    if (!result.retryable || attempt === 3) {
+      break;
+    }
+    sleep(2);
+  }
+
+  return {
+    ok: false,
+    message:
+      `${providerLabel} was configured, but inference.local inside sandbox '${sandboxName}' ` +
+      `could not serve model '${model}'. ${lastResult.message}`,
+  };
 }
 
 function sandboxExistsInGateway(sandboxName) {
@@ -3444,6 +3572,11 @@ async function setupInference(
   }
 
   verifyInferenceRoute(provider, model);
+  const sandboxProbe = verifyLocalSandboxInference(sandboxName, model, provider);
+  if (!sandboxProbe.ok) {
+    console.error(`  ${sandboxProbe.message}`);
+    process.exit(1);
+  }
   registry.updateSandbox(sandboxName, { model, provider });
   console.log(`  ✓ Inference route set: ${provider} / ${model}`);
   return { ok: true };
@@ -4748,6 +4881,7 @@ module.exports = {
   setupMessagingChannels,
   setupNim,
   isInferenceRouteReady,
+  verifyLocalSandboxInference,
   isOpenclawReady,
   arePolicyPresetsApplied,
   getSuggestedPolicyPresets,

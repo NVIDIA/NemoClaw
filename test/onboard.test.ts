@@ -43,6 +43,7 @@ import {
   summarizeCurlFailure,
   summarizeProbeFailure,
   shouldIncludeBuildContextPath,
+  verifyLocalSandboxInference,
   writeSandboxConfigSyncFile,
 } from "../dist/lib/onboard";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context";
@@ -1326,6 +1327,32 @@ console.log(JSON.stringify({
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("verifies local Ollama inference.local chat routing from inside the sandbox", () => {
+    expect(
+      verifyLocalSandboxInference("sandbox-box", "smollm2:135m", "ollama-local", () =>
+        [
+          '{"id":"chatcmpl-test","choices":[{"index":0,"message":{"role":"assistant","content":"PONG"}}]}',
+          "__NEMOCLAW_HTTP_STATUS__:200",
+        ].join("\n"),
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  it("reports a local Ollama model mismatch when inference.local returns 404 in the sandbox", () => {
+    expect(
+      verifyLocalSandboxInference("sandbox-box", "smollm2:135m", "ollama-local", () =>
+        [
+          '{"error":{"message":"model \'smollm2:135m\' not found"}}',
+          "__NEMOCLAW_HTTP_STATUS__:404",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      ok: false,
+      message:
+        "Local Ollama was configured, but inference.local inside sandbox 'sandbox-box' could not serve model 'smollm2:135m'. HTTP 404: {\"error\":{\"message\":\"model 'smollm2:135m' not found\"}}",
+    });
   });
 
   it("detects when OpenClaw is already configured inside the sandbox", () => {
