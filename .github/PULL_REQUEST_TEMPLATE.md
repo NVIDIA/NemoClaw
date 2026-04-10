@@ -37,7 +37,7 @@
 
 ### Doc Changes
 <!-- Skip if this PR has no doc changes. -->
-- [ ] Follows the [style guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md). Try running the `update-docs` agent skill to draft changes while complying with the style guide. For example, prompt your agent with "`/update-docs` catch up the docs for the new changes I made in this PR."
+- [ ] Follows the [style guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md). Try running the `nemoclaw-contributor-update-docs` agent skill to draft changes while complying with the style guide. For example, prompt your agent with "`/nemoclaw-contributor-update-docs` catch up the docs for the new changes I made in this PR."
 - [ ] New pages include SPDX license header and frontmatter, if creating a new page.
 - [ ] Cross-references and links verified.
 

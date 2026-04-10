@@ -13,8 +13,8 @@ export function encodeDockerJsonArg(value: unknown): string {
 
 export function getBraveExposureWarningLines(): string[] {
   return [
-    "NemoClaw will store the Brave API key in sandbox OpenClaw config.",
-    "The OpenClaw agent will be able to read that key.",
+    "NemoClaw will store the Brave API key in the sandbox agent config.",
+    "The sandboxed agent will be able to read that key.",
   ];
 }
 

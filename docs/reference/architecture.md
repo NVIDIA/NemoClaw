@@ -1,6 +1,6 @@
 ---
 title:
-  page: "NemoClaw Architecture — Plugin, Blueprint, and Sandbox Structure"
+  page: "NemoClaw Architecture: Plugin, Blueprint, and Sandbox Structure"
   nav: "Architecture"
 description:
   main: "Learn how NemoClaw combines a lightweight CLI plugin with a versioned blueprint to move OpenClaw into a controlled sandbox."
@@ -50,7 +50,6 @@ graph LR
         subgraph NEMOCLAW["NemoClaw"]
             direction TB
             NCLI["CLI + Onboarding<br/><small>Guided setup · provider selection<br/>credential validation · deploy</small>"]:::nemoclaw
-            BRIDGE["Messaging Bridges<br/><small>Connect chat platforms<br/>to sandboxed agent</small>"]:::nemoclaw
             BP["Blueprint<br/><small>Hardened Dockerfile<br/>Network policies · Presets<br/>Security configuration</small>"]:::nemoclaw
             MIGRATE["State Management<br/><small>Migration snapshots<br/>Credential stripping<br/>Integrity verification</small>"]:::nemoclaw
         end
@@ -59,6 +58,7 @@ graph LR
             direction TB
             GW["Gateway<br/><small>Credential store<br/>Inference proxy<br/>Policy engine<br/>Device auth</small>"]:::openshell
             OSCLI["openshell CLI<br/><small>provider · sandbox<br/>gateway · policy</small>"]:::openshell
+            CHMSG["Channel messaging<br/><small>OpenShell-managed<br/>Telegram · Discord · Slack</small>"]:::openshell
 
             subgraph SANDBOX["Sandbox Container 🔒"]
                 direction TB
@@ -78,8 +78,8 @@ graph LR
     AGENT -->|"Inference requests<br/><small>no credentials</small>"| GW
     GW -->|"Proxied with<br/>credential injected"| INFERENCE
 
-    MSGAPI -->|"Bot messages"| BRIDGE
-    BRIDGE -->|"Relayed as data<br/>via SSH"| AGENT
+    MSGAPI -->|"Platform APIs"| CHMSG
+    CHMSG -->|"Deliver to agent"| AGENT
 
     AGENT -.->|"Policy-gated"| INTERNET
     GW -.->|"Enforced by<br/>gateway"| INTERNET
@@ -93,7 +93,7 @@ It runs in-process with the OpenClaw gateway inside the sandbox.
 ```text
 nemoclaw/
 ├── src/
-│   ├── index.ts                    Plugin entry — registers all commands
+│   ├── index.ts                    Plugin entry: registers all commands
 │   ├── cli.ts                      Commander.js subcommand wiring
 │   ├── commands/
 │   │   ├── launch.ts               Fresh install into OpenShell
@@ -119,7 +119,7 @@ The blueprint drives all interactions with the OpenShell CLI.
 
 ```text
 nemoclaw-blueprint/
-├── blueprint.yaml                  Manifest — version, profiles, compatibility
+├── blueprint.yaml                  Manifest: version, profiles, compatibility
 ├── policies/
 │   └── openclaw-sandbox.yaml       Default network + filesystem policy
 ```
@@ -128,7 +128,7 @@ The blueprint runtime (TypeScript) lives in the plugin source tree:
 
 ```text
 nemoclaw/src/blueprint/
-├── runner.ts                       CLI runner — plan / apply / status / rollback
+├── runner.ts                       CLI runner: plan / apply / status / rollback
 ├── ssrf.ts                         SSRF endpoint validation (IP + DNS checks)
 ├── snapshot.ts                     Migration snapshot / restore lifecycle
 ├── state.ts                        Persistent run state management
@@ -178,7 +178,7 @@ NemoClaw keeps its operator-facing state on the host rather than inside the sand
 
 | Path | Purpose |
 |---|---|
-| `~/.nemoclaw/credentials.json` | Provider credentials saved during onboarding. |
+| `~/.nemoclaw/credentials.json` | Provider credentials saved during onboarding. Stored as plaintext JSON protected by local filesystem permissions; see [Credential Storage](../security/credential-storage.md). |
 | `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata, including the default sandbox selection. |
 | `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw snapshots or restores during migration flows. |
 
@@ -186,8 +186,10 @@ The following environment variables configure optional services and local access
 
 | Variable | Purpose |
 |---|---|
-| `TELEGRAM_BOT_TOKEN` | Bot token for the Telegram bridge. |
-| `ALLOWED_CHAT_IDS` | Comma-separated list of Telegram chat IDs allowed to message the agent. |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token you provide before `nemoclaw onboard`. OpenShell stores it in a provider; the sandbox receives placeholders, not the raw secret. |
+| `TELEGRAM_ALLOWED_IDS` | Comma-separated Telegram user or chat IDs for allowlists when onboarding applies channel restrictions. |
 | `CHAT_UI_URL` | URL for the optional chat UI endpoint. |
+| `NEMOCLAW_DISABLE_DEVICE_AUTH` | Build-time-only toggle that disables gateway device pairing when set to `1` before the sandbox image is created. |
 
 For normal setup and reconfiguration, prefer `nemoclaw onboard` over editing these files by hand.
+Do not treat `NEMOCLAW_DISABLE_DEVICE_AUTH` as a runtime setting for an already-created sandbox.

@@ -14,14 +14,14 @@ Update documentation when your change:
 
 ## Update Docs with Agent Skills
 
-If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `update-docs` skill that automates doc work.
+If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that automates doc work.
 Use it before writing from scratch.
 
 The skill scans recent commits for user-facing changes and drafts doc updates.
 Run it after landing features, before a release, or to find doc gaps.
-For example, ask your agent to "catch up the docs for everything merged since v0.2.0".
+For example, ask your agent to "catch up the docs for the changes I made in this PR".
 
-The skill lives in `.agents/skills/update-docs/` and follows the style guide below automatically.
+The skill lives in `.agents/skills/nemoclaw-contributor-update-docs/` and follows the style guide below automatically.
 
 ## Doc-to-Skills Pipeline
 
@@ -30,7 +30,7 @@ The script `scripts/docs-to-skills.py` converts doc pages into agent skills unde
 These generated skills let AI agents walk users through NemoClaw tasks (installation, inference configuration, policy management, monitoring, and more) without reading raw doc pages.
 
 Always edit pages in `docs/`.
-Never edit generated skill files under `.agents/skills/nemoclaw-*/`. Your changes will be overwritten on the next run.
+Never edit generated skill files under `.agents/skills/nemoclaw-user-*/`. Your changes will be overwritten on the next run.
 
 ### Generated skills
 
@@ -38,28 +38,32 @@ The current generated skills and their source pages are:
 
 | Skill | Source docs |
 |---|---|
-| `nemoclaw-overview` | `docs/about/overview.md`, `docs/about/how-it-works.md`, `docs/about/release-notes.md` |
-| `nemoclaw-get-started` | `docs/get-started/quickstart.md` |
-| `nemoclaw-configure-inference` | `docs/inference/inference-options.md`, `docs/inference/use-local-inference.md`, `docs/inference/switch-inference-providers.md` |
-| `nemoclaw-manage-policy` | `docs/network-policy/customize-network-policy.md`, `docs/network-policy/approve-network-requests.md` |
-| `nemoclaw-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.md` |
-| `nemoclaw-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.md`, `docs/deployment/set-up-telegram-bridge.md` |
-| `nemoclaw-reference` | `docs/reference/architecture.md`, `docs/reference/commands.md`, `docs/reference/network-policies.md`, `docs/reference/troubleshooting.md` |
+| `nemoclaw-user-overview` | `docs/about/overview.md`, `docs/about/ecosystem.md`, `docs/about/how-it-works.md`, `docs/about/release-notes.md` |
+| `nemoclaw-user-get-started` | `docs/get-started/quickstart.md` |
+| `nemoclaw-user-configure-inference` | `docs/inference/inference-options.md`, `docs/inference/use-local-inference.md`, `docs/inference/switch-inference-providers.md` |
+| `nemoclaw-user-manage-policy` | `docs/network-policy/customize-network-policy.md`, `docs/network-policy/approve-network-requests.md` |
+| `nemoclaw-user-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.md` |
+| `nemoclaw-user-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.md`, `docs/deployment/set-up-telegram-bridge.md` |
+| `nemoclaw-user-reference` | `docs/reference/architecture.md`, `docs/reference/commands.md`, `docs/reference/network-policies.md`, `docs/reference/troubleshooting.md` |
 
 ### Regenerating skills after doc changes
 
-After changing any page in `docs/`, regenerate the skills from the repo root:
+A pre-commit hook regenerates skills automatically whenever you commit changes to `docs/**/*.md` files.
+The hook runs `scripts/docs-to-skills.py` and stages the updated skills so they are included in the same commit.
+No manual step is needed for normal workflows.
+
+To regenerate skills manually (for example, after rebasing or outside of a commit), run from the repo root:
 
 ```bash
-python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw
+python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
 ```
 
-Always use this exact output path (`.agents/skills/`) and prefix (`nemoclaw`) so skill names and locations stay consistent.
+Always use this exact output path (`.agents/skills/`) and prefix (`nemoclaw-user`) so skill names and locations stay consistent.
 
 Preview what would change before writing files:
 
 ```bash
-python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw --dry-run
+python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --dry-run
 ```
 
 Other useful flags:
@@ -118,7 +122,7 @@ make docs-live
 ```yaml
 ---
 title:
-  page: "NemoClaw Page Title — Subtitle with Context"
+  page: "NemoClaw Page Title: Subtitle with Context"
   nav: "Short Nav Title"
 description:
   main: "One-sentence summary for readers, SEO, and doc search snippets."
@@ -159,7 +163,7 @@ These patterns are common in LLM-generated text and erode trust with technical r
 | Pattern | Problem | Fix |
 |---|---|---|
 | Unnecessary bold | "This is a **critical** step" on routine instructions. | Reserve bold for UI labels, parameter names, and genuine warnings. |
-| Em dashes everywhere | "The gateway — which runs in Docker — creates sandboxes." | Use commas or split into two sentences. Em dashes are fine sparingly but should not appear multiple times per paragraph. |
+| Em dashes | "The gateway, which runs in Docker, creates sandboxes." | Do not use em dashes. Prefer commas, colons, or separate sentences. |
 | Superlatives | "OpenShell provides a powerful, robust, seamless experience." | Say what it does, not how great it is. |
 | Hedge words | "Simply run the command" or "You can easily configure..." | Drop the adverb. "Run the command." |
 | Emoji in prose | "Let's get started!" | No emoji in documentation prose. |
