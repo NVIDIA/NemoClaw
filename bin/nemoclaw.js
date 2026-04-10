@@ -20,6 +20,7 @@ const policies = require("./lib/policies");
 const backupStore = require("./lib/sandbox-backup");
 const { getInferenceRuntimeStatus } = require("./lib/inference-status");
 const { runTelegramProbe } = require("./lib/telegram-diagnostics");
+const { runDiscordProbe } = require("./lib/discord-diagnostics");
 const {
   createSandbox,
   getDashboardForwardStartCommand,
@@ -622,7 +623,7 @@ async function deploy(instanceName) {
   console.log("  Running setup...");
   runInteractive(`ssh -t -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/brev-setup.sh'`);
 
-  if (tgToken) {
+  if (tgToken || discordToken) {
     console.log("  Starting services...");
     run(`ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR ${qname} 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && bash scripts/start-services.sh'`);
   }
@@ -923,6 +924,18 @@ function sandboxTelegramProbe(sandboxName) {
   exitWithSpawnResult(runTelegramProbe(sandboxName));
 }
 
+function sandboxDiscordProbe(sandboxName) {
+  if (!ensureLiveSandboxForAction(sandboxName, "probe")) {
+    process.exit(1);
+  }
+  ensureSandboxGatewayReachable();
+  console.log("");
+  console.log(`  Probing Discord network path inside sandbox '${sandboxName}'...`);
+  console.log("  This checks proxy and DNS diagnostics plus a bridge-equivalent Discord Bot API probe when DISCORD_BOT_TOKEN is available.");
+  console.log("");
+  exitWithSpawnResult(runDiscordProbe(sandboxName));
+}
+
 async function sandboxPolicyAdd(sandboxName) {
   if (!ensureLiveSandboxForAction(sandboxName, "update policies for")) {
     process.exit(1);
@@ -1211,6 +1224,7 @@ function help() {
     nemoclaw <name> status           Show sandbox status and health
     nemoclaw <name> logs [--follow]  View sandbox logs
     nemoclaw <name> telegram-probe   Probe api.telegram.org from inside a sandbox
+    nemoclaw <name> discord-probe    Probe discord.com from inside a sandbox
     nemoclaw <name> destroy          Stop NIM + delete sandbox
 
   ${G}Policy Presets:${R}
@@ -1221,7 +1235,7 @@ function help() {
     nemoclaw deploy <instance>       Deploy to a Brev VM and start services
 
   ${G}Services:${R}
-    nemoclaw start                   Start auxiliary services ${D}(Telegram, tunnel)${R}
+    nemoclaw start                   Start auxiliary services ${D}(Telegram, Discord, tunnel)${R}
     nemoclaw stop                    Stop all services
     nemoclaw status                  Show sandbox list and service status
 
@@ -1311,12 +1325,13 @@ async function dispatchSandboxAction(cmd, action, actionArgs) {
     case "status":      sandboxStatus(cmd); break;
     case "logs":        sandboxLogs(cmd, actionArgs.includes("--follow")); break;
     case "telegram-probe": sandboxTelegramProbe(cmd); break;
+    case "discord-probe": sandboxDiscordProbe(cmd); break;
     case "policy-add":  await sandboxPolicyAdd(cmd); break;
     case "policy-list": sandboxPolicyList(cmd); break;
     case "destroy":     await sandboxDestroy(cmd); break;
     default:
       console.error(`  Unknown action: ${action}`);
-      console.error(`  Valid actions: connect, backup, restore, repair-main, dashboard, status, logs, telegram-probe, policy-add, policy-list, destroy`);
+      console.error(`  Valid actions: connect, backup, restore, repair-main, dashboard, status, logs, telegram-probe, discord-probe, policy-add, policy-list, destroy`);
       process.exit(1);
   }
 }

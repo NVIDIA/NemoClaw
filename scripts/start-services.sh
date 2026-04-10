@@ -2,11 +2,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Start NemoClaw auxiliary services: Telegram bridge
+# Start NemoClaw auxiliary services: Telegram bridge, Discord bridge,
 # and cloudflared tunnel for public access.
 #
 # Usage:
 #   TELEGRAM_BOT_TOKEN=... ./scripts/start-services.sh         # start all
+#   DISCORD_BOT_TOKEN=... DISCORD_CHANNEL_ID=... ./scripts/start-services.sh
 #   ./scripts/start-services.sh --status                       # check status
 #   ./scripts/start-services.sh --stop                         # stop all
 #   ./scripts/start-services.sh --sandbox mybox                # start for specific sandbox
@@ -97,7 +98,7 @@ stop_service() {
 show_status() {
   mkdir -p "$PIDDIR"
   echo ""
-  for svc in telegram-bridge cloudflared; do
+  for svc in telegram-bridge discord-bridge cloudflared; do
     if is_running "$svc"; then
       echo -e "  ${GREEN}●${NC} $svc  (PID $(cat "$PIDDIR/$svc.pid"))"
     else
@@ -118,6 +119,7 @@ show_status() {
 do_stop() {
   mkdir -p "$PIDDIR"
   stop_service cloudflared
+  stop_service discord-bridge
   stop_service telegram-bridge
   info "All services stopped."
 }
@@ -125,9 +127,17 @@ do_stop() {
 do_start() {
   [ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY required"
 
-  if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
-    warn "TELEGRAM_BOT_TOKEN not set — Telegram bridge will not start."
-    warn "Create a bot via @BotFather on Telegram and set the token."
+  if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] && [ -z "${DISCORD_BOT_TOKEN:-}" ]; then
+    warn "No chat bridge token set - Telegram and Discord bridges will not start."
+    warn "Set TELEGRAM_BOT_TOKEN or DISCORD_BOT_TOKEN before running start-services.sh."
+  elif [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+    warn "TELEGRAM_BOT_TOKEN not set - Telegram bridge will not start."
+  elif [ -z "${DISCORD_BOT_TOKEN:-}" ]; then
+    warn "DISCORD_BOT_TOKEN not set - Discord bridge will not start."
+  fi
+
+  if [ -n "${DISCORD_BOT_TOKEN:-}" ] && [ -z "${DISCORD_CHANNEL_ID:-}" ]; then
+    fail "DISCORD_CHANNEL_ID required when DISCORD_BOT_TOKEN is set"
   fi
 
   command -v node >/dev/null || fail "node not found. Install Node.js first."
@@ -145,6 +155,11 @@ do_start() {
   if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
     SANDBOX_NAME="$SANDBOX_NAME" start_service telegram-bridge \
       node "$REPO_DIR/scripts/telegram-bridge.js"
+  fi
+
+  if [ -n "${DISCORD_BOT_TOKEN:-}" ]; then
+    SANDBOX_NAME="$SANDBOX_NAME" start_service discord-bridge \
+      node "$REPO_DIR/scripts/discord-bridge.js"
   fi
 
   # 3. cloudflared tunnel
@@ -186,7 +201,13 @@ do_start() {
   if is_running telegram-bridge; then
     echo "  │  Telegram:    bridge running                        │"
   else
-    echo "  │  Telegram:    not started (no token)                │"
+    echo "  │  Telegram:    not started                           │"
+  fi
+
+  if is_running discord-bridge; then
+    echo "  │  Discord:     bridge running                        │"
+  else
+    echo "  │  Discord:     not started                           │"
   fi
 
   echo "  │                                                     │"

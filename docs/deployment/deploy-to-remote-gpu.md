@@ -48,7 +48,7 @@ The deploy script performs the following steps on the VM:
 1. Installs Docker and the NVIDIA Container Toolkit if a GPU is present.
 2. Installs the OpenShell CLI.
 3. Runs the nemoclaw setup to create the gateway, register providers, and launch the sandbox.
-4. Starts auxiliary services, such as the Telegram bridge and cloudflared tunnel.
+4. Starts auxiliary services, such as the Telegram bridge, Discord bridge, and cloudflared tunnel.
 
 ## Connect to the Remote Sandbox
 
@@ -88,6 +88,7 @@ $ nemoclaw deploy <instance-name>
 
 ## Related Topics
 
+- [Set Up the Discord Bridge](set-up-discord-bridge.md) to interact with the remote agent through Discord.
 - [Set Up the Telegram Bridge](set-up-telegram-bridge.md) to interact with the remote agent through Telegram.
 - [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity.md) for sandbox monitoring tools.
 - [Commands](../reference/commands.md) for the full `deploy` command reference.

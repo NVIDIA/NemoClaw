@@ -1,0 +1,301 @@
+# Troubleshooting
+
+This page covers common issues you may encounter when installing, onboarding, or running NemoClaw, along with their resolution steps.
+
+> **Get Help:** If your issue is not listed here, join the [NemoClaw Discord channel](https://discord.gg/XFpfPv9Uvx) to ask questions and get help from the community. You can also [file an issue on GitHub](https://github.com/NVIDIA/NemoClaw/issues/new).
+
+## Installation
+
+### `nemoclaw` not found after install
+
+If you use nvm or fnm to manage Node.js, the installer may not update your current shell's PATH.
+The `nemoclaw` binary is installed but the shell session does not know where to find it.
+
+Run `source ~/.bashrc` (or `source ~/.zshrc` for zsh), or open a new terminal window.
+
+### Installer fails on unsupported platform
+
+The installer checks for a supported OS and architecture before proceeding.
+NemoClaw requires Linux Ubuntu 22.04 LTS or later.
+If you see an unsupported platform error, verify that you are running on a supported Linux distribution.
+
+### Node.js version is too old
+
+NemoClaw requires Node.js 22.16 or later.
+If the installer exits with a Node.js version error, check your current version:
+
+```console
+$ node --version
+```
+
+If the version is below 22.16, install a supported release.
+If you use nvm, run:
+
+```console
+$ nvm install 22
+$ nvm use 22
+```
+
+Then re-run the installer.
+
+### Docker is not running
+
+The installer and onboard wizard require Docker to be running.
+If you see a Docker connection error, start the Docker daemon:
+
+```console
+$ sudo systemctl start docker
+```
+
+On macOS with Docker Desktop, open the Docker Desktop application and wait for it to finish starting before retrying.
+
+### npm install fails with permission errors
+
+If `npm install` fails with an `EACCES` permission error, do not run npm with `sudo`.
+Instead, configure npm to use a directory you own:
+
+```console
+$ mkdir -p ~/.npm-global
+$ npm config set prefix ~/.npm-global
+$ export PATH=~/.npm-global/bin:$PATH
+```
+
+Add the `export` line to your `~/.bashrc` or `~/.zshrc` to make it permanent, then re-run the installer.
+
+### Port already in use
+
+The NemoClaw gateway uses port `18789` by default.
+If another process is already bound to this port, onboarding fails.
+Identify the conflicting process, verify it is safe to stop, and terminate it:
+
+```console
+$ lsof -i :18789
+$ kill <PID>
+```
+
+If the process does not exit, use `kill -9 <PID>` to force-terminate it.
+Then retry onboarding.
+
+## Onboarding
+
+### Cgroup v2 errors during onboard
+
+On Ubuntu 24.04, DGX Spark, and WSL2, Docker may not be configured for cgroup v2 delegation.
+The onboard preflight check detects this and fails with a clear error message.
+
+Run the Spark setup script to fix the Docker cgroup configuration, then retry onboarding:
+
+```console
+$ sudo nemoclaw setup-spark
+$ nemoclaw onboard
+```
+
+### Invalid sandbox name
+
+Sandbox names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
+Uppercase letters are automatically lowercased.
+
+If the name does not match these rules, the wizard exits with an error.
+Choose a name such as `my-assistant` or `dev1`.
+
+### Sandbox creation fails on DGX
+
+On DGX machines, sandbox creation can fail if the gateway's DNS has not finished propagating or if a stale port forward from a previous onboard run is still active.
+
+Run `nemoclaw onboard` to retry.
+The wizard cleans up stale port forwards and waits for gateway readiness automatically.
+
+### Colima socket not detected (macOS)
+
+Newer Colima versions use the XDG base directory (`~/.config/colima/default/docker.sock`) instead of the legacy path (`~/.colima/default/docker.sock`).
+NemoClaw checks both paths.
+If neither is found, verify that Colima is running:
+
+```console
+$ colima status
+```
+
+## Runtime
+
+### Reconnect after a host reboot
+
+After a host reboot, the container runtime, OpenShell gateway, and sandbox may not be running.
+Follow these steps to reconnect.
+
+1. Start the container runtime.
+
+   - **Linux:** start Docker if it is not already running (`sudo systemctl start docker`)
+   - **macOS:** open Docker Desktop or start Colima (`colima start`)
+
+1. Check sandbox state.
+
+   ```console
+   $ openshell sandbox list
+   ```
+
+   If the sandbox shows `Ready`, skip to step 4.
+
+1. Restart the gateway (if needed).
+
+   If the sandbox is not listed or the command fails, restart the OpenShell gateway:
+
+   ```console
+   $ openshell gateway start --name nemoclaw
+   ```
+
+   Wait a few seconds, then re-check with `openshell sandbox list`.
+
+1. Reconnect.
+
+   ```console
+   $ nemoclaw <name> connect
+   ```
+
+1. Start auxiliary services (if needed).
+
+   If you use the Telegram bridge or cloudflared tunnel, start them again:
+
+   ```console
+   $ nemoclaw start
+   ```
+
+> **If the sandbox does not recover:** If the sandbox remains missing after restarting the gateway, run `nemoclaw onboard` to recreate it.
+> The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox — workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
+> Back up your workspace first by following the instructions at Back Up and Restore (see the `nemoclaw-workspace` skill).
+
+### Sandbox shows as stopped
+
+The sandbox may have been stopped or deleted.
+Run `nemoclaw onboard` to recreate the sandbox from the same blueprint and policy definitions.
+
+### Status shows "not running" inside the sandbox
+
+This is expected behavior.
+When checking status inside an active sandbox, host-side sandbox state and inference configuration are not inspectable.
+The status command detects the sandbox context and reports "active (inside sandbox)" instead.
+
+Run `openshell sandbox list` on the host to check the underlying sandbox state.
+
+### Dashboard shows `Offline`, `origin not allowed`, or `device identity required` on WSL2
+
+On WSL2, the OpenClaw dashboard works best from `http://127.0.0.1:18789/`.
+That loopback origin satisfies the default Control UI policy and the local HTTP auth fallback.
+
+If VS Code or the Windows browser can only reach the dashboard through the current WSL host IP, a plain URL such as `http://172.x.x.x:18789/` can fail in a few different ways:
+
+1. `origin not allowed` means the browser origin is not on the sandbox Control UI allowlist.
+2. `device identity required` means the browser is connecting from a non-loopback HTTP origin without the authenticated fallback URL.
+3. `Offline` often means the page loaded but the gateway WebSocket handshake was rejected for one of those reasons.
+
+NemoClaw onboarding now seeds the sandbox allowlist with both `http://127.0.0.1:18789` and the current WSL host IP, then prints a `VS Code/WSL` URL that includes the gateway target and a one-time auth token.
+Use that printed `VS Code/WSL` URL exactly as printed when the dashboard does not work through `127.0.0.1`.
+If the printed URL uses the current WSL host IP, keep that direct WSL host IP in the browser URL. Do not replace it with `localhost`.
+
+If the WSL host IP changes after a restart, re-run `nemoclaw onboard` so NemoClaw can refresh the allowlist and print an updated authenticated URL.
+
+### Inference requests time out
+
+Verify that the inference provider endpoint is reachable from the host.
+Check the active provider and endpoint:
+
+```console
+$ nemoclaw <name> status
+```
+
+If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
+Then verify the credential and base URL for the provider you selected during onboarding.
+
+For Local Ollama, connect to the sandbox and test the managed route directly:
+
+```console
+$ nemoclaw <name> connect
+$ curl -sk https://inference.local/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer unused" \
+  -d '{"model":"<ollama-model>","messages":[{"role":"user","content":"Reply with exactly: OLLAMA_OK"}],"max_tokens":16}'
+```
+
+If this succeeds but `openclaw tui` or `openclaw agent` still times out, retry with a fresh session ID. A reused session can exceed the active Ollama context limit even when the provider path is healthy.
+
+### Local Ollama on WSL2 is not listed during onboarding
+
+On WSL2 with Docker Desktop, NemoClaw discovers Ollama from the Linux side and configures the sandbox to use a Docker Desktop hostname such as `host.docker.internal`.
+
+If Local Ollama does not appear in the onboarding flow, verify the following:
+
+1. Ollama is running on Windows and responds from WSL2.
+2. Docker Desktop is running with the WSL backend.
+3. The Windows firewall allows connections from Docker Desktop to the Ollama port.
+
+From WSL2, confirm that Ollama is reachable:
+
+```console
+$ curl http://<windows-host-ip>:11434/api/tags
+```
+
+If Ollama is reachable on a non-default host or port, set `NEMOCLAW_OLLAMA_BASE_URL` before running `nemoclaw onboard`.
+
+### Local Ollama times out after prompt truncation
+
+If the Ollama host log shows `truncating input prompt`, the request exceeded the active context window served by Ollama.
+This usually means OpenClaw is reusing more conversation history than the current Ollama context can hold.
+
+Check the active served context on the host:
+
+```console
+$ ollama ps
+$ ollama show <model>
+```
+
+NemoClaw records the context window it discovers from Ollama during onboarding and advertises that value inside the sandbox. If you change the Ollama context length, re-run onboarding so NemoClaw can sync the updated limit.
+
+If you need a larger context window, raise it in Ollama itself and then re-run onboarding. For example:
+
+```console
+$ OLLAMA_CONTEXT_LENGTH=8192 ollama serve
+```
+
+Or create a model variant with an explicit `num_ctx` in its Modelfile.
+
+### Local Ollama fails with "Model context window too small"
+
+OpenClaw requires at least 16,000 tokens for the main agent and TUI flow.
+
+If NemoClaw discovers that the selected Ollama model is configured below that minimum, onboarding fails early with a compatibility error instead of creating a sandbox that cannot answer in `openclaw tui`.
+
+If you see this error on an existing sandbox, increase the model context in Ollama and then re-run onboarding. For example:
+
+```console
+$ OLLAMA_CONTEXT_LENGTH=16384 ollama serve
+```
+
+Or create a model variant with `PARAMETER num_ctx 16384` and select that model during onboarding.
+
+### Direct requests to `host.docker.internal:11434` fail from inside the sandbox
+
+This can be expected.
+The sandbox policy can block direct host egress even when the managed inference route is configured correctly.
+
+Use `https://inference.local/v1` from inside the sandbox to verify NemoClaw inference routing.
+
+### Agent cannot reach an external host
+
+OpenShell blocks outbound connections to hosts not listed in the network policy.
+Open the TUI to see blocked requests and approve them:
+
+```console
+$ openshell term
+```
+
+To permanently allow an endpoint, add it to the network policy.
+Refer to Customize the Network Policy (see the `nemoclaw-manage-policy` skill) for details.
+
+### Blueprint run failed
+
+View the error output for the failed blueprint run:
+
+```console
+$ nemoclaw <name> logs
+```
+
+Use `--follow` to stream logs in real time while debugging.

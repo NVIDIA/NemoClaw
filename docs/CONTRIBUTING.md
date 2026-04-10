@@ -27,7 +27,7 @@ The current generated skills are:
 | `nemoclaw-configure-inference` | `docs/inference/switch-inference-providers.md` |
 | `nemoclaw-manage-policy` | `docs/network-policy/customize-network-policy.md`, `docs/network-policy/approve-network-requests.md` |
 | `nemoclaw-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.md` |
-| `nemoclaw-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.md`, `docs/deployment/set-up-telegram-bridge.md` |
+| `nemoclaw-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.md`, `docs/deployment/set-up-discord-bridge.md`, `docs/deployment/set-up-telegram-bridge.md` |
 | `nemoclaw-reference` | `docs/reference/architecture.md`, `docs/reference/commands.md`, `docs/reference/inference-profiles.md`, `docs/reference/network-policies.md`, `docs/reference/troubleshooting.md` |
 
 ### Regenerating skills after doc changes

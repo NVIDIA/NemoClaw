@@ -1,23 +1,3 @@
----
-title:
-  page: "NemoClaw CLI Commands Reference"
-  nav: "Commands"
-description: "Full CLI reference for plugin and standalone NemoClaw commands."
-keywords: ["nemoclaw cli commands", "nemoclaw command reference"]
-topics: ["generative_ai", "ai_agents"]
-tags: ["openclaw", "openshell", "nemoclaw", "cli"]
-content:
-  type: reference
-  difficulty: technical_beginner
-  audience: ["developer", "engineer"]
-status: published
----
-
-<!--
-  SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-  SPDX-License-Identifier: Apache-2.0
--->
-
 # Commands
 
 The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes. It is installed when you run `npm install -g nemoclaw`.
@@ -71,9 +51,7 @@ $ nemoclaw list
 
 ### `nemoclaw deploy`
 
-:::{warning}
-The `nemoclaw deploy` command is experimental and may not work as expected.
-:::
+> **Warning:** The `nemoclaw deploy` command is experimental and may not work as expected.
 
 Deploy NemoClaw to a remote GPU instance through [Brev](https://brev.nvidia.com).
 The deploy script installs Docker, NVIDIA Container Toolkit if a GPU is present, and OpenShell on the VM, then runs the nemoclaw setup and connects to the sandbox.
@@ -182,11 +160,9 @@ Stop the NIM container and delete the sandbox.
 For a live sandbox, NemoClaw prompts for explicit confirmation before deletion.
 If the entry is stale, NemoClaw offers to remove only the local registry entry.
 
-:::{warning}
-Destroying a sandbox permanently deletes all files inside it, including
-[workspace files](../workspace/workspace-files.md) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes).
-Create a backup first with `nemoclaw <name> backup`, then follow the instructions at [Back Up and Restore](../workspace/backup-restore.md) if you need manual restore steps.
-:::
+> **Warning:** Destroying a sandbox permanently deletes all files inside it, including
+> workspace files (see the `nemoclaw-workspace` skill) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes).
+> Create a backup first with `nemoclaw <name> backup`, then follow the instructions at Back Up and Restore (see the `nemoclaw-workspace` skill) if you need manual restore steps.
 
 ```console
 $ nemoclaw my-assistant destroy

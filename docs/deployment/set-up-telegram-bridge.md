@@ -90,5 +90,6 @@ $ nemoclaw stop
 
 ## Related Topics
 
+- [Set Up the Discord Bridge](set-up-discord-bridge.md) if you want the Discord workflow instead.
 - [Deploy NemoClaw to a Remote GPU Instance](deploy-to-remote-gpu.md) for remote deployment with Telegram support.
 - [Commands](../reference/commands.md) for the full `start` and `stop` command reference.

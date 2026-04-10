@@ -118,6 +118,14 @@ $ openclaw agent --agent jophiel --local -m "Reply with exactly JOPHIEL_OK" --se
 Expected output includes:
 
 ```json
+{
+  "payloads": [
+    {
+      "text": "JOPHIEL_OK"
+    }
+  ]
+}
+```
 
 ## Optional: Enable GitHub CLI (`gh`) for a Sub-Agent
 
@@ -161,14 +169,6 @@ $ openclaw agent --agent <agent-id> --local -m "Run 'gh --version' and return on
 
 If this fails with `command not found`, your sandbox image does not yet contain `gh`.
 Recreate the sandbox so it uses the updated base image.
-{
-  "payloads": [
-    {
-      "text": "JOPHIEL_OK"
-    }
-  ]
-}
-```
 
 ## Step 7: Allow Main to See or Spawn the Agent
 

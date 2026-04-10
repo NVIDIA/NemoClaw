@@ -112,6 +112,13 @@ describe("CLI dispatch", () => {
     assert.ok(r.out.includes("Probe api.telegram.org from inside a sandbox"));
   });
 
+  it("help mentions discord probe command", () => {
+    const r = run("help");
+    assert.equal(r.code, 0);
+    assert.ok(r.out.includes("discord-probe"), "help should mention discord-probe command");
+    assert.ok(r.out.includes("Probe discord.com from inside a sandbox"));
+  });
+
   it("help mentions dashboard command", () => {
     const r = run("help");
     assert.equal(r.code, 0);
@@ -131,5 +138,11 @@ describe("CLI dispatch", () => {
     const r = run("bogus-sandbox-name bogus-action");
     // Exits 1 (unknown sandbox) or the error path for unknown action
     assert.ok(r.out.includes("dashboard") || r.out.includes("repair-main") || r.out.includes("Unknown command"), "error output should be informative");
+  });
+
+  it("help mentions Discord service support", () => {
+    const r = run("help");
+    assert.equal(r.code, 0);
+    assert.ok(r.out.includes("Telegram, Discord, tunnel"), "help should mention Discord in the services section");
   });
 });
