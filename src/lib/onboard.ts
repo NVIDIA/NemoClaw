@@ -711,14 +711,16 @@ function verifyInferenceRoute(_provider, _model) {
     console.error("  OpenShell inference route was not configured.");
     process.exit(1);
   }
-  if (_provider && _model && !isInferenceRouteReady(_provider, _model)) {
+  if (_provider && _model) {
     const live = parseGatewayInference(output);
     const liveProvider = live?.provider || "unknown";
     const liveModel = live?.model || "unknown";
-    console.error(
-      `  OpenShell inference route mismatch. Expected ${_provider} / ${_model}, got ${liveProvider} / ${liveModel}.`,
-    );
-    process.exit(1);
+    if (liveProvider !== _provider || liveModel !== _model) {
+      console.error(
+        `  OpenShell inference route mismatch. Expected ${_provider} / ${_model}, got ${liveProvider} / ${liveModel}.`,
+      );
+      process.exit(1);
+    }
   }
 }
 

@@ -1329,6 +1329,90 @@ console.log(JSON.stringify({
     }
   });
 
+  it("reuses the first captured inference route when verifying setup success", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-inference-verify-once-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-inference-verify-once-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const resolveOpenshellPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "resolve-openshell.js"));
+    const fakeOpenshellPath = JSON.stringify(path.join(tmpDir, "openshell"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const resolveOpenshellModule = require(${resolveOpenshellPath});
+
+let inferenceGetCalls = 0;
+runner.run = () => ({ status: 0, stdout: "", stderr: "" });
+runner.runCapture = (command) => {
+  if (command.includes("inference") && command.includes("get")) {
+    inferenceGetCalls += 1;
+    if (inferenceGetCalls === 1) {
+      return [
+        "Gateway inference:",
+        "",
+        "  Route: inference.local",
+        "  Provider: openai-api",
+        "  Model: gpt-5.4",
+        "  Version: 1",
+      ].join("\n");
+    }
+    return "";
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+resolveOpenshellModule.resolveOpenshell = () => ${fakeOpenshellPath};
+
+process.env.OPENAI_API_KEY = "sk-secret-value";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  const result = await setupInference(
+    "test-box",
+    "gpt-5.4",
+    "openai-api",
+    "https://api.openai.com/v1",
+    "OPENAI_API_KEY",
+  );
+  console.log(JSON.stringify({ result, inferenceGetCalls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    try {
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout.trim().split("\n").pop())).toEqual({
+        result: { ok: true },
+        inferenceGetCalls: 1,
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("verifies local Ollama inference.local chat routing from inside the sandbox", () => {
     expect(
       verifyLocalSandboxInference("sandbox-box", "smollm2:135m", "ollama-local", () =>
