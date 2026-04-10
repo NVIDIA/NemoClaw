@@ -355,6 +355,7 @@ Monitor Sandbox Activity <monitoring/monitor-sandbox-activity>
 :hidden:
 
 Architecture <reference/architecture>
+Audit Chain <reference/audit-chain>
 Commands <reference/commands>
 Network Policies <reference/network-policies>
 Troubleshooting <reference/troubleshooting>
