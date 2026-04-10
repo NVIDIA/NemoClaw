@@ -4644,7 +4644,7 @@ async function onboard(opts = {}) {
       : null;
     if (dangerouslySkipPermissions) {
       step(8, 8, "Policy presets");
-      console.log("  Skipped — --dangerously-skip-permissions applies permissive base policy.");
+      policies.applyPermissivePolicy(sandboxName);
       onboardSession.markStepComplete("policies", {
         sandboxName,
         provider,
