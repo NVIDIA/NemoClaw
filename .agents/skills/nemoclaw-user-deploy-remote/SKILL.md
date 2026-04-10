@@ -168,6 +168,8 @@ When the wizard reaches **Messaging channels**, it lists Telegram, Discord, and 
 Press **1** to toggle Telegram on or off, then **Enter** when done.
 If the token is not already in the environment or credential store, the wizard prompts for it and saves it to the store.
 If `TELEGRAM_ALLOWED_IDS` is not set, the wizard can prompt for allowed sender IDs for Telegram DMs (you can leave this blank and rely on OpenClaw pairing instead).
+NemoClaw applies that allowlist to Telegram DMs only.
+Group chats stay open by default so rebuilt sandboxes do not silently drop Telegram group messages because of an empty group allowlist.
 
 ## Step 11: Run `nemoclaw onboard`
 

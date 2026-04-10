@@ -145,6 +145,14 @@ describe("policies", () => {
       expect(policies.loadPreset("../../etc/passwd")).toBe(null);
       expect(policies.loadPreset("../../../etc/shadow")).toBe(null);
     });
+
+    it("includes /usr/bin/node in communication presets", () => {
+      for (const preset of ["discord", "slack", "telegram"]) {
+        const content = policies.loadPreset(preset);
+        expect(content).toContain("/usr/local/bin/node");
+        expect(content).toContain("/usr/bin/node");
+      }
+    });
   });
 
   describe("getPresetEndpoints", () => {
@@ -580,6 +588,14 @@ describe("policies", () => {
         expect(content.includes("method: PUT")).toBe(false);
         expect(content.includes("method: POST")).toBe(false);
         expect(content.includes("method: DELETE")).toBe(false);
+      }
+    });
+
+    it("messaging REST presets do not pin deprecated tls termination", () => {
+      for (const name of ["discord", "slack", "telegram"]) {
+        const content = policies.loadPreset(name);
+        expect(content).toBeTruthy();
+        expect(content.includes("tls: terminate")).toBe(false);
       }
     });
 

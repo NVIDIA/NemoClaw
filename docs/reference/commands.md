@@ -107,6 +107,11 @@ The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
 Uppercase letters are automatically lowercased.
 
+If you enable Discord during onboarding, the wizard can also prompt for a Discord Server ID, whether the bot should reply only to `@mentions` or to all messages in that server, and an optional Discord User ID.
+NemoClaw bakes those values into the sandbox image as Discord guild workspace config so the bot can respond in the selected server, not just in DMs.
+If you leave the Discord User ID blank, the guild config omits the user allowlist and any member of the configured server can message the bot.
+Guild responses remain mention-gated by default unless you opt into all-message replies.
+
 Before creating the gateway, the wizard runs preflight checks.
 It verifies that Docker is reachable, warns on untested runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
 

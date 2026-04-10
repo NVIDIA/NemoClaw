@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -48,6 +49,9 @@ import {
 } from "../dist/lib/onboard";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context";
 import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
+
+const require = createRequire(import.meta.url);
+const { getSuggestedPolicyPresets } = require("../dist/lib/onboard.js");
 
 describe("onboard helpers", () => {
   it("classifies sandbox create timeout failures and tracks upload progress", () => {
@@ -105,6 +109,36 @@ describe("onboard helpers", () => {
     assert.match(script, /^exit$/m);
   });
 
+  it("uses explicit messaging selections for policy suggestions when provided", () => {
+    const originalTelegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
+    const originalDiscordBotToken = process.env.DISCORD_BOT_TOKEN;
+    const originalSlackBotToken = process.env.SLACK_BOT_TOKEN;
+    process.env.TELEGRAM_BOT_TOKEN = "telegram-token";
+    process.env.DISCORD_BOT_TOKEN = "discord-token";
+    process.env.SLACK_BOT_TOKEN = "slack-token";
+    try {
+      expect(getSuggestedPolicyPresets({ enabledChannels: [] })).toEqual(["pypi", "npm"]);
+      expect(getSuggestedPolicyPresets({ enabledChannels: ["telegram"] })).toEqual([
+        "pypi",
+        "npm",
+        "telegram",
+      ]);
+      expect(getSuggestedPolicyPresets({ enabledChannels: ["discord", "slack"] })).toEqual([
+        "pypi",
+        "npm",
+        "slack",
+        "discord",
+      ]);
+    } finally {
+      if (originalTelegramBotToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
+      else process.env.TELEGRAM_BOT_TOKEN = originalTelegramBotToken;
+      if (originalDiscordBotToken === undefined) delete process.env.DISCORD_BOT_TOKEN;
+      else process.env.DISCORD_BOT_TOKEN = originalDiscordBotToken;
+      if (originalSlackBotToken === undefined) delete process.env.SLACK_BOT_TOKEN;
+      else process.env.SLACK_BOT_TOKEN = originalSlackBotToken;
+    }
+  });
+
   it("patches the staged Dockerfile with the selected model and chat UI URL", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
@@ -135,6 +169,117 @@ describe("onboard helpers", () => {
       assert.match(patched, /^ARG NEMOCLAW_PRIMARY_MODEL_REF=openai\/gpt-5\.4$/m);
       assert.match(patched, /^ARG CHAT_UI_URL=http:\/\/127\.0\.0\.1:19999$/m);
       assert.match(patched, /^ARG NEMOCLAW_BUILD_ID=build-123$/m);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patches the staged Dockerfile with Discord guild config for server workspaces", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-discord-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
+        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
+        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-discord-guild",
+        "openai-api",
+        null,
+        null,
+        ["discord"],
+        {},
+        {
+          "1491590992753590594": {
+            requireMention: true,
+            users: ["1005536447329222676"],
+          },
+        },
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_MESSAGING_CHANNELS_B64=/m);
+      const guildLine = patched
+        .split("\n")
+        .find((line) => line.startsWith("ARG NEMOCLAW_DISCORD_GUILDS_B64="));
+      assert.ok(guildLine, "expected discord guild build arg");
+      const encoded = guildLine.split("=")[1];
+      const decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+      assert.deepEqual(decoded, {
+        "1491590992753590594": {
+          requireMention: true,
+          users: ["1005536447329222676"],
+        },
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patches the staged Dockerfile with Discord guild config that allows all server members", () => {
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-discord-open-"),
+    );
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
+        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
+        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-discord-open",
+        "openai-api",
+        null,
+        null,
+        ["discord"],
+        {},
+        {
+          "1491590992753590594": {
+            requireMention: false,
+          },
+        },
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      const guildLine = patched
+        .split("\n")
+        .find((line) => line.startsWith("ARG NEMOCLAW_DISCORD_GUILDS_B64="));
+      assert.ok(guildLine, "expected discord guild build arg");
+      const encoded = guildLine.split("=")[1];
+      const decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+      assert.deepEqual(decoded, {
+        "1491590992753590594": {
+          requireMention: false,
+        },
+      });
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -1661,7 +1806,7 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*webSearchConfig,\s*enabledChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
+      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*webSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
     );
   });
 
