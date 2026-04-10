@@ -228,6 +228,19 @@ def merge_agent_lists(base_agents, overlay_agents):
   return merged
 
 
+def load_overlay_agents(overlay_path):
+  if not os.path.exists(overlay_path):
+    return []
+
+  with open(overlay_path) as f:
+    overlay = json.load(f)
+
+  if not isinstance(overlay, dict):
+    return []
+
+  return ((overlay.get('agents') or {}).get('list') or [])
+
+
 def ensure_primary_agent_config(cfg):
   agents_cfg = cfg.setdefault('agents', {})
   defaults_cfg = agents_cfg.setdefault('defaults', {})
@@ -259,6 +272,13 @@ with open(runtime_path) as f:
 
 ensure_primary_agent_config(cfg)
 
+overlay_agents = load_overlay_agents(overlay_path)
+if overlay_agents:
+    cfg_agents = cfg.setdefault('agents', {})
+    existing_agents = cfg_agents.get('list') or []
+    cfg_agents['list'] = merge_agent_lists(existing_agents, overlay_agents)
+    ensure_primary_agent_config(cfg)
+
 if os.path.exists(selection_path):
     with open(selection_path) as f:
         selection = json.load(f)
@@ -286,21 +306,14 @@ if os.path.exists(selection_path):
                 'maxTokens': max_tokens if isinstance(max_tokens, int) and max_tokens > 0 else 4096,
             }],
         }
-
-        if os.path.exists(overlay_path):
-          with open(overlay_path) as f:
-            overlay = json.load(f)
-          overlay_agents = []
-          if isinstance(overlay, dict):
-            overlay_agents = ((overlay.get('agents') or {}).get('list') or [])
-          cfg_agents = cfg.setdefault('agents', {})
-          existing_agents = cfg_agents.get('list') or []
-          cfg_agents['list'] = merge_agent_lists(existing_agents, overlay_agents)
-
         ensure_primary_agent_config(cfg)
 
         with open(runtime_path, 'w') as f:
           json.dump(cfg, f, indent=2)
+
+else:
+    with open(runtime_path, 'w') as f:
+      json.dump(cfg, f, indent=2)
 
 os.chmod(runtime_path, 0o644)
 PYRUNTIME

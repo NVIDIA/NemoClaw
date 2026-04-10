@@ -5,9 +5,12 @@
 set -euo pipefail
 
 WORKSPACE_PATH="/sandbox/.openclaw/workspace"
+DATA_PATH="/sandbox/.openclaw-data"
 BACKUP_BASE="${HOME}/.nemoclaw/backups"
-FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md MEMORY.md)
+FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md MEMORY.md WIKI.md)
 DIRS=(memory)
+# Wiki directories live under .openclaw-data, not workspace
+DATA_DIRS=(wiki wiki-raw)
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -68,6 +71,14 @@ do_backup() {
     fi
   done
 
+  for d in "${DATA_DIRS[@]}"; do
+    if openshell sandbox download "$sandbox" "${DATA_PATH}/${d}/" "${dest}/${d}/"; then
+      count=$((count + 1))
+    else
+      warn "Skipped ${d}/ (not found or download failed)"
+    fi
+  done
+
   if [ "$count" -eq 0 ]; then
     fail "No files were backed up. Check that the sandbox '${sandbox}' exists and has workspace files."
   fi
@@ -104,6 +115,16 @@ do_restore() {
   for d in "${DIRS[@]}"; do
     if [ -d "${src}/${d}" ]; then
       if openshell sandbox upload "$sandbox" "${src}/${d}/" "${WORKSPACE_PATH}/${d}/"; then
+        count=$((count + 1))
+      else
+        warn "Failed to restore ${d}/"
+      fi
+    fi
+  done
+
+  for d in "${DATA_DIRS[@]}"; do
+    if [ -d "${src}/${d}" ]; then
+      if openshell sandbox upload "$sandbox" "${src}/${d}/" "${DATA_PATH}/${d}/"; then
         count=$((count + 1))
       else
         warn "Failed to restore ${d}/"

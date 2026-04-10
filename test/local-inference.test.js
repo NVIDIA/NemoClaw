@@ -132,7 +132,7 @@ describe("local inference helpers", () => {
   });
 
   it("returns the expected health check command for ollama-local", () => {
-    expect(getLocalProviderHealthCheck("ollama-local")).toBe("curl -sf http://localhost:11434/api/tags 2>/dev/null");
+    expect(getLocalProviderHealthCheck("ollama-local")).toBe("curl -sf --max-time 5 http://localhost:11434/api/tags 2>/dev/null");
   });
 
   it("returns the expected container reachability command for ollama-local", () => {

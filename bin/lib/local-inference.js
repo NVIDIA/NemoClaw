@@ -16,6 +16,11 @@ const OLLAMA_DEFAULT_SERVICE_URL = "http://localhost:11434";
 const DEFAULT_OLLAMA_CONTEXT_WINDOW = 4096;
 const DEFAULT_OLLAMA_MAX_TOKENS = 4096;
 const OPENCLAW_MIN_CONTEXT_WINDOW = 16000;
+const LOCAL_PROVIDER_HTTP_TIMEOUT_SECONDS = 5;
+
+function buildTimedCurlSf(url, timeoutSeconds = LOCAL_PROVIDER_HTTP_TIMEOUT_SECONDS) {
+  return `curl -sf --max-time ${timeoutSeconds} ${url} 2>/dev/null`;
+}
 
 function trimTrailingSlash(value) {
   return String(value || "").replace(/\/+$/, "");
@@ -181,7 +186,7 @@ function resolveOllamaEndpoint(runCapture, opts = {}) {
   }
 
   for (const candidate of getOllamaEndpointCandidates({ ...opts, runCapture })) {
-    const output = runCapture(`curl -sf ${candidate.tagsUrl} 2>/dev/null`, { ignoreError: true });
+    const output = runCapture(buildTimedCurlSf(candidate.tagsUrl), { ignoreError: true });
     if (output) {
       return candidate;
     }
@@ -217,10 +222,10 @@ function getLocalProviderBaseUrl(provider, opts = {}) {
 function getLocalProviderHealthCheck(provider, opts = {}) {
   switch (provider) {
     case "vllm-local":
-      return "curl -sf http://localhost:8000/v1/models 2>/dev/null";
+      return buildTimedCurlSf("http://localhost:8000/v1/models");
     case "ollama-local": {
       const endpoint = opts.endpoint || resolveOllamaEndpoint(opts.runCapture, opts);
-      return `curl -sf ${endpoint?.tagsUrl || `${OLLAMA_DEFAULT_SERVICE_URL}/api/tags`} 2>/dev/null`;
+      return buildTimedCurlSf(endpoint?.tagsUrl || `${OLLAMA_DEFAULT_SERVICE_URL}/api/tags`);
     }
     default:
       return null;
@@ -406,7 +411,7 @@ function getOllamaModelContextWindow(runCapture, model, opts = {}) {
 
   const endpoint = opts.endpoint || resolveOllamaEndpoint(runCapture, opts);
   const hostUrl = endpoint?.hostUrl || OLLAMA_DEFAULT_SERVICE_URL;
-  const psOutput = runCapture(`curl -sf ${hostUrl}/api/ps 2>/dev/null`, { ignoreError: true });
+  const psOutput = runCapture(buildTimedCurlSf(`${hostUrl}/api/ps`), { ignoreError: true });
   const runningContext = parseOllamaPsResponse(psOutput, model);
   if (runningContext) {
     return runningContext;
@@ -414,7 +419,7 @@ function getOllamaModelContextWindow(runCapture, model, opts = {}) {
 
   const showPayload = JSON.stringify({ model });
   const showOutput = runCapture(
-    `curl -sf ${hostUrl}/api/show -H 'Content-Type: application/json' -d ${shellQuote(showPayload)} 2>/dev/null`,
+    `curl -sf --max-time ${LOCAL_PROVIDER_HTTP_TIMEOUT_SECONDS} ${hostUrl}/api/show -H 'Content-Type: application/json' -d ${shellQuote(showPayload)} 2>/dev/null`,
     { ignoreError: true },
   );
   return parseOllamaShowResponse(showOutput);
@@ -457,7 +462,7 @@ function getOllamaModelOptions(runCapture, opts = {}) {
 
   const endpoint = opts.endpoint || resolveOllamaEndpoint(runCapture, opts);
   if (endpoint) {
-    const tags = runCapture(`curl -sf ${endpoint.tagsUrl} 2>/dev/null`, { ignoreError: true });
+    const tags = runCapture(buildTimedCurlSf(endpoint.tagsUrl), { ignoreError: true });
     const apiParsed = parseOllamaTagsResponse(tags);
     if (apiParsed.length > 0) {
       return apiParsed;

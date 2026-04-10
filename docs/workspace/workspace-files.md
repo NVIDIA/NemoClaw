@@ -34,6 +34,7 @@ Each file controls a distinct aspect of the agent's behavior and memory.
 | `IDENTITY.md` | Agent name, creature type, emoji, and self-presentation. | [IDENTITY template](https://docs.openclaw.ai/reference/templates/IDENTITY) |
 | `AGENTS.md` | Multi-agent coordination, memory conventions, and safety guidelines. | [AGENTS template](https://docs.openclaw.ai/reference/templates/AGENTS) |
 | `MEMORY.md` | Curated long-term memory distilled from daily notes. | — |
+| `WIKI.md` | Schema and conventions for the [wiki memory](wiki-memory.md) knowledge base. | — |
 | `memory/` | Directory of daily note files (`YYYY-MM-DD.md`) for session continuity. | — |
 
 ## Where They Live
@@ -47,9 +48,8 @@ All workspace files reside inside the sandbox filesystem:
 ├── MEMORY.md
 ├── SOUL.md
 ├── USER.md
+├── WIKI.md
 └── memory/
-    ├── 2026-03-18.md
-    └── 2026-03-19.md
 ```
 
 :::{note}
@@ -81,6 +81,7 @@ You can edit them in two ways:
 
 ## Next Steps
 
+- [Wiki Memory](wiki-memory.md)
 - [Create Sub-Agents](create-sub-agents.md)
 - [Back Up and Restore workspace files](backup-restore.md)
 - [Commands reference](../reference/commands.md)
