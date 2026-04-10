@@ -7,11 +7,11 @@
 //   ~/.hermes/config.yaml  — Hermes configuration (immutable at runtime)
 //   ~/.hermes/.env         — Messaging token placeholders (immutable at runtime)
 //
-// Only sets what's required for Hermes to run inside OpenShell:
+// Sets what's required for Hermes to run inside OpenShell:
 //   - Model and inference endpoint (custom provider pointing at inference.local)
 //   - API server on internal port (socat forwards to public port)
 //   - Messaging platform tokens (if configured during onboard)
-// Everything else uses Hermes defaults.
+//   - Agent defaults (terminal, memory, skills, display)
 
 import { writeFileSync, chmodSync } from "node:fs";
 import { join } from "node:path";
@@ -43,6 +43,25 @@ function main(): void {
       default: model,
       provider: "custom",
       base_url: baseUrl,
+    },
+    terminal: {
+      backend: "local",
+      timeout: 180,
+    },
+    agent: {
+      max_turns: 60,
+      reasoning_effort: "medium",
+    },
+    memory: {
+      memory_enabled: true,
+      user_profile_enabled: true,
+    },
+    skills: {
+      creation_nudge_interval: 15,
+    },
+    display: {
+      compact: false,
+      tool_progress: "all",
     },
   };
 
@@ -83,8 +102,11 @@ function main(): void {
   writeFileSync(configPath, toYaml(config));
   chmodSync(configPath, 0o600);
 
-  // Write .env — only messaging token placeholders
-  const envLines: string[] = [];
+  // Write .env — API server config and messaging token placeholders
+  const envLines: string[] = [
+    "API_SERVER_PORT=18642",
+    "API_SERVER_HOST=127.0.0.1",
+  ];
   for (const ch of msgChannels) {
     if (ch in TOKEN_ENV) {
       envLines.push(`${TOKEN_ENV[ch]}=openshell:resolve:env:${TOKEN_ENV[ch]}`);

@@ -88,6 +88,17 @@ RUN node --experimental-strip-types /opt/nemoclaw-generate-config.ts
 RUN mkdir -p /sandbox/.hermes-data/plugins/nemoclaw \
     && cp -r /opt/nemoclaw-hermes-plugin/* /sandbox/.hermes-data/plugins/nemoclaw/
 
+# Write a default SOUL.md for the sandboxed agent.
+# Hermes's ensure_hermes_home() expects SOUL.md in the home directory
+# (/sandbox/.hermes/), which is immutable. Write the content to the
+# writable data dir and symlink from the immutable dir.
+RUN printf '%s\n' \
+    'You are a helpful AI assistant running inside an NVIDIA OpenShell sandbox.' \
+    'Your inference is routed through NemoClaw. You have access to terminal,' \
+    'file, and web tools. Be concise and helpful.' \
+    > /sandbox/.hermes-data/memories/SOUL.md \
+    && ln -s /sandbox/.hermes-data/memories/SOUL.md /sandbox/.hermes/SOUL.md
+
 # Lock .hermes via DAC: chown to root so sandbox user cannot modify config.
 # Same pattern as OpenClaw — Landlock provides defense-in-depth.
 # hadolint ignore=DL3002

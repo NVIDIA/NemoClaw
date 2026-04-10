@@ -86,7 +86,12 @@
         "properties": { "protocol": { "const": "rest" } },
         "required": ["protocol"]
       },
-      "then": { "required": ["rules"] }
+      "then": {
+        "anyOf": [
+          { "required": ["rules"] },
+          { "required": ["access"] }
+        ]
+      }
     },
     "rule": {
       "type": "object",

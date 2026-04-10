@@ -9,9 +9,9 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { runCapture } from "../bin/lib/runner";
+import { runCapture } from "../dist/lib/runner";
 
-const runnerPath = path.join(import.meta.dirname, "..", "bin", "lib", "runner");
+const runnerPath = path.join(import.meta.dirname, "..", "dist", "lib", "runner.js");
 
 describe("runner helpers", () => {
   it("does not let child commands consume installer stdin", () => {
