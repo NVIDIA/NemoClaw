@@ -118,6 +118,49 @@ $ openclaw agent --agent jophiel --local -m "Reply with exactly JOPHIEL_OK" --se
 Expected output includes:
 
 ```json
+
+## Optional: Enable GitHub CLI (`gh`) for a Sub-Agent
+
+If you want a sub-agent to run GitHub operations through the GitHub CLI:
+
+1. Ensure the sandbox image includes `gh`.
+2. Authenticate `gh` inside the sandbox.
+3. Verify the target agent can execute a `gh` command.
+
+### 1) Ensure `gh` exists in the sandbox
+
+New sandboxes built from the latest NemoClaw base image include `gh`.
+Existing sandboxes created before that image change must be recreated to pick it up.
+
+Check from a sandbox shell:
+
+```console
+$ command -v gh
+$ gh --version
+```
+
+### 2) Authenticate `gh`
+
+Use token-based auth in the sandbox shell:
+
+```console
+$ export GH_TOKEN=<your-token>
+$ gh auth login --with-token <<<"$GH_TOKEN"
+$ gh auth status
+```
+
+Use a least-privilege token that only grants the repo scopes you need.
+
+### 3) Verify the Agent Can Use `gh`
+
+Run a direct local call using your target agent id:
+
+```console
+$ openclaw agent --agent <agent-id> --local -m "Run 'gh --version' and return only the first line." --session-id verify-agent-gh --json
+```
+
+If this fails with `command not found`, your sandbox image does not yet contain `gh`.
+Recreate the sandbox so it uses the updated base image.
 {
   "payloads": [
     {
@@ -281,6 +324,11 @@ Agent exists, but `main` cannot see or spawn it
 
 Update `main.subagents.allowAgents` in `/tmp/nemoclaw/openclaw.json` to include the agent id or `*`.
 If you want it to survive restart, include a minimal `main` entry with that allowlist in `/sandbox/.nemoclaw/agents-overlay.json`.
+
+`main` is missing or routes to another agent in an older sandbox
+
+Run `nemoclaw <name> repair-main` from the host to rebuild the explicit `main` entry in `/tmp/nemoclaw/openclaw.json` without manual edits.
+Use `--model <model>` if you also want to pin a specific primary model during the repair.
 
 Agent does not appear in the Control UI
 

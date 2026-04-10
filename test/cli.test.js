@@ -124,11 +124,12 @@ describe("CLI dispatch", () => {
     assert.equal(r.code, 0);
     assert.ok(r.out.includes("backup"), "help should mention backup command");
     assert.ok(r.out.includes("restore"), "help should mention restore command");
+    assert.ok(r.out.includes("repair-main"), "help should mention repair-main command");
   });
 
   it("unknown sandbox action mentions dashboard in valid actions", () => {
     const r = run("bogus-sandbox-name bogus-action");
     // Exits 1 (unknown sandbox) or the error path for unknown action
-    assert.ok(r.out.includes("dashboard") || r.out.includes("Unknown command"), "error output should be informative");
+    assert.ok(r.out.includes("dashboard") || r.out.includes("repair-main") || r.out.includes("Unknown command"), "error output should be informative");
   });
 });

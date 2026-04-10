@@ -133,6 +133,20 @@ $ nemoclaw my-assistant restore pre-upgrade
 
 When restoring into a live sandbox, NemoClaw prompts for confirmation before overwriting files inside `/sandbox`.
 
+### `nemoclaw <name> repair-main`
+
+Repair legacy sandbox runtime state so `main` is explicitly present in `agents.list`, points to the default workspace, and uses the current primary inference model.
+Use this when older sandboxes route `main` prompts to another agent or when `main` is missing from runtime state.
+
+```console
+$ nemoclaw my-assistant repair-main
+```
+
+Optional flags:
+
+- `--model <model>` forces a specific primary model during repair.
+- `--skip-verify` skips the post-repair `openclaw agent --agent main` probe.
+
 ### `nemoclaw <name> dashboard`
 
 Print the dashboard access URL(s) for a sandbox.

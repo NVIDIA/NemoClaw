@@ -986,6 +986,162 @@ function sandboxDashboard(sandboxName) {
   console.log("");
 }
 
+function parseRepairMainArgs(args) {
+  const parsed = {
+    model: null,
+    skipVerify: false,
+  };
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--skip-verify") {
+      parsed.skipVerify = true;
+      continue;
+    }
+    if (arg === "--model") {
+      const model = args[i + 1];
+      if (!model) {
+        throw new Error("Missing value for --model.");
+      }
+      parsed.model = model;
+      i += 1;
+      continue;
+    }
+    throw new Error(`Unknown repair-main option: ${arg}`);
+  }
+
+  return parsed;
+}
+
+function sandboxRepairMain(sandboxName, actionArgs = [], options = {}) {
+  const ensureLiveFn = options.ensureLiveSandboxForAction || ensureLiveSandboxForAction;
+  const exitFn = options.exit || process.exit;
+  if (!ensureLiveFn(sandboxName, "repair")) {
+    exitFn(1);
+    return false;
+  }
+
+  const runSandboxScriptFn = options.runSandboxScript || backupStore.runSandboxScript;
+
+  try {
+    const parsed = parseRepairMainArgs(actionArgs);
+    const fallbackModel = parsed.model ? JSON.stringify(parsed.model) : "None";
+    console.log("");
+    console.log(`  Repairing main agent wiring in sandbox '${sandboxName}'...`);
+    const repairScript = `set -eu
+export OPENCLAW_CONFIG_PATH=/tmp/nemoclaw/openclaw.json
+python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+runtime_path = Path('/tmp/nemoclaw/openclaw.json')
+selection_path = Path('/sandbox/.nemoclaw/config.json')
+workspace_path = '/sandbox/.openclaw/workspace'
+agent_dir = '/sandbox/.openclaw/agents/main/agent'
+model_override = ${fallbackModel}
+
+
+def normalize(value):
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
+def ensure_inference_model(raw_model):
+    model = normalize(raw_model)
+    if not model:
+        return None
+    if model.startswith('inference/'):
+        return model
+    return f'inference/{model}'
+
+
+with runtime_path.open() as f:
+    cfg = json.load(f)
+
+agents = cfg.setdefault('agents', {})
+defaults = agents.setdefault('defaults', {})
+model_defaults = defaults.setdefault('model', {})
+
+selection_model = None
+selection = {}
+if selection_path.exists():
+    with selection_path.open() as f:
+        selection = json.load(f)
+    selection_model = normalize(selection.get('model'))
+
+primary_model = ensure_inference_model(model_override) or ensure_inference_model(selection_model) or ensure_inference_model(model_defaults.get('primary')) or 'inference/qwen3.5:9b-64k'
+defaults['workspace'] = workspace_path
+model_defaults['primary'] = primary_model
+
+agent_list = agents.get('list') or []
+new_list = []
+main_entry = {
+    'id': 'main',
+    'name': 'main',
+    'workspace': workspace_path,
+    'agentDir': agent_dir,
+    'model': primary_model,
+    'default': True,
+}
+new_list.append(main_entry)
+
+for entry in agent_list:
+    if not isinstance(entry, dict):
+        continue
+    if entry.get('id') == 'main':
+        continue
+    repaired = dict(entry)
+    repaired['default'] = False
+    new_list.append(repaired)
+
+agents['list'] = new_list
+
+with runtime_path.open('w') as f:
+    json.dump(cfg, f, indent=2)
+    f.write('\n')
+
+if selection:
+    selection['model'] = primary_model.replace('inference/', '', 1)
+    with selection_path.open('w') as f:
+        json.dump(selection, f, indent=2)
+        f.write('\n')
+
+print(json.dumps({
+    'sandbox': '${sandboxName}',
+    'mainModel': primary_model,
+    'mainWorkspace': workspace_path,
+    'mainAgentDir': agent_dir,
+    'selectionModel': selection.get('model') if selection else None,
+    'agentIds': [entry.get('id') for entry in new_list if isinstance(entry, dict)],
+}, indent=2))
+PY
+openclaw agents list --json`;
+
+    runSandboxScriptFn(sandboxName, repairScript, { ignoreError: false });
+
+    if (!parsed.skipVerify) {
+      const verifyScript = `set -eu
+export OPENCLAW_CONFIG_PATH=/tmp/nemoclaw/openclaw.json
+openclaw agent --agent main --local -m 'Reply with exactly MAIN_REPAIR_OK' --session-id verify-main-repair --json`;
+      runSandboxScriptFn(sandboxName, verifyScript, { ignoreError: false });
+    }
+
+    console.log(`  ✓ Repaired main agent wiring in '${sandboxName}'`);
+    if (parsed.skipVerify) {
+      console.log("  Verification was skipped (--skip-verify).");
+    }
+    console.log("");
+    return true;
+  } catch (error) {
+    console.error(`  Failed to repair main agent wiring: ${error.message}`);
+    exitFn(1);
+    return false;
+  }
+}
+
 async function sandboxDestroy(sandboxName, options = {}) {
   const promptFn = options.prompt || require("./lib/credentials").prompt;
   const runFn = options.run || run;
@@ -1050,6 +1206,7 @@ function help() {
     nemoclaw <name> connect          Connect to a sandbox
     nemoclaw <name> backup           Create a full sandbox backup
     nemoclaw <name> restore [id]     Restore a backup into a sandbox
+    nemoclaw <name> repair-main      Restore explicit main agent wiring in older sandboxes
     nemoclaw <name> dashboard        Show dashboard access URL(s)
     nemoclaw <name> status           Show sandbox status and health
     nemoclaw <name> logs [--follow]  View sandbox logs
@@ -1149,6 +1306,7 @@ async function dispatchSandboxAction(cmd, action, actionArgs) {
     case "connect":     sandboxConnect(cmd); break;
     case "backup":      sandboxBackup(cmd, actionArgs); break;
     case "restore":     await sandboxRestore(cmd, actionArgs); break;
+    case "repair-main": sandboxRepairMain(cmd, actionArgs); break;
     case "dashboard":   sandboxDashboard(cmd); break;
     case "status":      sandboxStatus(cmd); break;
     case "logs":        sandboxLogs(cmd, actionArgs.includes("--follow")); break;
@@ -1158,7 +1316,7 @@ async function dispatchSandboxAction(cmd, action, actionArgs) {
     case "destroy":     await sandboxDestroy(cmd); break;
     default:
       console.error(`  Unknown action: ${action}`);
-      console.error(`  Valid actions: connect, backup, restore, dashboard, status, logs, telegram-probe, policy-add, policy-list, destroy`);
+      console.error(`  Valid actions: connect, backup, restore, repair-main, dashboard, status, logs, telegram-probe, policy-add, policy-list, destroy`);
       process.exit(1);
   }
 }
@@ -1195,6 +1353,7 @@ module.exports = {
   printStaleSandboxWarning,
   printSandboxBackups,
   sandboxBackup,
+  sandboxRepairMain,
   sandboxDestroy,
   sandboxRestore,
   showStatus,
