@@ -345,7 +345,6 @@ function readTailState(path: string): TailState {
       entry = JSON.parse(line) as AuditEntry;
     } catch {
       // Skip malformed lines and continue with the last successfully parsed entry.
-      console.error(`readTailState: skipping malformed line in ${path}`);
       continue;
     }
     lastSeq = entry.seq;
