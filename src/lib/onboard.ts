@@ -794,7 +794,7 @@ function parseSandboxInferenceProbe(output) {
         message: compactText(JSON.stringify(parsed.error)) || "inference.local returned an error.",
       };
     }
-    if (Array.isArray(parsed?.choices) || Array.isArray(parsed?.output) || typeof parsed?.id === "string") {
+    if (Array.isArray(parsed?.choices) && parsed.choices.length > 0) {
       return { ok: true };
     }
   } catch {
@@ -899,7 +899,15 @@ function finalizeSandboxInferenceSetup(sandboxName, model, provider, nimContaine
   if (nimContainer) {
     sandboxUpdate.nimContainer = nimContainer;
   }
-  registry.updateSandbox(sandboxName, sandboxUpdate);
+  const updated = registry.updateSandbox(sandboxName, sandboxUpdate);
+  if (!updated) {
+    registry.registerSandbox({
+      name: sandboxName,
+      model,
+      provider,
+      ...(nimContainer ? { nimContainer } : {}),
+    });
+  }
 }
 
 function sandboxExistsInGateway(sandboxName) {
@@ -4925,6 +4933,7 @@ module.exports = {
   setupMessagingChannels,
   setupNim,
   isInferenceRouteReady,
+  finalizeSandboxInferenceSetup,
   verifyLocalSandboxInference,
   isOpenclawReady,
   arePolicyPresetsApplied,

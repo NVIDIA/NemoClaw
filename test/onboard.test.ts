@@ -43,6 +43,7 @@ import {
   summarizeCurlFailure,
   summarizeProbeFailure,
   shouldIncludeBuildContextPath,
+  finalizeSandboxInferenceSetup,
   verifyLocalSandboxInference,
   writeSandboxConfigSyncFile,
 } from "../dist/lib/onboard";
@@ -51,6 +52,7 @@ import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
 
 const require = createRequire(import.meta.url);
 const { getSuggestedPolicyPresets } = require("../dist/lib/onboard.js");
+const registry = require("../dist/lib/registry.js");
 
 describe("onboard helpers", () => {
   it("classifies sandbox create timeout failures and tracks upload progress", () => {
@@ -1437,6 +1439,46 @@ const { setupInference } = require(${onboardPath});
     expect(result.message).toContain("model 'smollm2:135m'");
     expect(result.message).toContain("HTTP 404");
     expect(result.message).toContain("could not serve");
+  });
+
+  it("rejects sandbox probe payloads that are not chat completions responses", () => {
+    const result = verifyLocalSandboxInference("sandbox-box", "smollm2:135m", "ollama-local", () =>
+      ['{"id":"resp-test","output":[{"content":[{"type":"output_text","text":"PONG"}]}]}', "__NEMOCLAW_HTTP_STATUS__:200"].join(
+        "\n",
+      ),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Unexpected inference.local response");
+  });
+
+  it("registers sandbox metadata when updateSandbox cannot find the sandbox entry", () => {
+    const originalUpdateSandbox = registry.updateSandbox;
+    const originalRegisterSandbox = registry.registerSandbox;
+    const registrations = [];
+    registry.updateSandbox = () => false;
+    registry.registerSandbox = (entry) => {
+      registrations.push(entry);
+    };
+
+    try {
+      finalizeSandboxInferenceSetup(
+        "sandbox-box",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia-nim",
+        "nvcr.io/test/container:latest",
+      );
+      expect(registrations).toEqual([
+        {
+          name: "sandbox-box",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          provider: "nvidia-nim",
+          nimContainer: "nvcr.io/test/container:latest",
+        },
+      ]);
+    } finally {
+      registry.updateSandbox = originalUpdateSandbox;
+      registry.registerSandbox = originalRegisterSandbox;
+    }
   });
 
   it("detects when OpenClaw is already configured inside the sandbox", () => {
