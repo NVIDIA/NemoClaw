@@ -313,8 +313,72 @@ function hydrateRestoreCredentialEnv(provider) {
   }
 }
 
+function getRestoreGithubToken() {
+  const credentialToken = getCredential("GITHUB_TOKEN") || getCredential("GH_TOKEN");
+  if (credentialToken) {
+    return credentialToken;
+  }
+  const envToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  if (envToken) {
+    return envToken;
+  }
+  try {
+    const ghToken = execFileSync("gh", ["auth", "token"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return ghToken || null;
+  } catch {
+    return null;
+  }
+}
+
+function syncSandboxGithubTokenEnv(sandboxName, _options = {}) {
+  const logFn = _options.log || console.log;
+  const warnFn = _options.warn || console.warn;
+  const runFn = _options.run || run;
+  const token = _options.githubToken !== undefined ? _options.githubToken : getRestoreGithubToken();
+  if (!token) {
+    return false;
+  }
+
+  const startupSourceLine = "[ -f /sandbox/.nemoclaw/agent-env.sh ] && . /sandbox/.nemoclaw/agent-env.sh";
+  const script = [
+    "set -eu",
+    "mkdir -p /sandbox/.nemoclaw",
+    "cat > /sandbox/.nemoclaw/agent-env.sh <<'EOF_NEMO_GH_TOKEN'",
+    `export GH_TOKEN=${shellQuote(token)}`,
+    `export GITHUB_TOKEN=${shellQuote(token)}`,
+    "EOF_NEMO_GH_TOKEN",
+    "chmod 600 /sandbox/.nemoclaw/agent-env.sh",
+    "for rc in ~/.bashrc ~/.profile; do",
+    "  [ -f \"$rc\" ] || touch \"$rc\"",
+      `  grep -qF ${shellQuote(startupSourceLine)} "$rc" || printf '\\n${startupSourceLine}\\n' >> "$rc"`,
+    "done",
+    ". /sandbox/.nemoclaw/agent-env.sh",
+    "exit",
+  ].join("\n");
+
+  const result = runFn(`cat <<'EOF_NEMO_GH_SYNC' | openshell sandbox connect ${shellQuote(sandboxName)}\n${script}\nEOF_NEMO_GH_SYNC`, {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+  });
+
+  if (result.status === 0) {
+    logFn("  ✓ Synced GitHub token into sandbox environment");
+    return true;
+  }
+
+  warnFn("  Could not sync GitHub token into sandbox environment automatically.");
+  return false;
+}
+
 
 async function configureSandboxFromBackupManifest(sandboxName, manifest, _options = {}) {
+  const syncGithubTokenEnvFn = _options.syncGithubTokenEnv || syncSandboxGithubTokenEnv;
+  syncGithubTokenEnvFn(sandboxName, _options);
+
   const currentEntry = registry.getSandbox(sandboxName) || {};
   const manifestEntry = (manifest && manifest.registry) || {};
   const registryEntry = {
@@ -1356,6 +1420,7 @@ if (require.main === module) {
 module.exports = {
   ensureLiveSandboxForAction,
   configureSandboxFromBackupManifest,
+  syncSandboxGithubTokenEnv,
   getServiceSandboxEnv,
   getGatewayClusterContainerName,
   getStaleSandboxWarningLines,

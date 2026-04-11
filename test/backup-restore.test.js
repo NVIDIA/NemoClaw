@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { sandboxBackup, sandboxRestore } from "../bin/nemoclaw.js";
+import { sandboxBackup, sandboxRestore, syncSandboxGithubTokenEnv } from "../bin/nemoclaw.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -134,5 +134,37 @@ describe("sandbox restore command", () => {
     const printed = logSpy.mock.calls.map((args) => args.join(" ")).join("\n");
     expect(printed).toContain("Restore will overwrite files inside sandbox 'the-crucible'");
     expect(printed).toContain("Cancelled.");
+  });
+});
+
+describe("restore token sync", () => {
+  it("writes GitHub token environment when a token is available", () => {
+    const runFn = vi.fn().mockReturnValue({ status: 0 });
+    const logFn = vi.fn();
+    const warnFn = vi.fn();
+
+    const result = syncSandboxGithubTokenEnv("the-crucible", {
+      githubToken: "gho_test_token",
+      run: runFn,
+      log: logFn,
+      warn: warnFn,
+    });
+
+    expect(result).toBe(true);
+    expect(runFn).toHaveBeenCalledTimes(1);
+    expect(logFn).toHaveBeenCalledWith("  ✓ Synced GitHub token into sandbox environment");
+    expect(warnFn).not.toHaveBeenCalled();
+  });
+
+  it("skips sync when no GitHub token is available", () => {
+    const runFn = vi.fn();
+
+    const result = syncSandboxGithubTokenEnv("the-crucible", {
+      githubToken: "",
+      run: runFn,
+    });
+
+    expect(result).toBe(false);
+    expect(runFn).not.toHaveBeenCalled();
   });
 });
