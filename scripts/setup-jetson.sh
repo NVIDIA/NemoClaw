@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+SUDO=()
+((EUID != 0)) && SUDO=(sudo)
+
 info() {
   printf "[INFO]  %s\n" "$*"
 }
@@ -17,6 +20,8 @@ get_jetpack_version() {
   local release_line release revision l4t_version
 
   release_line="$(head -n1 /etc/nv_tegra_release 2>/dev/null || true)"
+  [[ -n "$release_line" ]] || return 0
+
   release="$(printf '%s\n' "$release_line" | sed -n 's/^# R\([0-9][0-9]*\) (release).*/\1/p')"
   revision="$(printf '%s\n' "$release_line" | sed -n 's/^.*REVISION: \([0-9][0-9]*\)\..*$/\1/p')"
   l4t_version="${release}.${revision}"
@@ -25,8 +30,11 @@ get_jetpack_version() {
     36.*)
       printf "%s" "jp6"
       ;;
-    38.2 | 38.4)
+    38.*)
       printf "%s" "jp7"
+      ;;
+    *)
+      info "Jetson detected (L4T $l4t_version) but version is not recognized — skipping host setup"
       ;;
   esac
 }
@@ -36,25 +44,43 @@ configure_jetson_host() {
 
   if ((EUID != 0)); then
     info "Jetson host configuration requires sudo. You may be prompted for your password."
-    sudo -v >/dev/null || error "Sudo is required to apply Jetson host configuration."
+    "${SUDO[@]}" true >/dev/null || error "Sudo is required to apply Jetson host configuration."
   fi
 
   case "$jetpack_version" in
     jp6)
-      sudo update-alternatives --set iptables /usr/sbin/iptables-legacy
-      sudo sed -i '/"iptables": false,/d; /"bridge": "none"/d; s/"default-runtime": "nvidia",/"default-runtime": "nvidia"/' /etc/docker/daemon.json
+      "${SUDO[@]}" update-alternatives --set iptables /usr/sbin/iptables-legacy
+      if [[ -f /etc/docker/daemon.json ]]; then
+        if command -v jq >/dev/null 2>&1; then
+          local tmp_daemon
+          tmp_daemon="$(mktemp)"
+          "${SUDO[@]}" jq 'del(.iptables, .bridge) | .["default-runtime"] = "nvidia"' \
+            /etc/docker/daemon.json >"$tmp_daemon" \
+            && "${SUDO[@]}" mv "$tmp_daemon" /etc/docker/daemon.json
+        else
+          error "jq is required to safely patch /etc/docker/daemon.json — install it with: apt-get install -y jq"
+        fi
+      else
+        info "/etc/docker/daemon.json not found; skipping Docker daemon patch"
+      fi
       ;;
-    jp7) ;;
+    jp7)
+      # JP7 (Thor) does not need iptables or Docker daemon.json changes.
+      ;;
     *)
       error "Unsupported Jetson version: $jetpack_version"
       ;;
   esac
 
-  sudo modprobe br_netfilter
-  sudo sysctl -w net.bridge.bridge-nf-call-iptables=1 >/dev/null
+  "${SUDO[@]}" modprobe br_netfilter
+  "${SUDO[@]}" sysctl -w net.bridge.bridge-nf-call-iptables=1 >/dev/null
+
+  # Persist across reboots
+  echo "br_netfilter" | "${SUDO[@]}" tee /etc/modules-load.d/nemoclaw.conf >/dev/null
+  echo "net.bridge.bridge-nf-call-iptables=1" | "${SUDO[@]}" tee /etc/sysctl.d/99-nemoclaw.conf >/dev/null
 
   if [[ "$jetpack_version" == "jp6" ]]; then
-    sudo systemctl restart docker
+    "${SUDO[@]}" systemctl restart docker
   fi
 }
 
@@ -63,7 +89,7 @@ main() {
   jetpack_version="$(get_jetpack_version)"
   [[ -n "$jetpack_version" ]] || exit 0
 
-  info "Jetson detected — applying required host configuration"
+  info "Jetson detected ($jetpack_version) — applying required host configuration"
   configure_jetson_host "$jetpack_version"
 }
 

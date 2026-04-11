@@ -629,10 +629,11 @@ describe("regression guards", () => {
       );
     });
 
-    it("scripts/setup-jetson.sh exists", () => {
-      expect(fs.existsSync(path.join(import.meta.dirname, "..", "scripts", "setup-jetson.sh"))).toBe(
-        true,
-      );
+    it("scripts/setup-jetson.sh exists and is executable", () => {
+      const scriptPath = path.join(import.meta.dirname, "..", "scripts", "setup-jetson.sh");
+      expect(fs.existsSync(scriptPath)).toBe(true);
+      const mode = fs.statSync(scriptPath).mode;
+      expect((mode & 0o111) !== 0).toBe(true);
     });
 
     it("services no longer tell users to install brev-setup.sh", () => {
