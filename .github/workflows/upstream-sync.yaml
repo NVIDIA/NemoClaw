@@ -119,6 +119,7 @@ jobs:
           FILES_CHANGED=$(git diff --stat "main..${{ steps.branch.outputs.branch }}" | tail -1)
 
           gh pr create \
+            --repo "${{ github.repository }}" \
             --base main \
             --head "${{ steps.branch.outputs.branch }}" \
             --title "merge: upstream NVIDIA/NemoClaw main ${{ steps.branch.outputs.date }}" \
@@ -150,6 +151,7 @@ jobs:
           CONFLICTS=$(cat /tmp/conflicts.txt)
 
           gh issue create \
+            --repo "${{ github.repository }}" \
             --title "Upstream sync conflicts — ${{ steps.branch.outputs.date }}" \
             --body "## Merge Conflict
 
