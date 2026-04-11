@@ -1189,7 +1189,6 @@ main() {
 
   _INSTALL_START=$SECONDS
   print_banner
-  step 0 "Jetson Setup"
   bash "${SCRIPT_DIR}/setup-jetson.sh"
 
   step 1 "Node.js"
