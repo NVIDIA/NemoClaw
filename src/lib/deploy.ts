@@ -14,6 +14,7 @@ export interface DeployCredentials {
   COMPATIBLE_ANTHROPIC_API_KEY?: string | null;
   GITHUB_TOKEN?: string | null;
   TELEGRAM_BOT_TOKEN?: string | null;
+  ALLOWED_CHAT_IDS?: string | null;
   DISCORD_BOT_TOKEN?: string | null;
   SLACK_BOT_TOKEN?: string | null;
 }
@@ -132,7 +133,12 @@ export function buildDeployEnvLines(opts: {
   }
 
   for (const [key, value] of Object.entries(credentials)) {
-    if (value) envLines.push(`${key}=${shellQuote(value)}`);
+    if (!value || key === "ALLOWED_CHAT_IDS") continue;
+    envLines.push(`${key}=${shellQuote(value)}`);
+  }
+
+  if (credentials.TELEGRAM_BOT_TOKEN && credentials.ALLOWED_CHAT_IDS) {
+    envLines.push(`ALLOWED_CHAT_IDS=${shellQuote(credentials.ALLOWED_CHAT_IDS)}`);
   }
 
   return envLines;
@@ -252,6 +258,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     COMPATIBLE_ANTHROPIC_API_KEY: getCredential("COMPATIBLE_ANTHROPIC_API_KEY"),
     GITHUB_TOKEN: getCredential("GITHUB_TOKEN"),
     TELEGRAM_BOT_TOKEN: getCredential("TELEGRAM_BOT_TOKEN"),
+    ALLOWED_CHAT_IDS: getCredential("ALLOWED_CHAT_IDS"),
     DISCORD_BOT_TOKEN: getCredential("DISCORD_BOT_TOKEN"),
     SLACK_BOT_TOKEN: getCredential("SLACK_BOT_TOKEN"),
   };

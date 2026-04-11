@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -36,16 +36,10 @@ describe("http-probe helpers", () => {
   });
 
   it("captures successful curl output and cleans up the temp file", () => {
-    const countProbeDirs = () =>
-      fs
-        .readdirSync(os.tmpdir())
-        .filter((entry) => entry.startsWith("nemoclaw-curl-probe-"))
-        .sort();
-
-    const before = countProbeDirs();
+    let outputPath = "";
     const result = runCurlProbe(["-sS", "https://example.test/models"], {
       spawnSyncImpl: (_command, args) => {
-        const outputPath = args[args.indexOf("-o") + 1];
+        outputPath = args[args.indexOf("-o") + 1];
         fs.writeFileSync(outputPath, JSON.stringify({ data: [{ id: "foo" }] }));
         return {
           pid: 1,
@@ -57,7 +51,6 @@ describe("http-probe helpers", () => {
         };
       },
     });
-    const after = countProbeDirs();
 
     expect(result).toMatchObject({
       ok: true,
@@ -65,7 +58,9 @@ describe("http-probe helpers", () => {
       curlStatus: 0,
       body: '{"data":[{"id":"foo"}]}',
     });
-    expect(after).toEqual(before);
+    expect(outputPath).not.toBe("");
+    expect(fs.existsSync(outputPath)).toBe(false);
+    expect(fs.existsSync(path.dirname(outputPath))).toBe(false);
   });
 
   it("reports spawn errors as curl failures", () => {
