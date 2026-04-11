@@ -12,6 +12,9 @@
 # Fix (three steps):
 #   1. Run a Python DNS forwarder on the pod-side veth gateway IP
 #      (10.200.0.1:53), forwarding to the real CoreDNS pod IP.
+#      The forwarder must support both UDP and TCP: some upstreams
+#      (notably Azure/OpenAI endpoints with long CNAME chains) return
+#      truncated UDP answers and require TCP fallback.
 #   2. Add an iptables rule in the sandbox namespace to allow UDP
 #      to the gateway on port 53 (the only non-proxy exception).
 #      Sandbox images may not have iptables on PATH, so we probe
@@ -104,37 +107,110 @@ echo "Setting up DNS proxy in pod '$POD' (${VETH_GW}:53 -> ${DNS_UPSTREAM})..."
 # ── Step 1: Write DNS forwarder to the pod ──────────────────────────
 
 kctl exec -n openshell "$POD" -- sh -c "cat > /tmp/dns-proxy.py << 'DNSPROXY'
-import socket, threading, os, sys
+import os, socket, sys, threading
 
 UPSTREAM = (sys.argv[1] if len(sys.argv) > 1 else '8.8.8.8', 53)
 BIND_IP = sys.argv[2] if len(sys.argv) > 2 else '0.0.0.0'
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-sock.bind((BIND_IP, 53))
+LOG_PATH = '/tmp/dns-proxy.log'
+PID_PATH = '/tmp/dns-proxy.pid'
 
-with open('/tmp/dns-proxy.pid', 'w') as pf:
-    pf.write(str(os.getpid()))
+def log(msg):
+    print(msg, flush=True)
+    with open(LOG_PATH, 'a') as logf:
+        logf.write(msg + '\n')
 
-msg = 'dns-proxy: {}:53 -> {}:{} pid={}'.format(BIND_IP, UPSTREAM[0], UPSTREAM[1], os.getpid())
-print(msg, flush=True)
-with open('/tmp/dns-proxy.log', 'w') as log:
-    log.write(msg + '\n')
+def recv_exact(sock, size):
+    buf = bytearray()
+    while len(buf) < size:
+        chunk = sock.recv(size - len(buf))
+        if not chunk:
+            return None
+        buf.extend(chunk)
+    return bytes(buf)
 
-def forward(data, addr):
+def forward_udp(udp_sock, data, addr):
     try:
-        f = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        f.settimeout(5)
-        f.sendto(data, UPSTREAM)
-        r, _ = f.recvfrom(4096)
-        sock.sendto(r, addr)
-        f.close()
-    except Exception:
-        pass
+        upstream = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        upstream.settimeout(5)
+        upstream.sendto(data, UPSTREAM)
+        response, _ = upstream.recvfrom(65535)
+        udp_sock.sendto(response, addr)
+        upstream.close()
+    except Exception as exc:
+        log('dns-proxy udp error: {}'.format(exc))
 
-while True:
-    d, a = sock.recvfrom(4096)
-    threading.Thread(target=forward, args=(d, a), daemon=True).start()
+def udp_server():
+    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    udp_sock.bind((BIND_IP, 53))
+    while True:
+        data, addr = udp_sock.recvfrom(65535)
+        threading.Thread(target=forward_udp, args=(udp_sock, data, addr), daemon=True).start()
+
+def handle_tcp(client_sock):
+    upstream = None
+    try:
+        upstream = socket.create_connection(UPSTREAM, timeout=5)
+        upstream.settimeout(5)
+        while True:
+            length_bytes = recv_exact(client_sock, 2)
+            if not length_bytes:
+                break
+            length = int.from_bytes(length_bytes, 'big')
+            payload = recv_exact(client_sock, length)
+            if payload is None:
+                break
+            upstream.sendall(length_bytes + payload)
+
+            response_len = recv_exact(upstream, 2)
+            if not response_len:
+                break
+            response_size = int.from_bytes(response_len, 'big')
+            response = recv_exact(upstream, response_size)
+            if response is None:
+                break
+            client_sock.sendall(response_len + response)
+    except Exception as exc:
+        log('dns-proxy tcp error: {}'.format(exc))
+    finally:
+        try:
+            client_sock.close()
+        except Exception:
+            pass
+        if upstream is not None:
+            try:
+                upstream.close()
+            except Exception:
+                pass
+
+def tcp_server():
+    tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    tcp_sock.bind((BIND_IP, 53))
+    tcp_sock.listen(64)
+    while True:
+        client_sock, _ = tcp_sock.accept()
+        threading.Thread(target=handle_tcp, args=(client_sock,), daemon=True).start()
+
+with open(PID_PATH, 'w') as pf:
+    pf.write(str(os.getpid()))
+with open(LOG_PATH, 'w') as logf:
+    logf.write('')
+
+msg = 'dns-proxy: {}:53 -> {}:{} pid={} protocols=udp,tcp'.format(
+    BIND_IP, UPSTREAM[0], UPSTREAM[1], os.getpid()
+)
+log(msg)
+
+threading.Thread(target=udp_server, daemon=True).start()
+try:
+    tcp_server()
+except KeyboardInterrupt:
+    pass
+except Exception as exc:
+    log('dns-proxy fatal error: {}'.format(exc))
+    raise
 DNSPROXY"
 
 # ── Step 2: Kill any existing DNS proxy ─────────────────────────────

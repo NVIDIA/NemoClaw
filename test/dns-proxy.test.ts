@@ -54,7 +54,16 @@ describe("setup-dns-proxy.sh", () => {
     const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
     expect(content).toContain("dns-proxy.py");
     expect(content).toContain("socket.SOCK_DGRAM");
+    expect(content).toContain("socket.SOCK_STREAM");
     expect(content).toContain("kctl exec");
+  });
+
+  it("supports TCP DNS fallback for large responses", () => {
+    const content = fs.readFileSync(SETUP_DNS_PROXY, "utf-8");
+    expect(content).toContain("protocols=udp,tcp");
+    expect(content).toContain("recv_exact");
+    expect(content).toContain("tcp_server");
+    expect(content).toContain("handle_tcp");
   });
 
   it("uses kubectl exec (not nsenter) to launch the forwarder", () => {
