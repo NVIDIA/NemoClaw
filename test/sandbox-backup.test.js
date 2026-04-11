@@ -23,21 +23,25 @@ describe("sandbox-backup restore", () => {
   it("builds backup archive script with ignore-failed-read", () => {
     const script = buildBackupArchiveScript();
 
-    expect(script).toContain("tar czf '/tmp/nemoclaw-sandbox-backup.tar.gz' --ignore-failed-read -C / sandbox");
+    expect(script).toContain(
+      "tar czf '/tmp/nemoclaw-sandbox-backup.tar.gz' --ignore-failed-read -C / sandbox",
+    );
   });
 
   it("builds a stop script that waits for the gateway to exit", () => {
     const script = buildGatewayStopScript();
 
     expect(script).toContain("pidof -s openclaw");
-    expect(script).toContain("kill \"$pid\"");
+    expect(script).toContain('kill "$pid"');
     expect(script).toContain("Timed out waiting for the OpenClaw gateway to stop.");
   });
 
   it("builds a start script that relaunches the sandbox entrypoint", () => {
     const script = buildGatewayStartScript();
 
-    expect(script).toContain("nohup '/usr/local/bin/nemoclaw-start' >/tmp/gateway.log 2>&1 </dev/null &");
+    expect(script).toContain(
+      "nohup '/usr/local/bin/nemoclaw-start' >/tmp/gateway.log 2>&1 </dev/null &",
+    );
     expect(script).toContain("Timed out waiting for the OpenClaw gateway to start.");
   });
 });

@@ -34,9 +34,11 @@ describe("sandbox backup command", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     const result = sandboxBackup("the-crucible", ["--list"], {
-      listBackups: vi.fn().mockReturnValue([
-        { id: "pre-upgrade", createdAt: "2026-03-28T10:20:30Z", sizeBytes: 1024 },
-      ]),
+      listBackups: vi
+        .fn()
+        .mockReturnValue([
+          { id: "pre-upgrade", createdAt: "2026-03-28T10:20:30Z", sizeBytes: 1024 },
+        ]),
       exit: null,
     });
 
@@ -94,7 +96,10 @@ describe("sandbox restore command", () => {
 
     expect(ensureGateway).toHaveBeenCalled();
     expect(createSandbox).toHaveBeenCalledWith(true, null, null, null, "the-crucible");
-    expect(restoreBackup).toHaveBeenCalledWith("the-crucible", "/tmp/backups/the-crucible/pre-upgrade");
+    expect(restoreBackup).toHaveBeenCalledWith(
+      "the-crucible",
+      "/tmp/backups/the-crucible/pre-upgrade",
+    );
     expect(configureSandbox).toHaveBeenCalledWith(
       "the-crucible",
       {
@@ -105,9 +110,13 @@ describe("sandbox restore command", () => {
           policies: ["telegram"],
         },
       },
-      { backupDir: "/tmp/backups/the-crucible/pre-upgrade" }
+      { backupDir: "/tmp/backups/the-crucible/pre-upgrade" },
     );
-    expect(result).toEqual({ sandboxName: "the-crucible", backupId: "pre-upgrade", recreated: true });
+    expect(result).toEqual({
+      sandboxName: "the-crucible",
+      backupId: "pre-upgrade",
+      recreated: true,
+    });
     const printed = logSpy.mock.calls.map((args) => args.join(" ")).join("\n");
     expect(printed).toContain("Recreating sandbox 'the-crucible' from backup 'pre-upgrade'");
     expect(printed).toContain("Restoring backup 'pre-upgrade' into sandbox 'the-crucible'");

@@ -32,17 +32,18 @@ function getDiscordBridgeToken(sandboxName, fsModule = fs) {
 }
 
 function getDiscordProbeToken(env = process.env, getCredentialFn = getCredential, options = {}) {
-  return env.DISCORD_BOT_TOKEN
-    || getCredentialFn("DISCORD_BOT_TOKEN")
-    || getDiscordBridgeToken(options.sandboxName, options.fsModule)
-    || null;
+  return (
+    env.DISCORD_BOT_TOKEN ||
+    getCredentialFn("DISCORD_BOT_TOKEN") ||
+    getDiscordBridgeToken(options.sandboxName, options.fsModule) ||
+    null
+  );
 }
 
 function buildDiscordProbeScript(options = {}) {
   const token = options.token ? String(options.token) : "";
-  const tokenAssignment = token.length > 0
-    ? `DISCORD_BOT_TOKEN=${shellQuote(token)}`
-    : "DISCORD_BOT_TOKEN=''";
+  const tokenAssignment =
+    token.length > 0 ? `DISCORD_BOT_TOKEN=${shellQuote(token)}` : "DISCORD_BOT_TOKEN=''";
 
   return `
 set -u
@@ -376,10 +377,12 @@ function buildDiscordProbeCommand(sandboxName, options = {}) {
 }
 
 function runDiscordProbe(sandboxName, options = {}) {
-  const token = options.token ?? getDiscordProbeToken(options.env, options.getCredential, {
-    sandboxName,
-    fsModule: options.fsModule,
-  });
+  const token =
+    options.token ??
+    getDiscordProbeToken(options.env, options.getCredential, {
+      sandboxName,
+      fsModule: options.fsModule,
+    });
   const command = buildDiscordProbeCommand(sandboxName, { token });
   return spawnSync("bash", ["-lc", command], {
     stdio: "inherit",

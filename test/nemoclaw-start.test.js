@@ -23,7 +23,9 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(src).toMatch(/RUNTIME_CONFIG_PATH="\$\{RUNTIME_CONFIG_DIR\}\/openclaw\.json"/);
     expect(src).toMatch(/prepare_runtime_config/);
     expect(src).toMatch(/export OPENCLAW_CONFIG_PATH="\$RUNTIME_CONFIG_PATH"/);
-    expect(src).toMatch(/gosu gateway env OPENCLAW_CONFIG_PATH="\$OPENCLAW_CONFIG_PATH" "\$OPENCLAW" gateway run/);
+    expect(src).toMatch(
+      /gosu gateway env OPENCLAW_CONFIG_PATH="\$OPENCLAW_CONFIG_PATH" "\$OPENCLAW" gateway run/,
+    );
   });
 
   it("merges persisted agent overlays into the runtime config", () => {
@@ -40,11 +42,19 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(src).toMatch(/defaults_cfg\['workspace'\] = default_workspace/);
     expect(src).toMatch(/'id': 'main'/);
     expect(src).toMatch(/'agentDir': '\/sandbox\/.openclaw\/agents\/main\/agent'/);
-    expect(src).toMatch(/agents_cfg\['list'\] = merge_agent_lists\(\[main_entry\], existing_agents\)/);
-    expect(src).toMatch(/merged\[positions\[agent_id\]\] = merge_agent_entries\(merged\[positions\[agent_id\]\], agent\)/);
+    expect(src).toMatch(
+      /agents_cfg\['list'\] = merge_agent_lists\(\[main_entry\], existing_agents\)/,
+    );
+    expect(src).toMatch(
+      /merged\[positions\[agent_id\]\] = merge_agent_entries\(merged\[positions\[agent_id\]\], agent\)/,
+    );
     expect(src).toMatch(/overlay_agents = load_overlay_agents\(overlay_path\)/);
-    expect(src).toMatch(/cfg_agents\['list'\] = merge_agent_lists\(existing_agents, overlay_agents\)/);
+    expect(src).toMatch(
+      /cfg_agents\['list'\] = merge_agent_lists\(existing_agents, overlay_agents\)/,
+    );
     expect(src).toMatch(/ensure_primary_agent_config\(cfg\)/);
-    expect(src).toMatch(/if os\.path\.exists\(selection_path\):[\s\S]*with open\(runtime_path, 'w'\) as f:[\s\S]*else:[\s\S]*with open\(runtime_path, 'w'\) as f:/);
+    expect(src).toMatch(
+      /if os\.path\.exists\(selection_path\):[\s\S]*with open\(runtime_path, 'w'\) as f:[\s\S]*else:[\s\S]*with open\(runtime_path, 'w'\) as f:/,
+    );
   });
 });

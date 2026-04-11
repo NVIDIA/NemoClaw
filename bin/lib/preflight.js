@@ -72,10 +72,7 @@ async function checkPortAvailable(port, opts) {
     } else {
       const hasLsof = runCapture("command -v lsof", { ignoreError: true });
       if (hasLsof) {
-        lsofOut = runCapture(
-          `lsof -i :${p} -sTCP:LISTEN -P -n 2>/dev/null`,
-          { ignoreError: true }
-        );
+        lsofOut = runCapture(`lsof -i :${p} -sTCP:LISTEN -P -n 2>/dev/null`, { ignoreError: true });
       }
     }
 

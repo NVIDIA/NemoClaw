@@ -11,7 +11,7 @@ Usage:
 Make sure to run this script using the following command to generate the skills and keep the locations and names consistent.
 
 ```bash
-python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw
+python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
 ```
 
 What it does:
@@ -34,22 +34,23 @@ What it does:
 
 Naming:
   Use --prefix to keep skill names consistent across the project. The prefix
-  is prepended to every generated skill name (e.g. --prefix nemoclaw produces
-  nemoclaw-get-started, nemoclaw-manage-policy). Action verbs are derived
+  is prepended to every generated skill name (e.g. --prefix nemoclaw-user produces
+  nemoclaw-user-get-started, nemoclaw-user-manage-policy). Action verbs are derived
   automatically from page titles and content types. Use --name-map to
   override specific names when the heuristic doesn't produce the right result.
 
 Usage:
-    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw
-    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw --dry-run
-    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --strategy individual --prefix nemoclaw
-    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw --name-map about=overview
-    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw --exclude "release-notes.md"
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --dry-run
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --strategy individual --prefix nemoclaw-user
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --name-map about=overview
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --exclude "release-notes.md"
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -119,6 +120,7 @@ class DocPage:
     # Derived fields populated after parsing
     title: str = ""
     description: str = ""
+    description_is_agent: bool = False
     content_type: str = ""  # concept, how_to, reference, get_started, tutorial
     difficulty: str = ""
     keywords: list[str] = field(default_factory=list)
@@ -223,7 +225,17 @@ def parse_doc(path: Path) -> DocPage:
     elif isinstance(title_block, str):
         page.title = title_block
 
-    page.description = fm.get("description", "")
+    desc = fm.get("description", "")
+    if isinstance(desc, dict):
+        main = str(desc.get("main") or "").strip()
+        agent = str(desc.get("agent") or "").strip()
+        if agent:
+            page.description = agent
+            page.description_is_agent = True
+        else:
+            page.description = main
+    else:
+        page.description = str(desc or "").strip()
     page.keywords = fm.get("keywords", [])
     page.tags = fm.get("tags", [])
 
@@ -541,47 +553,6 @@ def _safe_truncation_point(lines: list[str], target: int) -> int:
     return last_safe
 
 
-def extract_trigger_keywords(pages: list[DocPage]) -> list[str]:
-    """Build trigger keywords from doc metadata across a group of pages."""
-    keywords: set[str] = set()
-
-    for page in pages:
-        keywords.update(page.keywords)
-        for tag in page.tags:
-            keywords.add(tag.replace("_", " "))
-
-        # Extract meaningful words from the title
-        if page.title:
-            title_words = re.sub(r"[^a-zA-Z\s]", "", page.title).lower().split()
-            stop_words = {
-                "the",
-                "a",
-                "an",
-                "and",
-                "or",
-                "for",
-                "to",
-                "in",
-                "of",
-                "it",
-                "how",
-                "what",
-                "with",
-                "from",
-                "by",
-                "on",
-                "is",
-            }
-            title_words = [w for w in title_words if w not in stop_words and len(w) > 2]
-            if len(title_words) >= 2:
-                keywords.add(" ".join(title_words[:4]))
-
-    # Remove duplicates of the skill name itself and generic terms
-    generic = {"generative_ai", "generative ai", "ai_agents", "ai agents", "published"}
-    keywords -= generic
-    return sorted(keywords)[:15]  # Cap at 15 keywords
-
-
 TITLE_VERBS = {
     "customize": "manage",
     "approve": "manage",
@@ -792,39 +763,55 @@ def generate_skill_name(
     return name
 
 
-def build_skill_description(
-    name: str, pages: list[DocPage], keywords: list[str]
-) -> str:
+BRAND_WORDS: dict[str, str] = {
+    "nemoclaw": "NemoClaw",
+    "openclaw": "OpenClaw",
+    "openshell": "OpenShell",
+    "nvidia": "NVIDIA",
+    "gpu": "GPU",
+    "cli": "CLI",
+    "tui": "TUI",
+    "api": "API",
+    "llm": "LLM",
+    "llms": "LLMs",
+}
+
+
+def _brand_case(text: str) -> str:
+    """Replace generic title-cased words with their brand-correct forms."""
+    for wrong, right in BRAND_WORDS.items():
+        text = re.sub(rf"\b{re.escape(wrong)}\b", right, text, flags=re.IGNORECASE)
+    return text
+
+
+def build_skill_description(name: str, pages: list[DocPage]) -> str:
     """Build the description field for the skill frontmatter.
 
-    Best-practices compliance:
-    - Uses third-person voice (e.g. "Installs..." not "Install...")
-    - Includes "Use when..." clause instead of flat "Trigger keywords -" list
-    - Keeps description under 1024 characters
+    When a page supplies ``description.agent``, its text is used verbatim.
+    Legacy flat descriptions are still converted to third-person voice.
+    Keeps description under 1024 characters.
     """
-    descriptions = [p.description for p in pages if p.description]
+    descriptions = [
+        d if is_agent else _to_third_person(d)
+        for d, is_agent in ((p.description, p.description_is_agent) for p in pages if p.description)
+    ]
     if descriptions:
-        combined = _to_third_person(descriptions[0]).rstrip(".")
-        if len(descriptions) > 1:
-            extras = []
-            for d in descriptions[1:3]:
-                clean = _to_third_person(d).rstrip(".")
-                if clean:
-                    clean = clean[0].lower() + clean[1:]
-                extras.append(clean)
-            combined += ". Also covers " + "; ".join(extras) + "."
-        else:
-            combined += "."
+        combined = " ".join(d.rstrip().rstrip(".") + "." for d in descriptions)
     else:
         combined = f"Documentation-derived skill for {name.replace('-', ' ')}."
-
-    kw_list = keywords[:8]
-    if kw_list:
-        combined += " Use when " + ", ".join(kw_list) + "."
 
     if len(combined) > 1024:
         combined = combined[:1020] + "..."
     return combined
+
+
+def yaml_scalar(value: str) -> str:
+    """Return a YAML-safe quoted scalar using JSON string escaping.
+
+    JSON strings are valid YAML 1.2 double-quoted scalars, which makes this a
+    lightweight way to safely emit frontmatter without adding a YAML library.
+    """
+    return json.dumps(value, ensure_ascii=False)
 
 
 def _to_third_person(sentence: str) -> str:
@@ -890,6 +877,17 @@ CONTENT_TYPE_ROLE = {
 }
 
 
+def markdown_spdx_header() -> str:
+    """Return the SPDX header for generated Markdown files."""
+    return "\n".join(
+        [
+            "<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->",
+            "<!-- SPDX-License-Identifier: Apache-2.0 -->",
+            "",
+        ]
+    )
+
+
 def generate_skill(
     name: str,
     pages: list[DocPage],
@@ -904,8 +902,7 @@ def generate_skill(
     Writes identical output to each directory in *output_dirs*.
     Returns a summary dict for reporting.
     """
-    keywords = extract_trigger_keywords(pages)
-    description = build_skill_description(name, pages, keywords)
+    description = build_skill_description(name, pages)
 
     def _clean(text: str, source: DocPage) -> str:
         """Apply directive cleanup and path rewriting for a source page."""
@@ -933,13 +930,15 @@ def generate_skill(
 
     # Frontmatter
     lines.append("---")
-    lines.append(f"name: {name}")
-    lines.append(f"description: {description}")
+    lines.append(f"name: {yaml_scalar(name)}")
+    lines.append(f"description: {yaml_scalar(description)}")
     lines.append("---")
+    lines.append("")
+    lines.append(markdown_spdx_header().rstrip("\n"))
     lines.append("")
 
     # Title
-    skill_title = name.replace("-", " ").title()
+    skill_title = _brand_case(name.replace("-", " ").title())
     lines.append(f"# {skill_title}")
     lines.append("")
 
@@ -1031,7 +1030,7 @@ def generate_skill(
         lines.append("")
         for rp in reference_pages:
             ref_name = rp.path.stem + ".md"
-            title = rp.title or rp.path.stem.replace("-", " ").title()
+            title = rp.title or _brand_case(rp.path.stem.replace("-", " ").title())
             lines.append(f"- [{title}](references/{ref_name})")
         lines.append("")
 
@@ -1095,12 +1094,15 @@ def generate_skill(
             skill_md.rstrip("\n") + "\n", encoding="utf-8"
         )
 
+        spdx_ref = markdown_spdx_header()
+
+
         if ref_files:
             refs_dir = skill_dir / "references"
             refs_dir.mkdir(exist_ok=True)
             for fname, content in ref_files.items():
                 (refs_dir / fname).write_text(
-                    content.rstrip("\n") + "\n", encoding="utf-8"
+                    spdx_ref + content.rstrip("\n") + "\n", encoding="utf-8"
                 )
 
     return summary
@@ -1208,10 +1210,10 @@ def main():
               smart       Group by directory, merge concept pages as context
 
             Examples:
-              %(prog)s docs/ .agents/skills/ --prefix nemoclaw
-              %(prog)s docs/ .agents/skills/ --strategy individual --prefix nemoclaw
-              %(prog)s docs/ .agents/skills/ --prefix nemoclaw --name-map about=overview
-              %(prog)s docs/ .agents/skills/ --prefix nemoclaw --dry-run
+              %(prog)s docs/ .agents/skills/ --prefix nemoclaw-user
+              %(prog)s docs/ .agents/skills/ --strategy individual --prefix nemoclaw-user
+              %(prog)s docs/ .agents/skills/ --prefix nemoclaw-user --name-map about=overview
+              %(prog)s docs/ .agents/skills/ --prefix nemoclaw-user --dry-run
         """),
     )
     parser.add_argument(

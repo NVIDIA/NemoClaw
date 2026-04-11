@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/schemas/blueprint.schema.json",
+  "title": "NemoClaw Blueprint",
+  "description": "Schema for nemoclaw-blueprint/blueprint.yaml — defines sandbox orchestration, inference profiles, and policy configuration.",
+  "type": "object",
+  "required": ["version", "profiles", "components"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Semver version of the blueprint."
+    },
+    "min_openshell_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Minimum compatible OpenShell version."
+    },
+    "min_openclaw_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Minimum compatible OpenClaw version."
+    },
+    "digest": {
+      "type": "string",
+      "description": "Computed at release time."
+    },
+    "profiles": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Declared inference profile names."
+    },
+    "description": {
+      "type": "string"
+    },
+    "components": {
+      "type": "object",
+      "required": ["sandbox", "inference"],
+      "additionalProperties": false,
+      "properties": {
+        "sandbox": {
+          "type": "object",
+          "required": ["image", "name"],
+          "additionalProperties": false,
+          "properties": {
+            "image": {
+              "type": "string",
+              "description": "Container image for the sandbox."
+            },
+            "name": {
+              "type": "string",
+              "description": "Default sandbox name."
+            },
+            "forward_ports": {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 1, "maximum": 65535 }
+            }
+          }
+        },
+        "inference": {
+          "type": "object",
+          "required": ["profiles"],
+          "additionalProperties": false,
+          "properties": {
+            "profiles": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "$ref": "#/$defs/inferenceProfile"
+              }
+            }
+          }
+        },
+        "policy": {
+          "type": "object",
+          "required": ["base"],
+          "additionalProperties": false,
+          "properties": {
+            "base": {
+              "type": "string",
+              "description": "Path to the base sandbox policy file."
+            },
+            "additions": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/policyAddition"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "inferenceProfile": {
+      "type": "object",
+      "required": ["provider_type", "endpoint"],
+      "additionalProperties": false,
+      "properties": {
+        "provider_type": { "type": "string" },
+        "provider_name": { "type": "string" },
+        "endpoint": { "type": "string" },
+        "model": { "type": "string" },
+        "credential_env": { "type": "string" },
+        "credential_default": { "type": "string" },
+        "timeout_secs": { "type": "integer", "minimum": 1 },
+        "dynamic_endpoint": { "type": "boolean" }
+      }
+    },
+    "policyAddition": {
+      "type": "object",
+      "required": ["name", "endpoints"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "endpoints": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/endpoint" },
+          "minItems": 1
+        }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "required": ["host", "port"],
+      "additionalProperties": false,
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "protocol": { "type": "string", "enum": ["rest"] },
+        "enforcement": { "type": "string", "enum": ["enforce", "audit"] },
+        "tls": { "type": "string", "enum": ["terminate", "passthrough"] },
+        "access": { "type": "string", "enum": ["full"] },
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rule" },
+          "minItems": 1
+        }
+      },
+      "if": {
+        "properties": { "protocol": { "const": "rest" } },
+        "required": ["protocol"]
+      },
+      "then": { "required": ["rules"] }
+    },
+    "rule": {
+      "type": "object",
+      "required": ["allow"],
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "object",
+          "required": ["method", "path"],
+          "additionalProperties": false,
+          "properties": {
+            "method": {
+              "type": "string",
+              "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+            },
+            "path": {
+              "type": "string",
+              "pattern": "^/"
+            }
+          }
+        }
+      }
+    }
+  }
+}

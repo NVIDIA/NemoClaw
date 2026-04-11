@@ -170,9 +170,9 @@ if [ "$(uname -s)" = "Darwin" ]; then
   fi
 fi
 
-if command -v ollama > /dev/null 2>&1 && ! check_local_provider_health "ollama-local"; then
+if command -v ollama >/dev/null 2>&1 && ! check_local_provider_health "ollama-local"; then
   info "Starting Ollama service..."
-  OLLAMA_HOST=0.0.0.0:11434 ollama serve > /dev/null 2>&1 &
+  OLLAMA_HOST=0.0.0.0:11434 ollama serve >/dev/null 2>&1 &
   sleep 2
 fi
 

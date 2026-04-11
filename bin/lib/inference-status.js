@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-function getInferenceRuntimeStatus(sandbox = {}, nimStatusResolver = () => ({ running: false, healthy: false })) {
+function getInferenceRuntimeStatus(
+  sandbox = {},
+  nimStatusResolver = () => ({ running: false, healthy: false }),
+) {
   const provider = sandbox.provider || "unknown";
   const providerBaseUrl = sandbox.providerBaseUrl || null;
 
@@ -18,7 +21,9 @@ function getInferenceRuntimeStatus(sandbox = {}, nimStatusResolver = () => ({ ru
     const nimStatus = nimStatusResolver();
     if (sandbox.nimContainer || nimStatus.running) {
       const nimValue = nimStatus.running
-        ? (nimStatus.container ? `running (${nimStatus.container})` : "running")
+        ? nimStatus.container
+          ? `running (${nimStatus.container})`
+          : "running"
         : "not running";
       const lines = [
         {

@@ -11,11 +11,12 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
 // Use a stable dirname for both CJS and ESM-like runners without self-referencing TDZ.
-const TEST_DIR = typeof globalThis.__dirname === "string"
-  ? globalThis.__dirname
-  : (typeof import.meta !== "undefined" && import.meta.url
+const TEST_DIR =
+  typeof globalThis.__dirname === "string"
+    ? globalThis.__dirname
+    : typeof import.meta !== "undefined" && import.meta.url
       ? path.dirname(new URL(import.meta.url).pathname)
-      : process.cwd());
+      : process.cwd();
 const { spawnSync } = require("node:child_process");
 
 const {
@@ -35,16 +36,16 @@ const {
 describe("onboard helpers", () => {
   it("classifies sandbox create timeout failures and tracks upload progress", () => {
     expect(
-      classifySandboxCreateFailure("Error: failed to read image export stream\nTimeout error").kind
+      classifySandboxCreateFailure("Error: failed to read image export stream\nTimeout error").kind,
     ).toBe("image_transfer_timeout");
     expect(
       classifySandboxCreateFailure(
         [
-          "  Pushing image openshell/sandbox-from:123 into gateway \"nemoclaw\"",
+          '  Pushing image openshell/sandbox-from:123 into gateway "nemoclaw"',
           "  [progress] Uploaded to gateway",
           "Error: failed to read image export stream",
-        ].join("\n")
-      )
+        ].join("\n"),
+      ),
     ).toEqual({
       kind: "image_transfer_timeout",
       uploadedToGateway: true,
@@ -52,15 +53,17 @@ describe("onboard helpers", () => {
   });
 
   it("classifies sandbox create connection resets and incomplete create streams", () => {
-    expect(classifySandboxCreateFailure("Connection reset by peer").kind).toBe("image_transfer_reset");
+    expect(classifySandboxCreateFailure("Connection reset by peer").kind).toBe(
+      "image_transfer_reset",
+    );
     expect(
       classifySandboxCreateFailure(
         [
           "  Image openshell/sandbox-from:123 is available in the gateway.",
           "Created sandbox: my-assistant",
           "Error: stream closed unexpectedly",
-        ].join("\n")
-      )
+        ].join("\n"),
+      ),
     ).toEqual({
       kind: "sandbox_create_incomplete",
       uploadedToGateway: true,
@@ -78,7 +81,10 @@ describe("onboard helpers", () => {
     );
 
     assert.equal(result.fatal, false);
-    assert.match(result.message, /Continuing because the inference route is configured and the model may still be loading\./);
+    assert.match(
+      result.message,
+      /Continuing because the inference route is configured and the model may still be loading\./,
+    );
   });
 
   it("builds a sandbox sync script that only writes nemoclaw config", () => {
@@ -97,7 +103,10 @@ describe("onboard helpers", () => {
     assert.match(script, /"model": "nemotron-3-nano:30b"/);
     assert.match(script, /"credentialEnv": "OPENAI_API_KEY"/);
     assert.match(script, /openclaw models set 'inference\/nemotron-3-nano:30b'/);
-    assert.match(script, /cfg\.setdefault\('agents', {}\)\.setdefault\('defaults', {}\)\.setdefault\('model', {}\)\['primary'\]/);
+    assert.match(
+      script,
+      /cfg\.setdefault\('agents', {}\)\.setdefault\('defaults', {}\)\.setdefault\('model', {}\)\['primary'\]/,
+    );
     assert.match(script, /providers_cfg\["inference"\]/);
     assert.match(script, /providers_cfg\["inference"\]\s*=\s*json\.loads\(/);
     assert.match(script, /inference\/nemotron-3-nano:30b/);
@@ -152,26 +161,26 @@ describe("onboard helpers", () => {
     });
 
     assert.match(script, /openclaw models set 'inference\/qwen3\.5:35b-a3b'/);
-      assert.match(script, /"contextWindow"\s*:\s*8192/);
-      assert.match(script, /"maxTokens"\s*:\s*4096/);
+    assert.match(script, /"contextWindow"\s*:\s*8192/);
+    assert.match(script, /"maxTokens"\s*:\s*4096/);
   });
 
   it("merges Control UI allowed origins into the sandbox OpenClaw config", () => {
-    const script = buildSandboxConfigSyncScript({
-      endpointType: "custom",
-      endpointUrl: "https://inference.local/v1",
-      ncpPartner: null,
-      model: "qwen3.5:9b-64k",
-      profile: "inference-local",
-      credentialEnv: "OPENAI_API_KEY",
-      provider: "ollama-local",
-      onboardedAt: "2026-03-22T18:00:00.000Z",
-    }, {
-      controlUiAllowedOrigins: [
-        "http://127.0.0.1:18789",
-        "http://172.18.117.56:18789",
-      ],
-    });
+    const script = buildSandboxConfigSyncScript(
+      {
+        endpointType: "custom",
+        endpointUrl: "https://inference.local/v1",
+        ncpPartner: null,
+        model: "qwen3.5:9b-64k",
+        profile: "inference-local",
+        credentialEnv: "OPENAI_API_KEY",
+        provider: "ollama-local",
+        onboardedAt: "2026-03-22T18:00:00.000Z",
+      },
+      {
+        controlUiAllowedOrigins: ["http://127.0.0.1:18789", "http://172.18.117.56:18789"],
+      },
+    );
 
     assert.match(script, /control_ui_allowed_origins = json\.loads/);
     assert.match(script, /allowedOrigins/);
@@ -194,10 +203,7 @@ describe("onboard helpers", () => {
   });
 
   it("builds an authenticated WSL dashboard URL", () => {
-    const url = buildAuthenticatedDashboardUrl(
-      "http://172.18.117.56:18789",
-      "abc123",
-    );
+    const url = buildAuthenticatedDashboardUrl("http://172.18.117.56:18789", "abc123");
 
     assert.equal(
       url,
@@ -306,9 +312,7 @@ describe("onboard helpers", () => {
       runCapture: () => "",
     });
 
-    assert.deepEqual(access, [
-      { label: "Dashboard", url: "http://127.0.0.1:18789/" },
-    ]);
+    assert.deepEqual(access, [{ label: "Dashboard", url: "http://127.0.0.1:18789/" }]);
   });
 
   it("parses the real token line when command source text is echoed", () => {
@@ -319,10 +323,9 @@ describe("onboard helpers", () => {
       runCapture: (command) => {
         if (command.includes("hostname -I")) return "172.18.117.56";
         if (command.includes("NEMOCLAW_GATEWAY_TOKEN=")) {
-          return [
-            "print(f'NEMOCLAW_GATEWAY_TOKEN={token}')",
-            "NEMOCLAW_GATEWAY_TOKEN=abc123",
-          ].join("\n");
+          return ["print(f'NEMOCLAW_GATEWAY_TOKEN={token}')", "NEMOCLAW_GATEWAY_TOKEN=abc123"].join(
+            "\n",
+          );
         }
         return "";
       },
@@ -341,17 +344,20 @@ describe("onboard helpers", () => {
   });
 
   it("prints explicit WSL guidance when the direct WSL IP URL is available", () => {
-    const guidance = getDashboardGuidanceLines([
-      { label: "Dashboard", url: "http://127.0.0.1:18789/" },
+    const guidance = getDashboardGuidanceLines(
+      [
+        { label: "Dashboard", url: "http://127.0.0.1:18789/" },
+        {
+          label: "VS Code/WSL",
+          url: "http://172.18.117.56:18789/?gatewayUrl=ws%3A%2F%2F172.18.117.56%3A18789#token=abc123",
+        },
+      ],
       {
-        label: "VS Code/WSL",
-        url: "http://172.18.117.56:18789/?gatewayUrl=ws%3A%2F%2F172.18.117.56%3A18789#token=abc123",
+        env: { WSL_DISTRO_NAME: "Ubuntu-24.04" },
+        platform: "linux",
+        release: "5.15.167.4-microsoft-standard-WSL2",
       },
-    ], {
-      env: { WSL_DISTRO_NAME: "Ubuntu-24.04" },
-      platform: "linux",
-      release: "5.15.167.4-microsoft-standard-WSL2",
-    });
+    );
 
     assert.deepEqual(guidance, [
       "WSL/Win     If Windows cannot load http://127.0.0.1:18789/, use the VS Code/WSL URL above exactly as printed.",
@@ -360,13 +366,14 @@ describe("onboard helpers", () => {
   });
 
   it("does not print WSL guidance on non-WSL hosts", () => {
-    const guidance = getDashboardGuidanceLines([
-      { label: "Dashboard", url: "http://127.0.0.1:18789/" },
-    ], {
-      env: {},
-      platform: "linux",
-      release: "6.8.0-generic",
-    });
+    const guidance = getDashboardGuidanceLines(
+      [{ label: "Dashboard", url: "http://127.0.0.1:18789/" }],
+      {
+        env: {},
+        platform: "linux",
+        release: "6.8.0-generic",
+      },
+    );
 
     assert.deepEqual(guidance, []);
   });
@@ -459,8 +466,14 @@ const { createSandbox } = require(${onboardPath});
     const payload = JSON.parse(output);
     assert.equal(payload.result, "my-assistant");
     assert.equal(payload.prompts.length, 1);
-    assert.ok(payload.spawnCommands.some((command) => command.includes("bash -lc openshell sandbox create")));
-    assert.ok(payload.commands.some((command) => command.includes("openshell forward start --background")));
+    assert.ok(
+      payload.spawnCommands.some((command) =>
+        command.includes("bash -lc openshell sandbox create"),
+      ),
+    );
+    assert.ok(
+      payload.commands.some((command) => command.includes("openshell forward start --background")),
+    );
     assert.ok(payload.lines.some((line) => line.includes("Detected stale local sandbox entry")));
     assert.ok(payload.lines.some((line) => line.includes("OpenShell does not have this sandbox")));
     assert.ok(payload.sandbox);
@@ -544,10 +557,26 @@ const { createSandbox } = require(${onboardPath});
     assert.equal(payload.prompts.length, 1);
     assert.equal(payload.spawnCommands.length, 0);
     assert.equal(payload.commands.length, 0);
-    assert.ok(payload.lines.some((line) => line.includes("Found existing OpenShell sandbox 'my-assistant'.")));
-    assert.ok(payload.lines.some((line) => line.includes("Syncing local NemoClaw state before continuing.")));
-    assert.ok(payload.lines.some((line) => line.includes("Found existing OpenShell sandbox 'my-assistant'.")));
-    assert.ok(payload.lines.some((line) => line.includes("Sandbox 'my-assistant' already exists and is ready.")));
+    assert.ok(
+      payload.lines.some((line) =>
+        line.includes("Found existing OpenShell sandbox 'my-assistant'."),
+      ),
+    );
+    assert.ok(
+      payload.lines.some((line) =>
+        line.includes("Syncing local NemoClaw state before continuing."),
+      ),
+    );
+    assert.ok(
+      payload.lines.some((line) =>
+        line.includes("Found existing OpenShell sandbox 'my-assistant'."),
+      ),
+    );
+    assert.ok(
+      payload.lines.some((line) =>
+        line.includes("Sandbox 'my-assistant' already exists and is ready."),
+      ),
+    );
     assert.ok(payload.lines.some((line) => line.includes("Reusing existing sandbox.")));
     assert.equal(payload.sandbox.name, "my-assistant");
   });

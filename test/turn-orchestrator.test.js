@@ -22,13 +22,15 @@ const {
 
 describe("turn orchestrator helpers", () => {
   it("derives the route model from inference-qualified models", () => {
-    expect(deriveRouteModel({ agent: "jophiel", model: "inference/phi4-mini:latest" })).toBe("phi4-mini:latest");
+    expect(deriveRouteModel({ agent: "jophiel", model: "inference/phi4-mini:latest" })).toBe(
+      "phi4-mini:latest",
+    );
   });
 
   it("requires routeModel for non-inference qualified models", () => {
-    expect(() => deriveRouteModel({ agent: "main", model: "nvidia/nemotron-3-super-120b-a12b" })).toThrow(
-      /cannot be mapped/
-    );
+    expect(() =>
+      deriveRouteModel({ agent: "main", model: "nvidia/nemotron-3-super-120b-a12b" }),
+    ).toThrow(/cannot be mapped/);
   });
 
   it("renders transcript context into later prompts", () => {
@@ -36,13 +38,21 @@ describe("turn orchestrator helpers", () => {
       sandbox: "the-crucible",
       task: "Review the feature.",
       turns: [
-        { agent: "jophiel", model: "inference/glm-4.6v-flash-9b", instructions: "Produce critique." },
+        {
+          agent: "jophiel",
+          model: "inference/glm-4.6v-flash-9b",
+          instructions: "Produce critique.",
+        },
       ],
     });
 
     const message = renderTurnMessage(
       plan,
-      { agent: "gabriel", model: "inference/phi4-mini:latest", instructions: "Audit the transcript." },
+      {
+        agent: "gabriel",
+        model: "inference/phi4-mini:latest",
+        instructions: "Audit the transcript.",
+      },
       [
         {
           agent: "jophiel",
@@ -51,7 +61,7 @@ describe("turn orchestrator helpers", () => {
           prompt: "Prompt one",
           responseText: "First answer",
         },
-      ]
+      ],
     );
 
     expect(message).toContain("Prior turn transcript:");
@@ -61,7 +71,10 @@ describe("turn orchestrator helpers", () => {
   });
 
   it("acquires and releases a stale sandbox lock", () => {
-    const lockPath = path.join(os.tmpdir(), `turn-orchestrator-test-${process.pid}-${Date.now()}.lock`);
+    const lockPath = path.join(
+      os.tmpdir(),
+      `turn-orchestrator-test-${process.pid}-${Date.now()}.lock`,
+    );
     fs.writeFileSync(lockPath, JSON.stringify({ pid: 99999999 }));
 
     const lock = acquireLock(lockPath);
@@ -108,9 +121,9 @@ describe("turn orchestrator helpers", () => {
         message: "Reply with exactly OK",
         sessionId: "session-main",
         timeoutSeconds: 120,
-      })
+      }),
     ).toBe(
-      "openclaw agent --agent 'main' --local --timeout 120 --session-id 'session-main' --json -m 'Reply with exactly OK'"
+      "openclaw agent --agent 'main' --local --timeout 120 --session-id 'session-main' --json -m 'Reply with exactly OK'",
     );
   });
 
@@ -121,9 +134,9 @@ describe("turn orchestrator helpers", () => {
         message: "Reply with exactly OK",
         sessionId: "session-jophiel",
         timeoutSeconds: 120,
-      })
+      }),
     ).toBe(
-      "openclaw agent --agent 'jophiel' --local --timeout 120 --session-id 'session-jophiel' --json -m 'Reply with exactly OK'"
+      "openclaw agent --agent 'jophiel' --local --timeout 120 --session-id 'session-jophiel' --json -m 'Reply with exactly OK'",
     );
   });
 });
@@ -138,7 +151,11 @@ describe("orchestrateTurns", () => {
       task: "Prepare a final answer.",
       turns: [
         { agent: "jophiel", model: "inference/glm-4.6v-flash-9b", instructions: "Ideate." },
-        { agent: "gabriel", model: "inference/phi4-mini:latest", instructions: "Audit the previous answer." },
+        {
+          agent: "gabriel",
+          model: "inference/phi4-mini:latest",
+          instructions: "Audit the previous answer.",
+        },
       ],
     };
 
@@ -166,7 +183,10 @@ describe("orchestrateTurns", () => {
       { provider: "ollama-local", model: "qwen2.5-coder:7b-64k" },
     ]);
     expect(prompts[1].message).toContain("JOPHIEL_OK");
-    expect(result.restoredRoute).toEqual({ model: "qwen2.5-coder:7b-64k", provider: "ollama-local" });
+    expect(result.restoredRoute).toEqual({
+      model: "qwen2.5-coder:7b-64k",
+      provider: "ollama-local",
+    });
   });
 
   it("preserves a partial report when a later turn fails", async () => {
@@ -182,7 +202,10 @@ describe("orchestrateTurns", () => {
 
     await expect(
       orchestrateTurns(plan, {
-        lockPath: path.join(os.tmpdir(), `turn-orchestrator-${process.pid}-${Date.now()}-fail.lock`),
+        lockPath: path.join(
+          os.tmpdir(),
+          `turn-orchestrator-${process.pid}-${Date.now()}-fail.lock`,
+        ),
         runtime: {
           getCurrentRoute: () => ({ model: "qwen2.5-coder:7b-64k", provider: "ollama-local" }),
           runAgentTurn: ({ agent }) => {
@@ -196,14 +219,12 @@ describe("orchestrateTurns", () => {
           },
           setRoute: () => {},
         },
-      })
+      }),
     ).rejects.toMatchObject({
       name: TurnOrchestrationError.name,
       result: {
         error: { message: "agent timeout" },
-        turns: [
-          expect.objectContaining({ agent: "jophiel", responseText: "JOPHIEL_OK" }),
-        ],
+        turns: [expect.objectContaining({ agent: "jophiel", responseText: "JOPHIEL_OK" })],
       },
     });
   });

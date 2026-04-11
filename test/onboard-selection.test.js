@@ -35,7 +35,7 @@ done
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -107,7 +107,9 @@ const { setupNim } = require(${onboardPath});
 
   it("accepts a manually entered NVIDIA Endpoints model after validating it against /models", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-build-model-selection-"));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-build-model-selection-"),
+    );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "build-model-selection-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
@@ -134,7 +136,7 @@ fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const script = String.raw`
@@ -227,7 +229,7 @@ fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const script = String.raw`
@@ -284,8 +286,13 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.model, "z-ai/glm5");
-    assert.equal(payload.messages.filter((message) => /NVIDIA Endpoints model id:/.test(message)).length, 2);
-    assert.ok(payload.lines.some((line) => line.includes("is not available from NVIDIA Endpoints")));
+    assert.equal(
+      payload.messages.filter((message) => /NVIDIA Endpoints model id:/.test(message)).length,
+      2,
+    );
+    assert.ok(
+      payload.lines.some((line) => line.includes("is not available from NVIDIA Endpoints")),
+    );
   });
 
   it("shows curated Gemini models and supports Other for manual entry", () => {
@@ -321,7 +328,7 @@ fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const script = String.raw`
@@ -407,7 +414,7 @@ done
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const script = String.raw`
@@ -471,8 +478,12 @@ const { setupNim } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
     assert.equal(payload.result.preferredInferenceApi, "openai-responses");
-    assert.ok(payload.lines.some((line) => line.includes("Loading Ollama model: nemotron-3-nano:30b")));
-    assert.ok(payload.commands.some((command) => command.includes("http://localhost:11434/api/generate")));
+    assert.ok(
+      payload.lines.some((line) => line.includes("Loading Ollama model: nemotron-3-nano:30b")),
+    );
+    assert.ok(
+      payload.commands.some((command) => command.includes("http://localhost:11434/api/generate")),
+    );
   });
 
   it("offers starter Ollama models when none are installed and pulls the selected model", () => {
@@ -501,7 +512,7 @@ done
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
     fs.writeFileSync(
       path.join(fakeBin, "ollama"),
@@ -512,7 +523,7 @@ if [ "$1" = "pull" ]; then
 fi
 exit 0
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const script = String.raw`
@@ -572,7 +583,9 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "ollama-local");
     assert.equal(payload.result.model, "qwen2.5:7b");
     assert.ok(payload.lines.some((line) => line.includes("Ollama starter models:")));
-    assert.ok(payload.lines.some((line) => line.includes("No local Ollama models are installed yet")));
+    assert.ok(
+      payload.lines.some((line) => line.includes("No local Ollama models are installed yet")),
+    );
     assert.ok(payload.lines.some((line) => line.includes("Pulling Ollama model: qwen2.5:7b")));
     assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen2.5:7b");
   });
@@ -603,7 +616,7 @@ done
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
     fs.writeFileSync(
       path.join(fakeBin, "ollama"),
@@ -617,7 +630,7 @@ if [ "$1" = "pull" ]; then
 fi
 exit 0
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const script = String.raw`
@@ -676,8 +689,14 @@ const { setupNim } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
     assert.equal(payload.result.model, "llama3.2:3b");
-    assert.ok(payload.lines.some((line) => line.includes("Failed to pull Ollama model 'qwen2.5:7b'")));
-    assert.ok(payload.lines.some((line) => line.includes("Choose a different Ollama model or select Other.")));
+    assert.ok(
+      payload.lines.some((line) => line.includes("Failed to pull Ollama model 'qwen2.5:7b'")),
+    );
+    assert.ok(
+      payload.lines.some((line) =>
+        line.includes("Choose a different Ollama model or select Other."),
+      ),
+    );
     assert.equal(payload.messages.filter((message) => /Ollama model id:/.test(message)).length, 1);
     assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen2.5:7b\nllama3.2:3b");
   });
@@ -713,7 +732,7 @@ fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const script = String.raw`
@@ -771,7 +790,9 @@ const { setupNim } = require(${onboardPath});
 
   it("reprompts for an Anthropic Other model when /v1/models validation rejects it", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-anthropic-model-retry-"));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-anthropic-model-retry-"),
+    );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "anthropic-model-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
@@ -794,7 +815,7 @@ done
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const script = String.raw`
@@ -846,13 +867,18 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.model, "claude-haiku-4-5");
-    assert.equal(payload.messages.filter((message) => /Anthropic model id:/.test(message)).length, 2);
+    assert.equal(
+      payload.messages.filter((message) => /Anthropic model id:/.test(message)).length,
+      2,
+    );
     assert.ok(payload.lines.some((line) => line.includes("is not available from Anthropic")));
   });
 
   it("returns to provider selection when Anthropic live validation fails interactively", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-anthropic-validation-retry-"));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-anthropic-validation-retry-"),
+    );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "anthropic-validation-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
@@ -884,7 +910,7 @@ fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const script = String.raw`
@@ -967,7 +993,7 @@ done
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const script = String.raw`
@@ -1059,7 +1085,7 @@ fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const script = String.raw`
@@ -1113,16 +1139,33 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "compatible-endpoint");
     assert.equal(payload.result.model, "good-model");
     assert.equal(payload.result.preferredInferenceApi, "openai-responses");
-    assert.ok(payload.lines.some((line) => line.includes("Other OpenAI-compatible endpoint endpoint validation failed")));
-    assert.ok(payload.lines.some((line) => line.includes("Please enter a different Other OpenAI-compatible endpoint model name.")));
-    assert.equal(payload.messages.filter((message) => /OpenAI-compatible base URL/.test(message)).length, 1);
-    assert.equal(payload.messages.filter((message) => /Other OpenAI-compatible endpoint model/.test(message)).length, 2);
+    assert.ok(
+      payload.lines.some((line) =>
+        line.includes("Other OpenAI-compatible endpoint endpoint validation failed"),
+      ),
+    );
+    assert.ok(
+      payload.lines.some((line) =>
+        line.includes("Please enter a different Other OpenAI-compatible endpoint model name."),
+      ),
+    );
+    assert.equal(
+      payload.messages.filter((message) => /OpenAI-compatible base URL/.test(message)).length,
+      1,
+    );
+    assert.equal(
+      payload.messages.filter((message) => /Other OpenAI-compatible endpoint model/.test(message))
+        .length,
+      2,
+    );
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
   });
 
   it("reprompts only for model name when Other Anthropic-compatible endpoint validation fails", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-custom-anthropic-retry-"));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-custom-anthropic-retry-"),
+    );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "custom-anthropic-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
@@ -1152,7 +1195,7 @@ fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const script = String.raw`
@@ -1206,10 +1249,26 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "compatible-anthropic-endpoint");
     assert.equal(payload.result.model, "good-claude");
     assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
-    assert.ok(payload.lines.some((line) => line.includes("Other Anthropic-compatible endpoint endpoint validation failed")));
-    assert.ok(payload.lines.some((line) => line.includes("Please enter a different Other Anthropic-compatible endpoint model name.")));
-    assert.equal(payload.messages.filter((message) => /Anthropic-compatible base URL/.test(message)).length, 1);
-    assert.equal(payload.messages.filter((message) => /Other Anthropic-compatible endpoint model/.test(message)).length, 2);
+    assert.ok(
+      payload.lines.some((line) =>
+        line.includes("Other Anthropic-compatible endpoint endpoint validation failed"),
+      ),
+    );
+    assert.ok(
+      payload.lines.some((line) =>
+        line.includes("Please enter a different Other Anthropic-compatible endpoint model name."),
+      ),
+    );
+    assert.equal(
+      payload.messages.filter((message) => /Anthropic-compatible base URL/.test(message)).length,
+      1,
+    );
+    assert.equal(
+      payload.messages.filter((message) =>
+        /Other Anthropic-compatible endpoint model/.test(message),
+      ).length,
+      2,
+    );
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
   });
 
@@ -1246,7 +1305,7 @@ fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 }
+      { mode: 0o755 },
     );
 
     const script = String.raw`

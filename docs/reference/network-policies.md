@@ -1,8 +1,10 @@
 ---
 title:
-  page: "NemoClaw Network Policies — Baseline Rules and Operator Approval"
+  page: "NemoClaw Network Policies: Baseline Rules and Operator Approval"
   nav: "Network Policies"
-description: "Baseline network policy, filesystem rules, and operator approval flow."
+description:
+  main: "Baseline network policy, filesystem rules, and operator approval flow."
+  agent: "Documents baseline network policy, filesystem rules, and operator approval flow. Use when reviewing default network policies, understanding egress controls, or looking up the approval flow."
 keywords: ["nemoclaw network policy", "sandbox egress control operator approval"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "network_policy", "security"]
@@ -54,31 +56,21 @@ The following endpoint groups are allowed by default:
 * - `claude_code`
   - `api.anthropic.com:443`, `statsig.anthropic.com:443`, `sentry.io:443`
   - `/usr/local/bin/claude`
-  - All methods
+  - POST to inference paths on `api.anthropic.com`, POST on `statsig.anthropic.com`, GET only on `sentry.io`
 
 * - `nvidia`
   - `integrate.api.nvidia.com:443`, `inference-api.nvidia.com:443`
   - `/usr/local/bin/claude`, `/usr/local/bin/openclaw`
-  - All methods
-
-* - `github`
-  - `github.com:443`
-  - `/usr/bin/gh`, `/usr/bin/git`
-  - All methods, all paths
-
-* - `github_rest_api`
-  - `api.github.com:443`
-  - `/usr/bin/gh`
-  - GET, POST, PATCH, PUT, DELETE
+  - POST to inference and embedding paths, GET to model listings
 
 * - `clawhub`
-  - `clawhub.com:443`
-  - `/usr/local/bin/openclaw`
+  - `clawhub.ai:443`
+  - `/usr/local/bin/openclaw`, `/usr/local/bin/node`
   - GET, POST
 
 * - `openclaw_api`
   - `openclaw.ai:443`
-  - `/usr/local/bin/openclaw`
+  - `/usr/local/bin/openclaw`, `/usr/local/bin/node`
   - GET, POST
 
 * - `openclaw_docs`
@@ -88,17 +80,18 @@ The following endpoint groups are allowed by default:
 
 * - `npm_registry`
   - `registry.npmjs.org:443`
-  - `/usr/local/bin/openclaw`, `/usr/local/bin/npm`
+  - `/usr/local/bin/openclaw`, `/usr/local/bin/npm`, `/usr/local/bin/node`
   - GET only
-
-* - `telegram`
-  - `api.telegram.org:443`
-  - Any binary
-  - GET, POST on `/bot*/**`
 
 :::
 
 All endpoints use TLS termination and are enforced at port 443.
+
+:::{note}
+GitHub access (`github.com`, `api.github.com`) is not included in the baseline policy.
+Apply the `github` preset during onboarding if your agent needs GitHub access.
+See [Customize the Network Policy](../network-policy/customize-network-policy.md).
+:::
 
 ### Inference
 

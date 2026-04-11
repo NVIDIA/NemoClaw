@@ -34,11 +34,14 @@ describe("inference runtime status", () => {
 
   it("reports NIM when a managed NIM container is present", () => {
     assert.deepEqual(
-      getInferenceRuntimeStatus({
-        name: "assistant",
-        provider: "vllm-local",
-        nimContainer: "nim-assistant",
-      }, () => ({ running: true, healthy: true, container: "nim-assistant" })),
+      getInferenceRuntimeStatus(
+        {
+          name: "assistant",
+          provider: "vllm-local",
+          nimContainer: "nim-assistant",
+        },
+        () => ({ running: true, healthy: true, container: "nim-assistant" }),
+      ),
       [
         { label: "NIM", value: "running (nim-assistant)" },
         { label: "Healthy", value: "yes" },

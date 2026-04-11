@@ -33,8 +33,9 @@ esac
 
 info "Detected $OS_LABEL ($ARCH_LABEL)"
 
-# Minimum version required for cgroup v2 fix (NVIDIA/OpenShell#329)
-MIN_VERSION="0.0.7"
+# Minimum version required for sandbox persistence across gateway restarts
+# (deterministic k3s node name + workspace PVC: NVIDIA/OpenShell#739, #488)
+MIN_VERSION="0.0.24"
 
 version_gte() {
   # Returns 0 (true) if $1 >= $2 — portable, no sort -V (BSD compat)
@@ -79,13 +80,32 @@ esac
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
-if command -v gh >/dev/null 2>&1; then
-  GH_TOKEN="${GITHUB_TOKEN:-}" gh release download --repo NVIDIA/OpenShell \
-    --pattern "$ASSET" --dir "$tmpdir"
-else
+CHECKSUM_FILE="openshell-checksums-sha256.txt"
+download_with_curl() {
   curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/latest/download/$ASSET" \
     -o "$tmpdir/$ASSET"
+  curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/latest/download/$CHECKSUM_FILE" \
+    -o "$tmpdir/$CHECKSUM_FILE"
+}
+
+if command -v gh >/dev/null 2>&1; then
+  if GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" gh release download --repo NVIDIA/OpenShell \
+    --pattern "$ASSET" --dir "$tmpdir" 2>/dev/null \
+    && GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" gh release download --repo NVIDIA/OpenShell \
+      --pattern "$CHECKSUM_FILE" --dir "$tmpdir" 2>/dev/null; then
+    : # gh succeeded
+  else
+    warn "gh CLI download failed (auth may not be configured) — falling back to curl"
+    rm -f "$tmpdir/$ASSET" "$tmpdir/$CHECKSUM_FILE"
+    download_with_curl
+  fi
+else
+  download_with_curl
 fi
+
+info "Verifying SHA-256 checksum..."
+(cd "$tmpdir" && grep -F "$ASSET" "$CHECKSUM_FILE" | shasum -a 256 -c -) \
+  || fail "SHA-256 checksum verification failed for $ASSET"
 
 tar xzf "$tmpdir/$ASSET" -C "$tmpdir"
 

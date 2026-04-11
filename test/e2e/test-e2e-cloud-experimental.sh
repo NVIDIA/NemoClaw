@@ -8,7 +8,7 @@
 # Implemented: Phase 0–1, 3, 5–6. Phase 5 runs checks/*.sh; Phase 5b live chat; Phase 5c skill smoke; Phase 5d skill agent verification; Phase 5f check-docs.sh;
 # Phase 5e openclaw TUI smoke (expect, non-interactive); Phase 5f check-docs.sh; Phase 6 final cleanup.
 # Phase 3 default: expect-driven interactive curl|bash (RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=1).
-#   Set RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=0 for non-interactive install (NEMOCLAW_NON_INTERACTIVE=1, no expect).
+#   Set RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=0 for non-interactive install (NEMOCLAW_NON_INTERACTIVE=1 and NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1, no expect).
 # (add checks under e2e-cloud-experimental/checks without editing case loop). VDR3 #12 via env on Phase 3 install.
 # Phase 2 skipped. Phase 5: checks suite (checks/*.sh only; opt-in scripts live under e2e-cloud-experimental/skip/).
 # Phase 5b: POST /v1/chat/completions inside sandbox (model = CLOUD_EXPERIMENTAL_MODEL); retries on transient gateway/upstream failures.
@@ -17,7 +17,16 @@
 # Phase 5e: nemoclaw connect → openclaw tui → send message → repeated Ctrl+C → exit (requires `expect`; skipped if missing or RUN_E2E_CLOUD_EXPERIMENTAL_TUI=0).
 # Phase 5f: check-docs.sh (Markdown links + nemoclaw --help vs commands.md) before Phase 6; skip with RUN_E2E_CLOUD_EXPERIMENTAL_SKIP_CHECK_DOCS=1.
 #   Inherits CHECK_DOC_LINKS_REMOTE (check-docs.sh defaults to 1 — curl unique http(s) links); set CHECK_DOC_LINKS_REMOTE=0 to skip remote probes only.
-# Phase 6: cleanup (skipped when RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5=1 or RUN_E2E_CLOUD_EXPERIMENTAL_SKIP_FINAL_CLEANUP=1).
+# Phase 6: cleanup via e2e-cloud-experimental/cleanup.sh --verify (skipped when RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5=1 or RUN_E2E_CLOUD_EXPERIMENTAL_SKIP_FINAL_CLEANUP=1).
+# Phase 0 pre-cleanup uses the same script without --verify.
+#
+# Phase tags (optional — slice the suite without editing the script):
+#   E2E_CLOUD_EXPERIMENTAL_ONLY_TAGS — comma-separated whitelist; unset or "all" = run every phase (still subject to FROM_PHASE5 / SKIP_FINAL_CLEANUP / etc.).
+#     Example: phase3,phase5b,phase5f
+#   E2E_CLOUD_EXPERIMENTAL_SKIP_TAGS — comma-separated blacklist applied after ONLY (or alone when ONLY is unset).
+#     Example: phase0,phase6,phase5e
+#   Tag names: phase0 phase1 phase2 phase3 phase5 phase5b phase5c phase5d phase5e phase5f phase6
+#   Sub-phases (5b–5f) are independent; skipping phase5 does not skip 5b. You must list each phase you want when using ONLY_TAGS.
 # VDR3 #14 (re-onboard / volume audit) not automated here.
 #
 # Optional (not run here): port-8080 onboard conflict — see test/e2e/test-port8080-conflict.sh
@@ -27,6 +36,7 @@
 #   - NVIDIA_API_KEY set (nvapi-...) for Cloud inference segments
 #   - Network to integrate.api.nvidia.com
 #   - NEMOCLAW_NON_INTERACTIVE=1 for automated onboard segments
+#   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 for automated non-interactive install/onboard segments
 #
 # Environment (suggested):
 #   Sandbox name is fixed in this script: e2e-cloud-experimental
@@ -38,7 +48,7 @@
 #   NEMOCLAW_POLICY_PRESETS            — e.g. npm,pypi (github preset TBD in repo)
 #   RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE=1 — optional: expect-based steps (later phases)
 #   RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL — default 1: Phase 3 uses expect to drive interactive onboard.
-#     Set to 0 for non-interactive curl|bash (requires NEMOCLAW_NON_INTERACTIVE=1 in host env; no expect on PATH).
+#     Set to 0 for non-interactive curl|bash (requires NEMOCLAW_NON_INTERACTIVE=1 and NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 in host env; no expect on PATH).
 #   INTERACTIVE_SANDBOX_NAME / INTERACTIVE_RECREATE_ANSWER / INTERACTIVE_INFERENCE_SEND / INTERACTIVE_MODEL_SEND / INTERACTIVE_PRESETS_SEND — see Phase 3 expect branch
 #   DEMO_FAKE_ONLY=1 — expect-only smoke, exit before Phase 0 (offline)
 #   RUN_E2E_CLOUD_EXPERIMENTAL_TUI=0 — skip Phase 5e (openclaw tui expect smoke)
@@ -59,10 +69,12 @@
 #   E2E_CLOUD_EXPERIMENTAL_INSTALL_LOG — Phase 3 install log path (default: /tmp/nemoclaw-e2e-cloud-experimental-install.log)
 #   RUN_E2E_CLOUD_EXPERIMENTAL_SKIP_CHECK_DOCS=1 — skip Phase 5f (check-docs.sh)
 #   CHECK_DOC_LINKS_REMOTE=0 — Phase 5f: skip curling http(s) doc links only (default in check-docs.sh: remote checks on)
+#   E2E_CLOUD_EXPERIMENTAL_ONLY_TAGS — see header: whitelist phases (e.g. phase5b,phase5c)
+#   E2E_CLOUD_EXPERIMENTAL_SKIP_TAGS — see header: blacklist phases (e.g. phase6,phase5e)
 #
 # Usage (Phases 0–1, 3 + cases + Phase 5b–5f + Phase 6 cleanup; Phase 2 skipped):
 #   NVIDIA_API_KEY=nvapi-... bash test/e2e/test-e2e-cloud-experimental.sh
-#   Non-interactive install (no expect): RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=0 NEMOCLAW_NON_INTERACTIVE=1 NVIDIA_API_KEY=nvapi-... bash ...
+#   Non-interactive install (no expect): RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=0 NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_API_KEY=nvapi-... bash ...
 #
 # Validate only (existing sandbox; no install, no Phase 0/6 teardown):
 #   RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-e2e-cloud-experimental.sh
@@ -103,6 +115,36 @@ section() {
   printf '\033[1;36m=== %s ===\033[0m\n' "$1"
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
+
+# Tag filter: ONLY_TAGS whitelist (unset or "all" = allow all); SKIP_TAGS always removes listed phases.
+e2e_cloud_experimental_phase_enabled() {
+  local phase="$1"
+  local only="${E2E_CLOUD_EXPERIMENTAL_ONLY_TAGS:-}"
+  local sk="${E2E_CLOUD_EXPERIMENTAL_SKIP_TAGS:-}"
+  local tok
+  local IFS=,
+
+  for tok in $sk; do
+    tok="${tok// /}"
+    [ -z "$tok" ] && continue
+    if [ "$tok" = "$phase" ]; then
+      return 1
+    fi
+  done
+
+  if [ -z "$only" ] || [ "$only" = "all" ]; then
+    return 0
+  fi
+
+  for tok in $only; do
+    tok="${tok// /}"
+    [ -z "$tok" ] && continue
+    if [ "$tok" = "$phase" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
 
 # Parse chat completion JSON — content, reasoning_content, or reasoning (e.g. moonshot/kimi via gateway)
 parse_chat_content() {
@@ -190,20 +232,13 @@ fi
 # nemoclaw destroy clears ~/.nemoclaw/sandboxes.json; align with test-double-onboard.sh.
 section "Phase 0: Pre-cleanup"
 
-if [ "${RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5:-0}" = "1" ]; then
+if ! e2e_cloud_experimental_phase_enabled phase0; then
+  skip "Phase 0: skipped by tag (phase0 — set E2E_CLOUD_EXPERIMENTAL_ONLY_TAGS / SKIP_TAGS)"
+elif [ "${RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5:-0}" = "1" ]; then
   skip "Phase 0: pre-cleanup skipped (RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5=1 — preserving sandbox '${SANDBOX_NAME}')"
 else
   info "Destroying leftover sandbox, forwards, and gateway for '${SANDBOX_NAME}'..."
-
-  if command -v nemoclaw >/dev/null 2>&1; then
-    nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
-  fi
-  if command -v openshell >/dev/null 2>&1; then
-    openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
-    openshell forward stop 18789 2>/dev/null || true
-    openshell gateway destroy -g nemoclaw 2>/dev/null || true
-  fi
-
+  SANDBOX_NAME="$SANDBOX_NAME" bash "${E2E_DIR}/e2e-cloud-experimental/cleanup.sh"
   pass "Pre-cleanup complete"
 fi
 
@@ -211,52 +246,58 @@ fi
 # Phase 1: Prerequisites
 # ══════════════════════════════════════════════════════════════════════
 # Docker running; NVIDIA_API_KEY format; reach integrate.api.nvidia.com;
-# NEMOCLAW_NON_INTERACTIVE=1 for automated path; optional: assert Linux + Docker CE.
+# NEMOCLAW_NON_INTERACTIVE=1 and NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 for automated path; optional: assert Linux + Docker CE.
 section "Phase 1: Prerequisites"
 
-if docker info >/dev/null 2>&1; then
+if ! e2e_cloud_experimental_phase_enabled phase1; then
+  skip "Phase 1: skipped by tag (phase1 — set E2E_CLOUD_EXPERIMENTAL_ONLY_TAGS / SKIP_TAGS)"
+elif docker info >/dev/null 2>&1; then
   pass "Docker is running"
+
+  if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
+    pass "NVIDIA_API_KEY is set (starts with nvapi-)"
+  else
+    fail "NVIDIA_API_KEY not set or invalid — required for e2e-cloud-experimental (Cloud API)"
+    exit 1
+  fi
+
+  if curl -sf --max-time 10 https://integrate.api.nvidia.com/v1/models >/dev/null 2>&1; then
+    pass "Network access to integrate.api.nvidia.com"
+  else
+    fail "Cannot reach integrate.api.nvidia.com"
+    exit 1
+  fi
+
+  if [ "${RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5:-0}" = "1" ]; then
+    pass "Phase 1: FROM_PHASE5 mode (NEMOCLAW_NON_INTERACTIVE not required)"
+  elif [ "${RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL:-1}" = "1" ]; then
+    pass "Phase 1: interactive install mode (NEMOCLAW_NON_INTERACTIVE not required on host)"
+  elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then
+    fail "NEMOCLAW_NON_INTERACTIVE=1 is required when RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=0 (or use default interactive install, or RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5=1)"
+    exit 1
+  elif [ "${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}" != "1" ]; then
+    fail "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is required when RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=0"
+    exit 1
+  else
+    pass "NEMOCLAW_NON_INTERACTIVE=1"
+    pass "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1"
+  fi
+
+  # Nominal scenario: Ubuntu + Docker (Linux + Docker in README). Others may still run; do not hard-fail on macOS.
+  if [[ "$(uname -s)" == "Linux" ]]; then
+    pass "Host OS is Linux (nominal for e2e-cloud-experimental / README)"
+  else
+    skip "Host is not Linux — e2e-cloud-experimental nominally targets Ubuntu (continuing)"
+  fi
+
+  if srv_ver=$(docker version -f '{{.Server.Version}}' 2>/dev/null) && [ -n "$srv_ver" ]; then
+    pass "Docker server version reported (${srv_ver})"
+  else
+    skip "Could not read docker server version from docker version"
+  fi
 else
   fail "Docker is not running — cannot continue"
   exit 1
-fi
-
-if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set (starts with nvapi-)"
-else
-  fail "NVIDIA_API_KEY not set or invalid — required for e2e-cloud-experimental (Cloud API)"
-  exit 1
-fi
-
-if curl -sf --max-time 10 https://integrate.api.nvidia.com/v1/models >/dev/null 2>&1; then
-  pass "Network access to integrate.api.nvidia.com"
-else
-  fail "Cannot reach integrate.api.nvidia.com"
-  exit 1
-fi
-
-if [ "${RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5:-0}" = "1" ]; then
-  pass "Phase 1: FROM_PHASE5 mode (NEMOCLAW_NON_INTERACTIVE not required)"
-elif [ "${RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL:-1}" = "1" ]; then
-  pass "Phase 1: interactive install mode (NEMOCLAW_NON_INTERACTIVE not required on host)"
-elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then
-  fail "NEMOCLAW_NON_INTERACTIVE=1 is required when RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=0 (or use default interactive install, or RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5=1)"
-  exit 1
-else
-  pass "NEMOCLAW_NON_INTERACTIVE=1"
-fi
-
-# Nominal scenario: Ubuntu + Docker (Linux + Docker in README). Others may still run; do not hard-fail on macOS.
-if [[ "$(uname -s)" == "Linux" ]]; then
-  pass "Host OS is Linux (nominal for e2e-cloud-experimental / README)"
-else
-  skip "Host is not Linux — e2e-cloud-experimental nominally targets Ubuntu (continuing)"
-fi
-
-if srv_ver=$(docker version -f '{{.Server.Version}}' 2>/dev/null) && [ -n "$srv_ver" ]; then
-  pass "Docker server version reported (${srv_ver})"
-else
-  skip "Could not read docker server version from docker version"
 fi
 
 # ══════════════════════════════════════════════════════════════════════
@@ -264,7 +305,12 @@ fi
 # ══════════════════════════════════════════════════════════════════════
 # Deferred by request — not part of e2e-cloud-experimental for now.
 section "Phase 2: Doc review (README prerequisites) — skipped"
-skip "Phase 2: doc review (VDR3 #11) — not required for now"
+
+if ! e2e_cloud_experimental_phase_enabled phase2; then
+  skip "Phase 2: skipped by tag (phase2 — set E2E_CLOUD_EXPERIMENTAL_ONLY_TAGS / SKIP_TAGS)"
+else
+  skip "Phase 2: doc review (VDR3 #11) — not required for now"
+fi
 
 # ══════════════════════════════════════════════════════════════════════
 # Phase 3: Install + PATH (VDR3 #7, #10)
@@ -274,44 +320,45 @@ skip "Phase 2: doc review (VDR3 #11) — not required for now"
 # nemoclaw onboard — no second onboard pass needed.
 section "Phase 3: Install and PATH"
 
-cd "$REPO" || {
+if ! e2e_cloud_experimental_phase_enabled phase3; then
+  skip "Phase 3: skipped by tag (phase3 — set E2E_CLOUD_EXPERIMENTAL_ONLY_TAGS / SKIP_TAGS)"
+elif ! cd "$REPO"; then
   fail "Could not cd to repo root: $REPO"
   exit 1
-}
+else
+  export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
+  export NEMOCLAW_EXPERIMENTAL=1
+  export NEMOCLAW_PROVIDER=cloud
+  export NEMOCLAW_MODEL="$CLOUD_EXPERIMENTAL_MODEL"
+  export NEMOCLAW_POLICY_MODE="${NEMOCLAW_POLICY_MODE:-custom}"
+  export NEMOCLAW_POLICY_PRESETS="${NEMOCLAW_POLICY_PRESETS:-npm,pypi}"
 
-export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
-export NEMOCLAW_EXPERIMENTAL=1
-export NEMOCLAW_PROVIDER=cloud
-export NEMOCLAW_MODEL="$CLOUD_EXPERIMENTAL_MODEL"
-export NEMOCLAW_POLICY_MODE="${NEMOCLAW_POLICY_MODE:-custom}"
-export NEMOCLAW_POLICY_PRESETS="${NEMOCLAW_POLICY_PRESETS:-npm,pypi}"
+  NEMOCLAW_INSTALL_SCRIPT_URL="${NEMOCLAW_INSTALL_SCRIPT_URL:-https://www.nvidia.com/nemoclaw.sh}"
+  export NEMOCLAW_INSTALL_SCRIPT_URL
 
-NEMOCLAW_INSTALL_SCRIPT_URL="${NEMOCLAW_INSTALL_SCRIPT_URL:-https://www.nvidia.com/nemoclaw.sh}"
-export NEMOCLAW_INSTALL_SCRIPT_URL
+  # Override when running in Docker CI with a host-mounted log dir (see test/e2e/Dockerfile.cloud-experimental).
+  INSTALL_LOG="${E2E_CLOUD_EXPERIMENTAL_INSTALL_LOG:-/tmp/nemoclaw-e2e-cloud-experimental-install.log}"
 
-# Override when running in Docker CI with a host-mounted log dir (see test/e2e/Dockerfile.cloud-experimental).
-INSTALL_LOG="${E2E_CLOUD_EXPERIMENTAL_INSTALL_LOG:-/tmp/nemoclaw-e2e-cloud-experimental-install.log}"
-
-if [ "${RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5:-0}" = "1" ]; then
-  info "Phase 3: skipping curl|bash install (RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5=1)"
-  install_exit=0
-elif [ "${RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL:-1}" = "1" ]; then
-  if ! command -v expect >/dev/null 2>&1; then
-    fail "Phase 3: expect not on PATH (install expect, or set RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=0 for non-interactive install)"
-    exit 1
-  fi
-  export INTERACTIVE_SANDBOX_NAME="${INTERACTIVE_SANDBOX_NAME:-$SANDBOX_NAME}"
-  export INTERACTIVE_RECREATE_ANSWER="${INTERACTIVE_RECREATE_ANSWER:-n}"
-  export INTERACTIVE_INFERENCE_SEND="${INTERACTIVE_INFERENCE_SEND:-}"
-  export INTERACTIVE_MODEL_SEND="${INTERACTIVE_MODEL_SEND:-}"
-  export INTERACTIVE_PRESETS_SEND="${INTERACTIVE_PRESETS_SEND:-y}"
-  info "Phase 3: expect-driven interactive curl|bash (URL=${NEMOCLAW_INSTALL_SCRIPT_URL}, sandbox=${INTERACTIVE_SANDBOX_NAME})"
-  info "Output streams to this terminal AND ${INSTALL_LOG} (via tee) — first prompts may take several minutes after curl/Node install."
-  if [[ -z "${NVIDIA_API_KEY:-}" ]]; then
-    info "WARN: NVIDIA_API_KEY unset; expect will fail at API key prompt unless credentials exist on disk."
-  fi
-  set +e
-  expect <<'EXPECT' 2>&1 | tee "$INSTALL_LOG"
+  if [ "${RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5:-0}" = "1" ]; then
+    info "Phase 3: skipping curl|bash install (RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5=1)"
+    install_exit=0
+  elif [ "${RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL:-1}" = "1" ]; then
+    if ! command -v expect >/dev/null 2>&1; then
+      fail "Phase 3: expect not on PATH (install expect, or set RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL=0 for non-interactive install)"
+      exit 1
+    fi
+    export INTERACTIVE_SANDBOX_NAME="${INTERACTIVE_SANDBOX_NAME:-$SANDBOX_NAME}"
+    export INTERACTIVE_RECREATE_ANSWER="${INTERACTIVE_RECREATE_ANSWER:-n}"
+    export INTERACTIVE_INFERENCE_SEND="${INTERACTIVE_INFERENCE_SEND:-}"
+    export INTERACTIVE_MODEL_SEND="${INTERACTIVE_MODEL_SEND:-}"
+    export INTERACTIVE_PRESETS_SEND="${INTERACTIVE_PRESETS_SEND:-y}"
+    info "Phase 3: expect-driven interactive curl|bash (URL=${NEMOCLAW_INSTALL_SCRIPT_URL}, sandbox=${INTERACTIVE_SANDBOX_NAME})"
+    info "Output streams to this terminal AND ${INSTALL_LOG} (via tee) — first prompts may take several minutes after curl/Node install."
+    if [[ -z "${NVIDIA_API_KEY:-}" ]]; then
+      info "WARN: NVIDIA_API_KEY unset; expect will fail at API key prompt unless credentials exist on disk."
+    fi
+    set +e
+    expect <<'EXPECT' 2>&1 | tee "$INSTALL_LOG"
 set timeout -1
 
 if {![info exists env(NEMOCLAW_INSTALL_SCRIPT_URL)]} {
@@ -384,75 +431,77 @@ expect {
   }
 }
 EXPECT
-  install_exit=${PIPESTATUS[0]}
-  set -uo pipefail
-else
-  info "Running: curl -fsSL ${NEMOCLAW_INSTALL_SCRIPT_URL} | bash"
-  info "Onboard uses EXPERIMENTAL=1, PROVIDER=cloud, MODEL=${CLOUD_EXPERIMENTAL_MODEL} (override: NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL or legacy NEMOCLAW_SCENARIO_A_MODEL)."
-  info "Policy: NEMOCLAW_POLICY_MODE=${NEMOCLAW_POLICY_MODE} NEMOCLAW_POLICY_PRESETS=${NEMOCLAW_POLICY_PRESETS} (override env to change)."
-  info "Installs Node.js, openshell, NemoClaw, and runs onboard — may take several minutes."
+    install_exit=${PIPESTATUS[0]}
+    set -uo pipefail
+  else
+    info "Running: curl -fsSL ${NEMOCLAW_INSTALL_SCRIPT_URL} | bash"
+    info "Onboard uses EXPERIMENTAL=1, PROVIDER=cloud, MODEL=${CLOUD_EXPERIMENTAL_MODEL} (override: NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL or legacy NEMOCLAW_SCENARIO_A_MODEL)."
+    info "Policy: NEMOCLAW_POLICY_MODE=${NEMOCLAW_POLICY_MODE} NEMOCLAW_POLICY_PRESETS=${NEMOCLAW_POLICY_PRESETS} (override env to change)."
+    info "Installs Node.js, openshell, NemoClaw, and runs onboard — may take several minutes."
 
-  curl -fsSL "$NEMOCLAW_INSTALL_SCRIPT_URL" | bash >"$INSTALL_LOG" 2>&1 &
-  install_pid=$!
-  tail -f "$INSTALL_LOG" --pid=$install_pid 2>/dev/null &
-  tail_pid=$!
-  wait "$install_pid"
-  install_exit=$?
-  kill "$tail_pid" 2>/dev/null || true
-  wait "$tail_pid" 2>/dev/null || true
-fi
+    curl -fsSL "$NEMOCLAW_INSTALL_SCRIPT_URL" | bash >"$INSTALL_LOG" 2>&1 &
+    install_pid=$!
+    tail -f "$INSTALL_LOG" --pid=$install_pid 2>/dev/null &
+    tail_pid=$!
+    wait "$install_pid"
+    install_exit=$?
+    kill "$tail_pid" 2>/dev/null || true
+    wait "$tail_pid" 2>/dev/null || true
+  fi
 
-if [ -f "$HOME/.bashrc" ]; then
+  if [ -f "$HOME/.bashrc" ]; then
+    # shellcheck source=/dev/null
+    source "$HOME/.bashrc" 2>/dev/null || true
+  fi
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   # shellcheck source=/dev/null
-  source "$HOME/.bashrc" 2>/dev/null || true
-fi
-export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
-# shellcheck source=/dev/null
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-  export PATH="$HOME/.local/bin:$PATH"
-fi
-
-if [ "$install_exit" -eq 0 ]; then
-  if [ "${RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5:-0}" = "1" ]; then
-    pass "Phase 3: install skipped (FROM_PHASE5); using existing sandbox '${SANDBOX_NAME}'"
-  elif [ "${RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL:-1}" = "1" ]; then
-    pass "public install (expect interactive curl|bash) completed (exit 0)"
-  else
-    pass "public install (curl nemoclaw.sh | bash) completed (exit 0)"
+  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+  if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+    export PATH="$HOME/.local/bin:$PATH"
   fi
-else
-  if [ "${RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL:-1}" = "1" ]; then
-    fail "public install (expect interactive curl|bash) failed (exit $install_exit)"
+
+  if [ "$install_exit" -eq 0 ]; then
+    if [ "${RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5:-0}" = "1" ]; then
+      pass "Phase 3: install skipped (FROM_PHASE5); using existing sandbox '${SANDBOX_NAME}'"
+    elif [ "${RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL:-1}" = "1" ]; then
+      pass "public install (expect interactive curl|bash) completed (exit 0)"
+    else
+      pass "public install (curl nemoclaw.sh | bash) completed (exit 0)"
+    fi
   else
-    fail "public install (curl nemoclaw.sh | bash) failed (exit $install_exit)"
+    if [ "${RUN_E2E_CLOUD_EXPERIMENTAL_INTERACTIVE_INSTALL:-1}" = "1" ]; then
+      fail "public install (expect interactive curl|bash) failed (exit $install_exit)"
+    else
+      fail "public install (curl nemoclaw.sh | bash) failed (exit $install_exit)"
+    fi
+    exit 1
   fi
-  exit 1
-fi
 
-if command -v nemoclaw >/dev/null 2>&1; then
-  pass "nemoclaw on PATH ($(command -v nemoclaw))"
-else
-  _e2e_path_ctx="after install"
-  [ "${RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5:-0}" = "1" ] && _e2e_path_ctx="required for Phase 5"
-  fail "nemoclaw not found on PATH (${_e2e_path_ctx})"
-  exit 1
-fi
+  if command -v nemoclaw >/dev/null 2>&1; then
+    pass "nemoclaw on PATH ($(command -v nemoclaw))"
+  else
+    _e2e_path_ctx="after install"
+    [ "${RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5:-0}" = "1" ] && _e2e_path_ctx="required for Phase 5"
+    fail "nemoclaw not found on PATH (${_e2e_path_ctx})"
+    exit 1
+  fi
 
-if command -v openshell >/dev/null 2>&1; then
-  pass "openshell on PATH ($(openshell --version 2>&1 || echo unknown))"
-else
-  _e2e_path_ctx="after install"
-  [ "${RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5:-0}" = "1" ] && _e2e_path_ctx="required for Phase 5"
-  fail "openshell not found on PATH (${_e2e_path_ctx})"
-  exit 1
-fi
+  if command -v openshell >/dev/null 2>&1; then
+    pass "openshell on PATH ($(openshell --version 2>&1 || echo unknown))"
+  else
+    _e2e_path_ctx="after install"
+    [ "${RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5:-0}" = "1" ] && _e2e_path_ctx="required for Phase 5"
+    fail "openshell not found on PATH (${_e2e_path_ctx})"
+    exit 1
+  fi
 
-if nemoclaw --help >/dev/null 2>&1; then
-  pass "nemoclaw --help exits 0"
-else
-  fail "nemoclaw --help failed"
-  exit 1
+  if nemoclaw --help >/dev/null 2>&1; then
+    pass "nemoclaw --help exits 0"
+  else
+    fail "nemoclaw --help failed"
+    exit 1
+  fi
+
 fi
 
 # ══════════════════════════════════════════════════════════════════════
@@ -461,29 +510,33 @@ fi
 # Ready scripts are sorted by filename; each must exit 0 on success. See e2e-cloud-experimental/README.md.
 section "Phase 5: Sandbox checks suite (then Phase 5b chat + Phase 5c skill smoke in this script)"
 
-export SANDBOX_NAME CLOUD_EXPERIMENTAL_MODEL REPO NVIDIA_API_KEY
-
-shopt -s nullglob
-case_scripts=("$E2E_CLOUD_EXPERIMENTAL_READY_DIR"/*.sh)
-shopt -u nullglob
-
-if [ "${#case_scripts[@]}" -eq 0 ]; then
-  skip "No checks scripts in ${E2E_CLOUD_EXPERIMENTAL_READY_DIR} (add checks/*.sh)"
+if ! e2e_cloud_experimental_phase_enabled phase5; then
+  skip "Phase 5: skipped by tag (phase5 — checks/*.sh only; 5b–5f use their own tags)"
 else
-  info "Checks directory: ${E2E_CLOUD_EXPERIMENTAL_READY_DIR} (${#case_scripts[@]} script(s))"
-  for case_script in "${case_scripts[@]}"; do
-    info "Running $(basename "$case_script")..."
-    set +e
-    bash "$case_script"
-    c_rc=$?
-    set -uo pipefail
-    if [ "$c_rc" -eq 0 ]; then
-      pass "case $(basename "$case_script" .sh)"
-    else
-      fail "case $(basename "$case_script" .sh) exited ${c_rc}"
-      exit 1
-    fi
-  done
+  export SANDBOX_NAME CLOUD_EXPERIMENTAL_MODEL REPO NVIDIA_API_KEY
+
+  shopt -s nullglob
+  case_scripts=("$E2E_CLOUD_EXPERIMENTAL_READY_DIR"/*.sh)
+  shopt -u nullglob
+
+  if [ "${#case_scripts[@]}" -eq 0 ]; then
+    skip "No checks scripts in ${E2E_CLOUD_EXPERIMENTAL_READY_DIR} (add checks/*.sh)"
+  else
+    info "Checks directory: ${E2E_CLOUD_EXPERIMENTAL_READY_DIR} (${#case_scripts[@]} script(s))"
+    for case_script in "${case_scripts[@]}"; do
+      info "Running $(basename "$case_script")..."
+      set +e
+      bash "$case_script"
+      c_rc=$?
+      set -uo pipefail
+      if [ "$c_rc" -eq 0 ]; then
+        pass "case $(basename "$case_script" .sh)"
+      else
+        fail "case $(basename "$case_script" .sh) exited ${c_rc}"
+        exit 1
+      fi
+    done
+  fi
 fi
 
 # ══════════════════════════════════════════════════════════════════════
@@ -492,12 +545,15 @@ fi
 # Same path as test-full-e2e.sh 4b: sandbox → gateway → cloud; model from CLOUD_EXPERIMENTAL_MODEL.
 section "Phase 5b: Live chat (inference.local /v1/chat/completions)"
 
-if ! command -v python3 >/dev/null 2>&1; then
-  fail "Phase 5b: python3 not on PATH (needed to parse chat response)"
-  exit 1
-fi
+if ! e2e_cloud_experimental_phase_enabled phase5b; then
+  skip "Phase 5b: skipped by tag (phase5b — set E2E_CLOUD_EXPERIMENTAL_ONLY_TAGS / SKIP_TAGS)"
+else
+  if ! command -v python3 >/dev/null 2>&1; then
+    fail "Phase 5b: python3 not on PATH (needed to parse chat response)"
+    exit 1
+  fi
 
-payload=$(CLOUD_EXPERIMENTAL_MODEL="$CLOUD_EXPERIMENTAL_MODEL" python3 -c "
+  payload=$(CLOUD_EXPERIMENTAL_MODEL="$CLOUD_EXPERIMENTAL_MODEL" python3 -c "
 import json, os
 print(json.dumps({
     'model': os.environ['CLOUD_EXPERIMENTAL_MODEL'],
@@ -505,75 +561,77 @@ print(json.dumps({
     'max_tokens': 100,
 }))
 ") || {
-  fail "Phase 5b: could not build chat JSON payload"
-  exit 1
-}
+    fail "Phase 5b: could not build chat JSON payload"
+    exit 1
+  }
 
-PHASE_5B_MAX="${E2E_PHASE_5B_MAX_ATTEMPTS:-3}"
-PHASE_5B_SLEEP="${E2E_PHASE_5B_RETRY_SLEEP_SEC:-5}"
-# Clamp to at least 1 attempt
-if ! [[ "$PHASE_5B_MAX" =~ ^[1-9][0-9]*$ ]]; then
-  PHASE_5B_MAX=3
-fi
-info "POST chat completion inside sandbox (model ${CLOUD_EXPERIMENTAL_MODEL}, up to ${PHASE_5B_MAX} attempt(s), ${PHASE_5B_SLEEP}s between retries)..."
+  PHASE_5B_MAX="${E2E_PHASE_5B_MAX_ATTEMPTS:-3}"
+  PHASE_5B_SLEEP="${E2E_PHASE_5B_RETRY_SLEEP_SEC:-5}"
+  # Clamp to at least 1 attempt
+  if ! [[ "$PHASE_5B_MAX" =~ ^[1-9][0-9]*$ ]]; then
+    PHASE_5B_MAX=3
+  fi
+  info "POST chat completion inside sandbox (model ${CLOUD_EXPERIMENTAL_MODEL}, up to ${PHASE_5B_MAX} attempt(s), ${PHASE_5B_SLEEP}s between retries)..."
 
-CHAT_TIMEOUT_CMD=""
-command -v timeout >/dev/null 2>&1 && CHAT_TIMEOUT_CMD="timeout 120"
-command -v gtimeout >/dev/null 2>&1 && CHAT_TIMEOUT_CMD="gtimeout 120"
+  CHAT_TIMEOUT_CMD=""
+  command -v timeout >/dev/null 2>&1 && CHAT_TIMEOUT_CMD="timeout 120"
+  command -v gtimeout >/dev/null 2>&1 && CHAT_TIMEOUT_CMD="gtimeout 120"
 
-ssh_config_chat="$(mktemp)"
-if ! openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config_chat" 2>/dev/null; then
-  rm -f "$ssh_config_chat"
-  fail "Phase 5b: openshell sandbox ssh-config failed for '${SANDBOX_NAME}'"
-  exit 1
-fi
+  ssh_config_chat="$(mktemp)"
+  if ! openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config_chat" 2>/dev/null; then
+    rm -f "$ssh_config_chat"
+    fail "Phase 5b: openshell sandbox ssh-config failed for '${SANDBOX_NAME}'"
+    exit 1
+  fi
 
-phase_5b_attempt=1
-phase_5b_ok=0
-phase_5b_last_fail=""
-while [ "$phase_5b_attempt" -le "$PHASE_5B_MAX" ]; do
-  set +e
-  sandbox_chat_out=$(
-    $CHAT_TIMEOUT_CMD ssh -F "$ssh_config_chat" \
-      -o StrictHostKeyChecking=no \
-      -o UserKnownHostsFile=/dev/null \
-      -o ConnectTimeout=10 \
-      -o LogLevel=ERROR \
-      "openshell-${SANDBOX_NAME}" \
-      "curl -sS --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d $(printf '%q' "$payload")" \
-      2>&1
-  )
-  chat_ssh_rc=$?
-  set -uo pipefail
+  phase_5b_attempt=1
+  phase_5b_ok=0
+  phase_5b_last_fail=""
+  while [ "$phase_5b_attempt" -le "$PHASE_5B_MAX" ]; do
+    set +e
+    sandbox_chat_out=$(
+      $CHAT_TIMEOUT_CMD ssh -F "$ssh_config_chat" \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        -o ConnectTimeout=10 \
+        -o LogLevel=ERROR \
+        "openshell-${SANDBOX_NAME}" \
+        "curl -sS --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d $(printf '%q' "$payload")" \
+        2>&1
+    )
+    chat_ssh_rc=$?
+    set -uo pipefail
 
-  if [ "$chat_ssh_rc" -ne 0 ]; then
-    phase_5b_last_fail="Phase 5b: ssh/curl failed (exit ${chat_ssh_rc}): ${sandbox_chat_out:0:400}"
-  elif [ -z "$sandbox_chat_out" ]; then
-    phase_5b_last_fail="Phase 5b: empty response from inference.local chat completions"
-  else
-    chat_text=$(printf '%s' "$sandbox_chat_out" | parse_chat_content 2>/dev/null) || chat_text=""
-    if echo "$chat_text" | grep -qi "PONG"; then
-      pass "Phase 5b: chat completion returned PONG (model ${CLOUD_EXPERIMENTAL_MODEL}, attempt ${phase_5b_attempt}/${PHASE_5B_MAX})"
-      phase_5b_ok=1
+    if [ "$chat_ssh_rc" -ne 0 ]; then
+      phase_5b_last_fail="Phase 5b: ssh/curl failed (exit ${chat_ssh_rc}): ${sandbox_chat_out:0:400}"
+    elif [ -z "$sandbox_chat_out" ]; then
+      phase_5b_last_fail="Phase 5b: empty response from inference.local chat completions"
+    else
+      chat_text=$(printf '%s' "$sandbox_chat_out" | parse_chat_content 2>/dev/null) || chat_text=""
+      if echo "$chat_text" | grep -qi "PONG"; then
+        pass "Phase 5b: chat completion returned PONG (model ${CLOUD_EXPERIMENTAL_MODEL}, attempt ${phase_5b_attempt}/${PHASE_5B_MAX})"
+        phase_5b_ok=1
+        break
+      fi
+      phase_5b_last_fail="Phase 5b: expected PONG in assistant text, got: ${chat_text:0:300} (raw: ${sandbox_chat_out:0:400})"
+    fi
+
+    if [ "$phase_5b_attempt" -ge "$PHASE_5B_MAX" ]; then
       break
     fi
-    phase_5b_last_fail="Phase 5b: expected PONG in assistant text, got: ${chat_text:0:300} (raw: ${sandbox_chat_out:0:400})"
+    info "Phase 5b: attempt ${phase_5b_attempt}/${PHASE_5B_MAX} failed — ${phase_5b_last_fail#Phase 5b: }"
+    info "Phase 5b: sleeping ${PHASE_5B_SLEEP}s before retry..."
+    sleep "$PHASE_5B_SLEEP"
+    phase_5b_attempt=$((phase_5b_attempt + 1))
+  done
+
+  rm -f "$ssh_config_chat"
+
+  if [ "$phase_5b_ok" -ne 1 ]; then
+    fail "$phase_5b_last_fail"
+    exit 1
   fi
 
-  if [ "$phase_5b_attempt" -ge "$PHASE_5B_MAX" ]; then
-    break
-  fi
-  info "Phase 5b: attempt ${phase_5b_attempt}/${PHASE_5B_MAX} failed — ${phase_5b_last_fail#Phase 5b: }"
-  info "Phase 5b: sleeping ${PHASE_5B_SLEEP}s before retry..."
-  sleep "$PHASE_5B_SLEEP"
-  phase_5b_attempt=$((phase_5b_attempt + 1))
-done
-
-rm -f "$ssh_config_chat"
-
-if [ "$phase_5b_ok" -ne 1 ]; then
-  fail "$phase_5b_last_fail"
-  exit 1
 fi
 
 # ══════════════════════════════════════════════════════════════════════
@@ -584,32 +642,37 @@ fi
 #   skills subdir is optional (migration); absent → honest SKIP (not PASS).
 section "Phase 5c: Skill smoke (repo + sandbox OpenClaw)"
 
-info "Validating repo .agents/skills (SKILL.md frontmatter + body)..."
-if ! bash "$E2E_DIR/e2e-cloud-experimental/features/skill/lib/validate_repo_skills.sh" --repo "$REPO"; then
-  fail "Phase 5c: repo skill validation failed"
-  exit 1
-fi
-pass "Phase 5c: repo agent skills (SKILL.md) valid"
-
-info "Checking /sandbox/.openclaw inside sandbox..."
-set +e
-sb_out=$(SANDBOX_NAME="$SANDBOX_NAME" bash "$E2E_DIR/e2e-cloud-experimental/features/skill/lib/validate_sandbox_openclaw_skills.sh" 2>/dev/null)
-sb_rc=$?
-set -uo pipefail
-
-if [ "$sb_rc" -ne 0 ]; then
-  fail "Phase 5c: sandbox OpenClaw layout check failed (exit ${sb_rc}): ${sb_out:0:240}"
-  exit 1
-fi
-pass "Phase 5c: sandbox /sandbox/.openclaw + openclaw.json OK"
-
-if echo "$sb_out" | grep -q "SKILLS_SUBDIR=present"; then
-  pass "Phase 5c: sandbox /sandbox/.openclaw/skills present"
-elif echo "$sb_out" | grep -q "SKILLS_SUBDIR=absent"; then
-  skip "Phase 5c: /sandbox/.openclaw/skills absent (host migration snapshot had no skills dir)"
+if ! e2e_cloud_experimental_phase_enabled phase5c; then
+  skip "Phase 5c: skipped by tag (phase5c — set E2E_CLOUD_EXPERIMENTAL_ONLY_TAGS / SKIP_TAGS)"
 else
-  fail "Phase 5c: unexpected sandbox check output: ${sb_out:0:240}"
-  exit 1
+  info "Validating repo .agents/skills (SKILL.md frontmatter + body)..."
+  if ! bash "$E2E_DIR/e2e-cloud-experimental/features/skill/lib/validate_repo_skills.sh" --repo "$REPO"; then
+    fail "Phase 5c: repo skill validation failed"
+    exit 1
+  fi
+  pass "Phase 5c: repo agent skills (SKILL.md) valid"
+
+  info "Checking /sandbox/.openclaw inside sandbox..."
+  set +e
+  sb_out=$(SANDBOX_NAME="$SANDBOX_NAME" bash "$E2E_DIR/e2e-cloud-experimental/features/skill/lib/validate_sandbox_openclaw_skills.sh" 2>/dev/null)
+  sb_rc=$?
+  set -uo pipefail
+
+  if [ "$sb_rc" -ne 0 ]; then
+    fail "Phase 5c: sandbox OpenClaw layout check failed (exit ${sb_rc}): ${sb_out:0:240}"
+    exit 1
+  fi
+  pass "Phase 5c: sandbox /sandbox/.openclaw + openclaw.json OK"
+
+  if echo "$sb_out" | grep -q "SKILLS_SUBDIR=present"; then
+    pass "Phase 5c: sandbox /sandbox/.openclaw/skills present"
+  elif echo "$sb_out" | grep -q "SKILLS_SUBDIR=absent"; then
+    skip "Phase 5c: /sandbox/.openclaw/skills absent (host migration snapshot had no skills dir)"
+  else
+    fail "Phase 5c: unexpected sandbox check output: ${sb_out:0:240}"
+    exit 1
+  fi
+
 fi
 
 # ══════════════════════════════════════════════════════════════════════
@@ -618,19 +681,24 @@ fi
 # Deploy managed skill fixture into sandbox and verify one agent turn returns token.
 section "Phase 5d: Skill agent verification (inject + token)"
 
-info "Injecting skill-smoke-fixture into sandbox '${SANDBOX_NAME}'..."
-if ! SANDBOX_NAME="$SANDBOX_NAME" SKILL_ID="skill-smoke-fixture" bash "$E2E_DIR/e2e-cloud-experimental/features/skill/add-sandbox-skill.sh"; then
-  fail "Phase 5d: failed to inject/query skill-smoke-fixture"
-  exit 1
-fi
-pass "Phase 5d: skill-smoke-fixture injected and queryable"
+if ! e2e_cloud_experimental_phase_enabled phase5d; then
+  skip "Phase 5d: skipped by tag (phase5d — set E2E_CLOUD_EXPERIMENTAL_ONLY_TAGS / SKIP_TAGS)"
+else
+  info "Injecting skill-smoke-fixture into sandbox '${SANDBOX_NAME}'..."
+  if ! SANDBOX_NAME="$SANDBOX_NAME" SKILL_ID="skill-smoke-fixture" bash "$E2E_DIR/e2e-cloud-experimental/features/skill/add-sandbox-skill.sh"; then
+    fail "Phase 5d: failed to inject/query skill-smoke-fixture"
+    exit 1
+  fi
+  pass "Phase 5d: skill-smoke-fixture injected and queryable"
 
-info "Running one openclaw agent turn to verify skill token..."
-if ! NVIDIA_API_KEY="$NVIDIA_API_KEY" SANDBOX_NAME="$SANDBOX_NAME" SKILL_ID="skill-smoke-fixture" bash "$E2E_DIR/e2e-cloud-experimental/features/skill/verify-sandbox-skill-via-agent.sh"; then
-  fail "Phase 5d: agent verification did not return skill token"
-  exit 1
+  info "Running one openclaw agent turn to verify skill token..."
+  if ! NVIDIA_API_KEY="$NVIDIA_API_KEY" SANDBOX_NAME="$SANDBOX_NAME" SKILL_ID="skill-smoke-fixture" bash "$E2E_DIR/e2e-cloud-experimental/features/skill/verify-sandbox-skill-via-agent.sh"; then
+    fail "Phase 5d: agent verification did not return skill token"
+    exit 1
+  fi
+  pass "Phase 5d: agent returned SKILL_SMOKE_VERIFY_K9X2"
+
 fi
-pass "Phase 5d: agent returned SKILL_SMOKE_VERIFY_K9X2"
 
 # ══════════════════════════════════════════════════════════════════════
 # Phase 5e: OpenClaw TUI smoke (nemoclaw connect → tui → message → Ctrl+C → exit)
@@ -639,7 +707,9 @@ pass "Phase 5d: agent returned SKILL_SMOKE_VERIFY_K9X2"
 # e2e-cloud-experimental/openclaw-tui-in-sandbox.sh (that wrapper uses `interact` for humans).
 section "Phase 5e: OpenClaw TUI smoke (expect)"
 
-if [ "${RUN_E2E_CLOUD_EXPERIMENTAL_TUI:-1}" = "0" ]; then
+if ! e2e_cloud_experimental_phase_enabled phase5e; then
+  skip "Phase 5e: skipped by tag (phase5e — set E2E_CLOUD_EXPERIMENTAL_ONLY_TAGS / SKIP_TAGS)"
+elif [ "${RUN_E2E_CLOUD_EXPERIMENTAL_TUI:-1}" = "0" ]; then
   skip "Phase 5e: skipped (RUN_E2E_CLOUD_EXPERIMENTAL_TUI=0)"
 elif ! command -v expect >/dev/null 2>&1; then
   skip "Phase 5e: expect not on PATH — install expect to run TUI smoke (e.g. apt install expect)"
@@ -796,7 +866,9 @@ fi
 # ══════════════════════════════════════════════════════════════════════
 section "Phase 5f: Documentation checks (check-docs.sh)"
 
-if [ "${RUN_E2E_CLOUD_EXPERIMENTAL_SKIP_CHECK_DOCS:-0}" = "1" ]; then
+if ! e2e_cloud_experimental_phase_enabled phase5f; then
+  skip "Phase 5f: skipped by tag (phase5f — set E2E_CLOUD_EXPERIMENTAL_ONLY_TAGS / SKIP_TAGS)"
+elif [ "${RUN_E2E_CLOUD_EXPERIMENTAL_SKIP_CHECK_DOCS:-0}" = "1" ]; then
   skip "Phase 5f: check-docs skipped (RUN_E2E_CLOUD_EXPERIMENTAL_SKIP_CHECK_DOCS=1)"
 else
   info "check-docs.sh (default: curl unique http(s) links; CHECK_DOC_LINKS_REMOTE=0 to skip remote only)"
@@ -814,50 +886,18 @@ fi
 # openshell sandbox delete + forward stop + gateway destroy.
 section "Phase 6: Final cleanup"
 
-if [ "${RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5:-0}" = "1" ] && [ "${RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5_RUN_CLEANUP:-0}" != "1" ]; then
+if ! e2e_cloud_experimental_phase_enabled phase6; then
+  skip "Phase 6: skipped by tag (phase6 — set E2E_CLOUD_EXPERIMENTAL_ONLY_TAGS / SKIP_TAGS)"
+elif [ "${RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5:-0}" = "1" ] && [ "${RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5_RUN_CLEANUP:-0}" != "1" ]; then
   skip "Phase 6: final cleanup skipped (RUN_E2E_CLOUD_EXPERIMENTAL_FROM_PHASE5=1 — set FROM_PHASE5_RUN_CLEANUP=1 to destroy sandbox)"
 elif [ "${RUN_E2E_CLOUD_EXPERIMENTAL_SKIP_FINAL_CLEANUP:-${RUN_SCENARIO_A_SKIP_FINAL_CLEANUP:-}}" = "1" ]; then
   skip "Phase 6: final cleanup skipped (RUN_E2E_CLOUD_EXPERIMENTAL_SKIP_FINAL_CLEANUP=1)"
 else
   info "Removing sandbox '${SANDBOX_NAME}', port forward, and nemoclaw gateway..."
-
-  if command -v nemoclaw >/dev/null 2>&1; then
-    nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
+  if ! SANDBOX_NAME="$SANDBOX_NAME" bash "${E2E_DIR}/e2e-cloud-experimental/cleanup.sh" --verify; then
+    fail "Phase 6: final cleanup or verification failed"
+    exit 1
   fi
-  if command -v openshell >/dev/null 2>&1; then
-    openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
-    openshell forward stop 18789 2>/dev/null || true
-    openshell gateway destroy -g nemoclaw 2>/dev/null || true
-  fi
-
-  if command -v openshell >/dev/null 2>&1; then
-    if openshell sandbox get "$SANDBOX_NAME" >/dev/null 2>&1; then
-      fail "openshell sandbox get '${SANDBOX_NAME}' still succeeds after cleanup"
-      exit 1
-    fi
-    pass "openshell: sandbox '${SANDBOX_NAME}' no longer visible to sandbox get"
-  else
-    skip "openshell not on PATH — skipped sandbox get check after cleanup"
-  fi
-
-  if command -v nemoclaw >/dev/null 2>&1; then
-    set +e
-    list_out=$(nemoclaw list 2>&1)
-    list_rc=$?
-    set -uo pipefail
-    if [ "$list_rc" -eq 0 ]; then
-      if echo "$list_out" | grep -Fq "    ${SANDBOX_NAME}"; then
-        fail "nemoclaw list still lists '${SANDBOX_NAME}' after destroy"
-        exit 1
-      fi
-      pass "nemoclaw list: '${SANDBOX_NAME}' removed from registry"
-    else
-      skip "nemoclaw list failed after cleanup — could not verify registry (exit $list_rc)"
-    fi
-  else
-    skip "nemoclaw not on PATH — skipped list check after cleanup"
-  fi
-
   pass "Phase 6: final cleanup complete"
 fi
 

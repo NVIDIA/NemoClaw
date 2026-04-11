@@ -8,7 +8,6 @@ const { getCredential } = require("./credentials");
 const { resolveOpenshell } = require("./resolve-openshell");
 const { ROOT, shellQuote } = require("./runner");
 
-
 function getTelegramBridgeToken(sandboxName, fsModule = fs) {
   if (!sandboxName || !/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(sandboxName)) {
     return null;
@@ -33,17 +32,18 @@ function getTelegramBridgeToken(sandboxName, fsModule = fs) {
 }
 
 function getTelegramProbeToken(env = process.env, getCredentialFn = getCredential, options = {}) {
-  return env.TELEGRAM_BOT_TOKEN
-    || getCredentialFn("TELEGRAM_BOT_TOKEN")
-    || getTelegramBridgeToken(options.sandboxName, options.fsModule)
-    || null;
+  return (
+    env.TELEGRAM_BOT_TOKEN ||
+    getCredentialFn("TELEGRAM_BOT_TOKEN") ||
+    getTelegramBridgeToken(options.sandboxName, options.fsModule) ||
+    null
+  );
 }
 
 function buildTelegramProbeScript(options = {}) {
   const token = options.token ? String(options.token) : "";
-  const tokenAssignment = token.length > 0
-    ? `TELEGRAM_BOT_TOKEN=${shellQuote(token)}`
-    : "TELEGRAM_BOT_TOKEN=''";
+  const tokenAssignment =
+    token.length > 0 ? `TELEGRAM_BOT_TOKEN=${shellQuote(token)}` : "TELEGRAM_BOT_TOKEN=''";
 
   return `
 set -u
@@ -451,10 +451,12 @@ function buildTelegramProbeCommand(sandboxName, options = {}) {
 }
 
 function runTelegramProbe(sandboxName, options = {}) {
-  const token = options.token ?? getTelegramProbeToken(options.env, options.getCredential, {
-    sandboxName,
-    fsModule: options.fsModule,
-  });
+  const token =
+    options.token ??
+    getTelegramProbeToken(options.env, options.getCredential, {
+      sandboxName,
+      fsModule: options.fsModule,
+    });
   const command = buildTelegramProbeCommand(sandboxName, { token });
   return spawnSync("bash", ["-lc", command], {
     stdio: "inherit",

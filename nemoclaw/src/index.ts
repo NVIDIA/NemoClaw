@@ -163,7 +163,9 @@ function activeOnboardedModelLimits(onboardCfg: ReturnType<typeof loadOnboardCon
   };
 }
 
-function activeModelEntries(onboardCfg: ReturnType<typeof loadOnboardConfig>): ModelProviderEntry[] {
+function activeModelEntries(
+  onboardCfg: ReturnType<typeof loadOnboardConfig>,
+): ModelProviderEntry[] {
   if (!onboardCfg?.model) {
     return [
       {

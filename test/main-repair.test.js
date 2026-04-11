@@ -21,7 +21,9 @@ describe("sandbox repair-main command", () => {
 
     expect(result).toBe(true);
     expect(runSandboxScript).toHaveBeenCalledTimes(2);
-    expect(runSandboxScript.mock.calls[0][1]).toContain("OPENCLAW_CONFIG_PATH=/tmp/nemoclaw/openclaw.json");
+    expect(runSandboxScript.mock.calls[0][1]).toContain(
+      "OPENCLAW_CONFIG_PATH=/tmp/nemoclaw/openclaw.json",
+    );
     expect(runSandboxScript.mock.calls[0][1]).toContain("'id': 'main'");
     expect(runSandboxScript.mock.calls[1][1]).toContain("openclaw agent --agent main --local");
 
@@ -33,15 +35,19 @@ describe("sandbox repair-main command", () => {
   it("supports --skip-verify and --model", () => {
     const runSandboxScript = vi.fn().mockReturnValue({ status: 0, stdout: "" });
 
-    const result = sandboxRepairMain("the-crucible", ["--model", "qwen3.5:9b-64k", "--skip-verify"], {
-      ensureLiveSandboxForAction: vi.fn().mockReturnValue(true),
-      runSandboxScript,
-      exit: () => {},
-    });
+    const result = sandboxRepairMain(
+      "the-crucible",
+      ["--model", "qwen3.5:9b-64k", "--skip-verify"],
+      {
+        ensureLiveSandboxForAction: vi.fn().mockReturnValue(true),
+        runSandboxScript,
+        exit: () => {},
+      },
+    );
 
     expect(result).toBe(true);
     expect(runSandboxScript).toHaveBeenCalledTimes(1);
-    expect(runSandboxScript.mock.calls[0][1]).toContain("model_override = \"qwen3.5:9b-64k\"");
+    expect(runSandboxScript.mock.calls[0][1]).toContain('model_override = "qwen3.5:9b-64k"');
   });
 
   it("exits with failure on stale sandbox", () => {

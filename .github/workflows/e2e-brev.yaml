@@ -3,31 +3,64 @@
 
 name: e2e-brev
 
+# Ephemeral Brev E2E: provisions a cloud instance, bootstraps NemoClaw,
+# runs test suites remotely, then tears down. Use workflow_dispatch to
+# trigger manually from the Actions tab, or workflow_call from other workflows.
+#
+# Test suites:
+#   full                     — Install → onboard → sandbox verify → live inference
+#                              against NVIDIA Endpoints → CLI operations. Tests the
+#                              complete user journey. (~10 min, destroys sandbox)
+#   credential-sanitization  — 24 tests validating PR #743: credential stripping from
+#                              migration snapshots, auth-profiles.json deletion, blueprint
+#                              digest verification, symlink traversal protection, and
+#                              runtime sandbox credential checks. Requires running sandbox.
+#   telegram-injection       — 18 tests validating PR #584: command injection prevention
+#                              through $(cmd), backticks, quote breakout, ${VAR} expansion,
+#                              process table leak checks, and SANDBOX_NAME validation.
+#                              Requires running sandbox.
+#   messaging-providers      — 20+ tests validating PR #1081: provider creation, credential
+#                              isolation, openclaw.json config patching, network reachability,
+#                              and L7 proxy token rewriting for Telegram + Discord. Creates
+#                              its own sandbox (e2e-msg-provider). (~15 min)
+#   all                      — Runs credential-sanitization + telegram-injection (NOT full,
+#                              which destroys the sandbox the security tests need).
+#
+# Required secrets: BREV_API_TOKEN, NVIDIA_API_KEY
+# Instance cost: Brev CPU credits (~$0.10/run for 4x16 instance)
+
 on:
   workflow_dispatch:
     inputs:
-      branch:
-        description: "Branch to test"
-        required: true
-        default: "main"
       pr_number:
-        description: "PR number (for status reporting, optional)"
+        description: "PR number (resolves branch automatically)"
         required: false
         default: ""
       test_suite:
-        description: "Test suite to run"
+        description: "Test suite to run (see workflow header for descriptions)"
         required: true
         default: "full"
         type: choice
         options:
           - full
           - credential-sanitization
+          - telegram-injection
+          - messaging-providers
           - all
+      use_launchable:
+        description: "Use CI launchable (true) or bare brev create + brev-setup.sh (false)"
+        required: false
+        type: boolean
+        default: true
       keep_alive:
         description: "Keep Brev instance alive after tests (for SSH debugging)"
         required: false
         type: boolean
-        default: true
+        default: false
+      brev_token:
+        description: "Brev refresh token (overrides BREV_API_TOKEN secret if provided)"
+        required: false
+        default: ""
   workflow_call:
     inputs:
       branch:
@@ -41,6 +74,14 @@ on:
         required: false
         type: string
         default: "full"
+      use_launchable:
+        required: false
+        type: boolean
+        default: true
+      setup_script_url:
+        required: false
+        type: string
+        default: ""
       keep_alive:
         required: false
         type: boolean
@@ -62,14 +103,23 @@ concurrency:
 
 jobs:
   e2e-brev:
-    if: github.repository == 'NVIDIA/NemoClaw'
+    # if: github.repository == 'NVIDIA/NemoClaw'  # Disabled for fork testing — re-enable before merge
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
+      - name: Resolve branch from PR number
+        if: inputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH=$(gh pr view ${{ inputs.pr_number }} --repo ${{ github.repository }} --json headRefName -q .headRefName)
+          echo "Resolved PR #${{ inputs.pr_number }} → branch: $BRANCH"
+          echo "RESOLVED_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
       - name: Checkout target branch
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.branch }}
+          ref: ${{ env.RESOLVED_BRANCH || inputs.branch || 'main' }}
 
       - name: Create check run (pending)
         if: inputs.pr_number != ''
@@ -94,22 +144,43 @@ jobs:
           cache: npm
 
       - name: Install Brev CLI
+        env:
+          BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
         run: |
-          # Pin to v0.6.310 — v0.6.322 removed --cpu flag and defaults to GPU instances
-          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.310/brev-cli_0.6.310_linux_amd64.tar.gz"
+          # Brev CLI v0.6.322+ — CPU instances use `brev search cpu | brev create`
+          # Startup scripts use `brev create --startup-script @file` (not brev start --cpu)
+          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.322/brev-cli_0.6.322_linux_amd64.tar.gz"
           tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
           chmod +x /usr/local/bin/brev
+          # Brev CLI does not read BREV_API_TOKEN from env — it requires
+          # ~/.brev/credentials.json. The login call was removed in #1470
+          # (374a847d), breaking CI. Write the credentials file so `brev ls`
+          # works in the test harness's hasAuthenticatedBrev check.
+          if [ -z "${BREV_API_TOKEN:-}" ]; then
+            echo "::error::BREV_API_TOKEN is empty — cannot authenticate Brev CLI."
+            exit 1
+          fi
+          mkdir -p ~/.brev
+          umask 077
+          printf '{"refresh_token":"%s"}' "$BREV_API_TOKEN" > ~/.brev/credentials.json
+          chmod 600 ~/.brev/credentials.json
+          # Skip the first-run onboarding wizard that blocks on stdin (also removed in #1470)
+          printf '{"step":1,"hasRunBrevShell":true,"hasRunBrevOpen":true}' > ~/.brev/onboarding_step.json
+          brev ls >/dev/null
 
       - name: Install dependencies
         run: npm install --ignore-scripts
 
       - name: Run ephemeral Brev E2E
         env:
-          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
+          BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           INSTANCE_NAME: e2e-pr-${{ inputs.pr_number || github.run_id }}
           TEST_SUITE: ${{ inputs.test_suite }}
+          USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
+          LAUNCHABLE_SETUP_SCRIPT: ${{ inputs.setup_script_url || '' }}
+          BREV_PROVIDER: gcp
           KEEP_ALIVE: ${{ inputs.keep_alive }}
         run: npx vitest run --project e2e-brev --reporter=verbose
 
@@ -139,7 +210,8 @@ jobs:
             STATUS="FAILED"
           fi
           INSTANCE="e2e-pr-${{ inputs.pr_number || github.run_id }}"
-          BODY="${EMOJI} **Brev E2E** (${{ inputs.test_suite }}): **${STATUS}** on branch \`${{ inputs.branch }}\` — [See logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          BRANCH="${RESOLVED_BRANCH:-${{ inputs.branch || 'main' }}}"
+          BODY="${EMOJI} **Brev E2E** (${{ inputs.test_suite }}): **${STATUS}** on branch \`${BRANCH}\` — [See logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           if [ "${{ inputs.keep_alive }}" = "true" ]; then
             BODY="${BODY}
 

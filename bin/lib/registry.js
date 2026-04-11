@@ -13,7 +13,9 @@ function load() {
     if (fs.existsSync(REGISTRY_FILE)) {
       return JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf-8"));
     }
-  } catch { /* ignored */ }
+  } catch {
+    /* ignored */
+  }
   return { sandboxes: {}, defaultSandbox: null };
 }
 

@@ -73,7 +73,10 @@ describe("sandbox destroy safeguards", () => {
 
     expect(result).toBe(true);
     expect(stopNim).toHaveBeenCalledWith("the-crucible");
-    expect(runMock).toHaveBeenCalledWith('openshell sandbox delete "the-crucible" 2>/dev/null || true', { ignoreError: true });
+    expect(runMock).toHaveBeenCalledWith(
+      'openshell sandbox delete "the-crucible" 2>/dev/null || true',
+      { ignoreError: true },
+    );
     expect(removeSandbox).toHaveBeenCalledWith("the-crucible");
     const printed = logSpy.mock.calls.map((args) => args.join(" ")).join("\n");
     expect(printed).toContain("Stopping NIM for 'the-crucible'");

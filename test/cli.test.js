@@ -123,7 +123,10 @@ describe("CLI dispatch", () => {
     const r = run("help");
     assert.equal(r.code, 0);
     assert.ok(r.out.includes("dashboard"), "help should mention dashboard command");
-    assert.ok(r.out.includes("Show dashboard access URL"), "help should describe dashboard command");
+    assert.ok(
+      r.out.includes("Show dashboard access URL"),
+      "help should describe dashboard command",
+    );
   });
 
   it("help mentions backup and restore commands", () => {
@@ -137,12 +140,20 @@ describe("CLI dispatch", () => {
   it("unknown sandbox action mentions dashboard in valid actions", () => {
     const r = run("bogus-sandbox-name bogus-action");
     // Exits 1 (unknown sandbox) or the error path for unknown action
-    assert.ok(r.out.includes("dashboard") || r.out.includes("repair-main") || r.out.includes("Unknown command"), "error output should be informative");
+    assert.ok(
+      r.out.includes("dashboard") ||
+        r.out.includes("repair-main") ||
+        r.out.includes("Unknown command"),
+      "error output should be informative",
+    );
   });
 
   it("help mentions Discord service support", () => {
     const r = run("help");
     assert.equal(r.code, 0);
-    assert.ok(r.out.includes("Telegram, Discord, tunnel"), "help should mention Discord in the services section");
+    assert.ok(
+      r.out.includes("Telegram, Discord, tunnel"),
+      "help should mention Discord in the services section",
+    );
   });
 });

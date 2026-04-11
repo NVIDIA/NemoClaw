@@ -14,13 +14,14 @@
 #   - Network access to integrate.api.nvidia.com
 #
 # Environment variables:
-#   NEMOCLAW_NON_INTERACTIVE=1   — required (enables non-interactive install + onboard)
-#   NEMOCLAW_SANDBOX_NAME        — sandbox name (default: e2e-nightly)
-#   NEMOCLAW_RECREATE_SANDBOX=1  — recreate sandbox if it exists from a previous run
-#   NVIDIA_API_KEY               — required for NVIDIA Endpoints inference
+#   NEMOCLAW_NON_INTERACTIVE=1             — required (enables non-interactive install + onboard)
+#   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required for non-interactive install/onboard
+#   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-nightly)
+#   NEMOCLAW_RECREATE_SANDBOX=1            — recreate sandbox if it exists from a previous run
+#   NVIDIA_API_KEY                         — required for NVIDIA Endpoints inference
 #
 # Usage:
-#   NEMOCLAW_NON_INTERACTIVE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-full-e2e.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-full-e2e.sh
 #
 # See: https://github.com/NVIDIA/NemoClaw/issues/71
 
@@ -122,6 +123,11 @@ fi
 
 if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then
   fail "NEMOCLAW_NON_INTERACTIVE=1 is required"
+  exit 1
+fi
+
+if [ "${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}" != "1" ]; then
+  fail "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is required for non-interactive install"
   exit 1
 fi
 
@@ -341,9 +347,12 @@ section "Phase 6: Cleanup"
 nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
-list_after=$(nemoclaw list 2>&1)
-if grep -Fq -- "$SANDBOX_NAME" <<<"$list_after"; then
-  fail "Sandbox ${SANDBOX_NAME} still in list after destroy"
+# Verify against the registry file directly.  `nemoclaw list` triggers
+# gateway recovery which can restart a destroyed gateway and re-import stale
+# sandbox entries — that's a separate issue (#TBD), so avoid it here.
+registry_file="${HOME}/.nemoclaw/sandboxes.json"
+if [ -f "$registry_file" ] && grep -Fq "\"${SANDBOX_NAME}\"" "$registry_file"; then
+  fail "Sandbox ${SANDBOX_NAME} still in registry after destroy"
 else
   pass "Sandbox ${SANDBOX_NAME} removed"
 fi

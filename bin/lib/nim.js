@@ -26,10 +26,9 @@ function listModels() {
 function detectGpu() {
   // Try NVIDIA first — query VRAM
   try {
-    const output = runCapture(
-      "nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits",
-      { ignoreError: true }
-    );
+    const output = runCapture("nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits", {
+      ignoreError: true,
+    });
     if (output) {
       const lines = output.split("\n").filter((l) => l.trim());
       const perGpuMB = lines.map((l) => parseInt(l.trim(), 10)).filter((n) => !isNaN(n));
@@ -44,21 +43,24 @@ function detectGpu() {
         };
       }
     }
-  } catch { /* ignored */ }
+  } catch {
+    /* ignored */
+  }
 
   // Fallback: DGX Spark (GB10) — VRAM not queryable due to unified memory architecture
   try {
-    const nameOutput = runCapture(
-      "nvidia-smi --query-gpu=name --format=csv,noheader,nounits",
-      { ignoreError: true }
-    );
+    const nameOutput = runCapture("nvidia-smi --query-gpu=name --format=csv,noheader,nounits", {
+      ignoreError: true,
+    });
     if (nameOutput && nameOutput.includes("GB10")) {
       // GB10 has 128GB unified memory shared with Grace CPU — use system RAM
       let totalMemoryMB = 0;
       try {
         const memLine = runCapture("free -m | awk '/Mem:/ {print $2}'", { ignoreError: true });
         if (memLine) totalMemoryMB = parseInt(memLine.trim(), 10) || 0;
-      } catch { /* ignored */ }
+      } catch {
+        /* ignored */
+      }
       return {
         type: "nvidia",
         count: 1,
@@ -68,15 +70,16 @@ function detectGpu() {
         spark: true,
       };
     }
-  } catch { /* ignored */ }
+  } catch {
+    /* ignored */
+  }
 
   // macOS: detect Apple Silicon or discrete GPU
   if (process.platform === "darwin") {
     try {
-      const spOutput = runCapture(
-        "system_profiler SPDisplaysDataType 2>/dev/null",
-        { ignoreError: true }
-      );
+      const spOutput = runCapture("system_profiler SPDisplaysDataType 2>/dev/null", {
+        ignoreError: true,
+      });
       if (spOutput) {
         const chipMatch = spOutput.match(/Chipset Model:\s*(.+)/);
         const vramMatch = spOutput.match(/VRAM.*?:\s*(\d+)\s*(MB|GB)/i);
@@ -94,7 +97,9 @@ function detectGpu() {
             try {
               const memBytes = runCapture("sysctl -n hw.memsize", { ignoreError: true });
               if (memBytes) memoryMB = Math.floor(parseInt(memBytes, 10) / 1024 / 1024);
-            } catch { /* ignored */ }
+            } catch {
+              /* ignored */
+            }
           }
 
           return {
@@ -108,7 +113,9 @@ function detectGpu() {
           };
         }
       }
-    } catch { /* ignored */ }
+    } catch {
+      /* ignored */
+    }
   }
 
   return null;
@@ -143,7 +150,7 @@ function startNimContainerByName(name, model, port = 8000) {
 
   console.log(`  Starting NIM container: ${name}`);
   run(
-    `docker run -d --gpus all -p ${Number(port)}:8000 --name ${qn} --shm-size 16g ${shellQuote(image)}`
+    `docker run -d --gpus all -p ${Number(port)}:8000 --name ${qn} --shm-size 16g ${shellQuote(image)}`,
   );
   return name;
 }
@@ -163,7 +170,9 @@ function waitForNimHealth(port = 8000, timeout = 300) {
         console.log("  NIM is healthy.");
         return true;
       }
-    } catch { /* ignored */ }
+    } catch {
+      /* ignored */
+    }
     // Synchronous sleep via spawnSync
     require("child_process").spawnSync("sleep", ["5"]);
   }
@@ -192,7 +201,7 @@ function nimStatusByName(name) {
   try {
     const state = runCapture(
       `docker inspect --format '{{.State.Status}}' ${shellQuote(name)} 2>/dev/null`,
-      { ignoreError: true }
+      { ignoreError: true },
     );
     if (!state) return { running: false, container: name };
 

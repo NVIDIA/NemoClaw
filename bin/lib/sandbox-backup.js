@@ -15,33 +15,33 @@ const MANIFEST_FILE = "backup-manifest.json";
 const MANIFEST_VERSION = 1;
 const REMOTE_ARCHIVE_PATH = "/tmp/nemoclaw-sandbox-backup.tar.gz";
 const START_SCRIPT_PATH = "/usr/local/bin/nemoclaw-start";
-const RESTORE_EXCLUDES = [
-  "sandbox/.openclaw",
-  "sandbox/.nemoclaw/blueprints",
-];
+const RESTORE_EXCLUDES = ["sandbox/.openclaw", "sandbox/.nemoclaw/blueprints"];
 function getSandboxBackupRoot(sandboxName) {
   return path.join(BACKUP_ROOT, sandboxName);
 }
 
 function hasSandboxBackups(sandboxName) {
   const backupRoot = getSandboxBackupRoot(sandboxName);
-  return fs.existsSync(backupRoot) && fs.readdirSync(backupRoot).some((entry) => {
-    const fullPath = path.join(backupRoot, entry);
-    try {
-      return fs.statSync(fullPath).isDirectory();
-    } catch {
-      return false;
-    }
-  });
+  return (
+    fs.existsSync(backupRoot) &&
+    fs.readdirSync(backupRoot).some((entry) => {
+      const fullPath = path.join(backupRoot, entry);
+      try {
+        return fs.statSync(fullPath).isDirectory();
+      } catch {
+        return false;
+      }
+    })
+  );
 }
 
 function formatTimestamp(date = new Date()) {
   const pad = (value) => String(value).padStart(2, "0");
-  return [
-    date.getFullYear(),
-    pad(date.getMonth() + 1),
-    pad(date.getDate()),
-  ].join("") + "-" + [pad(date.getHours()), pad(date.getMinutes()), pad(date.getSeconds())].join("");
+  return (
+    [date.getFullYear(), pad(date.getMonth() + 1), pad(date.getDate())].join("") +
+    "-" +
+    [pad(date.getHours()), pad(date.getMinutes()), pad(date.getSeconds())].join("")
+  );
 }
 
 function normalizeBackupId(label) {
@@ -51,7 +51,9 @@ function normalizeBackupId(label) {
     throw new Error("Backup label cannot be empty.");
   }
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(trimmed)) {
-    throw new Error("Backup label must start with a letter or number and use only letters, numbers, '.', '_' or '-'.");
+    throw new Error(
+      "Backup label must start with a letter or number and use only letters, numbers, '.', '_' or '-'.",
+    );
   }
   return trimmed;
 }
@@ -72,7 +74,9 @@ function readManifest(backupDir) {
 }
 
 function writeManifest(backupDir, manifest) {
-  fs.writeFileSync(path.join(backupDir, MANIFEST_FILE), JSON.stringify(manifest, null, 2), { mode: 0o600 });
+  fs.writeFileSync(path.join(backupDir, MANIFEST_FILE), JSON.stringify(manifest, null, 2), {
+    mode: 0o600,
+  });
 }
 
 function getArchivePath(backupDir, manifest = null) {
@@ -109,7 +113,8 @@ function getGatewayInferenceMetadata() {
 
 function buildManifest(sandboxName, options = {}) {
   const packageVersion = options.packageVersion || require(path.join(ROOT, "package.json")).version;
-  const registryEntry = options.registryEntry || registry.getSandbox(sandboxName) || { name: sandboxName };
+  const registryEntry = options.registryEntry ||
+    registry.getSandbox(sandboxName) || { name: sandboxName };
   return {
     manifestVersion: MANIFEST_VERSION,
     backupType: "full-sandbox-filesystem",
@@ -119,7 +124,10 @@ function buildManifest(sandboxName, options = {}) {
     createdAt: (options.now || new Date()).toISOString(),
     archiveFile: ARCHIVE_FILE,
     nemoclawVersion: packageVersion,
-    openshellVersion: options.openshellVersion || runCapture("openshell --version 2>/dev/null", { ignoreError: true }) || null,
+    openshellVersion:
+      options.openshellVersion ||
+      runCapture("openshell --version 2>/dev/null", { ignoreError: true }) ||
+      null,
     registry: {
       ...registryEntry,
       name: sandboxName,
@@ -146,7 +154,7 @@ function runSandboxScript(sandboxName, script, options = {}) {
 function downloadFromSandbox(sandboxName, remotePath, localDir) {
   const result = run(
     `openshell sandbox download ${shellQuote(sandboxName)} ${shellQuote(remotePath)} ${shellQuote(localDir)}`,
-    { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }
+    { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
   );
   if (result.status !== 0) {
     const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
@@ -157,7 +165,7 @@ function downloadFromSandbox(sandboxName, remotePath, localDir) {
 function uploadToSandbox(sandboxName, localPath, remoteDir) {
   const result = run(
     `openshell sandbox upload ${shellQuote(sandboxName)} ${shellQuote(localPath)} ${shellQuote(remoteDir)}`,
-    { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }
+    { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
   );
   if (result.status !== 0) {
     const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
@@ -187,7 +195,7 @@ function isGatewayRunning(sandboxName) {
   const result = runSandboxScript(
     sandboxName,
     "set -eu\nif pidof -s openclaw >/dev/null 2>&1; then echo running; else echo stopped; fi",
-    { ignoreError: true }
+    { ignoreError: true },
   );
   return (result.stdout || "").includes("running");
 }
@@ -211,7 +219,8 @@ function listBackups(sandboxName) {
   const backupRoot = getSandboxBackupRoot(sandboxName);
   if (!fs.existsSync(backupRoot)) return [];
 
-  return fs.readdirSync(backupRoot, { withFileTypes: true })
+  return fs
+    .readdirSync(backupRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => {
       const backupDir = path.join(backupRoot, entry.name);
@@ -274,10 +283,10 @@ function createBackup(sandboxName, options = {}) {
 }
 
 function _buildBackupManifest(sandboxName, options, backupId) {
-  const registryEntry = options.registryEntry || registry.getSandbox(sandboxName) || { name: sandboxName };
-  const inferredMetadata = (!registryEntry.model || !registryEntry.provider)
-    ? getGatewayInferenceMetadata()
-    : null;
+  const registryEntry = options.registryEntry ||
+    registry.getSandbox(sandboxName) || { name: sandboxName };
+  const inferredMetadata =
+    !registryEntry.model || !registryEntry.provider ? getGatewayInferenceMetadata() : null;
   return buildManifest(sandboxName, {
     ...options,
     backupId,
@@ -286,7 +295,10 @@ function _buildBackupManifest(sandboxName, options, backupId) {
       ...registryEntry,
       model: registryEntry.model || (inferredMetadata && inferredMetadata.model) || null,
       provider: registryEntry.provider || (inferredMetadata && inferredMetadata.provider) || null,
-      providerBaseUrl: registryEntry.providerBaseUrl || (inferredMetadata && inferredMetadata.providerBaseUrl) || null,
+      providerBaseUrl:
+        registryEntry.providerBaseUrl ||
+        (inferredMetadata && inferredMetadata.providerBaseUrl) ||
+        null,
     },
   });
 }
@@ -298,7 +310,9 @@ function _createBackupArchive(sandboxName, backupDir) {
       downloadFromSandbox(sandboxName, REMOTE_ARCHIVE_PATH, backupDir);
     });
   } finally {
-    runSandboxScript(sandboxName, `rm -f ${shellQuote(REMOTE_ARCHIVE_PATH)}`, { ignoreError: true });
+    runSandboxScript(sandboxName, `rm -f ${shellQuote(REMOTE_ARCHIVE_PATH)}`, {
+      ignoreError: true,
+    });
   }
 }
 
@@ -323,15 +337,15 @@ function restoreBackup(sandboxName, backupDir) {
   try {
     withGatewayQuiesced(sandboxName, () => {
       uploadToSandbox(sandboxName, archivePath, "/tmp/");
-      runSandboxScript(
-        sandboxName,
-        buildRestoreArchiveScript(archivePath),
-        { ignoreError: false }
-      );
+      runSandboxScript(sandboxName, buildRestoreArchiveScript(archivePath), { ignoreError: false });
     });
   } finally {
-    runSandboxScript(sandboxName, `rm -f ${shellQuote(uploadedArchivePath)}`, { ignoreError: true });
-    runSandboxScript(sandboxName, `rm -f ${shellQuote(REMOTE_ARCHIVE_PATH)}`, { ignoreError: true });
+    runSandboxScript(sandboxName, `rm -f ${shellQuote(uploadedArchivePath)}`, {
+      ignoreError: true,
+    });
+    runSandboxScript(sandboxName, `rm -f ${shellQuote(REMOTE_ARCHIVE_PATH)}`, {
+      ignoreError: true,
+    });
   }
 
   return { manifest, archivePath };

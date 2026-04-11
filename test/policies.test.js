@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 // Polyfill __dirname for ESM
-import { fileURLToPath } from 'url';
+import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import { describe, it, expect } from "vitest";
@@ -14,9 +14,9 @@ import policies from "../bin/lib/policies";
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 9 presets", () => {
+    it("returns all 11 presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(9);
+      expect(presets.length).toBe(11);
     });
 
     it("each preset has name and description", () => {
@@ -32,8 +32,10 @@ describe("policies", () => {
         .map((p) => p.name)
         .sort();
       const expected = [
+        "brave",
+        "brew",
         "discord",
-        "docker",
+        "github",
         "huggingface",
         "jira",
         "npm",
@@ -90,28 +92,17 @@ describe("policies", () => {
 
   describe("buildPolicySetCommand", () => {
     it("shell-quotes sandbox name to prevent injection", () => {
-      const cmd = policies.buildPolicySetCommand(
-        "/tmp/policy.yaml",
-        "my-assistant",
-      );
-      expect(cmd).toBe(
-        "openshell policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'",
-      );
+      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
+      expect(cmd).toBe("openshell policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'");
     });
 
     it("escapes shell metacharacters in sandbox name", () => {
-      const cmd = policies.buildPolicySetCommand(
-        "/tmp/policy.yaml",
-        "test; whoami",
-      );
+      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test; whoami");
       expect(cmd.includes("'test; whoami'")).toBeTruthy();
     });
 
     it("places --wait before the sandbox name", () => {
-      const cmd = policies.buildPolicySetCommand(
-        "/tmp/policy.yaml",
-        "test-box",
-      );
+      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test-box");
       const waitIdx = cmd.indexOf("--wait");
       const nameIdx = cmd.indexOf("'test-box'");
       expect(waitIdx < nameIdx).toBeTruthy();
@@ -120,10 +111,7 @@ describe("policies", () => {
     it("uses the resolved openshell binary when provided by the installer path", () => {
       process.env.NEMOCLAW_OPENSHELL_BIN = "/tmp/fake path/openshell";
       try {
-        const cmd = policies.buildPolicySetCommand(
-          "/tmp/policy.yaml",
-          "my-assistant",
-        );
+        const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
         assert.equal(
           cmd,
           "'/tmp/fake path/openshell' policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'",
@@ -137,9 +125,7 @@ describe("policies", () => {
   describe("buildPolicyGetCommand", () => {
     it("shell-quotes sandbox name", () => {
       const cmd = policies.buildPolicyGetCommand("my-assistant");
-      expect(cmd).toBe(
-        "openshell policy get --full 'my-assistant' 2>/dev/null",
-      );
+      expect(cmd).toBe("openshell policy get --full 'my-assistant' 2>/dev/null");
     });
   });
 
@@ -156,8 +142,7 @@ describe("policies", () => {
     });
 
     it("appends preset entries when current policy has network_policies but no version", () => {
-      const versionlessWithNp =
-        "network_policies:\n  - host: existing.com\n    allow: true";
+      const versionlessWithNp = "network_policies:\n  - host: existing.com\n    allow: true";
       const merged = policies.mergePresetIntoPolicy(versionlessWithNp, sampleEntries);
       expect(merged.trimStart().startsWith("version: 1\n")).toBe(true);
       expect(merged).toContain("existing.com");
@@ -187,7 +172,10 @@ describe("policies", () => {
         path.join(__dirname, "..", "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
         "utf8",
       );
-      assert.match(sandboxPolicy, /telegram:[\s\S]*?binaries:\s*\n\s*- \{ path: \/usr\/local\/bin\/node \}/);
+      assert.match(
+        sandboxPolicy,
+        /telegram:[\s\S]*?binaries:\s*\n\s*- \{ path: \/usr\/local\/bin\/node \}/,
+      );
     });
 
     it("no preset has rules at NetworkPolicyRuleDef level", () => {
@@ -223,8 +211,7 @@ describe("policies", () => {
       for (const name of packagePresets) {
         const content = policies.loadPreset(name);
         expect(content).toBeTruthy();
-        expect(content.includes("tls: terminate")).toBe(false);
-        expect(content.includes("access: full")).toBe(true);
+        expect(content.includes("tls: terminate")).toBe(true);
       }
     });
 

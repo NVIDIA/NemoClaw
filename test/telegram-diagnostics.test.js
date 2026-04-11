@@ -47,19 +47,34 @@ describe("telegram diagnostics", () => {
     assert.match(script, /section "Proxy Routing"/);
     assert.match(script, /run_route_probe_for_url/);
     assert.match(script, /run_route_probe default curl/);
-    assert.match(script, /run_route_probe forced-proxy env NO_PROXY= no_proxy= curl --proxy "\$selected_proxy_target" --noproxy ""/);
-    assert.match(script, /run_route_probe forced-bypass env HTTPS_PROXY= HTTP_PROXY= ALL_PROXY= https_proxy= http_proxy= all_proxy= curl --noproxy '\*'/);
+    assert.match(
+      script,
+      /run_route_probe forced-proxy env NO_PROXY= no_proxy= curl --proxy "\$selected_proxy_target" --noproxy ""/,
+    );
+    assert.match(
+      script,
+      /run_route_probe forced-bypass env HTTPS_PROXY= HTTP_PROXY= ALL_PROXY= https_proxy= http_proxy= all_proxy= curl --noproxy '\*'/,
+    );
     assert.match(script, /section "Proxy Comparison"/);
     assert.match(script, /comparison_probe_url="https:\/\/example\.com\/"/);
-    assert.match(script, /run_route_probe_for_url comparison-default "\$comparison_probe_url" curl/);
-    assert.match(script, /run_route_probe_for_url comparison-forced-proxy "\$comparison_probe_url" env NO_PROXY= no_proxy= curl --proxy "\$selected_proxy_target" --noproxy ""/);
+    assert.match(
+      script,
+      /run_route_probe_for_url comparison-default "\$comparison_probe_url" curl/,
+    );
+    assert.match(
+      script,
+      /run_route_probe_for_url comparison-forced-proxy "\$comparison_probe_url" env NO_PROXY= no_proxy= curl --proxy "\$selected_proxy_target" --noproxy ""/,
+    );
     assert.match(script, /--silent --show-error --no-progress-meter/);
     assert.match(script, /curl --proxy "\$selected_proxy_target" --noproxy ""/);
     assert.match(script, /curl --noproxy '\*'/);
     assert.match(script, /getent ahostsv4 api\.telegram\.org/);
     assert.match(script, /socket\.getaddrinfo\('api\.telegram\.org', 443/);
     assert.match(script, /advisory_fail 'dns api\.telegram\.org'/);
-    assert.match(script, /curl -sS -o \/dev\/null -D "\$curl_header_file" --max-time 15 https:\/\/api\.telegram\.org\//);
+    assert.match(
+      script,
+      /curl -sS -o \/dev\/null -D "\$curl_header_file" --max-time 15 https:\/\/api\.telegram\.org\//,
+    );
     assert.match(script, /TELEGRAM_BOT_TOKEN='abc123'/);
     assert.match(script, /section "Bot API \(curl\)"/);
     assert.match(script, /https:\/\/api\.telegram\.org\/bot\$\{TELEGRAM_BOT_TOKEN\}\/getMe/);
@@ -83,10 +98,7 @@ describe("telegram diagnostics", () => {
   });
 
   it("prefers TELEGRAM_BOT_TOKEN from the environment before credentials", () => {
-    const token = getTelegramProbeToken(
-      { TELEGRAM_BOT_TOKEN: "from-env" },
-      () => "from-creds",
-    );
+    const token = getTelegramProbeToken({ TELEGRAM_BOT_TOKEN: "from-env" }, () => "from-creds");
 
     assert.equal(token, "from-env");
   });
@@ -101,8 +113,10 @@ describe("telegram diagnostics", () => {
     const fakeFs = {
       ...fs,
       existsSync(filePath) {
-        return filePath === "/tmp/nemoclaw-services-the-crucible/telegram-bridge.pid"
-          || filePath === "/proc/4242/environ";
+        return (
+          filePath === "/tmp/nemoclaw-services-the-crucible/telegram-bridge.pid" ||
+          filePath === "/proc/4242/environ"
+        );
       },
       readFileSync(filePath) {
         if (filePath === "/tmp/nemoclaw-services-the-crucible/telegram-bridge.pid") {
@@ -118,7 +132,10 @@ describe("telegram diagnostics", () => {
 
     assert.equal(getTelegramBridgeToken("the-crucible", fakeFsModule), "from-bridge");
     assert.equal(
-      getTelegramProbeToken({}, () => null, { sandboxName: "the-crucible", fsModule: fakeFsModule }),
+      getTelegramProbeToken({}, () => null, {
+        sandboxName: "the-crucible",
+        fsModule: fakeFsModule,
+      }),
       "from-bridge",
     );
   });

@@ -1,0 +1,11 @@
+{
+  "renameTests": [
+    "test/policies.test.js"
+  ],
+  "moveRuntime": {
+    "bin/lib/policies.js": "src/lib/policies.ts"
+  },
+  "shimStrategy": {
+    "bin/lib/policies.js": "simple"
+  }
+}

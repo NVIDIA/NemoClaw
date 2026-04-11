@@ -45,7 +45,10 @@ describe("discord diagnostics", () => {
     assert.match(script, /getent hosts gateway\.discord\.gg/);
     assert.match(script, /socket\.getaddrinfo\(host, 443/);
     assert.match(script, /advisory_fail 'dns discord'/);
-    assert.match(script, /curl -sS -o \/dev\/null -D "\$curl_header_file" --max-time 15 https:\/\/discord\.com\/api\/v10\/gateway/);
+    assert.match(
+      script,
+      /curl -sS -o \/dev\/null -D "\$curl_header_file" --max-time 15 https:\/\/discord\.com\/api\/v10\/gateway/,
+    );
     assert.match(script, /DISCORD_BOT_TOKEN='abc123'/);
     assert.match(script, /section "Bot API \(curl\)"/);
     assert.match(script, /https:\/\/discord\.com\/api\/v10\/users\/@me/);
@@ -67,10 +70,7 @@ describe("discord diagnostics", () => {
   });
 
   it("prefers DISCORD_BOT_TOKEN from the environment before credentials", () => {
-    const token = getDiscordProbeToken(
-      { DISCORD_BOT_TOKEN: "from-env" },
-      () => "from-creds",
-    );
+    const token = getDiscordProbeToken({ DISCORD_BOT_TOKEN: "from-env" }, () => "from-creds");
 
     assert.equal(token, "from-env");
   });
@@ -85,8 +85,10 @@ describe("discord diagnostics", () => {
     const fakeFs = {
       ...fs,
       existsSync(filePath) {
-        return filePath === "/tmp/nemoclaw-services-the-crucible/discord-bridge.pid"
-          || filePath === "/proc/4242/environ";
+        return (
+          filePath === "/tmp/nemoclaw-services-the-crucible/discord-bridge.pid" ||
+          filePath === "/proc/4242/environ"
+        );
       },
       readFileSync(filePath) {
         if (filePath === "/tmp/nemoclaw-services-the-crucible/discord-bridge.pid") {

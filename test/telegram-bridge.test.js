@@ -15,8 +15,13 @@ describe("telegram bridge", () => {
     process.env.TELEGRAM_BOT_TOKEN = "token";
     process.env.NVIDIA_API_KEY = "secret";
 
-    const restoreResolve = vi.spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell").mockImplementation(() => "/usr/bin/openshell");
-    const { buildAgentCommand, buildTelegramToolCheckCommand } = require("../scripts/telegram-bridge.js");
+    const restoreResolve = vi
+      .spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell")
+      .mockImplementation(() => "/usr/bin/openshell");
+    const {
+      buildAgentCommand,
+      buildTelegramToolCheckCommand,
+    } = require("../scripts/telegram-bridge.js");
 
     try {
       const command = buildAgentCommand("it's from telegram", "12345");
@@ -48,7 +53,9 @@ describe("telegram bridge", () => {
     process.env.TELEGRAM_BOT_TOKEN = "token";
     process.env.NVIDIA_API_KEY = "secret";
 
-    const restoreResolve = vi.spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell").mockImplementation(() => "/usr/bin/openshell");
+    const restoreResolve = vi
+      .spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell")
+      .mockImplementation(() => "/usr/bin/openshell");
     const { normalizeAgentResponse } = require("../scripts/telegram-bridge.js");
 
     try {
@@ -58,7 +65,10 @@ describe("telegram bridge", () => {
       );
 
       assert.match(response, /Telegram delivery is available from inside the sandbox/);
-      assert.doesNotMatch(response, /still having trouble sending messages via the OpenClaw Telegram tool/i);
+      assert.doesNotMatch(
+        response,
+        /still having trouble sending messages via the OpenClaw Telegram tool/i,
+      );
       assert.equal(normalizeAgentResponse("All good.", true), "All good.");
       assert.match(
         normalizeAgentResponse(
@@ -82,7 +92,9 @@ describe("telegram bridge", () => {
     process.env.TELEGRAM_BOT_TOKEN = "token";
     process.env.NVIDIA_API_KEY = "secret";
 
-    const restoreResolve = vi.spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell").mockImplementation(() => "/usr/bin/openshell");
+    const restoreResolve = vi
+      .spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell")
+      .mockImplementation(() => "/usr/bin/openshell");
     const { formatAgentFailure, summarizeStderr } = require("../scripts/telegram-bridge.js");
 
     try {

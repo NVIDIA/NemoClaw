@@ -17,8 +17,13 @@ describe("discord bridge", () => {
     process.env.DISCORD_CHANNEL_ID = "98765";
     process.env.NVIDIA_API_KEY = "secret";
 
-    const restoreResolve = vi.spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell").mockImplementation(() => "/usr/bin/openshell");
-    const { buildAgentCommand, buildDiscordToolCheckCommand } = require("../scripts/discord-bridge.js");
+    const restoreResolve = vi
+      .spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell")
+      .mockImplementation(() => "/usr/bin/openshell");
+    const {
+      buildAgentCommand,
+      buildDiscordToolCheckCommand,
+    } = require("../scripts/discord-bridge.js");
 
     try {
       const command = buildAgentCommand("it's from discord", "12345");
@@ -51,7 +56,9 @@ describe("discord bridge", () => {
     process.env.DISCORD_CHANNEL_ID = "98765";
     process.env.NVIDIA_API_KEY = "secret";
 
-    const restoreResolve = vi.spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell").mockImplementation(() => "/usr/bin/openshell");
+    const restoreResolve = vi
+      .spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell")
+      .mockImplementation(() => "/usr/bin/openshell");
     const { buildMessageChunks } = require("../scripts/discord-bridge.js");
 
     try {
@@ -78,7 +85,9 @@ describe("discord bridge", () => {
     process.env.DISCORD_CHANNEL_ID = "98765";
     process.env.NVIDIA_API_KEY = "secret";
 
-    const restoreResolve = vi.spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell").mockImplementation(() => "/usr/bin/openshell");
+    const restoreResolve = vi
+      .spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell")
+      .mockImplementation(() => "/usr/bin/openshell");
     const { normalizeAgentResponse } = require("../scripts/discord-bridge.js");
 
     try {
@@ -88,7 +97,10 @@ describe("discord bridge", () => {
       );
 
       assert.match(response, /Discord delivery is available from inside the sandbox/);
-      assert.doesNotMatch(response, /still having trouble sending messages via the OpenClaw Discord tool/i);
+      assert.doesNotMatch(
+        response,
+        /still having trouble sending messages via the OpenClaw Discord tool/i,
+      );
       assert.equal(normalizeAgentResponse("All good.", true), "All good.");
       assert.match(
         normalizeAgentResponse(
@@ -115,7 +127,9 @@ describe("discord bridge", () => {
     process.env.DISCORD_CHANNEL_ID = "98765";
     process.env.NVIDIA_API_KEY = "secret";
 
-    const restoreResolve = vi.spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell").mockImplementation(() => "/usr/bin/openshell");
+    const restoreResolve = vi
+      .spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell")
+      .mockImplementation(() => "/usr/bin/openshell");
     const { formatAgentFailure, summarizeStderr } = require("../scripts/discord-bridge.js");
 
     try {
@@ -147,7 +161,9 @@ describe("discord bridge", () => {
     process.env.DISCORD_CHANNEL_ID = "98765";
     process.env.NVIDIA_API_KEY = "secret";
 
-    const restoreResolve = vi.spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell").mockImplementation(() => "/usr/bin/openshell");
+    const restoreResolve = vi
+      .spyOn(require("../bin/lib/resolve-openshell"), "resolveOpenshell")
+      .mockImplementation(() => "/usr/bin/openshell");
     const { extractAgentResponse, isResponseNoiseLine } = require("../scripts/discord-bridge.js");
 
     try {
@@ -156,7 +172,12 @@ describe("discord bridge", () => {
         "Hello! How can I help you today? 🌟",
       ].join("\n");
 
-      assert.equal(isResponseNoiseLine("[gateway] Running as non-root (uid=998) — privilege separation disabled"), true);
+      assert.equal(
+        isResponseNoiseLine(
+          "[gateway] Running as non-root (uid=998) — privilege separation disabled",
+        ),
+        true,
+      );
       assert.equal(extractAgentResponse(stdout, 0, ""), "Hello! How can I help you today? 🌟");
     } finally {
       restoreResolve.mockRestore();
