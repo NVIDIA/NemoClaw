@@ -107,6 +107,33 @@ USER.md
 
 Update `SOUL.md`, `AGENTS.md`, and `IDENTITY.md` for that agent just as you would for the main agent.
 
+## Step 5a: Add a Per-Agent Wiki Memory Layer
+
+If you want the sub-agent to maintain its own long-term memory wiki, initialise
+an agent-local wiki instead of sharing the main agent's wiki.
+
+Run the wiki init script with the shared data root, the sub-agent workspace,
+and the agent id:
+
+```console
+$ bash /path/to/scripts/wiki-init.sh \
+  /sandbox/.openclaw-data \
+  /sandbox/.openclaw-data/workspace-jophiel \
+  jophiel
+```
+
+This creates:
+
+- `/sandbox/.openclaw-data/wiki-jophiel/`
+- `/sandbox/.openclaw-data/wiki-raw-jophiel/`
+- `/sandbox/.openclaw-data/workspace-jophiel/WIKI.md`
+
+It also patches the sub-agent's `SOUL.md`, `AGENTS.md`, and `MEMORY.md` so the
+agent uses its own wiki as a deep memory layer.
+
+Use this pattern for each sub-agent, substituting its agent id and workspace
+path.
+
 ## Step 6: Verify the Agent Runs
 
 Use a direct local agent call:
@@ -265,6 +292,18 @@ with open('/sandbox/.nemoclaw/agents-overlay.json', 'w') as f:
     json.dump({'agents': {'list': agent_list}}, f, indent=2)
 PY
 ```
+
+## Backup Note
+
+If you add per-agent wiki memory, the backup script now includes these
+directories automatically:
+
+- `workspace-<agent-id>/`
+- `wiki-<agent-id>/`
+- `wiki-raw-<agent-id>/`
+
+That keeps each sub-agent's persona files and wiki memory together during
+backup and restore.
 
 The startup script merges `/sandbox/.nemoclaw/agents-overlay.json` into the runtime config when the sandbox starts.
 

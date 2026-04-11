@@ -12,6 +12,17 @@ DIRS=(memory)
 # Wiki directories live under .openclaw-data, not workspace
 DATA_DIRS=(wiki wiki-raw)
 
+list_dynamic_data_dirs() {
+  local sandbox="$1"
+  cat <<'EOF' | openshell sandbox connect "$sandbox" 2>/dev/null
+set -eu
+find /sandbox/.openclaw-data -mindepth 1 -maxdepth 1 -type d \
+  \( -name 'workspace-*' -o -name 'wiki-*' -o -name 'wiki-raw-*' \) \
+  -printf '%f\n' | sort
+exit
+EOF
+}
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -54,6 +65,21 @@ do_backup() {
 
   info "Backing up workspace from sandbox '${sandbox}'..."
 
+  local -a dynamic_data_dirs=()
+  if mapfile -t dynamic_data_dirs < <(list_dynamic_data_dirs "$sandbox" || true); then
+    :
+  fi
+
+  declare -A seen_data_dirs=()
+  local d
+  for d in "${DATA_DIRS[@]}"; do
+    seen_data_dirs["$d"]=1
+  done
+  for d in "${dynamic_data_dirs[@]}"; do
+    [ -n "$d" ] || continue
+    seen_data_dirs["$d"]=1
+  done
+
   local count=0
   for f in "${FILES[@]}"; do
     if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${f}" "${dest}/"; then
@@ -71,7 +97,7 @@ do_backup() {
     fi
   done
 
-  for d in "${DATA_DIRS[@]}"; do
+  for d in "${!seen_data_dirs[@]}"; do
     if openshell sandbox download "$sandbox" "${DATA_PATH}/${d}/" "${dest}/${d}/"; then
       count=$((count + 1))
     else
@@ -101,6 +127,23 @@ do_restore() {
 
   info "Restoring workspace to sandbox '${sandbox}' from ${src}..."
 
+  local -a restore_data_dirs=()
+  local entry
+  for entry in "${DATA_DIRS[@]}"; do
+    restore_data_dirs+=("$entry")
+  done
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    restore_data_dirs+=("$entry")
+  done < <(find "$src" -mindepth 1 -maxdepth 1 -type d \( -name 'workspace-*' -o -name 'wiki-*' -o -name 'wiki-raw-*' \) -printf '%f\n' 2>/dev/null | sort)
+
+  declare -A seen_restore_dirs=()
+  local d
+  for d in "${restore_data_dirs[@]}"; do
+    [ -n "$d" ] || continue
+    seen_restore_dirs["$d"]=1
+  done
+
   local count=0
   for f in "${FILES[@]}"; do
     if [ -f "${src}/${f}" ]; then
@@ -122,7 +165,7 @@ do_restore() {
     fi
   done
 
-  for d in "${DATA_DIRS[@]}"; do
+  for d in "${!seen_restore_dirs[@]}"; do
     if [ -d "${src}/${d}" ]; then
       if openshell sandbox upload "$sandbox" "${src}/${d}/" "${DATA_PATH}/${d}/"; then
         count=$((count + 1))

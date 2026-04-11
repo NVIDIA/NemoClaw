@@ -47,6 +47,15 @@ workspace files are injected into the system prompt at session start (max
 schema file (`WIKI.md`) and executive summary (`MEMORY.md`) are bootstrapped.
 The agent reads wiki pages on-demand using the `read` tool.
 
+For sub-agents, the same pattern works with agent-specific directories:
+
+| Layer | Main agent | Sub-agent `jophiel` example |
+|---|---|---|
+| Workspace | `/sandbox/.openclaw/workspace` | `/sandbox/.openclaw-data/workspace-jophiel` |
+| Schema | `/sandbox/.openclaw/workspace/WIKI.md` | `/sandbox/.openclaw-data/workspace-jophiel/WIKI.md` |
+| Wiki pages | `/sandbox/.openclaw-data/wiki/` | `/sandbox/.openclaw-data/wiki-jophiel/` |
+| Raw sources | `/sandbox/.openclaw-data/wiki-raw/` | `/sandbox/.openclaw-data/wiki-raw-jophiel/` |
+
 ### Directory Structure
 
 ```text
@@ -105,6 +114,26 @@ openshell sandbox exec my-assistant bash /tmp/wiki-init.sh
 
 The script is idempotent — re-running it will not overwrite existing files.
 
+### Sub-agent setup
+
+For a sub-agent, pass the shared data root, the agent workspace, and the agent id:
+
+```bash
+bash /path/to/scripts/wiki-init.sh \
+  /sandbox/.openclaw-data \
+  /sandbox/.openclaw-data/workspace-jophiel \
+  jophiel
+```
+
+That creates:
+
+- `/sandbox/.openclaw-data/wiki-jophiel/`
+- `/sandbox/.openclaw-data/wiki-raw-jophiel/`
+- `/sandbox/.openclaw-data/workspace-jophiel/WIKI.md`
+
+It also patches that agent's `SOUL.md`, `AGENTS.md`, and `MEMORY.md` so the
+agent treats the new wiki as its own long-term memory layer.
+
 ### 2. Deploy the schema file
 
 The init script copies `WIKI.md` into the workspace automatically. You can
@@ -128,6 +157,10 @@ Add wiki ownership rules to `AGENTS.md`:
 
 - The main agent owns the wiki exclusively. Sub-agents do not access it.
 - Wiki paths: `/sandbox/.openclaw-data/wiki/` and `/sandbox/.openclaw-data/wiki-raw/`.
+
+For sub-agents, use agent-local ownership instead of sharing the main agent's
+wiki. Each sub-agent should have its own `wiki-<agent-id>/` and
+`wiki-raw-<agent-id>/` pair.
 
 Evolve `MEMORY.md` into a curated executive summary with one-line insights
 and references to wiki page paths.
@@ -214,6 +247,8 @@ scripts/backup-workspace.sh restore my-assistant   # Restores everything
 ```
 
 Both `wiki/` and `wiki-raw/` are backed up alongside workspace files.
+Agent-specific `workspace-*`, `wiki-*`, and `wiki-raw-*` directories are also
+included automatically.
 
 ## Next Steps
 

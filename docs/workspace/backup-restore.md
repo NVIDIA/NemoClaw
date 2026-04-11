@@ -52,6 +52,8 @@ If the sandbox is missing during restore, NemoClaw recreates it before restoring
 ## Manual Backup
 
 Use `openshell sandbox download` to copy files from the sandbox to your host.
+NemoClaw's backup helper also includes agent-specific `workspace-*`, `wiki-*`,
+and `wiki-raw-*` directories automatically when they exist.
 
 ```console
 $ SANDBOX=my-assistant
@@ -69,6 +71,8 @@ $ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/memory/ "$B
 ## Manual Restore
 
 Use `openshell sandbox upload` to push files back into a sandbox.
+When using the NemoClaw backup helper, agent-specific workspaces and wiki
+directories are restored alongside the main workspace files.
 
 ```console
 $ SANDBOX=my-assistant
