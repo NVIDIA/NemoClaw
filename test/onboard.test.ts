@@ -1482,32 +1482,146 @@ const { setupInference } = require(${onboardPath});
   });
 
   it("registers sandbox metadata when updateSandbox cannot find the sandbox entry", () => {
-    const originalUpdateSandbox = registry.updateSandbox;
-    const originalRegisterSandbox = registry.registerSandbox;
-    const registrations = [];
-    registry.updateSandbox = () => false;
-    registry.registerSandbox = (entry) => {
-      registrations.push(entry);
-    };
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-finalize-register-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "finalize-register-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const resolveOpenshellPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "resolve-openshell.js"));
+    const fakeOpenshellPath = JSON.stringify(path.join(fakeBin, "openshell"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const resolveOpenshellModule = require(${resolveOpenshellPath});
+const probeCalls = [];
+const registrations = [];
+runner.runCapture = (command) => {
+  probeCalls.push(command);
+  return ['{"choices":[{"message":{"role":"assistant","content":"PONG"}}]}', "__NEMOCLAW_HTTP_STATUS__:200"].join("\n");
+};
+registry.updateSandbox = () => false;
+registry.registerSandbox = (entry) => {
+  registrations.push(entry);
+};
+resolveOpenshellModule.resolveOpenshell = () => ${fakeOpenshellPath};
+
+const { finalizeSandboxInferenceSetup } = require(${onboardPath});
+finalizeSandboxInferenceSetup("sandbox-box", "smollm2:135m", "ollama-local");
+console.log(JSON.stringify({ probeCalls, registrations }));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
 
     try {
-      finalizeSandboxInferenceSetup(
-        "sandbox-box",
-        "nvidia/nemotron-3-super-120b-a12b",
-        "nvidia-nim",
-        "nvcr.io/test/container:latest",
+      expect(result.status).toBe(0);
+      const payload = JSON.parse(result.stdout.trim());
+      expect(payload.probeCalls).toHaveLength(1);
+      expect(payload.probeCalls[0]).toContain("sandbox-box");
+      expect(payload.probeCalls[0]).toContain("https://inference.local/v1/chat/completions");
+      expect(payload.probeCalls[0]).toContain(
+        JSON.stringify({
+          model: "smollm2:135m",
+          messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+          max_tokens: 8,
+        }),
       );
-      expect(registrations).toEqual([
+      expect(payload.probeCalls[0]).toContain("\\n__NEMOCLAW_HTTP_STATUS__:%{http_code}");
+      expect(payload.registrations).toEqual([
         {
           name: "sandbox-box",
-          model: "nvidia/nemotron-3-super-120b-a12b",
-          provider: "nvidia-nim",
-          nimContainer: "nvcr.io/test/container:latest",
+          model: "smollm2:135m",
+          provider: "ollama-local",
         },
       ]);
     } finally {
-      registry.updateSandbox = originalUpdateSandbox;
-      registry.registerSandbox = originalRegisterSandbox;
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces local sandbox probe failures before persisting sandbox metadata", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-finalize-fail-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "finalize-fail-check.js");
+    const markerPath = path.join(tmpDir, "finalize-fail-marker.json");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const resolveOpenshellPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "resolve-openshell.js"));
+    const fakeOpenshellPath = JSON.stringify(path.join(fakeBin, "openshell"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const resolveOpenshellModule = require(${resolveOpenshellPath});
+const fs = require("node:fs");
+const markerPath = ${JSON.stringify(markerPath)};
+const markers = { updateCalls: 0, registrations: [] };
+const writeMarkers = () => {
+  fs.writeFileSync(markerPath, JSON.stringify(markers));
+};
+runner.runCapture = () => [
+  "{\"error\":{\"message\":\"model 'smollm2:135m' not found\"}}",
+  "__NEMOCLAW_HTTP_STATUS__:404",
+].join("\n");
+registry.updateSandbox = (...args) => {
+  markers.updateCalls += 1;
+  writeMarkers();
+  return true;
+};
+registry.registerSandbox = (entry) => {
+  markers.registrations.push(entry);
+  writeMarkers();
+};
+resolveOpenshellModule.resolveOpenshell = () => ${fakeOpenshellPath};
+
+const { finalizeSandboxInferenceSetup } = require(${onboardPath});
+finalizeSandboxInferenceSetup("sandbox-box", "smollm2:135m", "ollama-local");
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    try {
+      expect(result.status).toBe(1);
+      const markers = fs.existsSync(markerPath)
+        ? JSON.parse(fs.readFileSync(markerPath, "utf-8"))
+        : { updateCalls: 0, registrations: [] };
+      expect(markers.updateCalls).toBe(0);
+      expect(markers.registrations).toEqual([]);
+      expect(result.stderr).toContain("Local Ollama was configured");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
