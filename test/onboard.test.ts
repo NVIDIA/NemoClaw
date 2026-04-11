@@ -1481,7 +1481,7 @@ const { setupInference } = require(${onboardPath});
     expect(result.message).toContain("Unexpected inference.local response");
   });
 
-  it("registers sandbox metadata when updateSandbox cannot find the sandbox entry", () => {
+  it("registers sandbox metadata when updateSandbox cannot find the local vLLM sandbox entry", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-finalize-register-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -1514,7 +1514,7 @@ registry.registerSandbox = (entry) => {
 resolveOpenshellModule.resolveOpenshell = () => ${fakeOpenshellPath};
 
 const { finalizeSandboxInferenceSetup } = require(${onboardPath});
-finalizeSandboxInferenceSetup("sandbox-box", "smollm2:135m", "ollama-local");
+finalizeSandboxInferenceSetup("sandbox-box", "nim/meta-llama-3.1-8b-instruct", "vllm-local");
 console.log(JSON.stringify({ probeCalls, registrations }));
 `;
     fs.writeFileSync(scriptPath, script);
@@ -1537,7 +1537,7 @@ console.log(JSON.stringify({ probeCalls, registrations }));
       expect(payload.probeCalls[0]).toContain("https://inference.local/v1/chat/completions");
       expect(payload.probeCalls[0]).toContain(
         JSON.stringify({
-          model: "smollm2:135m",
+          model: "nim/meta-llama-3.1-8b-instruct",
           messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
           max_tokens: 8,
         }),
@@ -1546,10 +1546,81 @@ console.log(JSON.stringify({ probeCalls, registrations }));
       expect(payload.registrations).toEqual([
         {
           name: "sandbox-box",
-          model: "smollm2:135m",
-          provider: "ollama-local",
+          model: "nim/meta-llama-3.1-8b-instruct",
+          provider: "vllm-local",
         },
       ]);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces local vLLM sandbox probe failures before persisting sandbox metadata", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-finalize-vllm-fail-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "finalize-vllm-fail-check.js");
+    const markerPath = path.join(tmpDir, "finalize-vllm-fail-marker.json");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const resolveOpenshellPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "resolve-openshell.js"));
+    const fakeOpenshellPath = JSON.stringify(path.join(fakeBin, "openshell"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const resolveOpenshellModule = require(${resolveOpenshellPath});
+const fs = require("node:fs");
+const markerPath = ${JSON.stringify(markerPath)};
+const markers = { updateCalls: 0, registrations: [] };
+const writeMarkers = () => {
+  fs.writeFileSync(markerPath, JSON.stringify(markers));
+};
+runner.runCapture = () => [
+  "{\"error\":{\"message\":\"model 'nim/meta-llama-3.1-8b-instruct' not found\"}}",
+  "__NEMOCLAW_HTTP_STATUS__:404",
+].join("\n");
+registry.updateSandbox = (...args) => {
+  markers.updateCalls += 1;
+  writeMarkers();
+  return true;
+};
+registry.registerSandbox = (entry) => {
+  markers.registrations.push(entry);
+  writeMarkers();
+};
+resolveOpenshellModule.resolveOpenshell = () => ${fakeOpenshellPath};
+
+const { finalizeSandboxInferenceSetup } = require(${onboardPath});
+finalizeSandboxInferenceSetup("sandbox-box", "nim/meta-llama-3.1-8b-instruct", "vllm-local");
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    try {
+      expect(result.status).toBe(1);
+      const markers = fs.existsSync(markerPath)
+        ? JSON.parse(fs.readFileSync(markerPath, "utf-8"))
+        : { updateCalls: 0, registrations: [] };
+      expect(markers.updateCalls).toBe(0);
+      expect(markers.registrations).toEqual([]);
+      expect(result.stderr).toContain("Local vLLM was configured");
+      expect(result.stderr).toContain("nim/meta-llama-3.1-8b-instruct");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
