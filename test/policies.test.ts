@@ -8,13 +8,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import { spawnSync } from "node:child_process";
-import policies from "../bin/lib/policies";
+import policies from "../dist/lib/policies";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "bin", "nemoclaw.js"));
-const CREDENTIALS_PATH = JSON.stringify(path.join(REPO_ROOT, "bin", "lib", "credentials.js"));
-const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "bin", "lib", "policies.js"));
-const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "bin", "lib", "registry.js"));
+const CREDENTIALS_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "credentials.js"));
+const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "policies.js"));
+const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "registry.js"));
 const SELECT_FROM_LIST_ITEMS = [
   { name: "npm", description: "npm and Yarn registry access" },
   { name: "pypi", description: "Python Package Index (PyPI) access" },
@@ -96,9 +96,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 10 presets", () => {
+    it("returns all 11 presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(10);
+      expect(presets.length).toBe(11);
     });
 
     it("each preset has name and description", () => {
@@ -117,6 +117,7 @@ describe("policies", () => {
         "brave",
         "brew",
         "discord",
+        "github",
         "huggingface",
         "jira",
         "npm",
@@ -143,6 +144,14 @@ describe("policies", () => {
     it("rejects path traversal attempts", () => {
       expect(policies.loadPreset("../../etc/passwd")).toBe(null);
       expect(policies.loadPreset("../../../etc/shadow")).toBe(null);
+    });
+
+    it("includes /usr/bin/node in communication presets", () => {
+      for (const preset of ["discord", "slack", "telegram"]) {
+        const content = policies.loadPreset(preset);
+        expect(content).toContain("/usr/local/bin/node");
+        expect(content).toContain("/usr/bin/node");
+      }
     });
   });
 
@@ -579,6 +588,14 @@ describe("policies", () => {
         expect(content.includes("method: PUT")).toBe(false);
         expect(content.includes("method: POST")).toBe(false);
         expect(content.includes("method: DELETE")).toBe(false);
+      }
+    });
+
+    it("messaging REST presets do not pin deprecated tls termination", () => {
+      for (const name of ["discord", "slack", "telegram"]) {
+        const content = policies.loadPreset(name);
+        expect(content).toBeTruthy();
+        expect(content.includes("tls: terminate")).toBe(false);
       }
     });
 

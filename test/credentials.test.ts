@@ -14,7 +14,7 @@ async function importCredentialsModule(home) {
   vi.doUnmock("child_process");
   vi.doUnmock("readline");
   vi.stubEnv("HOME", home);
-  const module = await import("../bin/lib/credentials.js");
+  const module = await import("../dist/lib/credentials.js");
   /** @type {any} */
   const resolved = module.default ?? module;
   return resolved;
@@ -35,8 +35,8 @@ describe("credential prompts", () => {
 
     credentials.saveCredential("TEST_API_KEY", "  nvapi-saved-key \r\n");
 
-    expect(credentials.CREDS_DIR).toBe(path.join(home, ".nemoclaw"));
-    expect(credentials.CREDS_FILE).toBe(path.join(home, ".nemoclaw", "credentials.json"));
+    expect(credentials.getCredsDir()).toBe(path.join(home, ".nemoclaw"));
+    expect(credentials.getCredsFile()).toBe(path.join(home, ".nemoclaw", "credentials.json"));
     expect(credentials.loadCredentials()).toEqual({ TEST_API_KEY: "nvapi-saved-key" });
     expect(credentials.getCredential("TEST_API_KEY")).toBe("nvapi-saved-key");
 
@@ -76,6 +76,7 @@ describe("credential prompts", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     // Isolate from real environment so getCredential only checks the file.
     vi.stubEnv("NVIDIA_API_KEY", "");
+    vi.stubEnv("OTHER_KEY", "");
     const credentials = await importCredentialsModule(home);
 
     credentials.saveCredential("NVIDIA_API_KEY", "nvapi-bad-key");

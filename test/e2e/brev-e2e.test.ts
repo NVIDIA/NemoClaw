@@ -1,3 +1,4 @@
+// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -88,35 +89,30 @@ function hasBrevInstance(instanceName) {
   return listBrevInstances().some((instance) => instance.name === instanceName);
 }
 
-function deleteBrevInstance(instanceName, { attempts = 5, intervalSeconds = 5 } = {}) {
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    if (!hasBrevInstance(instanceName)) {
-      return true;
-    }
+function isBrevInstanceDeleting(instanceName) {
+  const instances = listBrevInstances();
+  const instance = instances.find((i) => i.name === instanceName);
+  return instance && (instance.status === "DELETING" || instance.status === "STOPPING");
+}
 
-    try {
-      brev("delete", instanceName);
-    } catch {
-      // Best-effort delete. We'll verify via ls below and retry if needed.
-    }
-    sleep(2);
-
-    try {
-      brev("refresh");
-    } catch {
-      // Ignore transient refresh failures and rely on the next existence check.
-    }
-
-    if (!hasBrevInstance(instanceName)) {
-      return true;
-    }
-
-    if (attempt < attempts) {
-      sleep(intervalSeconds);
-    }
+function deleteBrevInstance(instanceName) {
+  if (!hasBrevInstance(instanceName)) {
+    return true;
   }
 
-  return !hasBrevInstance(instanceName);
+  try {
+    brev("delete", instanceName);
+  } catch {
+    // Best-effort delete
+  }
+
+  // If the instance is gone or in DELETING/STOPPING state, that's success —
+  // Brev will finish the teardown asynchronously.
+  if (!hasBrevInstance(instanceName) || isBrevInstanceDeleting(instanceName)) {
+    return true;
+  }
+
+  return false;
 }
 
 function ssh(cmd, { timeout = 120_000, stream = false } = {}) {
@@ -164,14 +160,16 @@ function sshEnv(cmd, { timeout = 600_000, stream = false } = {}) {
   return ssh(`${envPrefix} && ${cmd}`, { timeout, stream });
 }
 
-function waitForSsh(maxAttempts = 90, intervalMs = 5_000) {
+function waitForSsh(maxAttempts = 40, intervalMs = 5_000) {
   for (let i = 1; i <= maxAttempts; i++) {
     try {
       ssh("echo ok", { timeout: 10_000 });
       return;
     } catch {
-      if (i === maxAttempts) throw new Error(`SSH not ready after ${maxAttempts} attempts`);
+      if (i === maxAttempts) throw new Error(`SSH not ready after ${maxAttempts} attempts (~${Math.round(maxAttempts * (intervalMs + 10_000) / 60_000)} min)`);
+      console.log(`  SSH attempt ${i}/${maxAttempts} failed, retrying in ${intervalMs / 1000}s...`);
       if (i % 5 === 0) {
+        console.log(`  Refreshing brev SSH config...`);
         try {
           brev("refresh");
         } catch {
@@ -417,6 +415,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       // may have a package.json/package-lock.json that are slightly out of sync
       // (e.g. new transitive deps). npm install is more forgiving and still
       // benefits from the launchable's pre-cached node_modules.
+      // Always run this even for TEST_SUITE=full — it primes the cache so
+      // install.sh's npm install is a fast no-op.
       console.log(`[${elapsed()}] Running npm install to sync dependencies...`);
       ssh(
         [
@@ -429,6 +429,18 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       );
       console.log(`[${elapsed()}] Dependencies synced`);
 
+      // When TEST_SUITE=full, test-full-e2e.sh runs install.sh which handles
+      // plugin build, npm link, and onboard from scratch. Skip those steps
+      // to avoid ~8 min of redundant work.
+      const needsBeforeAllSetup = TEST_SUITE !== "full";
+
+      if (!needsBeforeAllSetup) {
+        console.log(
+          `[${elapsed()}] Skipping plugin build, npm link, and onboard (TEST_SUITE=full — install.sh handles it)`,
+        );
+      }
+
+      if (needsBeforeAllSetup) {
       // Rebuild TS plugin for our branch (reinstall plugin deps in case they changed)
       console.log(`[${elapsed()}] Building TypeScript plugin...`);
       ssh(
@@ -454,172 +466,175 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       );
       console.log(`[${elapsed()}] nemoclaw CLI linked`);
 
-      // Run onboard in the background. The `nemoclaw onboard` process hangs
-      // after sandbox creation because `openshell sandbox create` keeps a
-      // long-lived SSH connection to the sandbox entrypoint, and the dashboard
-      // port-forward also blocks. We launch it in background, poll for sandbox
-      // readiness via `openshell sandbox list`, then kill the hung process and
-      // write the registry file ourselves.
-      // Launch onboard fully detached. We chmod the docker socket so we don't
-      // need sg docker (which complicates backgrounding). nohup + </dev/null +
-      // disown ensures the SSH session can exit cleanly without waiting for
-      // the background process.
-      console.log(`[${elapsed()}] Starting nemoclaw onboard in background...`);
-      ssh(`sudo chmod 666 /var/run/docker.sock 2>/dev/null || true`, { timeout: 10_000 });
-      // Launch onboard in background. The SSH command may exit with code 255
-      // (SSH error) because background processes keep file descriptors open.
-      // That's fine — we just need the process to start; we'll poll for
-      // sandbox readiness separately.
-      try {
-        sshEnv(
-          [
-            `source ~/.nvm/nvm.sh 2>/dev/null || true`,
-            `cd ${remoteDir}`,
-            `nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 & disown`,
-            `sleep 2`,
-            `echo "onboard launched"`,
-          ].join(" && "),
-          { timeout: 30_000 },
-        );
-      } catch (bgErr) {
-        // SSH exit 255 or ETIMEDOUT is expected when backgrounding processes.
-        // Verify the process actually started by checking the log file.
+        // Run onboard in the background. The `nemoclaw onboard` process hangs
+        // after sandbox creation because `openshell sandbox create` keeps a
+        // long-lived SSH connection to the sandbox entrypoint, and the dashboard
+        // port-forward also blocks. We launch it in background, poll for sandbox
+        // readiness via `openshell sandbox list`, then kill the hung process and
+        // write the registry file ourselves.
+        // Launch onboard fully detached. We chmod the docker socket so we don't
+        // need sg docker (which complicates backgrounding). nohup + </dev/null +
+        // disown ensures the SSH session can exit cleanly without waiting for
+        // the background process.
+        console.log(`[${elapsed()}] Starting nemoclaw onboard in background...`);
+        ssh(`sudo chmod 666 /var/run/docker.sock 2>/dev/null || true`, { timeout: 10_000 });
+        // Launch onboard in background. The SSH command may exit with code 255
+        // (SSH error) because background processes keep file descriptors open.
+        // That's fine — we just need the process to start; we'll poll for
+        // sandbox readiness separately.
         try {
-          const check = ssh("test -f /tmp/nemoclaw-onboard.log && echo OK || echo MISSING", {
-            timeout: 10_000,
-          });
-          if (check.includes("OK")) {
-            console.log(
-              `[${elapsed()}] Background launch returned non-zero but log file exists — continuing`,
-            );
-          } else {
-            throw bgErr;
-          }
-        } catch {
-          throw bgErr;
-        }
-      }
-      console.log(`[${elapsed()}] Onboard launched in background`);
-
-      // Poll until openshell reports the sandbox as Ready (or onboard fails).
-      // The sandbox step is the slow part (~5-10 min for image build + upload).
-      const maxOnboardWaitMs = 1_200_000; // 20 min
-      const onboardPollMs = 15_000;
-      const onboardStart = Date.now();
-      const onboardElapsed = () => `${Math.round((Date.now() - onboardStart) / 1000)}s`;
-
-      while (Date.now() - onboardStart < maxOnboardWaitMs) {
-        try {
-          const sandboxList = ssh(`openshell sandbox list 2>/dev/null || true`, {
-            timeout: 15_000,
-          });
-          if (sandboxList.includes("e2e-test") && sandboxList.includes("Ready")) {
-            console.log(`[${onboardElapsed()}] Sandbox e2e-test is Ready!`);
-            break;
-          }
-          // Show onboard progress from the log
+          sshEnv(
+            [
+              `source ~/.nvm/nvm.sh 2>/dev/null || true`,
+              `cd ${remoteDir}`,
+              `nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 & disown`,
+              `sleep 2`,
+              `echo "onboard launched"`,
+            ].join(" && "),
+            { timeout: 30_000 },
+          );
+        } catch (bgErr) {
+          // SSH exit 255 or ETIMEDOUT is expected when backgrounding processes.
+          // Verify the process actually started by checking the log file.
           try {
-            const tail = ssh(
-              "tail -2 /tmp/nemoclaw-onboard.log 2>/dev/null || echo '(no log yet)'",
-              {
-                timeout: 10_000,
-              },
-            );
-            console.log(
-              `[${onboardElapsed()}] Onboard in progress... ${tail.replace(/\n/g, " | ")}`,
-            );
-          } catch {
-            /* ignore */
-          }
-        } catch {
-          console.log(`[${onboardElapsed()}] Poll: SSH command failed, retrying...`);
-        }
-
-        // Check if onboard failed (process exited and no sandbox)
-        try {
-          const session = ssh("cat ~/.nemoclaw/onboard-session.json 2>/dev/null || echo '{}'", {
-            timeout: 10_000,
-          });
-          const parsed = JSON.parse(session);
-          if (parsed.status === "failed") {
-            const failLog = ssh("cat /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
+            const check = ssh("test -f /tmp/nemoclaw-onboard.log && echo OK || echo MISSING", {
               timeout: 10_000,
             });
-            throw new Error(`Onboard failed: ${parsed.failure || "unknown"}\n${failLog}`);
+            if (check.includes("OK")) {
+              console.log(
+                `[${elapsed()}] Background launch returned non-zero but log file exists — continuing`,
+              );
+            } else {
+              throw bgErr;
+            }
+          } catch {
+            throw bgErr;
           }
-        } catch (e) {
-          if (e.message.startsWith("Onboard failed")) throw e;
-          /* ignore parse errors */
+        }
+        console.log(`[${elapsed()}] Onboard launched in background`);
+
+        // Poll until openshell reports the sandbox as Ready (or onboard fails).
+        // The sandbox step is the slow part (~5-10 min for image build + upload).
+        const maxOnboardWaitMs = 1_200_000; // 20 min
+        const onboardPollMs = 15_000;
+        const onboardStart = Date.now();
+        const onboardElapsed = () => `${Math.round((Date.now() - onboardStart) / 1000)}s`;
+
+        while (Date.now() - onboardStart < maxOnboardWaitMs) {
+          try {
+            const sandboxList = ssh(`openshell sandbox list 2>/dev/null || true`, {
+              timeout: 15_000,
+            });
+            if (sandboxList.includes("e2e-test") && sandboxList.includes("Ready")) {
+              console.log(`[${onboardElapsed()}] Sandbox e2e-test is Ready!`);
+              break;
+            }
+            // Show onboard progress from the log
+            try {
+              const tail = ssh(
+                "tail -2 /tmp/nemoclaw-onboard.log 2>/dev/null || echo '(no log yet)'",
+                {
+                  timeout: 10_000,
+                },
+              );
+              console.log(
+                `[${onboardElapsed()}] Onboard in progress... ${tail.replace(/\n/g, " | ")}`,
+              );
+            } catch {
+              /* ignore */
+            }
+          } catch {
+            console.log(`[${onboardElapsed()}] Poll: SSH command failed, retrying...`);
+          }
+
+          // Check if onboard failed (process exited and no sandbox)
+          try {
+            const session = ssh("cat ~/.nemoclaw/onboard-session.json 2>/dev/null || echo '{}'", {
+              timeout: 10_000,
+            });
+            const parsed = JSON.parse(session);
+            if (parsed.status === "failed") {
+              const failLog = ssh("cat /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
+                timeout: 10_000,
+              });
+              throw new Error(`Onboard failed: ${parsed.failure || "unknown"}\n${failLog}`);
+            }
+          } catch (e) {
+            if (e.message.startsWith("Onboard failed")) throw e;
+            /* ignore parse errors */
+          }
+
+          execSync(`sleep ${onboardPollMs / 1000}`);
         }
 
-        execSync(`sleep ${onboardPollMs / 1000}`);
-      }
+        // Verify sandbox is actually ready
+        const finalList = ssh(`openshell sandbox list 2>/dev/null`, { timeout: 15_000 });
+        if (!finalList.includes("e2e-test") || !finalList.includes("Ready")) {
+          const failLog = ssh("cat /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
+            timeout: 10_000,
+          });
+          throw new Error(`Sandbox not ready after ${maxOnboardWaitMs / 60_000} min.\n${failLog}`);
+        }
 
-      // Verify sandbox is actually ready
-      const finalList = ssh(`openshell sandbox list 2>/dev/null`, { timeout: 15_000 });
-      if (!finalList.includes("e2e-test") || !finalList.includes("Ready")) {
-        const failLog = ssh("cat /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
-          timeout: 10_000,
-        });
-        throw new Error(`Sandbox not ready after ${maxOnboardWaitMs / 60_000} min.\n${failLog}`);
-      }
-
-      // Kill the hung onboard process tree and write the sandbox registry
-      // manually. The onboard hangs on the dashboard port-forward step and
-      // never writes sandboxes.json.
-      console.log(`[${elapsed()}] Sandbox ready — killing hung onboard and writing registry...`);
-      // Kill hung onboard processes. pkill may kill the SSH connection itself
-      // if the pattern matches too broadly, so wrap in try/catch.
-      try {
-        ssh(
-          `pkill -f "nemoclaw onboard" 2>/dev/null; pkill -f "openshell sandbox create" 2>/dev/null; sleep 1; true`,
-          { timeout: 15_000 },
-        );
-      } catch {
-        // SSH exit 255 is expected — pkill may terminate the connection
-        console.log(
-          `[${elapsed()}] pkill returned non-zero (expected — SSH connection may have been affected)`,
-        );
-      }
-      // Write the sandbox registry using printf to avoid heredoc quoting issues over SSH
-      const registryJson = JSON.stringify(
-        {
-          version: 1,
-          defaultSandbox: "e2e-test",
-          sandboxes: {
-            "e2e-test": {
-              name: "e2e-test",
-              createdAt: new Date().toISOString(),
-              model: null,
-              nimContainer: null,
-              provider: null,
-              gpuEnabled: false,
-              policies: ["pypi", "npm"],
+        // Kill the hung onboard process tree and write the sandbox registry
+        // manually. The onboard hangs on the dashboard port-forward step and
+        // never writes sandboxes.json.
+        console.log(`[${elapsed()}] Sandbox ready — killing hung onboard and writing registry...`);
+        // Kill hung onboard processes. pkill may kill the SSH connection itself
+        // if the pattern matches too broadly, so wrap in try/catch.
+        try {
+          ssh(
+            `pkill -f "nemoclaw onboard" 2>/dev/null; pkill -f "openshell sandbox create" 2>/dev/null; sleep 1; true`,
+            { timeout: 15_000 },
+          );
+        } catch {
+          // SSH exit 255 is expected — pkill may terminate the connection
+          console.log(
+            `[${elapsed()}] pkill returned non-zero (expected — SSH connection may have been affected)`,
+          );
+        }
+        // Write the sandbox registry using printf to avoid heredoc quoting issues over SSH
+        const registryJson = JSON.stringify(
+          {
+            version: 1,
+            defaultSandbox: "e2e-test",
+            sandboxes: {
+              "e2e-test": {
+                name: "e2e-test",
+                createdAt: new Date().toISOString(),
+                model: null,
+                nimContainer: null,
+                provider: null,
+                gpuEnabled: false,
+                policies: ["pypi", "npm"],
+              },
             },
           },
-        },
-        null,
-        2,
-      );
-      ssh(
-        `mkdir -p ~/.nemoclaw && printf '%s' '${shellEscape(registryJson)}' > ~/.nemoclaw/sandboxes.json`,
-        { timeout: 15_000 },
-      );
-      console.log(`[${elapsed()}] Registry written, onboard workaround complete`);
+          null,
+          2,
+        );
+        ssh(
+          `mkdir -p ~/.nemoclaw && printf '%s' '${shellEscape(registryJson)}' > ~/.nemoclaw/sandboxes.json`,
+          { timeout: 15_000 },
+        );
+        console.log(`[${elapsed()}] Registry written, onboard workaround complete`);
+      } // end if (needsBeforeAllSetup)
     }
 
-    // Verify sandbox registry (common to both paths)
-    console.log(`[${elapsed()}] Verifying sandbox registry...`);
-    const registry = JSON.parse(ssh(`cat ~/.nemoclaw/sandboxes.json`, { timeout: 10_000 }));
-    expect(registry.defaultSandbox).toBe("e2e-test");
-    expect(registry.sandboxes).toHaveProperty("e2e-test");
-    const sandbox = registry.sandboxes["e2e-test"];
-    expect(sandbox).toMatchObject({
-      name: "e2e-test",
-      gpuEnabled: false,
-      policies: ["pypi", "npm"],
-    });
-    console.log(`[${elapsed()}] Sandbox registry verified`);
+    // Verify sandbox registry (only when beforeAll created a sandbox)
+    if (TEST_SUITE !== "full") {
+      console.log(`[${elapsed()}] Verifying sandbox registry...`);
+      const registry = JSON.parse(ssh(`cat ~/.nemoclaw/sandboxes.json`, { timeout: 10_000 }));
+      expect(registry.defaultSandbox).toBe("e2e-test");
+      expect(registry.sandboxes).toHaveProperty("e2e-test");
+      const sandbox = registry.sandboxes["e2e-test"];
+      expect(sandbox).toMatchObject({
+        name: "e2e-test",
+        gpuEnabled: false,
+        policies: ["pypi", "npm"],
+      });
+      console.log(`[${elapsed()}] Sandbox registry verified`);
+    }
 
     console.log(`[${elapsed()}] beforeAll complete — total bootstrap time: ${elapsed()}`);
   }, 2_700_000); // 45 min
@@ -632,10 +647,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       console.log(`  To delete:  brev delete ${INSTANCE_NAME}\n`);
       return;
     }
-    if (!deleteBrevInstance(INSTANCE_NAME)) {
-      throw new Error(`Failed to delete Brev instance "${INSTANCE_NAME}" during test cleanup`);
-    }
-  });
+    deleteBrevInstance(INSTANCE_NAME);
+  }, 120_000); // 2 min for cleanup
 
   // NOTE: The full E2E test runs install.sh --non-interactive which destroys and
   // rebuilds the sandbox from scratch. It cannot run alongside the security tests

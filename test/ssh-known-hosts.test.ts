@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
-import { pruneKnownHostsEntries } from "../bin/lib/onboard";
+import { pruneKnownHostsEntries } from "../dist/lib/onboard";
 
 describe("pruneKnownHostsEntries", () => {
   it("removes lines with openshell- hostnames", () => {

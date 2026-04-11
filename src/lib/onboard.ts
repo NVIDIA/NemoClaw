@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Interactive onboarding wizard — 7 steps from zero to running sandbox.
+// Interactive onboarding wizard — 8 steps from zero to running sandbox.
 // Supports non-interactive mode via --non-interactive flag or
 // NEMOCLAW_NON_INTERACTIVE=1 env var for CI/CD pipelines.
 
@@ -22,8 +22,8 @@ function envInt(name, fallback) {
 
 /** Inference timeout (seconds) for local providers (Ollama, vLLM, NIM). */
 const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 180);
-const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("../../bin/lib/runner");
-const { stageOptimizedSandboxBuildContext } = require("../../bin/lib/sandbox-build-context");
+const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
+const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -33,46 +33,46 @@ const {
   getOllamaWarmupCommand,
   validateOllamaModel,
   validateLocalProvider,
-} = require("../../bin/lib/local-inference");
+} = require("./local-inference");
 const {
   DEFAULT_CLOUD_MODEL,
   getProviderSelectionConfig,
   parseGatewayInference,
-} = require("../../bin/lib/inference-config");
-const { inferContainerRuntime, isWsl, shouldPatchCoredns } = require("../../bin/lib/platform");
-const { resolveOpenshell } = require("../../bin/lib/resolve-openshell");
+} = require("./inference-config");
+const { inferContainerRuntime, isWsl, shouldPatchCoredns } = require("./platform");
+const { resolveOpenshell } = require("./resolve-openshell");
 const {
   prompt,
   ensureApiKey,
   getCredential,
   normalizeCredentialValue,
   saveCredential,
-} = require("../../bin/lib/credentials");
-const registry = require("../../bin/lib/registry");
-const nim = require("../../bin/lib/nim");
-const onboardSession = require("../../bin/lib/onboard-session");
-const policies = require("../../bin/lib/policies");
-const { ensureUsageNoticeConsent } = require("../../bin/lib/usage-notice");
+} = require("./credentials");
+const registry = require("./registry");
+const nim = require("./nim");
+const onboardSession = require("./onboard-session");
+const policies = require("./policies");
+const { ensureUsageNoticeConsent } = require("./usage-notice");
 const {
   assessHost,
   checkPortAvailable,
   ensureSwap,
   getMemoryInfo,
   planHostRemediation,
-} = require("../../bin/lib/preflight");
+} = require("./preflight");
+const agentOnboard = require("./agent-onboard");
 
-// Typed modules (compiled from src/lib/*.ts → dist/lib/*.js)
-const gatewayState = require("../../dist/lib/gateway-state");
-const validation = require("../../dist/lib/validation");
-const urlUtils = require("../../dist/lib/url-utils");
-const buildContext = require("../../dist/lib/build-context");
-const dashboard = require("../../dist/lib/dashboard");
-const httpProbe = require("../../dist/lib/http-probe");
-const modelPrompts = require("../../dist/lib/model-prompts");
-const providerModels = require("../../dist/lib/provider-models");
-const sandboxCreateStream = require("../../dist/lib/sandbox-create-stream");
-const validationRecovery = require("../../dist/lib/validation-recovery");
-const webSearch = require("../../dist/lib/web-search");
+const gatewayState = require("./gateway-state");
+const validation = require("./validation");
+const urlUtils = require("./url-utils");
+const buildContext = require("./build-context");
+const dashboard = require("./dashboard");
+const httpProbe = require("./http-probe");
+const modelPrompts = require("./model-prompts");
+const providerModels = require("./provider-models");
+const sandboxCreateStream = require("./sandbox-create-stream");
+const validationRecovery = require("./validation-recovery");
+const webSearch = require("./web-search");
 
 /**
  * Create a temp file inside a directory with a cryptographically random name.
@@ -109,7 +109,7 @@ const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
-const BRAVE_SEARCH_HELP_URL = "https://api-dashboard.search.brave.com/app/keys";
+const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
 
 const REMOTE_PROVIDER_CONFIG = {
   build: {
@@ -177,6 +177,8 @@ const REMOTE_PROVIDER_CONFIG = {
     skipVerify: true,
   },
 };
+
+const DISCORD_SNOWFLAKE_RE = /^[0-9]{17,19}$/;
 
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
@@ -419,7 +421,7 @@ function versionGte(left = "0.0.0", right = "0.0.0") {
  */
 function getBlueprintMinOpenshellVersion(rootDir = ROOT) {
   try {
-    // Lazy require: yaml is already a dependency via bin/lib/policies.js but
+    // Lazy require: yaml is already a dependency via the policy helpers but
     // pulling it at module load would slow down `nemoclaw --help` for users
     // who never reach the preflight path.
     const YAML = require("yaml");
@@ -769,13 +771,7 @@ function isAffirmativeAnswer(value) {
   );
 }
 
-function printBraveExposureWarning() {
-  console.log("");
-  for (const line of webSearch.getBraveExposureWarningLines()) {
-    console.log(`  ${line}`);
-  }
-  console.log("");
-}
+
 
 function validateBraveSearchApiKey(apiKey) {
   return runCurlProbe([
@@ -880,7 +876,6 @@ async function configureWebSearch(existingConfig = null) {
       return null;
     }
     note("  [non-interactive] Brave Web Search requested.");
-    printBraveExposureWarning();
     const validation = validateBraveSearchApiKey(braveApiKey);
     if (!validation.ok) {
       console.error("  Brave Search API key validation failed.");
@@ -893,8 +888,6 @@ async function configureWebSearch(existingConfig = null) {
     process.env[webSearch.BRAVE_API_KEY_ENV] = braveApiKey;
     return { fetchEnabled: true };
   }
-
-  printBraveExposureWarning();
   const enableAnswer = await prompt("  Enable Brave Web Search? [y/N]: ");
   if (!isAffirmativeAnswer(enableAnswer)) {
     return null;
@@ -964,6 +957,7 @@ function patchStagedDockerfile(
   webSearchConfig = null,
   messagingChannels = [],
   messagingAllowedIds = {},
+  discordGuilds = {},
 ) {
   const { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat } =
     getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -1016,10 +1010,7 @@ function patchStagedDockerfile(
   }
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_WEB_CONFIG_B64=.*$/m,
-    `ARG NEMOCLAW_WEB_CONFIG_B64=${webSearch.buildWebSearchDockerConfig(
-      webSearchConfig,
-      webSearchConfig ? getCredential(webSearch.BRAVE_API_KEY_ENV) : null,
-    )}`,
+    `ARG NEMOCLAW_WEB_CONFIG_B64=${webSearch.buildWebSearchDockerConfig(webSearchConfig)}`,
   );
   // Onboard flow expects immediate dashboard access without device pairing,
   // so disable device auth for images built during onboard (see #1217).
@@ -1037,6 +1028,12 @@ function patchStagedDockerfile(
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=.*$/m,
       `ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${encodeDockerJsonArg(messagingAllowedIds)}`,
+    );
+  }
+  if (Object.keys(discordGuilds).length > 0) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_DISCORD_GUILDS_B64=.*$/m,
+      `ARG NEMOCLAW_DISCORD_GUILDS_B64=${encodeDockerJsonArg(discordGuilds)}`,
     );
   }
   fs.writeFileSync(dockerfilePath, dockerfile);
@@ -1553,6 +1550,16 @@ function getResumeConfigConflicts(session, opts = {}) {
       field: "fromDockerfile",
       requested: requestedFrom,
       recorded: recordedFrom,
+    });
+  }
+
+  const requestedAgent = opts.agent || process.env.NEMOCLAW_AGENT || null;
+  const recordedAgent = session?.agent || null;
+  if (requestedAgent && recordedAgent && requestedAgent !== recordedAgent) {
+    conflicts.push({
+      field: "agent",
+      requested: requestedAgent,
+      recorded: recordedAgent,
     });
   }
 
@@ -2264,11 +2271,14 @@ async function createSandbox(
   webSearchConfig = null,
   enabledChannels = null,
   fromDockerfile = null,
+  agent = null,
+  dangerouslySkipPermissions = false,
 ) {
   step(6, 8, "Creating sandbox");
 
   const sandboxName = sandboxNameOverride || (await promptValidatedSandboxName());
-  const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const effectivePort = agent ? agent.forwardPort : CONTROL_UI_PORT;
+  const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${effectivePort}`;
 
   // Check whether messaging providers will be needed — this must happen before
   // the sandbox reuse decision so we can detect stale sandboxes that were created
@@ -2281,7 +2291,9 @@ async function createSandbox(
   const enabledEnvKeys =
     enabledChannels != null
       ? new Set(
-          MESSAGING_CHANNELS.filter((c) => enabledChannels.includes(c.name)).map((c) => c.envKey),
+          MESSAGING_CHANNELS.filter((c) => enabledChannels.includes(c.name)).flatMap((c) =>
+            c.appTokenEnvKey ? [c.envKey, c.appTokenEnvKey] : [c.envKey],
+          ),
         )
       : null;
 
@@ -2297,11 +2309,24 @@ async function createSandbox(
       token: getMessagingToken("SLACK_BOT_TOKEN"),
     },
     {
+      name: `${sandboxName}-slack-app`,
+      envKey: "SLACK_APP_TOKEN",
+      token: getMessagingToken("SLACK_APP_TOKEN"),
+    },
+    {
       name: `${sandboxName}-telegram-bridge`,
       envKey: "TELEGRAM_BOT_TOKEN",
       token: getMessagingToken("TELEGRAM_BOT_TOKEN"),
     },
   ].filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey));
+
+  if (webSearchConfig) {
+    messagingTokenDefs.push({
+      name: `${sandboxName}-brave-search`,
+      envKey: webSearch.BRAVE_API_KEY_ENV,
+      token: getCredential(webSearch.BRAVE_API_KEY_ENV),
+    });
+  }
   const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
 
   // Reconcile local registry state with the live OpenShell gateway state.
@@ -2400,13 +2425,27 @@ async function createSandbox(
       fs.copyFileSync(fromResolved, stagedDockerfile);
     }
     console.log(`  Using custom Dockerfile: ${fromResolved}`);
+  } else if (agent) {
+    const agentBuild = agentOnboard.createAgentSandbox(agent);
+    buildCtx = agentBuild.buildCtx;
+    stagedDockerfile = agentBuild.stagedDockerfile;
   } else {
     ({ buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(ROOT));
   }
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
-  const basePolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
+  const globalPermissivePath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml");
+  let basePolicyPath;
+  if (dangerouslySkipPermissions) {
+    // Permissive mode: use agent-specific permissive policy if available,
+    // otherwise fall back to the global permissive policy.
+    const agentPermissive = agent && agentOnboard.getAgentPermissivePolicyPath(agent);
+    basePolicyPath = agentPermissive || globalPermissivePath;
+  } else {
+    const defaultPolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
+    basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
+  }
   const createArgs = [
     "--from",
     `${buildCtx}/Dockerfile`,
@@ -2434,27 +2473,67 @@ async function createSandbox(
     );
     process.exit(1);
   }
-  const activeMessagingChannels = messagingTokenDefs
-    .filter(({ token }) => !!token)
-    .map(({ envKey }) => {
-      if (envKey === "DISCORD_BOT_TOKEN") return "discord";
-      if (envKey === "SLACK_BOT_TOKEN") return "slack";
-      if (envKey === "TELEGRAM_BOT_TOKEN") return "telegram";
-      return null;
-    })
-    .filter(Boolean);
+  const tokensByEnvKey = Object.fromEntries(messagingTokenDefs.map(({ envKey, token }) => [envKey, token]));
+  const activeMessagingChannels = [
+    ...new Set(
+      messagingTokenDefs
+        .filter(({ token }) => !!token)
+        .map(({ envKey }) => {
+          if (envKey === "DISCORD_BOT_TOKEN") return "discord";
+          if (envKey === "SLACK_BOT_TOKEN") return "slack";
+          // SLACK_APP_TOKEN alone does not enable slack; bot token is required.
+          if (envKey === "SLACK_APP_TOKEN") return tokensByEnvKey["SLACK_BOT_TOKEN"] ? "slack" : null;
+          if (envKey === "TELEGRAM_BOT_TOKEN") return "telegram";
+          return null;
+        })
+        .filter(Boolean),
+    ),
+  ];
   // Build allowed sender IDs map from env vars set during the messaging prompt.
   // Each channel with a userIdEnvKey in MESSAGING_CHANNELS may have a
   // comma-separated list of IDs (e.g. TELEGRAM_ALLOWED_IDS="123,456").
   const messagingAllowedIds = {};
   const enabledTokenEnvKeys = new Set(messagingTokenDefs.map(({ envKey }) => envKey));
   for (const ch of MESSAGING_CHANNELS) {
-    if (enabledTokenEnvKeys.has(ch.envKey) && ch.userIdEnvKey && process.env[ch.userIdEnvKey]) {
+    if (
+      enabledTokenEnvKeys.has(ch.envKey) &&
+      ch.allowIdsMode === "dm" &&
+      ch.userIdEnvKey &&
+      process.env[ch.userIdEnvKey]
+    ) {
       const ids = process.env[ch.userIdEnvKey]
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
       if (ids.length > 0) messagingAllowedIds[ch.name] = ids;
+    }
+  }
+  const discordGuilds = {};
+  if (enabledTokenEnvKeys.has("DISCORD_BOT_TOKEN")) {
+    const serverIds = (process.env.DISCORD_SERVER_IDS || process.env.DISCORD_SERVER_ID || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const userIds = (process.env.DISCORD_ALLOWED_IDS || process.env.DISCORD_USER_ID || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const serverId of serverIds) {
+      if (!DISCORD_SNOWFLAKE_RE.test(serverId)) {
+        console.warn(`  Warning: Discord server ID '${serverId}' does not look like a snowflake.`);
+      }
+    }
+    for (const userId of userIds) {
+      if (!DISCORD_SNOWFLAKE_RE.test(userId)) {
+        console.warn(`  Warning: Discord user ID '${userId}' does not look like a snowflake.`);
+      }
+    }
+    const requireMention = process.env.DISCORD_REQUIRE_MENTION !== "0";
+    for (const serverId of serverIds) {
+      discordGuilds[serverId] = {
+        requireMention,
+        ...(userIds.length > 0 ? { users: userIds } : {}),
+      };
     }
   }
   patchStagedDockerfile(
@@ -2467,6 +2546,7 @@ async function createSandbox(
     webSearchConfig,
     activeMessagingChannels,
     messagingAllowedIds,
+    discordGuilds,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
@@ -2483,7 +2563,9 @@ async function createSandbox(
     "BEDROCK_API_KEY",
     "DISCORD_BOT_TOKEN",
     "SLACK_BOT_TOKEN",
+    "SLACK_APP_TOKEN",
     "TELEGRAM_BOT_TOKEN",
+    webSearch.BRAVE_API_KEY_ENV,
   ]);
   const sandboxEnv = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !blockedSandboxEnvNames.has(name)),
@@ -2595,6 +2677,8 @@ async function createSandbox(
   registry.registerSandbox({
     name: sandboxName,
     gpuEnabled: !!gpu,
+    agent: agent ? agent.name : null,
+    dangerouslySkipPermissions: dangerouslySkipPermissions || undefined,
   });
 
   // DNS proxy — run a forwarder in the sandbox pod so the isolated
@@ -2618,6 +2702,33 @@ async function createSandbox(
   }
 
   console.log(`  ✓ Sandbox '${sandboxName}' created`);
+
+  try {
+    if (process.platform === "darwin") {
+      const vmKernel = runCapture("docker info --format '{{.KernelVersion}}'", { ignoreError: true }).trim();
+      if (vmKernel) {
+        const parts = vmKernel.split(".");
+        const major = parseInt(parts[0], 10);
+        const minor = parseInt(parts[1], 10);
+        if (!isNaN(major) && !isNaN(minor) && (major < 5 || (major === 5 && minor < 13))) {
+          console.warn(`  ⚠ Landlock: Docker VM kernel ${vmKernel} does not support Landlock (requires ≥5.13).`);
+          console.warn("    Sandbox filesystem restrictions will silently degrade (best_effort mode).");
+        }
+      }
+    } else if (process.platform === "linux") {
+      const uname = runCapture("uname -r", { ignoreError: true }).trim();
+      if (uname) {
+        const parts = uname.split(".");
+        const major = parseInt(parts[0], 10);
+        const minor = parseInt(parts[1], 10);
+        if (!isNaN(major) && !isNaN(minor) && (major < 5 || (major === 5 && minor < 13))) {
+          console.warn(`  ⚠ Landlock: Kernel ${uname} does not support Landlock (requires ≥5.13).`);
+          console.warn("    Sandbox filesystem restrictions will silently degrade (best_effort mode).");
+        }
+      }
+    }
+  } catch {}
+
   return sandboxName;
 }
 
@@ -3389,6 +3500,7 @@ const MESSAGING_CHANNELS = [
     userIdEnvKey: "TELEGRAM_ALLOWED_IDS",
     userIdHelp: "Send /start to @userinfobot on Telegram to get your numeric user ID.",
     userIdLabel: "Telegram User ID (for DM access)",
+    allowIdsMode: "dm",
   },
   {
     name: "discord",
@@ -3396,6 +3508,18 @@ const MESSAGING_CHANNELS = [
     description: "Discord bot messaging",
     help: "Discord Developer Portal → Applications → Bot → Reset/Copy Token.",
     label: "Discord Bot Token",
+    serverIdEnvKey: "DISCORD_SERVER_ID",
+    serverIdHelp:
+      "Enable Developer Mode in Discord, then right-click your server and copy the Server ID.",
+    serverIdLabel: "Discord Server ID (for guild workspace access)",
+    requireMentionEnvKey: "DISCORD_REQUIRE_MENTION",
+    requireMentionHelp:
+      "Choose whether the bot should reply only when @mentioned or to all messages in this server.",
+    userIdEnvKey: "DISCORD_USER_ID",
+    userIdHelp:
+      "Optional: enable Developer Mode in Discord, then right-click your user/avatar and copy the User ID. Leave blank to allow any member of the configured server to message the bot.",
+    userIdLabel: "Discord User ID (optional guild allowlist)",
+    allowIdsMode: "guild",
   },
   {
     name: "slack",
@@ -3403,6 +3527,10 @@ const MESSAGING_CHANNELS = [
     description: "Slack bot messaging",
     help: "Slack API → Your Apps → OAuth & Permissions → Bot User OAuth Token (xoxb-...).",
     label: "Slack Bot Token",
+    appTokenEnvKey: "SLACK_APP_TOKEN",
+    appTokenHelp:
+      "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
+    appTokenLabel: "Slack App Token (Socket Mode)",
   },
 ];
 
@@ -3538,8 +3666,39 @@ async function setupMessagingChannels() {
         continue;
       }
     }
-    // Prompt for user/sender ID if the channel supports DM allowlisting
-    if (ch.userIdEnvKey) {
+    if (ch.serverIdEnvKey) {
+      const existingServerIds = process.env[ch.serverIdEnvKey] || "";
+      if (existingServerIds) {
+        console.log(`  ✓ ${ch.name} — server ID already set: ${existingServerIds}`);
+      } else {
+        console.log(`  ${ch.serverIdHelp}`);
+        const serverId = (await prompt(`  ${ch.serverIdLabel}: `)).trim();
+        if (serverId) {
+          process.env[ch.serverIdEnvKey] = serverId;
+          console.log(`  ✓ ${ch.name} server ID saved`);
+        } else {
+          console.log(`  Skipped ${ch.name} server ID (guild channels stay disabled)`);
+        }
+      }
+    }
+    if (ch.requireMentionEnvKey && ch.serverIdEnvKey && process.env[ch.serverIdEnvKey]) {
+      const existingRequireMention = process.env[ch.requireMentionEnvKey];
+      if (existingRequireMention === "0" || existingRequireMention === "1") {
+        const mode = existingRequireMention === "0" ? "all messages" : "@mentions only";
+        console.log(`  ✓ ${ch.name} — reply mode already set: ${mode}`);
+      } else {
+        console.log(`  ${ch.requireMentionHelp}`);
+        const answer = (await prompt("  Reply only when @mentioned? [Y/n]: "))
+          .trim()
+          .toLowerCase();
+        process.env[ch.requireMentionEnvKey] = answer === "n" || answer === "no" ? "0" : "1";
+        const mode =
+          process.env[ch.requireMentionEnvKey] === "0" ? "all messages" : "@mentions only";
+        console.log(`  ✓ ${ch.name} reply mode saved: ${mode}`);
+      }
+    }
+    // Prompt for user/sender ID when the channel supports allowlisting
+    if (ch.userIdEnvKey && (!ch.serverIdEnvKey || process.env[ch.serverIdEnvKey])) {
       const existingIds = process.env[ch.userIdEnvKey] || "";
       if (existingIds) {
         console.log(`  ✓ ${ch.name} — allowed IDs already set: ${existingIds}`);
@@ -3550,13 +3709,43 @@ async function setupMessagingChannels() {
           process.env[ch.userIdEnvKey] = userId;
           console.log(`  ✓ ${ch.name} user ID saved`);
         } else {
-          console.log(`  Skipped ${ch.name} user ID (bot will require manual pairing)`);
+          const skippedReason =
+            ch.allowIdsMode === "guild"
+              ? "any member in the configured server can message the bot"
+              : "bot will require manual pairing";
+          console.log(`  Skipped ${ch.name} user ID (${skippedReason})`);
         }
       }
     }
   }
   console.log("");
   return selected;
+}
+
+function getSuggestedPolicyPresets({ enabledChannels = null, webSearchConfig = null } = {}) {
+  const suggestions = ["pypi", "npm"];
+  const usesExplicitMessagingSelection = Array.isArray(enabledChannels);
+
+  const maybeSuggestMessagingPreset = (channel, envKey) => {
+    if (usesExplicitMessagingSelection) {
+      if (enabledChannels.includes(channel)) suggestions.push(channel);
+      return;
+    }
+    if (getCredential(envKey) || process.env[envKey]) {
+      suggestions.push(channel);
+      if (process.stdout.isTTY && !isNonInteractive() && process.env.CI !== "true") {
+        console.log(`  Auto-detected: ${envKey} -> suggesting ${channel} preset`);
+      }
+    }
+  };
+
+  maybeSuggestMessagingPreset("telegram", "TELEGRAM_BOT_TOKEN");
+  maybeSuggestMessagingPreset("slack", "SLACK_BOT_TOKEN");
+  maybeSuggestMessagingPreset("discord", "DISCORD_BOT_TOKEN");
+
+  if (webSearchConfig) suggestions.push("brave");
+
+  return suggestions;
 }
 
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
@@ -3588,24 +3777,9 @@ async function setupOpenclaw(sandboxName, model, provider) {
 // ── Step 7: Policy presets ───────────────────────────────────────
 
 // eslint-disable-next-line complexity
-async function _setupPolicies(sandboxName) {
+async function _setupPolicies(sandboxName, options = {}) {
   step(8, 8, "Policy presets");
-
-  const suggestions = ["pypi", "npm"];
-
-  // Auto-detect based on env tokens
-  if (getCredential("TELEGRAM_BOT_TOKEN")) {
-    suggestions.push("telegram");
-    console.log("  Auto-detected: TELEGRAM_BOT_TOKEN → suggesting telegram preset");
-  }
-  if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) {
-    suggestions.push("slack");
-    console.log("  Auto-detected: SLACK_BOT_TOKEN → suggesting slack preset");
-  }
-  if (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN) {
-    suggestions.push("discord");
-    console.log("  Auto-detected: DISCORD_BOT_TOKEN → suggesting discord preset");
-  }
+  const suggestions = getSuggestedPolicyPresets(options);
 
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
@@ -3866,15 +4040,11 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   const selectedPresets = Array.isArray(options.selectedPresets) ? options.selectedPresets : null;
   const onSelection = typeof options.onSelection === "function" ? options.onSelection : null;
   const webSearchConfig = options.webSearchConfig || null;
+  const enabledChannels = Array.isArray(options.enabledChannels) ? options.enabledChannels : null;
 
   step(8, 8, "Policy presets");
 
-  const suggestions = ["pypi", "npm"];
-  if (getCredential("TELEGRAM_BOT_TOKEN")) suggestions.push("telegram");
-  if (getCredential("SLACK_BOT_TOKEN") || process.env.SLACK_BOT_TOKEN) suggestions.push("slack");
-  if (getCredential("DISCORD_BOT_TOKEN") || process.env.DISCORD_BOT_TOKEN)
-    suggestions.push("discord");
-  if (webSearchConfig) suggestions.push("brave");
+  const suggestions = getSuggestedPolicyPresets({ enabledChannels, webSearchConfig });
 
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
@@ -4001,7 +4171,8 @@ const { resolveDashboardForwardTarget, buildControlUiUrls } = dashboard;
 
 function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
   const forwardTarget = resolveDashboardForwardTarget(chatUiUrl);
-  runOpenshell(["forward", "stop", String(CONTROL_UI_PORT)], { ignoreError: true });
+  const portToStop = String(new URL(chatUiUrl).port || CONTROL_UI_PORT);
+  runOpenshell(["forward", "stop", portToStop], { ignoreError: true });
   // Use stdio "ignore" to prevent spawnSync from waiting on inherited pipe fds.
   // The --background flag forks a child that inherits stdout/stderr; if those are
   // pipes, spawnSync blocks until the background process exits (never).
@@ -4057,7 +4228,7 @@ function fetchGatewayAuthTokenFromSandbox(sandboxName) {
 
 // buildControlUiUrls — see dashboard import above
 
-function printDashboard(sandboxName, model, provider, nimContainer = null) {
+function printDashboard(sandboxName, model, provider, nimContainer = null, agent = null) {
   const nimStat = nimContainer ? nim.nimStatusByName(nimContainer) : nim.nimStatus(sandboxName);
   const nimLabel = nimStat.running ? "running" : "not running";
 
@@ -4085,7 +4256,9 @@ function printDashboard(sandboxName, model, provider, nimContainer = null) {
   console.log(`  Status:      nemoclaw ${sandboxName} status`);
   console.log(`  Logs:        nemoclaw ${sandboxName} logs --follow`);
   console.log("");
-  if (token) {
+  if (agent) {
+    agentOnboard.printDashboardUi(sandboxName, token, agent, { note, buildControlUiUrls });
+  } else if (token) {
     console.log("  OpenClaw UI (tokenized URL; treat it like a password)");
     console.log(`  Port ${CONTROL_UI_PORT} must be forwarded before opening this URL.`);
     for (const url of buildControlUiUrls(token)) {
@@ -4147,6 +4320,16 @@ function skippedStepMessage(stepName, detail, reason = "resume") {
 async function onboard(opts = {}) {
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
+  const dangerouslySkipPermissions =
+    opts.dangerouslySkipPermissions || process.env.NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS === "1";
+  if (dangerouslySkipPermissions) {
+    console.error("");
+    console.error("  \u26a0  --dangerously-skip-permissions: sandbox security restrictions disabled.");
+    console.error("     Network:    all known endpoints open (no method/path filtering)");
+    console.error("     Filesystem: sandbox home directory is writable");
+    console.error("     Use for development/testing only.");
+    console.error("");
+  }
   delete process.env.OPENSHELL_GATEWAY;
   const resume = opts.resume === true;
   // In non-interactive mode also accept the env var so CI pipelines can set it.
@@ -4189,6 +4372,7 @@ async function onboard(opts = {}) {
 
   try {
     let session;
+    let selectedMessagingChannels = [];
     // Merged, absolute fromDockerfile: explicit flag/env takes precedence; on
     // resume falls back to what the original session recorded so the same image
     // is used even when --from is omitted from the resume invocation.
@@ -4209,12 +4393,17 @@ async function onboard(opts = {}) {
       const resumeConflicts = getResumeConfigConflicts(session, {
         nonInteractive: isNonInteractive(),
         fromDockerfile: requestedFromDockerfile,
+        agent: opts.agent || null,
       });
       if (resumeConflicts.length > 0) {
         for (const conflict of resumeConflicts) {
           if (conflict.field === "sandbox") {
             console.error(
               `  Resumable state belongs to sandbox '${conflict.recorded}', not '${conflict.requested}'.`,
+            );
+          } else if (conflict.field === "agent") {
+            console.error(
+              `  Session was started with agent '${conflict.recorded}', not '${conflict.requested}'.`,
             );
           } else if (conflict.field === "fromDockerfile") {
             if (!conflict.recorded) {
@@ -4273,6 +4462,14 @@ async function onboard(opts = {}) {
     if (isNonInteractive()) note("  (non-interactive mode)");
     if (resume) note("  (resume mode)");
     console.log("  ===================");
+
+    const agent = agentOnboard.resolveAgent({ agentFlag: opts.agent, session });
+    if (agent) {
+      onboardSession.updateSession((s) => {
+        s.agent = agent.name;
+        return s;
+      });
+    }
 
     let gpu;
     const resumePreflight = resume && session?.steps?.preflight?.status === "complete";
@@ -4422,13 +4619,22 @@ async function onboard(opts = {}) {
     }
 
     const sandboxReuseState = getSandboxReuseState(sandboxName);
+    const webSearchConfigChanged = Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
     const resumeSandbox =
-      resume && session?.steps?.sandbox?.status === "complete" && sandboxReuseState === "ready";
+      resume &&
+      !webSearchConfigChanged &&
+      session?.steps?.sandbox?.status === "complete" &&
+      sandboxReuseState === "ready";
     if (resumeSandbox) {
       skippedStepMessage("sandbox", sandboxName);
     } else {
       if (resume && session?.steps?.sandbox?.status === "complete") {
-        if (sandboxReuseState === "not_ready") {
+        if (webSearchConfigChanged) {
+          note("  [resume] Web Search configuration changed; recreating sandbox.");
+          if (sandboxName) {
+            registry.removeSandbox(sandboxName);
+          }
+        } else if (sandboxReuseState === "not_ready") {
           note(
             `  [resume] Recorded sandbox '${sandboxName}' exists but is not ready; recreating it.`,
           );
@@ -4440,9 +4646,12 @@ async function onboard(opts = {}) {
           }
         }
       }
-      const enabledChannels = await setupMessagingChannels();
-
       startRecordedStep("sandbox", { sandboxName, provider, model });
+      selectedMessagingChannels = await setupMessagingChannels();
+      onboardSession.updateSession((current) => {
+        current.messagingChannels = selectedMessagingChannels;
+        return current;
+      });
       sandboxName = await createSandbox(
         gpu,
         model,
@@ -4450,69 +4659,96 @@ async function onboard(opts = {}) {
         preferredInferenceApi,
         sandboxName,
         webSearchConfig,
-        enabledChannels,
+        selectedMessagingChannels,
         fromDockerfile,
+        agent,
+        dangerouslySkipPermissions,
       );
       onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
     }
 
-    const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
-    if (resumeOpenclaw) {
-      skippedStepMessage("openclaw", sandboxName);
-      onboardSession.markStepComplete("openclaw", { sandboxName, provider, model });
+    if (agent) {
+      await agentOnboard.handleAgentSetup(sandboxName, model, provider, agent, resume, session, {
+        step,
+        runCaptureOpenshell,
+        openshellShellCommand,
+        buildSandboxConfigSyncScript,
+        writeSandboxConfigSyncFile,
+        cleanupTempDir,
+        startRecordedStep,
+        skippedStepMessage,
+      });
     } else {
-      startRecordedStep("openclaw", { sandboxName, provider, model });
-      await setupOpenclaw(sandboxName, model, provider);
-      onboardSession.markStepComplete("openclaw", { sandboxName, provider, model });
+      const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
+      if (resumeOpenclaw) {
+        skippedStepMessage("openclaw", sandboxName);
+        onboardSession.markStepComplete("openclaw", { sandboxName, provider, model });
+      } else {
+        startRecordedStep("openclaw", { sandboxName, provider, model });
+        await setupOpenclaw(sandboxName, model, provider);
+        onboardSession.markStepComplete("openclaw", { sandboxName, provider, model });
+      }
     }
 
     const recordedPolicyPresets = Array.isArray(session?.policyPresets)
       ? session.policyPresets
       : null;
-    const resumePolicies =
-      resume && sandboxName && arePolicyPresetsApplied(sandboxName, recordedPolicyPresets || []);
-    if (resumePolicies) {
-      skippedStepMessage("policies", (recordedPolicyPresets || []).join(", "));
+    if (dangerouslySkipPermissions) {
+      step(8, 8, "Policy presets");
+      policies.applyPermissivePolicy(sandboxName);
       onboardSession.markStepComplete("policies", {
         sandboxName,
         provider,
         model,
-        policyPresets: recordedPolicyPresets || [],
+        policyPresets: [],
       });
     } else {
-      startRecordedStep("policies", {
-        sandboxName,
-        provider,
-        model,
-        policyPresets: recordedPolicyPresets || [],
-      });
-      const appliedPolicyPresets = await setupPoliciesWithSelection(sandboxName, {
-        selectedPresets:
-          resume &&
-          session?.steps?.policies?.status !== "complete" &&
-          Array.isArray(recordedPolicyPresets) &&
-          recordedPolicyPresets.length > 0
-            ? recordedPolicyPresets
-            : null,
-        webSearchConfig,
-        onSelection: (policyPresets) => {
-          onboardSession.updateSession((current) => {
-            current.policyPresets = policyPresets;
-            return current;
-          });
-        },
-      });
-      onboardSession.markStepComplete("policies", {
-        sandboxName,
-        provider,
-        model,
-        policyPresets: appliedPolicyPresets,
-      });
+      const resumePolicies =
+        resume && sandboxName && arePolicyPresetsApplied(sandboxName, recordedPolicyPresets || []);
+      if (resumePolicies) {
+        skippedStepMessage("policies", (recordedPolicyPresets || []).join(", "));
+        onboardSession.markStepComplete("policies", {
+          sandboxName,
+          provider,
+          model,
+          policyPresets: recordedPolicyPresets || [],
+        });
+      } else {
+        startRecordedStep("policies", {
+          sandboxName,
+          provider,
+          model,
+          policyPresets: recordedPolicyPresets || [],
+        });
+        const appliedPolicyPresets = await setupPoliciesWithSelection(sandboxName, {
+          selectedPresets:
+            resume &&
+            session?.steps?.policies?.status !== "complete" &&
+            Array.isArray(recordedPolicyPresets) &&
+            recordedPolicyPresets.length > 0
+              ? recordedPolicyPresets
+              : null,
+          enabledChannels: selectedMessagingChannels,
+          webSearchConfig,
+          onSelection: (policyPresets) => {
+            onboardSession.updateSession((current) => {
+              current.policyPresets = policyPresets;
+              return current;
+            });
+          },
+        });
+        onboardSession.markStepComplete("policies", {
+          sandboxName,
+          provider,
+          model,
+          policyPresets: appliedPolicyPresets,
+        });
+      }
     }
 
     onboardSession.completeSession({ sandboxName, provider, model });
     completed = true;
-    printDashboard(sandboxName, model, provider, nimContainer);
+    printDashboard(sandboxName, model, provider, nimContainer, agent);
   } finally {
     releaseOnboardLock();
   }
@@ -4566,6 +4802,7 @@ module.exports = {
   isInferenceRouteReady,
   isOpenclawReady,
   arePolicyPresetsApplied,
+  getSuggestedPolicyPresets,
   presetsCheckboxSelector,
   setupPoliciesWithSelection,
   summarizeCurlFailure,
