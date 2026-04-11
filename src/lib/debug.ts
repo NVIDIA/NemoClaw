@@ -45,10 +45,16 @@ function section(title: string): void {
 // Secret redaction
 // ---------------------------------------------------------------------------
 
+// Import canonical patterns from single source of truth (secret-patterns.ts).
+// debug.ts uses [pattern, replacement] tuples for full-replacement redaction,
+// while runner.ts uses the raw patterns with partial-redaction (keep first 4 chars).
+import { TOKEN_PREFIX_PATTERNS } from "./secret-patterns";
+
 const REDACT_PATTERNS: [RegExp, string][] = [
   [/(NVIDIA_API_KEY|API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY)=\S+/gi, "$1=<REDACTED>"],
-  [/nvapi-[A-Za-z0-9_-]{10,}/g, "<REDACTED>"],
-  [/(?:ghp_|github_pat_)[A-Za-z0-9_]{30,}/g, "<REDACTED>"],
+  ...TOKEN_PREFIX_PATTERNS.map(
+    (p): [RegExp, string] => [new RegExp(p.source, p.flags), "<REDACTED>"],
+  ),
   [/(Bearer )\S+/gi, "$1<REDACTED>"],
 ];
 
@@ -377,7 +383,7 @@ function collectNetwork(collectDir: string): void {
 
 function collectOnboardSession(collectDir: string, repoDir: string): void {
   section("Onboard Session");
-  const helperPath = join(repoDir, "bin", "lib", "onboard-session.js");
+  const helperPath = join(repoDir, "dist", "lib", "onboard-session.js");
   if (!existsSync(helperPath) || !commandExists("node")) {
     console.log("  (onboard session helper not available, skipping)");
     return;

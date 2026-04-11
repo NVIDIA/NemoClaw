@@ -14,9 +14,9 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-// runner.js is CJS — use require so we don't pull it into the TS build.
+// runner.ts still uses CommonJS-style exports — use require here.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { runCapture } = require("../../bin/lib/runner");
+const { runCapture } = require("./runner");
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -70,6 +70,375 @@ export interface EnsureSwapOpts {
   interactive?: boolean;
   /** Override getMemoryInfo implementation. */
   getMemoryInfoImpl?: (opts: GetMemoryInfoOpts) => MemoryInfo | null;
+}
+
+export type ContainerRuntime =
+  | "docker"
+  | "docker-desktop"
+  | "colima"
+  | "podman"
+  | "unknown";
+
+export type PackageManager = "apt" | "dnf" | "yum" | "brew" | "pacman" | "unknown";
+
+export type RemediationKind = "info" | "manual" | "auto" | "sudo";
+
+export interface HostAssessment {
+  platform: NodeJS.Platform | string;
+  isWsl: boolean;
+  runtime: ContainerRuntime;
+  packageManager?: PackageManager;
+  systemctlAvailable?: boolean;
+  dockerServiceActive?: boolean | null;
+  dockerServiceEnabled?: boolean | null;
+  dockerInstalled: boolean;
+  dockerRunning: boolean;
+  dockerReachable: boolean;
+  nodeInstalled: boolean;
+  openshellInstalled: boolean;
+  dockerInfoSummary?: string;
+  dockerCgroupVersion?: "v1" | "v2" | "unknown";
+  dockerDefaultCgroupnsMode?: "host" | "private" | "unknown";
+  requiresHostCgroupnsFix: boolean;
+  isUnsupportedRuntime: boolean;
+  isHeadlessLikely: boolean;
+  hasNvidiaGpu: boolean;
+  notes: string[];
+}
+
+export interface RemediationAction {
+  id: string;
+  title: string;
+  kind: RemediationKind;
+  reason: string;
+  commands: string[];
+  blocking: boolean;
+}
+
+export interface AssessHostOpts {
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  release?: string;
+  procVersion?: string;
+  dockerInfoOutput?: string;
+  dockerInfoError?: string;
+  readFileImpl?: (filePath: string, encoding: BufferEncoding) => string;
+  runCaptureImpl?: (command: string, options?: { ignoreError?: boolean }) => string;
+  commandExistsImpl?: (commandName: string) => boolean;
+  gpuProbeImpl?: () => boolean;
+}
+
+function commandExists(
+  commandName: string,
+  runCaptureImpl: (command: string, options?: { ignoreError?: boolean }) => string,
+): boolean {
+  try {
+    const output = runCaptureImpl(`command -v ${commandName}`, { ignoreError: true });
+    return Boolean(String(output || "").trim());
+  } catch {
+    return false;
+  }
+}
+
+function detectWsl(opts: {
+  platform: NodeJS.Platform | string;
+  env: NodeJS.ProcessEnv;
+  release: string;
+  procVersion: string;
+}): boolean {
+  if (opts.platform !== "linux") return false;
+
+  return (
+    Boolean(opts.env.WSL_DISTRO_NAME) ||
+    Boolean(opts.env.WSL_INTEROP) ||
+    /microsoft/i.test(opts.release) ||
+    /microsoft/i.test(opts.procVersion)
+  );
+}
+
+function inferContainerRuntime(info = ""): ContainerRuntime {
+  const normalized = String(info || "").toLowerCase();
+  if (!normalized.trim()) return "unknown";
+  if (normalized.includes("podman")) return "podman";
+  if (normalized.includes("colima")) return "colima";
+  if (normalized.includes("docker desktop")) return "docker-desktop";
+  if (normalized.includes("docker")) return "docker";
+  return "unknown";
+}
+
+function parseDockerCgroupVersion(info = ""): "v1" | "v2" | "unknown" {
+  if (/"CgroupVersion"\s*:\s*"2"/.test(info) || /CgroupVersion["=: ]+2/i.test(info)) {
+    return "v2";
+  }
+  if (/"CgroupVersion"\s*:\s*"1"/.test(info) || /CgroupVersion["=: ]+1/i.test(info)) {
+    return "v1";
+  }
+  return "unknown";
+}
+
+function parseDockerInfoSummary(info = ""): string | undefined {
+  const versionMatch = info.match(/"ServerVersion"\s*:\s*"([^"]+)"/);
+  const osMatch = info.match(/"OperatingSystem"\s*:\s*"([^"]+)"/);
+  const parts = [versionMatch?.[1], osMatch?.[1]].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
+function readDockerDefaultCgroupnsMode(
+  readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
+): "host" | "private" | "unknown" {
+  try {
+    const raw = readFileImpl("/etc/docker/daemon.json", "utf-8");
+    const parsed = JSON.parse(raw) as { ["default-cgroupns-mode"]?: unknown };
+    const mode = parsed["default-cgroupns-mode"];
+    return mode === "host" || mode === "private" ? mode : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+function isHeadlessLikely(env: NodeJS.ProcessEnv): boolean {
+  return !env.DISPLAY && !env.WAYLAND_DISPLAY && !env.TERM_PROGRAM;
+}
+
+function detectNvidiaGpu(
+  runCaptureImpl: (command: string, options?: { ignoreError?: boolean }) => string,
+): boolean {
+  if (!commandExists("nvidia-smi", runCaptureImpl)) {
+    return false;
+  }
+  return Boolean(String(runCaptureImpl("nvidia-smi -L", { ignoreError: true }) || "").trim());
+}
+
+function detectPackageManager(
+  runCaptureImpl: (command: string, options?: { ignoreError?: boolean }) => string,
+): PackageManager {
+  if (commandExists("apt-get", runCaptureImpl)) return "apt";
+  if (commandExists("dnf", runCaptureImpl)) return "dnf";
+  if (commandExists("yum", runCaptureImpl)) return "yum";
+  if (commandExists("brew", runCaptureImpl)) return "brew";
+  if (commandExists("pacman", runCaptureImpl)) return "pacman";
+  return "unknown";
+}
+
+function parseSystemctlState(value = ""): boolean | null {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "active" || normalized === "enabled") return true;
+  if (
+    normalized === "inactive" ||
+    normalized === "failed" ||
+    normalized === "disabled" ||
+    normalized === "masked"
+  ) {
+    return false;
+  }
+  return null;
+}
+
+export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
+  const platform = opts.platform ?? process.platform;
+  const env = opts.env ?? process.env;
+  const runCaptureImpl =
+    opts.runCaptureImpl ??
+    ((command: string, options?: { ignoreError?: boolean }) =>
+      runCapture(command, { ignoreError: options?.ignoreError ?? false }));
+  const readFileImpl = opts.readFileImpl ?? fs.readFileSync;
+  const dockerInstalled =
+    opts.commandExistsImpl?.("docker") ?? commandExists("docker", runCaptureImpl);
+  const nodeInstalled = opts.commandExistsImpl?.("node") ?? commandExists("node", runCaptureImpl);
+  const openshellInstalled =
+    opts.commandExistsImpl?.("openshell") ?? commandExists("openshell", runCaptureImpl);
+  const hasNvidiaGpu = opts.gpuProbeImpl?.() ?? detectNvidiaGpu(runCaptureImpl);
+  const packageManager = detectPackageManager(runCaptureImpl);
+  const systemctlAvailable = commandExists("systemctl", runCaptureImpl);
+
+  let dockerInfoOutput = opts.dockerInfoOutput;
+  let dockerReachable = false;
+  let dockerRunning = false;
+  if (dockerInstalled && dockerInfoOutput === undefined) {
+    dockerInfoOutput = runCaptureImpl("docker info --format '{{json .}}' 2>/dev/null", {
+      ignoreError: true,
+    });
+  }
+  if (dockerInstalled && String(dockerInfoOutput || "").trim()) {
+    dockerReachable = true;
+    dockerRunning = true;
+  }
+
+  const release = opts.release ?? os.release();
+  const procVersion =
+    opts.procVersion ??
+    (() => {
+      try {
+        return readFileImpl("/proc/version", "utf-8");
+      } catch {
+        return "";
+      }
+    })();
+  let runtime = inferContainerRuntime(dockerInfoOutput);
+  if (dockerReachable && runtime === "unknown" && platform === "linux") {
+    runtime = "docker";
+  }
+  const dockerCgroupVersion = dockerReachable
+    ? parseDockerCgroupVersion(dockerInfoOutput)
+    : "unknown";
+  const dockerDefaultCgroupnsMode = readDockerDefaultCgroupnsMode(readFileImpl);
+  const dockerServiceActive =
+    platform === "linux" && systemctlAvailable && dockerInstalled
+      ? parseSystemctlState(runCaptureImpl("systemctl is-active docker", { ignoreError: true }))
+      : null;
+  const dockerServiceEnabled =
+    platform === "linux" && systemctlAvailable && dockerInstalled
+      ? parseSystemctlState(runCaptureImpl("systemctl is-enabled docker", { ignoreError: true }))
+      : null;
+  const assessment: HostAssessment = {
+    platform,
+    isWsl: detectWsl({ platform, env, release, procVersion }),
+    runtime,
+    packageManager,
+    systemctlAvailable,
+    dockerServiceActive,
+    dockerServiceEnabled,
+    dockerInstalled,
+    dockerRunning,
+    dockerReachable,
+    nodeInstalled,
+    openshellInstalled,
+    dockerInfoSummary: parseDockerInfoSummary(dockerInfoOutput),
+    dockerCgroupVersion,
+    dockerDefaultCgroupnsMode,
+    // Current OpenShell sets host cgroupns on its own cluster container.
+    requiresHostCgroupnsFix: false,
+    isUnsupportedRuntime: runtime === "podman",
+    isHeadlessLikely: isHeadlessLikely(env),
+    hasNvidiaGpu,
+    notes: [],
+  };
+
+  if (assessment.isWsl) {
+    assessment.notes.push("Running under WSL");
+  }
+  if (assessment.isHeadlessLikely) {
+    assessment.notes.push("Headless environment likely");
+  }
+  if (assessment.dockerInfoSummary) {
+    assessment.notes.push(`Docker: ${assessment.dockerInfoSummary}`);
+  }
+
+  return assessment;
+}
+
+export function planHostRemediation(assessment: HostAssessment): RemediationAction[] {
+  const actions: RemediationAction[] = [];
+
+  if (!assessment.dockerInstalled) {
+    const installCommands: Record<PackageManager, string> = {
+      apt: "Install Docker Engine, then rerun `nemoclaw onboard`.",
+      dnf: "Install Docker Engine with your package manager, then rerun `nemoclaw onboard`.",
+      yum: "Install Docker Engine with your package manager, then rerun `nemoclaw onboard`.",
+      brew: "Install Docker Desktop or Colima, then rerun `nemoclaw onboard`.",
+      pacman: "Install Docker Engine with your package manager, then rerun `nemoclaw onboard`.",
+      unknown: "Install Docker, then rerun `nemoclaw onboard`.",
+    };
+    actions.push({
+      id: "install_docker",
+      title: "Install Docker",
+      kind: "manual",
+      reason: "Docker is required before onboarding can create a gateway or sandbox.",
+      commands:
+        assessment.platform === "darwin"
+          ? ["Install Docker Desktop or Colima, then rerun `nemoclaw onboard`."]
+          : [installCommands[assessment.packageManager ?? "unknown"]],
+      blocking: true,
+    });
+  } else if (!assessment.dockerReachable) {
+    // On Linux, if the systemd service is already active but the daemon is
+    // unreachable, the most likely cause is a permissions / docker-group issue
+    // rather than a stopped service.
+    const likelyGroupIssue =
+      assessment.platform === "linux" && assessment.dockerServiceActive === true;
+
+    if (likelyGroupIssue) {
+      actions.push({
+        id: "docker_group_permission",
+        title: "Add user to docker group",
+        kind: "sudo",
+        reason:
+          "Docker is installed and the service is running, but the current user cannot reach the daemon. " +
+          "This usually means your user is not in the docker group.",
+        commands: [
+          "sudo usermod -aG docker $USER",
+          "newgrp docker   # or log out and back in",
+          "nemoclaw onboard",
+        ],
+        blocking: true,
+      });
+    } else {
+      actions.push({
+        id: "start_docker",
+        title: "Start Docker",
+        kind: "manual",
+        reason: "Docker is installed but NemoClaw could not talk to the Docker daemon.",
+        commands:
+          assessment.platform === "darwin"
+            ? ["Start Docker Desktop or Colima, then rerun `nemoclaw onboard`."]
+            : assessment.systemctlAvailable
+              ? ["sudo systemctl start docker", "nemoclaw onboard"]
+              : ["Start the Docker daemon, then rerun `nemoclaw onboard`."],
+        blocking: true,
+      });
+    }
+  }
+
+  if (assessment.isUnsupportedRuntime) {
+    actions.push({
+      id: "unsupported_runtime_warning",
+      title: "Use a supported Docker runtime if problems appear",
+      kind: "manual",
+      reason:
+        "OpenShell officially documents Docker-based runtimes. Podman may work in some environments, but it is not a supported runtime and behavior may vary.",
+      commands:
+        assessment.platform === "darwin"
+          ? ["If onboarding or sandbox lifecycle fails, switch to Docker Desktop or Colima."]
+          : ["If onboarding or sandbox lifecycle fails, switch to a Docker-supported runtime."],
+      blocking: false,
+    });
+  }
+
+  if (!assessment.nodeInstalled) {
+    actions.push({
+      id: "install_nodejs",
+      title: "Install Node.js",
+      kind: "manual",
+      reason: "NemoClaw requires Node.js for its CLI and plugin build steps.",
+      commands: ["Run the NemoClaw installer to install Node.js automatically."],
+      blocking: false,
+    });
+  }
+
+  if (!assessment.openshellInstalled) {
+    actions.push({
+      id: "install_openshell",
+      title: "Install OpenShell",
+      kind: "manual",
+      reason: "OpenShell is required before onboarding can create or manage a gateway.",
+      commands: ["Run the NemoClaw installer or `scripts/install-openshell.sh`."],
+      blocking: false,
+    });
+  }
+
+  if (assessment.isHeadlessLikely && !assessment.hasNvidiaGpu) {
+    actions.push({
+      id: "headless_remote_hint",
+      title: "Review remote/headless UI settings",
+      kind: "info",
+      reason: "Headless Linux hosts often need explicit remote UI handling if you want browser access.",
+      commands: ["Set `CHAT_UI_URL` when remote browser access matters."],
+      blocking: false,
+    });
+  }
+
+  return actions;
 }
 
 // ── Port availability ────────────────────────────────────────────
@@ -137,7 +506,7 @@ export async function checkPortAvailable(
   port?: number,
   opts?: CheckPortOpts,
 ): Promise<PortProbeResult> {
-  const p = port || 18789;
+  const p = port ?? 18789;
   const o = opts || {};
 
   // ── lsof path ──────────────────────────────────────────────────

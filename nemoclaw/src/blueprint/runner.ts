@@ -15,7 +15,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 import { execa } from "execa";
 import YAML from "yaml";
@@ -68,6 +68,7 @@ interface InferenceProfile {
   model?: string;
   credential_env?: string;
   credential_default?: string;
+  timeout_secs?: number;
 }
 
 interface SandboxConfig {
@@ -296,9 +297,19 @@ export async function actionApply(
   });
 
   progress(70, "Setting inference route");
-  await runCmd(["openshell", "inference", "set", "--provider", providerName, "--model", model], {
-    reject: false,
-  });
+  const inferenceArgs = [
+    "openshell",
+    "inference",
+    "set",
+    "--provider",
+    providerName,
+    "--model",
+    model,
+  ];
+  if (inferenceCfg.timeout_secs !== undefined) {
+    inferenceArgs.push("--timeout", String(inferenceCfg.timeout_secs));
+  }
+  await runCmd(inferenceArgs, { reject: false });
 
   progress(85, "Saving run state");
   const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
@@ -329,13 +340,30 @@ export async function actionApply(
   log(`Inference: ${providerName} -> ${model} @ ${endpoint}`);
 }
 
+function validateRunId(rid: string): void {
+  if (!/^[a-zA-Z0-9_-]+$/.test(rid)) {
+    throw new Error(
+      `Invalid run ID: must contain only alphanumeric characters, hyphens, and underscores`,
+    );
+  }
+}
+
+function safeRunDir(runsDir: string, rid: string): string {
+  validateRunId(rid);
+  const resolved = join(runsDir, rid);
+  if (!resolved.startsWith(runsDir + sep)) {
+    throw new Error("Run ID resolves outside expected directory");
+  }
+  return resolved;
+}
+
 export function actionStatus(rid?: string): void {
   emitRunId();
   const runsDir = join(homedir(), ".nemoclaw", "state", "runs");
 
   let runDir: string;
   if (rid) {
-    runDir = join(runsDir, rid);
+    runDir = safeRunDir(runsDir, rid);
   } else {
     let runs: string[];
     try {
@@ -362,7 +390,8 @@ export function actionStatus(rid?: string): void {
 export async function actionRollback(rid: string): Promise<void> {
   emitRunId();
 
-  const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
+  const runsDir = join(homedir(), ".nemoclaw", "state", "runs");
+  const stateDir = safeRunDir(runsDir, rid);
   try {
     readdirSync(stateDir);
   } catch {

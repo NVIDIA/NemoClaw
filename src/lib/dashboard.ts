@@ -27,9 +27,12 @@ export function resolveDashboardForwardTarget(
   }
 }
 
-export function buildControlUiUrls(token: string | null = null): string[] {
+export function buildControlUiUrls(
+  token: string | null = null,
+  port: number = CONTROL_UI_PORT,
+): string[] {
   const hash = token ? `#token=${token}` : "";
-  const baseUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const baseUrl = `http://127.0.0.1:${port}`;
   const urls = [`${baseUrl}${CONTROL_UI_PATH}${hash}`];
   const chatUi = (process.env.CHAT_UI_URL || "").trim().replace(/\/$/, "");
   if (chatUi && /^https?:\/\//i.test(chatUi) && chatUi !== baseUrl) {

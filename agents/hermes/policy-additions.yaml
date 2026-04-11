@@ -1,0 +1,208 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Sandbox policy for the Hermes Agent.
+# Based on the OpenClaw policy with agent-specific adjustments:
+#   - .hermes / .hermes-data instead of .openclaw / .openclaw-data
+#   - Nous Research phone-home endpoints instead of OpenClaw/ClawHub
+#   - PyPI instead of npm registry
+#   - /usr/local/bin/hermes and python3 binary restrictions
+#
+# Principle: deny by default, allow only what's needed for core functionality.
+
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /proc
+    - /dev/urandom
+    - /app
+    - /etc
+    - /var/log
+    - /sandbox/.hermes              # Immutable config (Landlock enforced)
+  read_write:
+    - /sandbox
+    - /tmp
+    - /dev/null
+    - /sandbox/.hermes-data         # Writable agent state (symlinked from .hermes)
+
+landlock:
+  compatibility: best_effort
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+network_policies:
+  claude_code:
+    name: claude_code
+    endpoints:
+      - host: api.anthropic.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: POST, path: "/v1/messages" }
+          - allow: { method: POST, path: "/v1/messages/batches" }
+          - allow: { method: GET, path: "/v1/messages/batches/**" }
+          - allow: { method: POST, path: "/v1/complete" }
+      - host: statsig.anthropic.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: POST, path: "/**" }
+      - host: sentry.io
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: POST, path: "/api/*/envelope/**" }
+          - allow: { method: POST, path: "/api/*/store/**" }
+    binaries:
+      - { path: /usr/local/bin/claude }
+
+  nvidia:
+    name: nvidia
+    endpoints:
+      - host: integrate.api.nvidia.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: POST, path: "/v1/chat/completions" }
+          - allow: { method: POST, path: "/v1/completions" }
+          - allow: { method: POST, path: "/v1/embeddings" }
+          - allow: { method: GET, path: "/v1/models" }
+          - allow: { method: GET, path: "/v1/models/**" }
+      - host: inference-api.nvidia.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: POST, path: "/v1/chat/completions" }
+          - allow: { method: POST, path: "/v1/completions" }
+          - allow: { method: POST, path: "/v1/embeddings" }
+          - allow: { method: GET, path: "/v1/models" }
+          - allow: { method: GET, path: "/v1/models/**" }
+    binaries:
+      - { path: /usr/local/bin/claude }
+      - { path: /usr/local/bin/hermes }
+      - { path: /usr/bin/python3.11 }
+
+  github:
+    name: github
+    endpoints:
+      - host: github.com
+        port: 443
+        access: full
+      - host: api.github.com
+        port: 443
+        access: full
+    binaries:
+      - { path: /usr/bin/gh }
+      - { path: /usr/bin/git }
+
+  # ── Nous Research — Hermes auth, updates, portal ──────────────
+  nous_research:
+    name: nous_research
+    endpoints:
+      - host: nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: hermes-agent.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: api.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/hermes }
+      - { path: /usr/bin/python3.11 }
+
+  # ── PyPI — needed for pip install (skill/plugin deps) ─────────
+  pypi:
+    name: pypi
+    endpoints:
+      - host: pypi.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+      - host: files.pythonhosted.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/pip3 }
+      - { path: /usr/bin/python3.11 }
+
+  # ── Messaging — pre-allowed for agent notifications ───────────
+  telegram:
+    name: telegram
+    endpoints:
+      - host: api.telegram.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/bot*/**" }
+          - allow: { method: POST, path: "/bot*/**" }
+          - allow: { method: GET, path: "/file/bot*/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/python3.11 }
+
+  discord:
+    name: discord
+    endpoints:
+      - host: discord.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: gateway.discord.gg
+        port: 443
+        access: full
+      - host: cdn.discordapp.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/python3.11 }

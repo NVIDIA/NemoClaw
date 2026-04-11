@@ -899,6 +899,11 @@ export function restoreSnapshotToHost(
       copyFileSync(configSnapshotPath, manifest.configPath);
       chmodSync(manifest.configPath, 0o600);
       logger.info(`Restored external config to ${manifest.configPath}`);
+    } else {
+      const restoredBundledConfigPath = path.join(manifest.stateDir, "openclaw.json");
+      if (existsSync(restoredBundledConfigPath)) {
+        chmodSync(restoredBundledConfigPath, 0o600);
+      }
     }
 
     logger.info("Host OpenClaw state restored.");

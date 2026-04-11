@@ -21,7 +21,7 @@
 #   .openclaw dirs      — directory structure + symlinks are dictated by
 #     + symlinks          the OpenClaw CLI layout; new dirs are additive
 #                          (add them here and rebuild)
-#   openclaw CLI        — pinned to exact npm version (e.g., 2026.3.11)
+#   openclaw CLI        — version set by ARG OPENCLAW_VERSION (default below); override with --build-arg
 #   pyyaml              — pinned to exact pip version (6.0.3)
 #
 # Nothing here references NemoClaw plugin source, blueprint files,
@@ -33,7 +33,7 @@
 # The base-image.yaml workflow rebuilds automatically on main merges that
 # touch this file. You need to edit this file (triggering a rebuild) when:
 #
-#   1. OpenClaw CLI version bump    — change the openclaw@version below
+#   1. OpenClaw CLI version bump    — update OPENCLAW_VERSION default below, or override via --build-arg / workflow_dispatch
 #   2. New apt package needed       — add it to the apt-get install list
 #   3. gosu upgrade                 — update URL, checksum, and version
 #   4. node:22-slim digest rotated  — update-docker-pin.sh updates both
@@ -58,6 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-venv=3.11.2-1+b1 \
         curl=7.88.1-10+deb12u14 \
         git=1:2.39.5-0+deb12u3 \
+        gnupg=2.2.40-1.1+deb12u2 \
         ca-certificates=20230311+deb12u1 \
         iproute2=6.1.0-3 \
         iptables=1.8.9-2 \
@@ -102,6 +103,10 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
         /sandbox/.openclaw-data/canvas \
         /sandbox/.openclaw-data/cron \
         /sandbox/.openclaw-data/memory \
+        /sandbox/.openclaw-data/logs \
+        /sandbox/.openclaw-data/credentials \
+        /sandbox/.openclaw-data/sandbox \
+        /sandbox/.openclaw-data/telegram \
     && mkdir -p /sandbox/.openclaw \
     && ln -s /sandbox/.openclaw-data/agents /sandbox/.openclaw/agents \
     && ln -s /sandbox/.openclaw-data/extensions /sandbox/.openclaw/extensions \
@@ -113,11 +118,53 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
     && ln -s /sandbox/.openclaw-data/canvas /sandbox/.openclaw/canvas \
     && ln -s /sandbox/.openclaw-data/cron /sandbox/.openclaw/cron \
     && ln -s /sandbox/.openclaw-data/memory /sandbox/.openclaw/memory \
+    && ln -s /sandbox/.openclaw-data/logs /sandbox/.openclaw/logs \
+    && ln -s /sandbox/.openclaw-data/credentials /sandbox/.openclaw/credentials \
+    && ln -s /sandbox/.openclaw-data/sandbox /sandbox/.openclaw/sandbox \
     && touch /sandbox/.openclaw-data/update-check.json \
     && ln -s /sandbox/.openclaw-data/update-check.json /sandbox/.openclaw/update-check.json \
+    && touch /sandbox/.openclaw-data/exec-approvals.json \
+    && ln -s /sandbox/.openclaw-data/exec-approvals.json /sandbox/.openclaw/exec-approvals.json \
+    && ln -s /sandbox/.openclaw-data/telegram /sandbox/.openclaw/telegram \
     && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
 
+# Pre-create shell init files for the sandbox user.
+# The /sandbox home directory is Landlock read-only at runtime (#804), so these
+# files must exist at build time. Runtime proxy config is written by the
+# entrypoint to /tmp/nemoclaw-proxy-env.sh (root-owned, sticky-bit protected)
+# and sourced from here on every interactive session.
+# hadolint ignore=SC2028
+RUN printf '%s\n' \
+        '# Source runtime proxy config (Landlock read-only home, #804)' \
+        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        > /sandbox/.bashrc \
+    && printf '%s\n' \
+        '# Source runtime proxy config (Landlock read-only home, #804)' \
+        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        > /sandbox/.profile \
+    && chown sandbox:sandbox /sandbox/.bashrc /sandbox/.profile
+
 # Install OpenClaw CLI + PyYAML for inline Python scripts in e2e tests.
-# When bumping the openclaw version, rebuild this base image.
-RUN npm install -g openclaw@2026.3.11 \
+# OpenClaw version: change the OPENCLAW_VERSION ARG default so CI rebuilds
+# the base image on push to main, or use workflow_dispatch on base-image.yaml
+# with the openclaw_version input for a one-off build without editing this file.
+ARG OPENCLAW_VERSION=2026.3.11
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/blueprint.yaml \
+    echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \
+    || { echo "Error: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.3.11)."; exit 1; }; \
+    OPENCLAW_MIN_VERSION=$(grep 'min_openclaw_version' /tmp/blueprint.yaml | awk '{print $2}' | tr -d '"'); \
+    [ -n "$OPENCLAW_MIN_VERSION" ] \
+    || { echo "Error: Could not parse min_openclaw_version from nemoclaw-blueprint/blueprint.yaml"; exit 1; }; \
+    if [ "$(printf '%s\n%s' "$OPENCLAW_MIN_VERSION" "$OPENCLAW_VERSION" | sort -V | head -n1)" != "$OPENCLAW_MIN_VERSION" ]; then \
+        echo "Error: OpenClaw version ${OPENCLAW_VERSION} is below the minimum required version ${OPENCLAW_MIN_VERSION}"; \
+        echo "Hint: Update min_openclaw_version in nemoclaw-blueprint/blueprint.yaml or use a newer version."; exit 1; \
+    fi; \
+    if ! npm view openclaw@${OPENCLAW_VERSION} version > /dev/null 2>&1; then \
+        echo "Error: OpenClaw version ${OPENCLAW_VERSION} not found on npm registry"; \
+        echo "Hint: Check available versions with: npm view openclaw versions"; exit 1; \
+    fi; \
+    npm install -g "openclaw@${OPENCLAW_VERSION}" \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
