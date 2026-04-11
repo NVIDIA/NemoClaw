@@ -9,9 +9,9 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { runCapture } from "../bin/lib/runner";
+import { runCapture } from "../dist/lib/runner";
 
-const runnerPath = path.join(import.meta.dirname, "..", "bin", "lib", "runner");
+const runnerPath = path.join(import.meta.dirname, "..", "dist", "lib", "runner.js");
 
 describe("runner helpers", () => {
   it("does not let child commands consume installer stdin", () => {
@@ -627,6 +627,13 @@ describe("regression guards", () => {
       expect(fs.existsSync(path.join(import.meta.dirname, "..", "scripts", "brev-setup.sh"))).toBe(
         false,
       );
+    });
+
+    it("scripts/setup-jetson.sh exists and is executable", () => {
+      const scriptPath = path.join(import.meta.dirname, "..", "scripts", "setup-jetson.sh");
+      expect(fs.existsSync(scriptPath)).toBe(true);
+      const mode = fs.statSync(scriptPath).mode;
+      expect((mode & 0o111) !== 0).toBe(true);
     });
 
     it("services no longer tell users to install brev-setup.sh", () => {

@@ -175,6 +175,21 @@ resolve_default_sandbox_name() {
   printf "%s" "${sandbox_name:-my-assistant}"
 }
 
+resolve_onboarded_agent() {
+  local session_file="${HOME}/.nemoclaw/onboard-session.json"
+  if [[ -f "$session_file" ]] && command_exists node; then
+    node -e '
+      const fs = require("fs");
+      try {
+        const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+        process.stdout.write(data.agent || "openclaw");
+      } catch { process.stdout.write("openclaw"); }
+    ' "$session_file" 2>/dev/null || printf "openclaw"
+  else
+    printf "openclaw"
+  fi
+}
+
 # step N "Description" — numbered section header
 step() {
   local n=$1 msg=$2
@@ -195,7 +210,11 @@ print_banner() {
   printf "  ${C_GREEN}${C_BOLD} ██║ ╚████║███████╗██║ ╚═╝ ██║╚██████╔╝╚██████╗███████╗██║  ██║╚███╔███╔╝${C_RESET}\n"
   printf "  ${C_GREEN}${C_BOLD} ╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝ ╚═════╝  ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝${C_RESET}\n"
   printf "\n"
-  printf "  ${C_DIM}Launch OpenClaw in an OpenShell sandbox.%s${C_RESET}\n" "$version_suffix"
+  if [[ -n "${NEMOCLAW_AGENT:-}" && "${NEMOCLAW_AGENT}" != "openclaw" ]]; then
+    printf "  ${C_DIM}Launch %s in an OpenShell sandbox.%s${C_RESET}\n" "${NEMOCLAW_AGENT^}" "$version_suffix"
+  else
+    printf "  ${C_DIM}Launch OpenClaw in an OpenShell sandbox.%s${C_RESET}\n" "$version_suffix"
+  fi
   printf "\n"
 }
 
@@ -209,9 +228,14 @@ print_done() {
   printf "  ${C_GREEN}${C_BOLD}NemoClaw${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$elapsed"
   printf "\n"
   if [[ "$ONBOARD_RAN" == true ]]; then
-    local sandbox_name
+    local sandbox_name agent_name
     sandbox_name="$(resolve_default_sandbox_name)"
-    printf "  ${C_GREEN}Your OpenClaw Sandbox is live.${C_RESET}\n"
+    agent_name="$(resolve_onboarded_agent)"
+    if [[ "$agent_name" == "openclaw" || -z "$agent_name" ]]; then
+      printf "  ${C_GREEN}Your OpenClaw Sandbox is live.${C_RESET}\n"
+    else
+      printf "  ${C_GREEN}Your %s Sandbox is live.${C_RESET}\n" "${agent_name^}"
+    fi
     printf "  ${C_DIM}Sandbox in, break things, and tell us what you find.${C_RESET}\n"
     printf "\n"
     printf "  ${C_GREEN}Next:${C_RESET}\n"
@@ -219,7 +243,9 @@ print_done() {
       printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$(detect_shell_profile)"
     fi
     printf "  %s$%s nemoclaw %s connect\n" "$C_GREEN" "$C_RESET" "$sandbox_name"
-    printf "  %ssandbox@%s$%s openclaw tui\n" "$C_GREEN" "$sandbox_name" "$C_RESET"
+    if [[ "$agent_name" == "openclaw" || -z "$agent_name" ]]; then
+      printf "  %ssandbox@%s$%s openclaw tui\n" "$C_GREEN" "$sandbox_name" "$C_RESET"
+    fi
   elif [[ "$NEMOCLAW_READY_NOW" == true ]]; then
     printf "  ${C_GREEN}NemoClaw CLI is installed.${C_RESET}\n"
     printf "  ${C_DIM}Onboarding has not run yet.${C_RESET}\n"
@@ -471,6 +497,16 @@ ensure_nemoclaw_shim() {
     return 1
   fi
   node_dir="$(dirname "$node_path")"
+
+  # If npm placed the binary at the same path as the shim target (e.g. when
+  # npm_config_prefix=$HOME/.local), writing a shim would overwrite the real
+  # binary with a script that exec's itself — an infinite loop.  In that case
+  # the binary is already where it needs to be; skip shim creation.
+  if [[ "$cli_path" -ef "$shim_path" ]]; then
+    refresh_path
+    ensure_local_bin_in_profile
+    return 0
+  fi
 
   mkdir -p "$NEMOCLAW_SHIM_DIR"
   cat >"$shim_path" <<EOF
@@ -822,6 +858,12 @@ resolve_openclaw_version() {
         print substr($0, RSTART + 9, RLENGTH - 9)
         exit
       }
+      match($0, /ARG[[:space:]]+OPENCLAW_VERSION[[:space:]]*=[[:space:]]*[0-9][0-9.]+/) {
+        line = substr($0, RSTART, RLENGTH)
+        sub(/^[^=]+=[[:space:]]*/, "", line)
+        print line
+        exit
+      }
     ' "$dockerfile_base"
   fi
 }
@@ -852,8 +894,10 @@ install_nemoclaw() {
   if is_source_checkout "$repo_root"; then
     info "NemoClaw package.json found in the selected source checkout — installing from source…"
     NEMOCLAW_SOURCE_ROOT="$repo_root"
-    spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$NEMOCLAW_SOURCE_ROOT" \
-      || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
+    if [[ -z "${NEMOCLAW_AGENT:-}" || "${NEMOCLAW_AGENT}" == "openclaw" ]]; then
+      spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$NEMOCLAW_SOURCE_ROOT" \
+        || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
+    fi
     spin "Installing NemoClaw dependencies" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm install --ignore-scripts"
     spin "Building NemoClaw CLI modules" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm run --if-present build:cli"
     spin "Building NemoClaw plugin" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\"/nemoclaw && npm install --ignore-scripts && npm run build"
@@ -883,8 +927,10 @@ install_nemoclaw() {
     # unavailable or tags are pruned later.
     git -C "$nemoclaw_src" describe --tags --match 'v*' 2>/dev/null \
       | sed 's/^v//' >"$nemoclaw_src/.version" || true
-    spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
-      || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
+    if [[ -z "${NEMOCLAW_AGENT:-}" || "${NEMOCLAW_AGENT}" == "openclaw" ]]; then
+      spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
+        || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
+    fi
     spin "Installing NemoClaw dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"
     spin "Building NemoClaw CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
     spin "Building NemoClaw plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm install --ignore-scripts && npm run build"
@@ -898,39 +944,62 @@ install_nemoclaw() {
 # ---------------------------------------------------------------------------
 # 4. Verify
 # ---------------------------------------------------------------------------
+
+# Verify that a nemoclaw binary is the real NemoClaw CLI and not the broken
+# placeholder npm package (npmjs.org/nemoclaw 0.1.0 — 249 bytes, no build
+# artifacts).  The real CLI prints "nemoclaw v<semver>" on --version.
+# Mirrors the isOpenshellCLI() pattern from resolve-openshell.js (PR #970).
+is_real_nemoclaw_cli() {
+  local bin_path="${1:-nemoclaw}"
+  local version_output
+  version_output="$("$bin_path" --version 2>/dev/null)" || return 1
+  # Real CLI outputs: "nemoclaw v0.1.0" (or any semver, with optional pre-release)
+  [[ "$version_output" =~ ^nemoclaw[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+}
+
 verify_nemoclaw() {
   if command_exists nemoclaw; then
-    NEMOCLAW_READY_NOW=true
-    ensure_nemoclaw_shim || true
-    info "Verified: nemoclaw is available at $(command -v nemoclaw)"
-    return 0
+    if is_real_nemoclaw_cli "$(command -v nemoclaw)"; then
+      NEMOCLAW_READY_NOW=true
+      ensure_nemoclaw_shim || true
+      info "Verified: nemoclaw is available at $(command -v nemoclaw)"
+      return 0
+    else
+      warn "Found nemoclaw at $(command -v nemoclaw) but it is not the real NemoClaw CLI."
+      warn "This is likely the broken placeholder npm package."
+      npm uninstall -g nemoclaw 2>/dev/null || true
+    fi
   fi
 
   local npm_bin
   npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
 
   if [[ -n "$npm_bin" && -x "$npm_bin/nemoclaw" ]]; then
-    ensure_nemoclaw_shim || true
-    if command_exists nemoclaw; then
-      NEMOCLAW_READY_NOW=true
-      info "Verified: nemoclaw is available at $(command -v nemoclaw)"
-      return 0
-    fi
+    if is_real_nemoclaw_cli "$npm_bin/nemoclaw"; then
+      ensure_nemoclaw_shim || true
+      if command_exists nemoclaw; then
+        NEMOCLAW_READY_NOW=true
+        info "Verified: nemoclaw is available at $(command -v nemoclaw)"
+        return 0
+      fi
 
-    NEMOCLAW_RECOVERY_PROFILE="$(detect_shell_profile)"
-    if [[ -x "$NEMOCLAW_SHIM_DIR/nemoclaw" ]]; then
-      NEMOCLAW_RECOVERY_EXPORT_DIR="$NEMOCLAW_SHIM_DIR"
+      NEMOCLAW_RECOVERY_PROFILE="$(detect_shell_profile)"
+      if [[ -x "$NEMOCLAW_SHIM_DIR/nemoclaw" ]]; then
+        NEMOCLAW_RECOVERY_EXPORT_DIR="$NEMOCLAW_SHIM_DIR"
+      else
+        NEMOCLAW_RECOVERY_EXPORT_DIR="$npm_bin"
+      fi
+      warn "Found nemoclaw at $npm_bin/nemoclaw but this shell still cannot resolve it."
+      warn "Onboarding will be skipped until PATH is updated."
+      return 0
     else
-      NEMOCLAW_RECOVERY_EXPORT_DIR="$npm_bin"
+      warn "Found nemoclaw at $npm_bin/nemoclaw but it is not the real NemoClaw CLI."
+      npm uninstall -g nemoclaw 2>/dev/null || true
     fi
-    warn "Found nemoclaw at $npm_bin/nemoclaw but this shell still cannot resolve it."
-    warn "Onboarding will be skipped until PATH is updated."
-    return 0
-  else
-    warn "Could not locate the nemoclaw executable."
-    warn "Try running:  npm install -g git+https://github.com/NVIDIA/NemoClaw.git"
   fi
 
+  warn "Could not locate the nemoclaw executable."
+  warn "Try re-running:  curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash"
   error "Installation failed: nemoclaw binary not found."
 }
 
@@ -1120,6 +1189,7 @@ main() {
 
   _INSTALL_START=$SECONDS
   print_banner
+  bash "${SCRIPT_DIR}/setup-jetson.sh"
 
   step 1 "Node.js"
   install_nodejs

@@ -40,7 +40,7 @@
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────
-OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.20}"
+OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.24}"
 NEMOCLAW_REF="${NEMOCLAW_REF:-main}"
 TARGET_USER="${SUDO_USER:-$(id -un)}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
@@ -161,7 +161,27 @@ fi
 # 4. OpenShell CLI
 # ══════════════════════════════════════════════════════════════════════
 if command -v openshell >/dev/null 2>&1; then
-  info "OpenShell CLI already installed: $(openshell --version 2>&1 || echo unknown)"
+  _installed_ver="$(openshell --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo '0.0.0')"
+  _pinned_ver="${OPENSHELL_VERSION#v}" # strip leading 'v'
+  if [ "$_installed_ver" = "$_pinned_ver" ]; then
+    info "OpenShell CLI already installed at pinned version: $_installed_ver"
+  else
+    info "OpenShell CLI $_installed_ver does not match pinned ${_pinned_ver} — reinstalling..."
+    ARCH="$(uname -m)"
+    case "$ARCH" in
+      x86_64 | amd64) ASSET="openshell-x86_64-unknown-linux-musl.tar.gz" ;;
+      aarch64 | arm64) ASSET="openshell-aarch64-unknown-linux-musl.tar.gz" ;;
+      *) fail "Unsupported architecture: $ARCH" ;;
+    esac
+    tmpdir="$(mktemp -d)"
+    retry 3 10 "download openshell" \
+      curl -fsSL -o "$tmpdir/$ASSET" \
+      "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${ASSET}"
+    tar xzf "$tmpdir/$ASSET" -C "$tmpdir"
+    sudo install -m 755 "$tmpdir/openshell" /usr/local/bin/openshell
+    rm -rf "$tmpdir"
+    info "OpenShell CLI upgraded: $(openshell --version 2>&1 || echo unknown)"
+  fi
 else
   info "Installing OpenShell CLI ${OPENSHELL_VERSION}..."
   ARCH="$(uname -m)"

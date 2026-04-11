@@ -77,14 +77,55 @@ services:
       - /tmp:size=64m
 ```
 
-> **Note:** The `Dockerfile` itself cannot enforce `--cap-drop` — that is a
+> **Note:** The `Dockerfile` itself cannot enforce `--cap-drop`. That is a
 > runtime concern controlled by the container orchestrator. Always configure
 > capability dropping in your `docker run` flags, Compose file, or Kubernetes
 > `securityContext`.
 
+## Read-Only Home Directory
+
+The sandbox Landlock policy restricts `/sandbox` (the agent's home directory) to read-only access.
+Only explicitly declared directories are writable:
+
+| Path | Access | Purpose |
+|------|--------|---------|
+| `/sandbox` | read-only | Home directory — agents cannot create arbitrary files |
+| `/sandbox/.openclaw` | read-only | Immutable gateway config (auth tokens, CORS) |
+| `/sandbox/.openclaw-data` | read-write | Agent state, workspace, plugins (via symlinks) |
+| `/sandbox/.nemoclaw` | read-write | Plugin state and config; blueprints within are DAC-protected (root-owned) |
+| `/tmp` | read-write | Temporary files and logs |
+
+This prevents agents from:
+
+- Writing scripts and executing them later
+- Modifying their own runtime environment
+- Creating hidden files that persist across invocations
+- Using writable space for data staging before exfiltration
+
+The image build pre-creates shell init files `.bashrc` and `.profile`.
+These files source runtime proxy configuration from `/tmp/nemoclaw-proxy-env.sh`.
+
+### Landlock Kernel Requirements
+
+Landlock LSM requires Linux kernel 5.13 or later with `CONFIG_SECURITY_LANDLOCK=y`.
+The NemoClaw sandbox policy uses `compatibility: best_effort`, which means Landlock enforcement is silently skipped on kernels that do not support it.
+
+On such kernels, protection falls back to DAC (file ownership and permissions) only.
+Files owned by the sandbox user (e.g., `.bashrc`, `.profile`) would be writable by the agent despite the Landlock read-only policy.
+
+Operators should verify Landlock availability:
+
+```console
+$ ls /sys/kernel/security/landlock
+```
+
+For production deployments, kernel 5.13+ with Landlock enabled is strongly recommended.
+The `test/e2e/e2e-cloud-experimental/checks/04-landlock-readonly.sh` script validates enforcement at runtime.
+
 ## References
 
-- [#807](https://github.com/NVIDIA/NemoClaw/issues/807) — gcc in sandbox image
-- [#808](https://github.com/NVIDIA/NemoClaw/issues/808) — netcat in sandbox image
-- [#809](https://github.com/NVIDIA/NemoClaw/issues/809) — No process limit
-- [#797](https://github.com/NVIDIA/NemoClaw/issues/797) — Drop Linux capabilities
+- [#804](https://github.com/NVIDIA/NemoClaw/issues/804): Read-only home directory
+- [#807](https://github.com/NVIDIA/NemoClaw/issues/807): gcc in sandbox image
+- [#808](https://github.com/NVIDIA/NemoClaw/issues/808): netcat in sandbox image
+- [#809](https://github.com/NVIDIA/NemoClaw/issues/809): No process limit
+- [#797](https://github.com/NVIDIA/NemoClaw/issues/797): Drop Linux capabilities

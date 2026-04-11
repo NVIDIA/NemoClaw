@@ -6,7 +6,7 @@
 #
 # Sandbox “running” signal (OpenShell versions differ):
 #   1) openshell sandbox status <name> --json → .state == running (nemoclaw plugin status path)
-#   2) else openshell sandbox list → row for name contains Ready (bin/lib/onboard.js isSandboxReady)
+#   2) else openshell sandbox list → row for name contains Ready (dist/lib/onboard.js isSandboxReady)
 # Inference model: prefer openshell inference get --json .model; else plain inference get
 # (text) must contain CLOUD_EXPERIMENTAL_INFERENCE_PROVIDER + CLOUD_EXPERIMENTAL_MODEL (same idea as 01-onboard-completion.sh).
 # nemoclaw list model must match openshell model (JSON or CLOUD_EXPERIMENTAL_MODEL text path).

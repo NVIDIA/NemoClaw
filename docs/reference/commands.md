@@ -22,7 +22,8 @@ status: published
 
 # Commands
 
-The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes. It is installed when you run `npm install -g nemoclaw`.
+The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes.
+It is installed automatically by the installer (`curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`).
 
 ## `/nemoclaw` Slash Command
 
@@ -63,12 +64,17 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```console
-$ nemoclaw onboard
+$ nemoclaw onboard [--non-interactive] [--resume] [--from <Dockerfile>]
 ```
+
+:::{warning}
+For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
+Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemoclaw onboard`.
+:::
 
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
-Credentials are stored in `~/.nemoclaw/credentials.json`.
+Credentials are stored in `~/.nemoclaw/credentials.json`. For file permissions, plaintext storage behavior, and hardening guidance, see [Credential Storage](../security/credential-storage.md).
 The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
 
 If you enable Brave Search during onboarding, NemoClaw currently stores the Brave API key in the sandbox's OpenClaw configuration.
@@ -101,8 +107,33 @@ The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
 Uppercase letters are automatically lowercased.
 
+If you enable Discord during onboarding, the wizard can also prompt for a Discord Server ID, whether the bot should reply only to `@mentions` or to all messages in that server, and an optional Discord User ID.
+NemoClaw bakes those values into the sandbox image as Discord guild workspace config so the bot can respond in the selected server, not just in DMs.
+If you leave the Discord User ID blank, the guild config omits the user allowlist and any member of the configured server can message the bot.
+Guild responses remain mention-gated by default unless you opt into all-message replies.
+
 Before creating the gateway, the wizard runs preflight checks.
-It verifies that Docker is reachable, warns on unsupported runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
+It verifies that Docker is reachable, warns on untested runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
+
+#### `--from <Dockerfile>`
+
+Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
+The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it.
+
+```console
+$ nemoclaw onboard --from path/to/Dockerfile
+```
+
+The file can have any name; if it is not already named `Dockerfile`, onboard copies it to `Dockerfile` inside the staged build context automatically.
+All NemoClaw build arguments (`NEMOCLAW_MODEL`, `NEMOCLAW_PROVIDER_KEY`, `NEMOCLAW_INFERENCE_BASE_URL`, etc.) are injected as `ARG` overrides at build time, so declare them in your Dockerfile if you need to reference them.
+
+In non-interactive mode, the path can also be supplied via the `NEMOCLAW_FROM_DOCKERFILE` environment variable:
+
+```console
+$ NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_FROM_DOCKERFILE=path/to/Dockerfile nemoclaw onboard
+```
+
+If a `--resume` is attempted with a different `--from` path than the original session, onboarding exits with a conflict error rather than silently building from the wrong image.
 
 ### `nemoclaw list`
 
@@ -137,6 +168,8 @@ $ nemoclaw my-assistant connect
 ### `nemoclaw <name> status`
 
 Show sandbox status, health, and inference configuration.
+For local Ollama and local vLLM routes, the command also probes the host-side health endpoint and reports whether the backend is reachable.
+If the backend is down, the output includes an `Inference: unreachable` line with the local URL and a remediation hint.
 
 ```console
 $ nemoclaw my-assistant status
@@ -170,9 +203,20 @@ $ nemoclaw my-assistant destroy
 
 Add a policy preset to a sandbox.
 Presets extend the baseline network policy with additional endpoints.
+Before applying, the command shows which endpoints the preset would open and prompts for confirmation.
 
 ```console
 $ nemoclaw my-assistant policy-add
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview the endpoints a preset would open without applying changes |
+
+Use `--dry-run` to audit a preset before applying it:
+
+```console
+$ nemoclaw my-assistant policy-add --dry-run
 ```
 
 ### `nemoclaw <name> policy-list`
@@ -196,17 +240,15 @@ For a remote Brev instance, SSH to the instance and run `openshell term` there, 
 
 ### `nemoclaw start`
 
-Start auxiliary services, such as the Telegram bridge and cloudflared tunnel.
+Start optional host auxiliary services. This is the cloudflared tunnel when `cloudflared` is installed (for a public URL to the dashboard). Channel messaging (Telegram, Discord, Slack) is not started here; it is configured during `nemoclaw onboard` and runs through OpenShell-managed constructs.
 
 ```console
 $ nemoclaw start
 ```
 
-Requires `TELEGRAM_BOT_TOKEN` for the Telegram bridge.
-
 ### `nemoclaw stop`
 
-Stop all auxiliary services.
+Stop host auxiliary services started by `nemoclaw start` (for example cloudflared).
 
 ```console
 $ nemoclaw stop
@@ -214,7 +256,7 @@ $ nemoclaw stop
 
 ### `nemoclaw status`
 
-Show the sandbox list and the status of auxiliary services.
+Show the sandbox list and the status of host auxiliary services (for example cloudflared).
 
 ```console
 $ nemoclaw status
@@ -248,6 +290,28 @@ $ nemoclaw debug [--quick] [--sandbox NAME] [--output PATH]
 | `--quick` | Collect minimal diagnostics only |
 | `--sandbox NAME` | Target a specific sandbox (default: auto-detect) |
 | `--output PATH` | Write diagnostics tarball to the given path |
+
+### `nemoclaw credentials list`
+
+List the names of all credentials stored in `~/.nemoclaw/credentials.json`.
+Values are not printed.
+
+```console
+$ nemoclaw credentials list
+```
+
+### `nemoclaw credentials reset <KEY>`
+
+Remove a stored credential by name.
+After removal, re-running `nemoclaw onboard` re-prompts for that key.
+
+```console
+$ nemoclaw credentials reset NVIDIA_API_KEY
+```
+
+| Flag | Description |
+|------|-------------|
+| `--yes`, `-y` | Skip the confirmation prompt |
 
 ### `nemoclaw uninstall`
 

@@ -460,6 +460,50 @@ describe("runner", () => {
       });
       expect(mockedValidateEndpoint).toHaveBeenCalledWith("https://override.example.com/v1");
     });
+
+    it("passes --timeout when timeout_secs is set in profile", async () => {
+      const bp = {
+        components: {
+          inference: {
+            profiles: {
+              local: {
+                provider_type: "openai",
+                provider_name: "ollama-local",
+                endpoint: "http://localhost:11434/v1",
+                model: "nemotron-3-super:120b",
+                credential_env: "OPENAI_API_KEY",
+                credential_default: "ollama",
+                timeout_secs: 180,
+              },
+            },
+          },
+          sandbox: { name: "sb" },
+        },
+      };
+      process.env.OPENAI_API_KEY = "ollama";
+      try {
+        await actionApply("local", bp);
+      } finally {
+        delete process.env.OPENAI_API_KEY;
+      }
+
+      const inferenceCall = mockExeca.mock.calls.find(
+        (c) => Array.isArray(c[1]) && c[1].includes("inference") && c[1].includes("set"),
+      );
+      if (!inferenceCall) throw new Error("inference set call not found");
+      expect(inferenceCall[1]).toContain("--timeout");
+      expect(inferenceCall[1]).toContain("180");
+    });
+
+    it("omits --timeout when timeout_secs is not set in profile", async () => {
+      await actionApply("default", minimalBlueprint());
+
+      const inferenceCall = mockExeca.mock.calls.find(
+        (c) => Array.isArray(c[1]) && c[1].includes("inference") && c[1].includes("set"),
+      );
+      if (!inferenceCall) throw new Error("inference set call not found");
+      expect(inferenceCall[1]).not.toContain("--timeout");
+    });
   });
 
   describe("actionStatus", () => {
@@ -505,6 +549,25 @@ describe("runner", () => {
 
       actionStatus("nc-run-1");
       expect(stdoutText()).toContain('"status":"unknown"');
+    });
+
+    // ── Path traversal rejection ──────────────────────────────────
+
+    it.each(["../../etc", "../tmp", "valid.with.dots", "foo\x00bar", "/absolute/path"])(
+      "rejects malicious run ID: %j",
+      (rid) => {
+        expect(() => {
+          actionStatus(rid);
+        }).toThrow(/Invalid run ID/);
+      },
+    );
+
+    it("accepts a legitimate hyphenated run ID", () => {
+      const rid = "nc-20260406-abc12345";
+      addDir(`${RUNS_DIR}/${rid}`);
+      addFile(`${RUNS_DIR}/${rid}/plan.json`, JSON.stringify({ run_id: rid }));
+      actionStatus(rid);
+      expect(stdoutText()).toContain(rid);
     });
   });
 
@@ -559,6 +622,15 @@ describe("runner", () => {
       expect(mockExeca).not.toHaveBeenCalled();
       expect(store.has(`${runDir}/rolled_back`)).toBe(true);
     });
+
+    // ── Path traversal rejection ──────────────────────────────────
+
+    it.each(["../../etc", "../tmp", "valid.with.dots", "foo\x00bar", "/absolute/path", ""])(
+      "rejects malicious run ID: %j",
+      async (rid) => {
+        await expect(actionRollback(rid)).rejects.toThrow(/Invalid run ID/);
+      },
+    );
 
     it("defaults sandbox_name to 'openclaw' when not in plan", async () => {
       const runDir = `${RUNS_DIR}/nc-run-1`;

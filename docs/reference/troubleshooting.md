@@ -44,8 +44,7 @@ Run `source ~/.bashrc` (or `source ~/.zshrc` for zsh), or open a new terminal wi
 ### Installer fails on unsupported platform
 
 The installer checks for a supported OS and architecture before proceeding.
-NemoClaw requires Linux Ubuntu 22.04 LTS or later.
-If you see an unsupported platform error, verify that you are running on a supported Linux distribution.
+If you see an unsupported platform error, verify that you are running on a tested platform listed in the Container Runtimes table in the quickstart guide.
 
 ### Node.js version is too old
 
@@ -83,6 +82,18 @@ $ sudo systemctl start docker
 
 On macOS with Docker Desktop, open the Docker Desktop application and wait for it to finish starting before retrying.
 
+### Docker permission denied on Linux
+
+On Linux, if the Docker daemon is running but you see "permission denied" errors, your user may not be in the `docker` group.
+Add your user and activate the group in the current shell:
+
+```console
+$ sudo usermod -aG docker $USER
+$ newgrp docker
+```
+
+Then retry `nemoclaw onboard`.
+
 ### macOS first-run failures
 
 The two most common first-run failures on macOS are missing developer tools and Docker connection errors.
@@ -91,6 +102,15 @@ To avoid these issues, install the prerequisites in the following order before r
 
 1. Install Xcode Command Line Tools (`xcode-select --install`). These are needed by the installer and Node.js toolchain.
 2. Install and start a supported container runtime (Docker Desktop or Colima). Without a running runtime, the installer cannot connect to Docker.
+
+### Permission errors during installation
+
+The NemoClaw installer does not require `sudo` or root.
+It installs Node.js via nvm and NemoClaw via npm, both into user-local directories.
+The installer also handles OpenShell installation automatically using a pinned release.
+
+If you see permission errors during installation, they typically come from Docker, not the NemoClaw installer itself.
+Docker must be installed and running before you run the installer, and installing Docker may require elevated privileges on Linux.
 
 ### npm install fails with permission errors
 
@@ -132,8 +152,8 @@ If onboarding reports that Docker is missing or unreachable, fix Docker first an
 $ nemoclaw onboard
 ```
 
-If you are using Podman, NemoClaw warns and continues, but OpenShell officially documents Docker-based runtimes only.
-If onboarding or sandbox lifecycle fails, switch to Docker Desktop, Colima, or Docker Engine and rerun onboarding.
+Podman is not a tested runtime.
+If onboarding or sandbox lifecycle fails, switch to a tested runtime (Docker Desktop, Colima, or Docker Engine) and rerun onboarding.
 
 ### Invalid sandbox name
 
@@ -212,19 +232,21 @@ Follow these steps to reconnect.
    $ nemoclaw <name> connect
    ```
 
-1. Start auxiliary services (if needed).
+1. Start host auxiliary services (if needed).
 
-   If you use the Telegram bridge or cloudflared tunnel, start them again:
+   If you use the cloudflared tunnel started by `nemoclaw start`, start it again:
 
    ```console
    $ nemoclaw start
    ```
 
+   Telegram, Discord, and Slack are handled by OpenShell-managed channel messaging configured at onboarding, not by a separate bridge process from `nemoclaw start`.
+
 :::{admonition} If the sandbox does not recover
 :class: warning
 
 If the sandbox remains missing after restarting the gateway, run `nemoclaw onboard` to recreate it.
-The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox — workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
+The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox. Workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
 Back up your workspace first by following the instructions at [Back Up and Restore](../workspace/backup-restore.md).
 :::
 
@@ -250,8 +272,90 @@ Check the active provider and endpoint:
 $ nemoclaw <name> status
 ```
 
+For local Ollama and local vLLM, `nemoclaw <name> status` also prints an `Inference` line that probes the host-side health endpoint directly.
+If that line shows `unreachable`, start the local backend first and then retry the request.
+
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
 Then verify the credential and base URL for the provider you selected during onboarding.
+
+For local providers (Ollama, vLLM, NIM), the default timeout is 180 seconds.
+If large prompts still cause timeouts, increase it with `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` before re-running onboard:
+
+```console
+$ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
+$ nemoclaw onboard
+```
+
+### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
+
+This is expected behavior.
+`NEMOCLAW_DISABLE_DEVICE_AUTH` is a build-time setting used when NemoClaw creates the sandbox image.
+Changing or exporting it later does not rewrite the baked `openclaw.json` inside an existing sandbox.
+
+If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration.
+For the security trade-offs, refer to [Security Best Practices](../security/best-practices.md).
+
+### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
+
+This is expected in NemoClaw-managed sandboxes.
+NemoClaw bakes channel entries into `/sandbox/.openclaw/openclaw.json` at image build time, and OpenShell keeps that path read-only at runtime.
+
+As a result, commands that try to rewrite the baked config from inside the sandbox, including `openclaw doctor --fix`, cannot repair Discord, Telegram, or Slack channel entries in place.
+
+If your Discord channel config is wrong, rerun onboarding so NemoClaw rebuilds the sandbox image with the correct messaging selection.
+Do not treat a failed `doctor --fix` run as proof that the Discord gateway path itself is broken.
+
+If `openclaw doctor` reports that it moved Telegram single-account values under `channels.telegram.accounts.default`, rerun onboarding and rebuild the sandbox rather than trying to patch `openclaw.json` in place.
+Current NemoClaw rebuilds bake Telegram in the account-based layout and set Telegram group chats to `groupPolicy: open`, which avoids the empty `groupAllowFrom` warning path for default group-chat access.
+
+### Discord bot logs in, but the channel still does not work
+
+Separate the problem into two parts:
+
+1. Baked config and provider wiring
+
+   Check that onboarding selected Discord and that the sandbox was created with the Discord messaging provider attached.
+   If Discord was skipped during onboarding, rerun onboarding and select Discord again.
+
+1. Native Discord gateway path
+
+   Successful login alone does not prove that Discord works end to end.
+   Discord also needs a working gateway connection to `gateway.discord.gg`.
+   If logs show errors such as `getaddrinfo EAI_AGAIN gateway.discord.gg`, repeated reconnect loops, or a `400` response while probing the gateway path, the problem is usually in the native gateway/proxy path rather than in the baked config.
+
+Common signs of a native gateway-path failure:
+
+- REST calls to `discord.com` succeed, but the Discord channel never becomes healthy
+- `gateway.discord.gg` fails with DNS resolution errors
+- the WebSocket path returns `400` instead of opening a tunnel
+- native command deployment fails even though the bot token itself is valid
+
+In that case:
+
+- keep the Discord policy preset applied
+- verify the sandbox was created with the Discord provider attached
+- inspect gateway logs and blocked requests with `openshell term`
+- treat the failure as a native Discord gateway problem, not as a bridge startup problem
+
+### Sandbox lost after gateway restart
+
+Sandboxes created with OpenShell versions older than 0.0.24 can become unreachable after a gateway restart because SSH secrets were not persisted.
+Running `nemoclaw onboard` automatically upgrades OpenShell to 0.0.24 or later during the preflight check.
+After the upgrade, recreate the sandbox with `nemoclaw onboard`.
+
+### Agent cannot reach external hosts through a proxy
+
+NemoClaw uses a default proxy address of `10.200.0.1:3128` (the OpenShell-injected gateway).
+If your environment uses a different proxy, set `NEMOCLAW_PROXY_HOST` and `NEMOCLAW_PROXY_PORT` before onboarding:
+
+```console
+$ export NEMOCLAW_PROXY_HOST=proxy.example.com
+$ export NEMOCLAW_PROXY_PORT=8080
+$ nemoclaw onboard
+```
+
+These are build-time settings baked into the sandbox image.
+Changing them after onboarding requires re-running `nemoclaw onboard` to rebuild the image.
 
 ### Agent cannot reach an external host
 
@@ -274,3 +378,9 @@ $ nemoclaw <name> logs
 ```
 
 Use `--follow` to stream logs in real time while debugging.
+
+## Podman
+
+Podman is not a tested runtime.
+OpenShell officially documents Docker-based runtimes only.
+If you encounter issues with Podman, switch to a tested runtime (Docker Engine, Docker Desktop, or Colima) and rerun onboarding.
