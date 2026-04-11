@@ -26,12 +26,19 @@ export interface ValidationResult {
   message?: string;
 }
 
-export function getLocalProviderBaseUrl(provider: string): string | null {
+/**
+ * Build the base URL for a local inference provider.
+ * @param hostIp — When provided, use this IPv4 address instead of
+ *   `host.openshell.internal`.  On WSL2 + Docker Desktop the gateway
+ *   hostname is unreachable, so callers should pass the WSL2 eth0 IP.
+ */
+export function getLocalProviderBaseUrl(provider: string, hostIp?: string): string | null {
+  const host = hostIp ? `http://${hostIp}` : HOST_GATEWAY_URL;
   switch (provider) {
     case "vllm-local":
-      return `${HOST_GATEWAY_URL}:8000/v1`;
+      return `${host}:8000/v1`;
     case "ollama-local":
-      return `${HOST_GATEWAY_URL}:11434/v1`;
+      return `${host}:11434/v1`;
     default:
       return null;
   }
@@ -59,20 +66,45 @@ export function getLocalProviderHealthCheck(provider: string): string | null {
   }
 }
 
-export function getLocalProviderContainerReachabilityCheck(provider: string): string | null {
+/**
+ * Build a container reachability check command.
+ * @param hostIp — When provided, `--add-host` maps to this explicit IPv4
+ *   instead of `host-gateway`.  On Docker Desktop / WSL2, `host-gateway`
+ *   resolves to an IPv6 ULA or an un-routable gateway IP, so callers
+ *   should resolve the WSL2 eth0 address and pass it here.
+ */
+export function getLocalProviderContainerReachabilityCheck(
+  provider: string,
+  hostIp?: string,
+): string | null {
+  const addHost = hostIp
+    ? `--add-host host.openshell.internal:${hostIp}`
+    : "--add-host host.openshell.internal:host-gateway";
   switch (provider) {
     case "vllm-local":
-      return `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:8000/v1/models 2>/dev/null`;
+      return `docker run --rm ${addHost} ${CONTAINER_REACHABILITY_IMAGE} -4 -sf http://host.openshell.internal:8000/v1/models 2>/dev/null`;
     case "ollama-local":
-      return `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:11434/api/tags 2>/dev/null`;
+      return `docker run --rm ${addHost} ${CONTAINER_REACHABILITY_IMAGE} -4 -sf http://host.openshell.internal:11434/api/tags 2>/dev/null`;
     default:
       return null;
   }
 }
 
+/**
+ * Detect the WSL2 distro's primary IPv4 address.
+ * On Docker Desktop + WSL2, `host-gateway` resolves to an un-routable
+ * address.  The WSL2 eth0 IP is the only address containers can reach.
+ */
+export function detectWsl2HostIp(runCapture: RunCaptureFn): string | null {
+  const ip = runCapture("hostname -I 2>/dev/null", { ignoreError: true });
+  const first = (ip || "").trim().split(/\s+/)[0];
+  return first && /^\d+\.\d+\.\d+\.\d+$/.test(first) ? first : null;
+}
+
 export function validateLocalProvider(
   provider: string,
   runCapture: RunCaptureFn,
+  opts: { isWsl?: boolean; isDockerDesktop?: boolean } = {},
 ): ValidationResult {
   const command = getLocalProviderHealthCheck(provider);
   if (!command) {
@@ -98,7 +130,14 @@ export function validateLocalProvider(
     }
   }
 
-  const containerCommand = getLocalProviderContainerReachabilityCheck(provider);
+  // On WSL2 + Docker Desktop, host-gateway is un-routable.
+  // Resolve the WSL2 eth0 IP and pass it to the container check.
+  const hostIp =
+    opts.isWsl && opts.isDockerDesktop ? detectWsl2HostIp(runCapture) : undefined;
+  const containerCommand = getLocalProviderContainerReachabilityCheck(
+    provider,
+    hostIp ?? undefined,
+  );
   if (!containerCommand) {
     return { ok: true };
   }
@@ -119,7 +158,11 @@ export function validateLocalProvider(
       return {
         ok: false,
         message:
-          "Local Ollama is responding on localhost, but containers cannot reach http://host.openshell.internal:11434. Ensure Ollama listens on 0.0.0.0:11434 instead of 127.0.0.1 so sandboxes can reach it.",
+          "Local Ollama is responding on localhost, but the container reachability check failed for http://host.openshell.internal:11434.\n" +
+          "  Common causes:\n" +
+          "  • Ollama is bound to 127.0.0.1 — set OLLAMA_HOST=0.0.0.0:11434\n" +
+          "  • Docker Desktop on WSL2 resolves host-gateway to IPv6 — try installing Docker Engine natively in WSL2\n" +
+          "  • A firewall is blocking container-to-host traffic on port 11434",
       };
     default:
       return {

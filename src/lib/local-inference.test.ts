@@ -34,6 +34,16 @@ describe("local inference helpers", () => {
     );
   });
 
+  it("uses an explicit host IP in the base URL when provided", () => {
+    expect(getLocalProviderBaseUrl("ollama-local", "172.20.130.16")).toBe(
+      "http://172.20.130.16:11434/v1",
+    );
+    expect(getLocalProviderBaseUrl("vllm-local", "172.20.130.16")).toBe(
+      "http://172.20.130.16:8000/v1",
+    );
+    expect(getLocalProviderBaseUrl("unknown-provider", "172.20.130.16")).toBeNull();
+  });
+
   it("returns null for unknown local provider URLs", () => {
     expect(getLocalProviderBaseUrl("unknown-provider")).toBeNull();
     expect(getLocalProviderValidationBaseUrl("unknown-provider")).toBeNull();
@@ -57,13 +67,22 @@ describe("local inference helpers", () => {
       "curl -sf http://localhost:8000/v1/models 2>/dev/null",
     );
     expect(getLocalProviderContainerReachabilityCheck("vllm-local")).toBe(
-      `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:8000/v1/models 2>/dev/null`,
+      `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -4 -sf http://host.openshell.internal:8000/v1/models 2>/dev/null`,
     );
   });
 
   it("returns the expected container reachability command for ollama-local", () => {
     expect(getLocalProviderContainerReachabilityCheck("ollama-local")).toBe(
-      `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -sf http://host.openshell.internal:11434/api/tags 2>/dev/null`,
+      `docker run --rm --add-host host.openshell.internal:host-gateway ${CONTAINER_REACHABILITY_IMAGE} -4 -sf http://host.openshell.internal:11434/api/tags 2>/dev/null`,
+    );
+  });
+
+  it("uses an explicit host IP when provided", () => {
+    expect(getLocalProviderContainerReachabilityCheck("ollama-local", "172.20.130.16")).toBe(
+      `docker run --rm --add-host host.openshell.internal:172.20.130.16 ${CONTAINER_REACHABILITY_IMAGE} -4 -sf http://host.openshell.internal:11434/api/tags 2>/dev/null`,
+    );
+    expect(getLocalProviderContainerReachabilityCheck("vllm-local", "172.20.130.16")).toBe(
+      `docker run --rm --add-host host.openshell.internal:172.20.130.16 ${CONTAINER_REACHABILITY_IMAGE} -4 -sf http://host.openshell.internal:8000/v1/models 2>/dev/null`,
     );
   });
 
@@ -91,7 +110,7 @@ describe("local inference helpers", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/host\.openshell\.internal:11434/);
-    expect(result.message).toMatch(/0\.0\.0\.0:11434/);
+    expect(result.message).toMatch(/OLLAMA_HOST=0\.0\.0\.0:11434/);
   });
 
   it("returns a clear error when vllm-local is unavailable", () => {
@@ -108,6 +127,36 @@ describe("local inference helpers", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/host\.openshell\.internal:8000/);
+  });
+
+  it("detects WSL2 host IP and uses it for the container check", () => {
+    let callCount = 0;
+    const result = validateLocalProvider(
+      "ollama-local",
+      (cmd) => {
+        callCount += 1;
+        if (callCount === 1) return '{"models":[]}'; // health check passes
+        if (cmd.includes("hostname -I")) return "172.20.130.16 "; // WSL2 IP
+        return '{"models":[]}'; // container check passes with correct IP
+      },
+      { isWsl: true, isDockerDesktop: true },
+    );
+    expect(result).toEqual({ ok: true });
+    expect(callCount).toBe(3);
+  });
+
+  it("falls back to host-gateway when not on WSL2 + Docker Desktop", () => {
+    let callCount = 0;
+    const result = validateLocalProvider(
+      "ollama-local",
+      () => {
+        callCount += 1;
+        return '{"models":[]}';
+      },
+      { isWsl: false, isDockerDesktop: false },
+    );
+    expect(result).toEqual({ ok: true });
+    expect(callCount).toBe(2); // no hostname -I call
   });
 
   it("treats unknown local providers as already valid", () => {

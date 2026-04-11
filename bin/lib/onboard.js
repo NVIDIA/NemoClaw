@@ -24,6 +24,7 @@ const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
 const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
 const {
+  detectWsl2HostIp,
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
@@ -3311,12 +3312,18 @@ async function setupInference(
       process.exit(applyResult.status || 1);
     }
   } else if (provider === "vllm-local") {
-    const validation = validateLocalProvider(provider, runCapture);
+    const platformOpts = { isWsl: isWsl(), isDockerDesktop: getContainerRuntime() === "docker-desktop" };
+    const validation = validateLocalProvider(provider, runCapture, platformOpts);
     if (!validation.ok) {
       console.error(`  ${validation.message}`);
-      process.exit(1);
+      const answer = (await prompt("  Continue anyway? Inference may fail at runtime. [y/N]: ")).trim().toLowerCase();
+      if (answer !== "y") {
+        process.exit(1);
+      }
     }
-    const baseUrl = getLocalProviderBaseUrl(provider);
+    const wslHostIp = platformOpts.isWsl && platformOpts.isDockerDesktop
+      ? detectWsl2HostIp(runCapture) : null;
+    const baseUrl = getLocalProviderBaseUrl(provider, wslHostIp ?? undefined);
     const providerResult = upsertProvider("vllm-local", "openai", "OPENAI_API_KEY", baseUrl, {
       OPENAI_API_KEY: "dummy",
     });
@@ -3336,13 +3343,19 @@ async function setupInference(
       String(LOCAL_INFERENCE_TIMEOUT_SECS),
     ]);
   } else if (provider === "ollama-local") {
-    const validation = validateLocalProvider(provider, runCapture);
+    const platformOpts = { isWsl: isWsl(), isDockerDesktop: getContainerRuntime() === "docker-desktop" };
+    const validation = validateLocalProvider(provider, runCapture, platformOpts);
     if (!validation.ok) {
       console.error(`  ${validation.message}`);
       console.error("  On macOS, local inference also depends on OpenShell host routing support.");
-      process.exit(1);
+      const answer = (await prompt("  Continue anyway? Inference may fail at runtime. [y/N]: ")).trim().toLowerCase();
+      if (answer !== "y") {
+        process.exit(1);
+      }
     }
-    const baseUrl = getLocalProviderBaseUrl(provider);
+    const wslHostIp = platformOpts.isWsl && platformOpts.isDockerDesktop
+      ? detectWsl2HostIp(runCapture) : null;
+    const baseUrl = getLocalProviderBaseUrl(provider, wslHostIp ?? undefined);
     const providerResult = upsertProvider("ollama-local", "openai", "OPENAI_API_KEY", baseUrl, {
       OPENAI_API_KEY: "ollama",
     });
