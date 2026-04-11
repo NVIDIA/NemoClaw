@@ -16,6 +16,7 @@ import {
   buildSandboxConfigSyncScript,
   classifySandboxCreateFailure,
   compactText,
+  createReadySandbox,
   formatEnvAssignment,
   getNavigationChoice,
   getGatewayReuseState,
@@ -83,26 +84,6 @@ function findFunctionNode(sourceFile, functionName) {
 function getFunctionBody(source, functionName) {
   const sourceFile = createSourceFile(source);
   return findFunctionNode(sourceFile, functionName).body.getText(sourceFile);
-}
-
-function getFunctionCallSequence(source, functionName) {
-  const sourceFile = createSourceFile(source);
-  const functionNode = findFunctionNode(sourceFile, functionName);
-  const calls = [];
-
-  function visit(node) {
-    if (ts.isCallExpression(node)) {
-      calls.push({
-        callee: node.expression.getText(sourceFile),
-        args: node.arguments.map((arg) => arg.getText(sourceFile)),
-        start: node.getStart(sourceFile),
-      });
-    }
-    ts.forEachChild(node, visit);
-  }
-
-  visit(functionNode.body);
-  return calls;
 }
 
 describe("onboard helpers", () => {
@@ -2184,42 +2165,57 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
-  it("verifies local sandbox inference only after the sandbox exists", () => {
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
-      "utf-8",
-    );
-    assert.match(
-      source,
-      /function finalizeSandboxInferenceSetup\(sandboxName, model, provider, nimContainer = null\)/,
-    );
+  it("creates the sandbox before completing the step and finalizing inference setup", async () => {
+    const calls = [];
+    const onboardSessionImpl = {
+      markStepComplete: (...args) => {
+        calls.push({ name: "markStepComplete", args });
+      },
+    };
 
-    const callSequence = getFunctionCallSequence(source, "onboard");
-    const createSandboxCall = callSequence.find(({ callee }) => callee === "createSandbox");
-    const finalizeCall = callSequence.find(
-      ({ callee }) => callee === "finalizeSandboxInferenceSetup",
-    );
-    const markSandboxStepCall = callSequence.find(
-      ({ callee, args }) =>
-        callee === "onboardSession.markStepComplete" && args[0] === '"sandbox"',
-    );
+    const sandboxName = await createReadySandbox({
+      gpu: { vendor: "nvidia" },
+      model: "smollm2:135m",
+      provider: "ollama-local",
+      preferredInferenceApi: null,
+      sandboxName: "sandbox-requested",
+      webSearchConfig: null,
+      selectedMessagingChannels: ["discord"],
+      fromDockerfile: null,
+      agent: null,
+      dangerouslySkipPermissions: false,
+      createSandboxImpl: async (...args) => {
+        calls.push({ name: "createSandbox", args });
+        return "sandbox-created";
+      },
+      onboardSessionImpl,
+      finalizeSandboxInferenceSetupImpl: (...args) => {
+        calls.push({ name: "finalizeSandboxInferenceSetup", args });
+      },
+    });
 
-    assert.ok(createSandboxCall, "Expected onboard to create the sandbox");
-    assert.ok(finalizeCall, "Expected onboard to finalize sandbox inference setup");
-    assert.ok(markSandboxStepCall, "Expected onboard to mark the sandbox step complete");
-    assert.equal(
-      callSequence.some(({ callee }) => callee === "verifyLocalSandboxInference"),
-      false,
-      "onboard should not call verifyLocalSandboxInference before the sandbox exists",
-    );
-    assert.ok(
-      createSandboxCall.start < markSandboxStepCall.start,
-      "createSandbox should happen before marking the sandbox step complete",
-    );
-    assert.ok(
-      markSandboxStepCall.start < finalizeCall.start,
-      "finalizeSandboxInferenceSetup should run after the sandbox step is complete",
-    );
+    expect(sandboxName).toBe("sandbox-created");
+    expect(calls.map(({ name }) => name)).toEqual([
+      "createSandbox",
+      "markStepComplete",
+      "finalizeSandboxInferenceSetup",
+    ]);
+    expect(calls[0].args[4]).toBe("sandbox-requested");
+    expect(calls[1].args).toEqual([
+      "sandbox",
+      {
+        sandboxName: "sandbox-created",
+        provider: "ollama-local",
+        model: "smollm2:135m",
+        nimContainer: null,
+      },
+    ]);
+    expect(calls[2].args).toEqual([
+      "sandbox-created",
+      "smollm2:135m",
+      "ollama-local",
+      null,
+    ]);
   });
 
   it("prints numbered step headers even when onboarding skips resumed steps", () => {

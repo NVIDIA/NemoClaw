@@ -911,6 +911,65 @@ function finalizeSandboxInferenceSetup(sandboxName, model, provider, nimContaine
   }
 }
 
+/**
+ * Create the sandbox, mark the sandbox step complete, then finalize
+ * sandbox-local inference metadata in that order.
+ *
+ * @param {object} options
+ * @param {any} options.gpu
+ * @param {string} options.model
+ * @param {string} options.provider
+ * @param {string | null} options.preferredInferenceApi
+ * @param {string} options.sandboxName
+ * @param {object | null} options.webSearchConfig
+ * @param {string[]} options.selectedMessagingChannels
+ * @param {string | null} options.fromDockerfile
+ * @param {object | null} options.agent
+ * @param {boolean} options.dangerouslySkipPermissions
+ * @param {string | null} [options.nimContainer]
+ * @param {typeof createSandbox} [options.createSandboxImpl]
+ * @param {{ markStepComplete: Function }} [options.onboardSessionImpl]
+ * @param {typeof finalizeSandboxInferenceSetup} [options.finalizeSandboxInferenceSetupImpl]
+ * @returns {Promise<string>}
+ */
+async function createReadySandbox({
+  gpu,
+  model,
+  provider,
+  preferredInferenceApi,
+  sandboxName,
+  webSearchConfig,
+  selectedMessagingChannels,
+  fromDockerfile,
+  agent,
+  dangerouslySkipPermissions,
+  nimContainer = null,
+  createSandboxImpl = createSandbox,
+  onboardSessionImpl = onboardSession,
+  finalizeSandboxInferenceSetupImpl = finalizeSandboxInferenceSetup,
+}) {
+  const createdSandboxName = await createSandboxImpl(
+    gpu,
+    model,
+    provider,
+    preferredInferenceApi,
+    sandboxName,
+    webSearchConfig,
+    selectedMessagingChannels,
+    fromDockerfile,
+    agent,
+    dangerouslySkipPermissions,
+  );
+  onboardSessionImpl.markStepComplete("sandbox", {
+    sandboxName: createdSandboxName,
+    provider,
+    model,
+    nimContainer,
+  });
+  finalizeSandboxInferenceSetupImpl(createdSandboxName, model, provider, nimContainer);
+  return createdSandboxName;
+}
+
 function sandboxExistsInGateway(sandboxName) {
   const output = runCaptureOpenshell(["sandbox", "get", sandboxName], { ignoreError: true });
   return Boolean(output);
@@ -4836,7 +4895,7 @@ async function onboard(opts = {}) {
         current.messagingChannels = selectedMessagingChannels;
         return current;
       });
-      sandboxName = await createSandbox(
+      sandboxName = await createReadySandbox({
         gpu,
         model,
         provider,
@@ -4847,11 +4906,9 @@ async function onboard(opts = {}) {
         fromDockerfile,
         agent,
         dangerouslySkipPermissions,
-      );
-      onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
+        nimContainer,
+      });
     }
-
-    finalizeSandboxInferenceSetup(sandboxName, model, provider, nimContainer);
 
     if (agent) {
       await agentOnboard.handleAgentSetup(sandboxName, model, provider, agent, resume, session, {
@@ -4947,6 +5004,7 @@ module.exports = {
   copyBuildContextDir,
   classifySandboxCreateFailure,
   createSandbox,
+  createReadySandbox,
   formatEnvAssignment,
   getFutureShellPathHint,
   getGatewayStartEnv,
