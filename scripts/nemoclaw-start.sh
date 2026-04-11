@@ -15,6 +15,19 @@
 #   NEMOCLAW_DISABLE_DEVICE_AUTH  Build-time only. Set to "1" to skip device-pairing auth
 #                                 (development/headless). Has no runtime effect — openclaw.json
 #                                 is baked at image build and verified by hash at startup.
+#   NEMOCLAW_MODEL_OVERRIDE       Override the primary model at startup without rebuilding
+#                                 the sandbox image. Must match the model configured on
+#                                 the gateway via `openshell inference set`.
+#   NEMOCLAW_INFERENCE_API_OVERRIDE  Override the inference API type when switching between
+#                                 provider families (e.g., "anthropic-messages" or
+#                                 "openai-completions"). Only needed for cross-provider switches.
+#   NEMOCLAW_CONTEXT_WINDOW        Override the model's context window size (e.g., "32768").
+#   NEMOCLAW_MAX_TOKENS            Override the model's max output tokens (e.g., "8192").
+#   NEMOCLAW_REASONING             Set to "true" to enable reasoning mode for the model.
+#                                 Required for reasoning models (o1, Claude with thinking).
+#   NEMOCLAW_CORS_ORIGIN           Add a browser origin to allowedOrigins at startup without
+#                                 rebuilding. Useful for custom domains/ports (e.g.,
+#                                 "https://my-server.example.com:8443").
 
 set -euo pipefail
 
@@ -31,6 +44,55 @@ fi
 # SECURITY: Lock down PATH so the agent cannot inject malicious binaries
 # into commands executed by the entrypoint or auto-pair watcher.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Redirect tool caches and state to /tmp so they don't fail on the read-only
+# /sandbox home directory (#804). Without these, tools would try to create
+# dotfiles (~/.npm, ~/.cache, ~/.bash_history, ~/.gitconfig, ~/.local, ~/.claude)
+# in the Landlock read-only home and fail.
+#
+# IMPORTANT: This array is the single source of truth for tool-cache redirects.
+# The same entries are emitted into /tmp/nemoclaw-proxy-env.sh (see below) so
+# that `openshell sandbox connect` sessions also pick up the redirects.
+_TOOL_REDIRECTS=(
+  'npm_config_cache=/tmp/.npm-cache'
+  'XDG_CACHE_HOME=/tmp/.cache'
+  'XDG_CONFIG_HOME=/tmp/.config'
+  'XDG_DATA_HOME=/tmp/.local/share'
+  'XDG_STATE_HOME=/tmp/.local/state'
+  'XDG_RUNTIME_DIR=/tmp/.runtime'
+  'NODE_REPL_HISTORY=/tmp/.node_repl_history'
+  'HISTFILE=/tmp/.bash_history'
+  'GIT_CONFIG_GLOBAL=/tmp/.gitconfig'
+  'GNUPGHOME=/tmp/.gnupg'
+  'PYTHONUSERBASE=/tmp/.local'
+  'PYTHONHISTFILE=/tmp/.python_history'
+  'CLAUDE_CONFIG_DIR=/tmp/.claude'
+  'npm_config_prefix=/tmp/npm-global'
+)
+for _redir in "${_TOOL_REDIRECTS[@]}"; do
+  export "${_redir?}"
+done
+
+# Pre-create redirected directories to prevent ownership conflicts.
+# In root mode: the gateway starts first (as gateway user) and inherits these
+# env vars — if it creates a dir first, it would be gateway:gateway 755 and
+# the sandbox user couldn't write subdirs later. Creating them as root with
+# explicit sandbox ownership ensures the sandbox user always has write access.
+# In non-root mode: we're already the sandbox user, so mkdir -p is sufficient —
+# directories are owned by us automatically. Using install -o would fail with
+# EPERM because only root can chown. Ref: #804
+if [ "$(id -u)" -eq 0 ]; then
+  install -d -o sandbox -g sandbox -m 755 \
+    /tmp/.npm-cache /tmp/.cache /tmp/.config /tmp/.local/share \
+    /tmp/.local/state /tmp/.runtime /tmp/.claude \
+    /tmp/npm-global
+  install -d -o sandbox -g sandbox -m 700 /tmp/.gnupg
+else
+  mkdir -p /tmp/.npm-cache /tmp/.cache /tmp/.config /tmp/.local/share \
+    /tmp/.local/state /tmp/.runtime /tmp/.claude \
+    /tmp/npm-global
+  install -d -m 700 /tmp/.gnupg
+fi
 
 # ── Drop unnecessary Linux capabilities ──────────────────────────
 # CIS Docker Benchmark 5.3: containers should not run with default caps.
@@ -96,6 +158,7 @@ NEMOCLAW_CMD=("$@")
 CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:18789}"
 PUBLIC_PORT=18789
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
+_SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
 
 # ── Config integrity check ──────────────────────────────────────
 # The config hash was pinned at build time. If it doesn't match,
@@ -115,6 +178,355 @@ verify_config_integrity() {
   fi
 }
 
+# ── Runtime model/provider override ──────────────────────────────
+# Patches openclaw.json at startup when NEMOCLAW_MODEL_OVERRIDE is set,
+# allowing model or provider changes without rebuilding the sandbox image.
+# Runs AFTER integrity check (detects build-time tampering) and BEFORE
+# chattr +i (locks the file permanently). Recomputes the config hash so
+# future integrity checks pass.
+#
+# SECURITY: These env vars come from the host (Docker/OpenShell), not from
+# inside the sandbox. The agent cannot set them. Landlock locks the file
+# after this function runs. Same trust model as NEMOCLAW_LOCAL_INFERENCE_TIMEOUT.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/759
+
+apply_model_override() {
+  # Any of these env vars trigger a config patch
+  [ -n "${NEMOCLAW_MODEL_OVERRIDE:-}" ] \
+    || [ -n "${NEMOCLAW_INFERENCE_API_OVERRIDE:-}" ] \
+    || [ -n "${NEMOCLAW_CONTEXT_WINDOW:-}" ] \
+    || [ -n "${NEMOCLAW_MAX_TOKENS:-}" ] \
+    || [ -n "${NEMOCLAW_REASONING:-}" ] \
+    || return 0
+
+  # SECURITY: Only root can write to /sandbox/.openclaw (root:root 444).
+  # In non-root mode the sandbox user cannot modify the config.
+  if [ "$(id -u)" -ne 0 ]; then
+    printf '[SECURITY] Model/inference overrides ignored — requires root (non-root mode cannot write to config)\n' >&2
+    return 0
+  fi
+
+  local config_file="/sandbox/.openclaw/openclaw.json"
+  local hash_file="/sandbox/.openclaw/.config-hash"
+
+  # SECURITY: Refuse to write through symlinks to prevent symlink-following attacks.
+  # Symlink validation (validate_openclaw_symlinks) runs later, so guard here too.
+  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing model override — config or hash path is a symlink\n' >&2
+    return 1
+  fi
+
+  local model_override="$NEMOCLAW_MODEL_OVERRIDE"
+  local api_override="${NEMOCLAW_INFERENCE_API_OVERRIDE:-}"
+
+  # SECURITY: Validate inputs — reject control characters and enforce length limit.
+  if printf '%s' "$model_override" | grep -qP '[\x00-\x1f\x7f]'; then
+    printf '[SECURITY] NEMOCLAW_MODEL_OVERRIDE contains control characters — refusing\n' >&2
+    return 1
+  fi
+  if [ "${#model_override}" -gt 256 ]; then
+    printf '[SECURITY] NEMOCLAW_MODEL_OVERRIDE exceeds 256 characters — refusing\n' >&2
+    return 1
+  fi
+
+  # SECURITY: Allowlist inference API types to prevent unexpected routing.
+  if [ -n "$api_override" ]; then
+    case "$api_override" in
+      openai-completions | anthropic-messages) ;;
+      *)
+        printf '[SECURITY] NEMOCLAW_INFERENCE_API_OVERRIDE must be "openai-completions" or "anthropic-messages", got "%s"\n' "$api_override" >&2
+        return 1
+        ;;
+    esac
+  fi
+
+  local context_window="${NEMOCLAW_CONTEXT_WINDOW:-}"
+  local max_tokens="${NEMOCLAW_MAX_TOKENS:-}"
+  local reasoning="${NEMOCLAW_REASONING:-}"
+
+  # Validate numeric values
+  if [ -n "$context_window" ] && ! printf '%s' "$context_window" | grep -qE '^[0-9]+$'; then
+    printf '[SECURITY] NEMOCLAW_CONTEXT_WINDOW must be a positive integer, got "%s"\n' "$context_window" >&2
+    return 1
+  fi
+  if [ -n "$max_tokens" ] && ! printf '%s' "$max_tokens" | grep -qE '^[0-9]+$'; then
+    printf '[SECURITY] NEMOCLAW_MAX_TOKENS must be a positive integer, got "%s"\n' "$max_tokens" >&2
+    return 1
+  fi
+  # Validate reasoning is true/false
+  if [ -n "$reasoning" ]; then
+    case "$reasoning" in
+      true | false) ;;
+      *)
+        printf '[SECURITY] NEMOCLAW_REASONING must be "true" or "false", got "%s"\n' "$reasoning" >&2
+        return 1
+        ;;
+    esac
+  fi
+
+  [ -n "$model_override" ] && printf '[config] Applying model override: %s\n' "$model_override" >&2
+  [ -n "$api_override" ] && printf '[config] Applying inference API override: %s\n' "$api_override" >&2
+  [ -n "$context_window" ] && printf '[config] Applying context window override: %s\n' "$context_window" >&2
+  [ -n "$max_tokens" ] && printf '[config] Applying max tokens override: %s\n' "$max_tokens" >&2
+  [ -n "$reasoning" ] && printf '[config] Applying reasoning override: %s\n' "$reasoning" >&2
+
+  NEMOCLAW_CONTEXT_WINDOW="$context_window" \
+    NEMOCLAW_MAX_TOKENS="$max_tokens" \
+    NEMOCLAW_REASONING="$reasoning" \
+    python3 - "$config_file" "$model_override" "$api_override" <<'PYOVERRIDE'
+import json, os, sys
+
+config_file, model_override, api_override = sys.argv[1], sys.argv[2], sys.argv[3]
+context_window = os.environ.get("NEMOCLAW_CONTEXT_WINDOW", "")
+max_tokens = os.environ.get("NEMOCLAW_MAX_TOKENS", "")
+reasoning = os.environ.get("NEMOCLAW_REASONING", "")
+
+with open(config_file) as f:
+    cfg = json.load(f)
+
+# Patch primary model reference
+if model_override:
+    cfg["agents"]["defaults"]["model"]["primary"] = model_override
+
+# Patch model properties in provider config
+for pkey, pval in cfg.get("models", {}).get("providers", {}).items():
+    for m in pval.get("models", []):
+        if model_override:
+            m["id"] = model_override
+            m["name"] = model_override
+        if context_window:
+            m["contextWindow"] = int(context_window)
+        if max_tokens:
+            m["maxTokens"] = int(max_tokens)
+        if reasoning:
+            m["reasoning"] = reasoning == "true"
+
+    # Patch inference API type if overridden (cross-provider switch)
+    if api_override:
+        pval["api"] = api_override
+
+with open(config_file, "w") as f:
+    json.dump(cfg, f, indent=2)
+PYOVERRIDE
+
+  # Recompute config hash so integrity check passes on next startup
+  (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
+  printf '[SECURITY] Config hash recomputed after model override\n' >&2
+}
+
+# ── Runtime CORS origin override ──────────────────────────────────
+# Adds a browser origin to gateway.controlUi.allowedOrigins at startup
+# without rebuilding the sandbox image. Useful for custom domains/ports.
+# Same trust model as model override: host-set env var, applied before
+# chattr +i, hash recomputed.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/719
+
+apply_cors_override() {
+  [ -n "${NEMOCLAW_CORS_ORIGIN:-}" ] || return 0
+
+  if [ "$(id -u)" -ne 0 ]; then
+    printf '[SECURITY] NEMOCLAW_CORS_ORIGIN ignored — requires root (non-root mode cannot write to config)\n' >&2
+    return 0
+  fi
+
+  local config_file="/sandbox/.openclaw/openclaw.json"
+  local hash_file="/sandbox/.openclaw/.config-hash"
+
+  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing CORS override — config or hash path is a symlink\n' >&2
+    return 1
+  fi
+
+  local cors_origin="$NEMOCLAW_CORS_ORIGIN"
+
+  if printf '%s' "$cors_origin" | grep -qP '[\x00-\x1f\x7f]'; then
+    printf '[SECURITY] NEMOCLAW_CORS_ORIGIN contains control characters — refusing\n' >&2
+    return 1
+  fi
+  if [ "${#cors_origin}" -gt 256 ]; then
+    printf '[SECURITY] NEMOCLAW_CORS_ORIGIN exceeds 256 characters — refusing\n' >&2
+    return 1
+  fi
+  if ! printf '%s' "$cors_origin" | grep -qE '^https?://'; then
+    printf '[SECURITY] NEMOCLAW_CORS_ORIGIN must start with http:// or https://, got "%s"\n' "$cors_origin" >&2
+    return 1
+  fi
+
+  printf '[config] Adding CORS origin: %s\n' "$cors_origin" >&2
+
+  python3 - "$config_file" "$cors_origin" <<'PYCORS'
+import json, sys
+
+config_file, cors_origin = sys.argv[1], sys.argv[2]
+
+with open(config_file) as f:
+    cfg = json.load(f)
+
+origins = cfg.get("gateway", {}).get("controlUi", {}).get("allowedOrigins", [])
+if cors_origin not in origins:
+    origins.append(cors_origin)
+    cfg.setdefault("gateway", {}).setdefault("controlUi", {})["allowedOrigins"] = origins
+
+with open(config_file, "w") as f:
+    json.dump(cfg, f, indent=2)
+PYCORS
+
+  (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
+  printf '[config] Config hash recomputed after CORS override\n' >&2
+}
+
+_read_gateway_token() {
+  python3 - <<'PYTOKEN'
+import json
+try:
+    with open('/sandbox/.openclaw/openclaw.json') as f:
+        cfg = json.load(f)
+    print(cfg.get('gateway', {}).get('auth', {}).get('token', ''))
+except Exception:
+    print('')
+PYTOKEN
+}
+
+export_gateway_token() {
+  local token
+  token="$(_read_gateway_token)"
+  local marker_begin="# nemoclaw-gateway-token begin"
+  local marker_end="# nemoclaw-gateway-token end"
+
+  if [ -z "$token" ]; then
+    # Remove any stale marker blocks from rc files so revoked/old tokens
+    # are not re-exported in later interactive sessions.
+    unset OPENCLAW_GATEWAY_TOKEN
+    for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
+      if [ -f "$rc_file" ] && grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
+        local tmp
+        tmp="$(mktemp)"
+        awk -v b="$marker_begin" -v e="$marker_end" \
+          '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp"
+        cat "$tmp" >"$rc_file"
+        rm -f "$tmp"
+      fi
+    done
+    return
+  fi
+  export OPENCLAW_GATEWAY_TOKEN="$token"
+
+  # Persist to .bashrc/.profile so interactive sessions (openshell sandbox
+  # connect) also see the token — same pattern as the proxy config above.
+  # Shell-escape the token so quotes/dollars/backticks cannot break the
+  # sourced snippet or allow code injection.
+  local escaped_token
+  escaped_token="$(printf '%s' "$token" | sed "s/'/'\\\\''/g")"
+  local snippet
+  snippet="${marker_begin}
+export OPENCLAW_GATEWAY_TOKEN='${escaped_token}'
+${marker_end}"
+
+  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
+    if [ -f "$rc_file" ] && grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
+      local tmp
+      tmp="$(mktemp)"
+      awk -v b="$marker_begin" -v e="$marker_end" \
+        '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp"
+      printf '%s\n' "$snippet" >>"$tmp"
+      cat "$tmp" >"$rc_file"
+      rm -f "$tmp"
+    elif [ -w "$rc_file" ] || [ -w "$(dirname "$rc_file")" ]; then
+      printf '\n%s\n' "$snippet" >>"$rc_file"
+    fi
+  done
+}
+
+install_configure_guard() {
+  # Installs a shell function that intercepts `openclaw configure` inside the
+  # sandbox. The config is Landlock read-only — atomic writes to
+  # /sandbox/.openclaw/ fail with EACCES. Instead of a cryptic error, guide
+  # the user to the correct host-side workflow.
+  local marker_begin="# nemoclaw-configure-guard begin"
+  local marker_end="# nemoclaw-configure-guard end"
+  local snippet
+  read -r -d '' snippet <<'GUARD' || true
+# nemoclaw-configure-guard begin
+openclaw() {
+  case "$1" in
+    configure)
+      echo "Error: 'openclaw configure' cannot modify config inside the sandbox." >&2
+      echo "The sandbox config is read-only (Landlock enforced) for security." >&2
+      echo "" >&2
+      echo "To change your configuration, exit the sandbox and run:" >&2
+      echo "  nemoclaw onboard --resume" >&2
+      echo "" >&2
+      echo "This rebuilds the sandbox with your updated settings." >&2
+      return 1
+      ;;
+  esac
+  command openclaw "$@"
+}
+# nemoclaw-configure-guard end
+GUARD
+
+  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
+    if [ -f "$rc_file" ] && grep -qF "$marker_begin" "$rc_file" 2>/dev/null; then
+      local tmp
+      tmp="$(mktemp)"
+      awk -v b="$marker_begin" -v e="$marker_end" \
+        '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp"
+      printf '%s\n' "$snippet" >>"$tmp"
+      cat "$tmp" >"$rc_file"
+      rm -f "$tmp"
+    elif [ -w "$rc_file" ] || [ -w "$(dirname "$rc_file")" ]; then
+      printf '\n%s\n' "$snippet" >>"$rc_file"
+    fi
+  done
+}
+
+validate_openclaw_symlinks() {
+  local entry name target expected
+  for entry in /sandbox/.openclaw/*; do
+    [ -L "$entry" ] || continue
+    name="$(basename "$entry")"
+    target="$(readlink -f "$entry" 2>/dev/null || true)"
+    expected="/sandbox/.openclaw-data/$name"
+    if [ "$target" != "$expected" ]; then
+      echo "[SECURITY] Symlink $entry points to unexpected target: $target (expected $expected)" >&2
+      return 1
+    fi
+  done
+}
+
+harden_openclaw_symlinks() {
+  local entry hardened failed
+  hardened=0
+  failed=0
+
+  if ! command -v chattr >/dev/null 2>&1; then
+    echo "[SECURITY] chattr not available — relying on DAC + Landlock for .openclaw hardening" >&2
+    return 0
+  fi
+
+  if chattr +i /sandbox/.openclaw 2>/dev/null; then
+    hardened=$((hardened + 1))
+  else
+    failed=$((failed + 1))
+  fi
+
+  for entry in /sandbox/.openclaw/*; do
+    [ -L "$entry" ] || continue
+    if chattr +i "$entry" 2>/dev/null; then
+      hardened=$((hardened + 1))
+    else
+      failed=$((failed + 1))
+    fi
+  done
+
+  if [ "$failed" -gt 0 ]; then
+    echo "[SECURITY] Immutable hardening applied to $hardened path(s); $failed path(s) could not be hardened — continuing with DAC + Landlock" >&2
+  elif [ "$hardened" -gt 0 ]; then
+    echo "[SECURITY] Immutable hardening applied to /sandbox/.openclaw and validated symlinks" >&2
+  fi
+}
+
+# Write an auth profile JSON for the NVIDIA API key so the gateway can authenticate.
 write_auth_profile() {
   if [ -z "${NVIDIA_API_KEY:-}" ]; then
     return
@@ -137,22 +549,37 @@ os.chmod(path, 0o600)
 PYAUTH
 }
 
+harden_auth_profiles() {
+  if [ -d "${HOME}/.openclaw" ]; then
+    # Enforce 600 for all auth profiles across all agents
+    find -L "${HOME}/.openclaw" -type f -name "auth-profiles.json" -exec chmod 600 {} + 2>/dev/null || true
+  fi
+}
+
+configure_messaging_channels() {
+  # Channel entries are baked into openclaw.json at image build time via
+  # NEMOCLAW_MESSAGING_CHANNELS_B64 (see Dockerfile). Placeholder tokens
+  # (openshell:resolve:env:*) flow through to API calls where the L7 proxy
+  # rewrites them with real secrets at egress. Real tokens are never visible
+  # inside the sandbox.
+  #
+  # Runtime patching of /sandbox/.openclaw/openclaw.json is not possible:
+  # Landlock enforces read-only on /sandbox/.openclaw/ at the kernel level,
+  # regardless of DAC (file ownership/chmod). Writes fail with EPERM.
+  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || [ -n "${DISCORD_BOT_TOKEN:-}" ] || [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
+
+  echo "[channels] Messaging channels active (baked at build time):" >&2
+  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && echo "[channels]   telegram (native)" >&2
+  [ -n "${DISCORD_BOT_TOKEN:-}" ] && echo "[channels]   discord (native)" >&2
+  [ -n "${SLACK_BOT_TOKEN:-}" ] && echo "[channels]   slack (native)" >&2
+  return 0
+}
+
+# Print the local and remote dashboard URLs, appending the auth token if available.
 print_dashboard_urls() {
   local token chat_ui_base local_url remote_url
 
-  token="$(
-    python3 - <<'PYTOKEN'
-import json
-import os
-path = '/sandbox/.openclaw/openclaw.json'
-try:
-    cfg = json.load(open(path))
-except Exception:
-    print('')
-else:
-    print(cfg.get('gateway', {}).get('auth', {}).get('token', ''))
-PYTOKEN
-  )"
+  token="$(_read_gateway_token)"
 
   chat_ui_base="${CHAT_UI_URL%/}"
   local_url="http://127.0.0.1:${PUBLIC_PORT}/"
@@ -190,7 +617,7 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 # is defense-in-depth, not a trust boundary. PR #690 adds one-shot exit,
 # timeout reduction, and token cleanup for a more comprehensive fix.
 ALLOWED_CLIENTS = {'openclaw-control-ui'}
-ALLOWED_MODES = {'webchat'}
+ALLOWED_MODES = {'webchat', 'cli'}
 
 def run(*args):
     proc = subprocess.run(args, capture_output=True, text=True)
@@ -249,7 +676,8 @@ while time.time() < DEADLINE:
 else:
     print(f'[auto-pair] watcher timed out approvals={APPROVED}')
 PYAUTOPAIR
-  echo "[gateway] auto-pair watcher launched (pid $!)" >&2
+  AUTO_PAIR_PID=$!
+  echo "[gateway] auto-pair watcher launched (pid $AUTO_PAIR_PID)" >&2
 }
 
 # ── Proxy environment ────────────────────────────────────────────
@@ -278,60 +706,66 @@ export no_proxy="$_NO_PROXY_VAL"
 # OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
 # time a user connects via `openshell sandbox connect`.  The connect path spawns
 # `/bin/bash -i` (interactive, non-login), which sources ~/.bashrc — NOT
-# ~/.profile or /etc/profile.d/*.  Write the full proxy config to ~/.bashrc so
-# interactive sessions see the correct values.
+# ~/.profile or /etc/profile.d/*.
+#
+# The /sandbox home directory is Landlock read-only (#804), so we write the proxy
+# config to /tmp/nemoclaw-proxy-env.sh. The pre-built .bashrc and .profile
+# source this file automatically.
+#
+# SECURITY: /tmp has the sticky bit, so when running as root the sandbox user
+# cannot delete or replace this root-owned file. In non-root mode privilege
+# separation is already disabled, so this is an accepted limitation.
 #
 # Both uppercase and lowercase variants are required: Node.js undici prefers
 # lowercase (no_proxy) over uppercase (NO_PROXY) when both are set.
 # curl/wget use uppercase.  gRPC C-core uses lowercase.
-#
-# Also write to ~/.profile for login-shell paths (e.g. `sandbox create -- cmd`
-# which spawns `bash -lc`).
-#
-# Idempotency: begin/end markers delimit the block so it can be replaced
-# on restart if NEMOCLAW_PROXY_HOST/PORT change, without duplicating.
-_PROXY_MARKER_BEGIN="# nemoclaw-proxy-config begin"
-_PROXY_MARKER_END="# nemoclaw-proxy-config end"
-_PROXY_SNIPPET="${_PROXY_MARKER_BEGIN}
-export HTTP_PROXY=\"$_PROXY_URL\"
-export HTTPS_PROXY=\"$_PROXY_URL\"
-export NO_PROXY=\"$_NO_PROXY_VAL\"
-export http_proxy=\"$_PROXY_URL\"
-export https_proxy=\"$_PROXY_URL\"
-export no_proxy=\"$_NO_PROXY_VAL\"
-${_PROXY_MARKER_END}"
+_PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
+# Remove any pre-existing file/symlink to prevent symlink-following attacks,
+# then write a fresh file.
+rm -f "$_PROXY_ENV_FILE" 2>/dev/null || true
+{
+  cat <<PROXYEOF
+# Proxy configuration (overrides narrow OpenShell defaults on connect)
+export HTTP_PROXY="$_PROXY_URL"
+export HTTPS_PROXY="$_PROXY_URL"
+export NO_PROXY="$_NO_PROXY_VAL"
+export http_proxy="$_PROXY_URL"
+export https_proxy="$_PROXY_URL"
+export no_proxy="$_NO_PROXY_VAL"
+PROXYEOF
+  # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
+  echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
+  for _redir in "${_TOOL_REDIRECTS[@]}"; do
+    echo "export ${_redir?}"
+  done
+} >"$_PROXY_ENV_FILE"
+chmod 644 "$_PROXY_ENV_FILE"
 
-if [ "$(id -u)" -eq 0 ]; then
-  _SANDBOX_HOME=$(getent passwd sandbox 2>/dev/null | cut -d: -f6)
-  _SANDBOX_HOME="${_SANDBOX_HOME:-/sandbox}"
-else
-  _SANDBOX_HOME="${HOME:-/sandbox}"
-fi
-
-_write_proxy_snippet() {
-  local target="$1"
-  if [ -f "$target" ] && grep -qF "$_PROXY_MARKER_BEGIN" "$target" 2>/dev/null; then
-    local tmp
-    tmp="$(mktemp)"
-    awk -v b="$_PROXY_MARKER_BEGIN" -v e="$_PROXY_MARKER_END" \
-      '$0==b{s=1;next} $0==e{s=0;next} !s' "$target" >"$tmp"
-    printf '%s\n' "$_PROXY_SNIPPET" >>"$tmp"
-    cat "$tmp" >"$target"
-    rm -f "$tmp"
-    return 0
+# Forward SIGTERM/SIGINT to child processes for graceful shutdown.
+# This script is PID 1 — without a trap, signals interrupt wait and
+# children are orphaned until Docker sends SIGKILL after the grace period.
+cleanup() {
+  echo "[gateway] received signal, forwarding to children..." >&2
+  local gateway_status=0
+  kill -TERM "$GATEWAY_PID" 2>/dev/null || true
+  if [ -n "${AUTO_PAIR_PID:-}" ]; then
+    kill -TERM "$AUTO_PAIR_PID" 2>/dev/null || true
   fi
-  printf '\n%s\n' "$_PROXY_SNIPPET" >>"$target"
+  wait "$GATEWAY_PID" 2>/dev/null || gateway_status=$?
+  if [ -n "${AUTO_PAIR_PID:-}" ]; then
+    wait "$AUTO_PAIR_PID" 2>/dev/null || true
+  fi
+  exit "$gateway_status"
 }
-
-if [ -w "$_SANDBOX_HOME" ]; then
-  _write_proxy_snippet "${_SANDBOX_HOME}/.bashrc"
-  _write_proxy_snippet "${_SANDBOX_HOME}/.profile"
-fi
-
 # ── Main ─────────────────────────────────────────────────────────
 
 echo 'Setting up NemoClaw...' >&2
-[ -f .env ] && chmod 600 .env
+# Best-effort: .env may not exist, and /sandbox is Landlock read-only (#804).
+if [ -f .env ]; then
+  if ! chmod 600 .env 2>/dev/null; then
+    echo "[SECURITY WARNING] Could not restrict .env permissions — file may be world-readable (read-only filesystem)" >&2
+  fi
+fi
 
 # ── Non-root fallback ──────────────────────────────────────────
 # OpenShell runs containers with --security-opt=no-new-privileges, which
@@ -345,7 +779,75 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
+  apply_model_override
+  apply_cors_override
+  export_gateway_token
+  install_configure_guard
+  configure_messaging_channels
+  validate_openclaw_symlinks
+
+  # Ensure writable state directories exist and are owned by the current user.
+  # The Docker build (Dockerfile) sets this up correctly, but the native curl
+  # installer may create these directories as root, causing EACCES when openclaw
+  # tries to write device-auth.json or other state files.  Ref: #692
+  # Ensure the identity symlink points from .openclaw/identity → .openclaw-data/identity.
+  # Uses early returns to keep each case flat.
+  ensure_identity_symlink() {
+    local data_dir="$1" openclaw_dir="$2"
+    local link_path="${openclaw_dir}/identity"
+    local target="${data_dir}/identity"
+    [ -d "$target" ] || return 0
+    mkdir -p "${openclaw_dir}" 2>/dev/null || true
+
+    # Already a correct symlink — nothing to do.
+    if [ -L "$link_path" ]; then
+      local current expected
+      current="$(readlink -f "$link_path" 2>/dev/null || true)"
+      expected="$(readlink -f "$target" 2>/dev/null || true)"
+      [ "$current" != "$expected" ] || return 0
+      ln -snf "$target" "$link_path" 2>/dev/null \
+        && echo "[setup] repaired identity symlink" >&2 \
+        || echo "[setup] could not repair identity symlink" >&2
+      return 0
+    fi
+
+    # Nothing exists yet — create the symlink.
+    if [ ! -e "$link_path" ]; then
+      ln -snf "$target" "$link_path" 2>/dev/null \
+        && echo "[setup] created identity symlink" >&2 \
+        || echo "[setup] could not create identity symlink" >&2
+      return 0
+    fi
+
+    # A non-symlink entry exists — back it up, then replace.
+    local backup
+    backup="${link_path}.bak.$(date +%s)"
+    if mv "$link_path" "$backup" 2>/dev/null \
+      && ln -snf "$target" "$link_path" 2>/dev/null; then
+      echo "[setup] replaced non-symlink identity path (backup: ${backup})" >&2
+    else
+      echo "[setup] could not replace ${link_path}; writes may fail" >&2
+    fi
+  }
+
+  fix_openclaw_data_ownership() {
+    local data_dir="${HOME}/.openclaw-data"
+    local openclaw_dir="${HOME}/.openclaw"
+    [ -d "$data_dir" ] || return 0
+    local subdirs="agents/main/agent extensions workspace skills hooks identity devices canvas cron"
+    for sub in $subdirs; do
+      mkdir -p "${data_dir}/${sub}" 2>/dev/null || true
+    done
+    if find "$data_dir" ! -uid "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
+      chown -R "$(id -u):$(id -g)" "$data_dir" 2>/dev/null \
+        && echo "[setup] fixed ownership on ${data_dir}" >&2 \
+        || echo "[setup] could not fix ownership on ${data_dir}; writes may fail" >&2
+    fi
+    ensure_identity_symlink "$data_dir" "$openclaw_dir"
+  }
+  fix_openclaw_data_ownership
   write_auth_profile
+  harden_auth_profiles
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     exec "${NEMOCLAW_CMD[@]}"
@@ -364,8 +866,10 @@ if [ "$(id -u)" -ne 0 ]; then
   nohup "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
+  trap cleanup SIGTERM SIGINT
   start_auto_pair
   print_dashboard_urls
+
   wait "$GATEWAY_PID"
   exit $?
 fi
@@ -374,9 +878,19 @@ fi
 
 # Verify config integrity before starting anything
 verify_config_integrity
+apply_model_override
+apply_cors_override
+export_gateway_token
+install_configure_guard
+
+# Inject messaging channel config if provider tokens are present.
+# Must run AFTER integrity check (to detect build-time tampering) and
+# BEFORE chattr +i (which locks the config permanently).
+configure_messaging_channels
 
 # Write auth profile as sandbox user (needs writable .openclaw-data)
-gosu sandbox bash -c "$(declare -f write_auth_profile); write_auth_profile"
+# and recursively re-tighten any auth-profiles.json files under ~/.openclaw.
+gosu sandbox bash -c "$(declare -f write_auth_profile harden_auth_profiles); write_auth_profile; harden_auth_profiles"
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
@@ -395,29 +909,14 @@ chmod 600 /tmp/auto-pair.log
 
 # Verify ALL symlinks in .openclaw point to expected .openclaw-data targets.
 # Dynamic scan so future OpenClaw symlinks are covered automatically.
-for entry in /sandbox/.openclaw/*; do
-  [ -L "$entry" ] || continue
-  name="$(basename "$entry")"
-  target="$(readlink -f "$entry" 2>/dev/null || true)"
-  expected="/sandbox/.openclaw-data/$name"
-  if [ "$target" != "$expected" ]; then
-    echo "[SECURITY] Symlink $entry points to unexpected target: $target (expected $expected)" >&2
-    exit 1
-  fi
-done
+validate_openclaw_symlinks
 
 # Lock .openclaw directory after symlink validation: set the immutable flag
 # so symlinks cannot be swapped at runtime even if DAC or Landlock are
 # bypassed. chattr requires cap_linux_immutable which the entrypoint has
 # as root; the sandbox user cannot remove the flag.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/1019
-if command -v chattr >/dev/null 2>&1; then
-  chattr +i /sandbox/.openclaw 2>/dev/null || true
-  for entry in /sandbox/.openclaw/*; do
-    [ -L "$entry" ] || continue
-    chattr +i "$entry" 2>/dev/null || true
-  done
-fi
+harden_openclaw_symlinks
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs
@@ -426,6 +925,7 @@ fi
 nohup gosu gateway "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
 GATEWAY_PID=$!
 echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
+trap cleanup SIGTERM SIGINT
 
 start_auto_pair
 print_dashboard_urls

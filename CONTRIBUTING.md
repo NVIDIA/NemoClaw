@@ -51,6 +51,19 @@ The CLI (`bin/`, `scripts/`) is type-checked separately:
 npm run typecheck:cli   # or: npx tsc -p tsconfig.cli.json
 ```
 
+### Local Development Testing
+
+After building, return to the repository root and link the CLI so the `nemoclaw` command is available locally.
+If you followed the build step above, you are still inside `nemoclaw/` and must `cd ..` first:
+
+```bash
+cd ..                   # back to the repo root (from nemoclaw/ subdirectory)
+npm link
+nemoclaw --version      # verify the linked version
+```
+
+To unlink when you are done: `npm unlink -g nemoclaw`
+
 ## Main Tasks
 
 These are the primary `make` and `npm` targets for day-to-day development:
@@ -73,7 +86,7 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 
 | Hook | What runs |
 |------|-----------|
-| **pre-commit** | File fixers, formatters, linters, Vitest (plugin) |
+| **pre-commit** | File fixers, formatters, linters, doc-to-skills regeneration, Vitest (plugin) |
 | **commit-msg** | commitlint (Conventional Commits) |
 | **pre-push** | TypeScript type check (`tsc --noEmit` for plugin, JS, and CLI) |
 
@@ -100,7 +113,7 @@ The repository is organized as follows.
 
 All new source files must be TypeScript. Do not add new `.js` files to the project. When modifying an existing JavaScript file, prefer migrating it to TypeScript in the same PR.
 
-Existing JavaScript in `bin/` and `scripts/` is being incrementally migrated (see `src/lib/` for completed migrations). Tests in `test/` may remain ESM JavaScript for now but new test files should use TypeScript where practical.
+Only a small CommonJS launcher/compatibility layer remains in `bin/`, while the main CLI implementation now lives in `src/lib/` and compiles to `dist/`. Tests in `test/` may remain ESM JavaScript for now but new test files should use TypeScript where practical.
 
 Shell scripts (`scripts/*.sh`) must pass ShellCheck and use `shfmt` formatting.
 
@@ -108,7 +121,7 @@ Shell scripts (`scripts/*.sh`) must pass ShellCheck and use `shfmt` formatting.
 
 If your change affects user-facing behavior (new commands, changed defaults, new features, bug fixes that contradict existing docs), update the relevant pages under `docs/` in the same PR.
 
-If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `/update-docs` skill that drafts doc updates. Use them before writing from scratch and follow the style guide in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
+If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that drafts doc updates. Use it before writing from scratch and follow the style guide in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 
 To build and preview docs locally:
 
@@ -126,20 +139,22 @@ The script `scripts/docs-to-skills.py` converts doc pages into agent skills unde
 These generated skills let AI agents answer user questions and walk through procedures without reading raw doc pages.
 
 Always edit pages in `docs/`.
-Never edit generated skill files under `.agents/skills/nemoclaw-*/` — your changes will be overwritten on the next run.
+Never edit generated skill files under `.agents/skills/nemoclaw-user-*/` — your changes will be overwritten on the next run.
 
-After changing any page in `docs/`, regenerate the skills from the repo root:
+A pre-commit hook regenerates skills automatically whenever you commit changes to `docs/**/*.md` files. The hook runs `scripts/docs-to-skills.py` and stages the updated skills so they are included in the same commit. No manual step is needed for normal workflows.
+
+To regenerate skills manually (for example, after rebasing or outside of a commit), run from the repo root:
 
 ```bash
-python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw
+python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
 ```
 
-Always use this exact output path (`.agents/skills/`) and prefix (`nemoclaw`) so skill names and locations stay consistent.
+Always use this exact output path (`.agents/skills/`) and prefix (`nemoclaw-user`) so skill names and locations stay consistent.
 
 Preview what would change before writing files:
 
 ```bash
-python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw --dry-run
+python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --dry-run
 ```
 
 Other useful flags:

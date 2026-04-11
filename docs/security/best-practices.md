@@ -1,6 +1,6 @@
 ---
 title:
-  page: "NemoClaw Security Best Practices — Controls, Risks, and Posture Profiles"
+  page: "NemoClaw Security Best Practices: Controls, Risks, and Posture Profiles"
   nav: "Security Best Practices"
 description:
   main: "A risk framework for every configurable security control in NemoClaw: defaults, what you can change, and what happens if you do."
@@ -45,7 +45,7 @@ The following diagram shows the default posture immediately after `nemoclaw onbo
 
 ```{mermaid}
 flowchart TB
-    subgraph HOST["Your Machine — default posture after nemoclaw onboard"]
+    subgraph HOST["Your Machine: default posture after nemoclaw onboard"]
         direction TB
 
         YOU["👤 Operator"]
@@ -53,14 +53,14 @@ flowchart TB
         subgraph NC["NemoClaw + OpenShell"]
             direction TB
 
-            subgraph SB["Sandbox — the agent's isolated world"]
+            subgraph SB["Sandbox: the agent's isolated world"]
                 direction LR
                 PROC["⚙️ Process Layer<br/>Controls what the agent can execute"]
                 FS["📁 Filesystem Layer<br/>Controls what the agent can read and write"]
                 AGENT["🤖 Agent"]
             end
 
-            subgraph GW["Gateway — the gatekeeper"]
+            subgraph GW["Gateway: the gatekeeper"]
                 direction LR
                 NET["🌐 Network Layer<br/>Controls where the agent can connect"]
                 INF["🧠 Inference Layer<br/>Controls which AI models the agent can use"]
@@ -150,7 +150,7 @@ If someone replaces a binary while the sandbox runs, the hash mismatch triggers 
 
 | Aspect | Detail |
 |---|---|
-| Default | Each endpoint restricts access to specific binaries. For example, only `/usr/bin/gh` and `/usr/bin/git` can reach `github.com`. Binary paths support glob patterns (`*` matches one path component, `**` matches recursively). |
+| Default | Each endpoint restricts access to specific binaries. For example, the `github` preset restricts access so only `/usr/bin/gh` and `/usr/bin/git` can reach `github.com`. Binary paths support glob patterns (`*` matches one path component, `**` matches recursively). |
 | What you can change | Add binaries to an endpoint entry, or omit the `binaries` field to allow any executable. |
 | Risk if relaxed | Removing binary restrictions lets any process in the sandbox reach the endpoint. An agent could use `curl`, `wget`, or a Python script to exfiltrate data to an allowed host, bypassing the intended usage pattern. |
 | Recommendation | Always scope endpoints to the binaries that need them. If the agent needs a host from a new binary, add that binary explicitly rather than removing the restriction. |
@@ -161,7 +161,7 @@ Endpoint rules restrict allowed HTTP methods and URL paths.
 
 | Aspect | Detail |
 |---|---|
-| Default | Most endpoints allow GET and POST on `/**`. Some allow GET only (read-only), such as `docs.openclaw.ai`. |
+| Default | Some endpoints allow GET and POST on `/**` (for example, `clawhub.ai`). Others restrict methods and paths to specific API routes (for example, `api.anthropic.com` allows POST only to inference paths). Read-only endpoints such as `docs.openclaw.ai` and `sentry.io` allow GET only. The `npm_registry` baseline entry and the `npm`/`pypi` presets are GET-only (plus HEAD for PyPI). |
 | What you can change | Add methods (PUT, DELETE, PATCH) or restrict paths to specific prefixes. |
 | Risk if relaxed | Allowing all methods on an API endpoint gives the agent write and delete access. For example, allowing DELETE on `api.github.com` lets the agent delete repositories. |
 | Recommendation | Use GET-only rules for endpoints that the agent only reads. Add write methods only for endpoints where the agent must create or modify resources. Restrict paths to specific API routes when possible. |
@@ -195,13 +195,15 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 
 | Preset | What it enables | Key risk |
 |---|---|---|
+| `brave` | Brave Search API. | Agent can issue search queries. |
+| `brew` | Homebrew (Linuxbrew) package manager. | Allows installing arbitrary Homebrew packages, which may contain malicious code. |
 | `discord` | Discord REST API, WebSocket gateway, CDN. | CDN endpoint (`cdn.discordapp.com`) allows GET to any path. WebSocket uses `access: full` (no inspection). |
-| `docker` | Docker Hub, NVIDIA container registry. | Allows pulling arbitrary container images into the sandbox. |
-| `huggingface` | Hugging Face model registry. | Allows downloading arbitrary models and datasets. |
+| `github` | GitHub and GitHub REST API. | Gives agent read/write access to repositories and issues via `gh` and `git`. |
+| `huggingface` | Hugging Face Hub (download-only) and inference router. | Allows downloading arbitrary models and datasets. POST is restricted to the inference router only. |
 | `jira` | Atlassian Jira API. | Gives agent read/write access to project issues and comments. |
-| `npm` | npm and Yarn registries. | Allows installing arbitrary npm packages, which may contain malicious code. |
+| `npm` | npm and Yarn registries (GET-only). | Allows installing arbitrary npm packages, which may contain malicious code. Publishing is blocked. |
 | `outlook` | Microsoft 365, Outlook. | Gives agent access to email. |
-| `pypi` | Python Package Index. | Allows installing arbitrary Python packages, which may contain malicious code. |
+| `pypi` | Python Package Index (GET and HEAD only). | Allows installing arbitrary Python packages, which may contain malicious code. Publishing is blocked. |
 | `slack` | Slack API, Socket Mode, webhooks. | WebSocket uses `access: full`. Agent can post to any channel the bot token has access to. |
 | `telegram` | Telegram Bot API. | Agent can send messages to any chat the bot token has access to. |
 
@@ -360,6 +362,30 @@ The Dockerfile removes compilers and network probes from the runtime image.
 | Risk if relaxed | A compiler lets the agent build arbitrary native code, including kernel exploits or custom network tools. `netcat` enables arbitrary TCP connections that bypass HTTP-level policy enforcement. |
 | Recommendation | Keep build tools removed. If the agent needs to compile code, run the build in a separate, purpose-built container and copy artifacts into the sandbox. |
 
+### Image Digest Pinning
+
+The blueprint references the sandbox image by an immutable `@sha256:` digest instead of a mutable tag such as `:latest`.
+A registry compromise or accidental force-push cannot silently swap the sandbox image.
+
+| Aspect | Detail |
+|---|---|
+| Default | `nemoclaw-blueprint/blueprint.yaml` pins the sandbox image by digest. A CI regression test blocks any mutable-tag reference from merging. |
+| What you can change | Contributors bumping the sandbox image must update the digest in `blueprint.yaml`. Release tooling should rewrite the digest automatically. |
+| Risk if relaxed | Reverting to a mutable tag (`:latest`) allows a registry-side change to replace the sandbox image without any blueprint update, which is a supply-chain risk. |
+| Recommendation | Always reference the sandbox image by digest. If you build a custom image with `nemoclaw onboard --from`, the digest constraint does not apply to your local build. |
+
+### Auth Profile Permissions
+
+The entrypoint and migration flows enforce `chmod 600` on all `auth-profiles.json` files under `~/.openclaw`.
+This prevents other users on the host from reading stored credentials.
+
+| Aspect | Detail |
+|---|---|
+| Default | `600` permissions applied recursively at startup and after migration restores. |
+| What you can change | This is not a user-facing knob. The entrypoint enforces it. |
+| Risk if relaxed | Looser permissions let other users or processes on the host read provider API keys and tokens stored in auth profiles. |
+| Recommendation | No action needed. If you see a `permission denied` error when reading auth profiles, verify that you are running as the same user who created them. |
+
 ## Gateway Authentication Controls
 
 The OpenClaw gateway authenticates devices that connect to the Control UI dashboard.
@@ -471,7 +497,6 @@ Use for always-on assistants with minimal external access.
 Use when the agent needs package registries, Docker Hub, or broader GitHub access during development tasks.
 
 - Apply the `pypi` and `npm` presets for package installation.
-- Apply the `docker` preset if the agent builds or pulls container images.
 - Keep binary restrictions on all presets.
 - Review the agent's network activity periodically with `openshell term`.
 - Use operator approval for any endpoint not covered by a preset.

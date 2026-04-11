@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, execSync, spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -12,7 +12,6 @@ import {
   unlinkSync,
 } from "node:fs";
 import { join } from "node:path";
-import { platform } from "node:os";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -101,7 +100,7 @@ function removePid(pidDir: string, name: string): void {
 // Service lifecycle
 // ---------------------------------------------------------------------------
 
-const SERVICE_NAMES = ["telegram-bridge", "cloudflared"] as const;
+const SERVICE_NAMES = ["cloudflared"] as const;
 type ServiceName = (typeof SERVICE_NAMES)[number];
 
 function startService(
@@ -242,65 +241,18 @@ export function stopAll(opts: ServiceOptions = {}): void {
   const pidDir = resolvePidDir(opts);
   ensurePidDir(pidDir);
   stopService(pidDir, "cloudflared");
-  stopService(pidDir, "telegram-bridge");
   info("All services stopped.");
 }
 
 export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   const pidDir = resolvePidDir(opts);
   const dashboardPort = opts.dashboardPort ?? (Number(process.env.DASHBOARD_PORT) || 18789);
-  // Compiled location: dist/lib/services.js → repo root is 2 levels up
-  const repoDir = opts.repoDir ?? join(__dirname, "..", "..");
-
-  if (!process.env.TELEGRAM_BOT_TOKEN) {
-    warn("TELEGRAM_BOT_TOKEN not set — Telegram bridge will not start.");
-    warn("Create a bot via @BotFather on Telegram and set the token.");
-  } else if (!process.env.NVIDIA_API_KEY) {
-    warn("NVIDIA_API_KEY not set — Telegram bridge will not start.");
-    warn("Set NVIDIA_API_KEY if you want Telegram requests to reach inference.");
-  }
-
-  // Warn if no sandbox is ready
-  try {
-    const output = execFileSync("openshell", ["sandbox", "list"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (!output.includes("Ready")) {
-      warn("No sandbox in Ready state. Telegram bridge may not work until sandbox is running.");
-    }
-  } catch {
-    /* openshell not installed or no ready sandbox — skip check */
-  }
 
   ensurePidDir(pidDir);
 
-  // WSL2 ships with broken IPv6 routing — force IPv4-first DNS for bridge processes
-  if (platform() === "linux") {
-    const isWSL =
-      !!process.env.WSL_DISTRO_NAME ||
-      !!process.env.WSL_INTEROP ||
-      (existsSync("/proc/version") &&
-        readFileSync("/proc/version", "utf-8").toLowerCase().includes("microsoft"));
-    if (isWSL) {
-      const existing = process.env.NODE_OPTIONS ?? "";
-      process.env.NODE_OPTIONS = `${existing ? existing + " " : ""}--dns-result-order=ipv4first`;
-      info("WSL2 detected — setting --dns-result-order=ipv4first for Node.js bridge processes");
-    }
-  }
-
-  // Telegram bridge (only if both token and API key are set)
-  if (process.env.TELEGRAM_BOT_TOKEN && process.env.NVIDIA_API_KEY) {
-    const sandboxName =
-      opts.sandboxName ?? process.env.NEMOCLAW_SANDBOX ?? process.env.SANDBOX_NAME ?? "default";
-    startService(
-      pidDir,
-      "telegram-bridge",
-      "node",
-      [join(repoDir, "scripts", "telegram-bridge.js")],
-      { SANDBOX_NAME: sandboxName },
-    );
-  }
+  // Messaging (Telegram, Discord, Slack) is now handled natively by OpenClaw
+  // inside the sandbox via the OpenShell provider/placeholder/L7-proxy pipeline.
+  // No host-side bridge processes are needed. See: PR #1081.
 
   // cloudflared tunnel
   try {
@@ -313,7 +265,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
       `http://localhost:${String(dashboardPort)}`,
     ]);
   } catch {
-    warn("cloudflared not found — no public URL. Install: brev-setup.sh or manually.");
+    warn("cloudflared not found — no public URL. Install cloudflared manually if you need one.");
   }
 
   // Wait for cloudflared URL
@@ -353,11 +305,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     console.log(`  │  Public URL:  ${tunnelUrl.padEnd(40)}│`);
   }
 
-  if (isRunning(pidDir, "telegram-bridge")) {
-    console.log("  │  Telegram:    bridge running                        │");
-  } else {
-    console.log("  │  Telegram:    not started (no token)                │");
-  }
+  console.log("  │  Messaging:   via OpenClaw native channels (if configured) │");
 
   console.log("  │                                                     │");
   console.log("  │  Run 'openshell term' to monitor egress approvals   │");

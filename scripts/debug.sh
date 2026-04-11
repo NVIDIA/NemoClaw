@@ -85,10 +85,14 @@ done
 TMPDIR_BASE="${TMPDIR:-/tmp}"
 COLLECT_DIR=$(mktemp -d "${TMPDIR_BASE}/nemoclaw-debug-XXXXXX")
 SANDBOX_SSH_CONFIG=""
+SANDBOX_SSH_KNOWN=""
 cleanup() {
   rm -rf "$COLLECT_DIR"
   if [ -n "$SANDBOX_SSH_CONFIG" ]; then
     rm -f "$SANDBOX_SSH_CONFIG"
+  fi
+  if [ -n "$SANDBOX_SSH_KNOWN" ]; then
+    rm -f "$SANDBOX_SSH_KNOWN"
   fi
 }
 trap cleanup EXIT
@@ -114,15 +118,19 @@ SCRIPT_PATH="${BASH_SOURCE[0]:-}"
 if [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
   SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
   REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-  ONBOARD_SESSION_HELPER="${REPO_ROOT}/bin/lib/onboard-session.js"
+  ONBOARD_SESSION_HELPER="${REPO_ROOT}/dist/lib/onboard-session.js"
 fi
 
 # Redact known sensitive patterns (API keys, tokens, passwords in env/args).
+# Keep in sync with src/lib/secret-patterns.ts — consistency test enforces this.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/1736
 redact() {
   sed -E \
     -e 's/(NVIDIA_API_KEY|API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY)=\S+/\1=<REDACTED>/gi' \
-    -e 's/(nvapi-[A-Za-z0-9_-]{10,})/<REDACTED>/g' \
-    -e 's/(ghp_[A-Za-z0-9]{30,})/<REDACTED>/g' \
+    -e 's/nvapi-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+    -e 's/nvcf-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+    -e 's/ghp_[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+    -e 's/github_pat_[A-Za-z0-9_]{30,}/<REDACTED>/g' \
     -e 's/(Bearer )[^ ]+/\1<REDACTED>/gi'
 }
 
@@ -284,7 +292,8 @@ if command -v openshell &>/dev/null \
   SANDBOX_SSH_CONFIG=$(mktemp "${TMPDIR_BASE}/nemoclaw-ssh-XXXXXX")
   if openshell sandbox ssh-config "$SANDBOX_NAME" >"$SANDBOX_SSH_CONFIG" 2>/dev/null; then
     SANDBOX_SSH_HOST="openshell-${SANDBOX_NAME}"
-    SANDBOX_SSH_OPTS=(-F "$SANDBOX_SSH_CONFIG" -o StrictHostKeyChecking=no -o ConnectTimeout=10)
+    SANDBOX_SSH_KNOWN=$(mktemp "${TMPDIR_BASE}/nemoclaw-ssh-known-XXXXXX")
+    SANDBOX_SSH_OPTS=(-F "$SANDBOX_SSH_CONFIG" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$SANDBOX_SSH_KNOWN" -o ConnectTimeout=10)
 
     collect "sandbox-ps" ssh "${SANDBOX_SSH_OPTS[@]}" "$SANDBOX_SSH_HOST" ps -ef
     collect "sandbox-free" ssh "${SANDBOX_SSH_OPTS[@]}" "$SANDBOX_SSH_HOST" free -m
