@@ -50,19 +50,7 @@ configure_jetson_host() {
   case "$jetpack_version" in
     jp6)
       "${SUDO[@]}" update-alternatives --set iptables /usr/sbin/iptables-legacy
-      if [[ -f /etc/docker/daemon.json ]]; then
-        if command -v jq >/dev/null 2>&1; then
-          local tmp_daemon
-          tmp_daemon="$(mktemp)"
-          "${SUDO[@]}" jq 'del(.iptables, .bridge) | .["default-runtime"] = "nvidia"' \
-            /etc/docker/daemon.json >"$tmp_daemon" \
-            && "${SUDO[@]}" mv "$tmp_daemon" /etc/docker/daemon.json
-        else
-          error "jq is required to safely patch /etc/docker/daemon.json — install it with: apt-get install -y jq"
-        fi
-      else
-        info "/etc/docker/daemon.json not found; skipping Docker daemon patch"
-      fi
+      "${SUDO[@]}" sed -i '/"iptables": false,/d; /"bridge": "none"/d; s/"default-runtime": "nvidia",/"default-runtime": "nvidia"/' /etc/docker/daemon.json
       ;;
     jp7)
       # JP7 (Thor) does not need iptables or Docker daemon.json changes.
