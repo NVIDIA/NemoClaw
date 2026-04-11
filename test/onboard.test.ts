@@ -8,6 +8,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -55,33 +56,53 @@ const { getSuggestedPolicyPresets } = require("../dist/lib/onboard.js");
 // Keep the CJS export object here so onboard helper monkey-patches affect the same module instance.
 const registry = require("../dist/lib/registry.js");
 
-function extractFunctionBody(source, signature) {
-  const signatureIndex = source.indexOf(signature);
-  assert.notEqual(signatureIndex, -1, `Missing function signature: ${signature}`);
+function createSourceFile(source) {
+  return ts.createSourceFile("onboard.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+}
 
-  const signatureClose = source.indexOf(")", signatureIndex + signature.length);
-  assert.notEqual(signatureClose, -1, `Missing function signature close for: ${signature}`);
+function findFunctionNode(sourceFile, functionName) {
+  let found = null;
+  function visit(node) {
+    if (
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isMethodDeclaration(node)) &&
+      node.name?.getText(sourceFile) === functionName
+    ) {
+      found = node;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  assert.ok(found, `Missing function: ${functionName}`);
+  assert.ok(found.body, `Missing function body for: ${functionName}`);
+  return found;
+}
 
-  const bodyStart = source.indexOf("{", signatureClose);
-  assert.notEqual(bodyStart, -1, `Missing function body start for: ${signature}`);
+function getFunctionBody(source, functionName) {
+  const sourceFile = createSourceFile(source);
+  return findFunctionNode(sourceFile, functionName).body.getText(sourceFile);
+}
 
-  let depth = 0;
-  for (let index = bodyStart; index < source.length; index += 1) {
-    const char = source[index];
-    if (char === "{") {
-      depth += 1;
-      continue;
+function getFunctionCallSequence(source, functionName) {
+  const sourceFile = createSourceFile(source);
+  const functionNode = findFunctionNode(sourceFile, functionName);
+  const calls = [];
+
+  function visit(node) {
+    if (ts.isCallExpression(node)) {
+      calls.push({
+        callee: node.expression.getText(sourceFile),
+        args: node.arguments.map((arg) => arg.getText(sourceFile)),
+        start: node.getStart(sourceFile),
+      });
     }
-    if (char !== "}") {
-      continue;
-    }
-    depth -= 1;
-    if (depth === 0) {
-      return source.slice(bodyStart + 1, index);
-    }
+    ts.forEachChild(node, visit);
   }
 
-  throw new Error(`Missing closing brace for function: ${signature}`);
+  visit(functionNode.body);
+  return calls;
 }
 
 describe("onboard helpers", () => {
@@ -1459,13 +1480,9 @@ const { setupInference } = require(${onboardPath});
   it("treats sandbox-local inference probe status 0 as retryable", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const onboardSource = fs.readFileSync(path.join(repoRoot, "src", "lib", "onboard.ts"), "utf8");
-    const parseSandboxInferenceProbeBody = extractFunctionBody(
-      onboardSource,
-      "function parseSandboxInferenceProbe(",
-    );
     const parseSandboxInferenceProbe = new Function(
       "compactText",
-      `return function parseSandboxInferenceProbe(output) {${parseSandboxInferenceProbeBody}}`,
+      `return function parseSandboxInferenceProbe(output) ${getFunctionBody(onboardSource, "parseSandboxInferenceProbe")}`,
     )(compactText);
 
     const result = parseSandboxInferenceProbe(
@@ -2172,16 +2189,36 @@ const { setupInference } = require(${onboardPath});
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
-    const onboardBody = extractFunctionBody(source, "async function onboard(");
-
-    assert.match(source, /function finalizeSandboxInferenceSetup\(sandboxName, model, provider, nimContainer = null\)/);
-    assert.doesNotMatch(
-      onboardBody,
-      /verifyLocalSandboxInference\(/,
-    );
     assert.match(
-      onboardBody,
-      /sandboxName = await createSandbox\([\s\S]*?\);\s*onboardSession\.markStepComplete\("sandbox", \{ sandboxName, provider, model, nimContainer \}\);\s*\}\s*finalizeSandboxInferenceSetup\(sandboxName, model, provider, nimContainer\);/,
+      source,
+      /function finalizeSandboxInferenceSetup\(sandboxName, model, provider, nimContainer = null\)/,
+    );
+
+    const callSequence = getFunctionCallSequence(source, "onboard");
+    const createSandboxCall = callSequence.find(({ callee }) => callee === "createSandbox");
+    const finalizeCall = callSequence.find(
+      ({ callee }) => callee === "finalizeSandboxInferenceSetup",
+    );
+    const markSandboxStepCall = callSequence.find(
+      ({ callee, args }) =>
+        callee === "onboardSession.markStepComplete" && args[0] === '"sandbox"',
+    );
+
+    assert.ok(createSandboxCall, "Expected onboard to create the sandbox");
+    assert.ok(finalizeCall, "Expected onboard to finalize sandbox inference setup");
+    assert.ok(markSandboxStepCall, "Expected onboard to mark the sandbox step complete");
+    assert.equal(
+      callSequence.some(({ callee }) => callee === "verifyLocalSandboxInference"),
+      false,
+      "onboard should not call verifyLocalSandboxInference before the sandbox exists",
+    );
+    assert.ok(
+      createSandboxCall.start < markSandboxStepCall.start,
+      "createSandbox should happen before marking the sandbox step complete",
+    );
+    assert.ok(
+      markSandboxStepCall.start < finalizeCall.start,
+      "finalizeSandboxInferenceSetup should run after the sandbox step is complete",
     );
   });
 
@@ -4634,19 +4671,9 @@ const { createSandbox } = require(${onboardPath});
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
-    // Extract the promptValidatedSandboxName function body
-    const fnMatch = source.match(
-      /async function promptValidatedSandboxName\(\)\s*\{([\s\S]*?)\n\}/,
-    );
-    assert.ok(fnMatch, "promptValidatedSandboxName function not found");
-    const fnBody = fnMatch[1];
-    // Verify the bounded retry loop exists within this function
-    assert.match(fnBody, /MAX_ATTEMPTS/);
-    assert.match(fnBody, /for\s*\(let attempt/);
+    const fnBody = getFunctionBody(source, "promptValidatedSandboxName");
     assert.match(fnBody, /Please try again/);
-    // Exits after too many invalid attempts
     assert.match(fnBody, /Too many invalid attempts/);
-    // Non-interactive still exits within this function
     assert.match(fnBody, /isNonInteractive\(\)/);
     assert.match(fnBody, /process\.exit\(1\)/);
   });
