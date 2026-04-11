@@ -629,6 +629,12 @@ describe("regression guards", () => {
       );
     });
 
+    it("scripts/setup-jetson.sh exists", () => {
+      expect(fs.existsSync(path.join(import.meta.dirname, "..", "scripts", "setup-jetson.sh"))).toBe(
+        true,
+      );
+    });
+
     it("services no longer tell users to install brev-setup.sh", () => {
       const src = fs.readFileSync(
         path.join(import.meta.dirname, "..", "src", "lib", "services.ts"),
