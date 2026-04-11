@@ -163,6 +163,16 @@ repos:
       - id: check-shebang-scripts-are-executable
         priority: 10
 
+  - repo: local
+    hooks:
+      - id: validate-config-schemas
+        name: Validate config files against JSON schemas
+        entry: npx tsx scripts/validate-configs.ts
+        language: system
+        pass_filenames: false
+        files: ^(nemoclaw-blueprint/.*\.yaml$|nemoclaw/openclaw\.plugin\.json$|schemas/.*\.json$)
+        priority: 10
+
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.11.0.1
     hooks:
@@ -262,7 +272,7 @@ repos:
 
       - id: test-skills-yaml
         name: Test (skills YAML)
-        entry: npx vitest run test/skills-frontmatter.test.js
+        entry: npx vitest run test/skills-frontmatter.test.ts
         language: system
         pass_filenames: false
         files: ^(\.agents/skills/|docs/.*\.md$|scripts/docs-to-skills\.py$|test/skills-frontmatter\.test\.js$)

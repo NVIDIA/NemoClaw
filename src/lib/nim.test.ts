@@ -10,7 +10,7 @@ import nim from "../../dist/lib/nim";
 
 const require = createRequire(import.meta.url);
 const NIM_DIST_PATH = require.resolve("../../dist/lib/nim");
-const RUNNER_PATH = require.resolve("../../bin/lib/runner");
+const RUNNER_PATH = require.resolve("../../dist/lib/runner");
 
 function loadNimWithMockedRunner(runCapture: Mock) {
   const runner = require(RUNNER_PATH);

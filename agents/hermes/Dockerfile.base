@@ -1,0 +1,100 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Hermes sandbox base image — expensive, rarely-changing layers.
+#
+# Contains: node:22-slim (OpenShell needs Node), apt packages, gosu,
+# user/group setup, .hermes directory structure, Hermes CLI, and PyYAML.
+#
+# Mirrors the OpenClaw Dockerfile.base structure but installs Hermes
+# (Python-based) instead of OpenClaw (Node-based).
+#
+# ── When to rebuild ─────────────────────────────────────────────
+#   1. Hermes version bump      — change the HERMES_VERSION below
+#   2. New apt package needed   — add it to the apt-get install list
+#   3. gosu upgrade             — update URL, checksum, and version
+#   4. node:22-slim digest rot  — update-docker-pin.sh updates both
+#   5. New .hermes subdirectory — add mkdir + symlink below
+# ────────────────────────────────────────────────────────────────
+
+FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Hermes version pinned for reproducibility.
+# Calver tag v2026.4.8 = semver 0.8.0.
+ARG HERMES_VERSION=v2026.4.8
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3=3.11.2-1+b1 \
+        python3-pip=23.0.1+dfsg-1 \
+        python3-venv=3.11.2-1+b1 \
+        curl=7.88.1-10+deb12u14 \
+        git=1:2.39.5-0+deb12u3 \
+        ca-certificates=20230311+deb12u1 \
+        iproute2=6.1.0-3 \
+        iptables=1.8.9-2 \
+        libcap2-bin=1:2.66-4+deb12u2+b2 \
+        socat=1.7.4.4-2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# gosu for privilege separation (gateway vs sandbox user).
+# Identical to OpenClaw base — pinned to 1.19 with checksum.
+# hadolint ignore=DL4006
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+        amd64) gosu_asset="gosu-amd64"; gosu_sha256="52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0" ;; \
+        arm64) gosu_asset="gosu-arm64"; gosu_sha256="3a8ef022d82c0bc4a98bcb144e77da714c25fcfa64dccc57f6aba7ae47ff1a44" ;; \
+        *) echo "Unsupported architecture for gosu: $arch" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
+    && echo "${gosu_sha256}  /usr/local/bin/gosu" | sha256sum -c - \
+    && chmod +x /usr/local/bin/gosu \
+    && gosu --version
+
+# Create sandbox user (matches OpenShell convention) and gateway user.
+# Same UID/GID layout as OpenClaw — OpenShell expects these names.
+RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
+    && groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
+    && mkdir -p /sandbox/.nemoclaw \
+    && chown -R sandbox:sandbox /sandbox
+
+# Split .hermes into immutable config dir + writable state dir.
+# Same pattern as OpenClaw: Landlock makes /sandbox/.hermes read-only,
+# writable state lives in .hermes-data, reached via symlinks.
+RUN mkdir -p /sandbox/.hermes-data/memories \
+        /sandbox/.hermes-data/sessions \
+        /sandbox/.hermes-data/skills \
+        /sandbox/.hermes-data/plugins \
+        /sandbox/.hermes-data/cron \
+        /sandbox/.hermes-data/logs \
+        /sandbox/.hermes-data/skins \
+        /sandbox/.hermes-data/plans \
+        /sandbox/.hermes-data/workspace \
+        /sandbox/.hermes-data/profiles \
+        /sandbox/.hermes-data/cache \
+        /sandbox/.hermes-data/pairing \
+    && mkdir -p /sandbox/.hermes \
+    && ln -s /sandbox/.hermes-data/memories /sandbox/.hermes/memories \
+    && ln -s /sandbox/.hermes-data/sessions /sandbox/.hermes/sessions \
+    && ln -s /sandbox/.hermes-data/skills /sandbox/.hermes/skills \
+    && ln -s /sandbox/.hermes-data/plugins /sandbox/.hermes/plugins \
+    && ln -s /sandbox/.hermes-data/cron /sandbox/.hermes/cron \
+    && ln -s /sandbox/.hermes-data/logs /sandbox/.hermes/logs \
+    && ln -s /sandbox/.hermes-data/skins /sandbox/.hermes/skins \
+    && ln -s /sandbox/.hermes-data/plans /sandbox/.hermes/plans \
+    && ln -s /sandbox/.hermes-data/workspace /sandbox/.hermes/workspace \
+    && ln -s /sandbox/.hermes-data/profiles /sandbox/.hermes/profiles \
+    && ln -s /sandbox/.hermes-data/cache /sandbox/.hermes/cache \
+    && ln -s /sandbox/.hermes-data/pairing /sandbox/.hermes/pairing \
+    && chown -R sandbox:sandbox /sandbox/.hermes /sandbox/.hermes-data
+
+# Install Hermes Agent from GitHub release.
+# Hermes is not on PyPI — official install is via their install script or
+# direct pip install from the release tarball.
+# hadolint ignore=DL3013
+RUN pip3 install --no-cache-dir --break-system-packages \
+        "hermes-agent @ https://github.com/NousResearch/hermes-agent/archive/refs/tags/${HERMES_VERSION}.tar.gz" \
+        "pyyaml==6.0.3" \
+        "python-telegram-bot>=21.0" \
+    && hermes --version

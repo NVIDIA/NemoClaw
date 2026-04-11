@@ -1,6 +1,9 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Commands
 
-The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes. It is installed when you run `npm install -g nemoclaw`.
+The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes.
+It is installed automatically by the installer (`curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`).
 
 ## `/nemoclaw` Slash Command
 
@@ -82,6 +85,11 @@ The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
 Uppercase letters are automatically lowercased.
 
+If you enable Discord during onboarding, the wizard can also prompt for a Discord Server ID, whether the bot should reply only to `@mentions` or to all messages in that server, and an optional Discord User ID.
+NemoClaw bakes those values into the sandbox image as Discord guild workspace config so the bot can respond in the selected server, not just in DMs.
+If you leave the Discord User ID blank, the guild config omits the user allowlist and any member of the configured server can message the bot.
+Guild responses remain mention-gated by default unless you opt into all-message replies.
+
 Before creating the gateway, the wizard runs preflight checks.
 It verifies that Docker is reachable, warns on untested runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
 
@@ -136,6 +144,8 @@ $ nemoclaw my-assistant connect
 ### `nemoclaw <name> status`
 
 Show sandbox status, health, and inference configuration.
+For local Ollama and local vLLM routes, the command also probes the host-side health endpoint and reports whether the backend is reachable.
+If the backend is down, the output includes an `Inference: unreachable` line with the local URL and a remediation hint.
 
 ```console
 $ nemoclaw my-assistant status
@@ -167,9 +177,20 @@ $ nemoclaw my-assistant destroy
 
 Add a policy preset to a sandbox.
 Presets extend the baseline network policy with additional endpoints.
+Before applying, the command shows which endpoints the preset would open and prompts for confirmation.
 
 ```console
 $ nemoclaw my-assistant policy-add
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview the endpoints a preset would open without applying changes |
+
+Use `--dry-run` to audit a preset before applying it:
+
+```console
+$ nemoclaw my-assistant policy-add --dry-run
 ```
 
 ### `nemoclaw <name> policy-list`
@@ -241,6 +262,28 @@ $ nemoclaw debug [--quick] [--sandbox NAME] [--output PATH]
 | `--quick` | Collect minimal diagnostics only |
 | `--sandbox NAME` | Target a specific sandbox (default: auto-detect) |
 | `--output PATH` | Write diagnostics tarball to the given path |
+
+### `nemoclaw credentials list`
+
+List the names of all credentials stored in `~/.nemoclaw/credentials.json`.
+Values are not printed.
+
+```console
+$ nemoclaw credentials list
+```
+
+### `nemoclaw credentials reset <KEY>`
+
+Remove a stored credential by name.
+After removal, re-running `nemoclaw onboard` re-prompts for that key.
+
+```console
+$ nemoclaw credentials reset NVIDIA_API_KEY
+```
+
+| Flag | Description |
+|------|-------------|
+| `--yes`, `-y` | Skip the confirmation prompt |
 
 ### `nemoclaw uninstall`
 

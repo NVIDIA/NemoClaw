@@ -113,7 +113,7 @@ The repository is organized as follows.
 
 All new source files must be TypeScript. Do not add new `.js` files to the project. When modifying an existing JavaScript file, prefer migrating it to TypeScript in the same PR.
 
-Existing JavaScript in `bin/` and `scripts/` is being incrementally migrated (see `src/lib/` for completed migrations). Tests in `test/` may remain ESM JavaScript for now but new test files should use TypeScript where practical.
+Only a small CommonJS launcher/compatibility layer remains in `bin/`, while the main CLI implementation now lives in `src/lib/` and compiles to `dist/`. Tests in `test/` may remain ESM JavaScript for now but new test files should use TypeScript where practical.
 
 Shell scripts (`scripts/*.sh`) must pass ShellCheck and use `shfmt` formatting.
 
