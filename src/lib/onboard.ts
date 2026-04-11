@@ -780,7 +780,8 @@ function parseSandboxInferenceProbe(output) {
     const detail = compactText(body) || `HTTP ${status}`;
     return {
       ok: false,
-      retryable: [408, 425, 429, 500, 502, 503, 504].includes(status),
+      // curl can report `000` (parsed as 0) for transient connection/proxy failures.
+      retryable: [0, 408, 425, 429, 500, 502, 503, 504].includes(status),
       message: `HTTP ${status}: ${detail}`,
     };
   }

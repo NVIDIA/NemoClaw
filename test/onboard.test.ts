@@ -1456,6 +1456,26 @@ const { setupInference } = require(${onboardPath});
     ).toEqual({ ok: true });
   });
 
+  it("treats sandbox-local inference probe status 0 as retryable", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const onboardSource = fs.readFileSync(path.join(repoRoot, "src", "lib", "onboard.ts"), "utf8");
+    const parseSandboxInferenceProbeBody = extractFunctionBody(
+      onboardSource,
+      "function parseSandboxInferenceProbe(",
+    );
+    const parseSandboxInferenceProbe = new Function(
+      "compactText",
+      `return function parseSandboxInferenceProbe(output) {${parseSandboxInferenceProbeBody}}`,
+    )(compactText);
+
+    const result = parseSandboxInferenceProbe(
+      ["curl: (7) Failed to connect", "__NEMOCLAW_HTTP_STATUS__:0"].join("\n"),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.retryable).toBe(true);
+    expect(result.message).toContain("HTTP 0");
+  });
+
   it("reports a local Ollama model mismatch when inference.local returns 404 in the sandbox", () => {
     const result =
       verifyLocalSandboxInference("sandbox-box", "smollm2:135m", "ollama-local", () =>
