@@ -44,8 +44,7 @@ configure_jetson_host() {
       sudo update-alternatives --set iptables /usr/sbin/iptables-legacy
       sudo sed -i '/"iptables": false,/d; /"bridge": "none"/d; s/"default-runtime": "nvidia",/"default-runtime": "nvidia"/' /etc/docker/daemon.json
       ;;
-    jp7)
-      ;;
+    jp7) ;;
     *)
       error "Unsupported Jetson version: $jetpack_version"
       ;;
