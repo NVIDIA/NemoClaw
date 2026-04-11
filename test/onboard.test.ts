@@ -1459,19 +1459,23 @@ const { setupInference } = require(${onboardPath});
   });
 
   it("treats sandbox-local inference probe status 0 as retryable", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const onboardSource = fs.readFileSync(path.join(repoRoot, "src", "lib", "onboard.ts"), "utf8");
-    const parseSandboxInferenceProbe = new Function(
-      "compactText",
-      `return function parseSandboxInferenceProbe(output) ${getFunctionBody(onboardSource, "parseSandboxInferenceProbe")}`,
-    )(compactText);
-
-    const result = parseSandboxInferenceProbe(
+    const outputs = [
       ["curl: (7) Failed to connect", "__NEMOCLAW_HTTP_STATUS__:0"].join("\n"),
-    );
-    expect(result.ok).toBe(false);
-    expect(result.retryable).toBe(true);
-    expect(result.message).toContain("HTTP 0");
+      [
+        '{"id":"chatcmpl-test","choices":[{"index":0,"message":{"role":"assistant","content":"PONG"}}]}',
+        "__NEMOCLAW_HTTP_STATUS__:200",
+      ].join("\n"),
+    ];
+    let calls = 0;
+
+    const result = verifyLocalSandboxInference("sandbox-box", "smollm2:135m", "ollama-local", () => {
+      const output = outputs[calls];
+      calls += 1;
+      return output;
+    });
+
+    expect(result.ok).toBe(true);
+    expect(calls).toBe(2);
   });
 
   it("reports a local Ollama model mismatch when inference.local returns 404 in the sandbox", () => {
@@ -1497,6 +1501,48 @@ const { setupInference } = require(${onboardPath});
     );
     expect(result.ok).toBe(false);
     expect(result.message).toContain("Unexpected inference.local response");
+  });
+
+  it("clamps sandbox probe attempts so a zero env setting still performs one check", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-probe-attempt-floor-"));
+    const scriptPath = path.join(tmpDir, "probe-attempt-floor-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+
+    const script = String.raw`
+const { verifyLocalSandboxInference } = require(${onboardPath});
+
+let calls = 0;
+const result = verifyLocalSandboxInference("sandbox-box", "smollm2:135m", "ollama-local", () => {
+  calls += 1;
+  return [
+    '{"error":{"message":"model not found"}}',
+    "__NEMOCLAW_HTTP_STATUS__:404",
+  ].join("\\n");
+});
+
+console.log(JSON.stringify({ calls, result }));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        NEMOCLAW_LOCAL_SANDBOX_PROBE_ATTEMPTS: "0",
+      },
+    });
+
+    try {
+      expect(result.status).toBe(0);
+      const payload = JSON.parse(result.stdout.trim());
+      expect(payload.calls).toBe(1);
+      expect(payload.result.ok).toBe(false);
+      expect(payload.result.message).toContain("could not serve");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("registers sandbox metadata when updateSandbox cannot find the local vLLM sandbox entry", () => {
@@ -2197,11 +2243,17 @@ const { setupInference } = require(${onboardPath});
     expect(sandboxName).toBe("sandbox-created");
     expect(calls.map(({ name }) => name)).toEqual([
       "createSandbox",
-      "markStepComplete",
       "finalizeSandboxInferenceSetup",
+      "markStepComplete",
     ]);
     expect(calls[0].args[4]).toBe("sandbox-requested");
     expect(calls[1].args).toEqual([
+      "sandbox-created",
+      "smollm2:135m",
+      "ollama-local",
+      null,
+    ]);
+    expect(calls[2].args).toEqual([
       "sandbox",
       {
         sandboxName: "sandbox-created",
@@ -2209,12 +2261,6 @@ const { setupInference } = require(${onboardPath});
         model: "smollm2:135m",
         nimContainer: null,
       },
-    ]);
-    expect(calls[2].args).toEqual([
-      "sandbox-created",
-      "smollm2:135m",
-      "ollama-local",
-      null,
     ]);
   });
 

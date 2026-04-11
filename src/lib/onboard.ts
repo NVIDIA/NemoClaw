@@ -23,7 +23,10 @@ function envInt(name, fallback) {
 /** Inference timeout (seconds) for local providers (Ollama, vLLM, NIM). */
 const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 180);
 /** Retry budget for sandbox-local inference.local verification. */
-const LOCAL_SANDBOX_PROBE_ATTEMPTS = envInt("NEMOCLAW_LOCAL_SANDBOX_PROBE_ATTEMPTS", 3);
+const LOCAL_SANDBOX_PROBE_ATTEMPTS = Math.max(
+  1,
+  envInt("NEMOCLAW_LOCAL_SANDBOX_PROBE_ATTEMPTS", 3),
+);
 /** Delay between retryable sandbox-local inference.local probes. */
 const LOCAL_SANDBOX_PROBE_DELAY_SECS = envInt("NEMOCLAW_LOCAL_SANDBOX_PROBE_DELAY", 2);
 /** curl --max-time bound (seconds) for sandbox-local inference.local probes. */
@@ -912,8 +915,8 @@ function finalizeSandboxInferenceSetup(sandboxName, model, provider, nimContaine
 }
 
 /**
- * Create the sandbox, mark the sandbox step complete, then finalize
- * sandbox-local inference metadata in that order.
+ * Create the sandbox, finalize sandbox-local inference metadata, then mark the
+ * sandbox step complete once the guard has passed.
  *
  * @param {object} options
  * @param {any} options.gpu
@@ -960,13 +963,13 @@ async function createReadySandbox({
     agent,
     dangerouslySkipPermissions,
   );
+  finalizeSandboxInferenceSetupImpl(createdSandboxName, model, provider, nimContainer);
   onboardSessionImpl.markStepComplete("sandbox", {
     sandboxName: createdSandboxName,
     provider,
     model,
     nimContainer,
   });
-  finalizeSandboxInferenceSetupImpl(createdSandboxName, model, provider, nimContainer);
   return createdSandboxName;
 }
 
