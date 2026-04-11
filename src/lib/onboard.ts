@@ -961,13 +961,7 @@ function isAffirmativeAnswer(value) {
   );
 }
 
-function printBraveExposureWarning() {
-  console.log("");
-  for (const line of webSearch.getBraveExposureWarningLines()) {
-    console.log(`  ${line}`);
-  }
-  console.log("");
-}
+
 
 function validateBraveSearchApiKey(apiKey) {
   return runCurlProbe([
@@ -1072,7 +1066,6 @@ async function configureWebSearch(existingConfig = null) {
       return null;
     }
     note("  [non-interactive] Brave Web Search requested.");
-    printBraveExposureWarning();
     const validation = validateBraveSearchApiKey(braveApiKey);
     if (!validation.ok) {
       console.error("  Brave Search API key validation failed.");
@@ -1085,8 +1078,6 @@ async function configureWebSearch(existingConfig = null) {
     process.env[webSearch.BRAVE_API_KEY_ENV] = braveApiKey;
     return { fetchEnabled: true };
   }
-
-  printBraveExposureWarning();
   const enableAnswer = await prompt("  Enable Brave Web Search? [y/N]: ");
   if (!isAffirmativeAnswer(enableAnswer)) {
     return null;
@@ -1209,10 +1200,7 @@ function patchStagedDockerfile(
   }
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_WEB_CONFIG_B64=.*$/m,
-    `ARG NEMOCLAW_WEB_CONFIG_B64=${webSearch.buildWebSearchDockerConfig(
-      webSearchConfig,
-      webSearchConfig ? getCredential(webSearch.BRAVE_API_KEY_ENV) : null,
-    )}`,
+    `ARG NEMOCLAW_WEB_CONFIG_B64=${webSearch.buildWebSearchDockerConfig(webSearchConfig)}`,
   );
   // Onboard flow expects immediate dashboard access without device pairing,
   // so disable device auth for images built during onboard (see #1217).
@@ -2514,6 +2502,14 @@ async function createSandbox(
       token: getMessagingToken("TELEGRAM_BOT_TOKEN"),
     },
   ].filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey));
+
+  if (webSearchConfig) {
+    messagingTokenDefs.push({
+      name: `${sandboxName}-brave-search`,
+      envKey: webSearch.BRAVE_API_KEY_ENV,
+      token: getCredential(webSearch.BRAVE_API_KEY_ENV),
+    });
+  }
   const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
 
   // Reconcile local registry state with the live OpenShell gateway state.
@@ -2744,6 +2740,7 @@ async function createSandbox(
     "DISCORD_BOT_TOKEN",
     "SLACK_BOT_TOKEN",
     "TELEGRAM_BOT_TOKEN",
+    webSearch.BRAVE_API_KEY_ENV,
   ]);
   const sandboxEnv = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !blockedSandboxEnvNames.has(name)),
@@ -2880,6 +2877,33 @@ async function createSandbox(
   }
 
   console.log(`  ✓ Sandbox '${sandboxName}' created`);
+
+  try {
+    if (process.platform === "darwin") {
+      const vmKernel = runCapture("docker info --format '{{.KernelVersion}}'", { ignoreError: true }).trim();
+      if (vmKernel) {
+        const parts = vmKernel.split(".");
+        const major = parseInt(parts[0], 10);
+        const minor = parseInt(parts[1], 10);
+        if (!isNaN(major) && !isNaN(minor) && (major < 5 || (major === 5 && minor < 13))) {
+          console.warn(`  ⚠ Landlock: Docker VM kernel ${vmKernel} does not support Landlock (requires ≥5.13).`);
+          console.warn("    Sandbox filesystem restrictions will silently degrade (best_effort mode).");
+        }
+      }
+    } else if (process.platform === "linux") {
+      const uname = runCapture("uname -r", { ignoreError: true }).trim();
+      if (uname) {
+        const parts = uname.split(".");
+        const major = parseInt(parts[0], 10);
+        const minor = parseInt(parts[1], 10);
+        if (!isNaN(major) && !isNaN(minor) && (major < 5 || (major === 5 && minor < 13))) {
+          console.warn(`  ⚠ Landlock: Kernel ${uname} does not support Landlock (requires ≥5.13).`);
+          console.warn("    Sandbox filesystem restrictions will silently degrade (best_effort mode).");
+        }
+      }
+    }
+  } catch {}
+
   return sandboxName;
 }
 
@@ -4759,13 +4783,22 @@ async function onboard(opts = {}) {
     }
 
     const sandboxReuseState = getSandboxReuseState(sandboxName);
+    const webSearchConfigChanged = Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
     const resumeSandbox =
-      resume && session?.steps?.sandbox?.status === "complete" && sandboxReuseState === "ready";
+      resume &&
+      !webSearchConfigChanged &&
+      session?.steps?.sandbox?.status === "complete" &&
+      sandboxReuseState === "ready";
     if (resumeSandbox) {
       skippedStepMessage("sandbox", sandboxName);
     } else {
       if (resume && session?.steps?.sandbox?.status === "complete") {
-        if (sandboxReuseState === "not_ready") {
+        if (webSearchConfigChanged) {
+          note("  [resume] Web Search configuration changed; recreating sandbox.");
+          if (sandboxName) {
+            registry.removeSandbox(sandboxName);
+          }
+        } else if (sandboxReuseState === "not_ready") {
           note(
             `  [resume] Recorded sandbox '${sandboxName}' exists but is not ready; recreating it.`,
           );
