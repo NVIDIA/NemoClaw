@@ -145,13 +145,11 @@ jobs:
       - name: Open issue on merge conflict
         if: steps.merge.outputs.result == 'conflict'
         env:
-          # Use the workflow token for issue creation; PAT scope differences can
-          # block GraphQL `createIssue` even when PR/push operations work.
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
         run: |
           CONFLICTS=$(cat /tmp/conflicts.txt)
 
-          if gh issue create \
+          gh issue create \
             --title "Upstream sync conflicts — ${{ steps.branch.outputs.date }}" \
             --body "## Merge Conflict
 
@@ -176,10 +174,4 @@ jobs:
           - \`bin/nemoclaw.js\` — fork CLI commands
           - \`scripts/nemoclaw-start.sh\` — agent visibility + overlay logic
           - \`package.json\` — version bumps
-          - \`Dockerfile.base\` — pinned versions"; then
-            echo "::notice::Created conflict issue successfully."
-          else
-            echo "::warning::Could not create conflict issue automatically."
-            echo "::warning::Check repository Issues are enabled and workflow has issues:write permission."
-            echo "::warning::Manual fallback: open an issue titled 'Upstream sync conflicts — ${{ steps.branch.outputs.date }}' and paste /tmp/conflicts.txt."
-          fi
+          - \`Dockerfile.base\` — pinned versions"
