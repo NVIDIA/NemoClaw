@@ -476,8 +476,8 @@ describe("regression guards", () => {
     it("setupSpark is a compatibility alias that does not shell out to sudo", () => {
       const fs = require("fs");
       const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"), "utf-8");
-      expect(src).toContain("`nemoclaw setup-spark` is deprecated.");
-      expect(src).toContain("await onboard(args);");
+      expect(src).toContain("runDeprecatedOnboardAliasCommand");
+      expect(src).toContain('kind: "setup-spark"');
       expect(src).not.toContain('sudo bash "${SCRIPTS}/setup-spark.sh"');
     });
 
