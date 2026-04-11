@@ -2545,7 +2545,14 @@ async function createSandbox(
   }
   const telegramConfig = {};
   if (enabledTokenEnvKeys.has("TELEGRAM_BOT_TOKEN")) {
-    const requireMention = process.env.TELEGRAM_REQUIRE_MENTION === "1";
+    const rawTelegramRequireMention = process.env.TELEGRAM_REQUIRE_MENTION;
+    if (rawTelegramRequireMention != null && rawTelegramRequireMention !== "0" && rawTelegramRequireMention !== "1") {
+      console.error(
+        `  Error: TELEGRAM_REQUIRE_MENTION must be '0', '1', or unset, got '${rawTelegramRequireMention}'.`,
+      );
+      process.exit(1);
+    }
+    const requireMention = rawTelegramRequireMention === "1";
     telegramConfig.requireMention = requireMention;
   }
   patchStagedDockerfile(

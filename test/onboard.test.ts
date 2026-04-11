@@ -423,6 +423,94 @@ describe("onboard helpers", () => {
     }
   });
 
+  it(
+    "rejects invalid TELEGRAM_REQUIRE_MENTION values",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-telegram-require-mention-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "telegram-require-mention-check.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      try {
+        for (const badValue of ["true", "yes", "2", "on"]) {
+          const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+runner.run = (command, opts = {}) => ({ status: 0 });
+runner.runCapture = (command) => {
+  if (command.includes("'sandbox' 'get'")) return "";
+  if (command.includes("'sandbox' 'list'")) return "";
+  return "";
+};
+registry.registerSandbox = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
+  process.env.TELEGRAM_REQUIRE_MENTION = "${badValue}";
+  await createSandbox(null, "gpt-5.4");
+  console.log("ERROR_DID_NOT_EXIT");
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+          fs.writeFileSync(scriptPath, script);
+
+          const result = spawnSync(process.execPath, [scriptPath], {
+            cwd: repoRoot,
+            encoding: "utf-8",
+            env: {
+              ...process.env,
+              HOME: tmpDir,
+              PATH: `${fakeBin}:${process.env.PATH || ""}`,
+              NEMOCLAW_NON_INTERACTIVE: "1",
+            },
+          });
+
+          assert.notEqual(
+            result.status,
+            0,
+            `expected non-zero exit for TELEGRAM_REQUIRE_MENTION='${badValue}'`,
+          );
+          assert.ok(
+            !result.stdout.includes("ERROR_DID_NOT_EXIT"),
+            `onboard should have exited before sandbox create for value '${badValue}'`,
+          );
+          assert.ok(
+            result.stderr.includes("TELEGRAM_REQUIRE_MENTION must be"),
+            `expected validation error in stderr for value '${badValue}', got: ${result.stderr}`,
+          );
+        }
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("maps NVIDIA Endpoints to the routed inference provider", () => {
     assert.deepEqual(
       getSandboxInferenceConfig("qwen/qwen3.5-397b-a17b", "nvidia-prod", "openai-completions"),
