@@ -52,7 +52,37 @@ import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
 
 const require = createRequire(import.meta.url);
 const { getSuggestedPolicyPresets } = require("../dist/lib/onboard.js");
+// Keep the CJS export object here so onboard helper monkey-patches affect the same module instance.
 const registry = require("../dist/lib/registry.js");
+
+function extractFunctionBody(source, signature) {
+  const signatureIndex = source.indexOf(signature);
+  assert.notEqual(signatureIndex, -1, `Missing function signature: ${signature}`);
+
+  const signatureClose = source.indexOf(")", signatureIndex + signature.length);
+  assert.notEqual(signatureClose, -1, `Missing function signature close for: ${signature}`);
+
+  const bodyStart = source.indexOf("{", signatureClose);
+  assert.notEqual(bodyStart, -1, `Missing function body start for: ${signature}`);
+
+  let depth = 0;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+    if (char !== "}") {
+      continue;
+    }
+    depth -= 1;
+    if (depth === 0) {
+      return source.slice(bodyStart + 1, index);
+    }
+  }
+
+  throw new Error(`Missing closing brace for function: ${signature}`);
+}
 
 describe("onboard helpers", () => {
   it("classifies sandbox create timeout failures and tracks upload progress", () => {
@@ -1340,7 +1370,7 @@ console.log(JSON.stringify({
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
     const resolveOpenshellPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "resolve-openshell.js"));
-    const fakeOpenshellPath = JSON.stringify(path.join(tmpDir, "openshell"));
+    const fakeOpenshellPath = JSON.stringify(path.join(fakeBin, "openshell"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1937,14 +1967,15 @@ const { setupInference } = require(${onboardPath});
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
+    const onboardBody = extractFunctionBody(source, "async function onboard(");
 
     assert.match(source, /function finalizeSandboxInferenceSetup\(sandboxName, model, provider, nimContainer = null\)/);
     assert.doesNotMatch(
-      source,
-      /async function setupInference\([\s\S]*?verifyLocalSandboxInference\(/,
+      onboardBody,
+      /verifyLocalSandboxInference\(/,
     );
     assert.match(
-      source,
+      onboardBody,
       /sandboxName = await createSandbox\([\s\S]*?\);\s*onboardSession\.markStepComplete\("sandbox", \{ sandboxName, provider, model, nimContainer \}\);\s*\}\s*finalizeSandboxInferenceSetup\(sandboxName, model, provider, nimContainer\);/,
     );
   });
