@@ -1,0 +1,177 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: upstream-sync
+
+on:
+  schedule:
+    # Every Saturday at 09:00 UTC
+    - cron: "0 9 * * 6"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Merge and test but do not open a PR"
+        required: false
+        default: "false"
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          # Use a PAT so the created PR triggers CI workflows.
+          # The default GITHUB_TOKEN cannot trigger other workflows.
+          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/NVIDIA/NemoClaw.git || true
+          git config remote.upstream.fetch "+refs/heads/main:refs/remotes/upstream/main"
+
+      - name: Fetch upstream main
+        run: git fetch upstream main
+
+      - name: Check for new upstream commits
+        id: check
+        run: |
+          LOCAL_SHA="$(git rev-parse origin/main)"
+          UPSTREAM_SHA="$(git rev-parse upstream/main)"
+          if [ "$LOCAL_SHA" = "$UPSTREAM_SHA" ]; then
+            echo "status=up-to-date" >> "$GITHUB_OUTPUT"
+            echo "::notice::Already up to date — nothing to sync."
+          else
+            AHEAD=$(git rev-list --count "origin/main..upstream/main")
+            echo "status=behind" >> "$GITHUB_OUTPUT"
+            echo "ahead=$AHEAD" >> "$GITHUB_OUTPUT"
+            echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+            echo "local_sha=$LOCAL_SHA" >> "$GITHUB_OUTPUT"
+            echo "::notice::Upstream is $AHEAD commit(s) ahead."
+          fi
+
+      - name: Exit early if up to date
+        if: steps.check.outputs.status == 'up-to-date'
+        run: echo "Nothing to sync." && exit 0
+
+      - name: Create integration branch
+        if: steps.check.outputs.status == 'behind'
+        id: branch
+        run: |
+          DATE="$(date +%Y-%m-%d)"
+          BRANCH="integration/upstream-sync-${DATE}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+          git checkout -b "$BRANCH" main
+
+      - name: Attempt merge
+        if: steps.check.outputs.status == 'behind'
+        id: merge
+        run: |
+          if git merge upstream/main --no-edit \
+               -m "merge: upstream NVIDIA/NemoClaw main ${{ steps.branch.outputs.date }}"; then
+            echo "result=clean" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=conflict" >> "$GITHUB_OUTPUT"
+            # Capture conflicting files for the issue body
+            git diff --name-only --diff-filter=U > /tmp/conflicts.txt || true
+            git merge --abort
+          fi
+
+      - name: Setup Node.js (for validation)
+        if: steps.merge.outputs.result == 'clean'
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install and validate
+        if: steps.merge.outputs.result == 'clean'
+        run: |
+          npm install --ignore-scripts
+          cd nemoclaw && npm install && npm run build && cd ..
+          npx vitest run
+          make check
+
+      - name: Push branch and open PR
+        if: steps.merge.outputs.result == 'clean' && inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          git push origin "${{ steps.branch.outputs.branch }}"
+
+          AHEAD="${{ steps.check.outputs.ahead }}"
+          BEHIND=$(git rev-list --count "upstream/main..origin/main")
+          FILES_CHANGED=$(git diff --stat "main..${{ steps.branch.outputs.branch }}" | tail -1)
+
+          gh pr create \
+            --base main \
+            --head "${{ steps.branch.outputs.branch }}" \
+            --title "merge: upstream NVIDIA/NemoClaw main ${{ steps.branch.outputs.date }}" \
+            --body "## Upstream Sync — ${{ steps.branch.outputs.date }}
+
+          Merges \`NVIDIA/NemoClaw\` \`main\` into this fork.
+
+          ### Stats
+          - **Upstream commits merged:** ${AHEAD}
+          - **Fork-only commits preserved:** ${BEHIND}
+          - **Upstream SHA:** \`${{ steps.check.outputs.upstream_sha }}\`
+          - **Origin SHA (before merge):** \`${{ steps.check.outputs.local_sha }}\`
+          - **Files changed:** ${FILES_CHANGED}
+
+          ### Automated Validation
+          - [x] \`npm install\` — dependencies installed
+          - [x] \`npm run build\` — TypeScript plugin compiles
+          - [x] \`npx vitest run\` — all unit tests pass
+          - [x] \`make check\` — lint and hooks pass
+
+          ### Review checklist
+          See [FORK_FEATURES.md](FORK_FEATURES.md) and the [upstream-sync PR template](.github/PULL_REQUEST_TEMPLATE/upstream-sync.md)."
+
+      - name: Open issue on merge conflict
+        if: steps.merge.outputs.result == 'conflict'
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          CONFLICTS=$(cat /tmp/conflicts.txt)
+
+          gh issue create \
+            --title "Upstream sync conflicts — ${{ steps.branch.outputs.date }}" \
+            --body "## Merge Conflict
+
+          The weekly upstream sync on **${{ steps.branch.outputs.date }}** could not merge cleanly.
+
+          **Upstream is ${{ steps.check.outputs.ahead }} commit(s) ahead.**
+
+          ### Conflicting files
+          \`\`\`
+          ${CONFLICTS}
+          \`\`\`
+
+          ### Resolution steps
+          1. \`git fetch upstream main\`
+          2. \`git checkout -b ${{ steps.branch.outputs.branch }} main\`
+          3. \`git merge upstream/main\`
+          4. Resolve conflicts (see [FORK_FEATURES.md](FORK_FEATURES.md) for hotspot guidance)
+          5. Run validation: \`npm install && cd nemoclaw && npm run build && cd .. && npx vitest run && make check\`
+          6. Push and open PR: \`scripts/sync-upstream.sh\` (after resolving)
+
+          ### Known hotspots
+          - \`bin/nemoclaw.js\` — fork CLI commands
+          - \`scripts/nemoclaw-start.sh\` — agent visibility + overlay logic
+          - \`package.json\` — version bumps
+          - \`Dockerfile.base\` — pinned versions"

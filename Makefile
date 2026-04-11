@@ -1,4 +1,4 @@
-.PHONY: check lint format lint-ts format-ts docs docs-strict docs-live docs-clean
+.PHONY: check lint format lint-ts format-ts docs docs-strict docs-live docs-clean sync
 
 check:
 	npx prek run --all-files
@@ -28,3 +28,14 @@ docs-live:
 
 docs-clean:
 	rm -rf docs/_build
+
+# --- Upstream Sync ---
+
+sync:
+	scripts/sync-upstream.sh
+
+sync-dry:
+	scripts/sync-upstream.sh --dry-run
+
+sync-cleanup:
+	scripts/sync-upstream.sh --cleanup
