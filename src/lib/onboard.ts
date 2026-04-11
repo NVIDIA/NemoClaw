@@ -958,6 +958,7 @@ function patchStagedDockerfile(
   messagingChannels = [],
   messagingAllowedIds = {},
   discordGuilds = {},
+  telegramConfig = {},
 ) {
   const { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat } =
     getSandboxInferenceConfig(model, provider, preferredInferenceApi);
@@ -1034,6 +1035,12 @@ function patchStagedDockerfile(
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_DISCORD_GUILDS_B64=.*$/m,
       `ARG NEMOCLAW_DISCORD_GUILDS_B64=${encodeDockerJsonArg(discordGuilds)}`,
+    );
+  }
+  if (Object.keys(telegramConfig).length > 0) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_TELEGRAM_CONFIG_B64=.*$/m,
+      `ARG NEMOCLAW_TELEGRAM_CONFIG_B64=${encodeDockerJsonArg(telegramConfig)}`,
     );
   }
   fs.writeFileSync(dockerfilePath, dockerfile);
@@ -2536,6 +2543,11 @@ async function createSandbox(
       };
     }
   }
+  const telegramConfig = {};
+  if (enabledTokenEnvKeys.has("TELEGRAM_BOT_TOKEN")) {
+    const requireMention = process.env.TELEGRAM_REQUIRE_MENTION === "1";
+    telegramConfig.requireMention = requireMention;
+  }
   patchStagedDockerfile(
     stagedDockerfile,
     model,
@@ -2547,6 +2559,7 @@ async function createSandbox(
     activeMessagingChannels,
     messagingAllowedIds,
     discordGuilds,
+    telegramConfig,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
@@ -3497,6 +3510,9 @@ const MESSAGING_CHANNELS = [
     description: "Telegram bot messaging",
     help: "Create a bot via @BotFather on Telegram, then copy the token.",
     label: "Telegram Bot Token",
+    requireMentionEnvKey: "TELEGRAM_REQUIRE_MENTION",
+    requireMentionHelp:
+      "Choose whether the bot should reply only when @mentioned or to all messages in Telegram groups.",
     userIdEnvKey: "TELEGRAM_ALLOWED_IDS",
     userIdHelp: "Send /start to @userinfobot on Telegram to get your numeric user ID.",
     userIdLabel: "Telegram User ID (for DM access)",
@@ -3681,7 +3697,7 @@ async function setupMessagingChannels() {
         }
       }
     }
-    if (ch.requireMentionEnvKey && ch.serverIdEnvKey && process.env[ch.serverIdEnvKey]) {
+    if (ch.requireMentionEnvKey && (!ch.serverIdEnvKey || process.env[ch.serverIdEnvKey])) {
       const existingRequireMention = process.env[ch.requireMentionEnvKey];
       if (existingRequireMention === "0" || existingRequireMention === "1") {
         const mode = existingRequireMention === "0" ? "all messages" : "@mentions only";
