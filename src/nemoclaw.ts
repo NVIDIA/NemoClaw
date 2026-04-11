@@ -41,11 +41,16 @@ const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
 const { parseGatewayInference } = require("./lib/inference-config");
+const { probeLocalProviderHealth } = require("./lib/local-inference");
 const { getVersion } = require("./lib/version");
 const onboardSession = require("./lib/onboard-session");
 const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
 const { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } = require("./lib/usage-notice");
 const { runDebugCommand } = require("./lib/debug-command");
+const {
+  runDeprecatedOnboardAliasCommand,
+  runOnboardCommand,
+} = require("./lib/onboard-command");
 const {
   captureOpenshellCommand,
   getInstalledOpenshellVersion,
@@ -780,88 +785,38 @@ function printDangerouslySkipPermissionsWarning() {
 
 // ── Commands ─────────────────────────────────────────────────────
 
-async function onboard(args) {
+function buildOnboardCommandDeps(args) {
   const { onboard: runOnboard } = require("./lib/onboard");
+  const { listAgents } = require("./lib/agent-defs");
+  return {
+    args,
+    noticeAcceptFlag: NOTICE_ACCEPT_FLAG,
+    noticeAcceptEnv: NOTICE_ACCEPT_ENV,
+    env: process.env,
+    runOnboard,
+    listAgents,
+    log: console.log,
+    error: console.error,
+    exit: (code) => process.exit(code),
+  };
+}
 
-  // Extract --from <path> before the unknown-arg validator: it takes a value
-  // so the set-based check would reject the value token as an unknown flag.
-  let fromDockerfile = null;
-  const fromIdx = args.indexOf("--from");
-  if (fromIdx !== -1) {
-    fromDockerfile = args[fromIdx + 1];
-    if (!fromDockerfile || fromDockerfile.startsWith("--")) {
-      console.error("  --from requires a path to a Dockerfile");
-      console.error(
-        `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [${NOTICE_ACCEPT_FLAG}]`,
-      );
-      process.exit(1);
-    }
-    args = [...args.slice(0, fromIdx), ...args.slice(fromIdx + 2)];
-  }
-
-  let agentFlag = null;
-  const agentIdx = args.indexOf("--agent");
-  if (agentIdx !== -1) {
-    agentFlag = args[agentIdx + 1];
-    if (!agentFlag || agentFlag.startsWith("--")) {
-      console.error("  --agent requires a name");
-      process.exit(1);
-    }
-    const { listAgents } = require("../bin/lib/agent-defs");
-    const knownAgents = listAgents();
-    if (!knownAgents.includes(agentFlag)) {
-      console.error(`  Unknown agent '${agentFlag}'. Available: ${knownAgents.join(", ")}`);
-      process.exit(1);
-    }
-    args = [...args.slice(0, agentIdx), ...args.slice(agentIdx + 2)];
-  }
-
-  const allowedArgs = new Set([
-    "--non-interactive",
-    "--resume",
-    "--recreate-sandbox",
-    "--dangerously-skip-permissions",
-    NOTICE_ACCEPT_FLAG,
-  ]);
-  const unknownArgs = args.filter((arg) => !allowedArgs.has(arg));
-  if (unknownArgs.length > 0) {
-    console.error(`  Unknown onboard option(s): ${unknownArgs.join(", ")}`);
-    console.error(
-      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [--dangerously-skip-permissions] [${NOTICE_ACCEPT_FLAG}]`,
-    );
-    process.exit(1);
-  }
-  const nonInteractive = args.includes("--non-interactive");
-  const resume = args.includes("--resume");
-  const recreateSandbox = args.includes("--recreate-sandbox");
-  const dangerouslySkipPermissions = args.includes("--dangerously-skip-permissions");
-  const acceptThirdPartySoftware =
-    args.includes(NOTICE_ACCEPT_FLAG) || String(process.env[NOTICE_ACCEPT_ENV] || "") === "1";
-  await runOnboard({
-    nonInteractive,
-    resume,
-    recreateSandbox,
-    fromDockerfile,
-    acceptThirdPartySoftware,
-    agent: agentFlag,
-    dangerouslySkipPermissions,
-  });
+async function onboard(args) {
+  await runOnboardCommand(buildOnboardCommandDeps(args));
 }
 
 async function setup(args = []) {
-  console.log("");
-  console.log("  ⚠  `nemoclaw setup` is deprecated. Use `nemoclaw onboard` instead.");
-  console.log("");
-  await onboard(args);
+  await runDeprecatedOnboardAliasCommand({
+    ...buildOnboardCommandDeps(args),
+    kind: "setup",
+  });
 }
 
 async function setupSpark(args = []) {
-  console.log("");
-  console.log("  ⚠  `nemoclaw setup-spark` is deprecated.");
-  console.log("  Current OpenShell releases handle the old DGX Spark cgroup issue themselves.");
-  console.log("  Use `nemoclaw onboard` instead.");
-  console.log("");
-  await onboard(args);
+  await runDeprecatedOnboardAliasCommand({
+    ...buildOnboardCommandDeps(args),
+    kind: "setup-spark",
+  });
 }
 
 async function deploy(instanceName) {
@@ -1035,6 +990,18 @@ async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false 
     policies.applyPermissivePolicy(sandboxName);
   }
   checkAndRecoverSandboxProcesses(sandboxName);
+  // Print a one-shot hint before dropping the user into the sandbox
+  // shell so a fresh user knows the first thing to type. Without this,
+  // `nemoclaw <name> connect` lands on a bare bash prompt and users
+  // ask "now what?" — see #465. Suppress the hint when stdout isn't a
+  // TTY so scripted callers don't get noise in their pipelines.
+  if (process.stdout.isTTY && !["1", "true"].includes(String(process.env.NEMOCLAW_NO_CONNECT_HINT || ""))) {
+    console.log("");
+    console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
+    console.log(`  ${D}Inside the sandbox, run \`openclaw tui\` to start chatting with the agent.${R}`);
+    console.log(`  ${D}Type \`exit\` (or Ctrl-D) to return to the host shell.${R}`);
+    console.log("");
+  }
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
     stdio: "inherit",
     cwd: ROOT,
@@ -1049,11 +1016,23 @@ async function sandboxStatus(sandboxName) {
   const live = parseGatewayInference(
     captureOpenshell(["inference", "get"], { ignoreError: true }).output,
   );
+  const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
+  const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
+  const localInferenceHealth =
+    typeof currentProvider === "string" ? probeLocalProviderHealth(currentProvider) : null;
   if (sb) {
     console.log("");
     console.log(`  Sandbox: ${sb.name}`);
-    console.log(`    Model:    ${(live && live.model) || sb.model || "unknown"}`);
-    console.log(`    Provider: ${(live && live.provider) || sb.provider || "unknown"}`);
+    console.log(`    Model:    ${currentModel}`);
+    console.log(`    Provider: ${currentProvider}`);
+    if (localInferenceHealth) {
+      console.log(
+        `    Inference: ${localInferenceHealth.ok ? `${G}healthy${R}` : `${_RD}unreachable${R}`} (${localInferenceHealth.endpoint})`,
+      );
+      if (!localInferenceHealth.ok) {
+        console.log(`      ${localInferenceHealth.detail}`);
+      }
+    }
     console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
     if (sb.dangerouslySkipPermissions) {
@@ -1253,10 +1232,11 @@ function sandboxPolicyList(sandboxName) {
   console.log("");
 }
 
-function cleanupSandboxServices(sandboxName) {
-  // Stop host services (cloudflared) and clean up PID directory.
-  const { stopAll } = require("./lib/services");
-  stopAll({ sandboxName });
+function cleanupSandboxServices(sandboxName, { stopHostServices = false } = {}) {
+  if (stopHostServices) {
+    const { stopAll } = require("./lib/services");
+    stopAll({ sandboxName });
+  }
   try {
     fs.rmSync(`/tmp/nemoclaw-services-${sandboxName}`, { recursive: true, force: true });
   } catch {
@@ -1272,9 +1252,10 @@ function cleanupSandboxServices(sandboxName) {
 async function sandboxDestroy(sandboxName, args = []) {
   const skipConfirm = args.includes("--yes") || args.includes("--force");
   if (!skipConfirm) {
-    const answer = await askPrompt(
-      `  ${YW}Destroy sandbox '${sandboxName}'?${R} This cannot be undone. [y/N]: `,
-    );
+    console.log(`  ${YW}Destroy sandbox '${sandboxName}'?${R}`);
+    console.log("  This will permanently delete the sandbox and all workspace files inside it.");
+    console.log("  This cannot be undone.");
+    const answer = await askPrompt("  Type 'yes' to confirm, or press Enter to cancel [y/N]: ");
     if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
       console.log("  Cancelled.");
       return;
@@ -1285,8 +1266,6 @@ async function sandboxDestroy(sandboxName, args = []) {
   const sb = registry.getSandbox(sandboxName);
   if (sb && sb.nimContainer) nim.stopNimContainerByName(sb.nimContainer);
   else nim.stopNimContainer(sandboxName);
-
-  cleanupSandboxServices(sandboxName);
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
@@ -1302,6 +1281,13 @@ async function sandboxDestroy(sandboxName, args = []) {
     console.error(`  Failed to destroy sandbox '${sandboxName}'.`);
     process.exit(deleteResult.status || 1);
   }
+
+  const shouldStopHostServices =
+    (deleteResult.status === 0 || alreadyGone) &&
+    registry.listSandboxes().sandboxes.length === 1 &&
+    !!registry.getSandbox(sandboxName);
+
+  cleanupSandboxServices(sandboxName, { stopHostServices: shouldStopHostServices });
 
   const removed = registry.removeSandbox(sandboxName);
   const session = onboardSession.loadSession();
