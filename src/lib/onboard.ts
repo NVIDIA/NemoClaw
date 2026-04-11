@@ -2481,7 +2481,9 @@ async function createSandbox(
   const enabledEnvKeys =
     enabledChannels != null
       ? new Set(
-          MESSAGING_CHANNELS.filter((c) => enabledChannels.includes(c.name)).map((c) => c.envKey),
+          MESSAGING_CHANNELS.filter((c) => enabledChannels.includes(c.name)).flatMap((c) =>
+            c.appTokenEnvKey ? [c.envKey, c.appTokenEnvKey] : [c.envKey],
+          ),
         )
       : null;
 
@@ -2495,6 +2497,11 @@ async function createSandbox(
       name: `${sandboxName}-slack-bridge`,
       envKey: "SLACK_BOT_TOKEN",
       token: getMessagingToken("SLACK_BOT_TOKEN"),
+    },
+    {
+      name: `${sandboxName}-slack-app`,
+      envKey: "SLACK_APP_TOKEN",
+      token: getMessagingToken("SLACK_APP_TOKEN"),
     },
     {
       name: `${sandboxName}-telegram-bridge`,
@@ -2656,15 +2663,22 @@ async function createSandbox(
     );
     process.exit(1);
   }
-  const activeMessagingChannels = messagingTokenDefs
-    .filter(({ token }) => !!token)
-    .map(({ envKey }) => {
-      if (envKey === "DISCORD_BOT_TOKEN") return "discord";
-      if (envKey === "SLACK_BOT_TOKEN") return "slack";
-      if (envKey === "TELEGRAM_BOT_TOKEN") return "telegram";
-      return null;
-    })
-    .filter(Boolean);
+  const tokensByEnvKey = Object.fromEntries(messagingTokenDefs.map(({ envKey, token }) => [envKey, token]));
+  const activeMessagingChannels = [
+    ...new Set(
+      messagingTokenDefs
+        .filter(({ token }) => !!token)
+        .map(({ envKey }) => {
+          if (envKey === "DISCORD_BOT_TOKEN") return "discord";
+          if (envKey === "SLACK_BOT_TOKEN") return "slack";
+          // SLACK_APP_TOKEN alone does not enable slack; bot token is required.
+          if (envKey === "SLACK_APP_TOKEN") return tokensByEnvKey["SLACK_BOT_TOKEN"] ? "slack" : null;
+          if (envKey === "TELEGRAM_BOT_TOKEN") return "telegram";
+          return null;
+        })
+        .filter(Boolean),
+    ),
+  ];
   // Build allowed sender IDs map from env vars set during the messaging prompt.
   // Each channel with a userIdEnvKey in MESSAGING_CHANNELS may have a
   // comma-separated list of IDs (e.g. TELEGRAM_ALLOWED_IDS="123,456").
@@ -2739,6 +2753,7 @@ async function createSandbox(
     "BEDROCK_API_KEY",
     "DISCORD_BOT_TOKEN",
     "SLACK_BOT_TOKEN",
+    "SLACK_APP_TOKEN",
     "TELEGRAM_BOT_TOKEN",
     webSearch.BRAVE_API_KEY_ENV,
   ]);
@@ -3701,6 +3716,10 @@ const MESSAGING_CHANNELS = [
     description: "Slack bot messaging",
     help: "Slack API → Your Apps → OAuth & Permissions → Bot User OAuth Token (xoxb-...).",
     label: "Slack Bot Token",
+    appTokenEnvKey: "SLACK_APP_TOKEN",
+    appTokenHelp:
+      "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
+    appTokenLabel: "Slack App Token (Socket Mode)",
   },
 ];
 
