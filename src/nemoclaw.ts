@@ -66,6 +66,7 @@ const {
   runUninstallCommand,
 } = require("./lib/uninstall-command");
 const agentRuntime = require("../bin/lib/agent-runtime");
+const { appendAuditEntry, runVerifyAudit } = require("./lib/audit-log");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -81,6 +82,7 @@ const GLOBAL_COMMANDS = new Set([
   "debug",
   "uninstall",
   "credentials",
+  "verify-audit",
   "help",
   "--help",
   "-h",
@@ -998,6 +1000,7 @@ async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false 
   if (process.stdout.isTTY && !["1", "true"].includes(String(process.env.NEMOCLAW_NO_CONNECT_HINT || ""))) {
     console.log("");
     console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
+    appendAuditEntry("sandbox.connect", `Connected to sandbox '${sandboxName}'`, { meta: { sandbox: sandboxName } });
     console.log(`  ${D}Inside the sandbox, run \`openclaw tui\` to start chatting with the agent.${R}`);
     console.log(`  ${D}Type \`exit\` (or Ctrl-D) to return to the host shell.${R}`);
     console.log("");
@@ -1309,6 +1312,7 @@ async function sandboxDestroy(sandboxName, args = []) {
     console.log(`  Sandbox '${sandboxName}' was already absent from the live gateway.`);
   }
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);
+  appendAuditEntry("sandbox.destroy", `Sandbox '${sandboxName}' destroyed`, { meta: { sandbox: sandboxName } });
 }
 
 // ── Help ─────────────────────────────────────────────────────────
@@ -1347,6 +1351,7 @@ function help() {
   Troubleshooting:
     nemoclaw debug [--quick]         Collect diagnostics for bug reports
     nemoclaw debug --output FILE     Save diagnostics tarball for GitHub issues
+    nemoclaw verify-audit ${D}[FILE]${R}   Verify audit log hash chain integrity
 
   ${G}Credentials:${R}
     nemoclaw credentials list        List stored credential keys
@@ -1382,6 +1387,7 @@ const [cmd, ...args] = process.argv.slice(2);
   if (GLOBAL_COMMANDS.has(cmd)) {
     switch (cmd) {
       case "onboard":
+        appendAuditEntry("onboard.start", "Onboard initiated", { meta: { args } });
         await onboard(args);
         break;
       case "setup":
@@ -1410,6 +1416,9 @@ const [cmd, ...args] = process.argv.slice(2);
         break;
       case "credentials":
         await credentialsCommand(args);
+        break;
+      case "verify-audit":
+        process.exitCode = runVerifyAudit(args);
         break;
       case "list":
         await listSandboxes();
@@ -1446,6 +1455,7 @@ const [cmd, ...args] = process.argv.slice(2);
         sandboxLogs(cmd, actionArgs.includes("--follow"));
         break;
       case "policy-add":
+        appendAuditEntry("policy.add", `Policy preset added to sandbox '${cmd}'`, { meta: { sandbox: cmd } });
         await sandboxPolicyAdd(cmd, actionArgs);
         break;
       case "policy-list":
