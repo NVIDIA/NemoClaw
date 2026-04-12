@@ -383,15 +383,27 @@ if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exec gosu sandbox "${NEMOCLAW_CMD[@]}"
 fi
 
-# SECURITY: Protect gateway log from sandbox user tampering
-touch /tmp/gateway.log
-chmod 600 /tmp/gateway.log
-chown gateway:gateway /tmp/gateway.log
+# SECURITY: Protect gateway log from sandbox user tampering.
+# Guard against symlink hijacking: if the path already exists as a symlink,
+# an attacker could point it at a sensitive file and have the entrypoint
+# overwrite it. Reject symlinks, then use mktemp+mv to avoid TOCTOU races.
+for _log_path in /tmp/gateway.log /tmp/auto-pair.log; do
+  if [ -L "$_log_path" ]; then
+    echo "[SECURITY] $_log_path is a symlink — refusing to start (possible symlink hijack)" >&2
+    exit 1
+  fi
+  rm -f "$_log_path"
+done
 
-# Separate log for auto-pair so sandbox user can write to it
-touch /tmp/auto-pair.log
-chmod 600 /tmp/auto-pair.log
-chown sandbox:sandbox /tmp/auto-pair.log
+_gw_log="$(mktemp /tmp/gateway.log.XXXXXX)"
+chmod 600 "$_gw_log"
+chown gateway:gateway "$_gw_log"
+mv "$_gw_log" /tmp/gateway.log
+
+_ap_log="$(mktemp /tmp/auto-pair.log.XXXXXX)"
+chmod 600 "$_ap_log"
+chown sandbox:sandbox "$_ap_log"
+mv "$_ap_log" /tmp/auto-pair.log
 
 # Verify ALL symlinks in .openclaw point to expected .openclaw-data targets.
 # Dynamic scan so future OpenClaw symlinks are covered automatically.
