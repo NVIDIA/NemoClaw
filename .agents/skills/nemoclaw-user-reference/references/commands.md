@@ -44,7 +44,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```console
-$ nemoclaw onboard [--non-interactive] [--resume] [--from <Dockerfile>]
+$ nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [--yes-i-accept-third-party-software]
 ```
 
 > **Warning:** For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
@@ -70,6 +70,23 @@ or:
 
 ```console
 $ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 nemoclaw onboard --non-interactive
+```
+
+#### `--recreate-sandbox`
+
+Delete and recreate the existing sandbox instead of reusing it.
+Use this when you need onboarding to rebuild the sandbox after configuration changes or to recover from a broken sandbox state.
+
+```console
+$ nemoclaw onboard --resume --recreate-sandbox
+```
+
+#### `--agent <name>`
+
+Select a specific packaged agent during onboarding instead of using the default agent.
+
+```console
+$ nemoclaw onboard --agent hermes
 ```
 
 To enable Brave Search in non-interactive mode, set:
