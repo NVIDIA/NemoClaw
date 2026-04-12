@@ -60,11 +60,6 @@ function getPresetEndpoints(content) {
   return hosts;
 }
 
-/**
- * Extract just the network_policies entries (indented content under
- * the `network_policies:` key) from a preset file, stripping the
- * `preset:` metadata header.
- */
 function extractPresetEntries(presetContent) {
   if (!presetContent) return null;
   const npMatch = presetContent.match(/^network_policies:\n([\s\S]*)$/m);
@@ -72,19 +67,23 @@ function extractPresetEntries(presetContent) {
   return npMatch[1].trimEnd();
 }
 
-/**
- * Parse the output of `openshell policy get --full` which has a metadata
- * header (Version, Hash, etc.) followed by `---` and then the actual YAML.
- */
-function parseCurrentPolicy(raw) {
+function normalizePolicyCandidate(raw) {
   if (!raw) return "";
   const sep = raw.indexOf("---");
-  const candidate = (sep === -1 ? raw : raw.slice(sep + 3)).trim();
-  if (!candidate) return "";
+  return (sep === -1 ? raw : raw.slice(sep + 3)).trim();
+}
+
+function isLikelyPolicyYaml(candidate) {
+  if (!candidate) return false;
   if (/^(error|failed|invalid|warning|status)\b/i.test(candidate)) {
-    return "";
+    return false;
   }
-  if (!/^[a-z_][a-z0-9_]*\s*:/m.test(candidate)) {
+  return /^[a-z_][a-z0-9_]*\s*:/m.test(candidate);
+}
+
+function parseCurrentPolicy(raw) {
+  const candidate = normalizePolicyCandidate(raw);
+  if (!isLikelyPolicyYaml(candidate)) {
     return "";
   }
   try {
@@ -98,24 +97,14 @@ function parseCurrentPolicy(raw) {
   return candidate;
 }
 
-/**
- * Build the openshell policy set command with properly quoted arguments.
- */
 function buildPolicySetCommand(policyFile, sandboxName) {
   return `${getOpenshellCommand()} policy set --policy ${shellQuote(policyFile)} --wait ${shellQuote(sandboxName)}`;
 }
 
-/**
- * Build the openshell policy get command with properly quoted arguments.
- */
 function buildPolicyGetCommand(sandboxName) {
   return `${getOpenshellCommand()} policy get --full ${shellQuote(sandboxName)} 2>/dev/null`;
 }
 
-/**
- * Text-based fallback for merging preset entries into policy YAML.
- * Used when preset entries cannot be parsed as structured YAML.
- */
 function textBasedMerge(currentPolicy, presetEntries) {
   if (!currentPolicy) {
     return "version: 1\n\nnetwork_policies:\n" + presetEntries;
@@ -148,40 +137,51 @@ function textBasedMerge(currentPolicy, presetEntries) {
   return merged;
 }
 
-/**
- * Merge preset entries into existing policy YAML using structured YAML
- * parsing. Replaces the previous text-based manipulation which could
- * produce invalid YAML when indentation or ordering varied.
- *
- * Behavior:
- *   - Parses both current policy and preset entries as YAML
- *   - Merges network_policies by name (preset overrides on collision)
- *   - Preserves all non-network sections (filesystem_policy, process, etc.)
- *   - Ensures version: 1 exists
- *
- * @param {string} currentPolicy - Existing policy YAML (may be empty/versionless)
- * @param {string} presetEntries - Indented network_policies entries from preset
- * @returns {string} Merged YAML
- */
+function parsePresetPolicies(presetEntries) {
+  try {
+    const wrapped = "network_policies:\n" + presetEntries;
+    const parsed = YAML.parse(wrapped);
+    return parsed?.network_policies;
+  } catch {
+    return null;
+  }
+}
+
+function parsePolicyYamlOrFallback(currentPolicy, presetEntries) {
+  try {
+    const current = YAML.parse(currentPolicy);
+    return current && typeof current === "object" ? current : {};
+  } catch {
+    return textBasedMerge(currentPolicy, presetEntries);
+  }
+}
+
+function mergeNetworkPolicies(current, presetPolicies) {
+  const existingNp = current.network_policies;
+  if (existingNp && typeof existingNp === "object" && !Array.isArray(existingNp)) {
+    return { ...existingNp, ...presetPolicies };
+  }
+  return presetPolicies;
+}
+
+function buildMergedPolicyOutput(current, mergedNp) {
+  const output = { version: current.version || 1 };
+  for (const [key, val] of Object.entries(current)) {
+    if (key !== "version" && key !== "network_policies") {
+      output[key] = val;
+    }
+  }
+  output.network_policies = mergedNp;
+  return YAML.stringify(output);
+}
+
 function mergePresetIntoPolicy(currentPolicy, presetEntries) {
   const normalizedCurrentPolicy = parseCurrentPolicy(currentPolicy);
   if (!presetEntries) {
     return normalizedCurrentPolicy || "version: 1\n\nnetwork_policies:\n";
   }
 
-  // Parse preset entries. They come as indented content under network_policies:,
-  // so we wrap them to make valid YAML for parsing.
-  let presetPolicies;
-  try {
-    const wrapped = "network_policies:\n" + presetEntries;
-    const parsed = YAML.parse(wrapped);
-    presetPolicies = parsed?.network_policies;
-  } catch {
-    presetPolicies = null;
-  }
-
-  // If YAML parsing failed or entries are not a mergeable object,
-  // fall back to the text-based approach for backward compatibility.
+  const presetPolicies = parsePresetPolicies(presetEntries);
   if (!presetPolicies || typeof presetPolicies !== "object" || Array.isArray(presetPolicies)) {
     return textBasedMerge(normalizedCurrentPolicy, presetEntries);
   }
@@ -190,38 +190,16 @@ function mergePresetIntoPolicy(currentPolicy, presetEntries) {
     return YAML.stringify({ version: 1, network_policies: presetPolicies });
   }
 
-  // Parse the current policy as structured YAML
-  let current;
-  try {
-    current = YAML.parse(normalizedCurrentPolicy);
-  } catch {
-    return textBasedMerge(normalizedCurrentPolicy, presetEntries);
+  const current = parsePolicyYamlOrFallback(normalizedCurrentPolicy, presetEntries);
+  if (typeof current === "string") {
+    return current;
   }
 
-  if (!current || typeof current !== "object") current = {};
-
-  // Structured merge: preset entries override existing on name collision.
-  // Guard: network_policies may be an array in legacy policies — only
-  // object-merge when both sides are plain objects.
-  const existingNp = current.network_policies;
-  let mergedNp;
-  if (existingNp && typeof existingNp === "object" && !Array.isArray(existingNp)) {
-    mergedNp = { ...existingNp, ...presetPolicies };
-  } else {
-    mergedNp = presetPolicies;
-  }
-
-  const output = { version: current.version || 1 };
-  for (const [key, val] of Object.entries(current)) {
-    if (key !== "version" && key !== "network_policies") output[key] = val;
-  }
-  output.network_policies = mergedNp;
-
-  return YAML.stringify(output);
+  const mergedNp = mergeNetworkPolicies(current, presetPolicies);
+  return buildMergedPolicyOutput(current, mergedNp);
 }
-function applyPreset(sandboxName, presetName) {
-  // Guard against truncated sandbox names — WSL can truncate hyphenated
-  // names during argument parsing, e.g. "my-assistant" → "m"
+
+function validateSandboxName(sandboxName) {
   const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
   if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
     throw new Error(
@@ -229,6 +207,48 @@ function applyPreset(sandboxName, presetName) {
         `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
     );
   }
+}
+
+function readCurrentPolicy(sandboxName) {
+  try {
+    return runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+  } catch {
+    return "";
+  }
+}
+
+function writeMergedPolicyFile(merged) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
+  const tmpFile = path.join(tmpDir, "policy.yaml");
+  fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
+  return { tmpDir, tmpFile };
+}
+
+function cleanupPolicyTempFile(tmpDir, tmpFile) {
+  try {
+    fs.unlinkSync(tmpFile);
+  } catch {
+    /* ignored */
+  }
+  try {
+    fs.rmdirSync(tmpDir);
+  } catch {
+    /* ignored */
+  }
+}
+
+function updateSandboxPolicies(sandboxName, presetName) {
+  const sandbox = registry.getSandbox(sandboxName);
+  if (!sandbox) return;
+  const pols = sandbox.policies || [];
+  if (!pols.includes(presetName)) {
+    pols.push(presetName);
+  }
+  registry.updateSandbox(sandboxName, { policies: pols });
+}
+
+function applyPreset(sandboxName, presetName) {
+  validateSandboxName(sandboxName);
 
   const presetContent = loadPreset(presetName);
   if (!presetContent) {
@@ -242,15 +262,7 @@ function applyPreset(sandboxName, presetName) {
     return false;
   }
 
-  // Get current policy YAML from sandbox
-  let rawPolicy = "";
-  try {
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
-  } catch {
-    /* ignored */
-  }
-
-  const currentPolicy = parseCurrentPolicy(rawPolicy);
+  const currentPolicy = parseCurrentPolicy(readCurrentPolicy(sandboxName));
   const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
 
   const endpoints = getPresetEndpoints(presetContent);
@@ -258,36 +270,15 @@ function applyPreset(sandboxName, presetName) {
     console.log(`  Widening sandbox egress — adding: ${endpoints.join(", ")}`);
   }
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
-  const tmpFile = path.join(tmpDir, "policy.yaml");
-  fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
-
+  const { tmpDir, tmpFile } = writeMergedPolicyFile(merged);
   try {
     run(buildPolicySetCommand(tmpFile, sandboxName));
-
     console.log(`  Applied preset: ${presetName}`);
   } finally {
-    try {
-      fs.unlinkSync(tmpFile);
-    } catch {
-      /* ignored */
-    }
-    try {
-      fs.rmdirSync(tmpDir);
-    } catch {
-      /* ignored */
-    }
+    cleanupPolicyTempFile(tmpDir, tmpFile);
   }
 
-  const sandbox = registry.getSandbox(sandboxName);
-  if (sandbox) {
-    const pols = sandbox.policies || [];
-    if (!pols.includes(presetName)) {
-      pols.push(presetName);
-    }
-    registry.updateSandbox(sandboxName, { policies: pols });
-  }
-
+  updateSandboxPolicies(sandboxName, presetName);
   return true;
 }
 
@@ -351,7 +342,6 @@ const PERMISSIVE_POLICY_PATH = path.join(
 );
 
 function resolvePermissivePolicyPath(sandboxName) {
-  // Use agent-specific permissive policy if the sandbox has an agent with one.
   try {
     const sandbox = registry.getSandbox(sandboxName);
     if (sandbox?.agent && sandbox.agent !== "openclaw") {
@@ -369,13 +359,7 @@ function resolvePermissivePolicyPath(sandboxName) {
 }
 
 function applyPermissivePolicy(sandboxName) {
-  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
-  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
-    throw new Error(
-      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
-        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
-    );
-  }
+  validateSandboxName(sandboxName);
 
   const policyPath = resolvePermissivePolicyPath(sandboxName);
   if (!fs.existsSync(policyPath)) {
