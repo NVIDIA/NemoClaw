@@ -401,6 +401,7 @@ describe("onboard helpers", () => {
   it("binds the dashboard forward to all interfaces under WSL", () => {
     const command = getDashboardForwardStartCommand("the-crucible", {
       env: { WSL_DISTRO_NAME: "Ubuntu" },
+      openshellBinary: "/usr/bin/openshell",
       platform: "linux",
       release: "6.6.87.2-microsoft-standard-WSL2",
     });

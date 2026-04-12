@@ -457,8 +457,9 @@ function getOpenshellBinary() {
   return OPENSHELL_BIN;
 }
 
-function openshellShellCommand(args) {
-  return [shellQuote(getOpenshellBinary()), ...args.map((arg) => shellQuote(arg))].join(" ");
+function openshellShellCommand(args, options = {}) {
+  const openshellBinary = options.openshellBinary || getOpenshellBinary();
+  return [shellQuote(openshellBinary), ...args.map((arg) => shellQuote(arg))].join(" ");
 }
 
 function runOpenshell(args, opts = {}) {
@@ -4246,7 +4247,10 @@ function getDashboardForwardStartCommand(sandboxName, options = {}) {
   const forwardTarget = isWsl(options)
     ? `0.0.0.0:${CONTROL_UI_PORT}`
     : resolveDashboardForwardTarget(`http://127.0.0.1:${CONTROL_UI_PORT}`);
-  return `${openshellShellCommand(["forward", "start", "--background", forwardTarget, sandboxName])}`;
+  return `${openshellShellCommand(
+    ["forward", "start", "--background", forwardTarget, sandboxName],
+    options,
+  )}`;
 }
 
 function buildAuthenticatedDashboardUrl(baseUrl, token = null) {
