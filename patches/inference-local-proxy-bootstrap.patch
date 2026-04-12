@@ -1,0 +1,114 @@
+diff --git a/scripts/nemoclaw-start.sh b/scripts/nemoclaw-start.sh
+index f995002..09b9da6 100755
+--- a/scripts/nemoclaw-start.sh
++++ b/scripts/nemoclaw-start.sh
+@@ -703,6 +703,44 @@ export http_proxy="$_PROXY_URL"
+ export https_proxy="$_PROXY_URL"
+ export no_proxy="$_NO_PROXY_VAL"
+ 
++# inference.local is intentionally routed through the OpenShell proxy. That
++# proxy terminates TLS with an OpenShell Sandbox CA that is not present in the
++# sandbox trust store by default. OpenClaw's Node/undici client validates TLS,
++# so bootstrap a small CA bundle from the proxy-presented chain and expose it
++# through NODE_EXTRA_CA_CERTS for both the gateway and interactive sessions.
++#
++# This preserves TLS verification instead of disabling it globally.
++_INFERENCE_LOCAL_CA_FILE="/tmp/nemoclaw-inference-local-ca.pem"
++bootstrap_inference_local_ca() {
++  [ "${NEMOCLAW_SKIP_INFERENCE_LOCAL_CA_BOOTSTRAP:-0}" = "1" ] && return 0
++  command -v openssl >/dev/null 2>&1 || return 0
++  local certs
++  if command -v timeout >/dev/null 2>&1; then
++    certs="$(timeout 5 openssl s_client \
++      -proxy "${PROXY_HOST}:${PROXY_PORT}" \
++      -connect inference.local:443 \
++      -servername inference.local \
++      -showcerts \
++      </dev/null 2>/dev/null | sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p')" || return 0
++  else
++    certs="$(openssl s_client \
++      -proxy "${PROXY_HOST}:${PROXY_PORT}" \
++      -connect inference.local:443 \
++      -servername inference.local \
++      -showcerts \
++      </dev/null 2>/dev/null | sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p')" || return 0
++  fi
++  [ -n "$certs" ] || return 0
++  printf '%s\n' "$certs" >"$_INFERENCE_LOCAL_CA_FILE"
++  chmod 644 "$_INFERENCE_LOCAL_CA_FILE"
++}
++bootstrap_inference_local_ca
++export NODE_EXTRA_CA_CERTS="$_INFERENCE_LOCAL_CA_FILE"
++case " ${NODE_OPTIONS:-} " in
++  *" --use-env-proxy "*) ;;
++  *) export NODE_OPTIONS="${NODE_OPTIONS:+${NODE_OPTIONS} }--use-env-proxy" ;;
++esac
++
+ # OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
+ # time a user connects via `openshell sandbox connect`.  The connect path spawns
+ # `/bin/bash -i` (interactive, non-login), which sources ~/.bashrc — NOT
+@@ -732,6 +770,11 @@ export NO_PROXY="$_NO_PROXY_VAL"
+ export http_proxy="$_PROXY_URL"
+ export https_proxy="$_PROXY_URL"
+ export no_proxy="$_NO_PROXY_VAL"
++export NODE_EXTRA_CA_CERTS="$_INFERENCE_LOCAL_CA_FILE"
++case " ${NODE_OPTIONS:-} " in
++  *" --use-env-proxy "*) ;;
++  *) export NODE_OPTIONS="${NODE_OPTIONS:+${NODE_OPTIONS} }--use-env-proxy" ;;
++esac
+ PROXYEOF
+   # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
+   echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
+diff --git a/test/service-env.test.ts b/test/service-env.test.ts
+index dcaa225..a68fc5b 100644
+--- a/test/service-env.test.ts
++++ b/test/service-env.test.ts
+@@ -237,13 +237,19 @@ describe("service environment", () => {
+         'echo "http_proxy=${http_proxy}"',
+         'echo "https_proxy=${https_proxy}"',
+         'echo "no_proxy=${no_proxy}"',
++        'echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS}"',
++        'echo "NODE_OPTIONS=${NODE_OPTIONS}"',
+       ].join("\n");
+       const tmpFile = join(tmpdir(), `nemoclaw-proxy-test-${process.pid}.sh`);
+       try {
+         writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+         const out = execFileSync("bash", [tmpFile], {
+           encoding: "utf-8",
+-          env: { ...process.env, ...env },
++          env: {
++            ...process.env,
++            NEMOCLAW_SKIP_INFERENCE_LOCAL_CA_BOOTSTRAP: "1",
++            ...env,
++          },
+         }).trim();
+         return Object.fromEntries(
+           out.split("\n").map((l) => {
+@@ -305,6 +311,16 @@ describe("service environment", () => {
+       expect(noProxy).toContain("10.200.0.1");
+     });
+ 
++    it("exports NODE_EXTRA_CA_CERTS for inference.local TLS trust", () => {
++      const vars = extractProxyVars();
++      expect(vars.NODE_EXTRA_CA_CERTS).toBe("/tmp/nemoclaw-inference-local-ca.pem");
++    });
++
++    it("appends --use-env-proxy to NODE_OPTIONS", () => {
++      const vars = extractProxyVars();
++      expect(vars.NODE_OPTIONS).toContain("--use-env-proxy");
++    });
++
+     it("entrypoint writes proxy-env.sh to writable data dir", () => {
+       const fakeDataDir = join(tmpdir(), `nemoclaw-data-test-${process.pid}`);
+       execFileSync("mkdir", ["-p", fakeDataDir]);
+@@ -342,6 +358,10 @@ describe("service environment", () => {
+         expect(envFile).toContain("export NO_PROXY=");
+         expect(envFile).not.toContain("inference.local");
+         expect(envFile).toContain("10.200.0.1");
++        expect(envFile).toContain(
++          'export NODE_EXTRA_CA_CERTS="/tmp/nemoclaw-inference-local-ca.pem"',
++        );
++        expect(envFile).toContain('--use-env-proxy');
+         // Tool cache redirects should be present (#804)
+         expect(envFile).toContain("npm_config_cache");
+         expect(envFile).toContain("HISTFILE");
