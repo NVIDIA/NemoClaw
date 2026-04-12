@@ -272,6 +272,9 @@ Check the active provider and endpoint:
 $ nemoclaw <name> status
 ```
 
+For local Ollama and local vLLM, `nemoclaw <name> status` also prints an `Inference` line that probes the host-side health endpoint directly.
+If that line shows `unreachable`, start the local backend first and then retry the request.
+
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
 Then verify the credential and base URL for the provider you selected during onboarding.
 

@@ -604,7 +604,7 @@ describe("onboard helpers", () => {
         { fetchEnabled: true },
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
-      const expected = buildWebSearchDockerConfig({ fetchEnabled: true }, "brv-test-key");
+      const expected = buildWebSearchDockerConfig({ fetchEnabled: true });
       assert.match(
         patched,
         new RegExp(
@@ -1792,6 +1792,26 @@ const { setupInference } = require(${onboardPath});
     assert.match(
       source,
       /skippedStepMessage\("policies", \(recordedPolicyPresets \|\| \[\]\)\.join\(", "\)\)/,
+    );
+  });
+
+  it("activates permissive policy via policy set when dangerouslySkipPermissions is true", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // The dangerouslySkipPermissions branch must call applyPermissivePolicy to
+    // activate the policy via `openshell policy set --wait`.  Without this,
+    // the base policy from sandbox create stays in Pending status (#897).
+    assert.match(
+      source,
+      /if \(dangerouslySkipPermissions\) \{\s*step\(8, 8, "Policy presets"\);\s*policies\.applyPermissivePolicy\(sandboxName\);/,
+    );
+    // Must NOT just print a skip message without activating the policy.
+    assert.doesNotMatch(
+      source,
+      /dangerouslySkipPermissions\)[\s\S]*?Skipped —.*permissive base policy/,
     );
   });
 
