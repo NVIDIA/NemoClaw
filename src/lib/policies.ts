@@ -262,8 +262,8 @@ function applyPreset(sandboxName, presetName) {
     return false;
   }
 
-  const currentPolicy = parseCurrentPolicy(readCurrentPolicy(sandboxName));
-  const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
+  const currentPolicyRaw = readCurrentPolicy(sandboxName);
+  const merged = mergePresetIntoPolicy(currentPolicyRaw, presetEntries);
 
   const endpoints = getPresetEndpoints(presetContent);
   if (endpoints.length > 0) {
