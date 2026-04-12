@@ -39,7 +39,7 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # at startup using capsh. The bounding set limits what caps any child process
 # (gateway, sandbox, agent) can ever acquire.
 #
-# Kept: cap_chown, cap_setuid, cap_setgid, cap_fowner, cap_kill
+# Kept: cap_chown, cap_setuid, cap_setgid, cap_kill
 #   — required by the entrypoint for gosu privilege separation and chown.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/797
 if [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ] && command -v capsh >/dev/null 2>&1; then
@@ -48,7 +48,7 @@ if [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ] && command -v capsh >/dev/null 2>&1; 
   if capsh --has-p=cap_setpcap 2>/dev/null; then
     export NEMOCLAW_CAPS_DROPPED=1
     exec capsh \
-      --drop=cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service \
+      --drop=cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service,cap_fowner \
       -- -c 'exec /usr/local/bin/nemoclaw-start "$@"' -- "$@"
   else
     echo "[SECURITY] CAP_SETPCAP not available — runtime already restricts capabilities" >&2
@@ -385,13 +385,13 @@ fi
 
 # SECURITY: Protect gateway log from sandbox user tampering
 touch /tmp/gateway.log
-chown gateway:gateway /tmp/gateway.log
 chmod 600 /tmp/gateway.log
+chown gateway:gateway /tmp/gateway.log
 
 # Separate log for auto-pair so sandbox user can write to it
 touch /tmp/auto-pair.log
-chown sandbox:sandbox /tmp/auto-pair.log
 chmod 600 /tmp/auto-pair.log
+chown sandbox:sandbox /tmp/auto-pair.log
 
 # Verify ALL symlinks in .openclaw point to expected .openclaw-data targets.
 # Dynamic scan so future OpenClaw symlinks are covered automatically.
