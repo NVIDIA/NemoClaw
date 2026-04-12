@@ -47,6 +47,81 @@ Gateway endpoint: https://127.0.0.1:8080/
 
 const GW_INFO_MISSING = "No gateway metadata found";
 
+// Active endpoint without a "Gateway: <name>" line — unnamed gateway
+const GW_INFO_UNNAMED_ENDPOINT = `
+Gateway Info
+
+Gateway endpoint: https://127.0.0.1:8080/
+`;
+
+// Status output with a foreign (non-nemoclaw) gateway name
+const STATUS_FOREIGN = `
+Server Status
+
+Gateway: other-gw
+Server: https://127.0.0.1:9090/
+Connected
+`;
+
+describe("hasStaleGateway", () => {
+  it("returns true when output contains the named gateway", () => {
+    expect(hasStaleGateway(GW_INFO_NAMED)).toBe(true);
+  });
+
+  it("returns false for empty string", () => {
+    expect(hasStaleGateway("")).toBe(false);
+  });
+
+  it("returns false when output says no gateway metadata found", () => {
+    expect(hasStaleGateway(GW_INFO_MISSING)).toBe(false);
+  });
+
+  it("returns false when gateway name does not match", () => {
+    const other = GW_INFO_NAMED.replace("nemoclaw", "other-gw");
+    expect(hasStaleGateway(other)).toBe(false);
+  });
+});
+
+describe("hasActiveGatewayInfo", () => {
+  it("returns true when output contains Gateway endpoint", () => {
+    expect(hasActiveGatewayInfo(GW_INFO_ACTIVE)).toBe(true);
+  });
+
+  it("returns true for unnamed endpoint output", () => {
+    expect(hasActiveGatewayInfo(GW_INFO_UNNAMED_ENDPOINT)).toBe(true);
+  });
+
+  it("returns false for empty string", () => {
+    expect(hasActiveGatewayInfo("")).toBe(false);
+  });
+
+  it("returns false when output says no gateway metadata found", () => {
+    expect(hasActiveGatewayInfo(GW_INFO_MISSING)).toBe(false);
+  });
+});
+
+describe("getReportedGatewayName", () => {
+  it("extracts gateway name from status output", () => {
+    expect(getReportedGatewayName(STATUS_CONNECTED)).toBe("nemoclaw");
+  });
+
+  it("extracts gateway name from gateway info output", () => {
+    expect(getReportedGatewayName(GW_INFO_NAMED)).toBe("nemoclaw");
+  });
+
+  it("returns null for empty string", () => {
+    expect(getReportedGatewayName("")).toBeNull();
+  });
+
+  it("returns null when no Gateway: line is present", () => {
+    expect(getReportedGatewayName(GW_INFO_UNNAMED_ENDPOINT)).toBeNull();
+  });
+
+  it("returns null for undefined", () => {
+    expect(getReportedGatewayName()).toBeNull();
+  });
+});
+
 describe("isGatewayConnected", () => {
   it("matches 'Connected' keyword", () => {
     expect(isGatewayConnected(STATUS_CONNECTED)).toBe(true);
@@ -97,6 +172,11 @@ describe("isGatewayHealthy", () => {
     const nonEmptyStatus = "some unexpected output";
     expect(isGatewayHealthy(nonEmptyStatus, GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(false);
   });
+
+  it("returns false for Disconnected status (regression)", () => {
+    // Disconnected is non-empty, so fallback must not trigger
+    expect(isGatewayHealthy("Disconnected", GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(false);
+  });
 });
 
 describe("getGatewayReuseState", () => {
@@ -106,6 +186,20 @@ describe("getGatewayReuseState", () => {
 
   it("returns 'healthy' via ARM64 fallback path (#1711)", () => {
     expect(getGatewayReuseState("", GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe("healthy");
+  });
+
+  it("returns 'foreign-active' when connected to a different gateway", () => {
+    expect(getGatewayReuseState(STATUS_FOREIGN, "", "")).toBe("foreign-active");
+  });
+
+  it("returns 'stale' when named gateway exists but no active endpoint", () => {
+    // gwInfo has "Gateway: nemoclaw" but activeGatewayInfo is empty — no live endpoint
+    expect(getGatewayReuseState("", GW_INFO_NAMED, "")).toBe("stale");
+  });
+
+  it("returns 'active-unnamed' when endpoint exists without gateway name", () => {
+    // No status, no gwInfo, but activeGatewayInfo has an endpoint without a Gateway: line
+    expect(getGatewayReuseState("", "", GW_INFO_UNNAMED_ENDPOINT)).toBe("active-unnamed");
   });
 
   it("returns 'missing' when all outputs are empty", () => {
