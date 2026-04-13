@@ -643,8 +643,8 @@ function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
 /**
  * Create or update an OpenShell provider in the gateway.
  *
- * Attempts `openshell provider create`; if that fails (provider already exists),
- * falls back to `openshell provider update` with the same credential.
+ * Checks whether the provider already exists via `openshell provider get`;
+ * uses `create` for new providers and `update` for existing ones.
  * @param {string} name - Provider name (e.g. "discord-bridge", "inference").
  * @param {string} type - Provider type ("openai", "anthropic", "generic").
  * @param {string} credentialEnv - Environment variable name for the credential.
@@ -653,25 +653,17 @@ function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
  * @returns {{ ok: boolean, status?: number, message?: string }}
  */
 function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
-  const createArgs = buildProviderArgs("create", name, type, credentialEnv, baseUrl);
+  const exists = providerExistsInGateway(name);
+  const action = exists ? "update" : "create";
+  const args = buildProviderArgs(action, name, type, credentialEnv, baseUrl);
   const runOpts = { ignoreError: true, env, stdio: ["ignore", "pipe", "pipe"] };
-  const createResult = runOpenshell(createArgs, runOpts);
-  if (createResult.status === 0) {
-    return { ok: true };
-  }
-
-  const updateArgs = buildProviderArgs("update", name, type, credentialEnv, baseUrl);
-  const updateResult = runOpenshell(updateArgs, runOpts);
-  if (updateResult.status !== 0) {
+  const result = runOpenshell(args, runOpts);
+  if (result.status !== 0) {
     const output =
-      compactText(`${createResult.stderr || ""} ${updateResult.stderr || ""}`) ||
-      compactText(`${createResult.stdout || ""} ${updateResult.stdout || ""}`) ||
-      `Failed to create or update provider '${name}'.`;
-    return {
-      ok: false,
-      status: updateResult.status || createResult.status || 1,
-      message: output,
-    };
+      compactText(`${result.stderr || ""}`) ||
+      compactText(`${result.stdout || ""}`) ||
+      `Failed to ${action} provider '${name}'.`;
+    return { ok: false, status: result.status || 1, message: output };
   }
   return { ok: true };
 }
