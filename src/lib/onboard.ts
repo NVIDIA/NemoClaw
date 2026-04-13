@@ -1008,10 +1008,6 @@ function patchStagedDockerfile(
       `ARG NEMOCLAW_PROXY_PORT=${proxyPortEnv}`,
     );
   }
-  dockerfile = dockerfile.replace(
-    /^ARG NEMOCLAW_WEB_CONFIG_B64=.*$/m,
-    `ARG NEMOCLAW_WEB_CONFIG_B64=${webSearch.buildWebSearchDockerConfig(webSearchConfig)}`,
-  );
   // Onboard flow expects immediate dashboard access without device pairing,
   // so disable device auth for images built during onboard (see #1217).
   dockerfile = dockerfile.replace(
@@ -2540,6 +2536,12 @@ async function createSandbox(
   // See: crates/openshell-sandbox/src/secrets.rs (placeholder rewriting),
   //      crates/openshell-router/src/backend.rs (inference auth injection).
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
+  if (webSearchConfig?.fetchEnabled) {
+    const braveKey = getCredential(webSearch.BRAVE_API_KEY_ENV) || process.env[webSearch.BRAVE_API_KEY_ENV];
+    if (braveKey) {
+      envArgs.push(formatEnvAssignment(webSearch.BRAVE_API_KEY_ENV, braveKey));
+    }
+  }
   const blockedSandboxEnvNames = new Set([
     // Derived from REMOTE_PROVIDER_CONFIG to prevent drift
     ...Object.values(REMOTE_PROVIDER_CONFIG)
