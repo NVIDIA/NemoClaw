@@ -23,6 +23,7 @@ import {
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
   getBlueprintMinOpenshellVersion,
+  getBlueprintMaxOpenshellVersion,
   versionGte,
   getRequestedModelHint,
   getRequestedProviderHint,
@@ -746,6 +747,62 @@ describe("onboard helpers", () => {
     expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(v)).toBe(true);
   });
 
+  it("getBlueprintMaxOpenshellVersion reads max_openshell_version from blueprint.yaml", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-max-version-"));
+    const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(blueprintDir, "blueprint.yaml"),
+      [
+        'version: "0.1.0"',
+        'min_openshell_version: "0.0.24"',
+        'max_openshell_version: "0.0.26"',
+        'min_openclaw_version: "2026.3.0"',
+      ].join("\n"),
+    );
+    try {
+      expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe("0.0.26");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("getBlueprintMaxOpenshellVersion returns null on missing or unparseable blueprint", () => {
+    // Missing directory
+    const missingDir = path.join(
+      os.tmpdir(),
+      "nemoclaw-blueprint-max-missing-" + Date.now().toString(),
+    );
+    expect(getBlueprintMaxOpenshellVersion(missingDir)).toBe(null);
+
+    // Present file, missing field — must NOT block onboard
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-no-max-field-"));
+    const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.writeFileSync(path.join(blueprintDir, "blueprint.yaml"), 'version: "0.1.0"\n');
+    try {
+      expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe(null);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("shipped blueprint.yaml exposes a parseable max_openshell_version", () => {
+    const repoRoot = path.resolve(import.meta.dirname, "..");
+    const v = getBlueprintMaxOpenshellVersion(repoRoot);
+    expect(v).not.toBe(null);
+    expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(v)).toBe(true);
+  });
+
+  it("max_openshell_version is greater than or equal to min_openshell_version in shipped blueprint", () => {
+    const repoRoot = path.resolve(import.meta.dirname, "..");
+    const min = getBlueprintMinOpenshellVersion(repoRoot);
+    const max = getBlueprintMaxOpenshellVersion(repoRoot);
+    expect(min).not.toBe(null);
+    expect(max).not.toBe(null);
+    expect(versionGte(max, min)).toBe(true);
+  });
+
   it("pins the gateway image to the installed OpenShell release version", () => {
     expect(getInstalledOpenshellVersion("openshell 0.0.12")).toBe("0.0.12");
     expect(getInstalledOpenshellVersion("openshell 0.0.13-dev.8+gbbcaed2ea")).toBe("0.0.13");
@@ -1261,12 +1318,13 @@ const { setupInference } = require(${onboardPath});
 
     expect(result.status).toBe(0);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
+    assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
-    assert.match(commands[1].command, /'--credential' 'NVIDIA_API_KEY'/);
-    assert.doesNotMatch(commands[1].command, /nvapi-secret-value/);
-    assert.match(commands[1].command, /provider' 'create'/);
-    assert.match(commands[2].command, /inference' 'set'/);
+    assert.match(commands[1].command, /'provider' 'get'/);
+    assert.match(commands[2].command, /'--credential' 'NVIDIA_API_KEY'/);
+    assert.doesNotMatch(commands[2].command, /nvapi-secret-value/);
+    assert.match(commands[2].command, /provider' 'update'/);
+    assert.match(commands[3].command, /inference' 'set'/);
   });
 
   it("detects when the live inference route already matches the requested provider and model", () => {
@@ -1459,6 +1517,8 @@ const registry = require(${registryPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  // provider-get returns not-found so we exercise the create path
+  if (command.includes("'provider' 'get'")) return { status: 1 };
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -1502,12 +1562,13 @@ const { setupInference } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
+    assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
-    assert.match(commands[1].command, /'--type' 'anthropic'/);
-    assert.match(commands[1].command, /'--credential' 'ANTHROPIC_API_KEY'/);
-    assert.doesNotMatch(commands[1].command, /sk-ant-secret-value/);
-    assert.match(commands[2].command, /'--provider' 'anthropic-prod'/);
+    assert.match(commands[1].command, /'provider' 'get'/);
+    assert.match(commands[2].command, /'--type' 'anthropic'/);
+    assert.match(commands[2].command, /'--credential' 'ANTHROPIC_API_KEY'/);
+    assert.doesNotMatch(commands[2].command, /sk-ant-secret-value/);
+    assert.match(commands[3].command, /'--provider' 'anthropic-prod'/);
   });
 
   it("updates OpenAI-compatible providers without passing an unsupported --type flag", () => {
@@ -1529,11 +1590,9 @@ const runner = require(${runnerPath});
 const registry = require(${registryPath});
 
 const commands = [];
-let callIndex = 0;
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
-  callIndex += 1;
-  return { status: callIndex === 2 ? 1 : 0 };
+  return { status: 0 };
 };
 runner.runCapture = (command) => {
   if (command.includes("inference") && command.includes("get")) {
@@ -1578,7 +1637,7 @@ const { setupInference } = require(${onboardPath});
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
-    assert.match(commands[1].command, /provider' 'create'/);
+    assert.match(commands[1].command, /'provider' 'get'/);
     assert.match(commands[2].command, /provider' 'update' 'openai-api'/);
     assert.doesNotMatch(commands[2].command, /'--type'/);
     assert.match(commands[3].command, /inference' 'set' '--no-verify'/);
@@ -1754,17 +1813,17 @@ const { setupInference } = require(${onboardPath});
     assert.match(recoverySource, /local curl invocation error/);
   });
 
-  it("suppresses expected provider-create AlreadyExists noise when update succeeds", () => {
+  it("checks provider existence before create/update to avoid AlreadyExists noise (#1155)", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
 
-    assert.match(source, /stdio: \["ignore", "pipe", "pipe"\]/);
-    // upsertProvider must NOT have its own console.log for Created/Updated —
-    // runner passthrough handles output, so duplicating it causes #1506.
-    assert.doesNotMatch(source, /console\.log\(`✓ Created provider \$\{name\}`\)/);
-    assert.doesNotMatch(source, /console\.log\(`✓ Updated provider \$\{name\}`\)/);
+    // upsertProvider must check existence first so it never triggers AlreadyExists.
+    assert.match(source, /providerExistsInGateway\(name\)/);
+    assert.match(source, /exists \? "update" : "create"/);
+    // Only one openshell call should be made (no create-then-update fallback).
+    assert.match(source, /const result = runOpenshell\(args, runOpts\)/);
   });
 
   it("starts the sandbox step before prompting for the sandbox name", () => {
@@ -1894,8 +1953,9 @@ const { setupInference } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.equal(payload.openai, "sk-stored-secret");
-    assert.equal(payload.commands[1].env.OPENAI_API_KEY, "sk-stored-secret");
-    assert.doesNotMatch(payload.commands[1].command, /sk-stored-secret/);
+    // commands[0]=gateway select, [1]=provider get, [2]=provider update
+    assert.equal(payload.commands[2].env.OPENAI_API_KEY, "sk-stored-secret");
+    assert.doesNotMatch(payload.commands[2].command, /sk-stored-secret/);
   });
 
   it("drops stale local sandbox registry entries when the live sandbox is gone", () => {
@@ -2174,6 +2234,8 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  // provider-get returns not-found so messaging providers are created fresh
+  if (command.includes("'provider' 'get'")) return { status: 1 };
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -2469,9 +2531,11 @@ const { createSandbox } = require(${onboardPath});
         "should NOT delete sandbox when providers already exist in gateway",
       );
 
-      // Providers should still be upserted on reuse (credential refresh)
+      // Providers should still be upserted on reuse (credential refresh).
+      // Since the mock reports providers as existing (run returns status 0),
+      // upsertProvider issues 'update' rather than 'create'.
       const providerUpserts = payload.commands.filter((entry) =>
-        entry.command.includes("'provider' 'create'"),
+        entry.command.includes("'provider' 'update'"),
       );
       assert.ok(
         providerUpserts.some((e) => e.command.includes("my-assistant-discord-bridge")),
@@ -3014,6 +3078,8 @@ const runner = require(${runnerPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push(command);
+  // First call is provider-get (not found), second is provider-create (success)
+  if (command.includes("'provider' 'get'")) return { status: 1, stdout: "", stderr: "" };
   return { status: 0, stdout: "", stderr: "" };
 };
 const { upsertProvider } = require(${onboardPath});
@@ -3031,9 +3097,10 @@ console.log(JSON.stringify({ result, commands }));
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.deepEqual(payload.result, { ok: true });
-    assert.equal(payload.commands.length, 1);
-    assert.match(payload.commands[0], /'provider' 'create' '--name' 'discord-bridge'/);
-    assert.match(payload.commands[0], /'--credential' 'DISCORD_BOT_TOKEN'/);
+    assert.equal(payload.commands.length, 2);
+    assert.match(payload.commands[0], /'provider' 'get'/);
+    assert.match(payload.commands[1], /'provider' 'create' '--name' 'discord-bridge'/);
+    assert.match(payload.commands[1], /'--credential' 'DISCORD_BOT_TOKEN'/);
   });
 
   it("upsertProvider does not add its own log line on top of runner output (#1506)", () => {
@@ -3052,6 +3119,8 @@ console.log(JSON.stringify({ result, commands }));
     const script = `
 const runner = require(${runnerPath});
 runner.run = (command, opts = {}) => {
+  // First call is provider-get (not found)
+  if (command.includes("'provider' 'get'")) return { status: 1, stdout: "", stderr: "" };
   // Simulate runner passthrough: writeRedactedResult writes stdout to terminal
   process.stdout.write("✓ Created provider test-bridge\\n");
   return { status: 0, stdout: "✓ Created provider test-bridge", stderr: "" };
@@ -3074,7 +3143,7 @@ upsertProvider("test-bridge", "generic", "TEST_TOKEN", null, { TEST_TOKEN: "tok"
     assert.equal(lines.length, 1, `Expected 1 log line but got ${lines.length}: ${result.stdout}`);
   });
 
-  it("upsertProvider falls back to update when create fails", () => {
+  it("upsertProvider updates existing provider instead of creating (#1155)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upsert-provider-update-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3090,14 +3159,10 @@ upsertProvider("test-bridge", "generic", "TEST_TOKEN", null, { TEST_TOKEN: "tok"
     const script = `
 const runner = require(${runnerPath});
 const commands = [];
-let callCount = 0;
 runner.run = (command, opts = {}) => {
   commands.push(command);
-  callCount++;
-  // First call (create) fails, second call (update) succeeds
-  return callCount === 1
-    ? { status: 1, stdout: "", stderr: "already exists" }
-    : { status: 0, stdout: "", stderr: "" };
+  // provider-get succeeds (provider exists), then update succeeds
+  return { status: 0, stdout: "", stderr: "" };
 };
 const { upsertProvider } = require(${onboardPath});
 const result = upsertProvider("inference", "openai", "NVIDIA_API_KEY", "https://integrate.api.nvidia.com/v1");
@@ -3115,7 +3180,7 @@ console.log(JSON.stringify({ result, commands }));
     const payload = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.deepEqual(payload.result, { ok: true });
     assert.equal(payload.commands.length, 2);
-    assert.match(payload.commands[0], /'provider' 'create'/);
+    assert.match(payload.commands[0], /'provider' 'get'/);
     assert.match(payload.commands[1], /'provider' 'update'/);
     assert.match(
       payload.commands[1],
@@ -3123,7 +3188,7 @@ console.log(JSON.stringify({ result, commands }));
     );
   });
 
-  it("upsertProvider returns error details when both create and update fail", () => {
+  it("upsertProvider returns error details when create or update fails", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upsert-provider-fail-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3139,6 +3204,8 @@ console.log(JSON.stringify({ result, commands }));
     const script = `
 const runner = require(${runnerPath});
 runner.run = (command, opts = {}) => {
+  // provider-get says not found, then create fails
+  if (command.includes("'provider' 'get'")) return { status: 1, stdout: "", stderr: "" };
   return { status: 1, stdout: "", stderr: "gateway unreachable" };
 };
 const { upsertProvider } = require(${onboardPath});
@@ -3599,7 +3666,8 @@ const { setupInference } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
+    // gateway select + provider get + provider update + inference set
+    assert.equal(commands.length, 4);
   });
 
   it("accepts gateway inference output that omits the Route line", () => {
@@ -3668,7 +3736,8 @@ const { setupInference } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
+    // gateway select + provider get + provider update + inference set
+    assert.equal(commands.length, 4);
   });
 
   it(
@@ -3703,6 +3772,8 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  // provider-get returns not-found so messaging providers are created fresh
+  if (command.includes("'provider' 'get'")) return { status: 1 };
   return { status: 0 };
 };
 runner.runCapture = (command) => {
