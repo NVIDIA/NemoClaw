@@ -621,10 +621,12 @@ describe("policies", () => {
         }
       }
 
+      const deprecatedTlsPattern = /^\s*tls\s*:\s*["']?terminate["']?(?:\s+#.*)?\s*$/m;
+
       for (const file of yamlFiles) {
         const content = fs.readFileSync(file, "utf-8");
         assert.equal(
-          content.includes("tls: terminate"),
+          deprecatedTlsPattern.test(content),
           false,
           `${path.relative(REPO_ROOT, file)} still contains tls: terminate`,
         );
