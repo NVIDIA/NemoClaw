@@ -76,11 +76,13 @@ describe("credential exposure in process arguments", () => {
     expect(blocklist).toContain('"BEDROCK_API_KEY"');
     expect(blocklist).toContain('"DISCORD_BOT_TOKEN"');
     expect(blocklist).toContain('"SLACK_BOT_TOKEN"');
+    expect(blocklist).toContain('"SLACK_APP_TOKEN"');
     expect(blocklist).toContain('"TELEGRAM_BOT_TOKEN"');
     expect(src).toMatch(/streamSandboxCreate\(createCommand, sandboxEnv(?:, \{)?/);
     expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("NVIDIA_API_KEY"/);
     expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("DISCORD_BOT_TOKEN"/);
     expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("SLACK_BOT_TOKEN"/);
+    expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("SLACK_APP_TOKEN"/);
   });
 
   it("onboard curl probes use explicit timeouts", () => {

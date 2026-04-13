@@ -56,12 +56,12 @@ The following endpoint groups are allowed by default:
 * - `claude_code`
   - `api.anthropic.com:443`, `statsig.anthropic.com:443`, `sentry.io:443`
   - `/usr/local/bin/claude`
-  - All methods
+  - POST to inference paths on `api.anthropic.com`, POST on `statsig.anthropic.com`, GET only on `sentry.io`
 
 * - `nvidia`
   - `integrate.api.nvidia.com:443`, `inference-api.nvidia.com:443`
   - `/usr/local/bin/claude`, `/usr/local/bin/openclaw`
-  - All methods
+  - POST to inference and embedding paths, GET to model listings
 
 * - `clawhub`
   - `clawhub.ai:443`
@@ -81,7 +81,7 @@ The following endpoint groups are allowed by default:
 * - `npm_registry`
   - `registry.npmjs.org:443`
   - `/usr/local/bin/openclaw`, `/usr/local/bin/npm`, `/usr/local/bin/node`
-  - All methods, all paths
+  - GET only
 
 :::
 
