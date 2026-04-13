@@ -44,7 +44,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: POST, path: "/v1/messages" }
           - allow: { method: POST, path: "/v1/messages/batches" }
@@ -54,14 +53,12 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: POST, path: "/**" }
       - host: sentry.io
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: POST, path: "/api/*/envelope/**" }
           - allow: { method: POST, path: "/api/*/store/**" }
@@ -75,7 +72,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: POST, path: "/v1/chat/completions" }
           - allow: { method: POST, path: "/v1/completions" }
@@ -86,7 +82,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: POST, path: "/v1/chat/completions" }
           - allow: { method: POST, path: "/v1/completions" }
@@ -119,7 +114,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -127,7 +121,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -135,7 +128,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -151,14 +143,12 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
       - host: files.pythonhosted.org
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:
@@ -173,7 +163,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/bot*/**" }
           - allow: { method: POST, path: "/bot*/**" }
@@ -189,7 +178,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -200,7 +188,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:

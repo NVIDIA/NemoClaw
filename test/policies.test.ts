@@ -599,6 +599,38 @@ describe("policies", () => {
       }
     });
 
+    it("policy YAML files do not use deprecated tls termination", () => {
+      const roots = [
+        path.join(REPO_ROOT, "nemoclaw-blueprint", "policies"),
+        path.join(REPO_ROOT, "agents"),
+      ];
+      const stack = [...roots];
+      const yamlFiles = [];
+
+      while (stack.length > 0) {
+        const current = stack.pop();
+        for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+          const fullPath = path.join(current, entry.name);
+          if (entry.isDirectory()) {
+            stack.push(fullPath);
+            continue;
+          }
+          if (entry.name.endsWith(".yaml") || entry.name.endsWith(".yml")) {
+            yamlFiles.push(fullPath);
+          }
+        }
+      }
+
+      for (const file of yamlFiles) {
+        const content = fs.readFileSync(file, "utf-8");
+        assert.equal(
+          content.includes("tls: terminate"),
+          false,
+          `${path.relative(REPO_ROOT, file)} still contains tls: terminate`,
+        );
+      }
+    });
+
     it("pypi preset allows HEAD for pip lazy-wheel metadata checks", () => {
       // pip and uv use HEAD requests for lazy wheel downloads and
       // range-request support. GET-only would break pip install.
