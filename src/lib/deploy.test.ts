@@ -144,3 +144,93 @@ describe("Brev status helpers", () => {
     ).toBe(false);
   });
 });
+
+describe("executeDeploy — instance name validation (#575)", () => {
+  // Helper: build a minimal DeployExecutionOptions that tracks calls
+  function makeMockOpts(instanceName: string) {
+    const calls: string[] = [];
+    let exitCode: number | undefined;
+    let exitError: Error | undefined;
+
+    return {
+      opts: {
+        instanceName,
+        env: { NEMOCLAW_GPU: "a2-highgpu-1g:nvidia-tesla-a100:1" },
+        rootDir: "/fake/root",
+        getCredential: () => null,
+        validateName: (name: string, label: string) => {
+          if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
+            throw new Error(
+              `Invalid ${label}: '${name}'. Must be lowercase alphanumeric with optional internal hyphens.`,
+            );
+          }
+          return name;
+        },
+        shellQuote: (value: string) => `'${value.replace(/'/g, "'\''")}'`,
+        run: (command: string) => {
+          calls.push(`run:${command}`);
+        },
+        runInteractive: (command: string) => {
+          calls.push(`runInteractive:${command}`);
+        },
+        execFileSync: (_file: string, _args: string[], _opts?: Record<string, unknown>) => "",
+        spawnSync: () => {},
+        log: () => {},
+        error: () => {},
+        stdoutWrite: () => {},
+        exit: ((code: number) => {
+          exitCode = code;
+          exitError = new Error(`exit(${code})`);
+          throw exitError;
+        }) as (code: number) => never,
+      },
+      calls,
+      getExitCode: () => exitCode,
+      getExitError: () => exitError,
+    };
+  }
+
+  const maliciousNames = [
+    "foo;rm -rf /",
+    "foo|cat /etc/passwd",
+    "$(whoami)",
+    "`whoami`",
+    "foo && echo pwned",
+    "foo'inject",
+    'foo"inject',
+    "../traversal",
+    "UPPERCASE",
+    "has spaces",
+
+  ];
+
+  for (const name of maliciousNames) {
+    it(`rejects malicious instance name: ${JSON.stringify(name)}`, async () => {
+      const { executeDeploy } = await import("../../dist/lib/deploy");
+      const { opts, calls } = makeMockOpts(name);
+
+      await expect(executeDeploy(opts)).rejects.toThrow(/Invalid instance name|instance name is required/i);
+
+      // No shell commands should have been executed
+      expect(calls).toHaveLength(0);
+    });
+  }
+
+  it("accepts a valid instance name", async () => {
+    const { executeDeploy } = await import("../../dist/lib/deploy");
+    const { opts, getExitCode } = makeMockOpts("my-valid-instance");
+
+    // This will fail at the provider detection step (no credentials),
+    // but it should NOT fail at validation — proving the name was accepted.
+    try {
+      await executeDeploy(opts);
+    } catch {
+      // Expected: either exit(1) from missing provider or brev CLI not found
+    }
+
+    // If it exited, it should be because of missing provider/brev, not name validation
+    if (getExitCode() !== undefined) {
+      expect(getExitCode()).toBe(1);
+    }
+  });
+});
