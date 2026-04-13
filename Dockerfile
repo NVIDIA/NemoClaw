@@ -218,11 +218,18 @@ RUN mkdir -p /sandbox/.openclaw-data/logs \
 # Ensure exec approvals path compatibility when using a stale published base
 # image that still points to ~/.openclaw/exec-approvals.json.
 RUN OPENCLAW_DIST_DIR="$(npm root -g)/openclaw/dist" \
+    && if [ ! -d "$OPENCLAW_DIST_DIR" ]; then \
+        echo "Error: OpenClaw dist directory not found: $OPENCLAW_DIST_DIR"; \
+        exit 1; \
+    fi \
     && files_with_old_path="$(grep -R --include='*.js' -l "~/.openclaw/exec-approvals.json" "$OPENCLAW_DIST_DIR" || true)" \
     && if [ -n "$files_with_old_path" ]; then \
         echo "$files_with_old_path" | while IFS= read -r file; do \
             sed -i 's#~/.openclaw/exec-approvals.json#~/.openclaw-data/exec-approvals.json#g' "$file"; \
         done; \
+    elif ! grep -R --include='*.js' -q "~/.openclaw-data/exec-approvals.json" "$OPENCLAW_DIST_DIR"; then \
+        echo "Error: Unable to verify OpenClaw exec approvals path in dist"; \
+        exit 1; \
     fi \
     && if grep -R --include='*.js' -n "~/.openclaw/exec-approvals.json" "$OPENCLAW_DIST_DIR"; then \
         echo "Error: OpenClaw exec approvals path patch failed"; \
