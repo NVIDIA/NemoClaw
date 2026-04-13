@@ -9,7 +9,7 @@ const path = require("path");
 const os = require("os");
 const readline = require("readline");
 const YAML = require("yaml");
-const { ROOT, run, runCapture, shellQuote } = require("./runner");
+const { ROOT, run, shellQuote } = require("./runner");
 const registry = require("./registry");
 const { loadAgent } = require("./agent-defs");
 
@@ -199,22 +199,20 @@ function mergePresetIntoPolicy(currentPolicy, presetEntries) {
   return buildMergedPolicyOutput(current, mergedNp);
 }
 
+const SAFE_SANDBOX_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+
 function validateSandboxName(sandboxName) {
-  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
-  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
-    throw new Error(
-      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
-        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
-    );
+  if (!SAFE_SANDBOX_NAME_RE.test(sandboxName) || sandboxName.includes("..")) {
+    throw new Error(`Invalid sandbox name: ${JSON.stringify(sandboxName)}`);
   }
 }
 
 function readCurrentPolicy(sandboxName) {
-  try {
-    return runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
-  } catch {
-    return "";
+  const result = run(buildPolicyGetCommand(sandboxName), { ignoreError: true, suppressOutput: true });
+  if (result.status !== 0) {
+    return null;
   }
+  return String(result.stdout || "").trim();
 }
 
 function writeMergedPolicyFile(merged) {
@@ -263,6 +261,10 @@ function applyPreset(sandboxName, presetName) {
   }
 
   const currentPolicyRaw = readCurrentPolicy(sandboxName);
+  if (currentPolicyRaw === null) {
+    console.error(`  Failed to read current policy for sandbox: ${sandboxName}`);
+    return false;
+  }
   const merged = mergePresetIntoPolicy(currentPolicyRaw, presetEntries);
 
   const endpoints = getPresetEndpoints(presetContent);

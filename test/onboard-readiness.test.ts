@@ -103,13 +103,15 @@ describe("WSL sandbox name handling", () => {
     expect(cmd.includes("'m'")).toBeTruthy();
   });
 
-  it("applyPreset rejects truncated/invalid sandbox name", () => {
-    // Empty name
-    expect(() => applyPreset("", "npm")).toThrow(/Invalid or truncated sandbox name/);
-    // Name with uppercase (not valid per RFC 1123)
-    expect(() => applyPreset("My-Assistant", "npm")).toThrow(/Invalid or truncated sandbox name/);
-    // Name starting with hyphen
-    expect(() => applyPreset("-broken", "npm")).toThrow(/Invalid or truncated sandbox name/);
+  it("applyPreset accepts CLI-safe sandbox names and rejects unsafe ones", () => {
+    // Supported by CLI-safe naming (broader than RFC 1123)
+    expect(() => applyPreset("My-Assistant.v2", "npm")).not.toThrow();
+    expect(() => applyPreset("foo_bar", "npm")).not.toThrow();
+
+    // Still reject unsafe/path-traversal-like names
+    expect(() => applyPreset("", "npm")).toThrow(/Invalid sandbox name/);
+    expect(() => applyPreset("-broken", "npm")).toThrow(/Invalid sandbox name/);
+    expect(() => applyPreset("../escape", "npm")).toThrow(/Invalid sandbox name/);
   });
 
   it("readiness check uses exact match preventing truncated name false-positive", () => {
