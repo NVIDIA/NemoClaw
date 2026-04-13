@@ -414,12 +414,12 @@ function versionGte(left = "0.0.0", right = "0.0.0") {
 }
 
 /**
- * Read `min_openshell_version` from nemoclaw-blueprint/blueprint.yaml. Returns
- * null if the blueprint or field is missing or unparseable — callers must
- * treat null as "no constraint configured" so a malformed install does not
- * become a hard onboard blocker. See #1317.
+ * Read a semver field from nemoclaw-blueprint/blueprint.yaml. Returns null if
+ * the blueprint or field is missing or unparseable — callers must treat null
+ * as "no constraint configured" so a malformed install does not become a hard
+ * onboard blocker. See #1317.
  */
-function getBlueprintMinOpenshellVersion(rootDir = ROOT) {
+function getBlueprintVersionField(field, rootDir = ROOT) {
   try {
     // Lazy require: yaml is already a dependency via the policy helpers but
     // pulling it at module load would slow down `nemoclaw --help` for users
@@ -429,7 +429,7 @@ function getBlueprintMinOpenshellVersion(rootDir = ROOT) {
     if (!fs.existsSync(blueprintPath)) return null;
     const raw = fs.readFileSync(blueprintPath, "utf8");
     const parsed = YAML.parse(raw);
-    const value = parsed && parsed.min_openshell_version;
+    const value = parsed && parsed[field];
     if (typeof value !== "string") return null;
     const trimmed = value.trim();
     if (!/^[0-9]+\.[0-9]+\.[0-9]+/.test(trimmed)) return null;
@@ -437,6 +437,14 @@ function getBlueprintMinOpenshellVersion(rootDir = ROOT) {
   } catch {
     return null;
   }
+}
+
+function getBlueprintMinOpenshellVersion(rootDir = ROOT) {
+  return getBlueprintVersionField("min_openshell_version", rootDir);
+}
+
+function getBlueprintMaxOpenshellVersion(rootDir = ROOT) {
+  return getBlueprintVersionField("max_openshell_version", rootDir);
 }
 
 function getStableGatewayImageRef(versionOutput = null) {
@@ -1836,6 +1844,29 @@ async function preflight() {
       "    Or remove the existing binary so the installer can re-fetch a current build:",
     );
     console.error('      command -v openshell && rm -f "$(command -v openshell)"');
+    console.error("");
+    process.exit(1);
+  }
+  // Enforce nemoclaw-blueprint/blueprint.yaml's max_openshell_version. Newer
+  // OpenShell releases may change sandbox semantics that this NemoClaw version
+  // has not been validated against. Blocking early avoids silent runtime
+  // breakage. Users should upgrade NemoClaw to pick up support for newer
+  // OpenShell releases.
+  const maxOpenshellVersion = getBlueprintMaxOpenshellVersion();
+  if (
+    installedOpenshellVersion &&
+    maxOpenshellVersion &&
+    !versionGte(maxOpenshellVersion, installedOpenshellVersion)
+  ) {
+    console.error("");
+    console.error(
+      `  ✗ openshell ${installedOpenshellVersion} is above the maximum supported by this NemoClaw release.`,
+    );
+    console.error(`    blueprint.yaml max_openshell_version: ${maxOpenshellVersion}`);
+    console.error("");
+    console.error("    Upgrade NemoClaw to a version that supports your OpenShell release,");
+    console.error("    or install a supported OpenShell version:");
+    console.error("      https://github.com/NVIDIA/OpenShell/releases");
     console.error("");
     process.exit(1);
   }
@@ -4769,6 +4800,7 @@ module.exports = {
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
   getBlueprintMinOpenshellVersion,
+  getBlueprintMaxOpenshellVersion,
   versionGte,
   getRequestedModelHint,
   getRequestedProviderHint,

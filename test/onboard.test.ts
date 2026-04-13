@@ -23,6 +23,7 @@ import {
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
   getBlueprintMinOpenshellVersion,
+  getBlueprintMaxOpenshellVersion,
   versionGte,
   getRequestedModelHint,
   getRequestedProviderHint,
@@ -744,6 +745,62 @@ describe("onboard helpers", () => {
     const v = getBlueprintMinOpenshellVersion(repoRoot);
     expect(v).not.toBe(null);
     expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(v)).toBe(true);
+  });
+
+  it("getBlueprintMaxOpenshellVersion reads max_openshell_version from blueprint.yaml", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-max-version-"));
+    const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(blueprintDir, "blueprint.yaml"),
+      [
+        'version: "0.1.0"',
+        'min_openshell_version: "0.0.24"',
+        'max_openshell_version: "0.0.26"',
+        'min_openclaw_version: "2026.3.0"',
+      ].join("\n"),
+    );
+    try {
+      expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe("0.0.26");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("getBlueprintMaxOpenshellVersion returns null on missing or unparseable blueprint", () => {
+    // Missing directory
+    const missingDir = path.join(
+      os.tmpdir(),
+      "nemoclaw-blueprint-max-missing-" + Date.now().toString(),
+    );
+    expect(getBlueprintMaxOpenshellVersion(missingDir)).toBe(null);
+
+    // Present file, missing field — must NOT block onboard
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-no-max-field-"));
+    const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.writeFileSync(path.join(blueprintDir, "blueprint.yaml"), 'version: "0.1.0"\n');
+    try {
+      expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe(null);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("shipped blueprint.yaml exposes a parseable max_openshell_version", () => {
+    const repoRoot = path.resolve(import.meta.dirname, "..");
+    const v = getBlueprintMaxOpenshellVersion(repoRoot);
+    expect(v).not.toBe(null);
+    expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(v)).toBe(true);
+  });
+
+  it("max_openshell_version is greater than or equal to min_openshell_version in shipped blueprint", () => {
+    const repoRoot = path.resolve(import.meta.dirname, "..");
+    const min = getBlueprintMinOpenshellVersion(repoRoot);
+    const max = getBlueprintMaxOpenshellVersion(repoRoot);
+    expect(min).not.toBe(null);
+    expect(max).not.toBe(null);
+    expect(versionGte(max, min)).toBe(true);
   });
 
   it("pins the gateway image to the installed OpenShell release version", () => {
