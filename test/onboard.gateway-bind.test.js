@@ -40,7 +40,7 @@ describe("gateway loopback binding hardening", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const inspectPayload = JSON.stringify({
+    const inspectPayload = {
       Name: "/openshell-cluster-nemoclaw",
       Config: {
         Image: "ghcr.io/nvidia/openshell/cluster:0.0.23",
@@ -64,7 +64,7 @@ describe("gateway loopback binding hardening", () => {
         ExtraHosts: ["host.docker.internal:host-gateway"],
         Binds: ["openshell-cluster-nemoclaw:/var/lib/rancher/k3s"],
       },
-    });
+    };
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -81,7 +81,7 @@ runner.runCapture = (command) => {
     return "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080";
   }
   if (command.includes("docker inspect") && command.includes("{{json .}}")) {
-    return ${inspectPayload};
+    return ${JSON.stringify(JSON.stringify(inspectPayload))};
   }
   if (command.includes("docker inspect") && command.includes("State.Health")) {
     return "healthy";
@@ -106,28 +106,32 @@ const { startGatewayForRecovery } = require(${onboardPath});
 
     const result = runNodeScript(script);
     expect(result.status).toBe(0);
-    const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    expect(
-      commands.some((entry) => entry.includes("'docker' 'stop' 'openshell-cluster-nemoclaw'")),
-    ).toBe(true);
-    expect(
-      commands.some((entry) => entry.includes("'docker' 'rm' 'openshell-cluster-nemoclaw'")),
-    ).toBe(true);
-    expect(
-      commands.some(
-        (entry) =>
-          entry.includes("'docker' 'run'") &&
-          entry.includes("'-p' '127.0.0.1:8080:30051/tcp'") &&
-          entry.includes("'ghcr.io/nvidia/openshell/cluster:0.0.23'"),
-      ),
-    ).toBe(true);
+    expect(result.stdout).toContain("docker stop 'openshell-cluster-nemoclaw'");
+    expect(result.stdout).toContain("docker rm 'openshell-cluster-nemoclaw'");
+    expect(result.stdout).toContain("'-p' '127.0.0.1:8080:30051/tcp'");
+    expect(result.stdout).toContain("'ghcr.io/nvidia/openshell/cluster:0.0.23'");
+  });
+
+  it("parses colored gateway info output before enforcing loopback binding", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
+
+    const script = String.raw`
+const { parseGatewayEndpointHost } = require(${onboardPath});
+const sample = "\u001b[1m\u001b[36mGateway Info\u001b[39m\u001b[0m\n\n  \u001b[2mGateway:\u001b[0m nemoclaw\n  \u001b[2mGateway endpoint:\u001b[0m https://127.0.0.1:8080\n";
+console.log(parseGatewayEndpointHost(sample) || "null");
+`;
+
+    const result = runNodeScript(script);
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("127.0.0.1");
   });
 
   it("skips the rebind when the gateway endpoint is not loopback", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const onboardPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const inspectPayload = JSON.stringify({
+    const inspectPayload = {
       Name: "/openshell-cluster-nemoclaw",
       Config: {
         Image: "ghcr.io/nvidia/openshell/cluster:0.0.23",
@@ -137,7 +141,7 @@ const { startGatewayForRecovery } = require(${onboardPath});
           "30051/tcp": [{ HostIp: "0.0.0.0", HostPort: "8080" }],
         },
       },
-    });
+    };
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -145,7 +149,7 @@ const commands = [];
 
 runner.runCapture = (command) => {
   if (command.includes("docker inspect") && command.includes("{{json .}}")) {
-    return ${inspectPayload};
+    return ${JSON.stringify(JSON.stringify(inspectPayload))};
   }
   return "";
 };

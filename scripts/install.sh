@@ -837,7 +837,7 @@ is_source_checkout() {
     return 1
   fi
 
-  if [[ -n "${NEMOCLAW_REPO_ROOT:-}" || -d "${repo_root}/.git" ]]; then
+  if [[ -n "${NEMOCLAW_REPO_ROOT:-}" || -e "${repo_root}/.git" ]]; then
     return 0
   fi
 

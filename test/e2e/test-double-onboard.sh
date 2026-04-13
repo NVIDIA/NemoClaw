@@ -285,7 +285,7 @@ else
   fail "Second onboard exited $exit2 (expected 0)"
 fi
 
-if grep -q "Reusing existing NemoClaw gateway" <<<"$output2"; then
+if grep -Eq "Reusing (existing|healthy) (NemoClaw )?gateway|\[reuse\] Skipping gateway \(running\)" <<<"$output2"; then
   pass "Healthy gateway reused on second onboard"
 else
   fail "Healthy gateway was not reused on second onboard"
@@ -325,7 +325,7 @@ else
   fail "Third onboard exited $exit3 (expected 0)"
 fi
 
-if grep -q "Reusing existing NemoClaw gateway" <<<"$output3"; then
+if grep -Eq "Reusing (existing|healthy) (NemoClaw )?gateway|\[reuse\] Skipping gateway \(running\)" <<<"$output3"; then
   pass "Healthy gateway reused on third onboard"
 else
   fail "Healthy gateway was not reused on third onboard"

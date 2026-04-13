@@ -212,7 +212,7 @@ exit 98
     });
 
     expect(result.status).toBe(0);
-    const gitCalls = fs.readFileSync(gitLog, "utf-8");
+    const gitCalls = fs.existsSync(gitLog) ? fs.readFileSync(gitLog, "utf-8") : "";
     expect(gitCalls).not.toMatch(/clone/);
     expect(gitCalls).not.toMatch(/fetch/);
   }, 60_000);
@@ -1203,7 +1203,7 @@ fi`,
     });
 
     expect(result.status).toBe(0);
-    const gitCalls = fs.readFileSync(gitLog, "utf-8");
+    const gitCalls = fs.existsSync(gitLog) ? fs.readFileSync(gitLog, "utf-8") : "";
     expect(gitCalls).not.toMatch(/clone/);
     expect(gitCalls).not.toMatch(/fetch/);
   });
@@ -1316,6 +1316,29 @@ describe("installer pure helpers", () => {
   it("is_source_checkout: accepts an explicit source checkout with git metadata", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-checkout-git-"));
     fs.mkdirSync(path.join(tmp, ".git"));
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+    );
+    const r = spawnSync(
+      "bash",
+      [
+        "-c",
+        `source "${INSTALLER}" 2>/dev/null; is_source_checkout "${tmp}" && echo yes || echo no`,
+      ],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: { HOME: tmp, PATH: TEST_SYSTEM_PATH },
+      },
+    );
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe("yes");
+  });
+
+  it("is_source_checkout: accepts a git worktree .git file", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-checkout-worktree-"));
+    fs.writeFileSync(path.join(tmp, ".git"), "gitdir: /tmp/nemoclaw/worktrees/example\n");
     fs.writeFileSync(
       path.join(tmp, "package.json"),
       JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
@@ -1717,7 +1740,7 @@ exit 0`,
     });
 
     expect(result.status).toBe(0);
-    const gitCalls = fs.readFileSync(gitLog, "utf-8");
+    const gitCalls = fs.existsSync(gitLog) ? fs.readFileSync(gitLog, "utf-8") : "";
     expect(gitCalls).not.toMatch(/clone/);
     expect(gitCalls).not.toMatch(/fetch/);
   });
@@ -1764,7 +1787,7 @@ exit 0`,
     });
 
     expect(result.status).toBe(0);
-    const gitCalls = fs.readFileSync(gitLog, "utf-8");
+    const gitCalls = fs.existsSync(gitLog) ? fs.readFileSync(gitLog, "utf-8") : "";
     expect(gitCalls).not.toMatch(/clone/);
     expect(gitCalls).not.toMatch(/fetch/);
     expect(`${result.stdout}${result.stderr}`).not.toMatch(/curl should not hit the releases API/);

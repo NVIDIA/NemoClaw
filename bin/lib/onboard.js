@@ -630,9 +630,17 @@ function getGatewayClusterContainerName(gatewayName = GATEWAY_NAME) {
   return `openshell-cluster-${gatewayName}`;
 }
 
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+
+function stripAnsi(value = "") {
+  return String(value).replace(ANSI_RE, "");
+}
+
 function parseGatewayEndpointHost(gatewayInfoOutput = "") {
   if (typeof gatewayInfoOutput !== "string") return null;
-  const match = gatewayInfoOutput.match(/Gateway endpoint:\s+(\S+)/i);
+  const plainOutput = stripAnsi(gatewayInfoOutput);
+  const match = plainOutput.match(/Gateway endpoint:\s+(\S+)/i);
   if (!match) return null;
   try {
     return new URL(match[1]).hostname;
@@ -661,6 +669,8 @@ function isLoopbackBindHost(hostIp = "") {
   return hostIp === "127.0.0.1" || hostIp === "::1";
 }
 
+// Serializes a container inspection into an equivalent docker run command.
+// eslint-disable-next-line complexity
 function buildGatewayDockerRunCommand(inspection, hostIp) {
   const containerName = inspection?.Name?.replace(/^\//, "") || getGatewayClusterContainerName();
   const hostConfig = inspection?.HostConfig || {};
