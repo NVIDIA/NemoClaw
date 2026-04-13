@@ -842,6 +842,22 @@ describe("onboard helpers", () => {
     expect(isGatewayHealthy("Gateway status: Connected", "Gateway: something-else")).toBe(false);
   });
 
+  it("passes --port GATEWAY_PORT through every gateway start path", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // Primary start path (startGatewayWithOptions) builds gwArgs with --port.
+    assert.match(source, /const gwArgs = \["--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/);
+
+    // Recovery start path (recoverGatewayRuntime) also passes --port.
+    assert.match(
+      source,
+      /runOpenshell\(\["gateway", "start", "--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
+    );
+  });
+
   it("classifies gateway reuse states conservatively", () => {
     expect(
       getGatewayReuseState(
