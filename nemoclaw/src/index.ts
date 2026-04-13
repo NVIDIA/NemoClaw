@@ -11,12 +11,37 @@
  * time.
  */
 
+import { execFileSync } from "node:child_process";
 import { handleSlashCommand } from "./commands/slash.js";
 import {
   describeOnboardEndpoint,
   describeOnboardProvider,
   loadOnboardConfig,
 } from "./onboard/config.js";
+
+// Resolve live inference config from OpenShell as a fallback when the
+// onboard config file is not available (e.g. when running inside the
+// sandbox). Returns empty strings if the probe fails.
+function probeOpenShellInference(): { endpoint: string; model: string } {
+  try {
+    const raw = execFileSync("openshell", ["inference", "get", "--json"], {
+      encoding: "utf-8",
+      timeout: 3000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const parsed = JSON.parse(raw) as {
+      provider?: string;
+      model?: string;
+      endpoint?: string;
+    };
+    return {
+      endpoint: parsed.endpoint ?? parsed.provider ?? "",
+      model: parsed.model ?? "",
+    };
+  } catch {
+    return { endpoint: "", model: "" };
+  }
+}
 
 // ---------------------------------------------------------------------------
 // OpenClaw Plugin SDK compatible types (mirrors openclaw/plugin-sdk)
@@ -248,9 +273,21 @@ export default function register(api: OpenClawPluginApi): void {
   const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
   api.registerProvider(registeredProviderForConfig(onboardCfg, providerCredentialEnv));
 
-  const bannerEndpoint = onboardCfg ? describeOnboardEndpoint(onboardCfg) : "build.nvidia.com";
+  // Prefer onboard config; fall back to live OpenShell inference state when
+  // the config file is unavailable (e.g. inside the sandbox). Only resort to
+  // hardcoded defaults if both lookups fail.
+  let bannerEndpoint = onboardCfg ? describeOnboardEndpoint(onboardCfg) : "";
   const bannerProvider = onboardCfg ? describeOnboardProvider(onboardCfg) : "NVIDIA Endpoints";
-  const bannerModel = onboardCfg?.model ?? "nvidia/nemotron-3-super-120b-a12b";
+  let bannerModel = onboardCfg?.model ?? "";
+
+  if (!bannerEndpoint || !bannerModel) {
+    const probed = probeOpenShellInference();
+    if (!bannerEndpoint) bannerEndpoint = probed.endpoint;
+    if (!bannerModel) bannerModel = probed.model;
+  }
+
+  if (!bannerEndpoint) bannerEndpoint = "build.nvidia.com";
+  if (!bannerModel) bannerModel = "nvidia/nemotron-3-super-120b-a12b";
 
   api.logger.info("");
   api.logger.info("  ┌─────────────────────────────────────────────────────┐");
