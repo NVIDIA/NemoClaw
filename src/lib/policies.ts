@@ -312,6 +312,11 @@ function removePreset(sandboxName, presetName) {
   const currentPolicy = parseCurrentPolicy(rawPolicy);
   const updated = removePresetFromPolicy(currentPolicy, presetEntries);
 
+  if (updated === currentPolicy) {
+    console.error(`  Preset '${presetName}' could not be removed from the current policy.`);
+    return false;
+  }
+
   const endpoints = getPresetEndpoints(presetContent);
   if (endpoints.length > 0) {
     console.log(`  Narrowing sandbox egress — removing: ${endpoints.join(", ")}`);

@@ -902,6 +902,7 @@ policies.listPresets = () => [
 policies.getAppliedPresets = () => ["pypi"];
 policies.removePreset = (sandboxName, presetName) => {
   calls.push({ type: "remove", sandboxName, presetName });
+  return true;
 };
 process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-remove", ...${JSON.stringify(extraArgs)}];
 require(${CLI_PATH});

@@ -1398,7 +1398,9 @@ async function sandboxPolicyRemove(sandboxName, args = []) {
   const confirm = await askPrompt(`  Remove '${answer}' from sandbox '${sandboxName}'? [Y/n]: `);
   if (confirm.toLowerCase() === "n") return;
 
-  policies.removePreset(sandboxName, answer);
+  if (!policies.removePreset(sandboxName, answer)) {
+    process.exit(1);
+  }
 }
 
 function cleanupSandboxServices(sandboxName, { stopHostServices = false } = {}) {
