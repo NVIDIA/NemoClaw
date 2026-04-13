@@ -495,7 +495,7 @@ function hydrateCredentialEnv(envName) {
   return value || null;
 }
 
-const { getCurlTimingArgs, summarizeCurlFailure, summarizeProbeFailure, runCurlProbe } = httpProbe;
+const { getCurlTimingArgs, summarizeCurlFailure, summarizeProbeFailure, runCurlProbe, runStreamingEventProbe } = httpProbe;
 
 function getNavigationChoice(value = "") {
   const normalized = String(value || "")
@@ -523,6 +523,7 @@ const {
   isNvcfFunctionNotFoundForAccount,
   nvcfFunctionNotFoundMessage,
   shouldSkipResponsesProbe,
+  shouldForceCompletionsApi,
 } = validation;
 
 // validateNvidiaApiKeyValue — see validation import above
@@ -642,8 +643,8 @@ function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
 /**
  * Create or update an OpenShell provider in the gateway.
  *
- * Attempts `openshell provider create`; if that fails (provider already exists),
- * falls back to `openshell provider update` with the same credential.
+ * Checks whether the provider already exists via `openshell provider get`;
+ * uses `create` for new providers and `update` for existing ones.
  * @param {string} name - Provider name (e.g. "discord-bridge", "inference").
  * @param {string} type - Provider type ("openai", "anthropic", "generic").
  * @param {string} credentialEnv - Environment variable name for the credential.
@@ -652,25 +653,17 @@ function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
  * @returns {{ ok: boolean, status?: number, message?: string }}
  */
 function upsertProvider(name, type, credentialEnv, baseUrl, env = {}) {
-  const createArgs = buildProviderArgs("create", name, type, credentialEnv, baseUrl);
+  const exists = providerExistsInGateway(name);
+  const action = exists ? "update" : "create";
+  const args = buildProviderArgs(action, name, type, credentialEnv, baseUrl);
   const runOpts = { ignoreError: true, env, stdio: ["ignore", "pipe", "pipe"] };
-  const createResult = runOpenshell(createArgs, runOpts);
-  if (createResult.status === 0) {
-    return { ok: true };
-  }
-
-  const updateArgs = buildProviderArgs("update", name, type, credentialEnv, baseUrl);
-  const updateResult = runOpenshell(updateArgs, runOpts);
-  if (updateResult.status !== 0) {
+  const result = runOpenshell(args, runOpts);
+  if (result.status !== 0) {
     const output =
-      compactText(`${createResult.stderr || ""} ${updateResult.stderr || ""}`) ||
-      compactText(`${createResult.stdout || ""} ${updateResult.stdout || ""}`) ||
-      `Failed to create or update provider '${name}'.`;
-    return {
-      ok: false,
-      status: updateResult.status || createResult.status || 1,
-      message: output,
-    };
+      compactText(`${result.stderr || ""}`) ||
+      compactText(`${result.stdout || ""}`) ||
+      `Failed to ${action} provider '${name}'.`;
+    return { ok: false, status: result.status || 1, message: output };
   }
   return { ok: true };
 }
@@ -1196,6 +1189,56 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   for (const probe of probes) {
     const result = probe.execute();
     if (result.ok) {
+      // Streaming event validation — catch backends like SGLang that return
+      // valid non-streaming responses but emit incomplete SSE events in
+      // streaming mode. Only run for /responses probes on custom endpoints
+      // where probeStreaming was requested.
+      if (probe.api === "openai-responses" && options.probeStreaming === true) {
+        const streamResult = runStreamingEventProbe([
+          "-sS",
+          ...getValidationProbeCurlArgs(),
+          "-H",
+          "Content-Type: application/json",
+          ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+          "-d",
+          JSON.stringify({
+            model,
+            input: "Reply with exactly: OK",
+            stream: true,
+          }),
+          `${String(endpointUrl).replace(/\/+$/, "")}/responses`,
+        ]);
+        if (!streamResult.ok && streamResult.missingEvents.length > 0) {
+          // Backend responds but lacks required streaming events — fall back
+          // to /chat/completions silently.
+          console.log(`  ℹ ${streamResult.message}`);
+          failures.push({
+            name: probe.name + " (streaming)",
+            httpStatus: 0,
+            curlStatus: 0,
+            message: streamResult.message,
+            body: "",
+          });
+          continue;
+        }
+        if (!streamResult.ok) {
+          // Transport or execution failure — surface as a hard error instead
+          // of silently switching APIs.
+          return {
+            ok: false,
+            message: `${probe.name} (streaming): ${streamResult.message}`,
+            failures: [
+              {
+                name: probe.name + " (streaming)",
+                httpStatus: 0,
+                curlStatus: 0,
+                message: streamResult.message,
+                body: "",
+              },
+            ],
+          };
+        }
+      }
       return { ok: true, api: probe.api, label: probe.name };
     }
     // Preserve the raw response body alongside the summarized message so the
@@ -1344,6 +1387,8 @@ async function validateCustomOpenAiLikeSelection(
   const apiKey = getCredential(credentialEnv);
   const probe = probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, {
     requireResponsesToolCalling: true,
+    skipResponsesProbe: shouldForceCompletionsApi(process.env.NEMOCLAW_PREFERRED_API),
+    probeStreaming: true,
   });
   if (probe.ok) {
     console.log(`  ${probe.label} available — OpenClaw will use ${probe.api}.`);
