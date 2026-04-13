@@ -107,17 +107,27 @@ Add the `export` line to your `~/.bashrc` or `~/.zshrc` to make it permanent, th
 
 ### Port already in use
 
-The NemoClaw gateway uses port `18789` by default.
-If another process is already bound to this port, onboarding fails.
+The local NemoClaw/OpenShell runtime uses:
+
+- gateway: `8080` on `127.0.0.1`
+- dashboard: `18789`
+
+If another process is already bound to either port, onboarding fails.
 Identify the conflicting process, verify it is safe to stop, and terminate it:
 
 ```console
+$ sudo lsof -i :8080
 $ sudo lsof -i :18789
 $ kill <PID>
 ```
 
 If the process does not exit, use `kill -9 <PID>` to force-terminate it.
 Then retry onboarding.
+
+For local gateways, NemoClaw expects the OpenShell gateway to stay bound to
+`127.0.0.1:8080`. During gateway reuse and recovery, NemoClaw now repairs any
+accidental `0.0.0.0:8080` bind back to loopback automatically when the gateway
+metadata advertises a loopback endpoint.
 
 ## Onboarding
 

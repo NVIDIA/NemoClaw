@@ -624,6 +624,211 @@ function hydrateCredentialEnv(envName) {
   return value || null;
 }
 
+const GATEWAY_CLUSTER_CONTAINER_PORT = "30051/tcp";
+
+function getGatewayClusterContainerName(gatewayName = GATEWAY_NAME) {
+  return `openshell-cluster-${gatewayName}`;
+}
+
+function parseGatewayEndpointHost(gatewayInfoOutput = "") {
+  if (typeof gatewayInfoOutput !== "string") return null;
+  const match = gatewayInfoOutput.match(/Gateway endpoint:\s+(\S+)/i);
+  if (!match) return null;
+  try {
+    return new URL(match[1]).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function dockerInspectContainer(containerName) {
+  const raw = runCapture(`docker inspect ${shellQuote(containerName)} --format '{{json .}}'`, {
+    ignoreError: true,
+  });
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function getGatewayLoopbackBinding(inspection) {
+  return inspection?.HostConfig?.PortBindings?.[GATEWAY_CLUSTER_CONTAINER_PORT]?.[0] || null;
+}
+
+function isLoopbackBindHost(hostIp = "") {
+  return hostIp === "127.0.0.1" || hostIp === "::1";
+}
+
+function buildGatewayDockerRunCommand(inspection, hostIp) {
+  const containerName = inspection?.Name?.replace(/^\//, "") || getGatewayClusterContainerName();
+  const hostConfig = inspection?.HostConfig || {};
+  const config = inspection?.Config || {};
+  const cmdParts = ["docker", "run", "-d", "--name", containerName];
+
+  if (config.Hostname) {
+    cmdParts.push("--hostname", config.Hostname);
+  }
+  if (hostConfig.NetworkMode) {
+    cmdParts.push("--network", hostConfig.NetworkMode);
+  }
+  if (hostConfig.RestartPolicy?.Name) {
+    cmdParts.push("--restart", hostConfig.RestartPolicy.Name);
+  }
+  if (hostConfig.Privileged) {
+    cmdParts.push("--privileged");
+  }
+  for (const securityOpt of hostConfig.SecurityOpt || []) {
+    cmdParts.push("--security-opt", securityOpt);
+  }
+  for (const extraHost of hostConfig.ExtraHosts || []) {
+    cmdParts.push("--add-host", extraHost);
+  }
+  for (const bind of hostConfig.Binds || []) {
+    cmdParts.push("-v", bind);
+  }
+  for (const envPair of config.Env || []) {
+    cmdParts.push("-e", envPair);
+  }
+  for (const cap of hostConfig.CapAdd || []) {
+    cmdParts.push("--cap-add", cap);
+  }
+  for (const cap of hostConfig.CapDrop || []) {
+    cmdParts.push("--cap-drop", cap);
+  }
+  for (const dns of hostConfig.Dns || []) {
+    cmdParts.push("--dns", dns);
+  }
+  for (const dnsOption of hostConfig.DnsOptions || []) {
+    cmdParts.push("--dns-option", dnsOption);
+  }
+  for (const dnsSearch of hostConfig.DnsSearch || []) {
+    cmdParts.push("--dns-search", dnsSearch);
+  }
+  for (const device of hostConfig.Devices || []) {
+    const permissions = device?.CgroupPermissions ? `:${device.CgroupPermissions}` : "";
+    cmdParts.push("--device", `${device.PathOnHost}:${device.PathInContainer}${permissions}`);
+  }
+  if (hostConfig.DeviceRequests?.length) {
+    const hasGpuRequest = hostConfig.DeviceRequests.some(
+      (request) =>
+        Array.isArray(request?.Capabilities) &&
+        request.Capabilities.some((group) => Array.isArray(group) && group.includes("gpu")),
+    );
+    if (hasGpuRequest) {
+      cmdParts.push("--gpus", "all");
+    }
+  }
+  if (hostConfig.ReadonlyRootfs) {
+    cmdParts.push("--read-only");
+  }
+  if (hostConfig.Init) {
+    cmdParts.push("--init");
+  }
+  if (hostConfig.IpcMode && hostConfig.IpcMode !== "private") {
+    cmdParts.push("--ipc", hostConfig.IpcMode);
+  }
+  if (hostConfig.PidMode) {
+    cmdParts.push("--pid", hostConfig.PidMode);
+  }
+  if (config.User) {
+    cmdParts.push("--user", config.User);
+  }
+  if (config.WorkingDir) {
+    cmdParts.push("--workdir", config.WorkingDir);
+  }
+  if (hostConfig.ShmSize && hostConfig.ShmSize !== 67_108_864) {
+    cmdParts.push("--shm-size", String(hostConfig.ShmSize));
+  }
+
+  const portBindings = hostConfig.PortBindings || {};
+  for (const [containerPort, bindings] of Object.entries(portBindings)) {
+    for (const binding of bindings || []) {
+      const publishHost =
+        containerPort === GATEWAY_CLUSTER_CONTAINER_PORT ? hostIp : binding.HostIp;
+      const hostPort = binding.HostPort ? `${binding.HostPort}:` : "";
+      const publishTarget =
+        publishHost && publishHost.length > 0
+          ? `${publishHost}:${hostPort}${containerPort}`
+          : `${hostPort}${containerPort}`;
+      cmdParts.push("-p", publishTarget);
+    }
+  }
+
+  if (Array.isArray(config.Entrypoint) && config.Entrypoint.length === 1) {
+    cmdParts.push("--entrypoint", config.Entrypoint[0]);
+  }
+
+  cmdParts.push(config.Image);
+  if (Array.isArray(config.Cmd) && config.Cmd.length > 0) {
+    cmdParts.push(...config.Cmd);
+  }
+
+  return cmdParts.map((part) => shellQuote(part)).join(" ");
+}
+
+function waitForGatewayContainerHealthy(containerName, attempts = 30, sleepSeconds = 2) {
+  for (let i = 0; i < attempts; i++) {
+    const state = runCapture(
+      `docker inspect ${shellQuote(containerName)} --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}'`,
+      { ignoreError: true },
+    );
+    if (state === "healthy" || state === "running") {
+      return true;
+    }
+    sleep(sleepSeconds);
+  }
+  return false;
+}
+
+function enforceLoopbackGatewayBinding(gatewayName = GATEWAY_NAME, gatewayInfoOutput = null) {
+  const gatewayInfo =
+    gatewayInfoOutput ??
+    runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
+      ignoreError: true,
+    });
+  const endpointHost = parseGatewayEndpointHost(gatewayInfo);
+  if (!endpointHost || !isLoopbackHostname(endpointHost)) {
+    return false;
+  }
+
+  const containerName = getGatewayClusterContainerName(gatewayName);
+  const inspection = dockerInspectContainer(containerName);
+  if (!inspection) {
+    return false;
+  }
+  const binding = getGatewayLoopbackBinding(inspection);
+  if (!binding?.HostPort || isLoopbackBindHost(binding.HostIp)) {
+    return false;
+  }
+
+  console.log(
+    `  Securing OpenShell gateway port ${binding.HostPort} to loopback only (${binding.HostIp || "0.0.0.0"} -> 127.0.0.1)...`,
+  );
+  run(`docker stop ${shellQuote(containerName)} >/dev/null 2>&1 || true`, {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  run(`docker rm ${shellQuote(containerName)} >/dev/null 2>&1 || true`, {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  const recreateCommand = buildGatewayDockerRunCommand(inspection, "127.0.0.1");
+  const recreateResult = run(recreateCommand, {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  if (recreateResult.status !== 0) {
+    throw new Error("Could not recreate the OpenShell gateway container with a loopback-only bind");
+  }
+  if (!waitForGatewayContainerHealthy(containerName)) {
+    throw new Error("Recreated OpenShell gateway container did not become healthy");
+  }
+  console.log("  ✓ OpenShell gateway is now bound to 127.0.0.1 only");
+  return true;
+}
+
 function getCurlTimingArgs() {
   return ["--connect-timeout", "10", "--max-time", "60"];
 }
@@ -2210,6 +2415,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   if (isGatewayHealthy(gatewayStatus, gwInfo, activeGatewayInfo)) {
     console.log("  ✓ Reusing existing gateway");
     runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
+    enforceLoopbackGatewayBinding(GATEWAY_NAME, gwInfo || activeGatewayInfo);
     process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
     return;
   }
@@ -2301,6 +2507,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   }
 
   console.log("  ✓ Gateway is healthy");
+  enforceLoopbackGatewayBinding(GATEWAY_NAME);
 
   // CoreDNS fix — k3s-inside-Docker has broken DNS forwarding on all platforms.
   const runtime = getContainerRuntime();
@@ -2340,6 +2547,7 @@ async function recoverGatewayRuntime() {
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
   let status = runCaptureOpenshell(["status"], { ignoreError: true });
   if (status.includes("Connected") && isSelectedGateway(status)) {
+    enforceLoopbackGatewayBinding(GATEWAY_NAME);
     process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
     return true;
   }
@@ -2366,6 +2574,7 @@ async function recoverGatewayRuntime() {
     status = runCaptureOpenshell(["status"], { ignoreError: true });
     if (status.includes("Connected") && isSelectedGateway(status)) {
       process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
+      enforceLoopbackGatewayBinding(GATEWAY_NAME);
       const runtime = getContainerRuntime();
       if (shouldPatchCoredns(runtime)) {
         run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" ${GATEWAY_NAME} 2>&1 || true`, {
@@ -4159,7 +4368,9 @@ module.exports = {
   copyBuildContextDir,
   classifySandboxCreateFailure,
   createSandbox,
+  enforceLoopbackGatewayBinding,
   getFutureShellPathHint,
+  getGatewayClusterContainerName,
   getGatewayStartEnv,
   getGatewayReuseState,
   getSandboxInferenceConfig,
@@ -4167,6 +4378,7 @@ module.exports = {
   getRequestedModelHint,
   getRequestedProviderHint,
   getStableGatewayImageRef,
+  parseGatewayEndpointHost,
   getResumeConfigConflicts,
   isGatewayHealthy,
   hasStaleGateway,
