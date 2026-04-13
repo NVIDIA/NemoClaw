@@ -79,6 +79,148 @@ describe("plugin registration", () => {
   });
 });
 
+describe("before_tool_call secret scanner hook (#1233)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedLoadOnboardConfig.mockReturnValue(null);
+  });
+
+  function getHookHandler(api: OpenClawPluginApi) {
+    register(api);
+    const onCalls = vi.mocked(api.on).mock.calls;
+    const hookCall = onCalls.find(([name]) => name === "before_tool_call");
+    expect(hookCall).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by expect above
+    return hookCall![1];
+  }
+
+  it("registers a before_tool_call hook", () => {
+    const api = createMockApi();
+    register(api);
+    expect(api.on).toHaveBeenCalledWith("before_tool_call", expect.any(Function));
+  });
+
+  it("blocks write to memory path containing NVIDIA API key", () => {
+    const api = createMockApi();
+    const handler = getHookHandler(api);
+    const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
+    const result = handler({
+      toolName: "write",
+      params: {
+        file_path: "/sandbox/.openclaw-data/memory/project.md",
+        content: `api key: ${fakeKey}`,
+      },
+    });
+    expect(result).toMatchObject({ block: true });
+    expect((result as { blockReason: string }).blockReason).toContain("NVIDIA API key");
+  });
+
+  it("blocks edit to memory path containing secrets", () => {
+    const api = createMockApi();
+    const handler = getHookHandler(api);
+    const fakeToken = "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn";
+    const result = handler({
+      toolName: "edit",
+      params: {
+        file_path: "/sandbox/.openclaw-data/memory/notes.md",
+        new_string: `token: ${fakeToken}`,
+      },
+    });
+    expect(result).toMatchObject({ block: true });
+  });
+
+  it("blocks apply_patch to memory path containing secrets", () => {
+    const api = createMockApi();
+    const handler = getHookHandler(api);
+    const fakeKey = "sk-" + "abc123def456ghi789jkl012mno";
+    const result = handler({
+      toolName: "apply_patch",
+      params: {
+        file_path: "/sandbox/.openclaw-data/agents/config.json",
+        patch: fakeKey,
+      },
+    });
+    expect(result).toMatchObject({ block: true });
+  });
+
+  it("blocks notebook_edit to memory path containing secrets", () => {
+    const api = createMockApi();
+    const handler = getHookHandler(api);
+    const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
+    const result = handler({
+      toolName: "notebook_edit",
+      params: {
+        file_path: "/sandbox/.openclaw-data/memory/notebook.ipynb",
+        content: `api_key: ${fakeKey}`,
+      },
+    });
+    expect(result).toMatchObject({ block: true });
+  });
+
+  it("allows write to memory path with clean content", () => {
+    const api = createMockApi();
+    const handler = getHookHandler(api);
+    const result = handler({
+      toolName: "write",
+      params: {
+        file_path: "/sandbox/.openclaw-data/memory/project.md",
+        content: "# My Project\n\nThis is a regular memory note.",
+      },
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it("allows write to non-memory path even with secrets", () => {
+    const api = createMockApi();
+    const handler = getHookHandler(api);
+    const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
+    const result = handler({
+      toolName: "write",
+      params: {
+        file_path: "/sandbox/project/src/config.ts",
+        content: `const key = '${fakeKey}';`,
+      },
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it("allows non-write tools regardless of content", () => {
+    const api = createMockApi();
+    const handler = getHookHandler(api);
+    const result = handler({
+      toolName: "read",
+      params: {
+        file_path: "/sandbox/.openclaw-data/memory/project.md",
+      },
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it("handles missing event gracefully", () => {
+    const api = createMockApi();
+    const handler = getHookHandler(api);
+    expect(handler(undefined)).toBeUndefined();
+    expect(handler({})).toBeUndefined();
+    expect(handler({ toolName: "write" })).toBeUndefined();
+  });
+
+  it("logs a warning when blocking", () => {
+    const api = createMockApi();
+    const handler = getHookHandler(api);
+    const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
+    handler({
+      toolName: "write",
+      params: {
+        file_path: "/sandbox/.openclaw-data/memory/creds.md",
+        content: fakeKey,
+      },
+    });
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("[SECURITY] Blocked memory write"),
+    );
+  });
+});
+
 describe("getPluginConfig", () => {
   it("returns defaults when pluginConfig is undefined", () => {
     const api = createMockApi();

@@ -435,6 +435,19 @@ The CLI automatically redacts secret patterns (API keys, bearer tokens, provider
 | Risk if relaxed | Without redaction, secrets could appear in terminal scrollback, log files, or debug output shared in bug reports. |
 | Recommendation | No action needed. If you share `nemoclaw debug` output, verify that no secrets appear in the collected diagnostics. |
 
+### Memory Secret Scanner
+
+The NemoClaw plugin blocks the agent from writing likely secrets (API keys, tokens, private keys) into persistent memory files.
+The scanner intercepts Write, Edit, and similar tool calls targeting memory and workspace paths before they reach disk.
+
+| Aspect | Detail |
+|---|---|
+| Default | Enabled. The plugin registers a `before_tool_call` hook that scans for 14 high-confidence secret patterns. |
+| What it covers | `.openclaw-data/memory/`, `workspace/`, `agents/`, `skills/`, `hooks/`, and `MEMORY.md`. |
+| What you can change | This is not a user-facing knob. The plugin enforces it automatically. |
+| Risk if relaxed | Without scanning, the agent could persist API keys or tokens in memory files that survive across sessions and backups. |
+| Recommendation | No action needed. If a write is blocked, the agent receives an actionable error listing the detected patterns. |
+
 ## Inference Controls
 
 OpenShell routes all inference traffic through the gateway to isolate provider credentials from the sandbox.
@@ -522,6 +535,14 @@ The following patterns weaken security without providing meaningful benefit.
 | Granting write access to `/sandbox/.openclaw` | This directory contains the OpenClaw gateway configuration. A writable `.openclaw` lets the agent modify auth tokens, disable CORS, or redirect inference routing. | Store agent-writable state in `/sandbox/.openclaw-data`. |
 | Adding inference provider hosts to the network policy | Direct network access to an inference host bypasses credential isolation and usage tracking. | Use OpenShell inference routing instead of adding hosts like `api.openai.com` or `api.anthropic.com` to the network policy. |
 | Disabling device auth for remote deployments | Without device auth, any device on the network can connect to the gateway without pairing. Combined with a cloudflared tunnel, this makes the dashboard publicly accessible and unauthenticated. | Keep `NEMOCLAW_DISABLE_DEVICE_AUTH` at its default (`0`). Only set it to `1` for local headless or development environments. |
+
+## Known Limitations
+
+| Limitation | Impact | Mitigation |
+|-----------|--------|------------|
+| `openclaw agent --local` bypasses gateway | Secret scanning, network policy, and inference auth are not enforced when the agent runs in local mode. | A runtime warning is emitted when `--local` is detected. Avoid `--local` for production workflows. A future OpenClaw-level hook will close this gap. |
+| Direct filesystem writes bypass secret scanner | The scanner intercepts OpenClaw tool calls, not raw filesystem writes (e.g., `echo secret > file`). | Landlock restricts writable paths. The scanner is application-layer defense-in-depth, not a filesystem-level control. |
+| Base64/hex-encoded secrets are not detected | Content-based regex scanning cannot detect encoded or obfuscated secrets. | Use environment variables or credential stores instead of writing secrets to files. |
 
 ## Related Topics
 
