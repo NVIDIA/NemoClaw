@@ -459,6 +459,18 @@ openclaw() {
       echo "This rebuilds the sandbox with your updated settings." >&2
       return 1
       ;;
+    agent)
+      # Warn when --local is used — it bypasses gateway protections including
+      # secret scanning, network policy, and inference auth. Ref: #1632
+      local _arg
+      for _arg in "$@"; do
+        if [ "$_arg" = "--local" ]; then
+          echo "[SECURITY] Warning: 'openclaw agent --local' bypasses the NemoClaw gateway." >&2
+          echo "[SECURITY] Secret scanning, network policy, and inference auth are NOT enforced in local mode." >&2
+          break
+        fi
+      done
+      ;;
   esac
   command openclaw "$@"
 }

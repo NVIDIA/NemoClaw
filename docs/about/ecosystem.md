@@ -22,7 +22,7 @@ status: published
 
 # Ecosystem
 
-NemoClaw provides onboarding, lifecycle management, and management of OpenClaw within OpenShell containers.
+NemoClaw provides onboarding, lifecycle management, and OpenClaw operations within OpenShell containers.
 
 This page describes how the ecosystem is formed across projects, where NemoClaw sits relative to [OpenShell](https://github.com/NVIDIA/OpenShell) and [OpenClaw](https://openclaw.ai), and how to choose between NemoClaw and OpenShell.
 
