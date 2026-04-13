@@ -215,6 +215,20 @@ RUN mkdir -p /sandbox/.openclaw-data/logs \
         fi; \
     done
 
+# Ensure exec approvals path compatibility when using a stale published base
+# image that still points to ~/.openclaw/exec-approvals.json.
+RUN OPENCLAW_DIST_DIR="$(npm root -g)/openclaw/dist" \
+    && files_with_old_path="$(grep -R --include='*.js' -l "~/.openclaw/exec-approvals.json" "$OPENCLAW_DIST_DIR" || true)" \
+    && if [ -n "$files_with_old_path" ]; then \
+        echo "$files_with_old_path" | while IFS= read -r file; do \
+            sed -i 's#~/.openclaw/exec-approvals.json#~/.openclaw-data/exec-approvals.json#g' "$file"; \
+        done; \
+    fi \
+    && if grep -R --include='*.js' -n "~/.openclaw/exec-approvals.json" "$OPENCLAW_DIST_DIR"; then \
+        echo "Error: OpenClaw exec approvals path patch failed"; \
+        exit 1; \
+    fi
+
 RUN chown root:root /sandbox/.openclaw \
     && rm -rf /root/.npm /sandbox/.npm \
     && find /sandbox/.openclaw -mindepth 1 -maxdepth 1 -exec chown -h root:root {} + \
