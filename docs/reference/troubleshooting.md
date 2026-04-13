@@ -286,6 +286,33 @@ $ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
 $ nemoclaw onboard
 ```
 
+### Agent fails at runtime after onboarding succeeds with a compatible endpoint
+
+Some OpenAI-compatible servers (such as SGLang) expose `/v1/responses` and pass
+the onboarding validation probe, but their streaming mode is incomplete.
+OpenClaw requires granular streaming events like `response.output_text.delta`
+that these backends do not emit.
+
+NemoClaw now tests streaming events during the `/v1/responses` probe and falls
+back to `/v1/chat/completions` automatically.
+If you onboarded before this check was added, re-run onboarding so the wizard
+re-probes the endpoint and bakes the correct API path into the image:
+
+```console
+$ nemoclaw onboard
+```
+
+To force `/v1/chat/completions` without re-probing, set `NEMOCLAW_PREFERRED_API`:
+
+```console
+$ NEMOCLAW_PREFERRED_API=openai-completions nemoclaw onboard
+```
+
+Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone — it patches the config
+at container startup but does not update the Dockerfile ARG baked into the
+image.
+A fresh `nemoclaw onboard` is the reliable fix.
+
 ### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
 
 This is expected behavior.
