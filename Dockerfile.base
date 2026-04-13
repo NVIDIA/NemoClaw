@@ -152,6 +152,10 @@ ARG OPENCLAW_VERSION=2026.3.11
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# OpenClaw rejects symlink writes for exec approvals, but NemoClaw keeps
+# /sandbox/.openclaw immutable and redirects writable state to .openclaw-data.
+# Patch OpenClaw dist defaults so approvals write directly to .openclaw-data.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/1785
 RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/blueprint.yaml \
     echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \
     || { echo "Error: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.3.11)."; exit 1; }; \
@@ -167,4 +171,19 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         echo "Hint: Check available versions with: npm view openclaw versions"; exit 1; \
     fi; \
     npm install -g "openclaw@${OPENCLAW_VERSION}" \
+    && OPENCLAW_DIST_DIR="$(npm root -g)/openclaw/dist" \
+    && patched=0 \
+    && for file in "$OPENCLAW_DIST_DIR"/exec-approvals-*.js "$OPENCLAW_DIST_DIR"/exec-approvals-effective-*.js; do \
+        [ -f "$file" ] || continue; \
+        sed -i 's#~/.openclaw/exec-approvals.json#~/.openclaw-data/exec-approvals.json#g' "$file"; \
+        patched=$((patched + 1)); \
+    done \
+    && if [ "$patched" -le 0 ]; then \
+        echo "Error: OpenClaw exec approvals dist files not found"; \
+        exit 1; \
+    fi \
+    && if grep -R --include='exec-approvals-*.js' --include='exec-approvals-effective-*.js' -n "~/.openclaw/exec-approvals.json" "$OPENCLAW_DIST_DIR"; then \
+        echo "Error: OpenClaw exec approvals path patch failed"; \
+        exit 1; \
+    fi \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
