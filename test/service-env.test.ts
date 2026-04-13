@@ -7,8 +7,8 @@ import { execSync, execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, unlinkSync, readFileSync, lstatSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveOpenshell } from "../bin/lib/resolve-openshell";
-import { parseAllowedChatIds, isChatAllowed } from "../bin/lib/chat-filter.js";
+import { resolveOpenshell } from "../dist/lib/resolve-openshell";
+import { parseAllowedChatIds, isChatAllowed } from "../dist/lib/chat-filter.js";
 
 describe("service environment", () => {
   describe("start-services behavior", () => {
@@ -189,8 +189,14 @@ describe("service environment", () => {
       expect(src).toContain("/tmp/.config");
       expect(src).toContain("/tmp/.cache");
       expect(src).toContain("/tmp/.local/share");
-      expect(src).toContain("/tmp/.gnupg");
       expect(src).toContain("/tmp/npm-global");
+    });
+
+    it("entrypoint creates GNUPGHOME with restrictive permissions", () => {
+      const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+      const src = readFileSync(scriptPath, "utf-8");
+      expect(src).toContain("install -d -o sandbox -g sandbox -m 700 /tmp/.gnupg");
+      expect(src).toContain("install -d -m 700 /tmp/.gnupg");
     });
   });
 

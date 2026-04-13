@@ -30,6 +30,18 @@ describe("lib/version", () => {
     rmSync(join(testDir, ".version"));
   });
 
+  it("regression #1239: returns .version even when package.json is stale", () => {
+    // npm-published tarballs ship with a stale package.json version (0.1.0)
+    // and a .version file stamped from the git tag at publish time. The
+    // installed CLI must report the .version contents, not the package.json
+    // semver. See issue #1239.
+    writeFileSync(join(testDir, "package.json"), JSON.stringify({ version: "0.1.0" }));
+    writeFileSync(join(testDir, ".version"), "0.0.2");
+    expect(getVersion({ rootDir: testDir })).toBe("0.0.2");
+    rmSync(join(testDir, ".version"));
+    writeFileSync(join(testDir, "package.json"), JSON.stringify({ version: "1.2.3" }));
+  });
+
   it("returns a string", () => {
     expect(typeof getVersion({ rootDir: testDir })).toBe("string");
   });

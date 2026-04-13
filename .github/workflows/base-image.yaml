@@ -4,7 +4,7 @@
 # Build and push the sandbox base image to GHCR.
 #
 # Triggers:
-#   - Push to main when Dockerfile.base changes (new apt pkgs, openclaw bump, etc.)
+#   - Push to main when Dockerfile.base or the blueprint minimum version changes
 #   - Manual dispatch for ad-hoc rebuilds
 #
 # The base image contains the expensive, rarely-changing layers (apt, gosu,
@@ -18,7 +18,14 @@ on:
     branches: [main]
     paths:
       - "Dockerfile.base"
+      # Dockerfile.base validates min_openclaw_version from this file at build time.
+      - "nemoclaw-blueprint/blueprint.yaml"
   workflow_dispatch:
+    inputs:
+      openclaw_version:
+        description: "OpenClaw version to install (leave blank to use the default in Dockerfile.base)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -63,6 +70,10 @@ jobs:
             type=raw,value=latest
             type=sha,prefix=,format=short
 
+      - name: Validate OpenClaw version input
+        if: inputs.openclaw_version != ''
+        run: echo "${{ inputs.openclaw_version }}" | grep -qxE '[0-9]+(\.[0-9]+)*'
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -74,3 +85,5 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            ${{ inputs.openclaw_version && format('OPENCLAW_VERSION={0}', inputs.openclaw_version) || '' }}

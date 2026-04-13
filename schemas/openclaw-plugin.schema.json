@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/schemas/openclaw-plugin.schema.json",
+  "title": "NemoClaw OpenClaw Plugin Manifest",
+  "description": "Schema for nemoclaw/openclaw.plugin.json — the OpenClaw plugin manifest that declares the plugin identity and its configuration schema.",
+  "type": "object",
+  "required": ["id", "name", "version", "description", "configSchema"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique plugin identifier."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable plugin name."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Semver version of the plugin."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Short description of the plugin."
+    },
+    "configSchema": {
+      "type": "object",
+      "description": "JSON Schema object describing the plugin's configuration fields."
+    }
+  }
+}

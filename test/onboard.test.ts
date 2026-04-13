@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -22,6 +23,7 @@ import {
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
   getBlueprintMinOpenshellVersion,
+  getBlueprintMaxOpenshellVersion,
   versionGte,
   getRequestedModelHint,
   getRequestedProviderHint,
@@ -43,9 +45,12 @@ import {
   summarizeProbeFailure,
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
-} from "../bin/lib/onboard";
-import { stageOptimizedSandboxBuildContext } from "../bin/lib/sandbox-build-context";
+} from "../dist/lib/onboard";
+import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context";
 import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
+
+const require = createRequire(import.meta.url);
+const { getSuggestedPolicyPresets } = require("../dist/lib/onboard.js");
 
 describe("onboard helpers", () => {
   it("classifies sandbox create timeout failures and tracks upload progress", () => {
@@ -103,6 +108,36 @@ describe("onboard helpers", () => {
     assert.match(script, /^exit$/m);
   });
 
+  it("uses explicit messaging selections for policy suggestions when provided", () => {
+    const originalTelegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
+    const originalDiscordBotToken = process.env.DISCORD_BOT_TOKEN;
+    const originalSlackBotToken = process.env.SLACK_BOT_TOKEN;
+    process.env.TELEGRAM_BOT_TOKEN = "telegram-token";
+    process.env.DISCORD_BOT_TOKEN = "discord-token";
+    process.env.SLACK_BOT_TOKEN = "slack-token";
+    try {
+      expect(getSuggestedPolicyPresets({ enabledChannels: [] })).toEqual(["pypi", "npm"]);
+      expect(getSuggestedPolicyPresets({ enabledChannels: ["telegram"] })).toEqual([
+        "pypi",
+        "npm",
+        "telegram",
+      ]);
+      expect(getSuggestedPolicyPresets({ enabledChannels: ["discord", "slack"] })).toEqual([
+        "pypi",
+        "npm",
+        "slack",
+        "discord",
+      ]);
+    } finally {
+      if (originalTelegramBotToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
+      else process.env.TELEGRAM_BOT_TOKEN = originalTelegramBotToken;
+      if (originalDiscordBotToken === undefined) delete process.env.DISCORD_BOT_TOKEN;
+      else process.env.DISCORD_BOT_TOKEN = originalDiscordBotToken;
+      if (originalSlackBotToken === undefined) delete process.env.SLACK_BOT_TOKEN;
+      else process.env.SLACK_BOT_TOKEN = originalSlackBotToken;
+    }
+  });
+
   it("patches the staged Dockerfile with the selected model and chat UI URL", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
@@ -133,6 +168,117 @@ describe("onboard helpers", () => {
       assert.match(patched, /^ARG NEMOCLAW_PRIMARY_MODEL_REF=openai\/gpt-5\.4$/m);
       assert.match(patched, /^ARG CHAT_UI_URL=http:\/\/127\.0\.0\.1:19999$/m);
       assert.match(patched, /^ARG NEMOCLAW_BUILD_ID=build-123$/m);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patches the staged Dockerfile with Discord guild config for server workspaces", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-discord-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
+        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
+        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-discord-guild",
+        "openai-api",
+        null,
+        null,
+        ["discord"],
+        {},
+        {
+          "1491590992753590594": {
+            requireMention: true,
+            users: ["1005536447329222676"],
+          },
+        },
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_MESSAGING_CHANNELS_B64=/m);
+      const guildLine = patched
+        .split("\n")
+        .find((line) => line.startsWith("ARG NEMOCLAW_DISCORD_GUILDS_B64="));
+      assert.ok(guildLine, "expected discord guild build arg");
+      const encoded = guildLine.split("=")[1];
+      const decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+      assert.deepEqual(decoded, {
+        "1491590992753590594": {
+          requireMention: true,
+          users: ["1005536447329222676"],
+        },
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patches the staged Dockerfile with Discord guild config that allows all server members", () => {
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-discord-open-"),
+    );
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
+        "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
+        "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-discord-open",
+        "openai-api",
+        null,
+        null,
+        ["discord"],
+        {},
+        {
+          "1491590992753590594": {
+            requireMention: false,
+          },
+        },
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      const guildLine = patched
+        .split("\n")
+        .find((line) => line.startsWith("ARG NEMOCLAW_DISCORD_GUILDS_B64="));
+      assert.ok(guildLine, "expected discord guild build arg");
+      const encoded = guildLine.split("=")[1];
+      const decoded = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+      assert.deepEqual(decoded, {
+        "1491590992753590594": {
+          requireMention: false,
+        },
+      });
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -459,7 +605,7 @@ describe("onboard helpers", () => {
         { fetchEnabled: true },
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
-      const expected = buildWebSearchDockerConfig({ fetchEnabled: true }, "brv-test-key");
+      const expected = buildWebSearchDockerConfig({ fetchEnabled: true });
       assert.match(
         patched,
         new RegExp(
@@ -599,6 +745,62 @@ describe("onboard helpers", () => {
     const v = getBlueprintMinOpenshellVersion(repoRoot);
     expect(v).not.toBe(null);
     expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(v)).toBe(true);
+  });
+
+  it("getBlueprintMaxOpenshellVersion reads max_openshell_version from blueprint.yaml", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-max-version-"));
+    const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(blueprintDir, "blueprint.yaml"),
+      [
+        'version: "0.1.0"',
+        'min_openshell_version: "0.0.24"',
+        'max_openshell_version: "0.0.26"',
+        'min_openclaw_version: "2026.3.0"',
+      ].join("\n"),
+    );
+    try {
+      expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe("0.0.26");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("getBlueprintMaxOpenshellVersion returns null on missing or unparseable blueprint", () => {
+    // Missing directory
+    const missingDir = path.join(
+      os.tmpdir(),
+      "nemoclaw-blueprint-max-missing-" + Date.now().toString(),
+    );
+    expect(getBlueprintMaxOpenshellVersion(missingDir)).toBe(null);
+
+    // Present file, missing field — must NOT block onboard
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-no-max-field-"));
+    const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.writeFileSync(path.join(blueprintDir, "blueprint.yaml"), 'version: "0.1.0"\n');
+    try {
+      expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe(null);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("shipped blueprint.yaml exposes a parseable max_openshell_version", () => {
+    const repoRoot = path.resolve(import.meta.dirname, "..");
+    const v = getBlueprintMaxOpenshellVersion(repoRoot);
+    expect(v).not.toBe(null);
+    expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(v)).toBe(true);
+  });
+
+  it("max_openshell_version is greater than or equal to min_openshell_version in shipped blueprint", () => {
+    const repoRoot = path.resolve(import.meta.dirname, "..");
+    const min = getBlueprintMinOpenshellVersion(repoRoot);
+    const max = getBlueprintMaxOpenshellVersion(repoRoot);
+    expect(min).not.toBe(null);
+    expect(max).not.toBe(null);
+    expect(versionGte(max, min)).toBe(true);
   });
 
   it("pins the gateway image to the installed OpenShell release version", () => {
@@ -830,6 +1032,36 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("detects resume conflicts when a different agent is requested", () => {
+    expect(
+      getResumeConfigConflicts(
+        {
+          sandboxName: "my-assistant",
+          agent: "openclaw",
+        },
+        { agent: "hermes" },
+      ),
+    ).toEqual([
+      {
+        field: "agent",
+        requested: "hermes",
+        recorded: "openclaw",
+      },
+    ]);
+  });
+
+  it("allows resume when requested agent matches recorded agent", () => {
+    expect(
+      getResumeConfigConflicts(
+        {
+          sandboxName: "my-assistant",
+          agent: "hermes",
+        },
+        { agent: "hermes" },
+      ),
+    ).toEqual([]);
+  });
+
   it("returns a future-shell PATH hint for user-local openshell installs", () => {
     expect(getFutureShellPathHint("/home/test/.local/bin", "/usr/local/bin:/usr/bin")).toBe(
       'export PATH="/home/test/.local/bin:$PATH"',
@@ -1027,9 +1259,9 @@ describe("onboard helpers", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-inference-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-inference-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1086,12 +1318,13 @@ const { setupInference } = require(${onboardPath});
 
     expect(result.status).toBe(0);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
+    assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
-    assert.match(commands[1].command, /'--credential' 'NVIDIA_API_KEY'/);
-    assert.doesNotMatch(commands[1].command, /nvapi-secret-value/);
-    assert.match(commands[1].command, /provider' 'create'/);
-    assert.match(commands[2].command, /inference' 'set'/);
+    assert.match(commands[1].command, /'provider' 'get'/);
+    assert.match(commands[2].command, /'--credential' 'NVIDIA_API_KEY'/);
+    assert.doesNotMatch(commands[2].command, /nvapi-secret-value/);
+    assert.match(commands[2].command, /provider' 'update'/);
+    assert.match(commands[3].command, /inference' 'set'/);
   });
 
   it("detects when the live inference route already matches the requested provider and model", () => {
@@ -1099,7 +1332,7 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-inference-ready-"));
     const fakeOpenshell = path.join(tmpDir, "openshell");
     const scriptPath = path.join(tmpDir, "inference-ready-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
 
     fs.writeFileSync(
       fakeOpenshell,
@@ -1158,7 +1391,7 @@ console.log(JSON.stringify({
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-ready-"));
     const fakeOpenshell = path.join(tmpDir, "openshell");
     const scriptPath = path.join(tmpDir, "openclaw-ready-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
 
     fs.writeFileSync(
       fakeOpenshell,
@@ -1209,7 +1442,7 @@ console.log(JSON.stringify({
     const registryDir = path.join(tmpDir, ".nemoclaw");
     const registryFile = path.join(registryDir, "sandboxes.json");
     const scriptPath = path.join(tmpDir, "policy-ready-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
 
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -1268,9 +1501,9 @@ console.log(JSON.stringify({
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-anthropic-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-anthropic-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1284,6 +1517,8 @@ const registry = require(${registryPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  // provider-get returns not-found so we exercise the create path
+  if (command.includes("'provider' 'get'")) return { status: 1 };
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -1327,12 +1562,13 @@ const { setupInference } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
+    assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
-    assert.match(commands[1].command, /'--type' 'anthropic'/);
-    assert.match(commands[1].command, /'--credential' 'ANTHROPIC_API_KEY'/);
-    assert.doesNotMatch(commands[1].command, /sk-ant-secret-value/);
-    assert.match(commands[2].command, /'--provider' 'anthropic-prod'/);
+    assert.match(commands[1].command, /'provider' 'get'/);
+    assert.match(commands[2].command, /'--type' 'anthropic'/);
+    assert.match(commands[2].command, /'--credential' 'ANTHROPIC_API_KEY'/);
+    assert.doesNotMatch(commands[2].command, /sk-ant-secret-value/);
+    assert.match(commands[3].command, /'--provider' 'anthropic-prod'/);
   });
 
   it("updates OpenAI-compatible providers without passing an unsupported --type flag", () => {
@@ -1340,9 +1576,9 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-openai-update-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-openai-update-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1354,11 +1590,9 @@ const runner = require(${runnerPath});
 const registry = require(${registryPath});
 
 const commands = [];
-let callIndex = 0;
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
-  callIndex += 1;
-  return { status: callIndex === 2 ? 1 : 0 };
+  return { status: 0 };
 };
 runner.runCapture = (command) => {
   if (command.includes("inference") && command.includes("get")) {
@@ -1403,7 +1637,7 @@ const { setupInference } = require(${onboardPath});
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
-    assert.match(commands[1].command, /provider' 'create'/);
+    assert.match(commands[1].command, /'provider' 'get'/);
     assert.match(commands[2].command, /provider' 'update' 'openai-api'/);
     assert.doesNotMatch(commands[2].command, /'--type'/);
     assert.match(commands[3].command, /inference' 'set' '--no-verify'/);
@@ -1414,10 +1648,10 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-apply-auth-retry-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-inference-auth-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1499,10 +1733,10 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-apply-back-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-inference-apply-back-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1579,17 +1813,17 @@ const { setupInference } = require(${onboardPath});
     assert.match(recoverySource, /local curl invocation error/);
   });
 
-  it("suppresses expected provider-create AlreadyExists noise when update succeeds", () => {
+  it("checks provider existence before create/update to avoid AlreadyExists noise (#1155)", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
 
-    assert.match(source, /stdio: \["ignore", "pipe", "pipe"\]/);
-    // upsertProvider must NOT have its own console.log for Created/Updated —
-    // runner passthrough handles output, so duplicating it causes #1506.
-    assert.doesNotMatch(source, /console\.log\(`✓ Created provider \$\{name\}`\)/);
-    assert.doesNotMatch(source, /console\.log\(`✓ Updated provider \$\{name\}`\)/);
+    // upsertProvider must check existence first so it never triggers AlreadyExists.
+    assert.match(source, /providerExistsInGateway\(name\)/);
+    assert.match(source, /exists \? "update" : "create"/);
+    // Only one openshell call should be made (no create-then-update fallback).
+    assert.match(source, /const result = runOpenshell\(args, runOpts\)/);
   });
 
   it("starts the sandbox step before prompting for the sandbox name", () => {
@@ -1600,7 +1834,7 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*webSearchConfig,\s*enabledChannels,\s*fromDockerfile,\s*\);/,
+      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*webSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
     );
   });
 
@@ -1620,6 +1854,26 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
+  it("activates permissive policy via policy set when dangerouslySkipPermissions is true", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // The dangerouslySkipPermissions branch must call applyPermissivePolicy to
+    // activate the policy via `openshell policy set --wait`.  Without this,
+    // the base policy from sandbox create stays in Pending status (#897).
+    assert.match(
+      source,
+      /if \(dangerouslySkipPermissions\) \{\s*step\(8, 8, "Policy presets"\);\s*policies\.applyPermissivePolicy\(sandboxName\);/,
+    );
+    // Must NOT just print a skip message without activating the policy.
+    assert.doesNotMatch(
+      source,
+      /dangerouslySkipPermissions\)[\s\S]*?Skipped —.*permissive base policy/,
+    );
+  });
+
   it("delegates sandbox-create progress streaming to the extracted helper module", () => {
     const onboardSource = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
@@ -1636,10 +1890,10 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-cred-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-resume-credential-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1699,8 +1953,9 @@ const { setupInference } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.equal(payload.openai, "sk-stored-secret");
-    assert.equal(payload.commands[1].env.OPENAI_API_KEY, "sk-stored-secret");
-    assert.doesNotMatch(payload.commands[1].command, /sk-stored-secret/);
+    // commands[0]=gateway select, [1]=provider get, [2]=provider update
+    assert.equal(payload.commands[2].env.OPENAI_API_KEY, "sk-stored-secret");
+    assert.doesNotMatch(payload.commands[2].command, /sk-stored-secret/);
   });
 
   it("drops stale local sandbox registry entries when the live sandbox is gone", () => {
@@ -1708,9 +1963,9 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-stale-sandbox-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "stale-sandbox-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1759,11 +2014,11 @@ console.log(JSON.stringify({ liveExists, sandbox: registry.getSandbox("my-assist
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-sandbox-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "create-sandbox-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1864,11 +2119,11 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-remote-forward-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "create-sandbox-remote-forward.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1957,11 +2212,11 @@ const { createSandbox } = require(${onboardPath});
       );
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "messaging-provider-check.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-      const preflightPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1979,6 +2234,8 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  // provider-get returns not-found so messaging providers are created fresh
+  if (command.includes("'provider' 'get'")) return { status: 1 };
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -2122,11 +2379,11 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-provider-fail-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "provider-upsert-fail.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2199,9 +2456,9 @@ const { createSandbox } = require(${onboardPath});
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reuse-providers-"));
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "reuse-with-providers.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2274,9 +2531,11 @@ const { createSandbox } = require(${onboardPath});
         "should NOT delete sandbox when providers already exist in gateway",
       );
 
-      // Providers should still be upserted on reuse (credential refresh)
+      // Providers should still be upserted on reuse (credential refresh).
+      // Since the mock reports providers as existing (run returns status 0),
+      // upsertProvider issues 'update' rather than 'create'.
       const providerUpserts = payload.commands.filter((entry) =>
-        entry.command.includes("'provider' 'create'"),
+        entry.command.includes("'provider' 'update'"),
       );
       assert.ok(
         providerUpserts.some((e) => e.command.includes("my-assistant-discord-bridge")),
@@ -2299,9 +2558,9 @@ const { createSandbox } = require(${onboardPath});
       );
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "noninteractive-notready.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2377,9 +2636,9 @@ const { createSandbox } = require(${onboardPath});
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-flag-"));
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "recreate-flag.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2408,7 +2667,7 @@ registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
 registry.registerSandbox = () => true;
 registry.removeSandbox = () => true;
 
-const preflight = require(${JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"))});
+const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
@@ -2477,10 +2736,10 @@ const { createSandbox } = require(${onboardPath});
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-interactive-reuse-"));
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "interactive-reuse.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2571,10 +2830,10 @@ const { createSandbox } = require(${onboardPath});
       );
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "interactive-decline.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2604,7 +2863,7 @@ registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
 registry.registerSandbox = () => true;
 registry.removeSandbox = () => true;
 
-const preflight = require(${JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"))});
+const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 // Mock prompt to return "n" (decline reuse)
@@ -2684,10 +2943,10 @@ const { createSandbox } = require(${onboardPath});
       );
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "interactive-notready.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2722,7 +2981,7 @@ registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
 registry.registerSandbox = () => true;
 registry.removeSandbox = () => true;
 
-const preflight = require(${JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"))});
+const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 // User confirms recreation when prompted
@@ -2806,8 +3065,8 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upsert-provider-create-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "upsert-provider-create.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2819,6 +3078,8 @@ const runner = require(${runnerPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push(command);
+  // First call is provider-get (not found), second is provider-create (success)
+  if (command.includes("'provider' 'get'")) return { status: 1, stdout: "", stderr: "" };
   return { status: 0, stdout: "", stderr: "" };
 };
 const { upsertProvider } = require(${onboardPath});
@@ -2836,9 +3097,10 @@ console.log(JSON.stringify({ result, commands }));
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.deepEqual(payload.result, { ok: true });
-    assert.equal(payload.commands.length, 1);
-    assert.match(payload.commands[0], /'provider' 'create' '--name' 'discord-bridge'/);
-    assert.match(payload.commands[0], /'--credential' 'DISCORD_BOT_TOKEN'/);
+    assert.equal(payload.commands.length, 2);
+    assert.match(payload.commands[0], /'provider' 'get'/);
+    assert.match(payload.commands[1], /'provider' 'create' '--name' 'discord-bridge'/);
+    assert.match(payload.commands[1], /'--credential' 'DISCORD_BOT_TOKEN'/);
   });
 
   it("upsertProvider does not add its own log line on top of runner output (#1506)", () => {
@@ -2846,8 +3108,8 @@ console.log(JSON.stringify({ result, commands }));
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upsert-no-dup-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "upsert-no-dup.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2857,6 +3119,8 @@ console.log(JSON.stringify({ result, commands }));
     const script = `
 const runner = require(${runnerPath});
 runner.run = (command, opts = {}) => {
+  // First call is provider-get (not found)
+  if (command.includes("'provider' 'get'")) return { status: 1, stdout: "", stderr: "" };
   // Simulate runner passthrough: writeRedactedResult writes stdout to terminal
   process.stdout.write("✓ Created provider test-bridge\\n");
   return { status: 0, stdout: "✓ Created provider test-bridge", stderr: "" };
@@ -2879,13 +3143,13 @@ upsertProvider("test-bridge", "generic", "TEST_TOKEN", null, { TEST_TOKEN: "tok"
     assert.equal(lines.length, 1, `Expected 1 log line but got ${lines.length}: ${result.stdout}`);
   });
 
-  it("upsertProvider falls back to update when create fails", () => {
+  it("upsertProvider updates existing provider instead of creating (#1155)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upsert-provider-update-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "upsert-provider-update.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2895,14 +3159,10 @@ upsertProvider("test-bridge", "generic", "TEST_TOKEN", null, { TEST_TOKEN: "tok"
     const script = `
 const runner = require(${runnerPath});
 const commands = [];
-let callCount = 0;
 runner.run = (command, opts = {}) => {
   commands.push(command);
-  callCount++;
-  // First call (create) fails, second call (update) succeeds
-  return callCount === 1
-    ? { status: 1, stdout: "", stderr: "already exists" }
-    : { status: 0, stdout: "", stderr: "" };
+  // provider-get succeeds (provider exists), then update succeeds
+  return { status: 0, stdout: "", stderr: "" };
 };
 const { upsertProvider } = require(${onboardPath});
 const result = upsertProvider("inference", "openai", "NVIDIA_API_KEY", "https://integrate.api.nvidia.com/v1");
@@ -2920,7 +3180,7 @@ console.log(JSON.stringify({ result, commands }));
     const payload = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.deepEqual(payload.result, { ok: true });
     assert.equal(payload.commands.length, 2);
-    assert.match(payload.commands[0], /'provider' 'create'/);
+    assert.match(payload.commands[0], /'provider' 'get'/);
     assert.match(payload.commands[1], /'provider' 'update'/);
     assert.match(
       payload.commands[1],
@@ -2928,13 +3188,13 @@ console.log(JSON.stringify({ result, commands }));
     );
   });
 
-  it("upsertProvider returns error details when both create and update fail", () => {
+  it("upsertProvider returns error details when create or update fails", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upsert-provider-fail-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "upsert-provider-fail.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -2944,6 +3204,8 @@ console.log(JSON.stringify({ result, commands }));
     const script = `
 const runner = require(${runnerPath});
 runner.run = (command, opts = {}) => {
+  // provider-get says not found, then create fails
+  if (command.includes("'provider' 'get'")) return { status: 1, stdout: "", stderr: "" };
   return { status: 1, stdout: "", stderr: "gateway unreachable" };
 };
 const { upsertProvider } = require(${onboardPath});
@@ -2970,8 +3232,8 @@ console.log(JSON.stringify(result));
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-exists-true-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "provider-exists-true.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3004,8 +3266,8 @@ console.log(JSON.stringify({ exists: providerExistsInGateway("discord-bridge") }
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hydrate-cred-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "hydrate-cred.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3064,8 +3326,8 @@ console.log(JSON.stringify({
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-exists-false-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "provider-exists-false.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3099,11 +3361,11 @@ console.log(JSON.stringify({ exists: providerExistsInGateway("nonexistent") }));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "create-sandbox-ready-check.js");
     const payloadPath = path.join(tmpDir, "payload.json");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3220,9 +3482,9 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reuse-forward-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "reuse-sandbox-forward.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3342,9 +3604,9 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-inference-get-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "inference-get-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3404,7 +3666,8 @@ const { setupInference } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
+    // gateway select + provider get + provider update + inference set
+    assert.equal(commands.length, 4);
   });
 
   it("accepts gateway inference output that omits the Route line", () => {
@@ -3412,9 +3675,9 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-inference-route-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "inference-route-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3473,7 +3736,8 @@ const { setupInference } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
+    // gateway select + provider get + provider update + inference set
+    assert.equal(commands.length, 4);
   });
 
   it(
@@ -3486,11 +3750,11 @@ const { setupInference } = require(${onboardPath});
       );
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "enabled-channels-filter.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-      const preflightPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3508,6 +3772,8 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  // provider-get returns not-found so messaging providers are created fresh
+  if (command.includes("'provider' 'get'")) return { status: 1 };
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -3613,11 +3879,11 @@ const { createSandbox } = require(${onboardPath});
       );
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "enabled-channels-empty.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-      const preflightPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3730,8 +3996,8 @@ const { createSandbox } = require(${onboardPath});
       );
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "messaging-noninteractive.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3791,8 +4057,8 @@ const { setupMessagingChannels } = require(${onboardPath});
       );
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "messaging-no-tokens.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -3848,11 +4114,11 @@ const { setupMessagingChannels } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-dockerfile-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "create-sandbox-from.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
     // Create a minimal custom Dockerfile in a temporary directory
     const customBuildDir = path.join(tmpDir, "custom-image");
@@ -3975,11 +4241,11 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-missing-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "create-sandbox-missing.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {

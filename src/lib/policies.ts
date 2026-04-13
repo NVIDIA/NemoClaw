@@ -11,6 +11,7 @@ const readline = require("readline");
 const YAML = require("yaml");
 const { ROOT, run, runCapture, shellQuote } = require("./runner");
 const registry = require("./registry");
+const { loadAgent } = require("./agent-defs");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 function getOpenshellCommand() {
@@ -342,8 +343,58 @@ function selectFromList(items, { applied = [] } = {}) {
   });
 }
 
+const PERMISSIVE_POLICY_PATH = path.join(
+  ROOT,
+  "nemoclaw-blueprint",
+  "policies",
+  "openclaw-sandbox-permissive.yaml",
+);
+
+function resolvePermissivePolicyPath(sandboxName) {
+  // Use agent-specific permissive policy if the sandbox has an agent with one.
+  try {
+    const sandbox = registry.getSandbox(sandboxName);
+    if (sandbox?.agent && sandbox.agent !== "openclaw") {
+      const agent = loadAgent(sandbox.agent);
+      if (agent?.policyPermissivePath) return agent.policyPermissivePath;
+    }
+    if (sandbox?.agent === "openclaw") {
+      const agent = loadAgent("openclaw");
+      if (agent?.policyPermissivePath) return agent.policyPermissivePath;
+    }
+  } catch {
+    // Fall through to global permissive policy
+  }
+  return PERMISSIVE_POLICY_PATH;
+}
+
+function applyPermissivePolicy(sandboxName) {
+  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
+  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
+    throw new Error(
+      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
+        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
+    );
+  }
+
+  const policyPath = resolvePermissivePolicyPath(sandboxName);
+  if (!fs.existsSync(policyPath)) {
+    throw new Error(`Permissive policy not found: ${policyPath}`);
+  }
+
+  console.log("  Applying permissive policy (--dangerously-skip-permissions)...");
+  run(buildPolicySetCommand(policyPath, sandboxName));
+  console.log("  Applied permissive policy.");
+
+  const sandbox = registry.getSandbox(sandboxName);
+  if (sandbox) {
+    registry.updateSandbox(sandboxName, { dangerouslySkipPermissions: true });
+  }
+}
+
 export {
   PRESETS_DIR,
+  PERMISSIVE_POLICY_PATH,
   listPresets,
   loadPreset,
   getPresetEndpoints,
@@ -353,6 +404,7 @@ export {
   buildPolicyGetCommand,
   mergePresetIntoPolicy,
   applyPreset,
+  applyPermissivePolicy,
   getAppliedPresets,
   selectFromList,
 };

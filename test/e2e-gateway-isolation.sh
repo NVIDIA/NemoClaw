@@ -368,6 +368,57 @@ else
   fail "non-root command execution failed: $OUT"
 fi
 
+# ── Test 26: Model override patches openclaw.json at startup ─────
+# NEMOCLAW_MODEL_OVERRIDE should patch agents.defaults.model.primary,
+# model id, and model name in openclaw.json before Landlock locks it.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/759
+
+info "26. NEMOCLAW_MODEL_OVERRIDE patches openclaw.json"
+OUT=$(docker run --rm -e NEMOCLAW_MODEL_OVERRIDE="test/override-model" \
+  --entrypoint "" "$IMAGE" bash -c '
+  # Source the entrypoint functions without running the full startup
+  source <(sed -n "/^apply_model_override/,/^}/p" /usr/local/bin/nemoclaw-start)
+  export NEMOCLAW_MODEL_OVERRIDE="test/override-model"
+  apply_model_override
+  python3 -c "
+import json
+with open(\"/sandbox/.openclaw/openclaw.json\") as f:
+    cfg = json.load(f)
+primary = cfg[\"agents\"][\"defaults\"][\"model\"][\"primary\"]
+providers = cfg.get(\"models\", {}).get(\"providers\", {})
+all_models = [m for pval in providers.values() for m in pval.get(\"models\", [])]
+all_patched = all(
+    m.get(\"id\") == \"test/override-model\" and m.get(\"name\") == \"test/override-model\"
+    for m in all_models
+)
+if primary == \"test/override-model\" and all_models and all_patched:
+    print(\"OVERRIDE_OK\")
+else:
+    print(f\"OVERRIDE_FAIL primary={primary} models={len(all_models)} all_patched={all_patched}\")
+"
+' 2>&1 || true)
+if echo "$OUT" | grep -q "OVERRIDE_OK"; then
+  pass "NEMOCLAW_MODEL_OVERRIDE patches primary, id, and name"
+else
+  fail "model override did not patch correctly: $OUT"
+fi
+
+# ── Test 27: Model override is a no-op when env var is unset ─────
+
+info "27. No override when NEMOCLAW_MODEL_OVERRIDE is unset"
+OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+  source <(sed -n "/^apply_model_override/,/^}/p" /usr/local/bin/nemoclaw-start)
+  ORIGINAL=$(python3 -c "import json; print(json.load(open(\"/sandbox/.openclaw/openclaw.json\"))[\"agents\"][\"defaults\"][\"model\"][\"primary\"])")
+  apply_model_override
+  AFTER=$(python3 -c "import json; print(json.load(open(\"/sandbox/.openclaw/openclaw.json\"))[\"agents\"][\"defaults\"][\"model\"][\"primary\"])")
+  if [ "$ORIGINAL" = "$AFTER" ]; then echo "NOOP_OK"; else echo "NOOP_FAIL orig=$ORIGINAL after=$AFTER"; fi
+' 2>&1 || true)
+if echo "$OUT" | grep -q "NOOP_OK"; then
+  pass "no override applied when env var is unset"
+else
+  fail "config changed unexpectedly without override: $OUT"
+fi
+
 # ── Summary ──────────────────────────────────────────────────────
 
 echo ""

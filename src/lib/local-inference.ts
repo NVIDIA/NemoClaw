@@ -6,8 +6,11 @@
  * health checks, and command generators for vLLM and Ollama.
  */
 
+import type { CurlProbeResult } from "./http-probe";
+import { runCurlProbe } from "./http-probe";
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { shellQuote } = require("../../bin/lib/runner");
+const { shellQuote } = require("./runner");
 
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
 export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
@@ -24,6 +27,17 @@ export interface GpuInfo {
 export interface ValidationResult {
   ok: boolean;
   message?: string;
+}
+
+export interface LocalProviderHealthStatus {
+  ok: boolean;
+  providerLabel: string;
+  endpoint: string;
+  detail: string;
+}
+
+export interface LocalProviderHealthProbeOptions {
+  runCurlProbeImpl?: (argv: string[]) => CurlProbeResult;
 }
 
 export function getLocalProviderBaseUrl(provider: string): string | null {
@@ -48,15 +62,86 @@ export function getLocalProviderValidationBaseUrl(provider: string): string | nu
   }
 }
 
-export function getLocalProviderHealthCheck(provider: string): string | null {
+export function getLocalProviderHealthEndpoint(provider: string): string | null {
   switch (provider) {
     case "vllm-local":
-      return "curl -sf http://localhost:8000/v1/models 2>/dev/null";
+      return "http://localhost:8000/v1/models";
     case "ollama-local":
-      return "curl -sf http://localhost:11434/api/tags 2>/dev/null";
+      return "http://localhost:11434/api/tags";
     default:
       return null;
   }
+}
+
+export function getLocalProviderHealthCheck(provider: string): string | null {
+  const endpoint = getLocalProviderHealthEndpoint(provider);
+  return endpoint ? `curl -sf ${endpoint} 2>/dev/null` : null;
+}
+
+export function getLocalProviderLabel(provider: string): string | null {
+  switch (provider) {
+    case "vllm-local":
+      return "Local vLLM";
+    case "ollama-local":
+      return "Local Ollama";
+    default:
+      return null;
+  }
+}
+
+function buildLocalProviderProbeDetail(
+  provider: string,
+  endpoint: string,
+  result: CurlProbeResult,
+): string {
+  const label = getLocalProviderLabel(provider) || "Local inference provider";
+  if (result.httpStatus === 0) {
+    switch (provider) {
+      case "ollama-local":
+        return (
+          `${label} is selected for inference, but the host probe to ${endpoint} failed. ` +
+          `Start Ollama and retry. (${result.message})`
+        );
+      case "vllm-local":
+        return (
+          `${label} is selected for inference, but the host probe to ${endpoint} failed. ` +
+          `Start the local vLLM server and retry. (${result.message})`
+        );
+      default:
+        return `${label} is selected for inference, but the host probe to ${endpoint} failed. (${result.message})`;
+    }
+  }
+  return `${label} is reachable on ${endpoint}, but the health probe failed. (${result.message})`;
+}
+
+export function probeLocalProviderHealth(
+  provider: string,
+  options: LocalProviderHealthProbeOptions = {},
+): LocalProviderHealthStatus | null {
+  const endpoint = getLocalProviderHealthEndpoint(provider);
+  const providerLabel = getLocalProviderLabel(provider);
+  if (!endpoint || !providerLabel) {
+    return null;
+  }
+
+  const runCurlProbeImpl = options.runCurlProbeImpl ?? runCurlProbe;
+  const result = runCurlProbeImpl(["-sS", "--connect-timeout", "3", "--max-time", "5", endpoint]);
+
+  if (result.ok) {
+    return {
+      ok: true,
+      providerLabel,
+      endpoint,
+      detail: `${providerLabel} is reachable on ${endpoint}.`,
+    };
+  }
+
+  return {
+    ok: false,
+    providerLabel,
+    endpoint,
+    detail: buildLocalProviderProbeDetail(provider, endpoint, result),
+  };
 }
 
 export function getLocalProviderContainerReachabilityCheck(provider: string): string | null {

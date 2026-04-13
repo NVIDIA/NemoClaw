@@ -13,12 +13,15 @@ import {
   getLocalProviderBaseUrl,
   getLocalProviderContainerReachabilityCheck,
   getLocalProviderHealthCheck,
+  getLocalProviderHealthEndpoint,
+  getLocalProviderLabel,
   getLocalProviderValidationBaseUrl,
   getOllamaModelOptions,
   getOllamaProbeCommand,
   getOllamaWarmupCommand,
   parseOllamaList,
   parseOllamaTags,
+  probeLocalProviderHealth,
   validateOllamaModel,
   validateLocalProvider,
 } from "../../dist/lib/local-inference";
@@ -37,7 +40,9 @@ describe("local inference helpers", () => {
   it("returns null for unknown local provider URLs", () => {
     expect(getLocalProviderBaseUrl("unknown-provider")).toBeNull();
     expect(getLocalProviderValidationBaseUrl("unknown-provider")).toBeNull();
+    expect(getLocalProviderHealthEndpoint("unknown-provider")).toBeNull();
     expect(getLocalProviderHealthCheck("unknown-provider")).toBeNull();
+    expect(getLocalProviderLabel("unknown-provider")).toBeNull();
     expect(getLocalProviderContainerReachabilityCheck("unknown-provider")).toBeNull();
   });
 
@@ -46,6 +51,10 @@ describe("local inference helpers", () => {
   });
 
   it("returns the expected health check command for ollama-local", () => {
+    expect(getLocalProviderHealthEndpoint("ollama-local")).toBe(
+      "http://localhost:11434/api/tags",
+    );
+    expect(getLocalProviderLabel("ollama-local")).toBe("Local Ollama");
     expect(getLocalProviderHealthCheck("ollama-local")).toBe(
       "curl -sf http://localhost:11434/api/tags 2>/dev/null",
     );
@@ -53,6 +62,8 @@ describe("local inference helpers", () => {
 
   it("returns the expected validation and health check commands for vllm-local", () => {
     expect(getLocalProviderValidationBaseUrl("ollama-local")).toBe("http://localhost:11434/v1");
+    expect(getLocalProviderHealthEndpoint("vllm-local")).toBe("http://localhost:8000/v1/models");
+    expect(getLocalProviderLabel("vllm-local")).toBe("Local vLLM");
     expect(getLocalProviderHealthCheck("vllm-local")).toBe(
       "curl -sf http://localhost:8000/v1/models 2>/dev/null",
     );
@@ -98,6 +109,48 @@ describe("local inference helpers", () => {
     const result = validateLocalProvider("vllm-local", () => "");
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/http:\/\/localhost:8000/);
+  });
+
+  it("probes local provider health successfully", () => {
+    const result = probeLocalProviderHealth("ollama-local", {
+      runCurlProbeImpl: () => ({
+        ok: true,
+        httpStatus: 200,
+        curlStatus: 0,
+        body: "{}",
+        stderr: "",
+        message: "HTTP 200",
+      }),
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      providerLabel: "Local Ollama",
+      endpoint: "http://localhost:11434/api/tags",
+      detail: "Local Ollama is reachable on http://localhost:11434/api/tags.",
+    });
+  });
+
+  it("reports a clear local provider outage when the host probe cannot connect", () => {
+    const result = probeLocalProviderHealth("ollama-local", {
+      runCurlProbeImpl: () => ({
+        ok: false,
+        httpStatus: 0,
+        curlStatus: 7,
+        body: "",
+        stderr: "Failed to connect",
+        message: "curl failed (exit 7): Failed to connect",
+      }),
+    });
+
+    expect(result?.ok).toBe(false);
+    expect(result?.detail).toContain("Local Ollama is selected for inference");
+    expect(result?.detail).toContain("Start Ollama and retry");
+    expect(result?.detail).toContain("http://localhost:11434/api/tags");
+  });
+
+  it("returns null when provider health probing is not supported", () => {
+    expect(probeLocalProviderHealth("nvidia-prod")).toBeNull();
   });
 
   it("returns a clear error when vllm-local is not reachable from containers", () => {

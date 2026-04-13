@@ -54,7 +54,7 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
     return;
   }
 
-  const live = deps.getLiveInference();
+  deps.getLiveInference();
 
   log("");
   if (recovery.recoveredFromSession) {
@@ -70,8 +70,8 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
   for (const sb of sandboxes) {
     const isDefault = sb.name === defaultSandbox;
     const def = isDefault ? " *" : "";
-    const model = (isDefault && live?.model) || sb.model || "unknown";
-    const provider = (isDefault && live?.provider) || sb.provider || "unknown";
+    const model = sb.model || "unknown";
+    const provider = sb.provider || "unknown";
     const gpu = sb.gpuEnabled ? "GPU" : "CPU";
     const presets = sb.policies && sb.policies.length > 0 ? sb.policies.join(", ") : "none";
     log(`    ${sb.name}${def}`);
@@ -86,13 +86,13 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
   const log = deps.log ?? console.log;
   const { sandboxes, defaultSandbox } = deps.listSandboxes();
   if (sandboxes.length > 0) {
-    const live = deps.getLiveInference();
+    deps.getLiveInference();
     log("");
     log("  Sandboxes:");
     for (const sb of sandboxes) {
       const isDefault = sb.name === defaultSandbox;
       const def = isDefault ? " *" : "";
-      const model = (isDefault && live?.model) || sb.model;
+      const model = sb.model;
       log(`    ${sb.name}${def}${model ? ` (${model})` : ""}`);
     }
     log("");

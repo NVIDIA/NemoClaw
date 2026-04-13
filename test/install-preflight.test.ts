@@ -12,7 +12,52 @@ const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "..", "scripts", "install.sh");
 const GITHUB_INSTALL_URL = "git+https://github.com/NVIDIA/NemoClaw.git";
-const TEST_SYSTEM_PATH = "/usr/bin:/bin";
+/**
+ * Build an isolated "system bin" directory used by every test in this file
+ * via TEST_SYSTEM_PATH. The directory mirrors /usr/bin and /bin via symlinks
+ * — EXCEPT for `node`, `npm`, and `npx`, which are deliberately excluded.
+ *
+ * Why: the runtime preflight tests need a PATH where the host's real `node`
+ * and `npm` are NOT visible, so the "node missing" / "npm missing" error
+ * branches are actually exercised. The previous `"/usr/bin:/bin"` literal
+ * leaks /usr/bin/node on any Linux distribution that installs Node via
+ * `apt install nodejs` (i.e. most of them), causing those tests to assert
+ * the wrong code path on developer machines while passing on the upstream
+ * CI runners (where Node is installed under /opt/hostedtoolcache/, not
+ * /usr/bin/).
+ *
+ * Tests that need a fake `node` or `npm` continue to write a stub into
+ * `fakeBin` and prepend it to PATH (`${fakeBin}:${TEST_SYSTEM_PATH}`); the
+ * fake still wins because it comes first.
+ *
+ * The directory lives under `os.tmpdir()` and is intentionally not cleaned
+ * up — it's tiny (a few hundred symlinks), the OS reaps it on reboot, and
+ * cleanup would require an `afterAll` hook in every describe block.
+ */
+function buildIsolatedSystemPath() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preflight-sysbin-"));
+  const EXCLUDE = new Set(["node", "npm", "npx"]);
+  for (const sysDir of ["/usr/bin", "/bin"]) {
+    if (!fs.existsSync(sysDir)) continue;
+    for (const name of fs.readdirSync(sysDir)) {
+      if (EXCLUDE.has(name)) continue;
+      try {
+        fs.symlinkSync(path.join(sysDir, name), path.join(dir, name));
+      } catch (err) {
+        // Only swallow EEXIST — the expected case is when /bin is a symlink
+        // to /usr/bin (modern Linux) and we already linked the same name on
+        // the first pass. Any other error (EPERM, EACCES, EINVAL, ENOENT…)
+        // would leave TEST_SYSTEM_PATH partially populated and turn into a
+        // confusing downstream test failure, so re-throw it.
+        if (err && err.code === "EEXIST") continue;
+        throw err;
+      }
+    }
+  }
+  return dir;
+}
+
+const TEST_SYSTEM_PATH = buildIsolatedSystemPath();
 
 function writeExecutable(target, contents) {
   fs.writeFileSync(target, contents, { mode: 0o755 });
@@ -1550,8 +1595,14 @@ describe("installer pure helpers", () => {
   });
 
   it("resolve_openclaw_version: falls back to Dockerfile.base when package.json omits it", () => {
+    const dockerfileContent = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "Dockerfile.base"),
+      "utf-8",
+    );
+    const expected = dockerfileContent.match(/ARG\s+OPENCLAW_VERSION\s*=\s*(\S+)/)?.[1];
+    expect(expected).toBeDefined();
     const r = callInstallerFn('resolve_openclaw_version "$PWD"');
-    expect(r.stdout.trim()).toBe("2026.3.11");
+    expect(r.stdout.trim()).toBe(expected);
   });
 
   it("is_source_checkout: rejects a payload-like checkout without git metadata", () => {

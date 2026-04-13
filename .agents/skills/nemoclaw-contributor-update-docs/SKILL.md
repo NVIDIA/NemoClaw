@@ -18,6 +18,23 @@ Scan recent git history for commits that affect user-facing behavior and draft d
 - Before a release, to catch any doc gaps.
 - When a contributor asks "what docs need updating?"
 
+## Step 0: Load the Skip List
+
+Before scanning commits, read `docs/.docs-skip` if it exists. This file lists features and commits that are merged but should not be documented yet (experimental, under review, etc.).
+
+```bash
+cat docs/.docs-skip
+```
+
+Parse these sections from the file:
+
+- `skip-features:` — substring patterns matched against commit messages and changed file paths. Any commit whose message or file list contains a listed string is excluded.
+- `skip-terms:` — terms that must never appear in generated documentation. Check all drafted content against this list before writing. If a drafted sentence contains a skip-term, remove that sentence or the entire section. This is a hard gate — no skip-term may appear in any doc output.
+
+Ignore comment lines (starting with `#`) and inline comments (everything after ` # `).
+
+Keep the loaded skip list in memory for use throughout the skill execution and the whole documentation process.
+
 ## Step 1: Identify Relevant Commits
 
 Determine the commit range. The user may provide one explicitly (e.g., "since v0.1.0" or "last 30 commits"). If not, default to commits since the head of the main branch.
@@ -30,11 +47,13 @@ git log v0.1.0..HEAD --oneline --no-merges
 git log -50 --oneline --no-merges
 ```
 
-Filter to commits that are likely to affect docs. Look for these signals:
+Filter to commits that are likely to affect docs. Apply every rule below before proceeding. A commit excluded by any rule must not produce doc changes.
 
 1. **Commit type**: `feat`, `fix`, `refactor`, `perf` commits often change behavior. `docs` commits are already doc changes. `chore`, `ci`, `test` commits rarely need doc updates.
 2. **Files changed**: Changes to `nemoclaw/src/`, `nemoclaw-blueprint/`, `bin/`, `scripts/`, or policy-related code are high-signal.
 3. **Ignore**: Changes limited to `test/`, `.github/`, or internal-only modules.
+4. **Skip list**: Exclude any commit whose short hash appears in `skip-commits`, or whose commit message or changed file paths contain a `skip-features` substring. Report skipped commits in the final summary under a "Skipped (docs-skip)" heading.
+5. **Agent support matrix**: Do not document agent support (e.g., Claude Code, OpenHands, Goose) unless the agent is listed in the tested agent support matrix in the quickstart or platform docs. Commits that add or modify agent integration code should only produce doc updates for agents already in the matrix. Report excluded agents under "Skipped (not in agent matrix)" in the summary.
 
 ```bash
 # Show files changed per commit to assess impact
@@ -83,6 +102,8 @@ Identify where the new content should go. Follow the page's existing structure.
 
 ## Step 5: Draft the Update
 
+Before writing, verify that the commit was not excluded in Step 1. Do not draft content for commits matched by the skip list or for agent integrations not in the tested agent support matrix. After drafting, scan the content for any `skip-terms` from `docs/.docs-skip`. Remove any sentence or section that contains a skip-term. If in doubt, skip the commit and report it.
+
 Write the doc update following these conventions:
 
 - **Active voice, present tense, second person.**
@@ -125,6 +146,9 @@ After drafting all updates, present a summary to the user:
 ### New pages needed
 - None (or list any new pages created).
 
+### Skipped (docs-skip)
+- `feat(sandbox): add experimental-flag` (abc1234) — matched skip-features: "experimental-flag".
+
 ### Commits with no doc impact
 - `chore(deps): bump typescript` (abc1234) — internal dependency, no user-facing change.
 - `test: add launch command test` (def5678) — test-only change.
@@ -150,6 +174,7 @@ Check for:
 - Group related commits that touch the same doc page into a single update rather than making multiple small edits.
 - If a commit is a breaking change, add a note at the top of the relevant section using a `:::{warning}` admonition.
 - PRs that are purely internal refactors with no behavior change do not need doc updates, even if they touch high-signal directories.
+- To suppress documentation for a merged feature that is not ready for public docs, add it to `docs/.docs-skip`. Remove the entry once the feature is ready to document.
 
 ## Example Usage
 

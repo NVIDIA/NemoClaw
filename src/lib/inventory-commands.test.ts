@@ -50,7 +50,7 @@ describe("inventory commands", () => {
     );
   });
 
-  it("uses live inference only for the default sandbox in list output", async () => {
+  it("shows stored sandbox inference instead of live gateway inference in list output", async () => {
     const lines: string[] = [];
     await listSandboxesCommand({
       recoverRegistryEntries: async () => ({
@@ -78,6 +78,9 @@ describe("inventory commands", () => {
     });
 
     expect(lines).toContain(
+      "      model: configured-alpha  provider: configured-provider  GPU  policies: none",
+    );
+    expect(lines).not.toContain(
       "      model: live-model  provider: live-provider  GPU  policies: none",
     );
     expect(lines).toContain(
@@ -85,7 +88,7 @@ describe("inventory commands", () => {
     );
   });
 
-  it("prints the top-level status inventory and delegates service status", () => {
+  it("prints stored sandbox models in status and delegates service status", () => {
     const lines: string[] = [];
     const showServiceStatus = vi.fn();
     showStatusCommand({
@@ -108,7 +111,8 @@ describe("inventory commands", () => {
     });
 
     expect(lines).toContain("  Sandboxes:");
-    expect(lines).toContain("    alpha * (moonshotai/kimi-k2.5)");
+    expect(lines).toContain("    alpha * (nvidia/nemotron-3-super-120b-a12b)");
+    expect(lines).not.toContain("    alpha * (moonshotai/kimi-k2.5)");
     expect(lines).toContain("    beta (z-ai/glm5)");
     expect(showServiceStatus).toHaveBeenCalledWith({ sandboxName: "alpha" });
   });

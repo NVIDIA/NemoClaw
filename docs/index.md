@@ -3,8 +3,8 @@ title:
   page: "NVIDIA NemoClaw Developer Guide"
   nav: "NemoClaw"
 description:
-  main: "NemoClaw is an open source reference stack that simplifies running OpenClaw always-on assistants more safely, with a single command."
-  agent: "Provides an open source reference stack that simplifies running OpenClaw always-on assistants more safely. Use when setting up NemoClaw, exploring the project, or looking for the landing page."
+  main: "NemoClaw is an open-source reference stack that simplifies running OpenClaw always-on assistants more safely, with a single command."
+  agent: "Provides an open-source reference stack that simplifies running OpenClaw always-on assistants more safely. Use when setting up NemoClaw, exploring the project, or looking for the landing page."
 keywords: ["nemoclaw open source reference stack", "openclaw always-on assistants", "nvidia openshell", "nvidia nemotron"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "inference_routing", "nemoclaw"]
@@ -27,9 +27,9 @@ status: published
 :end-before: <!-- end-badges -->
 ```
 
-NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
-NemoClaw provides onboarding, lifecycle management, and management of OpenClaw within OpenShell containers.
-It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of NVIDIA Agent Toolkit, an environment designed for executing claws with additional security, and open source models like [NVIDIA Nemotron](https://build.nvidia.com).
+NVIDIA NemoClaw is an open-source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
+NemoClaw provides onboarding, lifecycle management, and OpenClaw operations within OpenShell containers.
+It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of NVIDIA Agent Toolkit, an environment designed for executing claws with additional security, and open-source models like [NVIDIA Nemotron](https://build.nvidia.com).
 
 ## Get Started
 
@@ -227,12 +227,6 @@ This software automatically retrieves, accesses or interacts with external mater
 ```
 
 ```{toctree}
-:hidden:
-
-Home <self>
-```
-
-```{toctree}
 :caption: About NemoClaw
 :hidden:
 
@@ -272,6 +266,7 @@ Customize the Network Policy <network-policy/customize-network-policy>
 
 Security Best Practices <security/best-practices>
 Credential Storage <security/credential-storage>
+OpenClaw Controls <security/openclaw-controls>
 ```
 
 ```{toctree}

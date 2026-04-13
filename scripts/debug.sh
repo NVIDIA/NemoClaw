@@ -118,15 +118,19 @@ SCRIPT_PATH="${BASH_SOURCE[0]:-}"
 if [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
   SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
   REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-  ONBOARD_SESSION_HELPER="${REPO_ROOT}/bin/lib/onboard-session.js"
+  ONBOARD_SESSION_HELPER="${REPO_ROOT}/dist/lib/onboard-session.js"
 fi
 
 # Redact known sensitive patterns (API keys, tokens, passwords in env/args).
+# Keep in sync with src/lib/secret-patterns.ts — consistency test enforces this.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/1736
 redact() {
   sed -E \
     -e 's/(NVIDIA_API_KEY|API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY)=\S+/\1=<REDACTED>/gi' \
-    -e 's/(nvapi-[A-Za-z0-9_-]{10,})/<REDACTED>/g' \
-    -e 's/(ghp_[A-Za-z0-9]{30,})/<REDACTED>/g' \
+    -e 's/nvapi-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+    -e 's/nvcf-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+    -e 's/ghp_[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+    -e 's/github_pat_[A-Za-z0-9_]{30,}/<REDACTED>/g' \
     -e 's/(Bearer )[^ ]+/\1<REDACTED>/gi'
 }
 

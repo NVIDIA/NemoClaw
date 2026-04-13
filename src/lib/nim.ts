@@ -4,7 +4,7 @@
 // NIM container management — pull, start, stop, health-check NIM images.
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { run, runCapture, shellQuote } = require("../../bin/lib/runner");
+const { run, runCapture, shellQuote } = require("./runner");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const nimImages = require("../../bin/lib/nim-images.json");
 

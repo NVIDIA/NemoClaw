@@ -3,7 +3,7 @@
 
 # Post-migration rescue tooling
 
-These helpers exist for the period after the root CLI JS→TS migration lands on `main`.
+These helpers exist for the period after the root CLI JS→TS migration lands on `main`. The CI guard also blocks edits that try to resurrect removed `bin/lib/*.js` compatibility shims; contributors should edit the canonical TS files instead.
 
 ## Files
 

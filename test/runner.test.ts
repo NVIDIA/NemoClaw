@@ -9,9 +9,9 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { runCapture } from "../bin/lib/runner";
+import { runCapture } from "../dist/lib/runner";
 
-const runnerPath = path.join(import.meta.dirname, "..", "bin", "lib", "runner");
+const runnerPath = path.join(import.meta.dirname, "..", "dist", "lib", "runner.js");
 
 describe("runner helpers", () => {
   it("does not let child commands consume installer stdin", () => {
@@ -476,8 +476,8 @@ describe("regression guards", () => {
     it("setupSpark is a compatibility alias that does not shell out to sudo", () => {
       const fs = require("fs");
       const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"), "utf-8");
-      expect(src).toContain("`nemoclaw setup-spark` is deprecated.");
-      expect(src).toContain("await onboard(args);");
+      expect(src).toContain("runDeprecatedOnboardAliasCommand");
+      expect(src).toContain('kind: "setup-spark"');
       expect(src).not.toContain('sudo bash "${SCRIPTS}/setup-spark.sh"');
     });
 
@@ -629,6 +629,13 @@ describe("regression guards", () => {
       );
     });
 
+    it("scripts/setup-jetson.sh exists and is executable", () => {
+      const scriptPath = path.join(import.meta.dirname, "..", "scripts", "setup-jetson.sh");
+      expect(fs.existsSync(scriptPath)).toBe(true);
+      const mode = fs.statSync(scriptPath).mode;
+      expect((mode & 0o111) !== 0).toBe(true);
+    });
+
     it("services no longer tell users to install brev-setup.sh", () => {
       const src = fs.readFileSync(
         path.join(import.meta.dirname, "..", "src", "lib", "services.ts"),
@@ -701,7 +708,7 @@ describe("regression guards", () => {
 
     it("brev e2e suite includes a deploy-cli mode", () => {
       const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.js"),
+        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.ts"),
         "utf-8",
       );
       expect(src).toContain('TEST_SUITE === "deploy-cli"');
@@ -711,7 +718,7 @@ describe("regression guards", () => {
 
     it("brev e2e suite relies on an authenticated brev CLI instead of a Brev API token", () => {
       const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.js"),
+        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.ts"),
         "utf-8",
       );
       expect(src).toContain("const hasAuthenticatedBrev =");
@@ -722,7 +729,7 @@ describe("regression guards", () => {
 
     it("brev e2e suite no longer contains the old brev-setup compatibility path", () => {
       const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.js"),
+        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.ts"),
         "utf-8",
       );
       expect(src).not.toContain("scripts/brev-setup.sh");

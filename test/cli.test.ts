@@ -117,6 +117,13 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("NemoClaw Services");
   });
 
+  it("onboard --help exits 0 and shows usage", () => {
+    const r = run("onboard --help");
+    expect(r.code).toBe(0);
+    expect(r.out.includes("Usage: nemoclaw onboard")).toBeTruthy();
+    expect(r.out.includes("--from <Dockerfile>")).toBeTruthy();
+  });
+
   it("unknown onboard option exits 1", () => {
     const r = run("onboard --non-interactiv");
     expect(r.code).toBe(1);
@@ -135,6 +142,14 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
   });
 
+  it("setup --help exits 0 and shows onboard usage", () => {
+    const r = run("setup --help");
+    expect(r.code).toBe(0);
+    expect(r.out.includes("setup` is deprecated")).toBeTruthy();
+    expect(r.out.includes("Usage: nemoclaw onboard")).toBeTruthy();
+    expect(r.out.includes("Unknown onboard option")).toBeFalsy();
+  });
+
   it("setup forwards unknown options into onboard parsing", () => {
     const r = run("setup --non-interactiv");
     expect(r.code).toBe(1);
@@ -147,6 +162,15 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(1);
     expect(r.out.includes("deprecated")).toBeTruthy();
     expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
+  });
+
+  it("setup-spark --help exits 0 and shows onboard usage", () => {
+    const r = run("setup-spark --help");
+    expect(r.code).toBe(0);
+    expect(r.out.includes("setup-spark` is deprecated")).toBeTruthy();
+    expect(r.out.includes("Use `nemoclaw onboard` instead")).toBeTruthy();
+    expect(r.out.includes("Usage: nemoclaw onboard")).toBeTruthy();
+    expect(r.out.includes("Unknown onboard option")).toBeFalsy();
   });
 
   it("setup-spark is a deprecated compatibility alias for onboard", () => {
@@ -1531,6 +1555,88 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Sandbox: alpha")).toBeTruthy();
   });
 
+  it("shows a clear local inference warning when Ollama is down", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-local-inference-down-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "llama3.2:1b",
+            provider: "ollama-local",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        "  echo 'Sandbox: alpha'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "alpha" ]; then',
+        "  exit 1",
+        "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo",
+        "  echo '  Provider: ollama-local'",
+        "  echo '  Model: llama3.2:1b'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "curl"),
+      [
+        "#!/usr/bin/env bash",
+        'out=""',
+        'url=""',
+        'while [ "$#" -gt 0 ]; do',
+        '  case "$1" in',
+        '    -o) out="$2"; shift 2 ;;',
+        '    -w|--connect-timeout|--max-time) shift 2 ;;',
+        '    -s|-S|-sS|-f) shift ;;',
+        '    http://*|https://*) url="$1"; shift ;;',
+        '    *) shift ;;',
+        '  esac',
+        'done',
+        'if [ -n "$out" ]; then : > "$out"; fi',
+        'if echo "$url" | grep -q "11434/api/tags"; then',
+        '  printf "000"',
+        '  exit 7',
+        'fi',
+        'printf "000"',
+        'exit 7',
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha status", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Inference:");
+    expect(r.out).toContain("unreachable");
+    expect(r.out).toContain("Start Ollama and retry");
+    expect(r.out).toContain("http://localhost:11434/api/tags");
+  });
+
   it("does not treat a different connected gateway as a healthy nemoclaw gateway", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-mixed-gateway-"));
     const localBin = path.join(home, "bin");
@@ -1948,21 +2054,20 @@ describe("CLI dispatch", () => {
 });
 
 describe("list shows live gateway inference", () => {
-  it("prefers live inference model/provider over stale registry values", () => {
+  it("shows stored sandbox inference instead of live gateway inference", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-live-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
-    // Registry has no model/provider (mimics post-onboard before inference setup)
     fs.writeFileSync(
       path.join(registryDir, "sandboxes.json"),
       JSON.stringify({
         sandboxes: {
           test: {
             name: "test",
-            model: null,
-            provider: null,
+            model: "configured-model",
+            provider: "configured-provider",
             gpuEnabled: true,
             policies: ["pypi", "npm"],
           },
@@ -1971,7 +2076,7 @@ describe("list shows live gateway inference", () => {
       }),
       { mode: 0o600 },
     );
-    // Stub openshell: inference get returns live provider/model
+    // Stub openshell: inference get returns a different live provider/model
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
@@ -1994,9 +2099,10 @@ describe("list shows live gateway inference", () => {
     });
 
     expect(r.code).toBe(0);
-    expect(r.out).toContain("nvidia/nemotron-3-super-120b-a12b");
-    expect(r.out).toContain("nvidia-prod");
-    expect(r.out).not.toContain("unknown");
+    expect(r.out).toContain("configured-model");
+    expect(r.out).toContain("configured-provider");
+    expect(r.out).not.toContain("nvidia/nemotron-3-super-120b-a12b");
+    expect(r.out).not.toContain("nvidia-prod");
   });
 
   it("falls back to registry values when openshell inference get fails", () => {
