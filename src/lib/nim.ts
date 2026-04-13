@@ -220,9 +220,18 @@ export function waitForNimHealth(port = VLLM_PORT, timeout = 300): boolean {
 
   while ((Date.now() - start) / 1000 < timeout) {
     try {
-      const result = runCapture(["curl", "-sf", `http://localhost:${hostPort}/v1/models`], {
-        ignoreError: true,
-      });
+      const result = runCapture(
+        [
+          "curl",
+          "-sf",
+          "--connect-timeout",
+          "5",
+          "--max-time",
+          "5",
+          `http://localhost:${hostPort}/v1/models`,
+        ],
+        { ignoreError: true },
+      );
       if (result) {
         console.log("  NIM is healthy.");
         return true;
@@ -272,7 +281,15 @@ export function nimStatusByName(name: string, port?: number): NimStatus {
         resolvedHostPort = m ? Number(m[1]) : VLLM_PORT;
       }
       const health = runCapture(
-        ["curl", "-sf", `http://localhost:${resolvedHostPort}/v1/models`],
+        [
+          "curl",
+          "-sf",
+          "--connect-timeout",
+          "5",
+          "--max-time",
+          "5",
+          `http://localhost:${resolvedHostPort}/v1/models`,
+        ],
         { ignoreError: true },
       );
       healthy = !!health;
