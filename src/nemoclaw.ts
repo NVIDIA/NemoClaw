@@ -875,7 +875,6 @@ function uninstall(args) {
     remoteScriptUrl: REMOTE_UNINSTALL_URL,
     env: process.env,
     spawnSyncImpl: spawnSync,
-    execFileSyncImpl: execFileSync,
     log: console.log,
     error: console.error,
     exit: (code) => process.exit(code),

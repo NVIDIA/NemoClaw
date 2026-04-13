@@ -47,7 +47,6 @@ describe("uninstall command", () => {
         remoteScriptUrl: "https://example.invalid/uninstall.sh",
         env: process.env,
         spawnSyncImpl,
-        execFileSyncImpl: vi.fn(),
         existsSyncImpl: (candidate) => candidate === path.join("/repo", "uninstall.sh"),
         log: () => {},
         error: () => {},
@@ -64,7 +63,6 @@ describe("uninstall command", () => {
   });
 
   it("does not download or run a remote uninstall script when no local copy exists", () => {
-    const execFileSyncImpl = vi.fn();
     const spawnSyncImpl = vi.fn(() => ({ status: 0, signal: null }));
     const errors: string[] = [];
     expect(() =>
@@ -75,7 +73,6 @@ describe("uninstall command", () => {
         remoteScriptUrl: "https://example.invalid/uninstall.sh",
         env: process.env,
         spawnSyncImpl,
-        execFileSyncImpl,
         existsSyncImpl: () => false,
         log: () => {},
         error: (message) => {
@@ -86,7 +83,6 @@ describe("uninstall command", () => {
         }) as never,
       }),
     ).toThrow("exit:1");
-    expect(execFileSyncImpl).not.toHaveBeenCalled();
     expect(spawnSyncImpl).not.toHaveBeenCalled();
     expect(errors.join("\n")).toContain("Remote uninstall fallback is disabled for security.");
     expect(errors.join("\n")).toContain("https://example.invalid/uninstall.sh");

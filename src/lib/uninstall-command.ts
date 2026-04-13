@@ -50,11 +50,7 @@ export interface RunUninstallCommandDeps {
     args: string[],
     options?: Record<string, unknown>,
   ) => Pick<SpawnSyncReturns<string>, "status" | "signal">;
-  execFileSyncImpl: (file: string, args: string[], options?: Record<string, unknown>) => void;
   existsSyncImpl?: (path: string) => boolean;
-  mkdtempSyncImpl?: (prefix: string) => string;
-  rmSyncImpl?: (path: string, options?: { recursive?: boolean; force?: boolean }) => void;
-  tmpdirFn?: () => string;
   log?: (message?: string) => void;
   error?: (message?: string) => void;
   exit?: (code: number) => never;

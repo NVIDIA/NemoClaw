@@ -749,11 +749,15 @@ describe("regression guards", () => {
         path.join(import.meta.dirname, "..", "src", "lib", "uninstall-command.ts"),
         "utf-8",
       );
-      expect(src).not.toMatch(/execFileSyncImpl\(\s*["']curl["']/);
-      expect(src).not.toMatch(
-        /spawnSyncImpl\(\s*["']bash["']\s*,\s*\[[^\]]*uninstallScript[^\]]*\]/,
+      const start = src.indexOf("export function runUninstallCommand(");
+      expect(start).toBeGreaterThan(-1);
+      const uninstallBlock = src.slice(start);
+
+      expect(uninstallBlock).not.toMatch(/exec(File)?Sync(?:Impl)?\(\s*["'](?:curl|wget)["']/);
+      expect(uninstallBlock).not.toMatch(
+        /spawnSyncImpl\(\s*["'](?:bash|sh)["']\s*,\s*\[[^\]]*(?:uninstallScript|https?:\/\/)[^\]]*\]/,
       );
-      expect(src).toContain("Remote uninstall fallback is disabled for security.");
+      expect(uninstallBlock).toContain("Remote uninstall fallback is disabled for security.");
     });
   });
 });
