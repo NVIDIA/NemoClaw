@@ -2137,7 +2137,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
     }
   }
 
-  const gwArgs = ["--name", GATEWAY_NAME];
+  const gwArgs = ["--name", GATEWAY_NAME, "--port", String(GATEWAY_PORT)];
   // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
   // routed through a host-side provider (Ollama, vLLM, or cloud API) — the
   // sandbox itself does not need direct GPU access. Passing --gpu causes
@@ -2259,7 +2259,7 @@ async function recoverGatewayRuntime() {
     return true;
   }
 
-  const startResult = runOpenshell(["gateway", "start", "--name", GATEWAY_NAME], {
+  const startResult = runOpenshell(["gateway", "start", "--name", GATEWAY_NAME, "--port", String(GATEWAY_PORT)], {
     ignoreError: true,
     env: getGatewayStartEnv(),
     suppressOutput: true,
