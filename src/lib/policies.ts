@@ -310,6 +310,11 @@ function removePreset(sandboxName, presetName) {
   }
 
   const currentPolicy = parseCurrentPolicy(rawPolicy);
+  if (!currentPolicy) {
+    console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
+    return false;
+  }
+
   const updated = removePresetFromPolicy(currentPolicy, presetEntries);
 
   if (updated === currentPolicy) {
