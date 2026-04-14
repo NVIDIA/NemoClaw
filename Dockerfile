@@ -51,14 +51,13 @@ RUN npm ci --omit=dev
 # telegram-media-download-fix.md
 # hadolint ignore=SC2016,DL3059,DL4006
 RUN set -eu; \
-    matches="$(grep -RIl --include='*.js' 'fetchWithSsrFGuard(withStrictGuardedFetchMode({' /usr/local/lib/node_modules/openclaw/dist/)"; \
+    matches="$(grep -RIl --include='*.js' 'import { n as withStrictGuardedFetchMode, t as fetchWithSsrFGuard }' /usr/local/lib/node_modules/openclaw/dist/)"; \
     test -n "$matches"; \
     printf '%s\n' "$matches" | xargs sed -i \
         -e 's|import { n as withStrictGuardedFetchMode, t as fetchWithSsrFGuard }|import { n as withStrictGuardedFetchMode, r as withTrustedEnvProxyGuardedFetchMode, t as fetchWithSsrFGuard }|g' \
         -e 's|fetchWithSsrFGuard(withStrictGuardedFetchMode({|fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({|g'; \
     grep -Rq --include='*.js' 'r as withTrustedEnvProxyGuardedFetchMode' /usr/local/lib/node_modules/openclaw/dist/; \
-    grep -Rq --include='*.js' 'fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({' /usr/local/lib/node_modules/openclaw/dist/; \
-    ! grep -Rq --include='*.js' 'fetchWithSsrFGuard(withStrictGuardedFetchMode({' /usr/local/lib/node_modules/openclaw/dist/
+    grep -Rq --include='*.js' 'fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({' /usr/local/lib/node_modules/openclaw/dist/
 
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
@@ -238,8 +237,10 @@ RUN mkdir -p /sandbox/.openclaw-data/logs \
             ln -s "/sandbox/.openclaw-data/$dir" "/sandbox/.openclaw/$dir"; \
         fi; \
     done \
-    && rm -rf /sandbox/.openclaw-data/workspace/media \
-    && ln -s /sandbox/.openclaw-data/media /sandbox/.openclaw-data/workspace/media
+    && if [ -e /sandbox/.openclaw-data/workspace/media ] && [ ! -L /sandbox/.openclaw-data/workspace/media ]; then \
+        rm -rf /sandbox/.openclaw-data/workspace/media; \
+    fi \
+    && ln -sfn /sandbox/.openclaw-data/media /sandbox/.openclaw-data/workspace/media
 
 RUN chown root:root /sandbox/.openclaw \
     && rm -rf /root/.npm /sandbox/.npm \
