@@ -16,6 +16,8 @@ import {
   classifySandboxCreateFailure,
   compactText,
   formatEnvAssignment,
+  getDashboardAccessInfo,
+  getDashboardForwardStartCommand,
   getNavigationChoice,
   getGatewayReuseState,
   getPortConflictServiceHints,
@@ -380,6 +382,38 @@ describe("onboard helpers", () => {
     expect(resolveDashboardForwardTarget("http://[::1]:18789")).toBe("18789");
     expect(resolveDashboardForwardTarget("https://chat.example.com")).toBe("0.0.0.0:18789");
     expect(resolveDashboardForwardTarget("http://10.0.0.25:18789")).toBe("0.0.0.0:18789");
+  });
+
+  it("includes a VS Code/WSL dashboard URL when running under WSL", () => {
+    const access = getDashboardAccessInfo("the-crucible", {
+      token: "secret-token",
+      chatUiUrl: "http://127.0.0.1:19999",
+      env: { WSL_DISTRO_NAME: "Ubuntu" },
+      platform: "linux",
+      release: "6.6.87.2-microsoft-standard-WSL2",
+      runCapture: (command) => (command.includes("hostname -I") ? "172.24.240.1\n" : ""),
+    });
+
+    expect(access).toEqual([
+      { label: "Dashboard", url: "http://127.0.0.1:19999/#token=secret-token" },
+      { label: "VS Code/WSL", url: "http://172.24.240.1:19999/#token=secret-token" },
+    ]);
+  });
+
+  it("binds the dashboard forward to all interfaces under WSL", () => {
+    const command = getDashboardForwardStartCommand("the-crucible", {
+      chatUiUrl: "http://127.0.0.1:19999",
+      env: { WSL_DISTRO_NAME: "Ubuntu" },
+      openshellBinary: "/usr/bin/openshell",
+      platform: "linux",
+      release: "6.6.87.2-microsoft-standard-WSL2",
+    });
+
+    expect(command).toContain("forward");
+    expect(command).toContain("start");
+    expect(command).toContain("--background");
+    expect(command).toContain("0.0.0.0:19999");
+    expect(command).toContain("the-crucible");
   });
 
   it("prints platform-appropriate service hints for port conflicts", () => {
@@ -842,6 +876,22 @@ describe("onboard helpers", () => {
     expect(isGatewayHealthy("Gateway status: Connected", "Gateway: something-else")).toBe(false);
   });
 
+  it("passes --port GATEWAY_PORT through every gateway start path", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // Primary start path (startGatewayWithOptions) builds gwArgs with --port.
+    assert.match(source, /const gwArgs = \["--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/);
+
+    // Recovery start path (recoverGatewayRuntime) also passes --port.
+    assert.match(
+      source,
+      /runOpenshell\(\["gateway", "start", "--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
+    );
+  });
+
   it("classifies gateway reuse states conservatively", () => {
     expect(
       getGatewayReuseState(
@@ -885,6 +935,125 @@ describe("onboard helpers", () => {
       ),
     ).toBe("foreign-active");
     expect(getGatewayReuseState("", "")).toBe("missing");
+  });
+
+  it("prints doctor logs automatically when gateway fails to start (#1605)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-diag-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "gateway-diag.cjs");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    // Fake openshell:
+    //   gateway start  — emits ANSI color codes + \r\n (mirrors real gateway output), exits 1
+    //   doctor logs    — emits ANSI sequences, an OOMKilled message, and a fake nvapi- credential
+    //                    to exercise ANSI stripping and redaction in the doctor-log path
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [[ "$*" == *"doctor"*"logs"* ]]; then
+  printf "\\033[31mERROR\\033[0m k3s cluster crashed: OOMKilled\\r\\n"
+  printf "  Container nemoclaw_k3s ran out of memory\\r\\n"
+  printf "  Gateway auth token: nvapi-fakecredential-9999\\r\\n"
+  exit 0
+fi
+if [[ "$*" == *"gateway"*"start"* ]]; then
+  printf "\\033[33mDeploying\\033[0m gateway nemoclaw...\\r\\n"
+  printf "\\r\\nWaiting for gateway health...\\r\\n"
+  exit 1
+fi
+exit 1
+`,
+      { mode: 0o755 },
+    );
+
+    // Script runs in a child process: patching p-retry to be immediate avoids the
+    // 10 s + 30 s minTimeout delays, and NEMOCLAW_HEALTH_POLL_COUNT=0 skips the
+    // health-poll loop so the function throws "Gateway failed to start" on the
+    // first attempt. With exitOnFailure:true the catch block should auto-print
+    // doctor logs to stderr and then call process.exit(1).
+    const script = `
+const mod = require("module");
+const origLoad = mod._load;
+mod._load = function(req, parent, isMain) {
+  if (req === "p-retry") {
+    return async (fn, opts) => {
+      try {
+        return await fn({ attemptNumber: 1, retriesLeft: 0 });
+      } catch (e) {
+        if (opts && opts.onFailedAttempt) {
+          opts.onFailedAttempt(Object.assign(e, { attemptNumber: 1, retriesLeft: 0 }));
+        }
+        throw e;
+      }
+    };
+  }
+  return origLoad.call(this, req, parent, isMain);
+};
+const { startGateway } = require(${onboardPath});
+startGateway(null).catch(() => {});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const nodeExec = process.execPath;
+    const result = spawnSync(nodeExec, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "0",
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    // The process exits 1 because startGateway calls process.exit(1) on failure.
+    assert.equal(result.status, 1, `unexpected exit code; stderr:\n${result.stderr}`);
+
+    // Fix 3: doctor logs are auto-printed to stderr.
+    assert.ok(
+      result.stderr.includes("Gateway logs:"),
+      `expected "Gateway logs:" header in stderr:\n${result.stderr}`,
+    );
+    assert.ok(
+      result.stderr.includes("OOMKilled"),
+      `expected doctor log output in stderr:\n${result.stderr}`,
+    );
+
+    // ANSI sequences must be stripped from both stdout (gateway start output) and
+    // stderr (doctor logs). A raw \x1b in the output means the regex failed.
+    assert.ok(
+      !result.stdout.includes("\x1b"),
+      `unexpected ANSI escape in stdout:\n${result.stdout}`,
+    );
+    assert.ok(
+      !result.stderr.includes("\x1b"),
+      `unexpected ANSI escape in stderr:\n${result.stderr}`,
+    );
+
+    // Credentials in doctor logs must be redacted, never printed verbatim.
+    assert.ok(
+      !result.stderr.includes("nvapi-fakecredential-9999"),
+      `credential leaked verbatim in stderr:\n${result.stderr}`,
+    );
+
+    // Fix 2: the \r\n -> \naiting rendering artifact must not appear.
+    assert.ok(
+      !result.stdout.includes("\naiting"),
+      `\\naiting artifact present in stdout:\n${result.stdout}`,
+    );
+
+    // Fix 1: gateway start output is printed per-line under the header, not as
+    // one collapsed blob. "Deploying" and "Waiting" must appear on separate lines.
+    const gatewayLines = result.stdout
+      .split("\n")
+      .filter((l) => l.includes("Deploying") || l.includes("Waiting"));
+    assert.ok(
+      gatewayLines.length >= 2,
+      `expected "Deploying" and "Waiting" on separate lines in stdout:\n${result.stdout}`,
+    );
   });
 
   it("classifies sandbox reuse states from openshell outputs", () => {
@@ -1318,12 +1487,13 @@ const { setupInference } = require(${onboardPath});
 
     expect(result.status).toBe(0);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
+    assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
-    assert.match(commands[1].command, /'--credential' 'NVIDIA_API_KEY'/);
-    assert.doesNotMatch(commands[1].command, /nvapi-secret-value/);
-    assert.match(commands[1].command, /provider' 'create'/);
-    assert.match(commands[2].command, /inference' 'set'/);
+    assert.match(commands[1].command, /'provider' 'get'/);
+    assert.match(commands[2].command, /'--credential' 'NVIDIA_API_KEY'/);
+    assert.doesNotMatch(commands[2].command, /nvapi-secret-value/);
+    assert.match(commands[2].command, /provider' 'update'/);
+    assert.match(commands[3].command, /inference' 'set'/);
   });
 
   it("detects when the live inference route already matches the requested provider and model", () => {
@@ -1516,6 +1686,8 @@ const registry = require(${registryPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  // provider-get returns not-found so we exercise the create path
+  if (command.includes("'provider' 'get'")) return { status: 1 };
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -1559,12 +1731,13 @@ const { setupInference } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
+    assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
-    assert.match(commands[1].command, /'--type' 'anthropic'/);
-    assert.match(commands[1].command, /'--credential' 'ANTHROPIC_API_KEY'/);
-    assert.doesNotMatch(commands[1].command, /sk-ant-secret-value/);
-    assert.match(commands[2].command, /'--provider' 'anthropic-prod'/);
+    assert.match(commands[1].command, /'provider' 'get'/);
+    assert.match(commands[2].command, /'--type' 'anthropic'/);
+    assert.match(commands[2].command, /'--credential' 'ANTHROPIC_API_KEY'/);
+    assert.doesNotMatch(commands[2].command, /sk-ant-secret-value/);
+    assert.match(commands[3].command, /'--provider' 'anthropic-prod'/);
   });
 
   it("updates OpenAI-compatible providers without passing an unsupported --type flag", () => {
@@ -1586,11 +1759,9 @@ const runner = require(${runnerPath});
 const registry = require(${registryPath});
 
 const commands = [];
-let callIndex = 0;
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
-  callIndex += 1;
-  return { status: callIndex === 2 ? 1 : 0 };
+  return { status: 0 };
 };
 runner.runCapture = (command) => {
   if (command.includes("inference") && command.includes("get")) {
@@ -1635,7 +1806,7 @@ const { setupInference } = require(${onboardPath});
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
-    assert.match(commands[1].command, /provider' 'create'/);
+    assert.match(commands[1].command, /'provider' 'get'/);
     assert.match(commands[2].command, /provider' 'update' 'openai-api'/);
     assert.doesNotMatch(commands[2].command, /'--type'/);
     assert.match(commands[3].command, /inference' 'set' '--no-verify'/);
@@ -1811,17 +1982,29 @@ const { setupInference } = require(${onboardPath});
     assert.match(recoverySource, /local curl invocation error/);
   });
 
-  it("suppresses expected provider-create AlreadyExists noise when update succeeds", () => {
+  it("checks provider existence before create/update to avoid AlreadyExists noise (#1155)", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
 
-    assert.match(source, /stdio: \["ignore", "pipe", "pipe"\]/);
-    // upsertProvider must NOT have its own console.log for Created/Updated —
-    // runner passthrough handles output, so duplicating it causes #1506.
-    assert.doesNotMatch(source, /console\.log\(`✓ Created provider \$\{name\}`\)/);
-    assert.doesNotMatch(source, /console\.log\(`✓ Updated provider \$\{name\}`\)/);
+    // upsertProvider must check existence first so it never triggers AlreadyExists.
+    assert.match(source, /providerExistsInGateway\(name\)/);
+    assert.match(source, /exists \? "update" : "create"/);
+    // Only one openshell call should be made (no create-then-update fallback).
+    assert.match(source, /const result = runOpenshell\(args, runOpts\)/);
+  });
+
+  it("marks the unused agent_setup/openclaw sibling step as skipped (#1834)", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // When agent path is taken, openclaw must be marked skipped.
+    assert.match(source, /handleAgentSetup[\s\S]*?markStepSkipped\("openclaw"\)/);
+    // When default openclaw path is taken, agent_setup must be marked skipped.
+    assert.match(source, /setupOpenclaw[\s\S]*?markStepSkipped\("agent_setup"\)/);
   });
 
   it("starts the sandbox step before prompting for the sandbox name", () => {
@@ -1951,8 +2134,9 @@ const { setupInference } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.equal(payload.openai, "sk-stored-secret");
-    assert.equal(payload.commands[1].env.OPENAI_API_KEY, "sk-stored-secret");
-    assert.doesNotMatch(payload.commands[1].command, /sk-stored-secret/);
+    // commands[0]=gateway select, [1]=provider get, [2]=provider update
+    assert.equal(payload.commands[2].env.OPENAI_API_KEY, "sk-stored-secret");
+    assert.doesNotMatch(payload.commands[2].command, /sk-stored-secret/);
   });
 
   it("drops stale local sandbox registry entries when the live sandbox is gone", () => {
@@ -2104,10 +2288,14 @@ const { createSandbox } = require(${onboardPath});
     assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
     assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
     assert.ok(
-      payload.commands.some((entry) =>
-        entry.command.includes("'forward' 'start' '--background' '18789' 'my-assistant'"),
+      payload.commands.some(
+        (entry) =>
+          entry.command.includes("'forward' 'start' '--background' '18789' 'my-assistant'") ||
+          entry.command.includes(
+            "'forward' 'start' '--background' '0.0.0.0:18789' 'my-assistant'",
+          ),
       ),
-      "expected default loopback dashboard forward",
+      "expected dashboard forward (loopback or WSL 0.0.0.0)",
     );
   });
 
@@ -2231,6 +2419,8 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  // provider-get returns not-found so messaging providers are created fresh
+  if (command.includes("'provider' 'get'")) return { status: 1 };
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -2526,9 +2716,11 @@ const { createSandbox } = require(${onboardPath});
         "should NOT delete sandbox when providers already exist in gateway",
       );
 
-      // Providers should still be upserted on reuse (credential refresh)
+      // Providers should still be upserted on reuse (credential refresh).
+      // Since the mock reports providers as existing (run returns status 0),
+      // upsertProvider issues 'update' rather than 'create'.
       const providerUpserts = payload.commands.filter((entry) =>
-        entry.command.includes("'provider' 'create'"),
+        entry.command.includes("'provider' 'update'"),
       );
       assert.ok(
         providerUpserts.some((e) => e.command.includes("my-assistant-discord-bridge")),
@@ -3071,6 +3263,8 @@ const runner = require(${runnerPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push(command);
+  // First call is provider-get (not found), second is provider-create (success)
+  if (command.includes("'provider' 'get'")) return { status: 1, stdout: "", stderr: "" };
   return { status: 0, stdout: "", stderr: "" };
 };
 const { upsertProvider } = require(${onboardPath});
@@ -3088,9 +3282,10 @@ console.log(JSON.stringify({ result, commands }));
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.deepEqual(payload.result, { ok: true });
-    assert.equal(payload.commands.length, 1);
-    assert.match(payload.commands[0], /'provider' 'create' '--name' 'discord-bridge'/);
-    assert.match(payload.commands[0], /'--credential' 'DISCORD_BOT_TOKEN'/);
+    assert.equal(payload.commands.length, 2);
+    assert.match(payload.commands[0], /'provider' 'get'/);
+    assert.match(payload.commands[1], /'provider' 'create' '--name' 'discord-bridge'/);
+    assert.match(payload.commands[1], /'--credential' 'DISCORD_BOT_TOKEN'/);
   });
 
   it("upsertProvider does not add its own log line on top of runner output (#1506)", () => {
@@ -3109,6 +3304,8 @@ console.log(JSON.stringify({ result, commands }));
     const script = `
 const runner = require(${runnerPath});
 runner.run = (command, opts = {}) => {
+  // First call is provider-get (not found)
+  if (command.includes("'provider' 'get'")) return { status: 1, stdout: "", stderr: "" };
   // Simulate runner passthrough: writeRedactedResult writes stdout to terminal
   process.stdout.write("✓ Created provider test-bridge\\n");
   return { status: 0, stdout: "✓ Created provider test-bridge", stderr: "" };
@@ -3131,7 +3328,7 @@ upsertProvider("test-bridge", "generic", "TEST_TOKEN", null, { TEST_TOKEN: "tok"
     assert.equal(lines.length, 1, `Expected 1 log line but got ${lines.length}: ${result.stdout}`);
   });
 
-  it("upsertProvider falls back to update when create fails", () => {
+  it("upsertProvider updates existing provider instead of creating (#1155)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upsert-provider-update-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3147,14 +3344,10 @@ upsertProvider("test-bridge", "generic", "TEST_TOKEN", null, { TEST_TOKEN: "tok"
     const script = `
 const runner = require(${runnerPath});
 const commands = [];
-let callCount = 0;
 runner.run = (command, opts = {}) => {
   commands.push(command);
-  callCount++;
-  // First call (create) fails, second call (update) succeeds
-  return callCount === 1
-    ? { status: 1, stdout: "", stderr: "already exists" }
-    : { status: 0, stdout: "", stderr: "" };
+  // provider-get succeeds (provider exists), then update succeeds
+  return { status: 0, stdout: "", stderr: "" };
 };
 const { upsertProvider } = require(${onboardPath});
 const result = upsertProvider("inference", "openai", "NVIDIA_API_KEY", "https://integrate.api.nvidia.com/v1");
@@ -3172,7 +3365,7 @@ console.log(JSON.stringify({ result, commands }));
     const payload = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.deepEqual(payload.result, { ok: true });
     assert.equal(payload.commands.length, 2);
-    assert.match(payload.commands[0], /'provider' 'create'/);
+    assert.match(payload.commands[0], /'provider' 'get'/);
     assert.match(payload.commands[1], /'provider' 'update'/);
     assert.match(
       payload.commands[1],
@@ -3180,7 +3373,7 @@ console.log(JSON.stringify({ result, commands }));
     );
   });
 
-  it("upsertProvider returns error details when both create and update fail", () => {
+  it("upsertProvider returns error details when create or update fails", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upsert-provider-fail-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3196,6 +3389,8 @@ console.log(JSON.stringify({ result, commands }));
     const script = `
 const runner = require(${runnerPath});
 runner.run = (command, opts = {}) => {
+  // provider-get says not found, then create fails
+  if (command.includes("'provider' 'get'")) return { status: 1, stdout: "", stderr: "" };
   return { status: 1, stdout: "", stderr: "gateway unreachable" };
 };
 const { upsertProvider } = require(${onboardPath});
@@ -3656,7 +3851,8 @@ const { setupInference } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
+    // gateway select + provider get + provider update + inference set
+    assert.equal(commands.length, 4);
   });
 
   it("accepts gateway inference output that omits the Route line", () => {
@@ -3725,7 +3921,8 @@ const { setupInference } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
+    // gateway select + provider get + provider update + inference set
+    assert.equal(commands.length, 4);
   });
 
   it(
@@ -3760,6 +3957,8 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  // provider-get returns not-found so messaging providers are created fresh
+  if (command.includes("'provider' 'get'")) return { status: 1 };
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -4300,5 +4499,25 @@ const { createSandbox } = require(${onboardPath});
     // Non-interactive still exits within this function
     assert.match(fnBody, /isNonInteractive\(\)/);
     assert.match(fnBody, /process\.exit\(1\)/);
+  });
+
+  it("regression #1881: registry.updateSandbox(model/provider) is called AFTER createSandbox", () => {
+    // updateSandbox() silently no-ops when the entry does not exist yet.
+    // This asserts that the model/provider update comes AFTER createSandbox()
+    // returns, not before registerSandbox() is called (the original bug).
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const createSandboxPos = source.indexOf("sandboxName = await createSandbox(");
+    assert.ok(createSandboxPos !== -1, "createSandbox call not found in onboard.ts");
+    const updateAfterCreate = source.indexOf(
+      "registry.updateSandbox(sandboxName, { model, provider })",
+      createSandboxPos,
+    );
+    assert.ok(
+      updateAfterCreate !== -1,
+      "registry.updateSandbox(model, provider) must appear AFTER createSandbox() — regression #1881",
+    );
   });
 });

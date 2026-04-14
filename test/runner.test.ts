@@ -742,4 +742,22 @@ describe("regression guards", () => {
       expect(findJsViolations(src)).toEqual([]);
     });
   });
+
+  describe("uninstall fallback hardening (#577)", () => {
+    it("src/lib/uninstall-command.ts does not execute remote uninstall script fallback", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "src", "lib", "uninstall-command.ts"),
+        "utf-8",
+      );
+      const start = src.indexOf("export function runUninstallCommand(");
+      expect(start).toBeGreaterThan(-1);
+      const uninstallBlock = src.slice(start);
+
+      expect(uninstallBlock).not.toMatch(/exec(File)?Sync(?:Impl)?\(\s*["'](?:curl|wget)["']/);
+      expect(uninstallBlock).not.toMatch(
+        /spawnSyncImpl\(\s*["'](?:bash|sh)["']\s*,\s*\[[^\]]*(?:uninstallScript|https?:\/\/)[^\]]*\]/,
+      );
+      expect(uninstallBlock).toContain("Remote uninstall fallback is disabled for security.");
+    });
+  });
 });
