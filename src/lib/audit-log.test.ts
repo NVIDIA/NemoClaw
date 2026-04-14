@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   appendAuditEntry,
+  AuditParseError,
   computeEntryHash,
   GENESIS_HASH,
   readAllEntries,
@@ -242,6 +243,53 @@ describe("audit-log", () => {
       const result = verifyAuditLog(logPath);
       expect(result.valid).toBe(false);
       expect(result.errors.some((e) => e.includes("prev_hash mismatch"))).toBe(true);
+    });
+
+    it("detects malformed JSONL without throwing", () => {
+      appendAuditEntry("a", "first", { logPath });
+      // Inject a corrupt line
+      const content = readFileSync(logPath, "utf-8");
+      writeFileSync(logPath, content + "NOT VALID JSON\n");
+
+      const result = verifyAuditLog(logPath);
+      expect(result.valid).toBe(false);
+      expect(result.brokenAt).toBe(1);
+      expect(result.errors[0]).toContain("Malformed JSONL");
+    });
+
+    it("detects tampered nested metadata", () => {
+      appendAuditEntry("a", "first", {
+        logPath,
+        meta: { nested: { key: "original" } },
+      });
+
+      // Tamper with nested meta
+      const content = readFileSync(logPath, "utf-8");
+      const lines = content.trimEnd().split("\n");
+      const entry0 = JSON.parse(lines[0]) as AuditEntry;
+      (entry0.meta as Record<string, unknown>).nested = { key: "tampered" };
+      lines[0] = JSON.stringify(entry0);
+      writeFileSync(logPath, lines.join("\n") + "\n");
+
+      const result = verifyAuditLog(logPath);
+      expect(result.valid).toBe(false);
+      expect(result.brokenAt).toBe(0);
+      expect(result.errors.some((e) => e.includes("hash mismatch"))).toBe(true);
+    });
+  });
+
+  // -- readAllEntries error handling -----------------------------------------
+
+  describe("readAllEntries", () => {
+    it("throws AuditParseError on malformed JSONL", () => {
+      writeFileSync(logPath, '{"valid": true}\nNOT JSON\n');
+      expect(() => readAllEntries(logPath)).toThrow(AuditParseError);
+      try {
+        readAllEntries(logPath);
+      } catch (err) {
+        expect(err).toBeInstanceOf(AuditParseError);
+        expect((err as AuditParseError).lineIndex).toBe(1);
+      }
     });
   });
 });

@@ -18,9 +18,12 @@
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  unlinkSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -76,11 +79,26 @@ export interface AuditEntry {
 
 /**
  * Compute the canonical hash for an entry. The hash covers every field
- * except hash itself, serialized as sorted-key JSON.
+ * except hash itself, serialized as deep-sorted-key JSON so nested
+ * objects (like meta) are included in the digest.
  */
 export function computeEntryHash(entry: Omit<AuditEntry, "hash">): string {
-  const canonical = JSON.stringify(entry, Object.keys(entry).sort());
+  const canonical = JSON.stringify(deepSortKeys(entry));
   return createHash("sha256").update(canonical, "utf-8").digest("hex");
+}
+
+/**
+ * Recursively sort object keys so JSON.stringify produces a
+ * deterministic string regardless of insertion order.
+ */
+function deepSortKeys(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(deepSortKeys);
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    sorted[key] = deepSortKeys((value as Record<string, unknown>)[key]);
+  }
+  return sorted;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,39 +128,51 @@ export function appendAuditEntry(
     mkdirSync(dir, { recursive: true });
   }
 
-  // Determine prev_hash and seq from the last line
-  let prevHash = GENESIS_HASH;
-  let seq = 0;
+  // Serialize concurrent appends via an exclusive lock file.
+  // Without this, two processes reading the last entry at the same
+  // time would produce duplicate seq/prev_hash and corrupt the chain.
+  // The lock is a separate file (<logPath>.lock) created with O_EXCL.
+  const lockPath = logPath + ".lock";
+  let lockFd: number | null = null;
+  try {
+    lockFd = acquireLockFile(lockPath);
 
-  if (existsSync(logPath)) {
-    const lastEntry = readLastEntry(logPath);
-    if (lastEntry) {
-      prevHash = lastEntry.hash;
-      seq = lastEntry.seq + 1;
+    // Determine prev_hash and seq from the last line
+    let prevHash = GENESIS_HASH;
+    let seq = 0;
+
+    if (existsSync(logPath)) {
+      const lastEntry = readLastEntry(logPath);
+      if (lastEntry) {
+        prevHash = lastEntry.hash;
+        seq = lastEntry.seq + 1;
+      }
     }
+
+    const partial: Omit<AuditEntry, "hash"> = {
+      timestamp: new Date().toISOString(),
+      seq,
+      prev_hash: prevHash,
+      event,
+      message,
+      actor: opts.actor ?? "host",
+      ...(opts.meta ? { meta: opts.meta } : {}),
+    };
+
+    const hash = computeEntryHash(partial);
+    const entry: AuditEntry = { ...partial, hash };
+
+    // Append as a single JSONL line
+    appendFileSync(logPath, JSON.stringify(entry) + "\n", { mode: 0o600 });
+
+    // On Linux, attempt to set the append-only attribute.
+    // This is best-effort: it requires root and the filesystem must support it.
+    trySetAppendOnly(logPath);
+
+    return entry;
+  } finally {
+    releaseLockFile(lockPath, lockFd);
   }
-
-  const partial: Omit<AuditEntry, "hash"> = {
-    timestamp: new Date().toISOString(),
-    seq,
-    prev_hash: prevHash,
-    event,
-    message,
-    actor: opts.actor ?? "host",
-    ...(opts.meta ? { meta: opts.meta } : {}),
-  };
-
-  const hash = computeEntryHash(partial);
-  const entry: AuditEntry = { ...partial, hash };
-
-  // Append as a single JSONL line
-  appendFileSync(logPath, JSON.stringify(entry) + "\n", { mode: 0o600 });
-
-  // On Linux, attempt to set the append-only attribute.
-  // This is best-effort: it requires root and the filesystem must support it.
-  trySetAppendOnly(logPath);
-
-  return entry;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,17 +196,28 @@ export function readLastEntry(logPath?: string): AuditEntry | null {
 
 /**
  * Read all entries from the audit log.
+ * Throws AuditParseError on malformed JSONL instead of a raw SyntaxError
+ * so callers (especially verifyAuditLog) can surface a clear diagnostic.
  */
 export function readAllEntries(logPath?: string): AuditEntry[] {
   const path = logPath ?? defaultAuditLogPath();
   if (!existsSync(path)) return [];
 
   const content = readFileSync(path, "utf-8");
-  return content
-    .trimEnd()
-    .split("\n")
-    .filter((l) => l.length > 0)
-    .map((line) => JSON.parse(line) as AuditEntry);
+  const lines = content.trimEnd().split("\n").filter((l) => l.length > 0);
+  const entries: AuditEntry[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    try {
+      entries.push(JSON.parse(lines[i]) as AuditEntry);
+    } catch {
+      throw new AuditParseError(
+        `Malformed JSONL at line ${i + 1}: ${lines[i].slice(0, 80)}`,
+        i,
+      );
+    }
+  }
+  return entries;
 }
 
 // ---------------------------------------------------------------------------
@@ -201,7 +242,19 @@ export interface VerifyResult {
  *   4. Sequence numbers are consecutive starting from 0
  */
 export function verifyAuditLog(logPath?: string): VerifyResult {
-  const entries = readAllEntries(logPath);
+  let entries: AuditEntry[];
+  try {
+    entries = readAllEntries(logPath);
+  } catch (err) {
+    const lineIndex = err instanceof AuditParseError ? err.lineIndex : 0;
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      valid: false,
+      totalEntries: 0,
+      brokenAt: lineIndex,
+      errors: [msg],
+    };
+  }
   const result: VerifyResult = {
     valid: true,
     totalEntries: entries.length,
@@ -250,6 +303,58 @@ function markBroken(result: VerifyResult, index: number): void {
   if (result.brokenAt === -1) {
     result.brokenAt = index;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Error types
+// ---------------------------------------------------------------------------
+
+export class AuditParseError extends Error {
+  constructor(message: string, public readonly lineIndex: number) {
+    super(message);
+    this.name = "AuditParseError";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// File locking (serialize concurrent appends)
+// ---------------------------------------------------------------------------
+
+const LOCK_TIMEOUT_MS = 5_000;
+const LOCK_RETRY_INTERVAL_MS = 50;
+
+/**
+ * Acquire an exclusive lock file via O_EXCL (atomic create-or-fail).
+ * Spins with a short sleep until the lock is acquired or the timeout
+ * is reached, at which point it force-removes the stale lock and
+ * retries once.
+ */
+function acquireLockFile(lockPath: string): number {
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  while (true) {
+    try {
+      return openSync(lockPath, "wx", 0o600);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== "EEXIST") throw err;
+      if (Date.now() >= deadline) {
+        // Stale lock — force-remove and retry once
+        try { unlinkSync(lockPath); } catch { /* ignore */ }
+        return openSync(lockPath, "wx", 0o600);
+      }
+      // Busy-wait with a short sleep
+      const wait = Math.min(LOCK_RETRY_INTERVAL_MS, deadline - Date.now());
+      if (wait > 0) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait);
+      }
+    }
+  }
+}
+
+function releaseLockFile(lockPath: string, fd: number | null): void {
+  if (fd !== null) {
+    try { closeSync(fd); } catch { /* ignore */ }
+  }
+  try { unlinkSync(lockPath); } catch { /* ignore */ }
 }
 
 // ---------------------------------------------------------------------------
