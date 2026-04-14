@@ -2217,6 +2217,7 @@ function getEffectiveProviderName(providerKey) {
     case "nim-local":
       return "nvidia-nim";
     case "ollama":
+    case "install-ollama":
       return "ollama-local";
     case "vllm":
       return "vllm-local";
@@ -4668,7 +4669,7 @@ async function setupNim(gpu) {
           run(["brew", "install", "ollama"]);
         } else {
           console.log("  Installing Ollama via official installer...");
-          run("curl -fsSL https://ollama.com/install.sh | sh");
+          run("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh");
         }
         console.log("  Starting Ollama...");
         // Shell required: backgrounding (&), env var prefix, output redirection.
