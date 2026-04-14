@@ -2679,6 +2679,11 @@ async function createSandbox(
   // proxy rewrites Authorization headers with real secrets at egress.
   // See: crates/openshell-sandbox/src/secrets.rs (placeholder rewriting),
   //      crates/openshell-router/src/backend.rs (inference auth injection).
+  //
+  // TODO: migrate this blocklist to the shared allowlist in
+  // src/lib/subprocess-env.ts once the sandbox create path has been validated
+  // end-to-end with the stricter filtering. The allowlist rejects unknown
+  // env vars by default, which is safer but needs careful rollout.
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
   const blockedSandboxEnvNames = new Set([
     // Derived from REMOTE_PROVIDER_CONFIG to prevent drift

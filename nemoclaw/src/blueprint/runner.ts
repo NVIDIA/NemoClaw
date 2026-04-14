@@ -21,6 +21,7 @@ import { execa } from "execa";
 import YAML from "yaml";
 
 import { validateEndpointUrl } from "./ssrf.js";
+import { buildSubprocessEnv } from "../lib/subprocess-env.js";
 import { DASHBOARD_PORT } from "../lib/ports.js";
 
 type Action = "plan" | "apply" | "status" | "rollback";
@@ -294,7 +295,7 @@ export async function actionApply(
     reject: false,
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, ...credEnv },
+    env: buildSubprocessEnv(credEnv),
   });
 
   progress(70, "Setting inference route");
