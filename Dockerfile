@@ -85,6 +85,11 @@ ARG NEMOCLAW_BUILD_ID=default
 # before running `nemoclaw onboard`. See #1409.
 ARG NEMOCLAW_PROXY_HOST=10.200.0.1
 ARG NEMOCLAW_PROXY_PORT=3128
+# Non-secret flag: set to "1" when the user configured Brave Search during
+# onboard. Controls whether the web search block is written to openclaw.json.
+# The actual API key is injected at runtime via openshell:resolve:env, never
+# baked into the image.
+ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
 
 # SECURITY: Promote build-args to env vars so the Python script reads them
 # via os.environ, never via string interpolation into Python source code.
@@ -101,7 +106,8 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
-    NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT}
+    NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
+    NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED}
 
 WORKDIR /sandbox
 USER sandbox
@@ -157,18 +163,20 @@ config = { \
         'auth': {'token': secrets.token_hex(32)} \
     } \
 }; \
-config.update({ \
-    'tools': { \
-        'web': { \
-            'search': { \
-                'enabled': True, \
-                'provider': 'brave', \
-                'apiKey': 'openshell:resolve:env:BRAVE_API_KEY' \
-            }, \
-            'fetch': {'enabled': True} \
+web_search_enabled = os.environ.get('NEMOCLAW_WEB_SEARCH_ENABLED', '') == '1'; \
+if web_search_enabled: \
+    config.update({ \
+        'tools': { \
+            'web': { \
+                'search': { \
+                    'enabled': True, \
+                    'provider': 'brave', \
+                    'apiKey': 'openshell:resolve:env:BRAVE_API_KEY' \
+                }, \
+                'fetch': {'enabled': True} \
+            } \
         } \
-    } \
-}); \
+    }); \
 path = os.path.expanduser('~/.openclaw/openclaw.json'); \
 json.dump(config, open(path, 'w'), indent=2); \
 os.chmod(path, 0o600)"
