@@ -180,7 +180,7 @@ Egress control, operator approval flow, and policy configuration.
 :link: workspace/workspace-files
 :link-type: doc
 
-Understand agent identity, memory, and configuration files that persist in the sandbox.
+Understand `SOUL.md`, `USER.md`, and other workspace files, plus backup and restore.
 
 +++
 {bdg-secondary}`Concept`
@@ -280,18 +280,18 @@ Sandbox Hardening <deployment/sandbox-hardening>
 ```
 
 ```{toctree}
-:caption: Monitoring
-:hidden:
-
-Monitor Sandbox Activity <monitoring/monitor-sandbox-activity>
-```
-
-```{toctree}
 :caption: Workspace
 :hidden:
 
 Workspace Files <workspace/workspace-files>
-Back Up and Restore <workspace/backup-restore>
+Backup & Restore <workspace/backup-restore>
+```
+
+```{toctree}
+:caption: Monitoring
+:hidden:
+
+Monitor Sandbox Activity <monitoring/monitor-sandbox-activity>
 ```
 
 ```{toctree}

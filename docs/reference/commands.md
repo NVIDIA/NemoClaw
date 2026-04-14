@@ -198,9 +198,9 @@ Stop the NIM container and delete the sandbox.
 This removes the sandbox from the registry.
 
 :::{warning}
-Destroying a sandbox permanently deletes all files inside it, including
-[workspace files](../workspace/workspace-files.md) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes).
-Back up your workspace first by following the instructions at [Back Up and Restore](../workspace/backup-restore.md).
+This command permanently deletes the sandbox **and its persistent volume**.
+All [workspace files](../workspace/workspace-files.md) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
+Back up your workspace first — see [Backup and Restore](../workspace/backup-restore.md).
 :::
 
 ```console
