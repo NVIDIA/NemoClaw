@@ -146,7 +146,8 @@ Available presets:
 | `brave` | Brave Search API |
 | `brew` | Homebrew (Linuxbrew) package manager |
 | `discord` | Discord webhook API |
-| `huggingface` | Hugging Face inference router |
+| `github` | GitHub and GitHub REST API |
+| `huggingface` | Hugging Face Hub (download-only) and inference router |
 | `jira` | Atlassian Jira API |
 | `npm` | npm and Yarn registries |
 | `outlook` | Microsoft 365 and Outlook |

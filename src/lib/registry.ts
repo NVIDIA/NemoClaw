@@ -14,6 +14,7 @@ export interface SandboxEntry {
   provider?: string | null;
   gpuEnabled?: boolean;
   policies?: string[];
+  agent?: string | null;
   dangerouslySkipPermissions?: boolean;
 }
 
@@ -157,6 +158,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       provider: entry.provider || null,
       gpuEnabled: entry.gpuEnabled || false,
       policies: entry.policies || [],
+      agent: entry.agent || null,
       dangerouslySkipPermissions:
         entry.dangerouslySkipPermissions === true ? true : undefined,
     };

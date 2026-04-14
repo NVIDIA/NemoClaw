@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
-import { applyPreset, buildPolicySetCommand, buildPolicyGetCommand } from "../bin/lib/policies";
-import { hasStaleGateway, isSandboxReady } from "../bin/lib/onboard";
+import { applyPreset, buildPolicySetCommand, buildPolicyGetCommand } from "../dist/lib/policies";
+import { hasStaleGateway, isSandboxReady } from "../dist/lib/onboard";
 
 describe("sandbox readiness parsing", () => {
   it("detects Ready sandbox", () => {

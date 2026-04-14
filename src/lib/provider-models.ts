@@ -5,9 +5,9 @@ import type { CurlProbeResult } from "./http-probe";
 import { getCurlTimingArgs, runCurlProbe } from "./http-probe";
 import type { ModelCatalogFetchResult, ModelValidationResult } from "./onboard-types";
 
-// credentials.js is CJS.
+// credentials.ts still uses CommonJS-style exports.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { normalizeCredentialValue } = require("../../bin/lib/credentials");
+const { normalizeCredentialValue } = require("./credentials");
 
 export const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 

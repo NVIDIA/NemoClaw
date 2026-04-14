@@ -15,15 +15,17 @@
     "typecheck": "tsc -p jsconfig.json",
     "build:cli": "tsc -p tsconfig.src.json",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
+    "validate:configs": "tsx scripts/validate-configs.ts",
     "migrate:js-to-ts": "tsx scripts/migrate-js-to-ts.ts",
     "ts-migration:assist": "tsx scripts/ts-migration-assist.ts",
     "ts-migration:bulk-fix-prs": "tsx scripts/ts-migration-bulk-fix-prs.ts",
     "ts-migration:guard": "tsx scripts/check-legacy-migrated-paths.ts",
     "bump:version": "tsx scripts/bump-version.ts",
-    "prepare": "if command -v tsc >/dev/null 2>&1 || [ -x node_modules/.bin/tsc ]; then npm run build:cli; fi && npm install --omit=dev --ignore-scripts 2>/dev/null || true && if [ -d .git ]; then if command -v prek >/dev/null 2>&1; then prek install; elif [ -d node_modules/@j178/prek ]; then echo \"ERROR: prek package found but binary not in PATH\" && exit 1; else echo \"Skipping git hook setup (prek not installed)\"; fi; fi",
-    "prepublishOnly": "cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
+    "prepare": "if command -v tsc >/dev/null 2>&1 || [ -x node_modules/.bin/tsc ]; then npm run build:cli; fi && npm install --omit=dev --ignore-scripts 2>/dev/null || true && if [ -d .git ]; then if command -v prek >/dev/null 2>&1; then prek install; else echo \"Skipping git hook setup (prek not installed)\"; fi; fi",
+    "prepublishOnly": "git describe --tags --match 'v*' | sed 's/^v//' > .version && test -s .version && cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
   "dependencies": {
+    "js-yaml": "^4.1.1",
     "p-retry": "^4.6.2",
     "yaml": "^2.8.3"
   },
@@ -31,7 +33,9 @@
     "p-retry"
   ],
   "files": [
+    ".version",
     "bin/",
+    "dist/",
     "nemoclaw/dist/",
     "nemoclaw/openclaw.plugin.json",
     "nemoclaw/package.json",
@@ -52,8 +56,9 @@
     "@commitlint/config-conventional": "^20.5.0",
     "@eslint/js": "^10.0.1",
     "@j178/prek": "^0.3.6",
-    "@types/node": "^25.5.0",
+    "@types/node": "^25.5.2",
     "@typescript-eslint/parser": "^8.58.1",
+    "ajv": "^8.17.0",
     "@vitest/coverage-v8": "^4.1.0",
     "eslint": "^10.1.0",
     "execa": "^9.6.1",

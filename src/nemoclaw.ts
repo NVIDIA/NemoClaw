@@ -6,6 +6,7 @@ const { execFileSync, spawnSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const { DASHBOARD_PORT } = require("./lib/ports");
 
 // ---------------------------------------------------------------------------
 // Color / style — respects NO_COLOR and non-TTY environments.
@@ -28,24 +29,29 @@ const {
   runInteractive,
   shellQuote,
   validateName,
-} = require("../bin/lib/runner");
-const { resolveOpenshell } = require("../bin/lib/resolve-openshell");
-const { startGatewayForRecovery } = require("../bin/lib/onboard");
+} = require("./lib/runner");
+const { resolveOpenshell } = require("./lib/resolve-openshell");
+const { startGatewayForRecovery } = require("./lib/onboard");
 const {
   getCredential,
   deleteCredential,
   listCredentialKeys,
   prompt: askPrompt,
-} = require("../bin/lib/credentials");
-const registry = require("../bin/lib/registry");
-const nim = require("../bin/lib/nim");
-const policies = require("../bin/lib/policies");
-const { parseGatewayInference } = require("../bin/lib/inference-config");
-const { getVersion } = require("../bin/lib/version");
-const onboardSession = require("../bin/lib/onboard-session");
-const { parseLiveSandboxNames } = require("../bin/lib/runtime-recovery");
-const { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } = require("../bin/lib/usage-notice");
+} = require("./lib/credentials");
+const registry = require("./lib/registry");
+const nim = require("./lib/nim");
+const policies = require("./lib/policies");
+const { parseGatewayInference } = require("./lib/inference-config");
+const { probeLocalProviderHealth } = require("./lib/local-inference");
+const { getVersion } = require("./lib/version");
+const onboardSession = require("./lib/onboard-session");
+const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
+const { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } = require("./lib/usage-notice");
 const { runDebugCommand } = require("./lib/debug-command");
+const {
+  runDeprecatedOnboardAliasCommand,
+  runOnboardCommand,
+} = require("./lib/onboard-command");
 const {
   captureOpenshellCommand,
   getInstalledOpenshellVersion,
@@ -60,6 +66,8 @@ const {
   buildVersionedUninstallUrl,
   runUninstallCommand,
 } = require("./lib/uninstall-command");
+const agentRuntime = require("../bin/lib/agent-runtime");
+const skillInstall = require("./lib/skill-install");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -86,7 +94,7 @@ const REMOTE_UNINSTALL_URL = buildVersionedUninstallUrl(getVersion());
 let OPENSHELL_BIN = null;
 const MIN_LOGS_OPENSHELL_VERSION = "0.0.7";
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
-const DASHBOARD_FORWARD_PORT = "18789";
+const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 
 function getOpenshellBinary() {
   if (!OPENSHELL_BIN) {
@@ -208,14 +216,16 @@ function executeSandboxCommand(sandboxName, command) {
 
 /**
  * Check whether the OpenClaw gateway process is running inside the sandbox.
- * Uses the gateway's HTTP endpoint (port 18789) as the source of truth,
+ * Uses the gateway's HTTP endpoint (dashboard port) as the source of truth,
  * since the gateway runs as a separate user and pgrep may not see it.
  * Returns true (running), false (stopped), or null (cannot determine).
  */
 function isSandboxGatewayRunning(sandboxName) {
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const probeUrl = agentRuntime.getHealthProbeUrl(agent);
   const result = executeSandboxCommand(
     sandboxName,
-    "curl -sf --max-time 3 http://127.0.0.1:18789/ > /dev/null 2>&1 && echo RUNNING || echo STOPPED",
+    `curl -sf --max-time 3 ${shellQuote(probeUrl)} > /dev/null 2>&1 && echo RUNNING || echo STOPPED`,
   );
   if (!result) return null;
   if (result.stdout === "RUNNING") return true;
@@ -229,29 +239,33 @@ function isSandboxGatewayRunning(sandboxName) {
  * in the background. Returns true on success.
  */
 function recoverSandboxProcesses(sandboxName) {
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const agentScript = agentRuntime.buildRecoveryScript(agent);
   // The recovery script runs as the sandbox user (non-root). This matches
   // the non-root fallback path in nemoclaw-start.sh — no privilege
   // separation, but the gateway runs and inference works.
-  const script = [
-    // Source proxy config (written to .bashrc by nemoclaw-start on first boot)
-    "[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null;",
-    // Re-check liveness before touching anything — another caller may have
-    // already recovered the gateway between our initial check and now (TOCTOU).
-    "if curl -sf --max-time 3 http://127.0.0.1:18789/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;",
-    // Clean stale lock files from the previous run (gateway checks these)
-    "rm -rf /tmp/openclaw-*/gateway.*.lock 2>/dev/null;",
-    // Clean stale temp files from the previous run
-    "rm -f /tmp/gateway.log /tmp/auto-pair.log;",
-    "touch /tmp/gateway.log; chmod 600 /tmp/gateway.log;",
-    "touch /tmp/auto-pair.log; chmod 600 /tmp/auto-pair.log;",
-    // Resolve and start gateway
-    'OPENCLAW="$(command -v openclaw)";',
-    'if [ -z "$OPENCLAW" ]; then echo OPENCLAW_MISSING; exit 1; fi;',
-    'nohup "$OPENCLAW" gateway run > /tmp/gateway.log 2>&1 &',
-    "GPID=$!; sleep 2;",
-    // Verify the gateway actually started (didn't crash immediately)
-    'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; cat /tmp/gateway.log 2>/dev/null | tail -5; fi',
-  ].join(" ");
+  const script =
+    agentScript ||
+    [
+      // Source proxy config (written to .bashrc by nemoclaw-start on first boot)
+      "[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null;",
+      // Re-check liveness before touching anything — another caller may have
+      // already recovered the gateway between our initial check and now (TOCTOU).
+      `if curl -sf --max-time 3 http://127.0.0.1:${DASHBOARD_PORT}/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;`,
+      // Clean stale lock files from the previous run (gateway checks these)
+      "rm -rf /tmp/openclaw-*/gateway.*.lock 2>/dev/null;",
+      // Clean stale temp files from the previous run
+      "rm -f /tmp/gateway.log /tmp/auto-pair.log;",
+      "touch /tmp/gateway.log; chmod 600 /tmp/gateway.log;",
+      "touch /tmp/auto-pair.log; chmod 600 /tmp/auto-pair.log;",
+      // Resolve and start gateway
+      'OPENCLAW="$(command -v openclaw)";',
+      'if [ -z "$OPENCLAW" ]; then echo OPENCLAW_MISSING; exit 1; fi;',
+      'nohup "$OPENCLAW" gateway run > /tmp/gateway.log 2>&1 &',
+      "GPID=$!; sleep 2;",
+      // Verify the gateway actually started (didn't crash immediately)
+      'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; cat /tmp/gateway.log 2>/dev/null | tail -5; fi',
+    ].join(" ");
 
   const result = executeSandboxCommand(sandboxName, script);
   if (!result) return false;
@@ -262,11 +276,14 @@ function recoverSandboxProcesses(sandboxName) {
 }
 
 /**
- * Re-establish the dashboard port forward (18789) to the sandbox.
+ * Re-establish the dashboard port forward to the sandbox.
+ * Uses the agent's forward port when a non-OpenClaw agent is active.
  */
 function ensureSandboxPortForward(sandboxName) {
-  runOpenshell(["forward", "stop", DASHBOARD_FORWARD_PORT], { ignoreError: true });
-  runOpenshell(["forward", "start", "--background", DASHBOARD_FORWARD_PORT, sandboxName], {
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const port = agent ? String(agent.forwardPort) : DASHBOARD_FORWARD_PORT;
+  runOpenshell(["forward", "stop", port], { ignoreError: true });
+  runOpenshell(["forward", "start", "--background", port, sandboxName], {
     ignoreError: true,
   });
 }
@@ -286,9 +303,10 @@ function checkAndRecoverSandboxProcesses(sandboxName, { quiet = false } = {}) {
   }
 
   // Gateway not running — attempt recovery
+  const _recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
   if (!quiet) {
     console.log("");
-    console.log("  OpenClaw gateway is not running inside the sandbox (sandbox likely restarted).");
+    console.log(`  ${agentRuntime.getAgentDisplayName(_recoveryAgent)} gateway is not running inside the sandbox (sandbox likely restarted).`);
     console.log("  Recovering...");
   }
 
@@ -306,13 +324,13 @@ function checkAndRecoverSandboxProcesses(sandboxName, { quiet = false } = {}) {
     }
     ensureSandboxPortForward(sandboxName);
     if (!quiet) {
-      console.log(`  ${G}✓${R} OpenClaw gateway restarted inside sandbox.`);
+      console.log(`  ${G}✓${R} ${agentRuntime.getAgentDisplayName(_recoveryAgent)} gateway restarted inside sandbox.`);
       console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
     }
   } else if (!quiet) {
-    console.error("  Could not restart OpenClaw gateway automatically.");
+    console.error(`  Could not restart ${agentRuntime.getAgentDisplayName(_recoveryAgent)} gateway automatically.`);
     console.error("  Connect to the sandbox and run manually:");
-    console.error("    nohup openclaw gateway run > /tmp/gateway.log 2>&1 &");
+    console.error(`    ${agentRuntime.getGatewayCommand(_recoveryAgent)}`);
   }
 
   return { checked: true, wasRunning: false, recovered };
@@ -330,6 +348,7 @@ function buildRecoveredSandboxEntry(name, metadata = {}) {
         ? metadata.policyPresets
         : [],
     nimContainer: metadata.nimContainer || null,
+    agent: metadata.agent || null,
   };
 }
 
@@ -768,70 +787,38 @@ function printDangerouslySkipPermissionsWarning() {
 
 // ── Commands ─────────────────────────────────────────────────────
 
+function buildOnboardCommandDeps(args) {
+  const { onboard: runOnboard } = require("./lib/onboard");
+  const { listAgents } = require("./lib/agent-defs");
+  return {
+    args,
+    noticeAcceptFlag: NOTICE_ACCEPT_FLAG,
+    noticeAcceptEnv: NOTICE_ACCEPT_ENV,
+    env: process.env,
+    runOnboard,
+    listAgents,
+    log: console.log,
+    error: console.error,
+    exit: (code) => process.exit(code),
+  };
+}
+
 async function onboard(args) {
-  const { onboard: runOnboard } = require("../bin/lib/onboard");
-
-  // Extract --from <path> before the unknown-arg validator: it takes a value
-  // so the set-based check would reject the value token as an unknown flag.
-  let fromDockerfile = null;
-  const fromIdx = args.indexOf("--from");
-  if (fromIdx !== -1) {
-    fromDockerfile = args[fromIdx + 1];
-    if (!fromDockerfile || fromDockerfile.startsWith("--")) {
-      console.error("  --from requires a path to a Dockerfile");
-      console.error(
-        `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--dangerously-skip-permissions] [${NOTICE_ACCEPT_FLAG}]`,
-      );
-      process.exit(1);
-    }
-    args = [...args.slice(0, fromIdx), ...args.slice(fromIdx + 2)];
-  }
-
-  const allowedArgs = new Set([
-    "--non-interactive",
-    "--resume",
-    "--recreate-sandbox",
-    "--dangerously-skip-permissions",
-    NOTICE_ACCEPT_FLAG,
-  ]);
-  const unknownArgs = args.filter((arg) => !allowedArgs.has(arg));
-  if (unknownArgs.length > 0) {
-    console.error(`  Unknown onboard option(s): ${unknownArgs.join(", ")}`);
-    console.error(
-      `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--dangerously-skip-permissions] [${NOTICE_ACCEPT_FLAG}]`,
-    );
-    process.exit(1);
-  }
-  const nonInteractive = args.includes("--non-interactive");
-  const resume = args.includes("--resume");
-  const recreateSandbox = args.includes("--recreate-sandbox");
-  const dangerouslySkipPermissions = args.includes("--dangerously-skip-permissions");
-  const acceptThirdPartySoftware =
-    args.includes(NOTICE_ACCEPT_FLAG) || String(process.env[NOTICE_ACCEPT_ENV] || "") === "1";
-  await runOnboard({
-    nonInteractive,
-    resume,
-    recreateSandbox,
-    fromDockerfile,
-    acceptThirdPartySoftware,
-    dangerouslySkipPermissions,
-  });
+  await runOnboardCommand(buildOnboardCommandDeps(args));
 }
 
 async function setup(args = []) {
-  console.log("");
-  console.log("  ⚠  `nemoclaw setup` is deprecated. Use `nemoclaw onboard` instead.");
-  console.log("");
-  await onboard(args);
+  await runDeprecatedOnboardAliasCommand({
+    ...buildOnboardCommandDeps(args),
+    kind: "setup",
+  });
 }
 
 async function setupSpark(args = []) {
-  console.log("");
-  console.log("  ⚠  `nemoclaw setup-spark` is deprecated.");
-  console.log("  Current OpenShell releases handle the old DGX Spark cgroup issue themselves.");
-  console.log("  Use `nemoclaw onboard` instead.");
-  console.log("");
-  await onboard(args);
+  await runDeprecatedOnboardAliasCommand({
+    ...buildOnboardCommandDeps(args),
+    kind: "setup-spark",
+  });
 }
 
 async function deploy(instanceName) {
@@ -855,7 +842,7 @@ async function deploy(instanceName) {
 }
 
 async function start() {
-  const { startAll } = require("../bin/lib/services");
+  const { startAll } = require("./lib/services");
   await runStartCommand({
     listSandboxes: () => registry.listSandboxes(),
     startAll,
@@ -863,7 +850,7 @@ async function start() {
 }
 
 function stop() {
-  const { stopAll } = require("../bin/lib/services");
+  const { stopAll } = require("./lib/services");
   runStopCommand({
     listSandboxes: () => registry.listSandboxes(),
     stopAll,
@@ -871,7 +858,7 @@ function stop() {
 }
 
 function debug(args) {
-  const { runDebug } = require("../bin/lib/debug");
+  const { runDebug } = require("./lib/debug");
   runDebugCommand(args, {
     getDefaultSandbox: () => registry.listSandboxes().defaultSandbox || undefined,
     runDebug,
@@ -975,7 +962,7 @@ async function credentialsCommand(args) {
 }
 
 function showStatus() {
-  const { showStatus: showServiceStatus } = require("../bin/lib/services");
+  const { showStatus: showServiceStatus } = require("./lib/services");
   showStatusCommand({
     listSandboxes: () => registry.listSandboxes(),
     getLiveInference: () =>
@@ -1001,10 +988,22 @@ async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false 
   await ensureLiveSandboxOrExit(sandboxName);
   if (dangerouslySkipPermissions) {
     printDangerouslySkipPermissionsWarning();
-    const policies = require("../bin/lib/policies");
+    const policies = require("./lib/policies");
     policies.applyPermissivePolicy(sandboxName);
   }
   checkAndRecoverSandboxProcesses(sandboxName);
+  // Print a one-shot hint before dropping the user into the sandbox
+  // shell so a fresh user knows the first thing to type. Without this,
+  // `nemoclaw <name> connect` lands on a bare bash prompt and users
+  // ask "now what?" — see #465. Suppress the hint when stdout isn't a
+  // TTY so scripted callers don't get noise in their pipelines.
+  if (process.stdout.isTTY && !["1", "true"].includes(String(process.env.NEMOCLAW_NO_CONNECT_HINT || ""))) {
+    console.log("");
+    console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
+    console.log(`  ${D}Inside the sandbox, run \`openclaw tui\` to start chatting with the agent.${R}`);
+    console.log(`  ${D}Type \`exit\` (or Ctrl-D) to return to the host shell.${R}`);
+    console.log("");
+  }
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
     stdio: "inherit",
     cwd: ROOT,
@@ -1019,11 +1018,23 @@ async function sandboxStatus(sandboxName) {
   const live = parseGatewayInference(
     captureOpenshell(["inference", "get"], { ignoreError: true }).output,
   );
+  const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
+  const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
+  const localInferenceHealth =
+    typeof currentProvider === "string" ? probeLocalProviderHealth(currentProvider) : null;
   if (sb) {
     console.log("");
     console.log(`  Sandbox: ${sb.name}`);
-    console.log(`    Model:    ${(live && live.model) || sb.model || "unknown"}`);
-    console.log(`    Provider: ${(live && live.provider) || sb.provider || "unknown"}`);
+    console.log(`    Model:    ${currentModel}`);
+    console.log(`    Provider: ${currentProvider}`);
+    if (localInferenceHealth) {
+      console.log(
+        `    Inference: ${localInferenceHealth.ok ? `${G}healthy${R}` : `${_RD}unreachable${R}`} (${localInferenceHealth.endpoint})`,
+      );
+      if (!localInferenceHealth.ok) {
+        console.log(`      ${localInferenceHealth.detail}`);
+      }
+    }
     console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
     if (sb.dangerouslySkipPermissions) {
@@ -1108,20 +1119,22 @@ async function sandboxStatus(sandboxName) {
   if (lookup.state === "present") {
     const processCheck = checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
     if (processCheck.checked) {
+      const _sa = agentRuntime.getSessionAgent(sandboxName);
+      const _saName = agentRuntime.getAgentDisplayName(_sa);
       if (processCheck.wasRunning) {
-        console.log(`    OpenClaw: ${G}running${R}`);
+        console.log(`    ${_saName}: ${G}running${R}`);
       } else if (processCheck.recovered) {
-        console.log(`    OpenClaw: ${G}recovered${R} (gateway restarted after sandbox restart)`);
+        console.log(`    ${_saName}: ${G}recovered${R} (gateway restarted after sandbox restart)`);
       } else {
-        console.log(`    OpenClaw: ${_RD}not running${R}`);
+        console.log(`    ${_saName}: ${_RD}not running${R}`);
         console.log("");
-        console.log("  The sandbox is alive but the OpenClaw gateway process is not running.");
+        console.log(`  The sandbox is alive but the ${_saName} gateway process is not running.`);
         console.log("  This typically happens after a gateway restart (e.g., laptop close/open).");
         console.log("");
         console.log("  To recover, run:");
         console.log(`    ${D}nemoclaw ${sandboxName} connect${R}  (auto-recovers on connect)`);
         console.log("  Or manually inside the sandbox:");
-        console.log(`    ${D}nohup openclaw gateway run > /tmp/gateway.log 2>&1 &${R}`);
+        console.log(`    ${D}${agentRuntime.getGatewayCommand(_sa)}${R}`);
       }
     }
   }
@@ -1221,10 +1234,152 @@ function sandboxPolicyList(sandboxName) {
   console.log("");
 }
 
-function cleanupSandboxServices(sandboxName) {
-  // Stop host services (cloudflared) and clean up PID directory.
-  const { stopAll } = require("../bin/lib/services");
-  stopAll({ sandboxName });
+async function sandboxSkillInstall(sandboxName, args = []) {
+  const sub = args[0];
+  if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
+    console.log("");
+    console.log("  Usage: nemoclaw <sandbox> skill install <path>");
+    console.log("");
+    console.log("  Deploy a skill directory to a running sandbox.");
+    console.log("  <path> must be a skill directory containing a SKILL.md (with 'name:' frontmatter),");
+    console.log("  or a direct path to a SKILL.md file. All non-dot files in the directory are uploaded.");
+    console.log("");
+    return;
+  }
+
+  if (sub !== "install") {
+    console.error(`  Unknown skill subcommand: ${sub}`);
+    console.error("  Valid subcommands: install");
+    process.exit(1);
+  }
+
+  const skillPath = args[1];
+  const extraArgs = args.slice(2);
+  if (extraArgs.length > 0) {
+    console.error(`  Unknown argument(s) for skill install: ${extraArgs.join(", ")}`);
+    console.error("  Usage: nemoclaw <sandbox> skill install <path>");
+    process.exit(1);
+  }
+  if (!skillPath) {
+    console.error("  Usage: nemoclaw <sandbox> skill install <path>");
+    console.error("  <path> must be a directory containing a SKILL.md file.");
+    process.exit(1);
+  }
+
+  const resolvedPath = path.resolve(skillPath);
+
+  // Accept a directory containing SKILL.md, or a direct path to SKILL.md.
+  let skillDir: string;
+  let skillMdPath: string;
+  if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isDirectory()) {
+    skillDir = resolvedPath;
+    skillMdPath = path.join(resolvedPath, "SKILL.md");
+  } else if (fs.existsSync(resolvedPath) && resolvedPath.endsWith("SKILL.md")) {
+    skillDir = path.dirname(resolvedPath);
+    skillMdPath = resolvedPath;
+  } else {
+    console.error(`  No SKILL.md found at '${resolvedPath}'.`);
+    console.error("  <path> must be a skill directory or a direct path to SKILL.md.");
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(skillMdPath)) {
+    console.error(`  No SKILL.md found in '${skillDir}'.`);
+    console.error("  The skill directory must contain a SKILL.md file.");
+    process.exit(1);
+  }
+
+  // 1. Validate frontmatter
+  let frontmatter;
+  try {
+    const content = fs.readFileSync(skillMdPath, "utf-8");
+    frontmatter = skillInstall.parseFrontmatter(content);
+  } catch (err) {
+    console.error(`  ${err.message}`);
+    process.exit(1);
+  }
+
+  const collected = skillInstall.collectFiles(skillDir);
+  if (collected.unsafePaths.length > 0) {
+    console.error(`  Skill directory contains files with unsafe characters:`);
+    for (const p of collected.unsafePaths) console.error(`    ${p}`);
+    console.error("  File names must match [A-Za-z0-9._-/]. Rename or remove them.");
+    process.exit(1);
+  }
+  if (collected.skippedDotfiles.length > 0) {
+    console.log(`  ${D}Skipping ${collected.skippedDotfiles.length} dotfile(s): ${collected.skippedDotfiles.join(", ")}${R}`);
+  }
+  const fileLabel = collected.files.length === 1 ? "1 file" : `${collected.files.length} files`;
+  console.log(`  ${G}✓${R} Validated SKILL.md (name: ${frontmatter.name}, ${fileLabel})`);
+
+  // 2. Ensure sandbox is live
+  await ensureLiveSandboxOrExit(sandboxName);
+
+  // 3. Resolve agent and paths
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const paths = skillInstall.resolveSkillPaths(agent, frontmatter.name);
+
+  // 4. Get SSH config
+  const sshConfigResult = captureOpenshell(["sandbox", "ssh-config", sandboxName], {
+    ignoreError: true,
+  });
+  if (sshConfigResult.status !== 0) {
+    console.error("  Failed to obtain SSH configuration for the sandbox.");
+    process.exit(1);
+  }
+
+  const tmpSshConfig = path.join(os.tmpdir(), `nemoclaw-ssh-skill-${process.pid}-${Date.now()}.conf`);
+  fs.writeFileSync(tmpSshConfig, sshConfigResult.output, { mode: 0o600 });
+
+  try {
+    const ctx = { configFile: tmpSshConfig, sandboxName };
+
+    // 5. Check if skill already exists (update vs fresh install)
+    const isUpdate = skillInstall.checkExisting(ctx, paths);
+
+    // 6. Upload skill directory
+    const { uploaded, failed } = skillInstall.uploadDirectory(ctx, skillDir, paths.uploadDir);
+    if (failed.length > 0) {
+      console.error(`  Failed to upload ${failed.length} file(s): ${failed.join(", ")}`);
+      process.exit(1);
+    }
+    console.log(`  ${G}✓${R} Uploaded ${uploaded} file(s) to sandbox`);
+
+    // 7. Post-install (OpenClaw mirror + refresh, or restart hint).
+    //    Skip session refresh on updates — the agent already knows the skill;
+    //    clearing sessions would destroy chat history unnecessarily.
+    const post = skillInstall.postInstall(ctx, paths, skillDir, { skipRefresh: isUpdate });
+    for (const msg of post.messages) {
+      if (msg.startsWith("Warning:")) {
+        console.error(`  ${YW}${msg}${R}`);
+      } else {
+        console.log(`  ${D}${msg}${R}`);
+      }
+    }
+
+    // 8. Verify
+    const verified = skillInstall.verifyInstall(ctx, paths);
+    if (verified) {
+      const verb = isUpdate ? "updated" : "installed";
+      console.log(`  ${G}✓${R} Skill '${frontmatter.name}' ${verb}`);
+    } else {
+      console.error(`  Skill uploaded but verification failed at ${paths.uploadDir}/SKILL.md`);
+      process.exit(1);
+    }
+  } finally {
+    try {
+      fs.unlinkSync(tmpSshConfig);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function cleanupSandboxServices(sandboxName, { stopHostServices = false } = {}) {
+  if (stopHostServices) {
+    const { stopAll } = require("./lib/services");
+    stopAll({ sandboxName });
+  }
   try {
     fs.rmSync(`/tmp/nemoclaw-services-${sandboxName}`, { recursive: true, force: true });
   } catch {
@@ -1240,9 +1395,10 @@ function cleanupSandboxServices(sandboxName) {
 async function sandboxDestroy(sandboxName, args = []) {
   const skipConfirm = args.includes("--yes") || args.includes("--force");
   if (!skipConfirm) {
-    const answer = await askPrompt(
-      `  ${YW}Destroy sandbox '${sandboxName}'?${R} This cannot be undone. [y/N]: `,
-    );
+    console.log(`  ${YW}Destroy sandbox '${sandboxName}'?${R}`);
+    console.log("  This will permanently delete the sandbox and all workspace files inside it.");
+    console.log("  This cannot be undone.");
+    const answer = await askPrompt("  Type 'yes' to confirm, or press Enter to cancel [y/N]: ");
     if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
       console.log("  Cancelled.");
       return;
@@ -1253,8 +1409,6 @@ async function sandboxDestroy(sandboxName, args = []) {
   const sb = registry.getSandbox(sandboxName);
   if (sb && sb.nimContainer) nim.stopNimContainerByName(sb.nimContainer);
   else nim.stopNimContainer(sandboxName);
-
-  cleanupSandboxServices(sandboxName);
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
@@ -1270,6 +1424,13 @@ async function sandboxDestroy(sandboxName, args = []) {
     console.error(`  Failed to destroy sandbox '${sandboxName}'.`);
     process.exit(deleteResult.status || 1);
   }
+
+  const shouldStopHostServices =
+    (deleteResult.status === 0 || alreadyGone) &&
+    registry.listSandboxes().sandboxes.length === 1 &&
+    !!registry.getSandbox(sandboxName);
+
+  cleanupSandboxServices(sandboxName, { stopHostServices: shouldStopHostServices });
 
   const removed = registry.removeSandbox(sandboxName);
   const session = onboardSession.loadSession();
@@ -1303,7 +1464,6 @@ function help() {
   ${G}Getting Started:${R}
     ${B}nemoclaw onboard${R}                 Configure inference endpoint and credentials
     nemoclaw onboard ${D}--from <Dockerfile>${R}  Use a custom Dockerfile for the sandbox image
-    nemoclaw onboard ${D}--dangerously-skip-permissions${R}  Apply maximally permissive sandbox policy
                                     ${D}(non-interactive: ${NOTICE_ACCEPT_FLAG} or ${NOTICE_ACCEPT_ENV}=1)${R}
 
   ${G}Sandbox Management:${R}
@@ -1312,6 +1472,9 @@ function help() {
     nemoclaw <name> status           Sandbox health + NIM status
     nemoclaw <name> logs ${D}[--follow]${R}  Stream sandbox logs
     nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
+
+  ${G}Skills:${R}
+    nemoclaw <name> skill install <path>  Deploy a skill directory to the sandbox
 
   ${G}Policy Presets:${R}
     nemoclaw <name> policy-add       Add a network or filesystem policy preset ${D}(--dry-run to preview)${R}
@@ -1410,6 +1573,12 @@ const [cmd, ...args] = process.argv.slice(2);
   }
 
   // Sandbox-scoped commands: nemoclaw <name> <action>
+  // If the registry doesn't know this name but the action is connect or skill,
+  // attempt recovery — the sandbox may still be live with a stale registry.
+  if (!registry.getSandbox(cmd) && (args[0] === "connect" || args[0] === "skill")) {
+    validateName(cmd, "sandbox name");
+    await recoverRegistryEntries({ requestedSandboxName: cmd });
+  }
   const sandbox = registry.getSandbox(cmd);
   if (sandbox) {
     validateName(cmd, "sandbox name");
@@ -1437,21 +1606,15 @@ const [cmd, ...args] = process.argv.slice(2);
       case "destroy":
         await sandboxDestroy(cmd, actionArgs);
         break;
+      case "skill":
+        await sandboxSkillInstall(cmd, actionArgs);
+        break;
       default:
         console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, destroy`);
+        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, skill, destroy`);
         process.exit(1);
     }
     return;
-  }
-
-  if (args[0] === "connect") {
-    validateName(cmd, "sandbox name");
-    await recoverRegistryEntries({ requestedSandboxName: cmd });
-    if (registry.getSandbox(cmd)) {
-      await sandboxConnect(cmd);
-      return;
-    }
   }
 
   // Unknown command — suggest

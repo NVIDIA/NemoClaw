@@ -149,7 +149,7 @@ export async function ensureUsageNoticeConsent({
 
   // credentials is still CJS
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const ask = promptFn || require("../../bin/lib/credentials").prompt;
+  const ask = promptFn || require("./credentials").prompt;
   const answer = String(await ask(`  ${config.interactivePrompt}`))
     .trim()
     .toLowerCase();

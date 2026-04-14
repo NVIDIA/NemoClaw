@@ -35,6 +35,7 @@ vi.mock("node:fs", async (importOriginal) => {
     mkdirSync: vi.fn((p: string) => {
       addDir(p);
     }),
+    chmodSync: vi.fn(),
     readFileSync: (p: string) => {
       const entry = store.get(p);
       if (entry?.type !== "file") throw new Error(`ENOENT: ${p}`);

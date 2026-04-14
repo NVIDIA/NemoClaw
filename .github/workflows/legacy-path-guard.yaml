@@ -9,7 +9,7 @@ on:
 
 jobs:
   guard-migrated-paths:
-    name: block edits to migrated legacy paths
+    name: block edits to migrated legacy paths and removed shims
     if: ${{ github.base_ref == 'main' && !startsWith(github.head_ref, 'ts-migration/') }}
     runs-on: ubuntu-latest
 
@@ -29,7 +29,7 @@ jobs:
         run: npm install --ignore-scripts
 
       - name: Fetch base branch
-        run: git fetch origin "${{ github.base_ref }}" --depth=1
+        run: git fetch origin "${{ github.base_ref }}"
 
       - name: Guard migrated legacy paths
         run: npm run ts-migration:guard -- --base "origin/${{ github.base_ref }}" --head HEAD

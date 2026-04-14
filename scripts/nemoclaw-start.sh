@@ -155,8 +155,25 @@ case "${1:-}" in
   nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
 esac
 NEMOCLAW_CMD=("$@")
-CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:18789}"
-PUBLIC_PORT=18789
+# Validate NEMOCLAW_DASHBOARD_PORT if set (same behavior as ports.js: fail fast).
+_DASHBOARD_PORT_RAW="${NEMOCLAW_DASHBOARD_PORT:-}"
+if [ -z "$_DASHBOARD_PORT_RAW" ]; then
+  _DASHBOARD_PORT=18789
+else
+  _DASHBOARD_PORT="$(printf '%s' "$_DASHBOARD_PORT_RAW" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  case "$_DASHBOARD_PORT" in
+    *[!0-9]* | '')
+      echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$_DASHBOARD_PORT" -lt 1024 ] || [ "$_DASHBOARD_PORT" -gt 65535 ]; then
+    echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
+    exit 1
+  fi
+fi
+CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${_DASHBOARD_PORT}}"
+PUBLIC_PORT="$_DASHBOARD_PORT"
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
 
@@ -459,6 +476,18 @@ openclaw() {
       echo "This rebuilds the sandbox with your updated settings." >&2
       return 1
       ;;
+    agent)
+      # Warn when --local is used — it bypasses gateway protections including
+      # secret scanning, network policy, and inference auth. Ref: #1632
+      local _arg
+      for _arg in "$@"; do
+        if [ "$_arg" = "--local" ]; then
+          echo "[SECURITY] Warning: 'openclaw agent --local' bypasses the NemoClaw gateway." >&2
+          echo "[SECURITY] Secret scanning, network policy, and inference auth are NOT enforced in local mode." >&2
+          break
+        fi
+      done
+      ;;
   esac
   command openclaw "$@"
 }
@@ -547,6 +576,13 @@ json.dump({
 }, open(path, 'w'))
 os.chmod(path, 0o600)
 PYAUTH
+}
+
+harden_auth_profiles() {
+  if [ -d "${HOME}/.openclaw" ]; then
+    # Enforce 600 for all auth profiles across all agents
+    find -L "${HOME}/.openclaw" -type f -name "auth-profiles.json" -exec chmod 600 {} + 2>/dev/null || true
+  fi
 }
 
 configure_messaging_channels() {
@@ -840,6 +876,7 @@ if [ "$(id -u)" -ne 0 ]; then
   }
   fix_openclaw_data_ownership
   write_auth_profile
+  harden_auth_profiles
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     exec "${NEMOCLAW_CMD[@]}"
@@ -881,7 +918,8 @@ install_configure_guard
 configure_messaging_channels
 
 # Write auth profile as sandbox user (needs writable .openclaw-data)
-gosu sandbox bash -c "$(declare -f write_auth_profile); write_auth_profile"
+# and recursively re-tighten any auth-profiles.json files under ~/.openclaw.
+gosu sandbox bash -c "$(declare -f write_auth_profile harden_auth_profiles); write_auth_profile; harden_auth_profiles"
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then

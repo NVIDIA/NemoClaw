@@ -4,9 +4,11 @@
 // NIM container management — pull, start, stop, health-check NIM images.
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { run, runCapture, shellQuote } = require("../../bin/lib/runner");
+const { run, runCapture, shellQuote } = require("./runner");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const nimImages = require("../../bin/lib/nim-images.json");
+
+import { VLLM_PORT } from "./ports";
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier"];
 
@@ -179,12 +181,12 @@ export function pullNimImage(model: string): string {
   return image;
 }
 
-export function startNimContainer(sandboxName: string, model: string, port = 8000): string {
+export function startNimContainer(sandboxName: string, model: string, port = VLLM_PORT): string {
   const name = containerName(sandboxName);
   return startNimContainerByName(name, model, port);
 }
 
-export function startNimContainerByName(name: string, model: string, port = 8000): string {
+export function startNimContainerByName(name: string, model: string, port = VLLM_PORT): string {
   const image = getImageForModel(model);
   if (!image) {
     console.error(`  Unknown model: ${model}`);
@@ -201,7 +203,7 @@ export function startNimContainerByName(name: string, model: string, port = 8000
   return name;
 }
 
-export function waitForNimHealth(port = 8000, timeout = 300): boolean {
+export function waitForNimHealth(port = VLLM_PORT, timeout = 300): boolean {
   const start = Date.now();
   const intervalSec = 5;
   const hostPort = Number(port);
@@ -260,7 +262,7 @@ export function nimStatusByName(name: string, port?: number): NimStatus {
           ignoreError: true,
         });
         const m = mapping && mapping.match(/:(\d+)\s*$/);
-        resolvedHostPort = m ? Number(m[1]) : 8000;
+        resolvedHostPort = m ? Number(m[1]) : VLLM_PORT;
       }
       const health = runCapture(
         `curl -sf http://localhost:${resolvedHostPort}/v1/models 2>/dev/null`,

@@ -11,6 +11,7 @@ const readline = require("readline");
 const YAML = require("yaml");
 const { ROOT, run, runCapture, shellQuote } = require("./runner");
 const registry = require("./registry");
+const { loadAgent } = require("./agent-defs");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 function getOpenshellCommand() {
@@ -349,6 +350,24 @@ const PERMISSIVE_POLICY_PATH = path.join(
   "openclaw-sandbox-permissive.yaml",
 );
 
+function resolvePermissivePolicyPath(sandboxName) {
+  // Use agent-specific permissive policy if the sandbox has an agent with one.
+  try {
+    const sandbox = registry.getSandbox(sandboxName);
+    if (sandbox?.agent && sandbox.agent !== "openclaw") {
+      const agent = loadAgent(sandbox.agent);
+      if (agent?.policyPermissivePath) return agent.policyPermissivePath;
+    }
+    if (sandbox?.agent === "openclaw") {
+      const agent = loadAgent("openclaw");
+      if (agent?.policyPermissivePath) return agent.policyPermissivePath;
+    }
+  } catch {
+    // Fall through to global permissive policy
+  }
+  return PERMISSIVE_POLICY_PATH;
+}
+
 function applyPermissivePolicy(sandboxName) {
   const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
   if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
@@ -358,12 +377,13 @@ function applyPermissivePolicy(sandboxName) {
     );
   }
 
-  if (!fs.existsSync(PERMISSIVE_POLICY_PATH)) {
-    throw new Error(`Permissive policy not found: ${PERMISSIVE_POLICY_PATH}`);
+  const policyPath = resolvePermissivePolicyPath(sandboxName);
+  if (!fs.existsSync(policyPath)) {
+    throw new Error(`Permissive policy not found: ${policyPath}`);
   }
 
   console.log("  Applying permissive policy (--dangerously-skip-permissions)...");
-  run(buildPolicySetCommand(PERMISSIVE_POLICY_PATH, sandboxName));
+  run(buildPolicySetCommand(policyPath, sandboxName));
   console.log("  Applied permissive policy.");
 
   const sandbox = registry.getSandbox(sandboxName);

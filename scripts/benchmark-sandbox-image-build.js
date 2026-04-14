@@ -10,7 +10,7 @@ const {
   collectBuildContextStats,
   stageLegacySandboxBuildContext,
   stageOptimizedSandboxBuildContext,
-} = require("../bin/lib/sandbox-build-context");
+} = require("../dist/lib/sandbox-build-context");
 
 function parseArgs(argv) {
   const args = {

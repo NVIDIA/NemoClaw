@@ -89,35 +89,30 @@ function hasBrevInstance(instanceName) {
   return listBrevInstances().some((instance) => instance.name === instanceName);
 }
 
-function deleteBrevInstance(instanceName, { attempts = 5, intervalSeconds = 5 } = {}) {
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    if (!hasBrevInstance(instanceName)) {
-      return true;
-    }
+function isBrevInstanceDeleting(instanceName) {
+  const instances = listBrevInstances();
+  const instance = instances.find((i) => i.name === instanceName);
+  return instance && (instance.status === "DELETING" || instance.status === "STOPPING");
+}
 
-    try {
-      brev("delete", instanceName);
-    } catch {
-      // Best-effort delete. We'll verify via ls below and retry if needed.
-    }
-    sleep(2);
-
-    try {
-      brev("refresh");
-    } catch {
-      // Ignore transient refresh failures and rely on the next existence check.
-    }
-
-    if (!hasBrevInstance(instanceName)) {
-      return true;
-    }
-
-    if (attempt < attempts) {
-      sleep(intervalSeconds);
-    }
+function deleteBrevInstance(instanceName) {
+  if (!hasBrevInstance(instanceName)) {
+    return true;
   }
 
-  return !hasBrevInstance(instanceName);
+  try {
+    brev("delete", instanceName);
+  } catch {
+    // Best-effort delete
+  }
+
+  // If the instance is gone or in DELETING/STOPPING state, that's success —
+  // Brev will finish the teardown asynchronously.
+  if (!hasBrevInstance(instanceName) || isBrevInstanceDeleting(instanceName)) {
+    return true;
+  }
+
+  return false;
 }
 
 function ssh(cmd, { timeout = 120_000, stream = false } = {}) {
@@ -165,14 +160,16 @@ function sshEnv(cmd, { timeout = 600_000, stream = false } = {}) {
   return ssh(`${envPrefix} && ${cmd}`, { timeout, stream });
 }
 
-function waitForSsh(maxAttempts = 90, intervalMs = 5_000) {
+function waitForSsh(maxAttempts = 40, intervalMs = 5_000) {
   for (let i = 1; i <= maxAttempts; i++) {
     try {
       ssh("echo ok", { timeout: 10_000 });
       return;
     } catch {
-      if (i === maxAttempts) throw new Error(`SSH not ready after ${maxAttempts} attempts`);
+      if (i === maxAttempts) throw new Error(`SSH not ready after ${maxAttempts} attempts (~${Math.round(maxAttempts * (intervalMs + 10_000) / 60_000)} min)`);
+      console.log(`  SSH attempt ${i}/${maxAttempts} failed, retrying in ${intervalMs / 1000}s...`);
       if (i % 5 === 0) {
+        console.log(`  Refreshing brev SSH config...`);
         try {
           brev("refresh");
         } catch {
@@ -418,6 +415,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       // may have a package.json/package-lock.json that are slightly out of sync
       // (e.g. new transitive deps). npm install is more forgiving and still
       // benefits from the launchable's pre-cached node_modules.
+      // Always run this even for TEST_SUITE=full — it primes the cache so
+      // install.sh's npm install is a fast no-op.
       console.log(`[${elapsed()}] Running npm install to sync dependencies...`);
       ssh(
         [
@@ -430,6 +429,18 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       );
       console.log(`[${elapsed()}] Dependencies synced`);
 
+      // When TEST_SUITE=full, test-full-e2e.sh runs install.sh which handles
+      // plugin build, npm link, and onboard from scratch. Skip those steps
+      // to avoid ~8 min of redundant work.
+      const needsBeforeAllSetup = TEST_SUITE !== "full";
+
+      if (!needsBeforeAllSetup) {
+        console.log(
+          `[${elapsed()}] Skipping plugin build, npm link, and onboard (TEST_SUITE=full — install.sh handles it)`,
+        );
+      }
+
+      if (needsBeforeAllSetup) {
       // Rebuild TS plugin for our branch (reinstall plugin deps in case they changed)
       console.log(`[${elapsed()}] Building TypeScript plugin...`);
       ssh(
@@ -455,19 +466,6 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       );
       console.log(`[${elapsed()}] nemoclaw CLI linked`);
 
-      // The full E2E test (test-full-e2e.sh) immediately destroys any sandbox
-      // in Phase 0, then runs install.sh which creates its own from scratch.
-      // Skip the beforeAll onboard for that suite — it would be thrown away
-      // and wastes ~6 min of image build + upload time.
-      const needsBeforeAllSandbox = TEST_SUITE !== "full";
-
-      if (!needsBeforeAllSandbox) {
-        console.log(
-          `[${elapsed()}] Skipping beforeAll onboard (TEST_SUITE=full — test does its own)`,
-        );
-      }
-
-      if (needsBeforeAllSandbox) {
         // Run onboard in the background. The `nemoclaw onboard` process hangs
         // after sandbox creation because `openshell sandbox create` keeps a
         // long-lived SSH connection to the sandbox entrypoint, and the dashboard
@@ -620,7 +618,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
           { timeout: 15_000 },
         );
         console.log(`[${elapsed()}] Registry written, onboard workaround complete`);
-      } // end if (needsBeforeAllSandbox)
+      } // end if (needsBeforeAllSetup)
     }
 
     // Verify sandbox registry (only when beforeAll created a sandbox)
@@ -649,10 +647,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       console.log(`  To delete:  brev delete ${INSTANCE_NAME}\n`);
       return;
     }
-    if (!deleteBrevInstance(INSTANCE_NAME)) {
-      throw new Error(`Failed to delete Brev instance "${INSTANCE_NAME}" during test cleanup`);
-    }
-  });
+    deleteBrevInstance(INSTANCE_NAME);
+  }, 120_000); // 2 min for cleanup
 
   // NOTE: The full E2E test runs install.sh --non-interactive which destroys and
   // rebuilds the sandbox from scratch. It cannot run alongside the security tests

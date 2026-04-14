@@ -21,6 +21,7 @@ import { execa } from "execa";
 import YAML from "yaml";
 
 import { validateEndpointUrl } from "./ssrf.js";
+import { DASHBOARD_PORT } from "../lib/ports.js";
 
 type Action = "plan" | "apply" | "status" | "rollback";
 
@@ -192,7 +193,7 @@ export async function actionPlan(
     sandbox: {
       image: sandboxCfg.image ?? "openclaw",
       name: sandboxCfg.name ?? "openclaw",
-      forward_ports: sandboxCfg.forward_ports ?? [18789],
+      forward_ports: sandboxCfg.forward_ports ?? [DASHBOARD_PORT],
     },
     inference: {
       provider_type: inferenceCfg.provider_type,
@@ -231,7 +232,7 @@ export async function actionApply(
 
   const sandboxName = sandboxCfg.name ?? "openclaw";
   const sandboxImage = sandboxCfg.image ?? "openclaw";
-  const forwardPorts = sandboxCfg.forward_ports ?? [18789];
+  const forwardPorts = sandboxCfg.forward_ports ?? [DASHBOARD_PORT];
 
   progress(20, "Creating OpenClaw sandbox");
   const createArgs = [

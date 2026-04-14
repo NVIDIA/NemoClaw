@@ -15,6 +15,7 @@ desktop.ini
 Thumbs.db
 
 # Project-specific
+.nemoclaw-maintainer/
 draft_newsletter_*
 research/
 specs/

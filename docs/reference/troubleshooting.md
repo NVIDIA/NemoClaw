@@ -272,6 +272,9 @@ Check the active provider and endpoint:
 $ nemoclaw <name> status
 ```
 
+For local Ollama and local vLLM, `nemoclaw <name> status` also prints an `Inference` line that probes the host-side health endpoint directly.
+If that line shows `unreachable`, start the local backend first and then retry the request.
+
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
 Then verify the credential and base URL for the provider you selected during onboarding.
 
@@ -283,6 +286,33 @@ $ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
 $ nemoclaw onboard
 ```
 
+### Agent fails at runtime after onboarding succeeds with a compatible endpoint
+
+Some OpenAI-compatible servers (such as SGLang) expose `/v1/responses` and pass
+the onboarding validation probe, but their streaming mode is incomplete.
+OpenClaw requires granular streaming events like `response.output_text.delta`
+that these backends do not emit.
+
+NemoClaw now tests streaming events during the `/v1/responses` probe and falls
+back to `/v1/chat/completions` automatically.
+If you onboarded before this check was added, re-run onboarding so the wizard
+re-probes the endpoint and bakes the correct API path into the image:
+
+```console
+$ nemoclaw onboard
+```
+
+To force `/v1/chat/completions` without re-probing, set `NEMOCLAW_PREFERRED_API`:
+
+```console
+$ NEMOCLAW_PREFERRED_API=openai-completions nemoclaw onboard
+```
+
+Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone — it patches the config
+at container startup but does not update the Dockerfile ARG baked into the
+image.
+A fresh `nemoclaw onboard` is the reliable fix.
+
 ### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
 
 This is expected behavior.
@@ -291,6 +321,48 @@ Changing or exporting it later does not rewrite the baked `openclaw.json` inside
 
 If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration.
 For the security trade-offs, refer to [Security Best Practices](../security/best-practices.md).
+
+### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
+
+This is expected in NemoClaw-managed sandboxes.
+NemoClaw bakes channel entries into `/sandbox/.openclaw/openclaw.json` at image build time, and OpenShell keeps that path read-only at runtime.
+
+As a result, commands that try to rewrite the baked config from inside the sandbox, including `openclaw doctor --fix`, cannot repair Discord, Telegram, or Slack channel entries in place.
+
+If your Discord channel config is wrong, rerun onboarding so NemoClaw rebuilds the sandbox image with the correct messaging selection.
+Do not treat a failed `doctor --fix` run as proof that the Discord gateway path itself is broken.
+
+If `openclaw doctor` reports that it moved Telegram single-account values under `channels.telegram.accounts.default`, rerun onboarding and rebuild the sandbox rather than trying to patch `openclaw.json` in place.
+Current NemoClaw rebuilds bake Telegram in the account-based layout and set Telegram group chats to `groupPolicy: open`, which avoids the empty `groupAllowFrom` warning path for default group-chat access.
+
+### Discord bot logs in, but the channel still does not work
+
+Separate the problem into two parts:
+
+1. Baked config and provider wiring
+
+   Check that onboarding selected Discord and that the sandbox was created with the Discord messaging provider attached.
+   If Discord was skipped during onboarding, rerun onboarding and select Discord again.
+
+1. Native Discord gateway path
+
+   Successful login alone does not prove that Discord works end to end.
+   Discord also needs a working gateway connection to `gateway.discord.gg`.
+   If logs show errors such as `getaddrinfo EAI_AGAIN gateway.discord.gg`, repeated reconnect loops, or a `400` response while probing the gateway path, the problem is usually in the native gateway/proxy path rather than in the baked config.
+
+Common signs of a native gateway-path failure:
+
+- REST calls to `discord.com` succeed, but the Discord channel never becomes healthy
+- `gateway.discord.gg` fails with DNS resolution errors
+- the WebSocket path returns `400` instead of opening a tunnel
+- native command deployment fails even though the bot token itself is valid
+
+In that case:
+
+- keep the Discord policy preset applied
+- verify the sandbox was created with the Discord provider attached
+- inspect gateway logs and blocked requests with `openshell term`
+- treat the failure as a native Discord gateway problem, not as a bridge startup problem
 
 ### Sandbox lost after gateway restart
 
@@ -333,6 +405,72 @@ $ nemoclaw <name> logs
 ```
 
 Use `--follow` to stream logs in real time while debugging.
+
+(windows-wsl-2)=
+
+## Windows Subsystem for Linux
+
+For environment setup steps, see [Windows Prerequisites](../get-started/windows-setup.md).
+
+### `wsl --install --no-distribution` returns Forbidden (403)
+
+Check your network connectivity.
+If you are behind a VPN, try reconnecting or switching to a different network.
+
+### `wsl -d Ubuntu` says "There is no distribution with the supplied name"
+
+The Ubuntu package was installed with `--no-launch` but never registered.
+Run `ubuntu.exe install --root` from PowerShell to register it, or reinstall without `--no-launch`:
+
+```console
+$ wsl --unregister Ubuntu
+$ wsl --install -d Ubuntu
+```
+
+### `docker info` fails inside WSL
+
+Confirm that Docker Desktop is running and that WSL integration is enabled for Ubuntu (Settings > Resources > WSL integration).
+Then restart WSL:
+
+```console
+$ wsl --shutdown
+$ wsl -d Ubuntu
+$ docker info
+```
+
+### Ollama inference fails or hangs in WSL
+
+Ollama configures context length based on your hardware.
+On some GPUs (for example RTX 3500), the default context length is not sufficient for OpenClaw.
+Force a larger context length:
+
+```console
+$ pkill -f 'ollama serve'
+$ OLLAMA_CONTEXT_LENGTH=16384 ollama serve
+```
+
+Verify that Ollama inference works:
+
+```console
+$ echo "Hello" | ollama run <model-id>
+```
+
+Replace `<model-id>` with the model you selected during onboarding (for example `qwen3.5:4b`).
+
+If `ollama serve` fails with `Error: listen tcp 127.0.0.1:11434: bind: address already in use`, check whether Ollama is configured for automatic startup:
+
+```console
+$ sudo systemctl status ollama
+```
+
+If it is active, stop it first, then start with the custom context length:
+
+```console
+$ sudo systemctl stop ollama
+$ OLLAMA_CONTEXT_LENGTH=16384 ollama serve
+```
+
+For additional troubleshooting, see the [Quickstart](../get-started/quickstart.md) and [Windows Setup](../get-started/windows-setup.md) pages.
 
 ## Podman
 

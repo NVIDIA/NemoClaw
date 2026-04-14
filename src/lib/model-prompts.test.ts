@@ -9,7 +9,7 @@ import {
   promptInputModel,
   promptManualModelId,
   promptRemoteModel,
-} from "./model-prompts";
+} from "../../dist/lib/model-prompts";
 
 function promptSequence(responses: string[]) {
   const queue = [...responses];

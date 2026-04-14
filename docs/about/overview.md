@@ -3,8 +3,8 @@ title:
   page: "NemoClaw Overview: What It Is"
   nav: "Overview"
 description:
-  main: "NemoClaw is an open source reference stack that simplifies running OpenClaw always-on assistants more safely."
-  agent: "Explains what NemoClaw covers: onboarding, lifecycle management, and management of OpenClaw within OpenShell containers, plus capabilities and why it exists. Use when users ask what NemoClaw is or what the project provides. For ecosystem placement or OpenShell-only paths, use the Ecosystem page; for internal mechanics, use How It Works."
+  main: "NemoClaw is an open-source reference stack that simplifies running OpenClaw always-on assistants more safely."
+  agent: "Explains what NemoClaw covers: onboarding, lifecycle management, and OpenClaw operations within OpenShell containers, plus capabilities and why it exists. Use when users ask what NemoClaw is or what the project provides. For ecosystem placement or OpenShell-only paths, use the Ecosystem page; for internal mechanics, use How It Works."
 keywords: ["nemoclaw overview", "openclaw always-on assistants", "nvidia openshell", "nvidia nemotron"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "inference_routing", "blueprints"]
@@ -22,12 +22,12 @@ status: published
 
 # Overview
 
-NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants.
-NemoClaw provides onboarding, lifecycle management, and management of OpenClaw within OpenShell containers.
+NVIDIA NemoClaw is an open-source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants.
+NemoClaw provides onboarding, lifecycle management, and OpenClaw operations within OpenShell containers.
 It incorporates policy-based privacy and security guardrails, giving you control over your agents’ behavior and data handling.
 This enables self-evolving claws to run more safely in clouds, on prem, RTX PCs and DGX Spark.
 
-NemoClaw pairs open source and hosted models (for example [NVIDIA Nemotron](https://build.nvidia.com)) with a hardened sandbox, routed inference, and declarative egress policy so deployment stays safer and more repeatable.
+NemoClaw pairs open-source and hosted models (for example [NVIDIA Nemotron](https://build.nvidia.com)) with a hardened sandbox, routed inference, and declarative egress policy so deployment stays safer and more repeatable.
 The sandbox runtime comes from [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell); NemoClaw adds the blueprint, `nemoclaw` CLI, onboarding, and related tooling as the reference way to run OpenClaw there.
 
 | Capability              | Description                                                                                                                                          |
