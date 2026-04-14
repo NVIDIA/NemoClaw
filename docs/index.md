@@ -241,6 +241,7 @@ Release Notes <about/release-notes>
 :hidden:
 
 Quickstart <get-started/quickstart>
+Windows Prerequisites <get-started/windows-setup>
 ```
 
 ```{toctree}
