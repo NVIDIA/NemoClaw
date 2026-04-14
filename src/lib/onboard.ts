@@ -566,9 +566,30 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
     console.log(
       `  ${label} authorization failed. Re-enter the API key or choose a different provider/model.`,
     );
-    const choice = (await prompt("  Type 'retry', 'back', or 'exit' [retry]: ", { secret: true }))
+    console.log("  ⚠️  Do NOT paste your API key here — use the options below:");
+    const choice = (
+      await prompt("  Options: retry (re-enter key), back (change provider), exit [retry]: ", {
+        secret: true,
+      })
+    )
       .trim()
       .toLowerCase();
+    // Guard against the user accidentally pasting an API key at this prompt.
+    // Tokens don't contain spaces; human sentences do — the no-space + length check
+    // avoids false-positives on long typed sentences.
+    const API_KEY_PREFIXES = ["nvapi-", "ghp_", "gcm-", "sk-", "gpt-", "gemini-", "nvcf-"];
+    const looksLikeToken =
+      API_KEY_PREFIXES.some((p) => choice.startsWith(p)) ||
+      (!choice.includes(" ") && choice.length > 40) ||
+      // Regex fallback: base64-safe token pattern (20+ chars, no spaces, mixed alphanum)
+      /^[A-Za-z0-9_\-\.]{20,}$/.test(choice);
+    const validator = credentialEnv === "NVIDIA_API_KEY" ? validateNvidiaApiKeyValue : null;
+    if (looksLikeToken) {
+      console.log("  ⚠️  That looks like an API key — do not paste credentials here.");
+      console.log("  Treating as 'retry'. You will be prompted to enter the key securely.");
+      await replaceNamedCredential(credentialEnv, `${label} API key`, helpUrl, validator);
+      return "credential";
+    }
     if (choice === "back") {
       console.log("  Returning to provider selection.");
       console.log("");
@@ -578,7 +599,6 @@ async function promptValidationRecovery(label, recovery, credentialEnv = null, h
       exitOnboardFromPrompt();
     }
     if (choice === "" || choice === "retry") {
-      const validator = credentialEnv === "NVIDIA_API_KEY" ? validateNvidiaApiKeyValue : null;
       await replaceNamedCredential(credentialEnv, `${label} API key`, helpUrl, validator);
       return "credential";
     }
