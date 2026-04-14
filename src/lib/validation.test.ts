@@ -12,6 +12,7 @@ import {
   isNvcfFunctionNotFoundForAccount,
   nvcfFunctionNotFoundMessage,
   shouldSkipResponsesProbe,
+  shouldForceCompletionsApi,
 } from "../../dist/lib/validation";
 
 describe("classifyValidationFailure", () => {
@@ -220,5 +221,31 @@ describe("shouldSkipResponsesProbe", () => {
     expect(shouldSkipResponsesProbe("anthropic-api")).toBe(false);
     expect(shouldSkipResponsesProbe("compatible-endpoint")).toBe(false);
     expect(shouldSkipResponsesProbe("")).toBe(false);
+  });
+});
+
+describe("shouldForceCompletionsApi", () => {
+  it("returns true when passed openai-completions", () => {
+    expect(shouldForceCompletionsApi("openai-completions")).toBe(true);
+  });
+
+  it("returns true for the chat-completions alias", () => {
+    expect(shouldForceCompletionsApi("chat-completions")).toBe(true);
+  });
+
+  it("is case-insensitive", () => {
+    expect(shouldForceCompletionsApi("OpenAI-Completions")).toBe(true);
+  });
+
+  it("returns false when undefined", () => {
+    expect(shouldForceCompletionsApi(undefined)).toBe(false);
+  });
+
+  it("returns false for openai-responses", () => {
+    expect(shouldForceCompletionsApi("openai-responses")).toBe(false);
+  });
+
+  it("returns false for empty string", () => {
+    expect(shouldForceCompletionsApi("")).toBe(false);
   });
 });

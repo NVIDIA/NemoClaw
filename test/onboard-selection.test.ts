@@ -9,6 +9,11 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+const CREDENTIAL_RETRY_PROMPT =
+  "  Options: retry (re-enter key), back (change provider), exit [retry]: ";
+const CREDENTIAL_RETRY_PROMPT_RE =
+  /Options: retry \(re-enter key\), back \(change provider\), exit \[retry\]: /;
+
 function writeOpenAiStyleAuthRetryCurl(fakeBin, goodToken, models = ["gpt-5.4"]) {
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
@@ -2180,19 +2185,87 @@ const { setupNim } = require(${onboardPath});
       payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length,
       1,
     );
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
-    const retryPrompt = payload.prompts.find((entry) =>
-      /Type 'retry', 'back', or 'exit' \[retry\]: /.test(entry.message),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
+    const retryPrompt = payload.prompts.find((entry) => CREDENTIAL_RETRY_PROMPT_RE.test(entry.message));
     assert.deepEqual(retryPrompt, {
-      message: "  Type 'retry', 'back', or 'exit' [retry]: ",
+      message: CREDENTIAL_RETRY_PROMPT,
       secret: true,
     });
     assert.ok(payload.messages.some((message) => /NVIDIA Endpoints API key: /.test(message)));
+  });
+
+  it("treats a pasted NVIDIA API key at the retry prompt as retry and re-prompts securely", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-nvidia-paste-guard-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "nvidia-paste-guard-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeOpenAiStyleAuthRetryCurl(fakeBin, "nvapi-good", ["nim/meta/llama-3.1-70b-instruct"]);
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["1", "", "nvapi-fake-key-value", "nvapi-good", ""];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  process.env.NVIDIA_API_KEY = "nvapi-bad";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines, key: process.env.NVIDIA_API_KEY }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "nvidia-prod");
+    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    assert.equal(payload.key, "nvapi-good");
+    assert.ok(payload.lines.some((line) => line.includes("That looks like an API key")));
+    assert.ok(payload.lines.some((line) => line.includes("Treating as 'retry'")));
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
+    assert.ok(payload.messages.some((message) => /NVIDIA Endpoints API key: /.test(message)));
+    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+    assert.equal(
+      payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length,
+      1,
+    );
   });
 
   it("lets users re-enter an OpenAI API key after authorization failure", () => {
@@ -2260,11 +2333,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "openai-responses");
     assert.equal(payload.key, "sk-good");
     assert.ok(payload.lines.some((line) => line.includes("OpenAI authorization failed")));
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(payload.messages.some((message) => /OpenAI API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(
@@ -2338,11 +2407,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
     assert.equal(payload.key, "anthropic-good");
     assert.ok(payload.lines.some((line) => line.includes("Anthropic authorization failed")));
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(payload.messages.some((message) => /Anthropic API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(
@@ -2416,11 +2481,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.equal(payload.key, "gemini-good");
     assert.ok(payload.lines.some((line) => line.includes("Google Gemini authorization failed")));
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(payload.messages.some((message) => /Google Gemini API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(
@@ -2501,11 +2562,7 @@ const { setupNim } = require(${onboardPath});
         line.includes("Other OpenAI-compatible endpoint authorization failed"),
       ),
     );
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(
       payload.messages.some((message) =>
         /Other OpenAI-compatible endpoint API key: /.test(message),
@@ -2595,11 +2652,7 @@ const { setupNim } = require(${onboardPath});
         line.includes("Other Anthropic-compatible endpoint authorization failed"),
       ),
     );
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(
       payload.messages.some((message) =>
         /Other Anthropic-compatible endpoint API key: /.test(message),
