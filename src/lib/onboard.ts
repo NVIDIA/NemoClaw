@@ -4248,18 +4248,8 @@ const CONTROL_UI_PORT = DASHBOARD_PORT;
 const { resolveDashboardForwardTarget, buildControlUiUrls } = dashboard;
 
 function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
-  const forwardTarget = isWsl()
-    ? `0.0.0.0:${CONTROL_UI_PORT}`
-    : resolveDashboardForwardTarget(chatUiUrl);
-  let portToStop = String(CONTROL_UI_PORT);
-  try {
-    portToStop = String(
-      new URL(/^[a-z]+:\/\//i.test(chatUiUrl) ? chatUiUrl : `http://${chatUiUrl}`).port ||
-        CONTROL_UI_PORT,
-    );
-  } catch {
-    // Fall back to the default dashboard port when chatUiUrl is not URL-shaped.
-  }
+  const portToStop = getDashboardForwardPort(chatUiUrl);
+  const forwardTarget = getDashboardForwardTarget(chatUiUrl);
   runOpenshell(["forward", "stop", portToStop], { ignoreError: true });
   // Use stdio "ignore" to prevent spawnSync from waiting on inherited pipe fds.
   // The --background flag forks a child that inherits stdout/stderr; if those are
@@ -4316,14 +4306,24 @@ function fetchGatewayAuthTokenFromSandbox(sandboxName) {
 
 // buildControlUiUrls — see dashboard import above
 
-function getDashboardForwardPort() {
-  return CONTROL_UI_PORT;
+function getDashboardForwardPort(
+  chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
+) {
+  const forwardTarget = resolveDashboardForwardTarget(chatUiUrl);
+  return forwardTarget.includes(":") ? (forwardTarget.split(":").pop() ?? String(CONTROL_UI_PORT)) : forwardTarget;
+}
+
+function getDashboardForwardTarget(
+  chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
+  options = {},
+) {
+  const port = getDashboardForwardPort(chatUiUrl);
+  return isWsl(options) ? `0.0.0.0:${port}` : resolveDashboardForwardTarget(chatUiUrl);
 }
 
 function getDashboardForwardStartCommand(sandboxName, options = {}) {
-  const forwardTarget = isWsl(options)
-    ? `0.0.0.0:${CONTROL_UI_PORT}`
-    : resolveDashboardForwardTarget(`http://127.0.0.1:${CONTROL_UI_PORT}`);
+  const chatUiUrl = options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const forwardTarget = getDashboardForwardTarget(chatUiUrl, options);
   return `${openshellShellCommand(
     ["forward", "start", "--background", forwardTarget, sandboxName],
     options,
@@ -4355,7 +4355,9 @@ function getDashboardAccessInfo(sandboxName, options = {}) {
   const token = Object.prototype.hasOwnProperty.call(options, "token")
     ? options.token
     : fetchGatewayAuthTokenFromSandbox(sandboxName);
-  const dashboardAccess = buildControlUiUrls(token).map((url, index) => ({
+  const chatUiUrl = options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const dashboardPort = Number(getDashboardForwardPort(chatUiUrl));
+  const dashboardAccess = buildControlUiUrls(token, dashboardPort).map((url, index) => ({
     label: index === 0 ? "Dashboard" : `Alt ${index}`,
     url: buildAuthenticatedDashboardUrl(url, null),
   }));
@@ -4363,7 +4365,7 @@ function getDashboardAccessInfo(sandboxName, options = {}) {
   const wslHostAddress = getWslHostAddress(options);
   if (wslHostAddress) {
     const wslUrl = buildAuthenticatedDashboardUrl(
-      `http://${wslHostAddress}:${CONTROL_UI_PORT}/`,
+      `http://${wslHostAddress}:${dashboardPort}/`,
       token,
     );
     if (!dashboardAccess.some((access) => access.url === wslUrl)) {
@@ -4374,9 +4376,12 @@ function getDashboardAccessInfo(sandboxName, options = {}) {
   return dashboardAccess;
 }
 
-function getDashboardGuidanceLines(dashboardAccess = []) {
-  const guidance = [`Port ${CONTROL_UI_PORT} must be forwarded before opening these URLs.`];
-  if (isWsl()) {
+function getDashboardGuidanceLines(dashboardAccess = [], options = {}) {
+  const dashboardPort = getDashboardForwardPort(
+    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
+  );
+  const guidance = [`Port ${dashboardPort} must be forwarded before opening these URLs.`];
+  if (isWsl(options)) {
     guidance.push(
       "WSL detected: if localhost fails in Windows, use the WSL host IP shown by `hostname -I`.",
     );

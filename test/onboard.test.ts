@@ -387,6 +387,7 @@ describe("onboard helpers", () => {
   it("includes a VS Code/WSL dashboard URL when running under WSL", () => {
     const access = getDashboardAccessInfo("the-crucible", {
       token: "secret-token",
+      chatUiUrl: "http://127.0.0.1:19999",
       env: { WSL_DISTRO_NAME: "Ubuntu" },
       platform: "linux",
       release: "6.6.87.2-microsoft-standard-WSL2",
@@ -394,13 +395,14 @@ describe("onboard helpers", () => {
     });
 
     expect(access).toEqual([
-      { label: "Dashboard", url: "http://127.0.0.1:18789/#token=secret-token" },
-      { label: "VS Code/WSL", url: "http://172.24.240.1:18789/#token=secret-token" },
+      { label: "Dashboard", url: "http://127.0.0.1:19999/#token=secret-token" },
+      { label: "VS Code/WSL", url: "http://172.24.240.1:19999/#token=secret-token" },
     ]);
   });
 
   it("binds the dashboard forward to all interfaces under WSL", () => {
     const command = getDashboardForwardStartCommand("the-crucible", {
+      chatUiUrl: "http://127.0.0.1:19999",
       env: { WSL_DISTRO_NAME: "Ubuntu" },
       openshellBinary: "/usr/bin/openshell",
       platform: "linux",
@@ -410,7 +412,7 @@ describe("onboard helpers", () => {
     expect(command).toContain("forward");
     expect(command).toContain("start");
     expect(command).toContain("--background");
-    expect(command).toContain("0.0.0.0:18789");
+    expect(command).toContain("0.0.0.0:19999");
     expect(command).toContain("the-crucible");
   });
 
