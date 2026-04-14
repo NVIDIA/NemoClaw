@@ -859,8 +859,24 @@ function stop() {
 
 function debug(args) {
   const { runDebug } = require("./lib/debug");
+  const getDefaultSandbox = (): string | undefined => {
+    const { defaultSandbox, sandboxes } = registry.listSandboxes();
+    if (!defaultSandbox) return undefined;
+    if (!sandboxes.find((s) => s.name === defaultSandbox)) {
+      console.error(`${_RD}Warning:${R} default sandbox '${defaultSandbox}' is no longer in the registry.`);
+      console.error(`  Use ${B}--sandbox NAME${R} to target a specific sandbox, or run ${B}nemoclaw onboard${R} again.\n`);
+      return undefined;
+    }
+    const liveList = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+    if (liveList.status === 0 && !parseLiveSandboxNames(liveList.output).has(defaultSandbox)) {
+      console.error(`${_RD}Warning:${R} default sandbox '${defaultSandbox}' exists in the local registry but not in OpenShell.`);
+      console.error(`  Use ${B}--sandbox NAME${R} to target a specific sandbox, or run ${B}nemoclaw onboard${R} again.\n`);
+      return undefined;
+    }
+    return defaultSandbox;
+  };
   runDebugCommand(args, {
-    getDefaultSandbox: () => registry.listSandboxes().defaultSandbox || undefined,
+    getDefaultSandbox,
     runDebug,
     log: console.log,
     error: console.error,
@@ -1490,7 +1506,8 @@ function help() {
     nemoclaw status                  Show sandbox list and service status
 
   Troubleshooting:
-    nemoclaw debug [--quick]         Collect diagnostics for bug reports
+    nemoclaw debug [--quick] [--sandbox NAME]
+                                     Collect diagnostics for bug reports
     nemoclaw debug --output FILE     Save diagnostics tarball for GitHub issues
 
   ${G}Credentials:${R}
