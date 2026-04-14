@@ -14,6 +14,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { DASHBOARD_PORT } from "./ports";
+
 // runner.ts still uses CommonJS-style exports — use require here.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { runCapture } = require("./runner");
@@ -506,7 +508,7 @@ export async function checkPortAvailable(
   port?: number,
   opts?: CheckPortOpts,
 ): Promise<PortProbeResult> {
-  const p = port ?? 18789;
+  const p = port ?? DASHBOARD_PORT;
   const o = opts || {};
 
   // ── lsof path ──────────────────────────────────────────────────

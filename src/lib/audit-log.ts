@@ -180,7 +180,8 @@ export function appendAuditEntry(
 // ---------------------------------------------------------------------------
 
 /**
- * Read the last entry from the audit log without loading the entire file.
+ * Read the last entry from the audit log.
+ * Loads the entire file into memory — for large logs consider streaming.
  * Returns null if the file is empty or does not exist.
  */
 export function readLastEntry(logPath?: string): AuditEntry | null {
@@ -353,8 +354,10 @@ function acquireLockFile(lockPath: string): number {
 function releaseLockFile(lockPath: string, fd: number | null): void {
   if (fd !== null) {
     try { closeSync(fd); } catch { /* ignore */ }
+    // Only delete the lock file if we successfully acquired it (fd !== null).
+    // Otherwise we'd delete a lock owned by another process.
+    try { unlinkSync(lockPath); } catch { /* ignore */ }
   }
-  try { unlinkSync(lockPath); } catch { /* ignore */ }
 }
 
 // ---------------------------------------------------------------------------

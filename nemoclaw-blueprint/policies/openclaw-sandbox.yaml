@@ -48,8 +48,19 @@ filesystem_policy:
                                     # Blueprints are root-owned; sticky bit (1755)
                                     # on parent prevents rename/delete (#1607).
 
+# TODO: evaluate landlock enforce mode — currently best_effort because
+# enforce can break things in unpredictable ways. Needs thorough testing
+# across different kernel versions before we flip this. (ref #516 item 3)
 landlock:
   compatibility: best_effort
+
+# Note: tool-level write/edit restrictions for openclaw.json are intentionally
+# NOT declared here. OpenShell's PolicyFile schema does not support a
+# `tool_policy` section (serde deny_unknown_fields — only version, filesystem_policy,
+# landlock, process, network_policies are accepted). Config protection is
+# achieved entirely through filesystem_policy (read_only + /etc/openclaw mount)
+# and the root:root 555 permission lock on /sandbox/.openclaw/.
+# Ref: https://github.com/NVIDIA/NemoClaw/pull/654#pullrequestreview-…
 
 process:
   run_as_user: sandbox
@@ -185,8 +196,10 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/openclaw }
 
-  # npm registry — needed for `openclaw plugins install` and `npm install`.
-  # Read-only: agents only fetch packages, never publish.
+  # npm registry — needed for `openclaw plugins install` only.
+  # Restricted to the openclaw binary so agents cannot use npm directly.
+  # Users who need npm/node access should add the npm policy preset during onboard.
+  # Ref: https://github.com/NVIDIA/NemoClaw/issues/1458
   npm_registry:
     name: npm_registry
     endpoints:
@@ -199,5 +212,49 @@ network_policies:
           - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
-      - { path: /usr/local/bin/npm }
+
+  # ── Messaging — pre-allowed for OpenClaw agent notifications ────
+  # Restricted to node processes to prevent arbitrary data exfiltration
+  # via curl, wget, python, etc. (See: #272)
+  telegram:
+    name: telegram
+    endpoints:
+      - host: api.telegram.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/bot*/**" }
+          - allow: { method: POST, path: "/bot*/**" }
+          - allow: { method: GET, path: "/file/bot*/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
+
+  discord:
+    name: discord
+    endpoints:
+      - host: discord.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      # WebSocket gateway — must use access: full (CONNECT tunnel) instead
+      # of protocol: rest. The proxy's HTTP idle timeout (~2 min) kills
+      # long-lived WebSocket connections; a CONNECT tunnel avoids
+      # HTTP-level timeouts entirely. Matches presets/discord.yaml. See #409.
+      - host: gateway.discord.gg
+        port: 443
+        access: full
+      - host: cdn.discordapp.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
       - { path: /usr/local/bin/node }
