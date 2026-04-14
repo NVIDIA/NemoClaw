@@ -65,7 +65,7 @@ resolve_min_version() {
 
   if [[ -f "$blueprint" ]]; then
     local version
-    version="$(sed -nE 's/^[[:space:]]*min_openshell_version:[[:space:]]*"?(v?[0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' "$blueprint" | head -1)"
+    version="$(sed -nE 's/^[[:space:]]*min_openshell_version:[[:space:]]*"(v?[0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' "$blueprint" | head -1)"
     version="${version#v}"
     if [[ -n "$version" ]]; then
       printf "%s" "$version"

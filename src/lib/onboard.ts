@@ -500,6 +500,38 @@ function shouldUpgradeOpenshell(installedVersion = null, minimumVersion = null) 
   return compareVersions(normalizedInstalled, normalizedMinimum) < 0;
 }
 
+function enforceOpenshellVersionConstraint(
+  currentVersion = null,
+  requiredVersion = null,
+  isSatisfied = null,
+  {
+    headline = "",
+    blueprintField = "",
+    guidanceLines = [],
+    showRemoveHint = false,
+  } = {},
+) {
+  if (!currentVersion || !requiredVersion || typeof isSatisfied !== "function") return;
+  if (isSatisfied(currentVersion, requiredVersion)) return;
+
+  console.error("");
+  console.error(headline);
+  console.error(`    blueprint.yaml ${blueprintField}: ${requiredVersion}`);
+  console.error("");
+  for (const line of guidanceLines) {
+    console.error(line);
+  }
+  console.error(`      ${TROUBLESHOOTING_GUIDE_URL}`);
+  if (showRemoveHint) {
+    console.error(
+      "    Or remove the existing binary so the installer can re-fetch a current build:",
+    );
+    console.error('      command -v openshell && rm -f "$(command -v openshell)"');
+  }
+  console.error("");
+  process.exit(1);
+}
+
 function getStableGatewayImageRef(versionOutput = null) {
   const version = getInstalledOpenshellVersion(versionOutput);
   if (!version) return null;
@@ -1934,49 +1966,36 @@ async function preflight() {
   // silent failures inside the sandbox at runtime. See #1317.
   const currentInstalledOpenshellVersion = getInstalledOpenshellVersion(openshellVersionOutput);
   const minOpenshellVersion = getBlueprintMinOpenshellVersion();
-  if (
-    currentInstalledOpenshellVersion &&
-    minOpenshellVersion &&
-    !versionGte(currentInstalledOpenshellVersion, minOpenshellVersion)
-  ) {
-    console.error("");
-    console.error(
-      `  ✗ openshell ${currentInstalledOpenshellVersion} is below the minimum required by this NemoClaw release.`,
-    );
-    console.error(`    blueprint.yaml min_openshell_version: ${minOpenshellVersion}`);
-    console.error("");
-    console.error("    Upgrade openshell and retry. See:");
-    console.error(`      ${TROUBLESHOOTING_GUIDE_URL}`);
-    console.error(
-      "    Or remove the existing binary so the installer can re-fetch a current build:",
-    );
-    console.error('      command -v openshell && rm -f "$(command -v openshell)"');
-    console.error("");
-    process.exit(1);
-  }
+  enforceOpenshellVersionConstraint(
+    currentInstalledOpenshellVersion,
+    minOpenshellVersion,
+    versionGte,
+    {
+      headline: `  ✗ openshell ${currentInstalledOpenshellVersion} is below the minimum required by this NemoClaw release.`,
+      blueprintField: "min_openshell_version",
+      guidanceLines: ["    Upgrade openshell and retry. See:"],
+      showRemoveHint: true,
+    },
+  );
   // Enforce nemoclaw-blueprint/blueprint.yaml's max_openshell_version. Newer
   // OpenShell releases may change sandbox semantics that this NemoClaw version
   // has not been validated against. Blocking early avoids silent runtime
   // breakage. Users should upgrade NemoClaw to pick up support for newer
   // OpenShell releases.
   const maxOpenshellVersion = getBlueprintMaxOpenshellVersion();
-  if (
-    currentInstalledOpenshellVersion &&
-    maxOpenshellVersion &&
-    !versionGte(maxOpenshellVersion, currentInstalledOpenshellVersion)
-  ) {
-    console.error("");
-    console.error(
-      `  ✗ openshell ${currentInstalledOpenshellVersion} is above the maximum supported by this NemoClaw release.`,
-    );
-    console.error(`    blueprint.yaml max_openshell_version: ${maxOpenshellVersion}`);
-    console.error("");
-    console.error("    Upgrade NemoClaw to a version that supports your OpenShell release.");
-    console.error("    See:");
-    console.error(`      ${TROUBLESHOOTING_GUIDE_URL}`);
-    console.error("");
-    process.exit(1);
-  }
+  enforceOpenshellVersionConstraint(
+    currentInstalledOpenshellVersion,
+    maxOpenshellVersion,
+    (currentVersion, supportedVersion) => versionGte(supportedVersion, currentVersion),
+    {
+      headline: `  ✗ openshell ${currentInstalledOpenshellVersion} is above the maximum supported by this NemoClaw release.`,
+      blueprintField: "max_openshell_version",
+      guidanceLines: [
+        "    Upgrade NemoClaw to a version that supports your OpenShell release.",
+        "    See:",
+      ],
+    },
+  );
   if (openshellInstall.futureShellPathHint) {
     console.log(
       `  Note: openshell was installed to ${openshellInstall.localBin} for this onboarding run.`,

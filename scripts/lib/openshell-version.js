@@ -6,7 +6,7 @@ const path = require("path");
 
 const DEFAULT_MIN_OPENSHELL_VERSION = "0.0.24";
 const MIN_OPENSHELL_VERSION_PATTERN =
-  /^[\t ]*min_openshell_version:[\t ]*"?(v?[0-9]+\.[0-9]+\.[0-9]+)"?.*$/m;
+  /^[\t ]*min_openshell_version:[\t ]*"(v?[0-9]+\.[0-9]+\.[0-9]+)".*$/m;
 
 function parseMinimumOpenshellVersion(blueprintText = "") {
   const match = String(blueprintText ?? "").match(MIN_OPENSHELL_VERSION_PATTERN);

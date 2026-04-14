@@ -1,3 +1,4 @@
+// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -42,7 +43,9 @@ exit 0
     });
 
     expect(result.status).toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/openshell already installed: 0\.0\.24 \(>= 0\.0\.24\)/);
+    expect(`${result.stdout}${result.stderr}`).toMatch(
+      /openshell already installed: 0\.0\.24 \(>= 0\.0\.24, <= 0\.0\.26\)/,
+    );
   });
 
   it("honors an explicit minimum-version override from the caller", () => {
@@ -73,6 +76,8 @@ exit 0
     });
 
     expect(result.status).toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/openshell already installed: 0\.0\.21 \(>= 0\.0\.20\)/);
+    expect(`${result.stdout}${result.stderr}`).toMatch(
+      /openshell already installed: 0\.0\.21 \(>= 0\.0\.20, <= 0\.0\.26\)/,
+    );
   });
 });
