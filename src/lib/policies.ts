@@ -198,7 +198,6 @@ function mergePresetIntoPolicy(currentPolicy, presetEntries) {
   const mergedNp = mergeNetworkPolicies(current, presetPolicies);
   return buildMergedPolicyOutput(current, mergedNp);
 }
-
 const SAFE_SANDBOX_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
 function validateSandboxName(sandboxName) {
@@ -245,7 +244,7 @@ function updateSandboxPolicies(sandboxName, presetName) {
   registry.updateSandbox(sandboxName, { policies: pols });
 }
 
-function applyPreset(sandboxName, presetName) {
+function applyPreset(sandboxName, presetName, _options = {}) {
   validateSandboxName(sandboxName);
 
   const presetContent = loadPreset(presetName);

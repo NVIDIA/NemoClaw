@@ -14,6 +14,7 @@ import { describe, it, expect } from "vitest";
 
 const ONBOARD_JS = path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts");
 const RUNNER_TS = path.join(import.meta.dirname, "..", "nemoclaw", "src", "blueprint", "runner.ts");
+const SERVICES_TS = path.join(import.meta.dirname, "..", "src", "lib", "services.ts");
 
 // Matches --credential followed by a value containing "=" (i.e. KEY=VALUE).
 // Catches quoted KEY=VALUE patterns in JS and Python f-string interpolation.
@@ -37,6 +38,16 @@ describe("credential exposure in process arguments", () => {
     );
 
     expect(violations).toEqual([]);
+  });
+
+  it("runner.ts must not spread full process.env into subprocess", () => {
+    const src = fs.readFileSync(RUNNER_TS, "utf-8");
+
+    // Strip comments so that documented bad patterns don't trigger false positives.
+    // Scan the full source (not line-by-line) to catch multiline spreads.
+    const uncommented = src.replace(/\/\/.*$/gm, "");
+    const spreadRe = /env\s*:\s*\{[\s\S]*?\.\.\.process\.env/;
+    expect(uncommented).not.toMatch(spreadRe);
   });
 
   it("runner.ts must not pass KEY=VALUE to --credential", () => {
@@ -67,6 +78,9 @@ describe("credential exposure in process arguments", () => {
     // sandboxEnv must be built with a blocklist that strips all credential env vars.
     // The blocklist derives provider keys from REMOTE_PROVIDER_CONFIG and adds
     // messaging tokens explicitly. Verify both mechanisms are present.
+    //
+    // TODO: migrate to the shared allowlist in subprocess-env.ts
+    // once the sandbox create path has been validated end-to-end.
     const blocklistMatch = src.match(/const blockedSandboxEnvNames = new Set\(\[([\s\S]*?)\]\);/);
     expect(blocklistMatch).not.toBeNull();
     const blocklist = blocklistMatch[1];
@@ -85,6 +99,14 @@ describe("credential exposure in process arguments", () => {
     expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("SLACK_APP_TOKEN"/);
   });
 
+  it("services.ts must not spread full process.env into subprocess", () => {
+    const src = fs.readFileSync(SERVICES_TS, "utf-8");
+
+    const uncommented = src.replace(/\/\/.*$/gm, "");
+    const spreadRe = /env\s*:\s*\{[\s\S]*?\.\.\.process\.env/;
+    expect(uncommented).not.toMatch(spreadRe);
+  });
+
   it("onboard curl probes use explicit timeouts", () => {
     const onboardSrc = fs.readFileSync(ONBOARD_JS, "utf-8");
     const probeSrc = fs.readFileSync(
@@ -95,5 +117,25 @@ describe("credential exposure in process arguments", () => {
     expect(onboardSrc).toMatch(/http-probe/);
     expect(probeSrc).toMatch(/"--connect-timeout", "10"/);
     expect(probeSrc).toMatch(/"--max-time", "60"/);
+  });
+
+  it("api-key paste-guard uses extensible prefix list and regex fallback", () => {
+    const src = fs.readFileSync(ONBOARD_JS, "utf-8");
+
+    // Known prefix list must include at least NVIDIA and GitHub prefixes
+    expect(src).toMatch(/API_KEY_PREFIXES/);
+    expect(src).toMatch(/"nvapi-"/);
+    expect(src).toMatch(/"ghp_"/);
+    // Space-aware length check must be present
+    expect(src).toMatch(/!choice\.includes\(" "\).*choice\.length > 40/);
+    // Regex fallback for base64-safe tokens must be present (full shape)
+    expect(src).toMatch(/\/\^\[A-Za-z0-9_\\-\\.\]\{20,\}\$\/\.test\(choice\)/);
+    // Validator must be hoisted (defined exactly once, not inside both branches)
+    const validatorCount = (
+      src.match(/const validator = credentialEnv === "NVIDIA_API_KEY"/g) || []
+    ).length;
+    expect(validatorCount).toBe(1);
+    // looksLikeToken variable must exist
+    expect(src).toMatch(/looksLikeToken/);
   });
 });
