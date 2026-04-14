@@ -4610,15 +4610,9 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   for (const name of newlySelected) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-<<<<<<< HEAD
         // Pass access mode so applyPreset can distinguish read vs read-write
         // when preset infrastructure supports it.
         policies.applyPreset(sandboxName, name, { access: accessByName[name] });
-=======
-        if (!policies.applyPreset(sandboxName, name)) {
-          throw new Error(`Failed to apply preset '${name}'.`);
-        }
->>>>>>> d63c919a (fix: address suggestions)
         break;
       } catch (err) {
         const message = err && err.message ? err.message : String(err);
