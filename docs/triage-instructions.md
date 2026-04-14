@@ -146,6 +146,5 @@ Items are classified as `quality_tier` or `standard_tier` before generation. Thi
 
 ## Next Steps
 
-- [Maintainer Guide](maintainer-guide.md) — community response workflows and comment templates
-- [Project Workflow](project-workflow.md) — board status semantics and label taxonomy
 - [Agent Skills](resources/agent-skills.md) — all available maintainer and user skills
+- [Contributing](CONTRIBUTING.md) — how to contribute to NemoClaw
