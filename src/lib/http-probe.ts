@@ -26,6 +26,12 @@ export interface CurlProbeOptions {
   ) => SpawnSyncReturns<string>;
 }
 
+export interface StreamingProbeResult {
+  ok: boolean;
+  missingEvents: string[];
+  message: string;
+}
+
 function secureTempFile(prefix: string, ext = ""): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-`));
   return path.join(dir, `${prefix}${ext}`);
@@ -145,5 +151,94 @@ export function runCurlProbe(argv: string[], opts: CurlProbeOptions = {}): CurlP
     };
   } finally {
     cleanupTempDir(bodyFile, "nemoclaw-curl-probe");
+  }
+}
+
+/**
+ * The minimum set of streaming events that OpenClaw requires from a
+ * `/v1/responses` endpoint. Backends that only emit the top-level lifecycle
+ * events (created / in_progress / completed) will cause runtime failures
+ * because OpenClaw never receives the incremental content deltas.
+ */
+const REQUIRED_STREAMING_EVENTS = ["response.output_text.delta"];
+
+/**
+ * Send a streaming request to a `/v1/responses`-style endpoint and verify
+ * that the SSE event stream includes the granular events OpenClaw needs.
+ *
+ * This catches backends like SGLang that return valid non-streaming
+ * responses but emit only `response.created`, `response.in_progress`, and
+ * `response.completed` in streaming mode — missing the content deltas that
+ * OpenClaw relies on.
+ */
+export function runStreamingEventProbe(
+  argv: string[],
+  opts: CurlProbeOptions = {},
+): StreamingProbeResult {
+  const bodyFile = secureTempFile("nemoclaw-streaming-probe", ".sse");
+  try {
+    const args = [...argv];
+    const url = args.pop();
+    const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+    const result = spawnSyncImpl(
+      "curl",
+      [...args, "-N", "-o", bodyFile, String(url || "")],
+      {
+        cwd: opts.cwd ?? ROOT,
+        encoding: "utf8",
+        timeout: 30_000,
+        env: {
+          ...process.env,
+          ...opts.env,
+        },
+      },
+    );
+
+    const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
+
+    if (result.error || (result.status !== null && result.status !== 0 && result.status !== 28)) {
+      // curl exit 28 = timeout, which is expected — we cap with --max-time
+      // and may still have collected enough events before the timeout.
+      const detail = result.error
+        ? String((result.error as Error).message || result.error)
+        : String(result.stderr || "");
+      return {
+        ok: false,
+        missingEvents: REQUIRED_STREAMING_EVENTS,
+        message: `Streaming probe failed: ${compactText(detail).slice(0, 200)}`,
+      };
+    }
+
+    // Parse SSE event types from the raw output.
+    // Each event line looks like: "event: response.output_text.delta"
+    const eventTypes = new Set<string>();
+    for (const line of body.split("\n")) {
+      const match = /^event:\s*(.+)$/i.exec(line.trim());
+      if (match) {
+        eventTypes.add(match[1].trim());
+      }
+    }
+
+    const missing = REQUIRED_STREAMING_EVENTS.filter((e) => !eventTypes.has(e));
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        missingEvents: missing,
+        message:
+          `Responses API streaming is missing required events: ${missing.join(", ")}. ` +
+          "Falling back to chat completions API.",
+      };
+    }
+
+    return { ok: true, missingEvents: [], message: "" };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      missingEvents: REQUIRED_STREAMING_EVENTS,
+      message: `Streaming probe error: ${detail}`,
+    };
+  } finally {
+    cleanupTempDir(bodyFile, "nemoclaw-streaming-probe");
   }
 }
