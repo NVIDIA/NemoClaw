@@ -18,6 +18,9 @@ Thumbs.db
 draft_newsletter_*
 research/
 specs/
+
+# Git worktrees
+.worktrees/
 vdr-notes/
 
 # Security: secrets, credentials, and keys
