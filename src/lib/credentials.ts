@@ -350,7 +350,6 @@ export async function ensureJiraCredentials(): Promise<void> {
       process.exit(1);
     }
     saveCredential("JIRA_BASE_URL", url);
-    process.env.JIRA_BASE_URL = url;
   }
 
   if (!email) {
@@ -360,7 +359,6 @@ export async function ensureJiraCredentials(): Promise<void> {
       process.exit(1);
     }
     saveCredential("JIRA_USER_EMAIL", email);
-    process.env.JIRA_USER_EMAIL = email;
   }
 
   if (!token) {
@@ -370,8 +368,11 @@ export async function ensureJiraCredentials(): Promise<void> {
       process.exit(1);
     }
     saveCredential("JIRA_API_TOKEN", token);
-    process.env.JIRA_API_TOKEN = token;
   }
+
+  process.env.JIRA_BASE_URL = url;
+  process.env.JIRA_USER_EMAIL = email;
+  process.env.JIRA_API_TOKEN = token;
 
   console.log("");
   console.log("  Credentials saved to ~/.nemoclaw/credentials.json (mode 600)");
