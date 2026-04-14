@@ -56,6 +56,7 @@ RUN set -eu; \
     printf '%s\n' "$matches" | xargs sed -i \
         -e 's|import { n as withStrictGuardedFetchMode, t as fetchWithSsrFGuard }|import { n as withStrictGuardedFetchMode, r as withTrustedEnvProxyGuardedFetchMode, t as fetchWithSsrFGuard }|g' \
         -e 's|fetchWithSsrFGuard(withStrictGuardedFetchMode({|fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({|g'; \
+    grep -Rq --include='*.js' 'r as withTrustedEnvProxyGuardedFetchMode' /usr/local/lib/node_modules/openclaw/dist/; \
     grep -Rq --include='*.js' 'fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({' /usr/local/lib/node_modules/openclaw/dist/; \
     ! grep -Rq --include='*.js' 'fetchWithSsrFGuard(withStrictGuardedFetchMode({' /usr/local/lib/node_modules/openclaw/dist/
 
@@ -237,7 +238,8 @@ RUN mkdir -p /sandbox/.openclaw-data/logs \
             ln -s "/sandbox/.openclaw-data/$dir" "/sandbox/.openclaw/$dir"; \
         fi; \
     done \
-    && ln -sfn /sandbox/.openclaw-data/media /sandbox/.openclaw-data/workspace/media
+    && rm -rf /sandbox/.openclaw-data/workspace/media \
+    && ln -s /sandbox/.openclaw-data/media /sandbox/.openclaw-data/workspace/media
 
 RUN chown root:root /sandbox/.openclaw \
     && rm -rf /root/.npm /sandbox/.npm \
