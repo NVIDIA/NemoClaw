@@ -3,7 +3,9 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type fs from "node:fs";
-const SNAP = "/snap/20260323";
+import { join, normalize, sep } from "node:path";
+
+const SNAP = normalize("/snap/20260323");
 
 // ── In-memory filesystem ────────────────────────────────────────
 
@@ -14,12 +16,20 @@ interface FsEntry {
 
 const store = new Map<string, FsEntry>();
 
+function normalizePath(p: string): string {
+  return normalize(p);
+}
+
+function isSameOrDescendantPath(candidate: string, root: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}${sep}`);
+}
+
 function addFile(p: string, content: string): void {
-  store.set(p, { type: "file", content });
+  store.set(normalizePath(p), { type: "file", content });
 }
 
 function addDir(p: string): void {
-  store.set(p, { type: "dir" });
+  store.set(normalizePath(p), { type: "dir" });
 }
 
 const FAKE_HOME = "/fakehome";
@@ -32,44 +42,49 @@ vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
   return {
     ...original,
-    existsSync: (p: string) => store.has(p),
+    existsSync: (p: string) => store.has(normalizePath(p)),
     mkdirSync: vi.fn((p: string) => {
       addDir(p);
     }),
     readFileSync: (p: string) => {
-      const entry = store.get(p);
+      const entry = store.get(normalizePath(p));
       if (entry?.type !== "file") throw new Error(`ENOENT: ${p}`);
       return entry.content ?? "";
     },
     writeFileSync: vi.fn((p: string, data: string) => {
-      store.set(p, { type: "file", content: data });
+      store.set(normalizePath(p), { type: "file", content: data });
     }),
     cpSync: vi.fn((src: string, dest: string) => {
+      const normalizedSrc = normalizePath(src);
+      const normalizedDest = normalizePath(dest);
       for (const [k, v] of store) {
-        if (k === src || k.startsWith(src + "/")) {
-          const relative = k.slice(src.length);
-          store.set(dest + relative, { ...v });
+        if (isSameOrDescendantPath(k, normalizedSrc)) {
+          const relative = k.slice(normalizedSrc.length);
+          store.set(`${normalizedDest}${relative}`, { ...v });
         }
       }
     }),
     renameSync: vi.fn((oldPath: string, newPath: string) => {
+      const normalizedOldPath = normalizePath(oldPath);
+      const normalizedNewPath = normalizePath(newPath);
       for (const [k, v] of [...store]) {
-        if (k === oldPath || k.startsWith(oldPath + "/")) {
-          const relative = k.slice(oldPath.length);
-          store.set(newPath + relative, v);
+        if (isSameOrDescendantPath(k, normalizedOldPath)) {
+          const relative = k.slice(normalizedOldPath.length);
+          store.set(`${normalizedNewPath}${relative}`, v);
           store.delete(k);
         }
       }
     }),
     readdirSync: (p: string, opts?: { withFileTypes?: boolean }) => {
-      const prefix = p.endsWith("/") ? p : p + "/";
+      const normalizedPath = normalizePath(p);
+      const prefix = normalizedPath.endsWith(sep) ? normalizedPath : `${normalizedPath}${sep}`;
       const childTypes = new Map<string, "file" | "dir">();
       for (const [k, v] of store) {
         if (k.startsWith(prefix)) {
           const rest = k.slice(prefix.length);
-          const name = rest.split("/")[0];
+          const name = rest.split(sep)[0];
           if (!name) continue;
-          const isNested = rest.includes("/");
+          const isNested = rest.includes(sep);
           if (!childTypes.has(name)) {
             childTypes.set(name, isNested ? "dir" : v.type);
           } else if (isNested) {
@@ -77,7 +92,7 @@ vi.mock("node:fs", async (importOriginal) => {
           }
         }
       }
-      if (childTypes.size === 0 && !store.has(p)) {
+      if (childTypes.size === 0 && !store.has(normalizedPath)) {
         throw new Error(`ENOENT: ${p}`);
       }
       if (opts?.withFileTypes) {
@@ -98,8 +113,8 @@ vi.mock("execa", () => ({ execa: (...args: unknown[]) => mockExeca(...args) }));
 const { createSnapshot, restoreIntoSandbox, cutoverHost, rollbackFromSnapshot, listSnapshots } =
   await import("./snapshot.js");
 
-const OPENCLAW_DIR = `${FAKE_HOME}/.openclaw`;
-const SNAPSHOTS_DIR = `${FAKE_HOME}/.nemoclaw/snapshots`;
+const OPENCLAW_DIR = join(FAKE_HOME, ".openclaw");
+const SNAPSHOTS_DIR = join(FAKE_HOME, ".nemoclaw", "snapshots");
 
 // ── Tests ───────────────────────────────────────────────────────
 
@@ -131,14 +146,14 @@ describe("snapshot", () => {
       expect(result.startsWith(SNAPSHOTS_DIR)).toBe(true);
 
       // Manifest was written
-      const manifestPath = `${result}/snapshot.json`;
+      const manifestPath = join(result, "snapshot.json");
       const entry = store.get(manifestPath);
       if (!entry?.content) throw new Error("manifest not written");
       const manifest = JSON.parse(entry.content);
       expect(manifest.source).toBe(OPENCLAW_DIR);
       expect(manifest.file_count).toBe(2);
       expect(manifest.contents).toContain("openclaw.json");
-      expect(manifest.contents).toContain("hooks/demo/HOOK.md");
+      expect(manifest.contents).toContain(join("hooks", "demo", "HOOK.md"));
     });
   });
 
@@ -155,7 +170,7 @@ describe("snapshot", () => {
       expect(await restoreIntoSandbox(SNAP, "mybox")).toBe(true);
       expect(mockExeca).toHaveBeenCalledWith(
         "openshell",
-        ["sandbox", "cp", `${SNAP}/openclaw`, "mybox:/sandbox/.openclaw"],
+        ["sandbox", "cp", join(SNAP, "openclaw"), "mybox:/sandbox/.openclaw"],
         { reject: false },
       );
     });
@@ -221,7 +236,7 @@ describe("snapshot", () => {
 
       expect(rollbackFromSnapshot(SNAP)).toBe(true);
 
-      const restored = store.get(`${OPENCLAW_DIR}/openclaw.json`);
+      const restored = store.get(join(OPENCLAW_DIR, "openclaw.json"));
       if (!restored) throw new Error("openclaw.json not restored");
       expect(restored.content).toBe('{"restored":true}');
     });
@@ -245,8 +260,8 @@ describe("snapshot", () => {
     });
 
     it("returns manifests sorted newest-first", () => {
-      const snap1 = `${SNAPSHOTS_DIR}/20260101T000000Z`;
-      const snap2 = `${SNAPSHOTS_DIR}/20260201T000000Z`;
+      const snap1 = join(SNAPSHOTS_DIR, "20260101T000000Z");
+      const snap2 = join(SNAPSHOTS_DIR, "20260201T000000Z");
       addDir(snap1);
       addFile(
         `${snap1}/snapshot.json`,
@@ -276,7 +291,7 @@ describe("snapshot", () => {
     });
 
     it("skips snapshots with corrupt manifests", () => {
-      const snap1 = `${SNAPSHOTS_DIR}/20260101T000000Z`;
+      const snap1 = join(SNAPSHOTS_DIR, "20260101T000000Z");
       addDir(snap1);
       addFile(`${snap1}/snapshot.json`, "NOT VALID JSON");
 

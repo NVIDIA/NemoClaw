@@ -3,6 +3,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type fs from "node:fs";
+import { join, normalize, sep } from "node:path";
 import YAML from "yaml";
 
 // ── In-memory filesystem ────────────────────────────────────────
@@ -14,12 +15,16 @@ interface FsEntry {
 
 const store = new Map<string, FsEntry>();
 
+function normalizePath(p: string): string {
+  return normalize(p);
+}
+
 function addFile(p: string, content: string): void {
-  store.set(p, { type: "file", content });
+  store.set(normalizePath(p), { type: "file", content });
 }
 
 function addDir(p: string): void {
-  store.set(p, { type: "dir" });
+  store.set(normalizePath(p), { type: "dir" });
 }
 
 const FAKE_HOME = "/fakehome";
@@ -36,29 +41,30 @@ vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
   return {
     ...original,
-    existsSync: (p: string) => store.has(p),
+    existsSync: (p: string) => store.has(normalizePath(p)),
     mkdirSync: vi.fn((p: string) => {
       addDir(p);
     }),
     readFileSync: (p: string) => {
-      const entry = store.get(p);
+      const entry = store.get(normalizePath(p));
       if (entry?.type !== "file") throw new Error(`ENOENT: ${p}`);
       return entry.content ?? "";
     },
     writeFileSync: vi.fn((p: string, data: string) => {
-      store.set(p, { type: "file", content: data });
+      store.set(normalizePath(p), { type: "file", content: data });
     }),
     readdirSync: (p: string) => {
-      const prefix = p.endsWith("/") ? p : p + "/";
+      const normalizedPath = normalizePath(p);
+      const prefix = normalizedPath.endsWith(sep) ? normalizedPath : `${normalizedPath}${sep}`;
       const entries = new Set<string>();
       for (const k of store.keys()) {
         if (k.startsWith(prefix)) {
           const rest = k.slice(prefix.length);
-          const first = rest.split("/")[0];
+          const first = rest.split(sep)[0];
           if (first) entries.add(first);
         }
       }
-      if (entries.size === 0 && !store.has(p)) {
+      if (entries.size === 0 && !store.has(normalizedPath)) {
         throw new Error(`ENOENT: ${p}`);
       }
       return [...entries].sort();
@@ -167,7 +173,7 @@ describe("runner", () => {
 
     it("respects NEMOCLAW_BLUEPRINT_PATH env var", () => {
       process.env.NEMOCLAW_BLUEPRINT_PATH = "/custom/path";
-      addFile("/custom/path/blueprint.yaml", YAML.stringify({ version: "3.0" }));
+      addFile(join("/custom/path", "blueprint.yaml"), YAML.stringify({ version: "3.0" }));
       expect(loadBlueprint()).toEqual({ version: "3.0" });
     });
   });
@@ -317,8 +323,8 @@ describe("runner", () => {
     it("saves run state to disk", async () => {
       await actionApply("default", minimalBlueprint());
 
-      const stateKeys = [...store.keys()].filter((k) => k.includes("/state/runs/"));
-      const planKey = stateKeys.find((k) => k.endsWith("/plan.json"));
+      const stateKeys = [...store.keys()].filter((k) => k.includes(`${sep}state${sep}runs${sep}`));
+      const planKey = stateKeys.find((k) => k.endsWith(`${sep}plan.json`));
       if (!planKey) throw new Error("plan.json not written to state dir");
       const entry = store.get(planKey);
       if (!entry?.content) throw new Error("plan.json has no content");
@@ -353,7 +359,7 @@ describe("runner", () => {
         delete process.env.SECRET_KEY;
       }
 
-      const planKey = [...store.keys()].find((k) => k.endsWith("/plan.json"));
+      const planKey = [...store.keys()].find((k) => k.endsWith(`${sep}plan.json`));
       if (!planKey) throw new Error("plan.json not written to state dir");
       const entry = store.get(planKey);
       if (!entry?.content) throw new Error("plan.json has no content");
@@ -507,7 +513,7 @@ describe("runner", () => {
   });
 
   describe("actionStatus", () => {
-    const RUNS_DIR = `${FAKE_HOME}/.nemoclaw/state/runs`;
+    const RUNS_DIR = join(FAKE_HOME, ".nemoclaw", "state", "runs");
 
     beforeEach(() => {
       captureStdout();
@@ -572,7 +578,7 @@ describe("runner", () => {
   });
 
   describe("actionRollback", () => {
-    const RUNS_DIR = `${FAKE_HOME}/.nemoclaw/state/runs`;
+    const RUNS_DIR = join(FAKE_HOME, ".nemoclaw", "state", "runs");
 
     beforeEach(() => {
       captureStdout();
@@ -609,7 +615,7 @@ describe("runner", () => {
 
       await actionRollback("nc-run-1");
 
-      expect(store.has(`${runDir}/rolled_back`)).toBe(true);
+      expect(store.has(join(runDir, "rolled_back"))).toBe(true);
     });
 
     it("still writes marker when plan.json is missing", async () => {
@@ -620,7 +626,7 @@ describe("runner", () => {
       await actionRollback("nc-run-1");
 
       expect(mockExeca).not.toHaveBeenCalled();
-      expect(store.has(`${runDir}/rolled_back`)).toBe(true);
+      expect(store.has(join(runDir, "rolled_back"))).toBe(true);
     });
 
     // ── Path traversal rejection ──────────────────────────────────
@@ -670,12 +676,12 @@ describe("runner", () => {
     });
 
     it("parses rollback with --run-id", async () => {
-      const runDir = `${FAKE_HOME}/.nemoclaw/state/runs/nc-run-1`;
+      const runDir = join(FAKE_HOME, ".nemoclaw", "state", "runs", "nc-run-1");
       addDir(runDir);
       addFile(`${runDir}/plan.json`, JSON.stringify({ sandbox_name: "sb" }));
 
       await main(["rollback", "--run-id", "nc-run-1"]);
-      expect(store.has(`${runDir}/rolled_back`)).toBe(true);
+      expect(store.has(join(runDir, "rolled_back"))).toBe(true);
     });
 
     it("throws when rollback has no --run-id", async () => {
