@@ -223,6 +223,9 @@ RUN OPENCLAW_DIST_DIR="$(npm root -g)/openclaw/dist" \
         echo "Error: OpenClaw dist directory not found: $OPENCLAW_DIST_DIR"; \
         exit 1; \
     fi \
+    && mkdir -p /sandbox/.openclaw-data \
+    && chown sandbox:sandbox /sandbox/.openclaw-data \
+    && chmod 755 /sandbox/.openclaw-data \
     && LEGACY_EXEC_APPROVALS_PATH="$(printf '%b' '\176/.openclaw/exec-approvals.json')" \
     && DATA_EXEC_APPROVALS_PATH="$(printf '%b' '\176/.openclaw-data/exec-approvals.json')" \
     && files_with_old_path="$(grep -R --include='*.js' -l "$LEGACY_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR" || true)" \

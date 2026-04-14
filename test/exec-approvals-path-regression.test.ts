@@ -24,6 +24,9 @@ describe("exec approvals path regression guard", () => {
     const src = fs.readFileSync(dockerfile, "utf-8");
 
     expect(src).toContain('[ ! -d "$OPENCLAW_DIST_DIR" ]');
+    expect(src).toContain("mkdir -p /sandbox/.openclaw-data");
+    expect(src).toContain("chown sandbox:sandbox /sandbox/.openclaw-data");
+    expect(src).toContain("chmod 755 /sandbox/.openclaw-data");
     expect(src).toContain('LEGACY_EXEC_APPROVALS_PATH="$(printf \'%b\'');
     expect(src).toContain('DATA_EXEC_APPROVALS_PATH="$(printf \'%b\'');
     expect(src).toContain('files_with_old_path_file="$(mktemp)"');
