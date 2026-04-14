@@ -115,11 +115,13 @@ jobs:
           BRANCH=$(gh pr view ${{ inputs.pr_number }} --repo ${{ github.repository }} --json headRefName -q .headRefName)
           echo "Resolved PR #${{ inputs.pr_number }} → branch: $BRANCH"
           echo "RESOLVED_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+          # Use the PR head ref for checkout so fork PRs work too.
+          echo "PR_REF=refs/pull/${{ inputs.pr_number }}/head" >> "$GITHUB_ENV"
 
       - name: Checkout target branch
         uses: actions/checkout@v6
         with:
-          ref: ${{ env.RESOLVED_BRANCH || inputs.branch || 'main' }}
+          ref: ${{ env.PR_REF || inputs.branch || 'main' }}
 
       - name: Create check run (pending)
         if: inputs.pr_number != ''
