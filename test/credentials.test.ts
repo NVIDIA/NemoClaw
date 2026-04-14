@@ -216,7 +216,7 @@ describe("credential prompts", () => {
 
   it("ensureJiraCredentials prompts for and saves each missing Jira credential", () => {
     const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "bin", "lib", "credentials.js"),
+      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
       "utf-8",
     );
 
