@@ -567,8 +567,10 @@ function getSandboxGatewayState(sandboxName) {
         // plus the original colored "Policy:" header line.
         const before = rawLines.slice(0, policyLineIdx + 1).join("\n");
         // Extract YAML content from policy get --full (skip metadata header before "---").
-        const yamlPart = livePolicy.output.includes("---\n")
-          ? livePolicy.output.split("---\n").slice(1).join("---\n")
+        // Use a regex to handle varying line endings (\n, \r\n) and optional trailing whitespace.
+        const delimIdx = livePolicy.output.search(/^---\s*$/m);
+        const yamlPart = delimIdx !== -1
+          ? livePolicy.output.slice(delimIdx).replace(/^---\s*[\r\n]+/, "")
           : livePolicy.output;
         // Add 2-space indent to match the original sandbox get output format.
         const indented = yamlPart.trimEnd().split("\n").map((l) => (l ? "  " + l : l)).join("\n");
