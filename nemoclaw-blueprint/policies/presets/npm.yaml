@@ -23,3 +23,10 @@ network_policies:
         tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/npm* }
+      - { path: /usr/local/bin/npx* }
+      - { path: /usr/local/bin/node* }
+      - { path: /usr/local/bin/yarn* }
+      - { path: /usr/bin/npm* }
+      - { path: /usr/bin/node* }

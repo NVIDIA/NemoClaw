@@ -1,0 +1,11 @@
+{
+  "renameTests": [
+    "test/runner.test.js"
+  ],
+  "moveRuntime": {
+    "bin/lib/runner.js": "src/lib/runner.ts"
+  },
+  "shimStrategy": {
+    "bin/lib/runner.js": "cache-busting"
+  }
+}

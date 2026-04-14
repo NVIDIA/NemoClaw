@@ -15,44 +15,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test-unit:
+  # Detect which files changed so we can skip expensive jobs for docs-only PRs.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!**/*.md'
+              - '!docs/**'
+
+  checks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
+      - name: Run basic checks
+        uses: ./.github/actions/basic-checks
 
-      - name: Install root dependencies
-        run: npm install
+      - name: Verify platform matrix is in sync
+        run: python3 scripts/generate-platform-docs.py --check
 
-      - name: Install and build TypeScript plugin
-        working-directory: nemoclaw
-        run: |
-          npm install
-          npm run build
-
-      - name: Run root unit tests
-        run: node --test test/*.test.js
-
-      - name: Run TypeScript unit tests
-        working-directory: nemoclaw
-        run: npx vitest run
-
-  test-e2e-sandbox:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Build sandbox test image
-        run: docker build -f test/Dockerfile.sandbox -t nemoclaw-sandbox-test .
-
-      - name: Run sandbox E2E tests
-        run: docker run --rm -v "${{ github.workspace }}/test:/opt/test" nemoclaw-sandbox-test /opt/test/e2e-test.sh
+  sandbox-images-and-e2e:
+    needs: [checks, changes]
+    if: needs.changes.outputs.code == 'true'
+    uses: ./.github/workflows/sandbox-images-and-e2e.yaml
+    with:
+      run_arm64: true

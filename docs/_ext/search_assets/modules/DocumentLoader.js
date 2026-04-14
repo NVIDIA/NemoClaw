@@ -105,6 +105,7 @@ class DocumentLoader {
             title: this.sanitizeText(doc.title, 200),
             // Add description as separate indexed field (for improved search relevance)
             description: this.sanitizeText(doc.description, 300),
+            description_agent: this.sanitizeText(doc.description_agent, 300),
             content: this.sanitizeText(doc.content, 5000),
             summary: this.sanitizeText(doc.summary, 500),
             headings: this.sanitizeHeadings(doc.headings),

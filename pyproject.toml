@@ -17,6 +17,7 @@ docs = [
     "sphinxcontrib-mermaid",
     "nvidia-sphinx-theme",
     "sphinx-llm>=0.3.0",
+    "sphinx-reredirects",
 ]
 
 [tool.uv]

@@ -1,0 +1,10 @@
+{
+  "runtimeMoves": {
+    "bin/lib/platform.js": "src/lib/platform.ts",
+    "bin/lib/sandbox-build-context.js": "src/lib/sandbox-build-context.ts",
+    "bin/lib/runner.js": "src/lib/runner.ts",
+    "bin/lib/policies.js": "src/lib/policies.ts",
+    "bin/lib/onboard.js": "src/lib/onboard.ts",
+    "bin/nemoclaw.js": "src/nemoclaw.ts"
+  }
+}

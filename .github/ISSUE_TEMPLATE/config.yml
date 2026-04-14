@@ -1,0 +1,7 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability?
+    url: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
+    about: >
+      Do not report security vulnerabilities through GitHub issues. Follow
+      the disclosure process in SECURITY.md.

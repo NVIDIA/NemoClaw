@@ -2,16 +2,6 @@
 
 This guide covers how to write, edit, and review documentation for NemoClaw. If you change code that affects user-facing behavior, update the relevant docs in the same PR.
 
-## Use the Agent Skills
-
-If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes skills that automate doc work. Use them before writing from scratch.
-
-| Skill | What it does | When to use |
-|---|---|---|
-| `update-docs` | Scans recent commits for user-facing changes and drafts doc updates. | After landing features, before a release, or to find doc gaps. |
-
-The skills live in `.agents/skills/` and follow the style guide below automatically. To use one, ask your agent to run it. For example, ask it to "catch up the docs for everything merged since v0.2.0".
-
 ## When to Update Docs
 
 Update documentation when your change:
@@ -21,6 +11,80 @@ Update documentation when your change:
 - Adds a new feature that users interact with.
 - Fixes a bug that the docs describe incorrectly.
 - Changes an API, protocol, or policy schema.
+
+## Update Docs with Agent Skills
+
+If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that automates doc work.
+Use it before writing from scratch.
+
+The skill scans recent commits for user-facing changes and drafts doc updates.
+Run it after landing features, before a release, or to find doc gaps.
+For example, ask your agent to "catch up the docs for the changes I made in this PR".
+
+The skill lives in `.agents/skills/nemoclaw-contributor-update-docs/` and follows the style guide below automatically.
+
+## Doc-to-Skills Pipeline
+
+The `docs/` directory is the source of truth for user-facing documentation.
+The script `scripts/docs-to-skills.py` converts doc pages into agent skills under `.agents/skills/`.
+These generated skills let AI agents walk users through NemoClaw tasks (installation, inference configuration, policy management, monitoring, and more) without reading raw doc pages.
+
+Always edit pages in `docs/`.
+Never edit generated skill files under `.agents/skills/nemoclaw-user-*/`. Your changes will be overwritten on the next run.
+
+### Generated skills
+
+The current generated skills and their source pages are:
+
+| Skill | Source docs |
+|---|---|
+| `nemoclaw-user-overview` | `docs/about/overview.md`, `docs/about/ecosystem.md`, `docs/about/how-it-works.md`, `docs/about/release-notes.md` |
+| `nemoclaw-user-get-started` | `docs/get-started/quickstart.md` |
+| `nemoclaw-user-configure-inference` | `docs/inference/inference-options.md`, `docs/inference/use-local-inference.md`, `docs/inference/switch-inference-providers.md` |
+| `nemoclaw-user-manage-policy` | `docs/network-policy/customize-network-policy.md`, `docs/network-policy/approve-network-requests.md` |
+| `nemoclaw-user-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.md` |
+| `nemoclaw-user-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.md`, `docs/deployment/set-up-telegram-bridge.md` |
+| `nemoclaw-user-reference` | `docs/reference/architecture.md`, `docs/reference/commands.md`, `docs/reference/network-policies.md`, `docs/reference/troubleshooting.md` |
+
+### Regenerating skills after doc changes
+
+A pre-commit hook regenerates skills automatically whenever you commit changes to `docs/**/*.md` files.
+The hook runs `scripts/docs-to-skills.py` and stages the updated skills so they are included in the same commit.
+No manual step is needed for normal workflows.
+
+To regenerate skills manually (for example, after rebasing or outside of a commit), run from the repo root:
+
+```bash
+python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
+```
+
+Always use this exact output path (`.agents/skills/`) and prefix (`nemoclaw-user`) so skill names and locations stay consistent.
+
+Preview what would change before writing files:
+
+```bash
+python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --dry-run
+```
+
+Other useful flags:
+
+| Flag | Purpose |
+|------|---------|
+| `--strategy <name>` | Grouping strategy: `smart` (default), `grouped`, or `individual`. |
+| `--name-map CAT=NAME` | Override a generated skill name (e.g. `--name-map about=overview`). |
+| `--exclude <file>` | Skip specific files (e.g. `--exclude "release-notes.md"`). |
+
+### How the Script Works
+
+The script reads YAML frontmatter from each doc page to determine its content type (`how_to`, `concept`, `reference`, `get_started`), then groups pages into skills using the `smart` strategy by default.
+Procedure pages (`how_to`, `get_started`) become the main body of the skill.
+Concept pages become a `## Context` section.
+Reference pages go into a `references/` subdirectory for progressive disclosure, keeping the `SKILL.md` concise (under 500 lines).
+
+Cross-references between doc pages are rewritten as skill-to-skill pointers so agents can navigate between skills.
+MyST/Sphinx directives are converted to standard markdown.
+
+For full usage details and all flags, see the docstring at the top of `scripts/docs-to-skills.py`.
 
 ## Building Docs Locally
 
@@ -43,9 +107,10 @@ make docs-live
 ### Format
 
 - Docs use [MyST Markdown](https://myst-parser.readthedocs.io/), a Sphinx-compatible superset of CommonMark.
-- Every page starts with YAML frontmatter (title, description, topics, tags, content type).
+- Every page starts with YAML frontmatter (title, description.main, description.agent, topics, tags, content type).
 - Include the SPDX license header after frontmatter:
-  ```
+
+  ```html
   <!--
     SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
     SPDX-License-Identifier: Apache-2.0
@@ -57,9 +122,11 @@ make docs-live
 ```yaml
 ---
 title:
-  page: "NemoClaw Page Title — Subtitle with Context"
+  page: "NemoClaw Page Title: Subtitle with Context"
   nav: "Short Nav Title"
-description: "One-sentence summary of the page."
+description:
+  main: "One-sentence summary for readers, SEO, and doc search snippets."
+  agent: "Third-person verb summary for agent routing. Add 'Use when...' with trigger phrases."
 keywords: ["primary keyword", "secondary keyword phrase"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "relevant", "tags"]
@@ -96,7 +163,7 @@ These patterns are common in LLM-generated text and erode trust with technical r
 | Pattern | Problem | Fix |
 |---|---|---|
 | Unnecessary bold | "This is a **critical** step" on routine instructions. | Reserve bold for UI labels, parameter names, and genuine warnings. |
-| Em dashes everywhere | "The gateway — which runs in Docker — creates sandboxes." | Use commas or split into two sentences. Em dashes are fine sparingly but should not appear multiple times per paragraph. |
+| Em dashes | "The gateway, which runs in Docker, creates sandboxes." | Do not use em dashes. Prefer commas, colons, or separate sentences. |
 | Superlatives | "OpenShell provides a powerful, robust, seamless experience." | Say what it does, not how great it is. |
 | Hedge words | "Simply run the command" or "You can easily configure..." | Drop the adverb. "Run the command." |
 | Emoji in prose | "Let's get started!" | No emoji in documentation prose. |
@@ -108,9 +175,11 @@ These patterns are common in LLM-generated text and erode trust with technical r
 - One sentence per line in the source file (makes diffs readable).
 - Use `code` formatting for CLI commands, file paths, flags, parameter names, and values.
 - Use code blocks with the `console` language for CLI examples. Prefix commands with `$`:
+
   ```console
   $ nemoclaw onboard
   ```
+
 - Use tables for structured comparisons. Keep tables simple (no nested formatting).
 - Use MyST admonitions (`:::{tip}`, `:::{note}`, `:::{warning}`) for callouts, not bold text.
 - Avoid nested admonitions.
@@ -142,13 +211,13 @@ Use these consistently:
 3. Build locally with `make docs` and verify the output.
 4. Open a PR with `docs:` as the conventional commit type.
 
-```
+```text
 docs: update quickstart for new onboard wizard
 ```
 
 If your doc change accompanies a code change, include both in the same PR and use the code change's commit type:
 
-```
+```text
 feat(cli): add policy-add command
 ```
 

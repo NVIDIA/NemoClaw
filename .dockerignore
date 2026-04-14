@@ -4,3 +4,9 @@ node_modules
 *.pyc
 __pycache__
 .pytest_cache
+.venv
+.ruff_cache
+.mypy_cache
+.env
+*.egg-info
+.DS_Store

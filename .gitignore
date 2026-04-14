@@ -1,8 +1,48 @@
-node_modules/
-dist/
-!nemoclaw/dist/
+# Build artifacts and caches
+.version
+*.pyc
+*.tsbuildinfo
 .pytest_cache/
 __pycache__/
-*.pyc
-.DS_Store
+coverage/
+dist/
 docs/_build/
+node_modules/
+
+# OS metadata
+.DS_Store
+desktop.ini
+Thumbs.db
+
+# Project-specific
+.nemoclaw-maintainer/
+draft_newsletter_*
+research/
+specs/
+vdr-notes/
+
+# Security: secrets, credentials, and keys
+*_ecdsa
+*_ed25519
+*_rsa
+*.jks
+*.key
+*.keystore
+*.p12
+*.pem
+*.pfx
+*.tfvars
+.direnv/
+.env
+.env.*
+.envrc
+.netrc
+.npmrc
+.pypirc
+credentials.json
+DRAFT-*.md
+key.json
+secrets.json
+secrets.yaml
+service-account*.json
+token.json

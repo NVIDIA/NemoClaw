@@ -2,7 +2,9 @@
 title:
   page: "NemoClaw Release Notes"
   nav: "Release Notes"
-description: "Changelog and feature history for NemoClaw releases."
+description:
+  main: "Changelog and feature history for NemoClaw releases."
+  agent: "Lists changelogs and feature history for NemoClaw releases. Use when checking what changed in a release, looking up version history, or reviewing the changelog."
 keywords: ["nemoclaw release notes", "nemoclaw changelog"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["nemoclaw", "releases"]
@@ -20,7 +22,7 @@ status: published
 
 # Release Notes
 
-NVIDIA NemoClaw is in active development and follows a frequent release cadence. Use the following GitHub resources directly.
+NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use the following GitHub resources to track changes.
 
 | Resource | Description |
 |---|---|

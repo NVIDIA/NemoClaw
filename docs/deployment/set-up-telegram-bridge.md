@@ -1,9 +1,11 @@
 ---
 title:
-  page: "Set Up the NemoClaw Telegram Bridge for Remote Agent Chat"
-  nav: "Set Up Telegram Bridge"
-description: "Forward messages between Telegram and the sandboxed OpenClaw agent."
-keywords: ["nemoclaw telegram bridge", "telegram bot openclaw agent"]
+  page: "Set Up Telegram with NemoClaw and OpenShell"
+  nav: "Set Up Telegram"
+description:
+  main: "Connect Telegram to your sandboxed OpenClaw agent using OpenShell-managed channel messaging configured during onboarding."
+  agent: "Explains how Telegram reaches the sandboxed OpenClaw agent through OpenShell-managed processes and onboarding-time channel configuration. Use when setting up Telegram, a chat interface, or messaging integration without relying on nemoclaw start for bridges."
+keywords: ["nemoclaw telegram", "telegram bot openclaw agent", "openshell channel messaging"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "telegram", "deployment", "nemoclaw"]
 content:
@@ -18,77 +20,75 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# Set Up the Telegram Bridge
+# Set Up Telegram
 
-Forward messages between a Telegram bot and the OpenClaw agent running inside the sandbox.
-The Telegram bridge is an auxiliary service managed by `nemoclaw start`.
+Telegram, Discord, and Slack reach your agent through OpenShell-managed processes and gateway constructs.
+NemoClaw configures those channels during `nemoclaw onboard`. Tokens are registered with OpenShell providers, channel configuration is baked into the sandbox image, and runtime delivery stays under OpenShell control.
+
+`nemoclaw start` does not start Telegram (or other chat bridges). It only starts optional host services such as the cloudflared tunnel when that binary is present.
+For details, refer to [Commands](../reference/commands.md).
 
 ## Prerequisites
 
-- A running NemoClaw sandbox, either local or remote.
+- A machine where you can run `nemoclaw onboard` (local or remote host that runs the gateway and sandbox).
 - A Telegram bot token from [BotFather](https://t.me/BotFather).
 
 ## Create a Telegram Bot
 
 Open Telegram and send `/newbot` to [@BotFather](https://t.me/BotFather).
-Follow the prompts to create a bot and receive a bot token.
+Follow the prompts to create a bot and copy the bot token.
 
-## Set the Environment Variable
+## Provide the Bot Token and Optional Allowlist
 
-Export the bot token as an environment variable:
+Onboarding reads Telegram credentials from either host environment variables or the NemoClaw credential store (`getCredential` / `saveCredential` in the onboard flow). You do not have to export variables if you enter the token when the wizard asks.
+
+### Option A: Environment variables (CI, scripts, or before you start the wizard)
 
 ```console
 $ export TELEGRAM_BOT_TOKEN=<your-bot-token>
 ```
 
-## Start Auxiliary Services
+Optional comma-separated allowlist (maps to the wizard field “Telegram User ID (for DM access)”):
 
-Start the Telegram bridge and other auxiliary services:
+```console
+$ export TELEGRAM_ALLOWED_IDS="123456789,987654321"
+```
+
+### Option B: Interactive `nemoclaw onboard`
+
+When the wizard reaches **Messaging channels**, it lists Telegram, Discord, and Slack.
+Press **1** to toggle Telegram on or off, then **Enter** when done.
+If the token is not already in the environment or credential store, the wizard prompts for it and saves it to the store.
+If `TELEGRAM_ALLOWED_IDS` is not set, the wizard can prompt for allowed sender IDs for Telegram DMs (you can leave this blank and rely on OpenClaw pairing instead).
+NemoClaw applies that allowlist to Telegram DMs only.
+Group chats stay open by default so rebuilt sandboxes do not silently drop Telegram group messages because of an empty group allowlist.
+
+## Run `nemoclaw onboard`
+
+Complete the rest of the wizard so the blueprint can create OpenShell providers (for example `<sandbox>-telegram-bridge`), bake channel configuration into the image (`NEMOCLAW_MESSAGING_CHANNELS_B64`), and start the sandbox.
+
+Channel entries in `/sandbox/.openclaw/openclaw.json` are fixed at image build time. Landlock keeps that path read-only at runtime, so you cannot patch messaging config inside a running sandbox.
+
+If you add or change `TELEGRAM_BOT_TOKEN` (or toggle channels) after a sandbox already exists, you typically need to run `nemoclaw onboard` again so the image and provider attachments are rebuilt with the new settings.
+
+For a full first-time flow, refer to [Quickstart](../get-started/quickstart.md).
+
+## Confirm Delivery
+
+After the sandbox is running, send a message to your bot in Telegram.
+If something fails, use `openshell term` on the host, check gateway logs, and verify network policy allows the Telegram API (see [Customize the Network Policy](../network-policy/customize-network-policy.md) and the `telegram` preset).
+
+## `nemoclaw start` (cloudflared Only)
+
+`nemoclaw start` starts cloudflared when it is installed, which can expose the dashboard with a public URL.
+It does not affect Telegram connectivity.
 
 ```console
 $ nemoclaw start
-```
-
-The `start` command launches the following services:
-
-- The Telegram bridge forwards messages between Telegram and the agent.
-- The cloudflared tunnel provides external access to the sandbox.
-
-The Telegram bridge starts only when the `TELEGRAM_BOT_TOKEN` environment variable is set.
-
-## Verify the Services
-
-Check that the Telegram bridge is running:
-
-```console
-$ nemoclaw status
-```
-
-The output shows the status of all auxiliary services.
-
-## Send a Message
-
-Open Telegram, find your bot, and send a message.
-The bridge forwards the message to the OpenClaw agent inside the sandbox and returns the agent response.
-
-## Restrict Access by Chat ID
-
-To restrict which Telegram chats can interact with the agent, set the `ALLOWED_CHAT_IDS` environment variable to a comma-separated list of Telegram chat IDs:
-
-```console
-$ export ALLOWED_CHAT_IDS="123456789,987654321"
-$ nemoclaw start
-```
-
-## Stop the Services
-
-To stop the Telegram bridge and all other auxiliary services:
-
-```console
-$ nemoclaw stop
 ```
 
 ## Related Topics
 
-- [Deploy NemoClaw to a Remote GPU Instance](deploy-to-remote-gpu.md) for remote deployment with Telegram support.
-- [Commands](../reference/commands.md) for the full `start` and `stop` command reference.
+- [Deploy NemoClaw to a Remote GPU Instance](deploy-to-remote-gpu.md) for remote deployment with messaging.
+- [Architecture](../reference/architecture.md) for how providers, the gateway, and the sandbox fit together.
+- [Commands](../reference/commands.md) for `start`, `stop`, and `status`.

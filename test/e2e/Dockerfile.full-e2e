@@ -1,3 +1,4 @@
+# hadolint global ignore=DL3008,DL4006,SC2086
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive

@@ -27,6 +27,15 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
+          # Core maintainers are exempt from the PR limit.
+          EXEMPT="ericksoa kjw3 jacobtomlinson cv"
+          for user in $EXEMPT; do
+            if [ "$AUTHOR" = "$user" ]; then
+              echo "Author $AUTHOR is a core maintainer — exempt from PR limit"
+              exit 0
+            fi
+          done
+
           OPEN_COUNT=$(gh pr list --repo "$REPO" --author "$AUTHOR" --state open --json number --jq 'length')
 
           echo "Author $AUTHOR has $OPEN_COUNT open PR(s)"

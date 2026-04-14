@@ -2,9 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 version: "0.1.0"
-min_openshell_version: "0.1.0"
-min_openclaw_version: "2026.3.0"
-digest: ""  # Computed at release time
+min_openshell_version: "0.0.24"
+max_openshell_version: "0.0.26"
+min_openclaw_version: "2026.4.2"
+# Mirrors the components.sandbox.image manifest digest below. Lets a
+# downstream consumer (or release tooling) verify the blueprint declares
+# a specific sandbox image without parsing the components tree, and
+# blocks the trivially-bypassable case where someone bumps the pinned
+# image but forgets the top-level field. Release tooling should rewrite
+# both fields together. See #1438.
+digest: "sha256:b3d832b596ab6b7184a9dcb4ae93337ca32851a4f93b00765cc12de26baa3a9a"
 
 profiles:
   - default
@@ -18,7 +25,12 @@ description: |
 
 components:
   sandbox:
-    image: "ghcr.io/nvidia/openshell-community/sandboxes/openclaw:latest"
+    # Pinned to a specific image digest so a future registry compromise or an
+    # accidental :latest force-push cannot silently swap the sandbox image.
+    # Ref: #1438. The digest below was the resolved sha256 of the :latest tag
+    # at the time of this commit; release tooling should bump it together with
+    # the top-level `digest:` field on every release.
+    image: "ghcr.io/nvidia/openshell-community/sandboxes/openclaw@sha256:b3d832b596ab6b7184a9dcb4ae93337ca32851a4f93b00765cc12de26baa3a9a"
     name: "openclaw"
     forward_ports:
       - 18789
@@ -45,6 +57,7 @@ components:
         endpoint: "http://nim-service.local:8000/v1"
         model: "nvidia/nemotron-3-super-120b-a12b"
         credential_env: "NIM_API_KEY"
+        timeout_secs: 180
 
       vllm:
         provider_type: "openai"
@@ -53,6 +66,7 @@ components:
         model: "nvidia/nemotron-3-nano-30b-a3b"
         credential_env: "OPENAI_API_KEY"
         credential_default: "dummy"
+        timeout_secs: 180
 
   policy:
     base: "sandboxes/openclaw/policy.yaml"
@@ -62,4 +76,4 @@ components:
         endpoints:
           - host: "nim-service.local"
             port: 8000
-            protocol: rest
+            access: full

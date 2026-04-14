@@ -1,0 +1,42 @@
+name: Documentation Issue
+description: Report incorrect, missing, or unclear documentation.
+labels: ["documentation", "status: triage"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What is wrong, missing, or unclear in the docs?
+    validations:
+      required: true
+
+  - type: input
+    id: page
+    attributes:
+      label: Affected Page
+      description: URL or file path of the doc page (e.g., docs/get-started/quickstart.md).
+      placeholder: docs/reference/commands.md
+    validations:
+      required: false
+
+  - type: dropdown
+    id: issue-type
+    attributes:
+      label: Issue Type
+      options:
+        - "Inaccurate information"
+        - "Missing documentation"
+        - "Unclear or confusing"
+        - "Broken link or cross-reference"
+        - "Formatting or rendering problem"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested Fix
+      description: If you know what the correct content should be, describe it here.
+    validations:
+      required: false

@@ -1,0 +1,284 @@
+# NemoClaw — prek hook configuration
+# prek: https://github.com/j178/prek — single binary, no Python required for the runner
+# Installed as an npm devDependency (@j178/prek) — available after `npm install`.
+# All git hooks (pre-commit, commit-msg, pre-push) are managed by prek via this file only.
+# The "prepare" script in package.json runs `prek install` (writes `.git/hooks/*`).
+# If you previously used Husky, run: git config --unset core.hooksPath
+# then `npm install` again so Git uses the hooks prek installs.
+#
+# Usage:
+#   npx prek install
+#   npx prek run --all-files
+#
+# CI / diff-only runs:
+#   npx prek run --from-ref <base> --to-ref HEAD
+#
+# Priority groups (prek runs same-priority hooks in parallel):
+#   0  — General file fixers (whitespace, EOF, line endings)
+#   4  — SPDX header insertion (--fix)
+#   5  — Shell / TS formatters (shfmt, prettier)
+#   6  — Fixes that should follow formatters (ruff check --fix, eslint --fix)
+#  10  — Linters and read-only checks
+#  20  — Project-level checks (vitest, coverage, ratchet)
+
+exclude: ^(nemoclaw/dist/|nemoclaw/node_modules/|docs/_build/|\.venv/|uv\.lock$)
+
+# Which git hook shims `prek install` writes (separate from each hook's `stages:`).
+# https://prek.j178.dev/configuration/#default_install_hook_types
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+  - pre-push
+
+repos:
+  # ── Priority 0: general file fixers ───────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        priority: 0
+      - id: end-of-file-fixer
+        priority: 0
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+        priority: 0
+
+  # ── Priority 0: reject force-added ignored files ───────────────────────────
+  # Catches `git add -f` of files that .gitignore would normally block.
+  # Single source of truth stays in .gitignore — no duplicate list here.
+  - repo: local
+    hooks:
+      - id: no-force-added-ignored
+        name: Reject force-added ignored files
+        entry: bash -c 'IGNORED=$(git ls-files --ignored --exclude-standard --cached -- "$@") && if [ -n "$IGNORED" ]; then echo "Force-added files that .gitignore would block:" && echo "$IGNORED" && exit 1; fi' --
+        language: system
+        always_run: true
+        pass_filenames: false
+        priority: 0
+
+  # ── Priority 4: SPDX headers (insert if missing; runs before language formatters) ──
+  - repo: local
+    hooks:
+      - id: spdx-headers
+        name: SPDX license headers (insert if missing)
+        entry: bash scripts/check-spdx-headers.sh --fix
+        language: system
+        files: ^(nemoclaw/src/.*\.ts|scripts/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
+        exclude: ^nemoclaw-blueprint/.*__init__\.py$
+        pass_filenames: true
+        priority: 4
+
+  # ── Priority 4: regenerate agent skills when docs change ──────────────────
+  - repo: local
+    hooks:
+      - id: platform-matrix-sync
+        name: Sync platform matrix to docs
+        entry: bash -c 'python3 scripts/generate-platform-docs.py && git add README.md docs/get-started/quickstart.md docs/inference/inference-options.md'
+        language: system
+        files: ^(ci/platform-matrix\.json|README\.md|docs/get-started/quickstart\.md|docs/inference/inference-options\.md|scripts/generate-platform-docs\.py)$
+        pass_filenames: false
+        priority: 3
+
+      - id: docs-to-skills
+        name: Regenerate agent skills from docs
+        entry: bash -c 'python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user && git add .agents/skills/'
+        language: system
+        files: ^(docs/.*\.md$|ci/platform-matrix\.json$|scripts/generate-platform-docs\.py$)
+        pass_filenames: false
+        priority: 4
+
+  # ── Priority 5: formatters ────────────────────────────────────────────────
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.12.0-2
+    hooks:
+      - id: shfmt
+        args:
+          - -w
+          - -i
+          - "2"
+          - -ci
+          - -bn
+        priority: 5
+
+  - repo: local
+    hooks:
+      - id: prettier-plugin
+        name: Prettier (plugin)
+        entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root/nemoclaw" && files=() && for f in "$@"; do files+=("${f#nemoclaw/}"); done && npx prettier --write "${files[@]}"' --
+        language: system
+        files: ^nemoclaw/.*\.ts$
+        pass_filenames: true
+        priority: 5
+
+      - id: prettier-js
+        name: Prettier (JavaScript)
+        entry: npx prettier --write
+        language: system
+        files: ^(bin|test)/.*\.js$
+        pass_filenames: true
+        priority: 5
+
+  # ── Priority 6: auto-fix after formatting ─────────────────────────────────
+  - repo: local
+    hooks:
+      - id: eslint-plugin
+        name: ESLint (plugin)
+        entry: bash -c 'root="$(git rev-parse --show-toplevel)" && cd "$root/nemoclaw" && files=() && for f in "$@"; do files+=("${f#nemoclaw/}"); done && npx eslint --fix "${files[@]}"' --
+        language: system
+        files: ^nemoclaw/.*\.ts$
+        pass_filenames: true
+        priority: 6
+
+  - repo: local
+    hooks:
+      - id: eslint-cli
+        name: ESLint (CLI)
+        entry: npx eslint --fix
+        language: system
+        files: ^(bin|test|scripts|docs/_ext)/.*\.js$
+        pass_filenames: true
+        priority: 6
+
+  # ── Priority 10: linters and validation ─────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+        priority: 10
+      - id: check-added-large-files
+        args: ["--maxkb=2000"]
+        priority: 10
+      - id: check-case-conflict
+        priority: 10
+      - id: check-yaml
+        priority: 10
+      - id: check-toml
+        priority: 10
+      - id: check-json
+        priority: 10
+      - id: detect-private-key
+        priority: 10
+      - id: check-executables-have-shebangs
+        priority: 10
+      - id: check-shebang-scripts-are-executable
+        priority: 10
+
+  - repo: local
+    hooks:
+      - id: validate-config-schemas
+        name: Validate config files against JSON schemas
+        entry: npx tsx scripts/validate-configs.ts
+        language: system
+        pass_filenames: false
+        files: ^(nemoclaw-blueprint/.*\.yaml$|nemoclaw/openclaw\.plugin\.json$|schemas/.*\.json$)
+        priority: 10
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        priority: 10
+
+  - repo: local
+    hooks:
+      - id: hadolint
+        name: hadolint
+        entry: hadolint
+        language: system
+        files: (Dockerfile[^/]*|.*\.dockerfile)$
+        types: [file]
+        priority: 10
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+        name: gitleaks (secret scan)
+        priority: 10
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.22.0
+    hooks:
+      - id: markdownlint-cli2
+        priority: 10
+
+  # ── commit-msg hooks ────────────────────────────────────────────────────────
+  - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
+    rev: v9.24.0
+    hooks:
+      - id: commitlint
+        stages: [commit-msg]
+        additional_dependencies: ["@commitlint/config-conventional@20"]
+        priority: 10
+
+  # ── pre-push hooks ─────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: tsc-plugin
+        name: TypeScript (plugin)
+        entry: bash -c 'cd nemoclaw && npx tsc --noEmit --incremental'
+        language: system
+        pass_filenames: false
+        files: ^nemoclaw/
+        stages: [pre-push]
+        priority: 10
+
+      - id: tsc-js
+        name: TypeScript (JS config)
+        entry: bash -c 'npm run build:cli && npx tsc -p jsconfig.json'
+        language: system
+        pass_filenames: false
+        files: ^(bin|test|scripts)/.*\.js$
+        stages: [pre-push]
+        priority: 10
+
+      - id: tsc-cli
+        name: TypeScript (CLI)
+        entry: npx tsc -p tsconfig.cli.json
+        language: system
+        pass_filenames: false
+        files: ^(bin|scripts)/
+        types_or: [ts, tsx]
+        stages: [pre-push]
+        priority: 10
+
+      - id: version-tag-sync
+        name: package.json ↔ git tag version sync
+        entry: bash scripts/check-version-tag-sync.sh
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]
+        priority: 10
+
+  # ── Priority 20: project-level checks (coverage + ratchet) ─────────────────
+  - repo: local
+    hooks:
+      - id: test-cli
+        name: Test (CLI)
+        entry: bash -c 'npm run build:cli && npx vitest run --project cli --coverage --coverage.reporter=text --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/cli --coverage.include="bin/**/*.js" --coverage.include="dist/lib/**/*.js" --coverage.exclude="test/**/*.js" --coverage.exclude="test/**/*.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"'
+        language: system
+        pass_filenames: false
+        files: ^(bin/|src/|test/)
+        priority: 20
+
+      - id: test-plugin
+        name: Test (plugin)
+        entry: bash -c 'npx vitest run --project plugin --coverage --coverage.reporter=text --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/plugin --coverage.include="nemoclaw/src/**/*.ts" --coverage.exclude="**/*.test.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"'
+        language: system
+        pass_filenames: false
+        files: ^nemoclaw/
+        priority: 20
+
+      - id: test-skills-yaml
+        name: Test (skills YAML)
+        entry: npx vitest run test/skills-frontmatter.test.ts
+        language: system
+        pass_filenames: false
+        files: ^(\.agents/skills/|docs/.*\.md$|scripts/docs-to-skills\.py$|test/skills-frontmatter\.test\.js$)
+        priority: 20
+
+default_language_version:
+  python: python3
+
+fail_fast: false

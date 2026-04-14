@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# markdownlint-cli2 configuration
+# https://github.com/DavidAnson/markdownlint-cli2
+#
+# All default rules are enabled unless listed below.
+
+config:
+  default: true
+
+  # --- Permanently disabled (style preferences) ---
+  MD004: false  # ul-style — mixed */- is fine
+  MD013: false  # line-length — 80-char limit too strict for docs prose
+  MD014: false  # commands-show-output — $ prefix in code blocks is intentional
+  MD024: false  # no-duplicate-heading — duplicate names in different sections are fine
+  MD033: false  # no-inline-html — HTML in markdown is common on GitHub
+  MD060: false  # table-column-style — table pipe spacing is cosmetic
+
+  # --- Permanently disabled (false positives) ---
+  # Front matter uses a complex `title:` object (with page/nav sub-keys),
+  # not a plain title string. The default regex falsely matches it as an h1.
+  MD025:
+    front_matter_title: ""
+
+ignores:
+  - "node_modules/**"

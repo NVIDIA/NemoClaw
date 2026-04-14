@@ -2,7 +2,9 @@
 title:
   page: "Customize the NemoClaw Sandbox Network Policy"
   nav: "Customize Network Policy"
-description: "Add, remove, or modify allowed endpoints in the sandbox policy."
+description:
+  main: "Add, remove, or modify allowed endpoints in the sandbox policy."
+  agent: "Adds, removes, or modifies allowed endpoints in the sandbox policy. Use when customizing network policy, changing egress rules, or configuring sandbox endpoint access."
 keywords: ["customize nemoclaw network policy", "sandbox egress policy configuration"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "network_policy", "security", "nemoclaw"]
@@ -21,12 +23,19 @@ status: published
 # Customize the Sandbox Network Policy
 
 Add, remove, or modify the endpoints that the sandbox is allowed to reach.
-NemoClaw supports both static policy changes that persist across restarts and dynamic updates to a running sandbox.
+
+The sandbox policy is defined in a declarative YAML file in the NemoClaw repository and enforced at runtime by [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
+NemoClaw supports both static policy changes that persist across restarts and dynamic updates applied to a running sandbox through the OpenShell CLI.
 
 ## Prerequisites
 
 - A running NemoClaw sandbox for dynamic changes, or the NemoClaw source repository for static changes.
 - The OpenShell CLI on your `PATH`.
+
+> [!IMPORTANT]
+> Make static policy edits on the host, not inside the sandbox.
+> The sandbox image is intentionally minimal and may not include editors or package-management tools.
+> Changes made only inside the sandbox are also ephemeral and are lost when the sandbox is recreated.
 
 ## Static Changes
 
@@ -35,6 +44,14 @@ Static changes modify the baseline policy file and take effect after the next sa
 ### Edit the Policy File
 
 Open `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and add or modify endpoint entries.
+
+If you only need one of the built-in presets, use `nemoclaw <name> policy-add` instead of editing YAML by hand:
+
+```console
+$ nemoclaw my-assistant policy-add
+```
+
+Use a manual YAML edit when you need to allow custom hosts that are not covered by a preset, such as an internal API or a weather service.
 
 Each entry in the `network` section defines an endpoint group with the following fields:
 
@@ -62,7 +79,7 @@ The wizard picks up the modified policy file and applies it to the sandbox.
 Check that the sandbox is running with the updated policy:
 
 ```console
-$ openclaw nemoclaw status
+$ nemoclaw <name> status
 ```
 
 ## Dynamic Changes
@@ -79,7 +96,7 @@ Follow the same format as the baseline policy in `nemoclaw-blueprint/policies/op
 Use the OpenShell CLI to apply the policy update:
 
 ```console
-$ openshell policy set <policy-file>
+$ openshell policy set --policy <policy-file> <sandbox-name>
 ```
 
 The change takes effect immediately.
@@ -90,7 +107,48 @@ Dynamic changes apply only to the current session.
 When the sandbox stops, the running policy resets to the baseline defined in the policy file.
 To make changes permanent, update the static policy file and re-run setup.
 
+### Approve Requests Interactively
+
+For one-off access, you can approve blocked requests in the OpenShell TUI instead of editing the baseline policy:
+
+```console
+$ openshell term
+```
+
+This is useful when you want to test a destination before deciding whether it belongs in a permanent preset or custom policy file.
+
+## Policy Presets
+
+NemoClaw ships preset policy files for common integrations in `nemoclaw-blueprint/policies/presets/`.
+Apply a preset as-is or use it as a starting template for a custom policy.
+
+Available presets:
+
+| Preset | Endpoints |
+|--------|-----------|
+| `brave` | Brave Search API |
+| `brew` | Homebrew (Linuxbrew) package manager |
+| `discord` | Discord webhook API |
+| `github` | GitHub and GitHub REST API |
+| `huggingface` | Hugging Face Hub (download-only) and inference router |
+| `jira` | Atlassian Jira API |
+| `npm` | npm and Yarn registries |
+| `outlook` | Microsoft 365 and Outlook |
+| `pypi` | Python Package Index |
+| `slack` | Slack API and webhooks |
+| `telegram` | Telegram Bot API |
+
+To apply a preset to a running sandbox, pass it as a policy file:
+
+```console
+$ openshell policy set --policy nemoclaw-blueprint/policies/presets/pypi.yaml my-assistant
+```
+
+To include a preset in the baseline, merge its entries into `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.
+
 ## Related Topics
 
 - [Approve or Deny Agent Network Requests](approve-network-requests.md) for real-time operator approval.
 - [Network Policies](../reference/network-policies.md) for the full baseline policy reference.
+- OpenShell [Policy Schema](https://docs.nvidia.com/openshell/latest/reference/policy-schema.html) for the full YAML policy schema reference.
+- OpenShell [Sandbox Policies](https://docs.nvidia.com/openshell/latest/sandboxes/policies.html) for applying, iterating, and debugging policies at the OpenShell layer.

@@ -2,8 +2,10 @@
 title:
   page: "NVIDIA NemoClaw Developer Guide"
   nav: "NemoClaw"
-description: "Sandbox OpenClaw with NVIDIA inference routing and strict network policies."
-keywords: ["nemoclaw sandboxed ai agent", "openclaw openshell plugin"]
+description:
+  main: "NemoClaw is an open-source reference stack that simplifies running OpenClaw always-on assistants more safely, with a single command."
+  agent: "Provides an open-source reference stack that simplifies running OpenClaw always-on assistants more safely. Use when setting up NemoClaw, exploring the project, or looking for the landing page."
+keywords: ["nemoclaw open source reference stack", "openclaw always-on assistants", "nvidia openshell", "nvidia nemotron"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "inference_routing", "nemoclaw"]
 content:
@@ -25,9 +27,9 @@ status: published
 :end-before: <!-- end-badges -->
 ```
 
-NemoClaw is the OpenClaw plugin for [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
-It runs OpenClaw inside a sandboxed environment with NVIDIA cloud inference, such as Nemotron 3 Super 120B through [build.nvidia.com](https://build.nvidia.com).
-The sandbox enforces strict network policies and operator-controlled egress approval.
+NVIDIA NemoClaw is an open-source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
+NemoClaw provides onboarding, lifecycle management, and OpenClaw operations within OpenShell containers.
+It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of NVIDIA Agent Toolkit, an environment designed for executing claws with additional security, and open-source models like [NVIDIA Nemotron](https://build.nvidia.com).
 
 ## Get Started
 
@@ -154,7 +156,17 @@ Proceed to the [Quickstart](get-started/quickstart.md) for step-by-step instruct
 :link: about/overview
 :link-type: doc
 
-Learn what NemoClaw does and how it integrates OpenClaw with OpenShell.
+What NemoClaw is: capabilities, benefits, and typical uses.
+
++++
+{bdg-secondary}`Concept`
+:::
+
+:::{grid-item-card} Ecosystem
+:link: about/ecosystem
+:link-type: doc
+
+How OpenClaw, OpenShell, and NemoClaw form a stack and when to use NemoClaw versus OpenShell alone.
 
 +++
 {bdg-secondary}`Concept`
@@ -180,21 +192,21 @@ CLI commands for launching, connecting, monitoring, and managing sandboxes.
 {bdg-secondary}`Reference`
 :::
 
-:::{grid-item-card} Inference Profiles
-:link: reference/inference-profiles
+:::{grid-item-card} Inference Options
+:link: inference/inference-options
 :link-type: doc
 
-NVIDIA cloud inference configuration and available models.
+Providers available during onboarding and how inference routing works.
 
 +++
-{bdg-secondary}`Reference`
+{bdg-secondary}`Concept`
 :::
 
 :::{grid-item-card} How It Works
 :link: about/how-it-works
 :link-type: doc
 
-High-level overview of the plugin, blueprint, sandbox, and inference routing.
+How NemoClaw runs: plugin, blueprint, OpenShell orchestration, routing, and policy layers.
 
 +++
 {bdg-secondary}`Concept`
@@ -220,6 +232,26 @@ Egress control, operator approval flow, and policy configuration.
 {bdg-secondary}`Reference`
 :::
 
+:::{grid-item-card} Workspace Files
+:link: workspace/workspace-files
+:link-type: doc
+
+Understand `SOUL.md`, `USER.md`, and other workspace files, plus backup and restore.
+
++++
+{bdg-secondary}`Concept`
+:::
+
+:::{grid-item-card} Security Best Practices
+:link: security/best-practices
+:link-type: doc
+
+Controls reference, risk framework, and posture profiles for sandbox security.
+
++++
+{bdg-secondary}`Concept`
+:::
+
 :::{grid-item-card} How-To Guides
 :link: inference/switch-inference-providers
 :link-type: doc
@@ -230,12 +262,24 @@ Task-oriented guides for inference, deployment, and policy management.
 {bdg-secondary}`How-To`
 :::
 
+:::{grid-item-card} Agent Skills
+:link: resources/agent-skills
+:link-type: doc
+
+Use AI coding assistants with NemoClaw's built-in agent skills for guided setup and operation.
+
++++
+{bdg-secondary}`Resource`
+:::
+
 ::::
 
-```{toctree}
-:hidden:
+---
 
-Home <self>
+```{admonition} Notice and Disclaimer
+:class: warning
+
+This software automatically retrieves, accesses or interacts with external materials. Those retrieved materials are not distributed with this software and are governed solely by separate terms, conditions and licenses. You are solely responsible for finding, reviewing and complying with all applicable terms, conditions, and licenses, and for verifying the security, integrity and suitability of any retrieved materials for your specific use case. This software is provided "AS IS", without warranty of any kind. The author makes no representations or warranties regarding any retrieved materials, and assumes no liability for any losses, damages, liabilities or legal consequences from your use or inability to use this software or any retrieved materials. Use this software and the retrieved materials at your own risk.
 ```
 
 ```{toctree}
@@ -244,6 +288,7 @@ Home <self>
 
 Overview <about/overview>
 How It Works <about/how-it-works>
+Ecosystem <about/ecosystem>
 Release Notes <about/release-notes>
 ```
 
@@ -252,12 +297,15 @@ Release Notes <about/release-notes>
 :hidden:
 
 Quickstart <get-started/quickstart>
+Windows Prerequisites <get-started/windows-setup>
 ```
 
 ```{toctree}
 :caption: Inference
 :hidden:
 
+Inference Options <inference/inference-options>
+Use Local Inference <inference/use-local-inference>
 Switch Inference Providers <inference/switch-inference-providers>
 ```
 
@@ -270,11 +318,29 @@ Customize the Network Policy <network-policy/customize-network-policy>
 ```
 
 ```{toctree}
+:caption: Security
+:hidden:
+
+Security Best Practices <security/best-practices>
+Credential Storage <security/credential-storage>
+OpenClaw Controls <security/openclaw-controls>
+```
+
+```{toctree}
 :caption: Deployment
 :hidden:
 
 Deploy to a Remote GPU Instance <deployment/deploy-to-remote-gpu>
-Set Up the Telegram Bridge <deployment/set-up-telegram-bridge>
+Set Up Telegram <deployment/set-up-telegram-bridge>
+Sandbox Hardening <deployment/sandbox-hardening>
+```
+
+```{toctree}
+:caption: Workspace
+:hidden:
+
+Workspace Files <workspace/workspace-files>
+Backup & Restore <workspace/backup-restore>
 ```
 
 ```{toctree}
@@ -290,7 +356,6 @@ Monitor Sandbox Activity <monitoring/monitor-sandbox-activity>
 
 Architecture <reference/architecture>
 Commands <reference/commands>
-Inference Profiles <reference/inference-profiles>
 Network Policies <reference/network-policies>
 Troubleshooting <reference/troubleshooting>
 ```
@@ -299,5 +364,8 @@ Troubleshooting <reference/troubleshooting>
 :caption: Resources
 :hidden:
 
+Agent Skills <resources/agent-skills>
+Report Vulnerabilities <https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md>
 resources/license
+Discord <https://discord.gg/XFpfPv9Uvx>
 ```
