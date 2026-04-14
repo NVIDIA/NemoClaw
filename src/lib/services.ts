@@ -14,6 +14,7 @@ import {
 import { join } from "node:path";
 
 import { DASHBOARD_PORT } from "./ports";
+import { buildSubprocessEnv } from "./subprocess-env";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -126,7 +127,7 @@ function startService(
   const subprocess = spawn(command, args, {
     detached: true,
     stdio: ["ignore", logFd, logFd],
-    env: { ...process.env, ...env },
+    env: buildSubprocessEnv(env),
   });
   closeSync(logFd);
 
