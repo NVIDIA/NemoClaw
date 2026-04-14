@@ -64,7 +64,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```console
-$ nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [--dangerously-skip-permissions] [--yes-i-accept-third-party-software]
+$ nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [--yes-i-accept-third-party-software]
 ```
 
 :::{warning}
@@ -76,6 +76,24 @@ The wizard prompts for a provider first, then collects the provider credential i
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
 Credentials are stored in `~/.nemoclaw/credentials.json`. For file permissions, plaintext storage behavior, and hardening guidance, see [Credential Storage](../security/credential-storage.md).
 The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
+
+After provider selection, the wizard prompts for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
+Three tiers are available:
+
+| Tier | Description |
+|------|-------------|
+| Restricted | Base sandbox only. No third-party network access beyond inference and core agent tooling. |
+| Balanced (default) | Full dev tooling and web search. Package installs, model downloads, and inference. No messaging platform access. |
+| Open | Broad access across third-party services including messaging and productivity. |
+
+After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access.
+For details on tiers and the presets each includes, see [Network Policies](network-policies.md#policy-tiers).
+
+In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `balanced`):
+
+```console
+$ NEMOCLAW_POLICY_TIER=restricted nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
 
 If you enable Brave Search during onboarding, NemoClaw currently stores the Brave API key in the sandbox's OpenClaw configuration.
 That means the OpenClaw agent can read the key.
@@ -106,6 +124,7 @@ $ BRAVE_API_KEY=... \
 The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
 Uppercase letters are automatically lowercased.
+Names that match global CLI commands (`status`, `list`, `debug`, etc.) are rejected to avoid routing conflicts.
 
 If you enable Slack during onboarding, the wizard collects both the Bot Token (`SLACK_BOT_TOKEN`) and the App-Level Token (`SLACK_APP_TOKEN`).
 Socket Mode requires both tokens.
@@ -235,6 +254,24 @@ List available policy presets and show which ones are applied to the sandbox.
 $ nemoclaw my-assistant policy-list
 ```
 
+### `nemoclaw <name> skill install <path>`
+
+Deploy a skill directory to a running sandbox.
+The command validates the `SKILL.md` frontmatter (a `name` field is required), uploads all non-dot files preserving subdirectory structure, and performs agent-specific post-install steps.
+
+```console
+$ nemoclaw my-assistant skill install ./my-skill/
+```
+
+The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field.
+Skill names must contain only alphanumeric characters, dots, hyphens, and underscores.
+
+Files with names starting with `.` (dotfiles) are skipped and listed in the output.
+Files with unsafe path characters are rejected to prevent shell injection.
+
+If the skill already exists on the sandbox, the command updates it in place and preserves chat history.
+For new installs, the agent session index is refreshed so the agent discovers the skill on the next session.
+
 ### `openshell term`
 
 Open the OpenShell TUI to monitor sandbox activity and approve network egress requests.
@@ -335,6 +372,29 @@ The CLI uses the local `uninstall.sh` first and falls back to the hosted script 
 ```console
 $ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
 ```
+
+## Environment Variables
+
+NemoClaw reads the following environment variables to configure service ports.
+Set them before running `nemoclaw onboard` or any command that starts services.
+All ports must be non-privileged integers between 1024 and 65535.
+
+| Variable | Default | Service |
+|----------|---------|---------|
+| `NEMOCLAW_GATEWAY_PORT` | 8080 | OpenShell gateway |
+| `NEMOCLAW_DASHBOARD_PORT` | 18789 | Dashboard UI |
+| `NEMOCLAW_VLLM_PORT` | 8000 | vLLM / NIM inference |
+| `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
+
+If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
+
+```console
+$ export NEMOCLAW_DASHBOARD_PORT=19000
+$ nemoclaw onboard
+```
+
+These overrides apply to onboarding, status checks, health probes, and the uninstaller.
+Defaults are unchanged when no variable is set.
 
 ### Legacy `nemoclaw setup`
 

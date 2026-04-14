@@ -122,6 +122,9 @@ This is useful when you want to test a destination before deciding whether it be
 NemoClaw ships preset policy files for common integrations in `nemoclaw-blueprint/policies/presets/`.
 Apply a preset as-is or use it as a starting template for a custom policy.
 
+During onboarding, the [policy tier](../reference/network-policies.md#policy-tiers) you select determines which presets are enabled by default.
+You can add or remove individual presets in the interactive preset screen that follows tier selection.
+
 Available presets:
 
 | Preset | Endpoints |

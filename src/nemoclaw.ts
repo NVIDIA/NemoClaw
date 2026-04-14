@@ -67,6 +67,8 @@ const {
   runUninstallCommand,
 } = require("./lib/uninstall-command");
 const agentRuntime = require("../bin/lib/agent-runtime");
+const sandboxVersion = require("./lib/sandbox-version");
+const sandboxState = require("./lib/sandbox-state");
 const skillInstall = require("./lib/skill-install");
 
 // ── Global commands ──────────────────────────────────────────────
@@ -83,6 +85,7 @@ const GLOBAL_COMMANDS = new Set([
   "debug",
   "uninstall",
   "credentials",
+  "backup-all",
   "help",
   "--help",
   "-h",
@@ -985,6 +988,17 @@ async function listSandboxes() {
 
 async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false } = {}) {
   await ensureLiveSandboxOrExit(sandboxName);
+
+  // Version staleness check — warn but don't block
+  try {
+    const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
+    if (versionCheck.isStale) {
+      for (const line of sandboxVersion.formatStalenessWarning(sandboxName, versionCheck)) {
+        console.error(line);
+      }
+    }
+  } catch { /* non-fatal — don't block connect on version check failure */ }
+
   if (dangerouslySkipPermissions) {
     printDangerouslySkipPermissionsWarning();
     const policies = require("./lib/policies");
@@ -1039,6 +1053,20 @@ async function sandboxStatus(sandboxName) {
     if (sb.dangerouslySkipPermissions) {
       console.log(`    Permissions: dangerously-skip-permissions (open)`);
     }
+
+    // Agent version check
+    try {
+      const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
+      const agent = agentRuntime.getSessionAgent(sandboxName);
+      const agentName = agentRuntime.getAgentDisplayName(agent);
+      if (versionCheck.sandboxVersion) {
+        console.log(`    Agent:    ${agentName} v${versionCheck.sandboxVersion}`);
+      }
+      if (versionCheck.isStale) {
+        console.log(`    ${YW}Update:   v${versionCheck.expectedVersion} available${R}`);
+        console.log(`              Run \`nemoclaw ${sandboxName} rebuild\` to upgrade`);
+      }
+    } catch { /* non-fatal */ }
   }
 
   const lookup = await getReconciledSandboxGatewayState(sandboxName);
@@ -1453,6 +1481,246 @@ async function sandboxDestroy(sandboxName, args = []) {
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);
 }
 
+// ── Rebuild ──────────────────────────────────────────────────────
+
+function _rebuildLog(msg) {
+  console.error(`  ${D}[rebuild ${new Date().toISOString()}] ${msg}${R}`);
+}
+
+async function sandboxRebuild(sandboxName, args = []) {
+  const verbose = args.includes("--verbose") || args.includes("-v") || process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
+  const log = verbose ? _rebuildLog : () => {};
+  const skipConfirm = args.includes("--yes") || args.includes("--force");
+  const sb = registry.getSandbox(sandboxName);
+  if (!sb) {
+    console.error(`  Sandbox '${sandboxName}' not found in registry.`);
+    process.exit(1);
+  }
+
+  // Multi-agent guard (temporary — until swarm lands)
+  if (sb.agents && sb.agents.length > 1) {
+    console.error("  Multi-agent sandbox rebuild is not yet supported.");
+    console.error("  Back up state manually and recreate with `nemoclaw onboard`.");
+    process.exit(1);
+  }
+
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const agentName = agentRuntime.getAgentDisplayName(agent);
+
+  // Version check — show what's changing
+  const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
+  console.log("");
+  console.log(`  ${B}Rebuild sandbox '${sandboxName}'${R}`);
+  if (versionCheck.sandboxVersion) {
+    console.log(`    Current:  ${agentName} v${versionCheck.sandboxVersion}`);
+  }
+  if (versionCheck.expectedVersion) {
+    console.log(`    Target:   ${agentName} v${versionCheck.expectedVersion}`);
+  }
+  console.log("");
+
+  if (!skipConfirm) {
+    console.log("  This will:");
+    console.log("    1. Back up workspace state");
+    console.log("    2. Destroy and recreate the sandbox with the current image");
+    console.log("    3. Restore workspace state into the new sandbox");
+    console.log("");
+    const answer = await askPrompt("  Proceed? [y/N]: ");
+    if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
+      console.log("  Cancelled.");
+      return;
+    }
+  }
+
+  // Step 1: Ensure sandbox is live for backup
+  log("Checking sandbox liveness: openshell sandbox list");
+  const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  log(`openshell sandbox list exit=${isLive.status}, output=${(isLive.output || "").substring(0, 200)}`);
+  const liveNames = parseLiveSandboxNames(isLive.output || "");
+  log(`Live sandboxes: ${Array.from(liveNames).join(", ") || "(none)"}`);
+  if (!liveNames.has(sandboxName)) {
+    console.error(`  Sandbox '${sandboxName}' is not running. Cannot back up state.`);
+    console.error("  Start it first or recreate with `nemoclaw onboard --recreate-sandbox`.");
+    process.exit(1);
+  }
+
+  // Step 2: Backup
+  console.log("  Backing up sandbox state...");
+  log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
+  const backup = sandboxState.backupSandboxState(sandboxName);
+  log(`Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}, failed=${backup.failedDirs.join(",")}`);
+  if (!backup.success) {
+    console.error("  Failed to back up sandbox state.");
+    if (backup.backedUpDirs.length > 0) {
+      console.error(`  Partial backup: ${backup.backedUpDirs.join(", ")}`);
+    }
+    if (backup.failedDirs.length > 0) {
+      console.error(`  Failed: ${backup.failedDirs.join(", ")}`);
+    }
+    console.error("  Aborting rebuild to prevent data loss.");
+    process.exit(1);
+  }
+  console.log(`  ${G}\u2713${R} State backed up (${backup.backedUpDirs.length} directories)`);
+  console.log(`    Backup: ${backup.manifest.backupPath}`);
+
+  // Step 3: Delete sandbox without tearing down gateway or session.
+  // sandboxDestroy() cleans up the gateway when it's the last sandbox and
+  // nulls session.sandboxName — both break the immediate onboard --resume.
+  console.log("  Deleting old sandbox...");
+  const sbMeta = registry.getSandbox(sandboxName);
+  log(`Registry entry: agent=${sbMeta?.agent}, agentVersion=${sbMeta?.agentVersion}, nimContainer=${sbMeta?.nimContainer}`);
+  if (sbMeta && sbMeta.nimContainer) nim.stopNimContainerByName(sbMeta.nimContainer);
+  else nim.stopNimContainer(sandboxName);
+
+  log(`Running: openshell sandbox delete ${sandboxName}`);
+  const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const { alreadyGone } = getSandboxDeleteOutcome(deleteResult);
+  log(`Delete result: exit=${deleteResult.status}, alreadyGone=${alreadyGone}`);
+  if (deleteResult.status !== 0 && !alreadyGone) {
+    console.error("  Failed to delete sandbox. Aborting rebuild.");
+    console.error("  State backup is preserved at: " + backup.manifest.backupPath);
+    process.exit(deleteResult.status || 1);
+  }
+  registry.removeSandbox(sandboxName);
+  log(`Registry after remove: ${JSON.stringify(registry.listSandboxes().sandboxes.map(s => s.name))}`);
+  console.log(`  ${G}\u2713${R} Old sandbox deleted`);
+
+  // Step 4: Recreate via onboard --resume
+  console.log("");
+  console.log("  Creating new sandbox with current image...");
+
+  // Force the sandbox name so onboard recreates with the same name.
+  // Mark session resumable and point at this sandbox; set env var as fallback.
+  const sessionBefore = onboardSession.loadSession();
+  log(`Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}`);
+
+  onboardSession.updateSession((s) => {
+    s.sandboxName = sandboxName;
+    s.resumable = true;
+    s.status = "in_progress";
+    return s;
+  });
+  process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
+
+  const sessionAfter = onboardSession.loadSession();
+  log(`Session after update: sandboxName=${sessionAfter?.sandboxName}, status=${sessionAfter?.status}, resumable=${sessionAfter?.resumable}, provider=${sessionAfter?.provider}, model=${sessionAfter?.model}`);
+  log(`Env: NEMOCLAW_SANDBOX_NAME=${process.env.NEMOCLAW_SANDBOX_NAME}, NEMOCLAW_RECREATE_SANDBOX=${process.env.NEMOCLAW_RECREATE_SANDBOX}`);
+  log("Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true })");
+
+  const { onboard } = require("./lib/onboard");
+  await onboard({
+    resume: true,
+    nonInteractive: true,
+    recreateSandbox: true,
+  });
+
+  log("onboard() returned successfully");
+
+  // Step 5: Restore
+  console.log("");
+  console.log("  Restoring workspace state...");
+  log(`Restoring from: ${backup.manifest.backupPath} into sandbox: ${sandboxName}`);
+  const restore = sandboxState.restoreSandboxState(sandboxName, backup.manifest.backupPath);
+  log(`Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}, failed=${restore.failedDirs.join(",")}`);
+  if (!restore.success) {
+    console.error(`  Partial restore: ${restore.restoredDirs.join(", ") || "none"}`);
+    console.error(`  Failed: ${restore.failedDirs.join(", ")}`);
+    console.error(`  Manual restore available from: ${backup.manifest.backupPath}`);
+  } else {
+    console.log(`  ${G}\u2713${R} State restored (${restore.restoredDirs.length} directories)`);
+  }
+
+  // Step 6: Post-restore agent-specific migration
+  const agentDef = agent ? require("./lib/agent-defs").loadAgent(agent.name) : require("./lib/agent-defs").loadAgent("openclaw");
+  if (agentDef.name === "openclaw") {
+    // openclaw doctor --fix validates and repairs directory structure.
+    // Idempotent and safe — catches structural changes between OpenClaw versions
+    // (new symlinks, new data dirs, etc.) that the restored state may be missing.
+    log("Running openclaw doctor --fix inside sandbox for post-upgrade structure repair");
+    const doctorResult = executeSandboxCommand(sandboxName, "openclaw doctor --fix");
+    log(`doctor --fix: exit=${doctorResult?.status}, stdout=${(doctorResult?.stdout || "").substring(0, 200)}`);
+    if (doctorResult && doctorResult.status === 0) {
+      console.log(`  ${G}\u2713${R} Post-upgrade structure check passed`);
+    } else {
+      console.log(`  ${D}Post-upgrade structure check skipped (doctor returned ${doctorResult?.status ?? "null"})${R}`);
+    }
+  }
+  // Hermes: no explicit post-restore step needed. Hermes's SessionDB._init_schema()
+  // auto-migrates state.db (SQLite) on first connection via sequential ALTER TABLE
+  // migrations (idempotent, schema_version tracked). ensure_hermes_home() repairs
+  // missing directories implicitly. The NemoClaw plugin's skill cache refreshes on
+  // on_session_start. Gateway startup is non-fatal if state.db migration fails.
+
+  // Step 7: Update registry with new version
+  registry.updateSandbox(sandboxName, {
+    agentVersion: agentDef.expectedVersion || null,
+  });
+  log(`Registry updated: agentVersion=${agentDef.expectedVersion}`);
+
+  console.log("");
+  if (restore.success) {
+    console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
+    if (versionCheck.expectedVersion) {
+      console.log(`    Now running: ${agentName} v${versionCheck.expectedVersion}`);
+    }
+  } else {
+    console.log(`  ${YW}\u26a0${R} Sandbox '${sandboxName}' rebuilt but state restore was incomplete`);
+    console.log(`    Backup available at: ${backup.manifest.backupPath}`);
+  }
+}
+
+// ── Pre-upgrade backup ───────────────────────────────────────────
+
+/**
+ * Back up all registered sandboxes. Called by install.sh before upgrading
+ * NemoClaw or OpenShell so sandbox state is recoverable if the upgrade
+ * destroys sandbox contents.
+ */
+function backupAll() {
+  const { sandboxes } = registry.listSandboxes();
+  if (sandboxes.length === 0) {
+    console.log("  No sandboxes registered. Nothing to back up.");
+    return;
+  }
+
+  // Check which sandboxes are actually live
+  const liveList = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  const liveNames = parseLiveSandboxNames(liveList.output || "");
+
+  let backed = 0;
+  let failed = 0;
+  let skipped = 0;
+  for (const sb of sandboxes) {
+    if (!liveNames.has(sb.name)) {
+      console.log(`  ${D}Skipping '${sb.name}' (not running)${R}`);
+      skipped++;
+      continue;
+    }
+    console.log(`  Backing up '${sb.name}'...`);
+    const result = sandboxState.backupSandboxState(sb.name);
+    if (result.success) {
+      console.log(`  ${G}\u2713${R} ${sb.name}: ${result.backedUpDirs.length} dirs → ${result.manifest.backupPath}`);
+      backed++;
+    } else {
+      console.error(`  ${_RD}✗${R} ${sb.name}: backup failed (${result.failedDirs.join(", ")})`);
+      failed++;
+    }
+  }
+  console.log("");
+  console.log(`  Pre-upgrade backup: ${backed} backed up, ${failed} failed, ${skipped} skipped`);
+  if (backed > 0) {
+    console.log(`  Backups stored in: ~/.nemoclaw/rebuild-backups/`);
+  }
+  // Exit non-zero if any live sandbox failed to back up — the upgrade hook
+  // in install.sh treats this as non-fatal but logs a warning.
+  if (failed > 0) {
+    process.exit(1);
+  }
+}
+
 // ── Help ─────────────────────────────────────────────────────────
 
 function help() {
@@ -1470,6 +1738,7 @@ function help() {
     nemoclaw <name> connect          Shell into a running sandbox
     nemoclaw <name> status           Sandbox health + NIM status
     nemoclaw <name> logs ${D}[--follow]${R}  Stream sandbox logs
+    nemoclaw <name> rebuild          Upgrade sandbox to current agent version ${D}(--yes to skip prompt)${R}
     nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
 
   ${G}Skills:${R}
@@ -1496,6 +1765,9 @@ function help() {
   ${G}Credentials:${R}
     nemoclaw credentials list        List stored credential keys
     nemoclaw credentials reset <KEY> Remove a stored credential so onboard re-prompts
+
+  ${G}Backup:${R}
+    nemoclaw backup-all              Back up all sandbox state before upgrade
 
   Cleanup:
     nemoclaw uninstall [flags]       Run uninstall.sh (local only; no remote fallback)
@@ -1559,6 +1831,9 @@ const [cmd, ...args] = process.argv.slice(2);
       case "list":
         await listSandboxes();
         break;
+      case "backup-all":
+        backupAll();
+        break;
       case "--version":
       case "-v": {
         console.log(`nemoclaw v${getVersion()}`);
@@ -1608,9 +1883,12 @@ const [cmd, ...args] = process.argv.slice(2);
       case "skill":
         await sandboxSkillInstall(cmd, actionArgs);
         break;
+      case "rebuild":
+        await sandboxRebuild(cmd, actionArgs);
+        break;
       default:
         console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, skill, destroy`);
+        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, skill, rebuild, destroy`);
         process.exit(1);
     }
     return;

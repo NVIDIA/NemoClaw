@@ -85,7 +85,7 @@ do_restore() {
   local ts="${2:-}"
 
   if [ -z "$ts" ]; then
-    ts="$(find "$BACKUP_BASE" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -r | head -n1 || true)"
+    ts="$(find "$BACKUP_BASE" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort -r | head -n1 || true)"
     [ -n "$ts" ] || fail "No backups found in ${BACKUP_BASE}/"
     info "Using most recent backup: ${ts}"
   fi
