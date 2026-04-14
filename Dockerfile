@@ -163,20 +163,18 @@ config = { \
         'auth': {'token': secrets.token_hex(32)} \
     } \
 }; \
-web_search_enabled = os.environ.get('NEMOCLAW_WEB_SEARCH_ENABLED', '') == '1'; \
-if web_search_enabled: \
-    config.update({ \
-        'tools': { \
-            'web': { \
-                'search': { \
-                    'enabled': True, \
-                    'provider': 'brave', \
-                    'apiKey': 'openshell:resolve:env:BRAVE_API_KEY' \
-                }, \
-                'fetch': {'enabled': True} \
-            } \
+config.update({ \
+    'tools': { \
+        'web': { \
+            'search': { \
+                'enabled': True, \
+                'provider': 'brave', \
+                'apiKey': 'openshell:resolve:env:BRAVE_API_KEY' \
+            }, \
+            'fetch': {'enabled': True} \
         } \
-    }); \
+    } \
+}) if os.environ.get('NEMOCLAW_WEB_SEARCH_ENABLED', '') == '1' else None; \
 path = os.path.expanduser('~/.openclaw/openclaw.json'); \
 json.dump(config, open(path, 'w'), indent=2); \
 os.chmod(path, 0o600)"
