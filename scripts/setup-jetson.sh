@@ -50,7 +50,64 @@ configure_jetson_host() {
   case "$jetpack_version" in
     jp6)
       "${SUDO[@]}" update-alternatives --set iptables /usr/sbin/iptables-legacy
-      "${SUDO[@]}" sed -i '/"iptables": false,/d; /"bridge": "none"/d; s/"default-runtime": "nvidia",/"default-runtime": "nvidia"/' /etc/docker/daemon.json
+      # Patch /etc/docker/daemon.json using python3 to guarantee valid JSON.
+      # The previous sed approach could leave trailing commas or strip required
+      # ones depending on key order. See: #1875
+      if ! "${SUDO[@]}" python3 --version >/dev/null 2>&1; then
+        error "python3 is required to patch /etc/docker/daemon.json but was not found on PATH"
+      fi
+      "${SUDO[@]}" python3 - /etc/docker/daemon.json <<'PYEOF'
+import json, os, re, sys, tempfile
+
+path = sys.argv[1]
+
+# --- Read & parse (with auto-repair for known corruption) ---
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except FileNotFoundError:
+    cfg = {}
+except json.JSONDecodeError:
+    # Attempt to repair the missing-comma pattern left by the old sed command:
+    #   "default-runtime": "nvidia"
+    #   "runtimes": { ... }        <-- missing comma before this line
+    with open(path) as f:
+        raw = f.read()
+    repaired = re.sub(
+        r'("default-runtime"\s*:\s*"nvidia")([\s\n]+")',
+        r'\1,\2',
+        raw,
+    )
+    try:
+        cfg = json.loads(repaired)
+    except json.JSONDecodeError as e:
+        sys.exit(f"daemon.json is malformed and could not be repaired automatically: {e}")
+
+if not isinstance(cfg, dict):
+    sys.exit("daemon.json must contain a top-level JSON object")
+
+# --- Remove unwanted keys ---
+cfg.pop("iptables", None)
+cfg.pop("bridge", None)
+
+# --- Atomic write with permission preservation ---
+dirname = os.path.dirname(os.path.abspath(path))
+try:
+    orig_mode = os.stat(path).st_mode & 0o777
+except FileNotFoundError:
+    orig_mode = 0o644
+
+fd, tmp = tempfile.mkstemp(dir=dirname)
+try:
+    with os.fdopen(fd, "w") as f:
+        json.dump(cfg, f, indent=4)
+        f.write("\n")
+    os.chmod(tmp, orig_mode)
+    os.replace(tmp, path)
+except Exception:
+    os.unlink(tmp)
+    raise
+PYEOF
       ;;
     jp7)
       # JP7 (Thor) does not need iptables or Docker daemon.json changes.
