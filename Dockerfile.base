@@ -172,16 +172,25 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     fi; \
     npm install -g "openclaw@${OPENCLAW_VERSION}" \
     && OPENCLAW_DIST_DIR="$(npm root -g)/openclaw/dist" \
-    && files_with_old_path="$(grep -R --include='*.js' -l "~/.openclaw/exec-approvals.json" "$OPENCLAW_DIST_DIR" || true)" \
+    && if [ ! -d "$OPENCLAW_DIST_DIR" ]; then \
+        echo "Error: OpenClaw dist directory not found: $OPENCLAW_DIST_DIR"; \
+        exit 1; \
+    fi \
+    && LEGACY_EXEC_APPROVALS_PATH="$(printf '%b' '\176/.openclaw/exec-approvals.json')" \
+    && DATA_EXEC_APPROVALS_PATH="$(printf '%b' '\176/.openclaw-data/exec-approvals.json')" \
+    && files_with_old_path="$(grep -R --include='*.js' -l "$LEGACY_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR" || true)" \
     && if [ -n "$files_with_old_path" ]; then \
-        echo "$files_with_old_path" | while IFS= read -r file; do \
-            sed -i 's#~/.openclaw/exec-approvals.json#~/.openclaw-data/exec-approvals.json#g' "$file"; \
-        done; \
-    elif ! grep -R --include='*.js' -q "~/.openclaw-data/exec-approvals.json" "$OPENCLAW_DIST_DIR"; then \
+        files_with_old_path_file="$(mktemp)"; \
+        printf '%s\n' "$files_with_old_path" > "$files_with_old_path_file"; \
+        while IFS= read -r file; do \
+            sed -i "s#${LEGACY_EXEC_APPROVALS_PATH}#${DATA_EXEC_APPROVALS_PATH}#g" "$file"; \
+        done < "$files_with_old_path_file"; \
+        rm -f "$files_with_old_path_file"; \
+    elif ! grep -R --include='*.js' -q "$DATA_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR"; then \
         echo "Error: Unable to verify OpenClaw exec approvals path in dist"; \
         exit 1; \
     fi \
-    && if grep -R --include='*.js' -n "~/.openclaw/exec-approvals.json" "$OPENCLAW_DIST_DIR"; then \
+    && if grep -R --include='*.js' -n "$LEGACY_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR"; then \
         echo "Error: OpenClaw exec approvals path patch failed"; \
         exit 1; \
     fi \
