@@ -10,6 +10,7 @@ import path from "path";
 const yaml = require("js-yaml");
 
 import { ROOT } from "./runner";
+import { DASHBOARD_PORT } from "./ports";
 
 export const AGENTS_DIR = path.join(ROOT, "agents");
 
@@ -120,8 +121,8 @@ export function loadAgent(name: string): AgentDefinition {
     get healthProbe(): AgentHealthProbe {
       return (
         (raw.health_probe as AgentHealthProbe) || {
-          url: "http://localhost:18789/",
-          port: 18789,
+          url: `http://localhost:${DASHBOARD_PORT}/`,
+          port: DASHBOARD_PORT,
           timeout_seconds: 30,
         }
       );
@@ -129,7 +130,7 @@ export function loadAgent(name: string): AgentDefinition {
 
     get forwardPort(): number {
       const ports = (raw.forward_ports as number[]) || [];
-      return ports[0] || 18789;
+      return ports[0] || DASHBOARD_PORT;
     },
 
     get configPaths(): AgentConfigPaths {
