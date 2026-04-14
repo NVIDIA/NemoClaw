@@ -545,6 +545,7 @@ async function recoverNamedGatewayRuntime() {
   return { recovered: false, before, after, attempted: true };
 }
 
+/** Query sandbox presence and return its output with the live enforced policy. */
 function getSandboxGatewayState(sandboxName) {
   const result = captureOpenshell(["sandbox", "get", sandboxName]);
   let output = result.output;
