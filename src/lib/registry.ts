@@ -14,6 +14,13 @@ export interface SandboxEntry {
   provider?: string | null;
   gpuEnabled?: boolean;
   policies?: string[];
+  /**
+   * Resolved host IPv4 used for container-side access to local inference
+   * (e.g. host-running Ollama/vLLM). Set on WSL2 + Docker Desktop when
+   * `host.openshell.internal` / `host-gateway` is un-routable. `null` on
+   * platforms where the default gateway hostname works.
+   */
+  resolvedHostIp?: string | null;
 }
 
 export interface SandboxRegistry {

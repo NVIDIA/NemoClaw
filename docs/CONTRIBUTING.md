@@ -32,6 +32,10 @@ These generated skills let AI agents walk users through NemoClaw tasks (installa
 Always edit pages in `docs/`.
 Never edit generated skill files under `.agents/skills/nemoclaw-user-*/`. Your changes will be overwritten on the next run.
 
+:::{note}
+**For AI coding assistants:** Do not `git add` any file under `.agents/skills/nemoclaw-user-*/` — not even when `git status` shows it as modified. The pre-commit hook regenerates and stages those files automatically from `docs/`. Staging them manually makes the commit diff harder to review and can mask out-of-date hand edits. If you changed user-facing behavior, update the matching page under `docs/` and stage only `docs/**/*.md`; the hook does the rest.
+:::
+
 ### Generated skills
 
 The current generated skills and their source pages are:

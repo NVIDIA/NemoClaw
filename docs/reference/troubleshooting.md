@@ -155,6 +155,50 @@ $ nemoclaw onboard
 Podman is not a tested runtime.
 If onboarding or sandbox lifecycle fails, switch to a tested runtime (Docker Desktop, Colima, or Docker Engine) and rerun onboarding.
 
+### Local inference on WSL2 + Docker Desktop
+
+On WSL2 with Docker Desktop, the conventional `host.openshell.internal`
+gateway hostname (backed by Docker's `host-gateway`) often resolves to
+an IPv6 ULA or an un-routable gateway IP. That can hang the onboard
+container reachability probe (step 4/8) and break inference routing to
+a host-side Ollama or vLLM.
+
+Onboarding now detects this combination and probes a list of candidate
+host IPs in order:
+
+1. The WSL distro's outbound IPv4 (`ip -4 -o route get 1.1.1.1`) —
+   correct when Ollama or vLLM runs **inside WSL**.
+2. The WSL2 default gateway (`ip -4 -o route show default`) — correct
+   when Ollama or vLLM runs on the **Windows host** in NAT networking
+   mode.
+3. Other interface addresses from `hostname -I`.
+
+The first candidate whose container-side probe succeeds is injected
+into both `OPENAI_BASE_URL` and the reachability check, and persisted
+to the sandbox registry entry as `resolvedHostIp`. No manual override
+is needed for either Ollama placement.
+
+In WSL **mirrored** networking mode, `host.openshell.internal` already
+reaches the shared network stack directly, so no override is applied.
+
+If onboarding still reports that the container reachability check
+failed for `http://host.openshell.internal:11434`:
+
+- Confirm Ollama is listening on all interfaces:
+  `OLLAMA_HOST=0.0.0.0:11434 ollama serve`.
+- Check your Windows / WSL firewall is not blocking port 11434.
+- If Ollama is on the Windows host (not inside WSL), the reachable
+  address may be the WSL2 default gateway rather than eth0. Use
+  `ip route show default` to find it, then set
+  `OPENAI_BASE_URL=http://<gateway-ip>:11434/v1` manually.
+- As a last resort, install Docker Engine directly inside WSL2 instead
+  of Docker Desktop — `host-gateway` works reliably there.
+
+Sandbox pod → host egress is a separate path from the onboard probe. If
+inference calls still fail from inside a running sandbox, verify the
+sandbox's `HTTP_PROXY` / `ALL_PROXY` env vars include the resolved host
+IP in `NO_PROXY`.
+
 ### Invalid sandbox name
 
 Sandbox names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.

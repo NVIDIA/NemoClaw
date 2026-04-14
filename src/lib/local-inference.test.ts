@@ -8,6 +8,7 @@ import {
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
   LARGE_OLLAMA_MIN_MEMORY_MB,
+  detectWsl2HostIp,
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
@@ -129,20 +130,122 @@ describe("local inference helpers", () => {
     expect(result.message).toMatch(/host\.openshell\.internal:8000/);
   });
 
+  describe("detectWsl2HostIp", () => {
+    it("prefers the `ip route get` outbound source address", () => {
+      const ip = detectWsl2HostIp((cmd) => {
+        if (cmd.includes("ip -4 -o route get")) {
+          return "1.1.1.1 via 172.20.128.1 dev eth0 src 172.20.130.16 uid 1000\n";
+        }
+        if (cmd.includes("hostname -I")) return "192.168.1.50 172.17.0.1 ";
+        return "";
+      });
+      expect(ip).toBe("172.20.130.16");
+    });
+
+    it("returns eth0 src and default gateway as separate candidates", async () => {
+      const { detectWsl2HostIpCandidates } = await import(
+        "../../dist/lib/local-inference"
+      );
+      const candidates = detectWsl2HostIpCandidates((cmd) => {
+        if (cmd.includes("ip -4 -o route get 1.1.1.1")) {
+          return "1.1.1.1 via 172.20.128.1 dev eth0 src 172.20.130.16 uid 1000";
+        }
+        if (cmd.includes("ip -4 -o route show default")) {
+          return "default via 172.20.128.1 dev eth0 proto kernel\n";
+        }
+        return "";
+      });
+      expect(candidates).toEqual(["172.20.130.16", "172.20.128.1"]);
+    });
+
+    it("falls back to hostname -I when ip route is unavailable", () => {
+      const ip = detectWsl2HostIp((cmd) => {
+        if (cmd.includes("ip -4 -o route get")) return "";
+        if (cmd.includes("hostname -I")) return "172.20.130.16 172.17.0.1";
+        return "";
+      });
+      expect(ip).toBe("172.20.130.16");
+    });
+
+    it("skips docker bridge, loopback, and link-local addresses", () => {
+      const ip = detectWsl2HostIp((cmd) => {
+        if (cmd.includes("ip -4 -o route get")) return "";
+        if (cmd.includes("hostname -I"))
+          return "127.0.0.1 172.17.0.1 169.254.1.2 10.42.0.5 192.168.1.50";
+        return "";
+      });
+      expect(ip).toBe("192.168.1.50");
+    });
+
+    it("returns null when no usable address is found", () => {
+      expect(
+        detectWsl2HostIp((cmd) => {
+          if (cmd.includes("ip -4 -o route get")) return "";
+          if (cmd.includes("hostname -I")) return "127.0.0.1 172.17.0.1";
+          return "";
+        }),
+      ).toBeNull();
+    });
+
+    it("returns null when both probes fail", () => {
+      expect(detectWsl2HostIp(() => "")).toBeNull();
+    });
+
+    it("ignores non-IPv4 tokens from hostname -I (IPv6 etc.)", () => {
+      const ip = detectWsl2HostIp((cmd) => {
+        if (cmd.includes("ip -4 -o route get")) return "";
+        if (cmd.includes("hostname -I")) return "fe80::1234 192.168.1.50";
+        return "";
+      });
+      expect(ip).toBe("192.168.1.50");
+    });
+  });
+
   it("detects WSL2 host IP and uses it for the container check", () => {
-    let callCount = 0;
     const result = validateLocalProvider(
       "ollama-local",
       (cmd) => {
-        callCount += 1;
-        if (callCount === 1) return '{"models":[]}'; // health check passes
-        if (cmd.includes("hostname -I")) return "172.20.130.16 "; // WSL2 IP
-        return '{"models":[]}'; // container check passes with correct IP
+        if (cmd.includes("/api/tags") && !cmd.includes("docker run")) {
+          return '{"models":[]}'; // localhost health check
+        }
+        if (cmd.includes("ip -4 -o route get")) {
+          return "1.1.1.1 via 172.20.128.1 dev eth0 src 172.20.130.16 uid 1000";
+        }
+        if (cmd.includes("ip -4 -o route show default")) {
+          return "default via 172.20.128.1 dev eth0 proto kernel";
+        }
+        if (cmd.includes("docker run") && cmd.includes("172.20.130.16")) {
+          return '{"models":[]}'; // first candidate wins
+        }
+        return "";
       },
       { isWsl: true, isDockerDesktop: true },
     );
-    expect(result).toEqual({ ok: true });
-    expect(callCount).toBe(3);
+    expect(result).toEqual({ ok: true, resolvedHostIp: "172.20.130.16" });
+  });
+
+  it("falls back to default gateway when eth0 candidate is not reachable", () => {
+    const result = validateLocalProvider(
+      "ollama-local",
+      (cmd) => {
+        if (cmd.includes("/api/tags") && !cmd.includes("docker run")) {
+          return '{"models":[]}';
+        }
+        if (cmd.includes("ip -4 -o route get")) {
+          return "1.1.1.1 via 172.20.128.1 dev eth0 src 172.20.130.16 uid 1000";
+        }
+        if (cmd.includes("ip -4 -o route show default")) {
+          return "default via 172.20.128.1 dev eth0 proto kernel";
+        }
+        // only the gateway candidate reaches Windows-hosted Ollama
+        if (cmd.includes("docker run") && cmd.includes("172.20.128.1")) {
+          return '{"models":[]}';
+        }
+        return "";
+      },
+      { isWsl: true, isDockerDesktop: true },
+    );
+    expect(result).toEqual({ ok: true, resolvedHostIp: "172.20.128.1" });
   });
 
   it("falls back to host-gateway when not on WSL2 + Docker Desktop", () => {

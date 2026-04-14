@@ -24,6 +24,15 @@ export interface GpuInfo {
 export interface ValidationResult {
   ok: boolean;
   message?: string;
+  /**
+   * When the caller is on WSL2 + Docker Desktop and one of the probed
+   * host-IP candidates succeeded, this is that IP. Callers should pass
+   * it into {@link getLocalProviderBaseUrl} so the gateway's
+   * `OPENAI_BASE_URL` matches the address the container probe
+   * validated. `undefined` on non-WSL2, mirrored-mode WSL2, or when
+   * only the default `host-gateway` probe succeeded.
+   */
+  resolvedHostIp?: string;
 }
 
 /**
@@ -90,15 +99,70 @@ export function getLocalProviderContainerReachabilityCheck(
   }
 }
 
+const IPV4_RE = /^\d+\.\d+\.\d+\.\d+$/;
+
+/** Addresses we never want to hand to a container as the "host IP". */
+function isUsableHostIp(ip: string): boolean {
+  if (!IPV4_RE.test(ip)) return false;
+  if (ip === "127.0.0.1" || ip.startsWith("127.")) return false;
+  if (ip.startsWith("169.254.")) return false; // link-local
+  // Common docker bridge / k8s CNI ranges that are not the WSL host.
+  if (ip.startsWith("172.17.") || ip.startsWith("172.18.")) return false;
+  if (ip.startsWith("10.42.") || ip.startsWith("10.43.")) return false;
+  return true;
+}
+
 /**
- * Detect the WSL2 distro's primary IPv4 address.
- * On Docker Desktop + WSL2, `host-gateway` resolves to an un-routable
- * address.  The WSL2 eth0 IP is the only address containers can reach.
+ * Gather candidate IPv4 addresses that might reach a host-side inference
+ * server from inside a container on WSL2 + Docker Desktop. Returns a
+ * priority-ordered, de-duplicated list.
+ *
+ * Two Ollama/vLLM placements are both valid and must both work:
+ *   A. Server **inside WSL** (Linux install of Ollama) — reachable via
+ *      the WSL distro's own eth0 IPv4.
+ *   B. Server on the **Windows host** — reachable only via the WSL2
+ *      default gateway IP (e.g. 172.x.x.1) in NAT networking mode.
+ *
+ * In mirrored networking mode the kernel reports no default route to a
+ * WSL-only gateway, and `host.openshell.internal` / `host-gateway`
+ * already works — callers treat an empty candidate list as the signal
+ * to fall back to the default hostname.
+ *
+ * Probe order:
+ *   1. `ip -4 -o route get 1.1.1.1` — outbound src, covers case (A).
+ *   2. `ip -4 -o route show default` — gateway, covers case (B).
+ *   3. `hostname -I` — last-resort interface enumeration.
+ */
+export function detectWsl2HostIpCandidates(runCapture: RunCaptureFn): string[] {
+  const out: string[] = [];
+  const push = (ip: string | null | undefined): void => {
+    if (ip && isUsableHostIp(ip) && !out.includes(ip)) out.push(ip);
+  };
+
+  const routeGet = runCapture("ip -4 -o route get 1.1.1.1 2>/dev/null", {
+    ignoreError: true,
+  });
+  push(String(routeGet || "").match(/\bsrc\s+(\d+\.\d+\.\d+\.\d+)\b/)?.[1]);
+
+  const routeDefault = runCapture("ip -4 -o route show default 2>/dev/null", {
+    ignoreError: true,
+  });
+  for (const line of String(routeDefault || "").split(/\r?\n/)) {
+    push(line.match(/\bvia\s+(\d+\.\d+\.\d+\.\d+)\b/)?.[1]);
+  }
+
+  const hostnameOut = runCapture("hostname -I 2>/dev/null", { ignoreError: true });
+  for (const tok of String(hostnameOut || "").trim().split(/\s+/)) push(tok);
+
+  return out;
+}
+
+/**
+ * First-choice host IP for WSL2. Retained for back-compat; new code
+ * should call {@link detectWsl2HostIpCandidates} and probe each.
  */
 export function detectWsl2HostIp(runCapture: RunCaptureFn): string | null {
-  const ip = runCapture("hostname -I 2>/dev/null", { ignoreError: true });
-  const first = (ip || "").trim().split(/\s+/)[0];
-  return first && /^\d+\.\d+\.\d+\.\d+$/.test(first) ? first : null;
+  return detectWsl2HostIpCandidates(runCapture)[0] || null;
 }
 
 export function validateLocalProvider(
@@ -130,21 +194,20 @@ export function validateLocalProvider(
     }
   }
 
-  // On WSL2 + Docker Desktop, host-gateway is un-routable.
-  // Resolve the WSL2 eth0 IP and pass it to the container check.
-  const hostIp =
-    opts.isWsl && opts.isDockerDesktop ? detectWsl2HostIp(runCapture) : undefined;
-  const containerCommand = getLocalProviderContainerReachabilityCheck(
-    provider,
-    hostIp ?? undefined,
-  );
-  if (!containerCommand) {
-    return { ok: true };
-  }
+  // On WSL2 + Docker Desktop, `host-gateway` is often un-routable.
+  // Try each candidate host IP (WSL eth0 + default gateway) and fall
+  // back to the default hostname. Use the first one the container can
+  // actually reach.
+  const candidates: (string | undefined)[] =
+    opts.isWsl && opts.isDockerDesktop
+      ? [...detectWsl2HostIpCandidates(runCapture), undefined]
+      : [undefined];
 
-  const containerOutput = runCapture(containerCommand, { ignoreError: true });
-  if (containerOutput) {
-    return { ok: true };
+  for (const candidate of candidates) {
+    const command = getLocalProviderContainerReachabilityCheck(provider, candidate);
+    if (!command) return { ok: true };
+    const out = runCapture(command, { ignoreError: true });
+    if (out) return candidate ? { ok: true, resolvedHostIp: candidate } : { ok: true };
   }
 
   switch (provider) {

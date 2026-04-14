@@ -24,7 +24,6 @@ const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
 const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
 const {
-  detectWsl2HostIp,
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
@@ -3234,6 +3233,11 @@ async function setupInference(
   step(4, 8, "Setting up inference provider");
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
 
+  // Populated by local-inference branches on WSL2 + Docker Desktop;
+  // persisted to the registry so later commands / diagnostics can see
+  // which host IP was injected into `host.openshell.internal`.
+  let resolvedHostIp = null;
+
   if (
     provider === "nvidia-prod" ||
     provider === "nvidia-nim" ||
@@ -3312,18 +3316,25 @@ async function setupInference(
       process.exit(applyResult.status || 1);
     }
   } else if (provider === "vllm-local") {
-    const platformOpts = { isWsl: isWsl(), isDockerDesktop: getContainerRuntime() === "docker-desktop" };
+    const platformOpts = {
+      isWsl: isWsl(),
+      isDockerDesktop: getContainerRuntime() === "docker-desktop",
+    };
     const validation = validateLocalProvider(provider, runCapture, platformOpts);
     if (!validation.ok) {
       console.error(`  ${validation.message}`);
-      const answer = (await prompt("  Continue anyway? Inference may fail at runtime. [y/N]: ")).trim().toLowerCase();
+      const answer = (await prompt("  Continue anyway? Inference may fail at runtime. [y/N]: "))
+        .trim()
+        .toLowerCase();
       if (answer !== "y") {
         process.exit(1);
       }
     }
-    const wslHostIp = platformOpts.isWsl && platformOpts.isDockerDesktop
-      ? detectWsl2HostIp(runCapture) : null;
-    const baseUrl = getLocalProviderBaseUrl(provider, wslHostIp ?? undefined);
+    resolvedHostIp = validation.resolvedHostIp || null;
+    if (resolvedHostIp) {
+      console.log(`  Resolved WSL2 host IP for container access: ${resolvedHostIp}`);
+    }
+    const baseUrl = getLocalProviderBaseUrl(provider, resolvedHostIp ?? undefined);
     const providerResult = upsertProvider("vllm-local", "openai", "OPENAI_API_KEY", baseUrl, {
       OPENAI_API_KEY: "dummy",
     });
@@ -3343,19 +3354,26 @@ async function setupInference(
       String(LOCAL_INFERENCE_TIMEOUT_SECS),
     ]);
   } else if (provider === "ollama-local") {
-    const platformOpts = { isWsl: isWsl(), isDockerDesktop: getContainerRuntime() === "docker-desktop" };
+    const platformOpts = {
+      isWsl: isWsl(),
+      isDockerDesktop: getContainerRuntime() === "docker-desktop",
+    };
     const validation = validateLocalProvider(provider, runCapture, platformOpts);
     if (!validation.ok) {
       console.error(`  ${validation.message}`);
       console.error("  On macOS, local inference also depends on OpenShell host routing support.");
-      const answer = (await prompt("  Continue anyway? Inference may fail at runtime. [y/N]: ")).trim().toLowerCase();
+      const answer = (await prompt("  Continue anyway? Inference may fail at runtime. [y/N]: "))
+        .trim()
+        .toLowerCase();
       if (answer !== "y") {
         process.exit(1);
       }
     }
-    const wslHostIp = platformOpts.isWsl && platformOpts.isDockerDesktop
-      ? detectWsl2HostIp(runCapture) : null;
-    const baseUrl = getLocalProviderBaseUrl(provider, wslHostIp ?? undefined);
+    resolvedHostIp = validation.resolvedHostIp || null;
+    if (resolvedHostIp) {
+      console.log(`  Resolved WSL2 host IP for container access: ${resolvedHostIp}`);
+    }
+    const baseUrl = getLocalProviderBaseUrl(provider, resolvedHostIp ?? undefined);
     const providerResult = upsertProvider("ollama-local", "openai", "OPENAI_API_KEY", baseUrl, {
       OPENAI_API_KEY: "ollama",
     });
@@ -3384,7 +3402,11 @@ async function setupInference(
   }
 
   verifyInferenceRoute(provider, model);
-  registry.updateSandbox(sandboxName, { model, provider });
+  registry.updateSandbox(sandboxName, {
+    model,
+    provider,
+    resolvedHostIp: resolvedHostIp || null,
+  });
   console.log(`  ✓ Inference route set: ${provider} / ${model}`);
   return { ok: true };
 }
