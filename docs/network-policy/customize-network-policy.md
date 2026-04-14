@@ -32,6 +32,11 @@ NemoClaw supports both static policy changes that persist across restarts and dy
 - A running NemoClaw sandbox for dynamic changes, or the NemoClaw source repository for static changes.
 - The OpenShell CLI on your `PATH`.
 
+> [!IMPORTANT]
+> Make static policy edits on the host, not inside the sandbox.
+> The sandbox image is intentionally minimal and may not include editors or package-management tools.
+> Changes made only inside the sandbox are also ephemeral and are lost when the sandbox is recreated.
+
 ## Static Changes
 
 Static changes modify the baseline policy file and take effect after the next sandbox creation.
@@ -39,6 +44,14 @@ Static changes modify the baseline policy file and take effect after the next sa
 ### Edit the Policy File
 
 Open `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and add or modify endpoint entries.
+
+If you only need one of the built-in presets, use `nemoclaw <name> policy-add` instead of editing YAML by hand:
+
+```console
+$ nemoclaw my-assistant policy-add
+```
+
+Use a manual YAML edit when you need to allow custom hosts that are not covered by a preset, such as an internal API or a weather service.
 
 Each entry in the `network` section defines an endpoint group with the following fields:
 
@@ -83,7 +96,7 @@ Follow the same format as the baseline policy in `nemoclaw-blueprint/policies/op
 Use the OpenShell CLI to apply the policy update:
 
 ```console
-$ openshell policy set <policy-file>
+$ openshell policy set --policy <policy-file> <sandbox-name>
 ```
 
 The change takes effect immediately.
@@ -93,6 +106,16 @@ The change takes effect immediately.
 Dynamic changes apply only to the current session.
 When the sandbox stops, the running policy resets to the baseline defined in the policy file.
 To make changes permanent, update the static policy file and re-run setup.
+
+### Approve Requests Interactively
+
+For one-off access, you can approve blocked requests in the OpenShell TUI instead of editing the baseline policy:
+
+```console
+$ openshell term
+```
+
+This is useful when you want to test a destination before deciding whether it belongs in a permanent preset or custom policy file.
 
 ## Policy Presets
 
@@ -118,7 +141,7 @@ Available presets:
 To apply a preset to a running sandbox, pass it as a policy file:
 
 ```console
-$ openshell policy set nemoclaw-blueprint/policies/presets/pypi.yaml
+$ openshell policy set --policy nemoclaw-blueprint/policies/presets/pypi.yaml my-assistant
 ```
 
 To include a preset in the baseline, merge its entries into `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.

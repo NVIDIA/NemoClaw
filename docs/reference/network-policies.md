@@ -131,5 +131,5 @@ $ nemoclaw onboard
 Apply policy updates to a running sandbox without restarting:
 
 ```console
-$ openshell policy set <policy-file>
+$ openshell policy set --policy <policy-file> <sandbox-name>
 ```

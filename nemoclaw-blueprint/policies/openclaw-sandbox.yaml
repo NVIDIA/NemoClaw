@@ -48,8 +48,19 @@ filesystem_policy:
                                     # Blueprints are root-owned; sticky bit (1755)
                                     # on parent prevents rename/delete (#1607).
 
+# TODO: evaluate landlock enforce mode — currently best_effort because
+# enforce can break things in unpredictable ways. Needs thorough testing
+# across different kernel versions before we flip this. (ref #516 item 3)
 landlock:
   compatibility: best_effort
+
+# Note: tool-level write/edit restrictions for openclaw.json are intentionally
+# NOT declared here. OpenShell's PolicyFile schema does not support a
+# `tool_policy` section (serde deny_unknown_fields — only version, filesystem_policy,
+# landlock, process, network_policies are accepted). Config protection is
+# achieved entirely through filesystem_policy (read_only + /etc/openclaw mount)
+# and the root:root 555 permission lock on /sandbox/.openclaw/.
+# Ref: https://github.com/NVIDIA/NemoClaw/pull/654#pullrequestreview-…
 
 process:
   run_as_user: sandbox
