@@ -8,7 +8,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   buildProviderArgs,
@@ -47,6 +47,9 @@ import {
   summarizeProbeFailure,
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
+  promptOrDefault,
+  _setNonInteractiveForTest,
+  _setPromptForTest,
 } from "../dist/lib/onboard";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context";
 import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
@@ -4487,5 +4490,126 @@ const { createSandbox } = require(${onboardPath});
     // Non-interactive still exits within this function
     assert.match(fnBody, /isNonInteractive\(\)/);
     assert.match(fnBody, /process\.exit\(1\)/);
+  });
+});
+
+describe("promptOrDefault", () => {
+  describe("non-interactive mode", () => {
+    const savedEnv: Record<string, string | undefined> = {};
+
+    function setEnv(key: string, value: string | undefined) {
+      savedEnv[key] = process.env[key];
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+
+    function restoreEnv() {
+      for (const [key, value] of Object.entries(savedEnv)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
+
+    beforeEach(() => {
+      _setNonInteractiveForTest(true);
+    });
+
+    afterEach(() => {
+      _setNonInteractiveForTest(false);
+      restoreEnv();
+    });
+
+    it("returns env var value when set", async () => {
+      setEnv("TEST_PROMPT_VAR", "from-env");
+      const result = await promptOrDefault("Question: ", "TEST_PROMPT_VAR", "fallback");
+      expect(result).toBe("from-env");
+    });
+
+    it("returns defaultValue when env var is unset", async () => {
+      setEnv("TEST_PROMPT_VAR", undefined);
+      const result = await promptOrDefault("Question: ", "TEST_PROMPT_VAR", "fallback");
+      expect(result).toBe("fallback");
+    });
+
+    it("returns defaultValue when env var is empty", async () => {
+      setEnv("TEST_PROMPT_VAR", "");
+      const result = await promptOrDefault("Question: ", "TEST_PROMPT_VAR", "fallback");
+      expect(result).toBe("fallback");
+    });
+
+    it("returns defaultValue when env var is whitespace-only", async () => {
+      setEnv("TEST_PROMPT_VAR", "   ");
+      const result = await promptOrDefault("Question: ", "TEST_PROMPT_VAR", "fallback");
+      expect(result).toBe("fallback");
+    });
+
+    it("trims env var value", async () => {
+      setEnv("TEST_PROMPT_VAR", "  padded  ");
+      const result = await promptOrDefault("Question: ", "TEST_PROMPT_VAR", "fallback");
+      expect(result).toBe("padded");
+    });
+
+    it("returns defaultValue when envVar is null", async () => {
+      const result = await promptOrDefault("Question: ", null, "fallback");
+      expect(result).toBe("fallback");
+    });
+  });
+
+  describe("interactive mode", () => {
+    afterEach(() => {
+      _setPromptForTest(null);
+      _setNonInteractiveForTest(false);
+    });
+
+    it("returns user input when non-empty", async () => {
+      _setPromptForTest(async () => "user-input");
+      const result = await promptOrDefault("Question: ", null, "fallback");
+      expect(result).toBe("user-input");
+    });
+
+    it("falls back to defaultValue when user submits empty input", async () => {
+      _setPromptForTest(async () => "");
+      const result = await promptOrDefault("Question: ", null, "fallback");
+      expect(result).toBe("fallback");
+    });
+
+    it("falls back to defaultValue when user submits whitespace-only", async () => {
+      _setPromptForTest(async () => "   ");
+      const result = await promptOrDefault("Question: ", null, "fallback");
+      expect(result).toBe("fallback");
+    });
+
+    it("trims user input", async () => {
+      _setPromptForTest(async () => "  padded  ");
+      const result = await promptOrDefault("Question: ", null, "fallback");
+      expect(result).toBe("padded");
+    });
+
+    it("falls back to defaultValue when prompt returns null", async () => {
+      _setPromptForTest(async () => null as unknown as string);
+      const result = await promptOrDefault("Question: ", null, "fallback");
+      expect(result).toBe("fallback");
+    });
+  });
+
+  describe("_setPromptForTest validation", () => {
+    afterEach(() => {
+      _setPromptForTest(null);
+    });
+
+    it("rejects non-function values", () => {
+      expect(() => _setPromptForTest("not-a-function" as any)).toThrow(TypeError);
+    });
+
+    it("accepts null to reset", () => {
+      _setPromptForTest(async () => "test");
+      _setPromptForTest(null);
+    });
   });
 });

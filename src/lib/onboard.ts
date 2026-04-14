@@ -203,16 +203,33 @@ function note(message) {
   console.log(`${DIM}${message}${RESET}`);
 }
 
+// Test-only override for the interactive prompt function.
+let _promptOverride: ((question: string) => Promise<string>) | null = null;
+
+function _setPromptForTest(fn: ((question: string) => Promise<string>) | null) {
+  if (fn !== null && typeof fn !== "function") {
+    throw new TypeError("_setPromptForTest expects a function or null");
+  }
+  _promptOverride = fn;
+}
+
+function _setNonInteractiveForTest(value: boolean) {
+  NON_INTERACTIVE = !!value;
+}
+
 // Prompt wrapper: returns env var value or default in non-interactive mode,
 // otherwise prompts the user interactively.
 async function promptOrDefault(question, envVar, defaultValue) {
   if (isNonInteractive()) {
-    const val = envVar ? process.env[envVar] : null;
+    const raw = envVar ? process.env[envVar] : null;
+    const val = (raw || "").trim();
     const result = val || defaultValue;
     note(`  [non-interactive] ${question.trim()} → ${result}`);
     return result;
   }
-  return prompt(question);
+  const promptFn = _promptOverride || prompt;
+  const answer = ((await promptFn(question)) || "").trim();
+  return answer || defaultValue;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -2354,7 +2371,7 @@ async function promptValidatedSandboxName() {
       "NEMOCLAW_SANDBOX_NAME",
       "my-assistant",
     );
-    const sandboxName = (nameAnswer || "my-assistant").trim().toLowerCase();
+    const sandboxName = nameAnswer.trim().toLowerCase();
 
     // Validate: RFC 1123 subdomain — lowercase alphanumeric and hyphens,
     // must start with a letter (not a digit) to satisfy Kubernetes naming.
@@ -2488,7 +2505,7 @@ async function createSandbox(
         console.log(`  Sandbox '${sandboxName}' already exists.`);
         console.log("  Choosing 'n' will delete the existing sandbox and create a new one.");
         const answer = await promptOrDefault("  Reuse existing sandbox? [Y/n]: ", null, "y");
-        const normalizedAnswer = answer.trim().toLowerCase();
+        const normalizedAnswer = answer.toLowerCase();
         if (normalizedAnswer !== "n" && normalizedAnswer !== "no") {
           upsertMessagingProviders(messagingTokenDefs);
           ensureDashboardForward(sandboxName, chatUiUrl);
@@ -2502,7 +2519,7 @@ async function createSandbox(
           null,
           "y",
         );
-        const normalizedAnswer = answer.trim().toLowerCase();
+        const normalizedAnswer = answer.toLowerCase();
         if (normalizedAnswer === "n" || normalizedAnswer === "no") {
           console.log("  Aborting onboarding.");
           process.exit(1);
@@ -5410,4 +5427,7 @@ module.exports = {
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
   patchStagedDockerfile,
+  promptOrDefault,
+  _setNonInteractiveForTest,
+  _setPromptForTest,
 };
