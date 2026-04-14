@@ -99,6 +99,16 @@ $ export PATH=~/.npm-global/bin:$PATH
 
 Add the `export` line to your `~/.bashrc` or `~/.zshrc` to make it permanent, then re-run the installer.
 
+### Installer fails on NVIDIA Jetson
+
+The installer auto-detects NVIDIA Jetson devices (Orin and Thor) and applies required host configuration before the normal install flow.
+If the Jetson setup step fails, verify that you have `sudo` access and that Docker is installed and running.
+
+For JetPack 6 (L4T 36.x), the setup switches iptables to legacy mode and adjusts the Docker daemon configuration.
+For JetPack 7 (L4T 38.x / Thor), only bridge netfilter and sysctl settings are applied.
+
+If the L4T version is not recognized, the setup step is skipped and the installer continues normally.
+
 ### Port already in use
 
 The NemoClaw gateway uses port `18789` by default.
@@ -128,6 +138,20 @@ $ nemoclaw onboard
 
 Podman is not a tested runtime.
 If onboarding or sandbox lifecycle fails, switch to a tested runtime (Docker Desktop, Colima, or Docker Engine) and rerun onboarding.
+
+### OpenShell version above maximum
+
+Each NemoClaw release validates against a range of tested OpenShell versions.
+If the installed OpenShell version exceeds the configured maximum, `nemoclaw onboard` exits with an error:
+
+```text
+✗ openshell <version> is above the maximum supported by this NemoClaw release.
+  blueprint.yaml max_openshell_version: <max>
+```
+
+Upgrade NemoClaw to a version that supports your OpenShell release, or install a supported OpenShell version from the [OpenShell releases page](https://github.com/NVIDIA/OpenShell/releases).
+
+The `install-openshell.sh` script also enforces this constraint and pins fresh installs to the validated maximum version.
 
 ### Invalid sandbox name
 
@@ -256,6 +280,33 @@ $ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
 $ nemoclaw onboard
 ```
 
+### Agent fails at runtime after onboarding succeeds with a compatible endpoint
+
+Some OpenAI-compatible servers (such as SGLang) expose `/v1/responses` and pass
+the onboarding validation probe, but their streaming mode is incomplete.
+OpenClaw requires granular streaming events like `response.output_text.delta`
+that these backends do not emit.
+
+NemoClaw now tests streaming events during the `/v1/responses` probe and falls
+back to `/v1/chat/completions` automatically.
+If you onboarded before this check was added, re-run onboarding so the wizard
+re-probes the endpoint and bakes the correct API path into the image:
+
+```console
+$ nemoclaw onboard
+```
+
+To force `/v1/chat/completions` without re-probing, set `NEMOCLAW_PREFERRED_API`:
+
+```console
+$ NEMOCLAW_PREFERRED_API=openai-completions nemoclaw onboard
+```
+
+Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone — it patches the config
+at container startup but does not update the Dockerfile ARG baked into the
+image.
+A fresh `nemoclaw onboard` is the reliable fix.
+
 ### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
 
 This is expected behavior.
@@ -307,6 +358,20 @@ In that case:
 - inspect gateway logs and blocked requests with `openshell term`
 - treat the failure as a native Discord gateway problem, not as a bridge startup problem
 
+### Landlock filesystem restrictions silently degraded
+
+After sandbox creation, NemoClaw checks whether the host kernel supports Landlock (Linux 5.13+).
+If the kernel is too old or you are running on macOS (where the Docker VM kernel may lack Landlock), a warning prints:
+
+```text
+⚠ Landlock: Docker VM kernel <version> does not support Landlock (requires ≥5.13).
+  Sandbox filesystem restrictions will silently degrade (best_effort mode).
+```
+
+This warning is informational and does not block sandbox creation.
+The sandbox runs without kernel-level filesystem restrictions, relying on container mount configuration instead.
+For full filesystem enforcement, run on a Linux kernel 5.13 or later (Ubuntu 22.04 LTS and later include Landlock support).
+
 ### Sandbox lost after gateway restart
 
 Sandboxes created with OpenShell versions older than 0.0.24 can become unreachable after a gateway restart because SSH secrets were not persisted.
@@ -348,6 +413,72 @@ $ nemoclaw <name> logs
 ```
 
 Use `--follow` to stream logs in real time while debugging.
+
+(windows-wsl-2)=
+
+## Windows Subsystem for Linux
+
+For environment setup steps, see Windows Prerequisites (see the `nemoclaw-user-get-started` skill).
+
+### `wsl --install --no-distribution` returns Forbidden (403)
+
+Check your network connectivity.
+If you are behind a VPN, try reconnecting or switching to a different network.
+
+### `wsl -d Ubuntu` says "There is no distribution with the supplied name"
+
+The Ubuntu package was installed with `--no-launch` but never registered.
+Run `ubuntu.exe install --root` from PowerShell to register it, or reinstall without `--no-launch`:
+
+```console
+$ wsl --unregister Ubuntu
+$ wsl --install -d Ubuntu
+```
+
+### `docker info` fails inside WSL
+
+Confirm that Docker Desktop is running and that WSL integration is enabled for Ubuntu (Settings > Resources > WSL integration).
+Then restart WSL:
+
+```console
+$ wsl --shutdown
+$ wsl -d Ubuntu
+$ docker info
+```
+
+### Ollama inference fails or hangs in WSL
+
+Ollama configures context length based on your hardware.
+On some GPUs (for example RTX 3500), the default context length is not sufficient for OpenClaw.
+Force a larger context length:
+
+```console
+$ pkill -f 'ollama serve'
+$ OLLAMA_CONTEXT_LENGTH=16384 ollama serve
+```
+
+Verify that Ollama inference works:
+
+```console
+$ echo "Hello" | ollama run <model-id>
+```
+
+Replace `<model-id>` with the model you selected during onboarding (for example `qwen3.5:4b`).
+
+If `ollama serve` fails with `Error: listen tcp 127.0.0.1:11434: bind: address already in use`, check whether Ollama is configured for automatic startup:
+
+```console
+$ sudo systemctl status ollama
+```
+
+If it is active, stop it first, then start with the custom context length:
+
+```console
+$ sudo systemctl stop ollama
+$ OLLAMA_CONTEXT_LENGTH=16384 ollama serve
+```
+
+For additional troubleshooting, see the Quickstart (see the `nemoclaw-user-get-started` skill) and Windows Setup (see the `nemoclaw-user-get-started` skill) pages.
 
 ## Podman
 
