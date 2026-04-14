@@ -8,6 +8,7 @@
 // defaults that match the hardcoded OpenClaw values on main.
 
 import * as registry from "./registry";
+import { DASHBOARD_PORT } from "./ports";
 import * as onboardSession from "./onboard-session";
 import { loadAgent, type AgentDefinition } from "./agent-defs";
 import { shellQuote } from "./runner";
@@ -43,8 +44,8 @@ export function getSessionAgent(sandboxName?: string): AgentDefinition | null {
  * Returns the agent's configured probe URL, or the OpenClaw default.
  */
 export function getHealthProbeUrl(agent: AgentDefinition | null): string {
-  if (!agent) return "http://127.0.0.1:18789/";
-  return agent.healthProbe?.url || "http://127.0.0.1:18789/";
+  if (!agent) return `http://127.0.0.1:${DASHBOARD_PORT}/`;
+  return agent.healthProbe?.url || `http://127.0.0.1:${DASHBOARD_PORT}/`;
 }
 
 /**

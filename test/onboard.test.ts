@@ -16,6 +16,8 @@ import {
   classifySandboxCreateFailure,
   compactText,
   formatEnvAssignment,
+  getDashboardAccessInfo,
+  getDashboardForwardStartCommand,
   getNavigationChoice,
   getGatewayReuseState,
   getPortConflictServiceHints,
@@ -380,6 +382,38 @@ describe("onboard helpers", () => {
     expect(resolveDashboardForwardTarget("http://[::1]:18789")).toBe("18789");
     expect(resolveDashboardForwardTarget("https://chat.example.com")).toBe("0.0.0.0:18789");
     expect(resolveDashboardForwardTarget("http://10.0.0.25:18789")).toBe("0.0.0.0:18789");
+  });
+
+  it("includes a VS Code/WSL dashboard URL when running under WSL", () => {
+    const access = getDashboardAccessInfo("the-crucible", {
+      token: "secret-token",
+      chatUiUrl: "http://127.0.0.1:19999",
+      env: { WSL_DISTRO_NAME: "Ubuntu" },
+      platform: "linux",
+      release: "6.6.87.2-microsoft-standard-WSL2",
+      runCapture: (command) => (command.includes("hostname -I") ? "172.24.240.1\n" : ""),
+    });
+
+    expect(access).toEqual([
+      { label: "Dashboard", url: "http://127.0.0.1:19999/#token=secret-token" },
+      { label: "VS Code/WSL", url: "http://172.24.240.1:19999/#token=secret-token" },
+    ]);
+  });
+
+  it("binds the dashboard forward to all interfaces under WSL", () => {
+    const command = getDashboardForwardStartCommand("the-crucible", {
+      chatUiUrl: "http://127.0.0.1:19999",
+      env: { WSL_DISTRO_NAME: "Ubuntu" },
+      openshellBinary: "/usr/bin/openshell",
+      platform: "linux",
+      release: "6.6.87.2-microsoft-standard-WSL2",
+    });
+
+    expect(command).toContain("forward");
+    expect(command).toContain("start");
+    expect(command).toContain("--background");
+    expect(command).toContain("0.0.0.0:19999");
+    expect(command).toContain("the-crucible");
   });
 
   it("prints platform-appropriate service hints for port conflicts", () => {
@@ -842,6 +876,22 @@ describe("onboard helpers", () => {
     expect(isGatewayHealthy("Gateway status: Connected", "Gateway: something-else")).toBe(false);
   });
 
+  it("passes --port GATEWAY_PORT through every gateway start path", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // Primary start path (startGatewayWithOptions) builds gwArgs with --port.
+    assert.match(source, /const gwArgs = \["--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/);
+
+    // Recovery start path (recoverGatewayRuntime) also passes --port.
+    assert.match(
+      source,
+      /runOpenshell\(\["gateway", "start", "--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
+    );
+  });
+
   it("classifies gateway reuse states conservatively", () => {
     expect(
       getGatewayReuseState(
@@ -885,6 +935,125 @@ describe("onboard helpers", () => {
       ),
     ).toBe("foreign-active");
     expect(getGatewayReuseState("", "")).toBe("missing");
+  });
+
+  it("prints doctor logs automatically when gateway fails to start (#1605)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-diag-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "gateway-diag.cjs");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    // Fake openshell:
+    //   gateway start  — emits ANSI color codes + \r\n (mirrors real gateway output), exits 1
+    //   doctor logs    — emits ANSI sequences, an OOMKilled message, and a fake nvapi- credential
+    //                    to exercise ANSI stripping and redaction in the doctor-log path
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [[ "$*" == *"doctor"*"logs"* ]]; then
+  printf "\\033[31mERROR\\033[0m k3s cluster crashed: OOMKilled\\r\\n"
+  printf "  Container nemoclaw_k3s ran out of memory\\r\\n"
+  printf "  Gateway auth token: nvapi-fakecredential-9999\\r\\n"
+  exit 0
+fi
+if [[ "$*" == *"gateway"*"start"* ]]; then
+  printf "\\033[33mDeploying\\033[0m gateway nemoclaw...\\r\\n"
+  printf "\\r\\nWaiting for gateway health...\\r\\n"
+  exit 1
+fi
+exit 1
+`,
+      { mode: 0o755 },
+    );
+
+    // Script runs in a child process: patching p-retry to be immediate avoids the
+    // 10 s + 30 s minTimeout delays, and NEMOCLAW_HEALTH_POLL_COUNT=0 skips the
+    // health-poll loop so the function throws "Gateway failed to start" on the
+    // first attempt. With exitOnFailure:true the catch block should auto-print
+    // doctor logs to stderr and then call process.exit(1).
+    const script = `
+const mod = require("module");
+const origLoad = mod._load;
+mod._load = function(req, parent, isMain) {
+  if (req === "p-retry") {
+    return async (fn, opts) => {
+      try {
+        return await fn({ attemptNumber: 1, retriesLeft: 0 });
+      } catch (e) {
+        if (opts && opts.onFailedAttempt) {
+          opts.onFailedAttempt(Object.assign(e, { attemptNumber: 1, retriesLeft: 0 }));
+        }
+        throw e;
+      }
+    };
+  }
+  return origLoad.call(this, req, parent, isMain);
+};
+const { startGateway } = require(${onboardPath});
+startGateway(null).catch(() => {});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const nodeExec = process.execPath;
+    const result = spawnSync(nodeExec, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "0",
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    // The process exits 1 because startGateway calls process.exit(1) on failure.
+    assert.equal(result.status, 1, `unexpected exit code; stderr:\n${result.stderr}`);
+
+    // Fix 3: doctor logs are auto-printed to stderr.
+    assert.ok(
+      result.stderr.includes("Gateway logs:"),
+      `expected "Gateway logs:" header in stderr:\n${result.stderr}`,
+    );
+    assert.ok(
+      result.stderr.includes("OOMKilled"),
+      `expected doctor log output in stderr:\n${result.stderr}`,
+    );
+
+    // ANSI sequences must be stripped from both stdout (gateway start output) and
+    // stderr (doctor logs). A raw \x1b in the output means the regex failed.
+    assert.ok(
+      !result.stdout.includes("\x1b"),
+      `unexpected ANSI escape in stdout:\n${result.stdout}`,
+    );
+    assert.ok(
+      !result.stderr.includes("\x1b"),
+      `unexpected ANSI escape in stderr:\n${result.stderr}`,
+    );
+
+    // Credentials in doctor logs must be redacted, never printed verbatim.
+    assert.ok(
+      !result.stderr.includes("nvapi-fakecredential-9999"),
+      `credential leaked verbatim in stderr:\n${result.stderr}`,
+    );
+
+    // Fix 2: the \r\n -> \naiting rendering artifact must not appear.
+    assert.ok(
+      !result.stdout.includes("\naiting"),
+      `\\naiting artifact present in stdout:\n${result.stdout}`,
+    );
+
+    // Fix 1: gateway start output is printed per-line under the header, not as
+    // one collapsed blob. "Deploying" and "Waiting" must appear on separate lines.
+    const gatewayLines = result.stdout
+      .split("\n")
+      .filter((l) => l.includes("Deploying") || l.includes("Waiting"));
+    assert.ok(
+      gatewayLines.length >= 2,
+      `expected "Deploying" and "Waiting" on separate lines in stdout:\n${result.stdout}`,
+    );
   });
 
   it("classifies sandbox reuse states from openshell outputs", () => {
@@ -2107,10 +2276,14 @@ const { createSandbox } = require(${onboardPath});
     assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
     assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
     assert.ok(
-      payload.commands.some((entry) =>
-        entry.command.includes("'forward' 'start' '--background' '18789' 'my-assistant'"),
+      payload.commands.some(
+        (entry) =>
+          entry.command.includes("'forward' 'start' '--background' '18789' 'my-assistant'") ||
+          entry.command.includes(
+            "'forward' 'start' '--background' '0.0.0.0:18789' 'my-assistant'",
+          ),
       ),
-      "expected default loopback dashboard forward",
+      "expected dashboard forward (loopback or WSL 0.0.0.0)",
     );
   });
 

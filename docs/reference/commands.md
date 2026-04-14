@@ -107,6 +107,10 @@ The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
 Uppercase letters are automatically lowercased.
 
+If you enable Slack during onboarding, the wizard collects both the Bot Token (`SLACK_BOT_TOKEN`) and the App-Level Token (`SLACK_APP_TOKEN`).
+Socket Mode requires both tokens.
+The app-level token is stored in a dedicated `slack-app` OpenShell provider and forwarded to the sandbox alongside the bot token.
+
 If you enable Discord during onboarding, the wizard can also prompt for a Discord Server ID, whether the bot should reply only to `@mentions` or to all messages in that server, and an optional Discord User ID.
 NemoClaw bakes those values into the sandbox image as Discord guild workspace config so the bot can respond in the selected server, not just in DMs.
 If you leave the Discord User ID blank, the guild config omits the user allowlist and any member of the configured server can message the bot.
@@ -114,6 +118,8 @@ Guild responses remain mention-gated by default unless you opt into all-message 
 
 Before creating the gateway, the wizard runs preflight checks.
 It verifies that Docker is reachable, warns on untested runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
+The preflight also enforces the OpenShell version range declared in the blueprint (`min_openshell_version` and `max_openshell_version`).
+If the installed OpenShell version falls outside this range, onboarding exits with an actionable error and a link to compatible releases.
 
 #### `--from <Dockerfile>`
 
@@ -160,6 +166,8 @@ $ nemoclaw deploy <instance-name>
 ### `nemoclaw <name> connect`
 
 Connect to a sandbox by name.
+On a TTY, a one-shot hint prints before dropping into the sandbox shell, reminding you to run `openclaw tui` inside.
+Set `NEMOCLAW_NO_CONNECT_HINT=1` to suppress the hint in scripted workflows.
 
 ```console
 $ nemoclaw my-assistant connect

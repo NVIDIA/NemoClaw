@@ -128,6 +128,35 @@ $ openshell inference set --provider compatible-anthropic-endpoint --model <mode
 
 If the provider itself needs to change, rerun `nemoclaw onboard`.
 
+#### Switching from Responses API to Chat Completions
+
+If onboarding selected `/v1/responses` but the agent fails at runtime (for
+example, because the backend does not emit the streaming events OpenClaw
+requires), re-run onboarding so the wizard re-probes the endpoint and bakes
+the correct API path into the image:
+
+```console
+$ nemoclaw onboard
+```
+
+Select the same provider and endpoint again.
+The updated streaming probe will detect incomplete `/v1/responses` support
+and select `/v1/chat/completions` automatically.
+
+To force `/v1/chat/completions` without re-probing, set `NEMOCLAW_PREFERRED_API`
+before onboarding:
+
+```console
+$ NEMOCLAW_PREFERRED_API=openai-completions nemoclaw onboard
+```
+
+> **Note:** `NEMOCLAW_INFERENCE_API_OVERRIDE` patches the config at container startup but
+> does not update the Dockerfile ARG baked into the image.
+> If you recreate the sandbox without the override env var, the image reverts to
+> the original API path.
+> A fresh `nemoclaw onboard` is the reliable fix because it updates both the
+> session and the baked image.
+
 ## Step 2: Cross-Provider Switching
 
 Switching to a different provider family (for example, from NVIDIA Endpoints to Anthropic) requires updating both the gateway route and the sandbox config.
@@ -147,7 +176,7 @@ $ nemoclaw onboard --resume --recreate-sandbox
 ```
 
 The entrypoint patches `openclaw.json` at container startup with the override values.
-No image rebuild is needed.
+You do not need to rebuild the image.
 Remove the env vars and recreate the sandbox to revert to the original model.
 
 `NEMOCLAW_INFERENCE_API_OVERRIDE` accepts `openai-completions` (for NVIDIA, OpenAI, Gemini, compatible endpoints) or `anthropic-messages` (for Anthropic and Anthropic-compatible endpoints).
@@ -280,6 +309,33 @@ $ NEMOCLAW_PROVIDER=custom \
 | `NEMOCLAW_ENDPOINT_URL` | Base URL of the local server. |
 | `NEMOCLAW_MODEL` | Model ID as reported by the server. |
 | `COMPATIBLE_API_KEY` | API key for the endpoint. Use any non-empty value if authentication is not required. |
+
+### Forcing Chat Completions API
+
+Some OpenAI-compatible servers (such as SGLang) expose `/v1/responses` but do
+not emit the granular streaming events that OpenClaw requires.
+NemoClaw tests streaming events during onboarding and falls back to
+`/v1/chat/completions` automatically when it detects incomplete streaming.
+
+If you need to bypass the `/v1/responses` probe entirely, set
+`NEMOCLAW_PREFERRED_API` before running onboard:
+
+```console
+$ NEMOCLAW_PREFERRED_API=openai-completions nemoclaw onboard
+```
+
+Set this variable to make the wizard skip the `/v1/responses` probe and use
+`/v1/chat/completions` directly.
+You can use it in both interactive and non-interactive mode.
+
+| Variable | Values | Default |
+|---|---|---|
+| `NEMOCLAW_PREFERRED_API` | `openai-completions`, `chat-completions` | unset (auto-detect) |
+
+If you already onboarded and the sandbox is failing at runtime, re-run
+`nemoclaw onboard` to re-probe the endpoint and bake the correct API path
+into the image.
+Refer to Switch Inference Models (see the `nemoclaw-user-configure-inference` skill) for details.
 
 ## Step 7: Anthropic-Compatible Server
 
