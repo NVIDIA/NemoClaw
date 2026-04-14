@@ -37,6 +37,10 @@ EOF
   exit 1
 }
 
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || fail "'$1' is required but not found in PATH."
+}
+
 do_backup() {
   local sandbox="$1"
   local ts
@@ -53,7 +57,7 @@ do_backup() {
 
   local count=0
   for f in "${FILES[@]}"; do
-    if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${f}" "${dest}/"; then
+    if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${f}" "${dest}/" 2>/dev/null; then
       count=$((count + 1))
     else
       warn "Skipped ${f} (not found or download failed)"
@@ -61,7 +65,7 @@ do_backup() {
   done
 
   for d in "${DIRS[@]}"; do
-    if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${d}/" "${dest}/${d}/"; then
+    if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${d}/" "${dest}/${d}/" 2>/dev/null; then
       count=$((count + 1))
     else
       warn "Skipped ${d}/ (not found or download failed)"
@@ -69,6 +73,7 @@ do_backup() {
   done
 
   if [ "$count" -eq 0 ]; then
+    rmdir "$dest" 2>/dev/null || true
     fail "No files were backed up. Check that the sandbox '${sandbox}' exists and has workspace files."
   fi
 
@@ -121,7 +126,7 @@ do_restore() {
 # --- Main ---
 
 [ $# -ge 2 ] || usage
-command -v openshell >/dev/null 2>&1 || fail "'openshell' is required but not found in PATH."
+require_cmd openshell
 
 action="$1"
 sandbox="$2"
