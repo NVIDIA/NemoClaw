@@ -1,6 +1,17 @@
 ---
 orphan: true
+title: "NemoClaw Triage Instructions"
+description: "AI-assisted label triage instructions for NVIDIA/NemoClaw issues and PRs. Single source of truth for the nemoclaw-maintainer-triage CLI skill and the nvoss-velocity dashboard."
+keywords: triage, labels, issues, pull requests, maintainer
+topics: [maintainer, triage, labels]
+tags: [maintainer, triage]
+content_type: reference
+audience: maintainers
+status: active
 ---
+
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # NemoClaw — Triage Instructions
 
@@ -130,3 +141,11 @@ Items are classified as `quality_tier` or `standard_tier` before generation. Thi
 - Do not add generic closing filler phrases
 - If a "Spam signal:" line is present in the item metadata, assign only `status: needs-info` and ask for more detail politely
 - If a "Note: Author also opened..." line is present, briefly acknowledge if the relationship is plausible
+
+---
+
+## Next Steps
+
+- [Maintainer Guide](maintainer-guide.md) — community response workflows and comment templates
+- [Project Workflow](project-workflow.md) — board status semantics and label taxonomy
+- [Agent Skills](resources/agent-skills.md) — all available maintainer and user skills

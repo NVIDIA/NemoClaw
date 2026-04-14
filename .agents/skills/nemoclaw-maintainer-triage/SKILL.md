@@ -1,8 +1,11 @@
 ---
 name: nemoclaw-maintainer-triage
-description: AI-assisted label triage for NVIDIA/NemoClaw issues and PRs. Reads triage-instructions.md at runtime for consistent label guidance. Supports single-item mode (give it a number) and batch mode (fetches all unlabeled open items). On approval, applies labels and an optional triage comment via gh CLI, then logs the session to the daily-rhythm activity folder. Trigger keywords - triage, label issues, suggest labels, batch triage, triage issue, triage PR, label this, what labels.
+description: AI-assisted label triage for NVIDIA/NemoClaw issues and PRs. Reads triage-instructions.md at runtime for consistent label guidance. Supports single-item mode (give it a number) and batch mode (fetches up to 50 unlabeled open items). On approval, applies labels and an optional triage comment via gh CLI, then logs the session to the daily-rhythm activity folder. Trigger keywords - triage, label issues, suggest labels, batch triage, triage issue, triage PR, label this, what labels.
 user_invocable: true
 ---
+
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # NemoClaw Maintainer — Triage
 
@@ -136,7 +139,7 @@ Never stage or commit this file to the NemoClaw repo.
 
 When triaging in batch mode, prioritize items in this order:
 
-1. Items with `priority: high` already applied (need comment)
+1. Items with outage, data loss, or critical breakage signals in title or body (candidate for `priority: high`)
 2. Items opened by company-affiliated or known community contributors
 3. Issues open > 5 business days with no label (first-response window at risk)
 4. Everything else by recency
