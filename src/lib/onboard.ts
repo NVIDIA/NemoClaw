@@ -28,6 +28,7 @@ const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
 const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
+const { buildSubprocessEnv } = require("./subprocess-env");
 const { DASHBOARD_PORT, GATEWAY_PORT, VLLM_PORT, OLLAMA_PORT } = require("./ports");
 const {
   getDefaultOllamaModel,
@@ -2699,27 +2700,24 @@ async function createSandbox(
   // See: crates/openshell-sandbox/src/secrets.rs (placeholder rewriting),
   //      crates/openshell-router/src/backend.rs (inference auth injection).
   //
-  // TODO: migrate this blocklist to the shared allowlist in
-  // src/lib/subprocess-env.ts once the sandbox create path has been validated
-  // end-to-end with the stricter filtering. The allowlist rejects unknown
-  // env vars by default, which is safer but needs careful rollout.
+  // Use the shared allowlist (subprocess-env.ts) instead of the old
+  // blocklist. The blocklist only blocked 12 specific credential names
+  // and passed EVERYTHING else — including GITHUB_TOKEN,
+  // AWS_SECRET_ACCESS_KEY, SSH_AUTH_SOCK, KUBECONFIG, NPM_TOKEN, and
+  // any CI/CD secrets that happened to be in the host environment.
+  // The allowlist inverts the default: only known-safe env vars are
+  // forwarded, everything else is dropped.
+  //
+  // For the sandbox specifically, we also strip KUBECONFIG and
+  // SSH_AUTH_SOCK — the generic allowlist includes these for host-side
+  // subprocesses (gateway start, openshell CLI) but the sandbox should
+  // never have access to the host's Kubernetes cluster or SSH agent.
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
-  const blockedSandboxEnvNames = new Set([
-    // Derived from REMOTE_PROVIDER_CONFIG to prevent drift
-    ...Object.values(REMOTE_PROVIDER_CONFIG)
-      .map((cfg) => cfg.credentialEnv)
-      .filter(Boolean),
-    // Additional credentials not in REMOTE_PROVIDER_CONFIG
-    "BEDROCK_API_KEY",
-    "DISCORD_BOT_TOKEN",
-    "SLACK_BOT_TOKEN",
-    "SLACK_APP_TOKEN",
-    "TELEGRAM_BOT_TOKEN",
-    webSearch.BRAVE_API_KEY_ENV,
-  ]);
-  const sandboxEnv = Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !blockedSandboxEnvNames.has(name)),
-  );
+  const sandboxEnv = buildSubprocessEnv();
+  // Remove host-infrastructure credentials that the generic allowlist
+  // permits for host-side processes but that must not enter the sandbox.
+  delete sandboxEnv.KUBECONFIG;
+  delete sandboxEnv.SSH_AUTH_SOCK;
   // Run without piping through awk — the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
