@@ -640,6 +640,8 @@ describe("onboard helpers", () => {
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
       assert.match(patched, /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=1$/m);
+      // Regression guard: the old secret-bearing build arg must not reappear.
+      assert.doesNotMatch(patched, /NEMOCLAW_WEB_CONFIG_B64/);
     } finally {
       if (priorBraveKey === undefined) {
         delete process.env.BRAVE_API_KEY;
