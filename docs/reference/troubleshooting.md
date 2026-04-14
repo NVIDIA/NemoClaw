@@ -181,18 +181,83 @@ is needed for either Ollama placement.
 In WSL **mirrored** networking mode, `host.openshell.internal` already
 reaches the shared network stack directly, so no override is applied.
 
+#### Host-side prerequisites for Windows-hosted Ollama
+
+If Ollama runs on the **Windows host** (not inside WSL), NemoClaw's
+detection only helps once the host itself is actually reachable from
+WSL. Run the following checks in the indicated shell.
+
+**1. Bind Ollama to all interfaces (run in PowerShell, as Administrator):**
+
+```powershell
+# Persist across reboots; Machine scope so services also inherit it.
+[System.Environment]::SetEnvironmentVariable('OLLAMA_HOST','0.0.0.0:11434','Machine')
+
+# Stop Ollama (tray + server) and start it in a new shell so it picks
+# up the new env var. Open a NEW PowerShell window first, then:
+Get-Process | Where-Object { $_.ProcessName -like 'ollama*' } | Stop-Process -Force
+ollama serve
+```
+
+Verify the bind address (run in PowerShell):
+
+```powershell
+Get-NetTCPConnection -LocalPort 11434 -State Listen | Select LocalAddress, LocalPort
+# Expect: 0.0.0.0 or [::] — NOT 127.0.0.1
+```
+
+**2. Allow inbound TCP 11434 in Windows Defender Firewall (PowerShell, Administrator):**
+
+```powershell
+New-NetFirewallRule -DisplayName "Ollama 11434 (WSL)" `
+  -Direction Inbound -Protocol TCP -LocalPort 11434 `
+  -Action Allow -Profile Any
+```
+
+**3. Switch WSL2 to mirrored networking mode.** On recent Windows 11,
+WSL2 in NAT mode routes traffic through a separate Hyper-V firewall
+layer that ignores standard inbound rules (you will see
+`NATInboundRuleNotApplicable` on `Get-NetFirewallHyperVRule`). Mirrored
+mode makes WSL share the Windows network stack directly.
+
+Edit `%USERPROFILE%\.wslconfig` (PowerShell or Notepad on Windows):
+
+```ini
+[wsl2]
+networkingMode=mirrored
+```
+
+Then apply (run in PowerShell):
+
+```powershell
+wsl --shutdown
+```
+
+Reopen your WSL terminal and verify Ollama is reachable (run in WSL):
+
+```bash
+curl --max-time 5 http://127.0.0.1:11434/api/tags
+# Expect: JSON list of installed models.
+```
+
+#### If the container reachability check still fails
+
 If onboarding still reports that the container reachability check
 failed for `http://host.openshell.internal:11434`:
 
-- Confirm Ollama is listening on all interfaces:
-  `OLLAMA_HOST=0.0.0.0:11434 ollama serve`.
-- Check your Windows / WSL firewall is not blocking port 11434.
-- If Ollama is on the Windows host (not inside WSL), the reachable
-  address may be the WSL2 default gateway rather than eth0. Use
-  `ip route show default` to find it, then set
-  `OPENAI_BASE_URL=http://<gateway-ip>:11434/v1` manually.
-- As a last resort, install Docker Engine directly inside WSL2 instead
-  of Docker Desktop — `host-gateway` works reliably there.
+- Double-check the bind address (PowerShell): Ollama shows
+  `127.0.0.1` in `Get-NetTCPConnection` until the env var reaches the
+  process from a fresh shell.
+- Confirm the firewall rule is enabled (PowerShell):
+  `Get-NetFirewallRule -DisplayName "Ollama 11434 (WSL)" | Select Enabled, Profile`.
+- If you cannot switch to mirrored mode, manually set the base URL
+  using the WSL2 default gateway (run in WSL to find it):
+  ```bash
+  ip route show default | awk '/default/ {print $3}'
+  ```
+  then export that IP as `OPENAI_BASE_URL=http://<gateway-ip>:11434/v1`.
+- Last resort: install Docker Engine directly inside WSL2 instead of
+  Docker Desktop — `host-gateway` works reliably there.
 
 Sandbox pod → host egress is a separate path from the onboard probe. If
 inference calls still fail from inside a running sandbox, verify the
