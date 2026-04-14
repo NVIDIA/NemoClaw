@@ -168,6 +168,14 @@ Check for:
 - Broken cross-references.
 - Correct rendering of new content.
 
+## Step 8: Label PRs
+
+When the workflow produces a pull request, apply the `documentation` label so reviewers can identify doc-only changes:
+
+```bash
+gh pr edit <number> --add-label documentation
+```
+
 ## Tips
 
 - When in doubt about whether a commit needs a doc update, check if the commit message references a CLI flag, config option, or user-visible behavior.

@@ -6,6 +6,7 @@ const { execFileSync, spawnSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const { DASHBOARD_PORT } = require("./lib/ports");
 
 // ---------------------------------------------------------------------------
 // Color / style — respects NO_COLOR and non-TTY environments.
@@ -66,6 +67,7 @@ const {
   runUninstallCommand,
 } = require("./lib/uninstall-command");
 const agentRuntime = require("../bin/lib/agent-runtime");
+const skillInstall = require("./lib/skill-install");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -92,7 +94,7 @@ const REMOTE_UNINSTALL_URL = buildVersionedUninstallUrl(getVersion());
 let OPENSHELL_BIN = null;
 const MIN_LOGS_OPENSHELL_VERSION = "0.0.7";
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
-const DASHBOARD_FORWARD_PORT = "18789";
+const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 
 function getOpenshellBinary() {
   if (!OPENSHELL_BIN) {
@@ -214,7 +216,7 @@ function executeSandboxCommand(sandboxName, command) {
 
 /**
  * Check whether the OpenClaw gateway process is running inside the sandbox.
- * Uses the gateway's HTTP endpoint (port 18789) as the source of truth,
+ * Uses the gateway's HTTP endpoint (dashboard port) as the source of truth,
  * since the gateway runs as a separate user and pgrep may not see it.
  * Returns true (running), false (stopped), or null (cannot determine).
  */
@@ -249,7 +251,7 @@ function recoverSandboxProcesses(sandboxName) {
       "[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null;",
       // Re-check liveness before touching anything — another caller may have
       // already recovered the gateway between our initial check and now (TOCTOU).
-      "if curl -sf --max-time 3 http://127.0.0.1:18789/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;",
+      `if curl -sf --max-time 3 http://127.0.0.1:${DASHBOARD_PORT}/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;`,
       // Clean stale lock files from the previous run (gateway checks these)
       "rm -rf /tmp/openclaw-*/gateway.*.lock 2>/dev/null;",
       // Clean stale temp files from the previous run
@@ -874,7 +876,6 @@ function uninstall(args) {
     remoteScriptUrl: REMOTE_UNINSTALL_URL,
     env: process.env,
     spawnSyncImpl: spawnSync,
-    execFileSyncImpl: execFileSync,
     log: console.log,
     error: console.error,
     exit: (code) => process.exit(code),
@@ -1232,6 +1233,147 @@ function sandboxPolicyList(sandboxName) {
   console.log("");
 }
 
+async function sandboxSkillInstall(sandboxName, args = []) {
+  const sub = args[0];
+  if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
+    console.log("");
+    console.log("  Usage: nemoclaw <sandbox> skill install <path>");
+    console.log("");
+    console.log("  Deploy a skill directory to a running sandbox.");
+    console.log("  <path> must be a skill directory containing a SKILL.md (with 'name:' frontmatter),");
+    console.log("  or a direct path to a SKILL.md file. All non-dot files in the directory are uploaded.");
+    console.log("");
+    return;
+  }
+
+  if (sub !== "install") {
+    console.error(`  Unknown skill subcommand: ${sub}`);
+    console.error("  Valid subcommands: install");
+    process.exit(1);
+  }
+
+  const skillPath = args[1];
+  const extraArgs = args.slice(2);
+  if (extraArgs.length > 0) {
+    console.error(`  Unknown argument(s) for skill install: ${extraArgs.join(", ")}`);
+    console.error("  Usage: nemoclaw <sandbox> skill install <path>");
+    process.exit(1);
+  }
+  if (!skillPath) {
+    console.error("  Usage: nemoclaw <sandbox> skill install <path>");
+    console.error("  <path> must be a directory containing a SKILL.md file.");
+    process.exit(1);
+  }
+
+  const resolvedPath = path.resolve(skillPath);
+
+  // Accept a directory containing SKILL.md, or a direct path to SKILL.md.
+  let skillDir: string;
+  let skillMdPath: string;
+  if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isDirectory()) {
+    skillDir = resolvedPath;
+    skillMdPath = path.join(resolvedPath, "SKILL.md");
+  } else if (fs.existsSync(resolvedPath) && resolvedPath.endsWith("SKILL.md")) {
+    skillDir = path.dirname(resolvedPath);
+    skillMdPath = resolvedPath;
+  } else {
+    console.error(`  No SKILL.md found at '${resolvedPath}'.`);
+    console.error("  <path> must be a skill directory or a direct path to SKILL.md.");
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(skillMdPath)) {
+    console.error(`  No SKILL.md found in '${skillDir}'.`);
+    console.error("  The skill directory must contain a SKILL.md file.");
+    process.exit(1);
+  }
+
+  // 1. Validate frontmatter
+  let frontmatter;
+  try {
+    const content = fs.readFileSync(skillMdPath, "utf-8");
+    frontmatter = skillInstall.parseFrontmatter(content);
+  } catch (err) {
+    console.error(`  ${err.message}`);
+    process.exit(1);
+  }
+
+  const collected = skillInstall.collectFiles(skillDir);
+  if (collected.unsafePaths.length > 0) {
+    console.error(`  Skill directory contains files with unsafe characters:`);
+    for (const p of collected.unsafePaths) console.error(`    ${p}`);
+    console.error("  File names must match [A-Za-z0-9._-/]. Rename or remove them.");
+    process.exit(1);
+  }
+  if (collected.skippedDotfiles.length > 0) {
+    console.log(`  ${D}Skipping ${collected.skippedDotfiles.length} hidden path(s): ${collected.skippedDotfiles.join(", ")}${R}`);
+  }
+  const fileLabel = collected.files.length === 1 ? "1 file" : `${collected.files.length} files`;
+  console.log(`  ${G}✓${R} Validated SKILL.md (name: ${frontmatter.name}, ${fileLabel})`);
+
+  // 2. Ensure sandbox is live
+  await ensureLiveSandboxOrExit(sandboxName);
+
+  // 3. Resolve agent and paths
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const paths = skillInstall.resolveSkillPaths(agent, frontmatter.name);
+
+  // 4. Get SSH config
+  const sshConfigResult = captureOpenshell(["sandbox", "ssh-config", sandboxName], {
+    ignoreError: true,
+  });
+  if (sshConfigResult.status !== 0) {
+    console.error("  Failed to obtain SSH configuration for the sandbox.");
+    process.exit(1);
+  }
+
+  const tmpSshConfig = path.join(os.tmpdir(), `nemoclaw-ssh-skill-${process.pid}-${Date.now()}.conf`);
+  fs.writeFileSync(tmpSshConfig, sshConfigResult.output, { mode: 0o600 });
+
+  try {
+    const ctx = { configFile: tmpSshConfig, sandboxName };
+
+    // 5. Check if skill already exists (update vs fresh install)
+    const isUpdate = skillInstall.checkExisting(ctx, paths);
+
+    // 6. Upload skill directory
+    const { uploaded, failed } = skillInstall.uploadDirectory(ctx, skillDir, paths.uploadDir);
+    if (failed.length > 0) {
+      console.error(`  Failed to upload ${failed.length} file(s): ${failed.join(", ")}`);
+      process.exit(1);
+    }
+    console.log(`  ${G}✓${R} Uploaded ${uploaded} file(s) to sandbox`);
+
+    // 7. Post-install (OpenClaw mirror + refresh, or restart hint).
+    //    Skip session refresh on updates — the agent already knows the skill;
+    //    clearing sessions would destroy chat history unnecessarily.
+    const post = skillInstall.postInstall(ctx, paths, skillDir, { skipRefresh: isUpdate });
+    for (const msg of post.messages) {
+      if (msg.startsWith("Warning:")) {
+        console.error(`  ${YW}${msg}${R}`);
+      } else {
+        console.log(`  ${D}${msg}${R}`);
+      }
+    }
+
+    // 8. Verify
+    const verified = skillInstall.verifyInstall(ctx, paths);
+    if (verified) {
+      const verb = isUpdate ? "updated" : "installed";
+      console.log(`  ${G}✓${R} Skill '${frontmatter.name}' ${verb}`);
+    } else {
+      console.error(`  Skill uploaded but verification failed at ${paths.uploadDir}/SKILL.md`);
+      process.exit(1);
+    }
+  } finally {
+    try {
+      fs.unlinkSync(tmpSshConfig);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 function cleanupSandboxServices(sandboxName, { stopHostServices = false } = {}) {
   if (stopHostServices) {
     const { stopAll } = require("./lib/services");
@@ -1330,6 +1472,9 @@ function help() {
     nemoclaw <name> logs ${D}[--follow]${R}  Stream sandbox logs
     nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
 
+  ${G}Skills:${R}
+    nemoclaw <name> skill install <path>  Deploy a skill directory to the sandbox
+
   ${G}Policy Presets:${R}
     nemoclaw <name> policy-add       Add a network or filesystem policy preset ${D}(--dry-run to preview)${R}
     nemoclaw <name> policy-list      List presets ${D}(● = applied)${R}
@@ -1353,7 +1498,7 @@ function help() {
     nemoclaw credentials reset <KEY> Remove a stored credential so onboard re-prompts
 
   Cleanup:
-    nemoclaw uninstall [flags]       Run uninstall.sh (local first, curl fallback)
+    nemoclaw uninstall [flags]       Run uninstall.sh (local only; no remote fallback)
 
   ${G}Uninstall flags:${R}
     --yes                            Skip the confirmation prompt
@@ -1427,6 +1572,12 @@ const [cmd, ...args] = process.argv.slice(2);
   }
 
   // Sandbox-scoped commands: nemoclaw <name> <action>
+  // If the registry doesn't know this name but the action is connect or skill,
+  // attempt recovery — the sandbox may still be live with a stale registry.
+  if (!registry.getSandbox(cmd) && (args[0] === "connect" || args[0] === "skill")) {
+    validateName(cmd, "sandbox name");
+    await recoverRegistryEntries({ requestedSandboxName: cmd });
+  }
   const sandbox = registry.getSandbox(cmd);
   if (sandbox) {
     validateName(cmd, "sandbox name");
@@ -1454,21 +1605,15 @@ const [cmd, ...args] = process.argv.slice(2);
       case "destroy":
         await sandboxDestroy(cmd, actionArgs);
         break;
+      case "skill":
+        await sandboxSkillInstall(cmd, actionArgs);
+        break;
       default:
         console.error(`  Unknown action: ${action}`);
-        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, destroy`);
+        console.error(`  Valid actions: connect, status, logs, policy-add, policy-list, skill, destroy`);
         process.exit(1);
     }
     return;
-  }
-
-  if (args[0] === "connect") {
-    validateName(cmd, "sandbox name");
-    await recoverRegistryEntries({ requestedSandboxName: cmd });
-    if (registry.getSandbox(cmd)) {
-      await sandboxConnect(cmd);
-      return;
-    }
   }
 
   // Unknown command — suggest

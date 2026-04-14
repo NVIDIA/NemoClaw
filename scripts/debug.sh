@@ -325,7 +325,10 @@ if [ "$QUICK" = false ]; then
   # shellcheck disable=SC2016
   collect "curl-models" sh -c 'code=$(curl -s -o /dev/null -w "%{http_code}" https://integrate.api.nvidia.com/v1/models); echo "HTTP $code"; if [ "$code" -ge 200 ] && [ "$code" -lt 500 ]; then echo "NIM API reachable"; else echo "NIM API unreachable"; exit 1; fi'
   collect "lsof-net" sh -c 'lsof -i -P -n 2>/dev/null | head -50'
-  collect "lsof-18789" lsof -i :18789
+  _dp="$(printf '%s' "${NEMOCLAW_DASHBOARD_PORT:-18789}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  case "$_dp" in *[!0-9]* | '') _dp=18789 ;; esac
+  [ "$_dp" -ge 1024 ] && [ "$_dp" -le 65535 ] 2>/dev/null || _dp=18789
+  collect "lsof-dashboard" lsof -i ":${_dp}"
 fi
 
 # -- Kernel / IO (full mode only) --

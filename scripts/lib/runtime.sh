@@ -235,12 +235,30 @@ select_openshell_cluster_container() {
   return 1
 }
 
+_validate_port() {
+  local name="$1" value="$2"
+  case "$value" in
+    '' | *[!0-9]*)
+      printf 'Invalid %s=%s (expected 1024-65535)\n' "$name" "$value" >&2
+      return 1
+      ;;
+  esac
+  [ "$value" -ge 1024 ] && [ "$value" -le 65535 ] || {
+    printf 'Invalid %s=%s (expected 1024-65535)\n' "$name" "$value" >&2
+    return 1
+  }
+}
+
 get_local_provider_base_url() {
   local provider="${1:-}"
 
+  local vllm_port="${NEMOCLAW_VLLM_PORT:-8000}"
+  local ollama_port="${NEMOCLAW_OLLAMA_PORT:-11434}"
+  _validate_port NEMOCLAW_VLLM_PORT "$vllm_port" || return 1
+  _validate_port NEMOCLAW_OLLAMA_PORT "$ollama_port" || return 1
   case "$provider" in
-    vllm-local) printf 'http://host.openshell.internal:8000/v1\n' ;;
-    ollama-local) printf 'http://host.openshell.internal:11434/v1\n' ;;
+    vllm-local) printf 'http://host.openshell.internal:%s/v1\n' "$vllm_port" ;;
+    ollama-local) printf 'http://host.openshell.internal:%s/v1\n' "$ollama_port" ;;
     *) return 1 ;;
   esac
 }
@@ -248,12 +266,16 @@ get_local_provider_base_url() {
 check_local_provider_health() {
   local provider="${1:-}"
 
+  local vllm_port="${NEMOCLAW_VLLM_PORT:-8000}"
+  local ollama_port="${NEMOCLAW_OLLAMA_PORT:-11434}"
+  _validate_port NEMOCLAW_VLLM_PORT "$vllm_port" || return 1
+  _validate_port NEMOCLAW_OLLAMA_PORT "$ollama_port" || return 1
   case "$provider" in
     vllm-local)
-      curl -sf http://localhost:8000/v1/models >/dev/null 2>&1
+      curl -sf "http://localhost:${vllm_port}/v1/models" >/dev/null 2>&1
       ;;
     ollama-local)
-      curl -sf http://localhost:11434/api/tags >/dev/null 2>&1
+      curl -sf "http://localhost:${ollama_port}/api/tags" >/dev/null 2>&1
       ;;
     *)
       return 1
