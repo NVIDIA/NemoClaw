@@ -54,23 +54,23 @@ Install the CLI and launch a sandboxed OpenClaw instance in a few commands.
   gap: 7px;
   align-items: center;
 }
-.nc-copy-btn { 
-  margin-left: auto; 
-  position: relative; 
-  background: none; 
-  border: 0; 
-  color: #8a8aa3; 
-  cursor: pointer; 
+.nc-copy-btn {
+  margin-left: auto;
+  position: relative;
+  background: none;
+  border: 0;
+  color: #8a8aa3;
+  cursor: pointer;
   padding: 4px;
   line-height: 0;
 }
 .nc-copy-btn:hover, .nc-copy-btn.copied { color: #76b900; }
 .nc-copy-btn svg { width: 16px; height: 16px; fill: currentColor; }
-.nc-copy-btn.copied::after { 
-  content: 'Copied'; 
-  position: absolute; 
-  right: 100%; 
-  top: 50%; 
+.nc-copy-btn.copied::after {
+  content: 'Copied';
+  position: absolute;
+  right: 100%;
+  top: 50%;
   transform: translate(-8px, -50%);
   font-size: 11px;
   line-height: 1;
