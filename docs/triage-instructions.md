@@ -6,6 +6,7 @@ keywords: triage, labels, issues, pull requests, maintainer
 topics: [maintainer, triage, labels]
 tags: [maintainer, triage]
 content_type: reference
+difficulty: advanced
 audience: maintainers
 status: active
 ---
