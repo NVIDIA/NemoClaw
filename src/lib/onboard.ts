@@ -5275,6 +5275,10 @@ async function onboard(opts = {}) {
         agent,
         dangerouslySkipPermissions,
       );
+      // Persist model and provider after the sandbox entry exists in the registry.
+      // updateSandbox() silently no-ops when the entry is missing, so this must
+      // run after createSandbox() / registerSandbox() — not before. Fixes #1881.
+      registry.updateSandbox(sandboxName, { model, provider });
       onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
     }
 
