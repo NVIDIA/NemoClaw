@@ -178,4 +178,56 @@ describe("credential prompts", () => {
     expect(source).toContain('output.write("*")');
     expect(source).toContain('output.write("\\b \\b")');
   });
+
+  it("ensureJiraCredentials loads saved credentials from disk and sets env vars", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-jira-creds-"));
+    const credentials = await importCredentialsModule(home);
+
+    credentials.saveCredential("JIRA_BASE_URL", "https://mycompany.atlassian.net");
+    credentials.saveCredential("JIRA_USER_EMAIL", "user@example.com");
+    credentials.saveCredential("JIRA_API_TOKEN", "atl-token-abc123");
+
+    await credentials.ensureJiraCredentials();
+
+    try {
+      expect(process.env.JIRA_BASE_URL).toBe("https://mycompany.atlassian.net");
+      expect(process.env.JIRA_USER_EMAIL).toBe("user@example.com");
+      expect(process.env.JIRA_API_TOKEN).toBe("atl-token-abc123");
+    } finally {
+      delete process.env.JIRA_BASE_URL;
+      delete process.env.JIRA_USER_EMAIL;
+      delete process.env.JIRA_API_TOKEN;
+    }
+  });
+
+  it("ensureJiraCredentials prefers environment variables over saved credentials", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-jira-env-"));
+    vi.stubEnv("JIRA_BASE_URL", "https://env.atlassian.net");
+    vi.stubEnv("JIRA_USER_EMAIL", "env-user@example.com");
+    vi.stubEnv("JIRA_API_TOKEN", "atl-env-token-xyz");
+
+    const credentials = await importCredentialsModule(home);
+    await credentials.ensureJiraCredentials();
+
+    expect(process.env.JIRA_BASE_URL).toBe("https://env.atlassian.net");
+    expect(process.env.JIRA_USER_EMAIL).toBe("env-user@example.com");
+    expect(process.env.JIRA_API_TOKEN).toBe("atl-env-token-xyz");
+  });
+
+  it("ensureJiraCredentials prompts for and saves each missing Jira credential", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "bin", "lib", "credentials.js"),
+      "utf-8",
+    );
+
+    expect(source).toMatch(/Jira Base URL/);
+    expect(source).toMatch(/Atlassian account email/);
+    expect(source).toMatch(/Jira API Token/);
+
+    expect(source).toMatch(/saveCredential\("JIRA_BASE_URL"/);
+    expect(source).toMatch(/saveCredential\("JIRA_USER_EMAIL"/);
+    expect(source).toMatch(/saveCredential\("JIRA_API_TOKEN"/);
+
+    expect(source).toMatch(/prompt\(.*Jira API Token.*\{.*secret.*true/s);
+  });
 });
