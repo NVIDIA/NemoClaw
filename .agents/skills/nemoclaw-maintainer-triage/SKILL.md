@@ -62,6 +62,7 @@ For each item, apply the rules from `triage-instructions.md` and present:
 Ask: "Apply these labels? (yes / skip / edit labels / no comment)"
 
 Options:
+
 - **yes** — apply as shown
 - **skip** — move to next item without applying
 - **edit labels** — user specifies different labels, then apply
@@ -97,7 +98,7 @@ After each approved item, append to `~/development/daily-rhythm/activity/nemocla
 
 Use the absolute path — this file lives in the daily-rhythm activity folder so it persists to GitLab over time.
 
-```
+```markdown
 ### [ISSUE|PR] NVIDIA/NemoClaw#<number> — <title>
 **Date:** YYYY-MM-DD
 **Labels applied:** bug, Platform: MacOS
@@ -108,7 +109,7 @@ Use the absolute path — this file lives in the daily-rhythm activity folder so
 
 Create the file if it doesn't exist, with this header:
 
-```
+```markdown
 # NemoClaw — Triage Log
 
 A running record of label triage actions on NVIDIA/NemoClaw issues and PRs.
@@ -119,7 +120,7 @@ Persisted via daily-rhythm to GitLab.
 
 At the end of a batch session, append a session summary before the individual entries:
 
-```
+```markdown
 ## YYYY-MM-DD — Triage Session
 **Items triaged:** N
 **Labels applied:** N labels across N items
@@ -134,6 +135,7 @@ Never stage or commit this file to the NemoClaw repo.
 ## Response Time Note
 
 When triaging in batch mode, prioritize items in this order:
+
 1. Items with `priority: high` already applied (need comment)
 2. Items opened by company-affiliated or known community contributors
 3. Issues open > 5 business days with no label (first-response window at risk)
