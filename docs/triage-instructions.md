@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # NemoClaw — Triage Instructions
 
 This document is the single source of truth for AI-assisted label triage on NVIDIA/NemoClaw issues and PRs.
