@@ -147,4 +147,3 @@ Items are classified as `quality_tier` or `standard_tier` before generation. Thi
 ## Next Steps
 
 - [Agent Skills](resources/agent-skills.md) — all available maintainer and user skills
-- [Contributing](CONTRIBUTING.md) — how to contribute to NemoClaw
