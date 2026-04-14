@@ -49,12 +49,15 @@ RUN npm ci --omit=dev
 # trusted_env_proxy mode makes media downloads (Telegram photos, etc.) route
 # through the proxy like all other traffic. See: docs/investigation/
 # telegram-media-download-fix.md
-# hadolint ignore=SC2016,DL3059
-RUN find /usr/local/lib/node_modules/openclaw/dist/ -name '*.js' \
-    -exec grep -q 'withStrictGuardedFetchMode' {} \; \
-    -exec sed -i \
+# hadolint ignore=SC2016,DL3059,DL4006
+RUN set -eu; \
+    matches="$(grep -RIl --include='*.js' 'fetchWithSsrFGuard(withStrictGuardedFetchMode({' /usr/local/lib/node_modules/openclaw/dist/)"; \
+    test -n "$matches"; \
+    printf '%s\n' "$matches" | xargs sed -i \
         -e 's|import { n as withStrictGuardedFetchMode, t as fetchWithSsrFGuard }|import { n as withStrictGuardedFetchMode, r as withTrustedEnvProxyGuardedFetchMode, t as fetchWithSsrFGuard }|g' \
-        -e 's|fetchWithSsrFGuard(withStrictGuardedFetchMode({|fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({|g' {} \;
+        -e 's|fetchWithSsrFGuard(withStrictGuardedFetchMode({|fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({|g'; \
+    grep -Rq --include='*.js' 'fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({' /usr/local/lib/node_modules/openclaw/dist/; \
+    ! grep -Rq --include='*.js' 'fetchWithSsrFGuard(withStrictGuardedFetchMode({' /usr/local/lib/node_modules/openclaw/dist/
 
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
@@ -135,6 +138,7 @@ USER sandbox
 RUN python3 -c "\
 import base64, json, os, secrets; \
 from urllib.parse import urlparse; \
+proxy_url = f\"http://{os.environ['NEMOCLAW_PROXY_HOST']}:{os.environ['NEMOCLAW_PROXY_PORT']}\"; \
 model = os.environ['NEMOCLAW_MODEL']; \
 chat_ui_url = os.environ['CHAT_UI_URL']; \
 provider_key = os.environ['NEMOCLAW_PROVIDER_KEY']; \
@@ -147,7 +151,7 @@ _allowed_ids = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_AL
 _discord_guilds = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_DISCORD_GUILDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
 _token_keys = {'discord': 'token', 'telegram': 'botToken', 'slack': 'botToken'}; \
 _env_keys = {'discord': 'DISCORD_BOT_TOKEN', 'telegram': 'TELEGRAM_BOT_TOKEN', 'slack': 'SLACK_BOT_TOKEN'}; \
-_ch_cfg = {ch: {'accounts': {'default': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, **({'proxy': 'http://10.200.0.1:3128'} if ch in ('telegram', 'discord', 'slack') else {}), **({'groupPolicy': 'open'} if ch == 'telegram' else {}), **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
+_ch_cfg = {ch: {'accounts': {'default': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, **({'proxy': proxy_url} if ch in ('telegram', 'discord', 'slack') else {}), **({'groupPolicy': 'open'} if ch == 'telegram' else {}), **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
 _ch_cfg['discord'].update({'groupPolicy': 'allowlist', 'guilds': _discord_guilds}) if 'discord' in _ch_cfg and _discord_guilds else None; \
 parsed = urlparse(chat_ui_url); \
 chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \
@@ -233,7 +237,7 @@ RUN mkdir -p /sandbox/.openclaw-data/logs \
             ln -s "/sandbox/.openclaw-data/$dir" "/sandbox/.openclaw/$dir"; \
         fi; \
     done \
-    && ln -sf /sandbox/.openclaw-data/media /sandbox/.openclaw-data/workspace/media
+    && ln -sfn /sandbox/.openclaw-data/media /sandbox/.openclaw-data/workspace/media
 
 RUN chown root:root /sandbox/.openclaw \
     && rm -rf /root/.npm /sandbox/.npm \
