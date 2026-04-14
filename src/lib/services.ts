@@ -13,6 +13,9 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
+import { DASHBOARD_PORT } from "./ports";
+import { buildSubprocessEnv } from "./subprocess-env";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -124,7 +127,7 @@ function startService(
   const subprocess = spawn(command, args, {
     detached: true,
     stdio: ["ignore", logFd, logFd],
-    env: { ...process.env, ...env },
+    env: buildSubprocessEnv(env),
   });
   closeSync(logFd);
 
@@ -246,7 +249,7 @@ export function stopAll(opts: ServiceOptions = {}): void {
 
 export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   const pidDir = resolvePidDir(opts);
-  const dashboardPort = opts.dashboardPort ?? (Number(process.env.DASHBOARD_PORT) || 18789);
+  const dashboardPort = opts.dashboardPort ?? DASHBOARD_PORT;
 
   ensurePidDir(pidDir);
 
