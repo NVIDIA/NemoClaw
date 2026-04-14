@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/schemas/policy-preset.schema.json",
+  "title": "NemoClaw Policy Preset",
+  "description": "Schema for policy presets (nemoclaw-blueprint/policies/presets/*.yaml) — named network policy bundles that can be merged into the base sandbox policy.",
+  "type": "object",
+  "required": ["preset", "network_policies"],
+  "additionalProperties": false,
+  "properties": {
+    "preset": {
+      "type": "object",
+      "required": ["name", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 }
+      }
+    },
+    "network_policies": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/networkPolicyEntry"
+      }
+    }
+  },
+  "$defs": {
+    "networkPolicyEntry": {
+      "type": "object",
+      "required": ["name", "endpoints"],
+      "properties": {
+        "name": { "type": "string" },
+        "endpoints": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/endpoint" },
+          "minItems": 1
+        },
+        "binaries": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/binary" }
+        }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "required": ["host", "port"],
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "protocol": { "type": "string", "enum": ["rest"] },
+        "enforcement": { "type": "string", "enum": ["enforce", "audit"] },
+        "tls": { "type": "string", "enum": ["terminate", "passthrough"] },
+        "access": { "type": "string", "enum": ["full"] },
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rule" },
+          "minItems": 1
+        }
+      },
+      "if": {
+        "properties": { "protocol": { "const": "rest" } },
+        "required": ["protocol"]
+      },
+      "then": { "required": ["rules"] }
+    },
+    "rule": {
+      "type": "object",
+      "required": ["allow"],
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "object",
+          "required": ["method", "path"],
+          "additionalProperties": false,
+          "properties": {
+            "method": {
+              "type": "string",
+              "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+            },
+            "path": {
+              "type": "string",
+              "pattern": "^/"
+            }
+          }
+        }
+      }
+    },
+    "binary": {
+      "type": "object",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      }
+    }
+  }
+}

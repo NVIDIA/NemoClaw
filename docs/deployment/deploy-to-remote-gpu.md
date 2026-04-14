@@ -120,6 +120,22 @@ If you disable device auth for a remote deployment, any device that can reach th
 Avoid this on internet-reachable or shared-network deployments.
 :::
 
+## Proxy Configuration
+
+NemoClaw routes sandbox traffic through a gateway proxy that defaults to `10.200.0.1:3128`.
+If your network requires a different proxy, set `NEMOCLAW_PROXY_HOST` and `NEMOCLAW_PROXY_PORT` before onboarding:
+
+```console
+$ export NEMOCLAW_PROXY_HOST=proxy.example.com
+$ export NEMOCLAW_PROXY_PORT=8080
+$ nemoclaw onboard
+```
+
+These values are baked into the sandbox image at build time.
+Only alphanumeric characters, dots, hyphens, and colons are accepted for the host.
+The port must be numeric (0-65535).
+Changing the proxy after onboarding requires re-running `nemoclaw onboard`.
+
 ## GPU Configuration
 
 The deploy script uses the `NEMOCLAW_GPU` environment variable to select the GPU type.

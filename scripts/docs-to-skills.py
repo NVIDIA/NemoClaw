@@ -447,12 +447,15 @@ def rewrite_doc_paths(
         if raw_path.startswith(("http://", "https://", "#", "mailto:")):
             return match.group(0)
 
+        # Strip fragment anchors before checking extension
+        path_no_frag = raw_path.split("#")[0]
+
         # Skip non-doc files
-        if not raw_path.endswith(".md") and not raw_path.endswith(".html"):
+        if not path_no_frag.endswith(".md") and not path_no_frag.endswith(".html"):
             return match.group(0)
 
         # Resolve relative path against the source doc's directory
-        resolved = (source_dir / raw_path).resolve()
+        resolved = (source_dir / path_no_frag).resolve()
         try:
             rel_to_repo = resolved.relative_to(repo_root)
         except ValueError:
@@ -877,6 +880,17 @@ CONTENT_TYPE_ROLE = {
 }
 
 
+def markdown_spdx_header() -> str:
+    """Return the SPDX header for generated Markdown files."""
+    return "\n".join(
+        [
+            "<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->",
+            "<!-- SPDX-License-Identifier: Apache-2.0 -->",
+            "",
+        ]
+    )
+
+
 def generate_skill(
     name: str,
     pages: list[DocPage],
@@ -923,6 +937,8 @@ def generate_skill(
     lines.append(f"description: {yaml_scalar(description)}")
     lines.append("---")
     lines.append("")
+    lines.append(markdown_spdx_header().rstrip("\n"))
+    lines.append("")
 
     # Title
     skill_title = _brand_case(name.replace("-", " ").title())
@@ -965,6 +981,8 @@ def generate_skill(
                 for item_line in cleaned.split("\n"):
                     stripped = item_line.strip()
                     if stripped.startswith("- "):
+                        if prereq_items and not prereq_items[-1].startswith("- "):
+                            prereq_items.append("")
                         norm = stripped.lower().strip("- .")
                         if norm not in seen_prereqs:
                             seen_prereqs.add(norm)
@@ -1081,12 +1099,15 @@ def generate_skill(
             skill_md.rstrip("\n") + "\n", encoding="utf-8"
         )
 
+        spdx_ref = markdown_spdx_header()
+
+
         if ref_files:
             refs_dir = skill_dir / "references"
             refs_dir.mkdir(exist_ok=True)
             for fname, content in ref_files.items():
                 (refs_dir / fname).write_text(
-                    content.rstrip("\n") + "\n", encoding="utf-8"
+                    spdx_ref + content.rstrip("\n") + "\n", encoding="utf-8"
                 )
 
     return summary

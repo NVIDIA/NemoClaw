@@ -5,9 +5,9 @@ import { CLOUD_MODEL_OPTIONS } from "./inference-config";
 import { isSafeModelId } from "./validation";
 import { validateNvidiaEndpointModel } from "./provider-models";
 
-// credentials.js is CJS.
+// credentials.ts still uses CommonJS-style exports.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { getCredential, prompt } = require("../../bin/lib/credentials");
+const { getCredential, prompt } = require("./credentials");
 
 export const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
 
@@ -41,6 +41,8 @@ export interface ModelPromptOptions {
   cloudModelOptions?: Array<{ id: string; label: string }>;
   remoteModelOptions?: Record<string, string[]>;
   backToSelection?: string;
+  /** Pre-fill this model ID as the default in interactive prompts. */
+  defaultModelId?: string;
 }
 
 function getNavigationChoice(value = ""): "back" | "exit" | null {
@@ -119,6 +121,14 @@ export async function promptManualModelId(
 
 export async function promptCloudModel(options: ModelPromptOptions = {}): Promise<string> {
   const deps = resolvePromptOptions(options);
+  const defaultModelId = options.defaultModelId ?? "";
+
+  // Find if the default matches a curated option
+  const defaultCuratedIdx = defaultModelId
+    ? deps.cloudModelOptions.findIndex((o) => o.id === defaultModelId)
+    : -1;
+  // Default list selection: match defaultModelId, or fall back to first option (index 0)
+  const defaultListChoice = defaultCuratedIdx >= 0 ? defaultCuratedIdx + 1 : 1;
 
   deps.writeLine("");
   deps.writeLine("  Cloud models:");
@@ -128,7 +138,7 @@ export async function promptCloudModel(options: ModelPromptOptions = {}): Promis
   deps.writeLine(`    ${deps.cloudModelOptions.length + 1}) Other...`);
   deps.writeLine("");
 
-  const choice = await deps.promptFn("  Choose model [1]: ");
+  const choice = await deps.promptFn(`  Choose model [${defaultListChoice}]: `);
   const navigation = deps.getNavigationChoiceFn(choice);
   if (navigation === "back") {
     return deps.backToSelection;
@@ -136,7 +146,7 @@ export async function promptCloudModel(options: ModelPromptOptions = {}): Promis
   if (navigation === "exit") {
     deps.exitFn();
   }
-  const index = parseInt(choice || "1", 10) - 1;
+  const index = parseInt(choice || String(defaultListChoice), 10) - 1;
   if (Number.isFinite(index) && index >= 0 && index < deps.cloudModelOptions.length) {
     return deps.cloudModelOptions[index].id;
   }
@@ -147,11 +157,16 @@ export async function promptCloudModel(options: ModelPromptOptions = {}): Promis
     return deps.backToSelection;
   }
 
+  // If default is a custom (non-curated) model ID, pre-fill it in the manual prompt
+  const manualDefault = defaultCuratedIdx < 0 && defaultModelId && isSafeModelId(defaultModelId) ? defaultModelId : "";
+  const manualLabel = manualDefault
+    ? `  NVIDIA Endpoints model id [${manualDefault}]: `
+    : "  NVIDIA Endpoints model id: ";
   return promptManualModelId(
-    "  NVIDIA Endpoints model id: ",
+    manualLabel,
     "NVIDIA Endpoints",
     (model) => deps.validateNvidiaEndpointModelFn(model, nvidiaApiKey),
-    deps,
+    { ...deps, promptFn: async (q) => (await deps.promptFn(q)) || manualDefault },
   );
 }
 

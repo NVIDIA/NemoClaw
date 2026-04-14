@@ -86,6 +86,20 @@ export function getCredential(key: string): string | null {
   return value || null;
 }
 
+export function deleteCredential(key: string): boolean {
+  const file = getCredsFile();
+  if (!fs.existsSync(file)) return false;
+  const creds = loadCredentials();
+  if (!Object.prototype.hasOwnProperty.call(creds, key)) return false;
+  delete creds[key];
+  writeConfigFile(file, creds);
+  return true;
+}
+
+export function listCredentialKeys(): string[] {
+  return Object.keys(loadCredentials()).sort();
+}
+
 export function promptSecret(question: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const input = process.stdin;
@@ -118,7 +132,10 @@ export function promptSecret(question: string): Promise<string> {
         const ch = text[i];
 
         if (ch === "\u0003") {
-          finish(reject as (value: string | Error) => void, Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
+          finish(
+            reject as (value: string | Error) => void,
+            Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }),
+          );
           return;
         }
 

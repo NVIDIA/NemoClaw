@@ -1,7 +1,10 @@
 ---
 name: "nemoclaw-user-get-started"
-description: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time."
+description: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time. There are additional Windows-only prerequisites before the Quickstart to install NemoClaw on Windows."
 ---
+
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # NemoClaw User Get Started
 
@@ -86,6 +89,10 @@ curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uni
 | `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
 
 For troubleshooting installation or onboarding issues, see the Troubleshooting guide (see the `nemoclaw-user-reference` skill).
+
+## Reference
+
+- [Windows Prerequisites for NemoClaw](references/windows-setup.md)
 
 ## Related Skills
 

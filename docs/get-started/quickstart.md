@@ -49,11 +49,9 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 
 | Dependency | Version                          |
 |------------|----------------------------------|
-| Linux      | Ubuntu 22.04 LTS or later |
 | Node.js    | 22.16 or later |
 | npm        | 10 or later |
-| Container runtime | Supported runtime installed and running |
-| [OpenShell](https://github.com/NVIDIA/OpenShell) | Installed |
+| Platform   | See below |
 
 :::{warning} OpenShell lifecycle
 For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
@@ -62,13 +60,17 @@ Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway sta
 
 ### Container Runtimes
 
-| Platform | Supported runtimes | Notes |
-|----------|--------------------|-------|
-| Linux | Docker | Primary supported path. |
-| macOS (Apple Silicon) | Colima, Docker Desktop | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
-| macOS (Intel) | Docker Desktop | Start the runtime before running the installer. |
-| Windows WSL | Docker Desktop (WSL backend) | Supported target path. |
-| DGX Spark | Docker | Use the standard installer and `nemoclaw onboard`. |
+The following table lists tested platform and runtime combinations.
+Availability is not limited to these entries, but untested configurations may have issues.
+
+<!-- platform-matrix:begin -->
+| OS | Container runtime | Status | Notes |
+|----|-------------------|--------|-------|
+| Linux | Docker | Tested | Primary tested path. |
+| macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
+| DGX Spark | Docker | Tested | Use the standard installer and `nemoclaw onboard`. |
+| Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. |
+<!-- platform-matrix:end -->
 
 ## Install NemoClaw and Onboard OpenClaw Agent
 
