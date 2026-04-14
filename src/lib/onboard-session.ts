@@ -474,6 +474,19 @@ export function markStepComplete(stepName: string, updates: SessionUpdates = {})
   });
 }
 
+export function markStepSkipped(stepName: string): Session {
+  return updateSession((session) => {
+    const step = session.steps[stepName];
+    if (!step) return session;
+    if (step.status === "complete" || step.status === "failed") return session;
+    step.status = "skipped";
+    step.startedAt = null;
+    step.completedAt = null;
+    step.error = null;
+    return session;
+  });
+}
+
 export function markStepFailed(stepName: string, message: string | null = null): Session {
   return updateSession((session) => {
     const step = session.steps[stepName];

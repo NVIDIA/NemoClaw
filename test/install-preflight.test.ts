@@ -400,9 +400,25 @@ exit 98
     expect(output).toMatch(/--non-interactive/);
     expect(output).toMatch(/--version/);
     expect(output).toMatch(/NEMOCLAW_PROVIDER/);
+    expect(output).toMatch(/build \| openai \| anthropic \| anthropicCompatible/);
+    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm/);
+    expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
     expect(output).toMatch(/NEMOCLAW_POLICY_MODE/);
     expect(output).toMatch(/NEMOCLAW_SANDBOX_NAME/);
     expect(output).toMatch(/nvidia\.com\/nemoclaw\.sh/);
+  });
+
+  it("scripts/install.sh --help lists the full non-interactive provider set", () => {
+    const result = spawnSync("bash", [INSTALLER_PAYLOAD, "--help"], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).toBe(0);
+    expect(output).toMatch(/build \| openai \| anthropic \| anthropicCompatible/);
+    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm/);
+    expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
   });
 
   it("--version exits 0 and prints the version number", () => {

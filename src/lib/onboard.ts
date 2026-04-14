@@ -2359,6 +2359,25 @@ async function promptValidatedSandboxName() {
     // Validate: RFC 1123 subdomain — lowercase alphanumeric and hyphens,
     // must start with a letter (not a digit) to satisfy Kubernetes naming.
     if (/^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName)) {
+      // Reject names that collide with global CLI commands.
+      // A sandbox named 'status' makes 'nemoclaw status connect' route to
+      // the global status command instead of the sandbox.
+      const RESERVED_NAMES = new Set([
+        "onboard", "list", "deploy", "setup", "setup-spark",
+        "start", "stop", "status", "debug", "uninstall",
+        "credentials", "help",
+      ]);
+      if (RESERVED_NAMES.has(sandboxName)) {
+        console.error(`  Reserved name: '${sandboxName}' is a NemoClaw CLI command.`);
+        console.error("  Choose a different name to avoid routing conflicts.");
+        if (isNonInteractive()) {
+          process.exit(1);
+        }
+        if (attempt < MAX_ATTEMPTS - 1) {
+          console.error("  Please try again.\n");
+        }
+        continue;
+      }
       return sandboxName;
     }
 
@@ -2679,6 +2698,11 @@ async function createSandbox(
   // proxy rewrites Authorization headers with real secrets at egress.
   // See: crates/openshell-sandbox/src/secrets.rs (placeholder rewriting),
   //      crates/openshell-router/src/backend.rs (inference auth injection).
+  //
+  // TODO: migrate this blocklist to the shared allowlist in
+  // src/lib/subprocess-env.ts once the sandbox create path has been validated
+  // end-to-end with the stricter filtering. The allowlist rejects unknown
+  // env vars by default, which is safer but needs careful rollout.
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
   const blockedSandboxEnvNames = new Set([
     // Derived from REMOTE_PROVIDER_CONFIG to prevent drift
@@ -5251,6 +5275,10 @@ async function onboard(opts = {}) {
         agent,
         dangerouslySkipPermissions,
       );
+      // Persist model and provider after the sandbox entry exists in the registry.
+      // updateSandbox() silently no-ops when the entry is missing, so this must
+      // run after createSandbox() / registerSandbox() — not before. Fixes #1881.
+      registry.updateSandbox(sandboxName, { model, provider });
       onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
     }
 
@@ -5265,6 +5293,7 @@ async function onboard(opts = {}) {
         startRecordedStep,
         skippedStepMessage,
       });
+      onboardSession.markStepSkipped("openclaw");
     } else {
       const resumeOpenclaw = resume && sandboxName && isOpenclawReady(sandboxName);
       if (resumeOpenclaw) {
@@ -5275,6 +5304,7 @@ async function onboard(opts = {}) {
         await setupOpenclaw(sandboxName, model, provider);
         onboardSession.markStepComplete("openclaw", { sandboxName, provider, model });
       }
+      onboardSession.markStepSkipped("agent_setup");
     }
 
     const recordedPolicyPresets = Array.isArray(session?.policyPresets)
