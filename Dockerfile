@@ -5,11 +5,11 @@
 # expensive, rarely-changing layers (apt, gosu, users, openclaw CLI).
 #
 # For local builds without GHCR access, build the base first:
-#   docker build -f Dockerfile.base -t ghcr.io/nvidia/nemoclaw/sandbox-base:latest .
+#   docker build -f Dockerfile.base -t ghcr.io/kenneyhe2/nemoclaw/sandbox-base:latest .
 
 # Global ARG — must be declared before the first FROM to be visible
 # to all FROM directives. Can be overridden via --build-arg.
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
+ARG BASE_IMAGE=ghcr.io/kenneyhe2/nemoclaw/sandbox-base:latest
 
 # Stage 1: Build TypeScript plugin from source
 FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d AS builder
@@ -145,7 +145,7 @@ providers = { \
     } \
 }; \
 config = { \
-    'agents': {'defaults': {'model': {'primary': primary_model_ref}}}, \
+    'agents': {'defaults': {'model': {'primary': primary_model_ref}, 'sandbox': { 'mode': 'off'}}}, \
     'models': {'mode': 'merge', 'providers': providers}, \
     'channels': dict({'defaults': {'configWrites': False}}, **_ch_cfg), \
     'gateway': { \
@@ -214,12 +214,16 @@ RUN mkdir -p /sandbox/.openclaw-data/logs \
             ln -s "/sandbox/.openclaw-data/$dir" "/sandbox/.openclaw/$dir"; \
         fi; \
     done
+RUN chmod 700 /sandbox/.openclaw-data/credentials
 
 RUN chown root:root /sandbox/.openclaw \
     && rm -rf /root/.npm /sandbox/.npm \
     && find /sandbox/.openclaw -mindepth 1 -maxdepth 1 -exec chown -h root:root {} + \
-    && chmod 755 /sandbox/.openclaw \
-    && chmod 444 /sandbox/.openclaw/openclaw.json
+    && chmod 700 /sandbox/.openclaw \
+    && chmod 600 /sandbox/.openclaw/openclaw.json \
+    && chown sandbox:sandbox /sandbox/.openclaw \
+    && chown sandbox:sandbox /usr/bin \
+    && chown sandbox:sandbox /sandbox/.openclaw/openclaw.json
 
 # Pin config hash at build time so the entrypoint can verify integrity.
 # Prevents the agent from creating a copy with a tampered config and
