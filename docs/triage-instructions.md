@@ -14,7 +14,7 @@ status: active
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# NemoClaw — Triage Instructions
+# NemoClaw Triage Instructions
 
 This document is the single source of truth for AI-assisted label triage on NVIDIA/NemoClaw issues and PRs.
 It is read at runtime by the `nemoclaw-maintainer-triage` CLI skill and fetched at generation time by the nvoss-velocity dashboard.
