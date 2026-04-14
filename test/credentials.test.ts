@@ -214,6 +214,26 @@ describe("credential prompts", () => {
     expect(process.env.JIRA_API_TOKEN).toBe("atl-env-token-xyz");
   });
 
+  it("ensureJiraCredentials sets process.env from mixed on-disk and env-var sources", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-jira-mixed-"));
+    const credentials = await importCredentialsModule(home);
+
+    credentials.saveCredential("JIRA_BASE_URL", "https://disk.atlassian.net");
+    credentials.saveCredential("JIRA_API_TOKEN", "atl-disk-token-xyz");
+    vi.stubEnv("JIRA_USER_EMAIL", "env-user@example.com");
+
+    await credentials.ensureJiraCredentials();
+
+    try {
+      expect(process.env.JIRA_BASE_URL).toBe("https://disk.atlassian.net");
+      expect(process.env.JIRA_USER_EMAIL).toBe("env-user@example.com");
+      expect(process.env.JIRA_API_TOKEN).toBe("atl-disk-token-xyz");
+    } finally {
+      delete process.env.JIRA_BASE_URL;
+      delete process.env.JIRA_API_TOKEN;
+    }
+  });
+
   it("ensureJiraCredentials prompts for and saves each missing Jira credential", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),

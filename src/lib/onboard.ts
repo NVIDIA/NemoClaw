@@ -45,6 +45,7 @@ const { resolveOpenshell } = require("./resolve-openshell");
 const {
   prompt,
   ensureApiKey,
+  ensureJiraCredentials,
   getCredential,
   normalizeCredentialValue,
   saveCredential,
@@ -2671,9 +2672,12 @@ async function createSandbox(
   const jiraUrl = getCredential("JIRA_BASE_URL") || process.env.JIRA_BASE_URL;
   const jiraEmail = getCredential("JIRA_USER_EMAIL") || process.env.JIRA_USER_EMAIL;
   const jiraToken = getCredential("JIRA_API_TOKEN") || process.env.JIRA_API_TOKEN;
-  if (jiraUrl) sandboxEnv.JIRA_BASE_URL = jiraUrl;
-  if (jiraEmail) sandboxEnv.JIRA_USER_EMAIL = jiraEmail;
-  if (jiraToken) sandboxEnv.JIRA_API_TOKEN = jiraToken;
+  if (jiraUrl || jiraEmail || jiraToken) {
+    await ensureJiraCredentials();
+  }
+  if (process.env.JIRA_BASE_URL) sandboxEnv.JIRA_BASE_URL = process.env.JIRA_BASE_URL;
+  if (process.env.JIRA_USER_EMAIL) sandboxEnv.JIRA_USER_EMAIL = process.env.JIRA_USER_EMAIL;
+  if (process.env.JIRA_API_TOKEN) sandboxEnv.JIRA_API_TOKEN = process.env.JIRA_API_TOKEN;
   // Run without piping through awk — the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
