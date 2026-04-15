@@ -88,13 +88,13 @@ else
   fail "Wrong token should be 401, got $STATUS"
 fi
 
-# Test 5: Correct token proxied to backend
+# Test 5: Correct token proxied to backend on a protected endpoint
 CORRECT_AUTH="Bearer $TOKEN"
-BODY=$(curl -sf -H "Authorization: $CORRECT_AUTH" "http://127.0.0.1:$PROXY_PORT/api/tags")
-if echo "$BODY" | grep -q "mock:latest"; then
-  pass "Correct token proxied to backend"
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: $CORRECT_AUTH" -X POST "http://127.0.0.1:$PROXY_PORT/api/generate" -d '{}')
+if [ "$STATUS" = "200" ]; then
+  pass "Correct token proxied to backend (protected endpoint)"
 else
-  fail "Correct token did not proxy to backend"
+  fail "Correct token should proxy to backend, got $STATUS"
 fi
 
 # Test 6: GET /api/tags allowed without auth (health check)
