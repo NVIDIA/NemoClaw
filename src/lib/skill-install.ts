@@ -220,7 +220,7 @@ export function collectFiles(dir: string): CollectedFiles {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
       const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.name.startsWith(".")) {
-        if (entry.isFile()) skippedDotfiles.push(rel);
+        skippedDotfiles.push(entry.isDirectory() ? `${rel}/` : rel);
         continue;
       }
       if (entry.isDirectory()) {
@@ -293,8 +293,8 @@ export function postInstall(
           : paths.mirrorDir;
         const mirrorFile = `${paths.mirrorDir}/${rel}`;
         // mirrorDir contains $HOME which must expand, so we use double
-        // quotes for the mkdir target but shellQuote the relative part
-        // to prevent injection from file names.
+        // quotes (not shellQuote). Safe because validateRelativePath
+        // restricts filenames to [A-Za-z0-9._-/] before we reach here.
         const result = sshExec(
           ctx,
           `mkdir -p "${mirrorSubdir}" && cat > "${mirrorFile}"`,

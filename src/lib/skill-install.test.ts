@@ -158,6 +158,22 @@ describe("collectFiles", () => {
     }
   });
 
+  it("reports hidden directories in skippedDotfiles", () => {
+    setup({
+      "SKILL.md": "---\nname: safe\n---\n",
+      ".secret/token.txt": "secret-value",
+      "scripts/visible.sh": "#!/bin/sh",
+      "scripts/.hidden.sh": "#!/bin/sh",
+    });
+    try {
+      const { files, skippedDotfiles } = collectFiles(tmpDir);
+      expect(files.sort()).toEqual(["SKILL.md", "scripts/visible.sh"]);
+      expect(skippedDotfiles.sort()).toEqual([".secret/", "scripts/.hidden.sh"]);
+    } finally {
+      cleanup();
+    }
+  });
+
   it("flags files with unsafe characters", () => {
     setup({
       "SKILL.md": "---\nname: bad\n---\n",

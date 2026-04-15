@@ -82,7 +82,9 @@ bootstrap_usage() {
   printf "    NEMOCLAW_NON_INTERACTIVE=1   Same as --non-interactive\n"
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_SANDBOX_NAME        Sandbox name to create/use\n"
-  printf "    NEMOCLAW_PROVIDER            cloud | ollama | nim | vllm\n"
+  printf "    NEMOCLAW_PROVIDER            build | openai | anthropic | anthropicCompatible\n"
+  printf "                                 | gemini | ollama | custom | nim-local | vllm\n"
+  printf "                                 (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_POLICY_MODE         suggested | custom | skip\n"
   printf "\n"
 }

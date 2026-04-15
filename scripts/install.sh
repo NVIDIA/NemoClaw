@@ -294,7 +294,9 @@ usage() {
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
   printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
-  printf "    NEMOCLAW_PROVIDER             cloud | ollama | nim | vllm\n"
+  printf "    NEMOCLAW_PROVIDER             build | openai | anthropic | anthropicCompatible\n"
+  printf "                                  | gemini | ollama | custom | nim-local | vllm\n"
+  printf "                                  (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
   printf "    NEMOCLAW_POLICY_PRESETS       Comma-separated policy presets\n"
@@ -1200,6 +1202,28 @@ main() {
   fix_npm_permissions
   install_nemoclaw
   verify_nemoclaw
+
+  # Pre-upgrade safety: back up all sandbox state before onboarding (which may
+  # upgrade OpenShell). If the upgrade destroys sandbox contents, the backups
+  # in ~/.nemoclaw/rebuild-backups/ let the user recover via `nemoclaw <name> rebuild`.
+  # Check the registry file directly to avoid shelling out to nemoclaw (which
+  # may be a stub in test environments).
+  local _reg_file="${HOME}/.nemoclaw/sandboxes.json"
+  if [ -f "$_reg_file" ] && command_exists nemoclaw && command_exists openshell; then
+    local _has_sandboxes
+    _has_sandboxes="$(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(len(d.get('sandboxes', {})))
+except Exception:
+    print(0)
+" "$_reg_file" 2>/dev/null || echo 0)"
+    if [ "$_has_sandboxes" -gt 0 ]; then
+      info "Backing up $_has_sandboxes sandbox(es) before upgrade…"
+      nemoclaw backup-all 2>&1 || warn "Pre-upgrade backup failed (non-fatal). Continuing."
+    fi
+  fi
 
   step 3 "Onboarding"
   if command_exists nemoclaw; then

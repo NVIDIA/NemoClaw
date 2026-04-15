@@ -15,6 +15,8 @@ export interface NemoClawState {
   hostBackupPath: string | null;
   createdAt: string | null;
   updatedAt: string;
+  lastRebuildAt: string | null;
+  lastRebuildBackupPath: string | null;
 }
 
 let stateDirCreated = false;
@@ -41,6 +43,8 @@ function blankState(): NemoClawState {
     hostBackupPath: null,
     createdAt: null,
     updatedAt: new Date().toISOString(),
+    lastRebuildAt: null,
+    lastRebuildBackupPath: null,
   };
 }
 
