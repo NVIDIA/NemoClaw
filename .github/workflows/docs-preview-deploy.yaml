@@ -78,7 +78,7 @@ jobs:
 
       - name: Post preview comment
         if: steps.meta.outputs.action != 'closed' && steps.meta.outputs.same-repo == 'true'
-        uses: marocchino/sticky-pull-request-comment@70d2764d1a7d5d9560b100cbea0077fc8f633987  # v3.0.2
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0  # v3.0.4
         with:
           header: pr-preview
           number: ${{ steps.meta.outputs.pr-number }}
@@ -99,7 +99,7 @@ jobs:
 
       - name: Remove preview comment
         if: steps.meta.outputs.action == 'closed'
-        uses: marocchino/sticky-pull-request-comment@70d2764d1a7d5d9560b100cbea0077fc8f633987  # v3.0.2
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0  # v3.0.4
         with:
           header: pr-preview
           number: ${{ steps.meta.outputs.pr-number }}
