@@ -1,20 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it, beforeEach, afterEach } = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 let origHome;
 let tmpHome;
+let moduleVersion = 0;
 
 beforeEach(() => {
   origHome = process.env.HOME;
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-"));
   process.env.HOME = tmpHome;
-  delete require.cache[require.resolve("../nemoclaw/dist/blueprint/resolve.js")];
 });
 
 afterEach(() => {
@@ -22,8 +21,10 @@ afterEach(() => {
   fs.rmSync(tmpHome, { recursive: true, force: true });
 });
 
-function loadModule() {
-  return require("../nemoclaw/dist/blueprint/resolve.js");
+async function loadModule() {
+  moduleVersion += 1;
+  const moduleUrl = new URL("../nemoclaw/dist/blueprint/resolve.js", import.meta.url);
+  return import(`${moduleUrl.href}?v=${moduleVersion}`);
 }
 
 // Write a minimal blueprint.yaml into the cache directory.
@@ -35,54 +36,57 @@ function writeCachedBlueprint(version, content) {
 }
 
 describe("blueprint resolve", () => {
-  it("getCacheDir returns path under HOME", () => {
-    const { getCacheDir } = loadModule();
-    assert.ok(getCacheDir().startsWith(tmpHome));
-    assert.ok(getCacheDir().includes(".nemoclaw"));
+  it("getCacheDir returns path under HOME", async () => {
+    const { getCacheDir } = await loadModule();
+    expect(getCacheDir().startsWith(tmpHome)).toBe(true);
+    expect(getCacheDir()).toContain(".nemoclaw");
   });
 
-  it("getCachedBlueprintPath includes version", () => {
-    const { getCachedBlueprintPath } = loadModule();
+  it("getCachedBlueprintPath includes version", async () => {
+    const { getCachedBlueprintPath } = await loadModule();
     const p = getCachedBlueprintPath("0.1.0");
-    assert.ok(p.endsWith("0.1.0"));
+    expect(p).toMatch(/0\.1\.0$/);
   });
 
-  it("isCached returns false when no blueprint exists", () => {
-    const { isCached } = loadModule();
-    assert.equal(isCached("0.1.0"), false);
+  it("isCached returns false when no blueprint exists", async () => {
+    const { isCached } = await loadModule();
+    expect(isCached("0.1.0")).toBe(false);
   });
 
-  it("isCached returns true after writing blueprint.yaml", () => {
+  it("isCached returns true after writing blueprint.yaml", async () => {
     writeCachedBlueprint("0.2.0", "version: 0.2.0\n");
-    const { isCached } = loadModule();
-    assert.equal(isCached("0.2.0"), true);
+    const { isCached } = await loadModule();
+    expect(isCached("0.2.0")).toBe(true);
   });
 
-  it("readCachedManifest returns null when not cached", () => {
-    const { readCachedManifest } = loadModule();
-    assert.equal(readCachedManifest("0.9.9"), null);
+  it("readCachedManifest returns null when not cached", async () => {
+    const { readCachedManifest } = await loadModule();
+    expect(readCachedManifest("0.9.9")).toBe(null);
   });
 
-  it("readCachedManifest parses version field", () => {
-    writeCachedBlueprint("0.1.0", [
-      'version: "0.1.0"',
-      'min_openshell_version: "0.1.0"',
-      'min_openclaw_version: "2026.3.0"',
-      "digest: abc123",
-      "",
-    ].join("\n"));
-    const { readCachedManifest } = loadModule();
+  it("readCachedManifest parses version field", async () => {
+    writeCachedBlueprint(
+      "0.1.0",
+      [
+        'version: "0.1.0"',
+        'min_openshell_version: "0.1.0"',
+        'min_openclaw_version: "2026.3.0"',
+        "digest: abc123",
+        "",
+      ].join("\n"),
+    );
+    const { readCachedManifest } = await loadModule();
     const m = readCachedManifest("0.1.0");
-    assert.ok(m);
-    assert.equal(m.version, '"0.1.0"');
-    assert.equal(m.digest, "abc123");
+    expect(m).toBeTruthy();
+    expect(m.version).toBe("0.1.0");
+    expect(m.digest).toBe("abc123");
   });
 
-  it("readCachedManifest returns default profiles when missing", () => {
+  it("readCachedManifest returns default profiles when missing", async () => {
     writeCachedBlueprint("0.3.0", "version: 0.3.0\n");
-    const { readCachedManifest } = loadModule();
+    const { readCachedManifest } = await loadModule();
     const m = readCachedManifest("0.3.0");
-    assert.ok(m);
-    assert.deepEqual(m.profiles, ["default"]);
+    expect(m).toBeTruthy();
+    expect(m.profiles).toEqual(["default"]);
   });
 });
