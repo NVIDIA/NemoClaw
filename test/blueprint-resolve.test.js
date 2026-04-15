@@ -122,4 +122,12 @@ describe("blueprint resolve", () => {
     const { readCachedManifest } = await loadModule();
     expect(readCachedManifest("0.7.0")).toBe(null);
   });
+
+  it("readCachedManifest returns null for non-object YAML", async () => {
+    writeCachedBlueprint("0.8.0", "[]\n");
+    writeCachedBlueprint("0.8.1", "true\n");
+    const { readCachedManifest } = await loadModule();
+    expect(readCachedManifest("0.8.0")).toBe(null);
+    expect(readCachedManifest("0.8.1")).toBe(null);
+  });
 });

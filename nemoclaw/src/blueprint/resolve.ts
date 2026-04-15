@@ -31,14 +31,18 @@ export function isCached(version: string): boolean {
 export function readCachedManifest(version: string): CachedBlueprintManifest | null {
   try {
     const blueprintPath = join(getCachedBlueprintPath(version), "blueprint.yaml");
-    const parsed = parse(readFileSync(blueprintPath, "utf-8")) as Record<string, unknown> | null;
+    const parsedRaw = parse(readFileSync(blueprintPath, "utf-8")) as unknown;
+    if (parsedRaw == null || typeof parsedRaw !== "object" || Array.isArray(parsedRaw)) {
+      return null;
+    }
+    const parsed = parsedRaw as Record<string, unknown>;
 
     return {
-      version: readString(parsed?.version),
-      min_openshell_version: readString(parsed?.min_openshell_version),
-      min_openclaw_version: readString(parsed?.min_openclaw_version),
-      digest: readString(parsed?.digest),
-      profiles: readProfiles(parsed?.profiles),
+      version: readString(parsed.version),
+      min_openshell_version: readString(parsed.min_openshell_version),
+      min_openclaw_version: readString(parsed.min_openclaw_version),
+      digest: readString(parsed.digest),
+      profiles: readProfiles(parsed.profiles),
     };
   } catch {
     return null;
