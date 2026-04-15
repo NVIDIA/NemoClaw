@@ -135,8 +135,10 @@ step-by-step in [README.md](./README.md).
 The pod has no Kubernetes `NetworkPolicy` attached. With the default
 "allow all" cluster behavior, the workspace container can reach any
 service in the cluster — including the kube-apiserver — via the
-node's cluster network, and `POLICY_MODE=skip` removes the
-NemoClaw-side guardrail too.
+node's cluster network. `NEMOCLAW_POLICY_MODE=suggested` (the
+current default) weakens the NemoClaw-side guardrails but does not
+fully disable them, so the remaining gap is at the cluster network
+layer.
 
 **Production alternative:** ship a default-deny `NetworkPolicy` for
 the `nemoclaw` namespace and explicitly allow only the inference
