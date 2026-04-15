@@ -55,17 +55,11 @@ OLLAMA_PROXY_TOKEN="$TOKEN" \
 PROXY_PID=$!
 sleep 1
 
-# Test 1: Mock backend bound to localhost only
-# On Linux, 0.0.0.0 does not route to 127.0.0.1, so the mock is unreachable.
-# On macOS, 0.0.0.0 routes to localhost, so we skip this check.
-if [ "$(uname)" = "Linux" ]; then
-  if curl -sf --connect-timeout 2 "http://0.0.0.0:$MOCK_PORT/api/tags" >/dev/null 2>&1; then
-    fail "Mock should NOT be reachable on 0.0.0.0:$MOCK_PORT"
-  else
-    pass "Mock is localhost-only (not reachable on 0.0.0.0:$MOCK_PORT)"
-  fi
+# Test 1: Mock backend responds on localhost
+if curl -sf --connect-timeout 2 "http://127.0.0.1:$MOCK_PORT/api/tags" >/dev/null 2>&1; then
+  pass "Mock is responding on localhost:$MOCK_PORT"
 else
-  pass "Mock is localhost-only (skipped on macOS — 0.0.0.0 routes to loopback)"
+  fail "Mock should be responding on localhost:$MOCK_PORT"
 fi
 
 # Test 2: Proxy is listening

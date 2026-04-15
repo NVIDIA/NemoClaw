@@ -14,6 +14,12 @@ const { shellQuote, runCapture } = require("./runner");
 
 import { VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } from "./ports";
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { isWsl } = require("./platform");
+
+/** Port containers use to reach Ollama — proxy on non-WSL, direct on WSL2. */
+export const OLLAMA_CONTAINER_PORT = isWsl() ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
+
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
 export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
 export const DEFAULT_OLLAMA_MODEL = "nemotron-3-nano:30b";
@@ -48,7 +54,7 @@ export function getLocalProviderBaseUrl(provider: string): string | null {
       return `${HOST_GATEWAY_URL}:${VLLM_PORT}/v1`;
     case "ollama-local":
       // Containers reach Ollama through the auth proxy, not directly.
-      return `${HOST_GATEWAY_URL}:${OLLAMA_PROXY_PORT}/v1`;
+      return `${HOST_GATEWAY_URL}:${OLLAMA_CONTAINER_PORT}/v1`;
     default:
       return null;
   }
@@ -163,7 +169,7 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
         "docker", "run", "--rm",
         "--add-host", "host.openshell.internal:host-gateway",
         CONTAINER_REACHABILITY_IMAGE,
-        "-sf", `http://host.openshell.internal:${OLLAMA_PROXY_PORT}/api/tags`,
+        "-sf", `http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/api/tags`,
       ];
     default:
       return null;
@@ -220,7 +226,7 @@ export function validateLocalProvider(
       return {
         ok: false,
         message:
-          `Local Ollama is responding on localhost, but containers cannot reach the auth proxy at http://host.openshell.internal:${OLLAMA_PROXY_PORT}. Ensure the Ollama auth proxy is running.`,
+          `Local Ollama is responding on localhost, but containers cannot reach the auth proxy at http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}. Ensure the Ollama auth proxy is running.`,
       };
     default:
       return {
