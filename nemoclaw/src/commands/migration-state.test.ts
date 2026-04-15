@@ -3,6 +3,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { PluginLogger } from "../index.js";
+import { setConfigValue } from "./migration-state.js";
 
 // ---------------------------------------------------------------------------
 // fs mock — thin in-memory store keyed by absolute path
@@ -1416,6 +1417,49 @@ describe("commands/migration-state", () => {
           process.env.HOME = origHome;
         }
       }
+    });
+  });
+
+  // ── setConfigValue prototype pollution guard ─────────────────────
+
+  describe("setConfigValue", () => {
+    it.each(["__proto__", "constructor", "prototype"])(
+      "rejects unsafe path segment: %s",
+      (segment) => {
+        const doc: Record<string, unknown> = {};
+        expect(() => setConfigValue(doc, `${segment}.polluted`, "true")).toThrow(
+          /Unsafe config path segment/,
+        );
+      },
+    );
+
+    it("rejects __proto__ in nested position", () => {
+      const doc: Record<string, unknown> = {};
+      expect(() =>
+        setConfigValue(doc, "agents.__proto__.isAdmin", "true"),
+      ).toThrow(/Unsafe config path segment/);
+    });
+
+    it.each(["foo.prototype.bar", "foo.constructor.bar"])(
+      "rejects unsafe segment in nested path: %s",
+      (configPath) => {
+        const doc: Record<string, unknown> = {};
+        expect(() => setConfigValue(doc, configPath, "true")).toThrow(
+          /Unsafe config path segment/,
+        );
+      },
+    );
+
+    it("allows legitimate dotted paths", () => {
+      const doc: Record<string, unknown> = {};
+      setConfigValue(doc, "agents.list[0].workspace", "/tmp/ws");
+      expect((doc as any).agents.list[0].workspace).toBe("/tmp/ws");
+    });
+
+    it("allows simple top-level keys", () => {
+      const doc: Record<string, unknown> = {};
+      setConfigValue(doc, "theme", "dark");
+      expect(doc.theme).toBe("dark");
     });
   });
 });
