@@ -2558,13 +2558,23 @@ async function createSandbox(
     buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
     stagedDockerfile = path.join(buildCtx, "Dockerfile");
     // Copy the entire parent directory as build context.
-    fs.cpSync(path.dirname(fromResolved), buildCtx, {
-      recursive: true,
-      filter: (src) => {
-        const base = path.basename(src);
-        return !["node_modules", ".git", ".venv", "__pycache__"].includes(base);
-      },
-    });
+    try {
+      fs.cpSync(path.dirname(fromResolved), buildCtx, {
+        recursive: true,
+        filter: (src) => {
+          const base = path.basename(src);
+          return !["node_modules", ".git", ".venv", "__pycache__"].includes(base);
+        },
+      });
+    } catch (err) {
+      if (err.code === "EACCES") {
+        console.error(`  Permission denied while copying build context from: ${path.dirname(fromResolved)}`);
+        console.error("  The --from flag uses the Dockerfile's parent directory as the Docker build context.");
+        console.error("  Move your Dockerfile to a dedicated directory and retry.");
+        process.exit(1);
+      }
+      throw err;
+    }
     // If the caller pointed at a file not named "Dockerfile", copy it to the
     // location openshell expects (buildCtx/Dockerfile).
     if (path.basename(fromResolved) !== "Dockerfile") {
