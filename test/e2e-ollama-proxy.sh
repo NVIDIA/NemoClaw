@@ -13,10 +13,12 @@ PROXY_PORT=19435
 TOKEN="test-token-$(date +%s)"
 PASS=0
 FAIL=0
+MOCK_PID=""
+PROXY_PID=""
 
 cleanup() {
-  kill "$MOCK_PID" 2>/dev/null || true
-  kill "$PROXY_PID" 2>/dev/null || true
+  [ -n "${MOCK_PID:-}" ] && kill "$MOCK_PID" 2>/dev/null || true
+  [ -n "${PROXY_PID:-}" ] && kill "$PROXY_PID" 2>/dev/null || true
 }
 trap cleanup EXIT
 

@@ -1510,9 +1510,19 @@ function loadPersistedProxyToken(): string | null {
 
 function killStaleProxy(): void {
   try {
-    const pidOutput = runCapture(`lsof -ti :${OLLAMA_PROXY_PORT}`, { ignoreError: true });
+    // Only kill processes that are actually the auth proxy, not unrelated
+    // services that happen to use the same port.
+    const pidOutput = runCapture(
+      `lsof -ti :${OLLAMA_PROXY_PORT} 2>/dev/null`,
+      { ignoreError: true },
+    );
     if (pidOutput && pidOutput.trim()) {
-      run(`kill ${pidOutput.trim()} 2>/dev/null || true`, { ignoreError: true });
+      for (const pid of pidOutput.trim().split(/\s+/)) {
+        const cmdline = runCapture(`ps -p ${pid} -o args= 2>/dev/null`, { ignoreError: true });
+        if (cmdline && cmdline.includes("ollama-auth-proxy")) {
+          run(`kill ${pid} 2>/dev/null || true`, { ignoreError: true });
+        }
+      }
       sleep(1);
     }
   } catch { /* ignore */ }
