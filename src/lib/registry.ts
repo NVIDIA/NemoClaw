@@ -17,6 +17,7 @@ export interface SandboxEntry {
   policyTier?: string | null;
   agent?: string | null;
   dangerouslySkipPermissions?: boolean;
+  agentVersion?: string | null;
 }
 
 export interface SandboxRegistry {
@@ -163,6 +164,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       agent: entry.agent || null,
       dangerouslySkipPermissions:
         entry.dangerouslySkipPermissions === true ? true : undefined,
+      agentVersion: entry.agentVersion || null,
     };
     if (!data.defaultSandbox) {
       data.defaultSandbox = entry.name;

@@ -67,6 +67,7 @@ const {
   planHostRemediation,
 } = require("./preflight");
 const agentOnboard = require("./agent-onboard");
+const agentDefs = require("./agent-defs");
 
 const gatewayState = require("./gateway-state");
 const validation = require("./validation");
@@ -2830,10 +2831,12 @@ async function createSandbox(
   ensureDashboardForward(sandboxName, chatUiUrl);
 
   // Register only after confirmed ready — prevents phantom entries
+  const effectiveAgent = agent || agentDefs.loadAgent("openclaw");
   registry.registerSandbox({
     name: sandboxName,
     gpuEnabled: !!gpu,
     agent: agent ? agent.name : null,
+    agentVersion: fromDockerfile ? null : (effectiveAgent.expectedVersion || null),
     dangerouslySkipPermissions: dangerouslySkipPermissions || undefined,
   });
 
