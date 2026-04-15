@@ -28,7 +28,7 @@ const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
 const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
-const { DASHBOARD_PORT, GATEWAY_PORT, VLLM_PORT, OLLAMA_PORT } = require("./ports");
+const { DASHBOARD_PORT, GATEWAY_PORT, VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("./ports");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -1478,6 +1478,48 @@ const { validateAnthropicModel, validateOpenAiLikeModel } = providerModels;
 const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRecoveryHints } =
   buildContext;
 // classifySandboxCreateFailure — see validation import above
+
+// ---------------------------------------------------------------------------
+// Ollama auth proxy — keeps Ollama on localhost, exposes a token-gated proxy
+// on 0.0.0.0 so containers can reach it without exposing Ollama to the network.
+// ---------------------------------------------------------------------------
+
+let ollamaProxyToken: string | null = null;
+
+function startOllamaAuthProxy(): void {
+  const crypto = require("crypto");
+  // Kill any stale proxy from a previous onboard run
+  run([`lsof`, `-ti`, `:${OLLAMA_PROXY_PORT}`], { ignoreError: true, suppressOutput: true });
+  try {
+    const pidOutput = runCapture(`lsof -ti :${OLLAMA_PROXY_PORT}`, { ignoreError: true });
+    if (pidOutput && pidOutput.trim()) {
+      run(`kill ${pidOutput.trim()} 2>/dev/null || true`, { ignoreError: true });
+      sleep(1);
+    }
+  } catch { /* ignore */ }
+
+  ollamaProxyToken = crypto.randomBytes(24).toString("hex");
+  run(
+    `OLLAMA_PROXY_TOKEN=${shellQuote(ollamaProxyToken)} ` +
+    `OLLAMA_PROXY_PORT=${OLLAMA_PROXY_PORT} ` +
+    `OLLAMA_BACKEND_PORT=${OLLAMA_PORT} ` +
+    `node "${SCRIPTS}/ollama-auth-proxy.js" > /dev/null 2>&1 &`,
+    { ignoreError: true },
+  );
+  sleep(1);
+  // Verify proxy is actually listening
+  const probe = runCapture(
+    `curl -sf --connect-timeout 2 http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/tags 2>/dev/null`,
+    { ignoreError: true },
+  );
+  if (!probe) {
+    console.error(`  Warning: Ollama auth proxy did not start on :${OLLAMA_PROXY_PORT}`);
+  }
+}
+
+function getOllamaProxyToken(): string | null {
+  return ollamaProxyToken;
+}
 
 async function promptOllamaModel(gpu = null) {
   const installed = getOllamaModelOptions();
@@ -3346,14 +3388,12 @@ async function setupNim(gpu) {
       } else if (selected.key === "ollama") {
         if (!ollamaRunning) {
           console.log("  Starting Ollama...");
-          // On WSL2, binding to 0.0.0.0 creates a dual-stack socket that Docker
-          // cannot reach via host-gateway. The default 127.0.0.1 binding works
-          // because WSL2 relays IPv4-only sockets to the Windows host.
-          const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} `;
-          run(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+          // Bind to localhost only — the auth proxy handles container access.
+          run(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
           sleep(2);
         }
-        console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
+        startOllamaAuthProxy();
+        console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`);
         provider = "ollama-local";
         credentialEnv = "OPENAI_API_KEY";
         endpointUrl = getLocalProviderBaseUrl(provider);
@@ -3408,9 +3448,11 @@ async function setupNim(gpu) {
         console.log("  Installing Ollama via Homebrew...");
         run("brew install ollama", { ignoreError: true });
         console.log("  Starting Ollama...");
-        run(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+        // Bind to localhost only — the auth proxy handles container access.
+        run(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
         sleep(2);
-        console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
+        startOllamaAuthProxy();
+        console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`);
         provider = "ollama-local";
         credentialEnv = "OPENAI_API_KEY";
         endpointUrl = getLocalProviderBaseUrl(provider);
@@ -3641,12 +3683,19 @@ async function setupInference(
     const validation = validateLocalProvider(provider);
     if (!validation.ok) {
       console.error(`  ${validation.message}`);
-      console.error("  On macOS, local inference also depends on OpenShell host routing support.");
+      if (process.platform === "darwin") {
+        console.error("  On macOS, local inference also depends on OpenShell host routing support.");
+      }
       process.exit(1);
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
+    const proxyToken = getOllamaProxyToken();
+    if (!proxyToken) {
+      console.error("  Ollama auth proxy token is not set. Re-run onboard to initialize the proxy.");
+      process.exit(1);
+    }
     const providerResult = upsertProvider("ollama-local", "openai", "OPENAI_API_KEY", baseUrl, {
-      OPENAI_API_KEY: "ollama",
+      OPENAI_API_KEY: proxyToken,
     });
     if (!providerResult.ok) {
       console.error(`  ${providerResult.message}`);
