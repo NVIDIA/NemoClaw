@@ -1,24 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it, beforeEach, afterEach } = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // The config module reads process.env.HOME to locate ~/.nemoclaw/config.json.
 // We override HOME to an isolated temp directory so tests never touch real config.
 let origHome;
 let tmpHome;
+let moduleVersion = 0;
 
 beforeEach(() => {
   origHome = process.env.HOME;
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cfg-"));
   process.env.HOME = tmpHome;
-
-  // Force re-require so the module picks up the new HOME
-  delete require.cache[require.resolve("../nemoclaw/dist/onboard/config.js")];
 });
 
 afterEach(() => {
@@ -26,8 +23,10 @@ afterEach(() => {
   fs.rmSync(tmpHome, { recursive: true, force: true });
 });
 
-function loadModule() {
-  return require("../nemoclaw/dist/onboard/config.js");
+async function loadModule() {
+  moduleVersion += 1;
+  const moduleUrl = new URL("../nemoclaw/dist/onboard/config.js", import.meta.url);
+  return import(`${moduleUrl.href}?v=${moduleVersion}`);
 }
 
 const SAMPLE_CONFIG = {
@@ -41,47 +40,47 @@ const SAMPLE_CONFIG = {
 };
 
 describe("onboard config", () => {
-  it("returns null when no config exists", () => {
-    const { loadOnboardConfig } = loadModule();
-    assert.equal(loadOnboardConfig(), null);
+  it("returns null when no config exists", async () => {
+    const { loadOnboardConfig } = await loadModule();
+    expect(loadOnboardConfig()).toBe(null);
   });
 
-  it("saves and loads config round-trip", () => {
-    const { saveOnboardConfig, loadOnboardConfig } = loadModule();
+  it("saves and loads config round-trip", async () => {
+    const { saveOnboardConfig, loadOnboardConfig } = await loadModule();
     saveOnboardConfig(SAMPLE_CONFIG);
     const loaded = loadOnboardConfig();
-    assert.deepEqual(loaded, SAMPLE_CONFIG);
+    expect(loaded).toEqual(SAMPLE_CONFIG);
   });
 
-  it("creates .nemoclaw directory if missing", () => {
-    const { saveOnboardConfig } = loadModule();
+  it("creates .nemoclaw directory if missing", async () => {
+    const { saveOnboardConfig } = await loadModule();
     saveOnboardConfig(SAMPLE_CONFIG);
     const configDir = path.join(tmpHome, ".nemoclaw");
-    assert.ok(fs.existsSync(configDir));
+    expect(fs.existsSync(configDir)).toBe(true);
   });
 
-  it("clears config", () => {
-    const { saveOnboardConfig, clearOnboardConfig, loadOnboardConfig } = loadModule();
+  it("clears config", async () => {
+    const { saveOnboardConfig, clearOnboardConfig, loadOnboardConfig } = await loadModule();
     saveOnboardConfig(SAMPLE_CONFIG);
-    assert.notEqual(loadOnboardConfig(), null);
+    expect(loadOnboardConfig()).not.toBe(null);
     clearOnboardConfig();
-    assert.equal(loadOnboardConfig(), null);
+    expect(loadOnboardConfig()).toBe(null);
   });
 
-  it("clear is safe when no config exists", () => {
-    const { clearOnboardConfig } = loadModule();
+  it("clear is safe when no config exists", async () => {
+    const { clearOnboardConfig } = await loadModule();
     // Should not throw
-    clearOnboardConfig();
+    expect(() => clearOnboardConfig()).not.toThrow();
   });
 
-  it("overwrites existing config on save", () => {
-    const { saveOnboardConfig, loadOnboardConfig } = loadModule();
+  it("overwrites existing config on save", async () => {
+    const { saveOnboardConfig, loadOnboardConfig } = await loadModule();
     saveOnboardConfig(SAMPLE_CONFIG);
 
     const updated = { ...SAMPLE_CONFIG, model: "nvidia/nemotron-3-nano-30b-a3b" };
     saveOnboardConfig(updated);
 
     const loaded = loadOnboardConfig();
-    assert.equal(loaded.model, "nvidia/nemotron-3-nano-30b-a3b");
+    expect(loaded?.model).toBe("nvidia/nemotron-3-nano-30b-a3b");
   });
 });
