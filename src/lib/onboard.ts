@@ -1496,6 +1496,8 @@ function persistProxyToken(token: string): void {
     fs.mkdirSync(dir, { recursive: true });
   }
   fs.writeFileSync(PROXY_TOKEN_PATH, token, { mode: 0o600 });
+  // mode only applies on creation; ensure permissions on existing files too
+  fs.chmodSync(PROXY_TOKEN_PATH, 0o600);
 }
 
 function loadPersistedProxyToken(): string | null {
@@ -1533,7 +1535,9 @@ function startOllamaAuthProxy(): void {
   killStaleProxy();
 
   ollamaProxyToken = crypto.randomBytes(24).toString("hex");
-  persistProxyToken(ollamaProxyToken);
+  // Don't persist yet — wait until provider is confirmed in setupInference.
+  // If the user backs out to a different provider, the token stays in memory
+  // only and is discarded.
 
   run(
     `OLLAMA_PROXY_TOKEN=${shellQuote(ollamaProxyToken)} ` +
@@ -1558,17 +1562,25 @@ function startOllamaAuthProxy(): void {
  * from host reboots where the background proxy process was lost.
  */
 function ensureOllamaAuthProxy(): void {
-  // Check if proxy is already running
+  // Try to load persisted token first — if none, this isn't an Ollama setup
+  const token = loadPersistedProxyToken();
+  if (!token) return;
+
+  // Verify the proxy is alive AND accepts our token (not a stale proxy
+  // with a different token or an unrelated service on the same port).
+  // Use a protected endpoint, not /api/tags which is auth-exempt.
   const probe = runCapture(
-    `curl -sf --connect-timeout 1 http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/tags 2>/dev/null`,
+    `curl -sf --connect-timeout 1 -H "Authorization: Bearer ${shellQuote(token)}" ` +
+    `-X POST http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/generate -d '{}' 2>/dev/null`,
     { ignoreError: true },
   );
-  if (probe) return; // proxy is alive
+  if (probe !== null && probe !== undefined) {
+    ollamaProxyToken = token;
+    return; // proxy is alive and accepts our token
+  }
 
-  // Try to restart with persisted token
-  const token = loadPersistedProxyToken();
-  if (!token) return; // no token — not an Ollama setup
-
+  // Proxy not running or wrong token — restart it
+  killStaleProxy();
   ollamaProxyToken = token;
   run(
     `OLLAMA_PROXY_TOKEN=${shellQuote(token)} ` +
@@ -3776,6 +3788,9 @@ async function setupInference(
         process.exit(1);
       }
       ollamaCredential = proxyToken;
+      // Persist token now that ollama-local is confirmed as the provider.
+      // Not persisted earlier in case the user backs out to a different provider.
+      persistProxyToken(proxyToken);
     }
     const providerResult = upsertProvider("ollama-local", "openai", "OPENAI_API_KEY", baseUrl, {
       OPENAI_API_KEY: ollamaCredential,
