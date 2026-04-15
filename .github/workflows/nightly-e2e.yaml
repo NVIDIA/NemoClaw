@@ -410,16 +410,13 @@ jobs:
           if-no-files-found: ignore
 
   # ── GPU E2E (Ollama local inference) ──────────────────────────
-  # Enable by setting repository variable GPU_E2E_ENABLED=true
-  # (Settings → Secrets and variables → Actions → Variables)
-  #
-  # Runner labels: using 'self-hosted' for now. Refine to
-  # [self-hosted, linux, x64, gpu] once NVIDIA runner labels are confirmed.
+  # Runs on an ephemeral Brev GPU instance with Ollama pre-installed.
   gpu-e2e:
     if: github.repository == 'NVIDIA/NemoClaw' && vars.GPU_E2E_ENABLED == 'true'
-    runs-on: self-hosted
-    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
     env:
+      BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-gpu-ollama"
@@ -429,19 +426,59 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Verify GPU availability
+      - name: Install Brev CLI
         run: |
-          echo "=== GPU Info ==="
-          nvidia-smi
-          echo ""
-          echo "=== VRAM ==="
-          nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
-          echo ""
-          echo "=== Docker ==="
-          docker info --format '{{.ServerVersion}}'
+          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.322/brev-cli_0.6.322_linux_amd64.tar.gz"
+          tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
+          chmod +x /usr/local/bin/brev
 
-      - name: Run GPU E2E test (Ollama local inference)
-        run: bash test/e2e/test-gpu-e2e.sh
+      - name: Provision Brev GPU Instance & Run Test
+        env:
+          INSTANCE_NAME: e2e-gpu-nightly-${{ github.run_id }}
+        run: |
+          # Provision the GPU instance with our script. Form-created launchables could also just substitute their template ID here.
+          echo "Provisioning GPU instance..."
+          brev create --name "$INSTANCE_NAME" \
+            --flavor "t4" \
+            --startup-script "https://raw.githubusercontent.com/NVIDIA/NemoClaw/${{ github.sha }}/scripts/brev-launchable-ci-gpu.sh"
+
+          echo "Waiting for readiness sentinel..."
+          export READY=0
+          for i in {1..20}; do
+             if brev exec "$INSTANCE_NAME" -- cat /var/run/nemoclaw-launchable-ready >/dev/null 2>&1; then
+               READY=1
+               break
+             fi
+             sleep 30
+          done
+
+          if [ $READY -eq 0 ]; then
+             echo "Instance did not become ready in time."
+             exit 1
+          fi
+
+          echo "Running GPU E2E tests remotely..."
+          # Pass the needed env variables when running
+          brev exec "$INSTANCE_NAME" -- bash -c \
+            "cd ~/NemoClaw && \
+             export NEMOCLAW_NON_INTERACTIVE=${NEMOCLAW_NON_INTERACTIVE} && \
+             export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE} && \
+             export NEMOCLAW_SANDBOX_NAME=${NEMOCLAW_SANDBOX_NAME} && \
+             export NEMOCLAW_RECREATE_SANDBOX=${NEMOCLAW_RECREATE_SANDBOX} && \
+             export NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER} && \
+             export OLLAMA_MODEL=qwen3:0.6b && \
+             bash test/e2e/test-gpu-e2e.sh"
+
+      - name: Tear down GPU instance
+        if: always()
+        run: brev delete e2e-gpu-nightly-${{ github.run_id }} || true
+
+      - name: Copy install log on failure
+        if: failure()
+        env:
+          INSTANCE_NAME: e2e-gpu-nightly-${{ github.run_id }}
+        run: |
+          brev scp "$INSTANCE_NAME":/tmp/nemoclaw-gpu-e2e-install.log /tmp/nemoclaw-gpu-e2e-install.log || true
 
       - name: Upload install log on failure
         if: failure()
@@ -450,6 +487,13 @@ jobs:
           name: gpu-e2e-install-log
           path: /tmp/nemoclaw-gpu-e2e-install.log
           if-no-files-found: ignore
+
+      - name: Copy test log on failure
+        if: failure()
+        env:
+          INSTANCE_NAME: e2e-gpu-nightly-${{ github.run_id }}
+        run: |
+          brev scp "$INSTANCE_NAME":/tmp/nemoclaw-gpu-e2e-test.log /tmp/nemoclaw-gpu-e2e-test.log || true
 
       - name: Upload test log on failure
         if: failure()

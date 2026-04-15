@@ -20,8 +20,8 @@
  *   The local `brev` CLI must already be authenticated before this suite runs.
  *
  * Optional env vars:
- *   TEST_SUITE             — which test to run: full (default), deploy-cli, credential-sanitization,
- *                             telegram-injection, messaging-providers, all
+ *   TEST_SUITE             — which test to run: full (default), credential-sanitization, telegram-injection, all, gpu
+ *   USE_LAUNCHABLE         — "1" (default) to use CI launchable, "0" for bare brev create + brev-setup.sh
  *   LAUNCHABLE_SETUP_SCRIPT — URL to setup script for launchable path (default: brev-launchable-ci-cpu.sh on main)
  *   BREV_MIN_VCPU          — Minimum vCPUs for CPU instance (default: 4)
  *   BREV_MIN_RAM           — Minimum RAM in GB for CPU instance (default: 16)
@@ -684,33 +684,13 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     600_000,
   );
 
-  it.runIf(TEST_SUITE === "deploy-cli")(
-    "deploy CLI provisions a remote sandbox end to end",
+  it.runIf(TEST_SUITE === "gpu")(
+    "GPU E2E suite passes on remote VM",
     () => {
-      const sandboxList = ssh(
-        "export PATH=$HOME/.local/bin:$PATH && openshell sandbox list 2>/dev/null",
-        { timeout: 30_000 },
-      );
-      expect(sandboxList).toContain("e2e-test");
-      expect(sandboxList).toContain("Ready");
-
-      const registry = JSON.parse(ssh("cat ~/.nemoclaw/sandboxes.json", { timeout: 10_000 }));
-      expect(registry.defaultSandbox).toBe("e2e-test");
-      expect(registry.sandboxes).toHaveProperty("e2e-test");
-    },
-    120_000,
-  );
-
-  // NOTE: The messaging-providers test creates its own sandbox (e2e-msg-provider)
-  // with messaging tokens attached. It does not conflict with the e2e-test sandbox
-  // used by other tests, but it may recreate the gateway.
-  it.runIf(TEST_SUITE === "messaging-providers" || TEST_SUITE === "all")(
-    "messaging credential provider suite passes on remote VM",
-    () => {
-      const output = runRemoteTest("test/e2e/test-messaging-providers.sh");
+      const output = runRemoteTest("test/e2e/test-gpu-e2e.sh");
       expect(output).toContain("PASS");
       expect(output).not.toMatch(/FAIL:/);
     },
-    900_000, // 15 min — creates a new sandbox with messaging providers
+    900_000,
   );
 });
