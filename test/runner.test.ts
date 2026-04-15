@@ -229,7 +229,7 @@ describe("shellQuote", () => {
 });
 
 describe("validateName", () => {
-  it("accepts valid RFC 1123 names", () => {
+  it("accepts valid sandbox names", () => {
     const { validateName } = require(runnerPath);
     expect(validateName("my-sandbox")).toBe("my-sandbox");
     expect(validateName("test123")).toBe("test123");
@@ -253,6 +253,7 @@ describe("validateName", () => {
 
   it("rejects uppercase and special characters", () => {
     const { validateName } = require(runnerPath);
+    expect(() => validateName("1sandbox")).toThrow(/Invalid/);
     expect(() => validateName("MyBox")).toThrow(/Invalid/);
     expect(() => validateName("my_box")).toThrow(/Invalid/);
     expect(() => validateName("-leading")).toThrow(/Invalid/);

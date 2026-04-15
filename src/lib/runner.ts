@@ -189,9 +189,9 @@ function validateName(name, label = "name") {
   if (name.length > 63) {
     throw new Error(`${label} too long (max 63 chars): '${name.slice(0, 20)}...'`);
   }
-  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
+  if (!/^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
     throw new Error(
-      `Invalid ${label}: '${name}'. Must be lowercase alphanumeric with optional internal hyphens.`,
+      `Invalid ${label}: '${name}'. Must start with a letter and contain only lowercase alphanumerics with optional internal hyphens.`,
     );
   }
   return name;
