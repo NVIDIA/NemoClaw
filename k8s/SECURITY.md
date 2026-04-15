@@ -77,7 +77,7 @@ socket) into the workspace container.
 `POLICY_MODE=skip` disables NemoClaw's network policy enforcement
 inside the sandbox. The agent inside the sandbox can reach **any**
 host on the cluster network, exfiltrate data, or pivot to other
-services. Policies (`pypi`, `npm`, `github`, `huggingface`, etc.)
+services. Policies (`pypi`, `npm`, `GitHub`, `huggingface`, etc.)
 have zero effect.
 
 **Production alternative:** drop the env var (or set
