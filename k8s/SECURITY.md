@@ -67,65 +67,68 @@ to escape the sandbox.
 so the daemon issues client certs, then mount only the certs (not the
 socket) into the workspace container.
 
-### 3. `NEMOCLAW_POLICY_MODE=skip`
+### 3. `NEMOCLAW_POLICY_MODE=suggested`
 
 ```yaml
 - name: NEMOCLAW_POLICY_MODE
-  value: "skip"
+  value: "suggested"
 ```
 
-`POLICY_MODE=skip` disables NemoClaw's network policy enforcement
-inside the sandbox. The agent inside the sandbox can reach **any**
-host on the cluster network, exfiltrate data, or pivot to other
-services. Policies (`pypi`, `npm`, `GitHub`, `huggingface`, etc.)
-have zero effect.
-
-**Production alternative:** drop the env var (or set
-`NEMOCLAW_POLICY_MODE=enforce`) and pick the smallest set of policy
+The current manifest uses `suggested` — a permissive mode that
+applies NemoClaw's suggested policy presets without strictly
+enforcing them. This is a meaningful improvement over the previous
+`skip` default (which disabled policy enforcement entirely), but it
+is still not the strictest setting. For production workloads
+handling sensitive data, reduce the allowed policy set to only the
 presets the agent actually needs during onboard.
 
-### 4. `curl | bash` installer over the network
+### 4. Installer pulled over the network at pod start
+
+The manifest now downloads the installer to a local file with
+HTTPS-only curl flags before executing:
 
 ```yaml
-command:
-  - bash
-  - -c
-  - |
-      ...
-      curl -fsSL https://nvidia.com/nemoclaw.sh | bash
+curl --proto '=https' --tlsv1.2 --fail --show-error --silent \
+  --location \
+  --output /tmp/nemoclaw-install.sh \
+  https://www.nvidia.com/nemoclaw.sh
+chmod 700 /tmp/nemoclaw-install.sh
+bash /tmp/nemoclaw-install.sh
 ```
 
-Pulling the installer over the network at pod start time means the
-deployed version of NemoClaw is whatever is live on
-`nvidia.com/nemoclaw.sh` at the moment the pod boots. There is no
-checksum verification, no version pinning, and no offline path. A
-compromise of the installer URL or a transient redirect is a one-shot
-supply-chain compromise of every pod that ever restarts.
+This is better than the original `curl | bash` — the download and
+execute are now separate steps, TLS 1.2+ is enforced, and HTTP is
+rejected. However, the installer script itself is still pulled at
+pod start with no checksum verification and no version pinning. A
+compromise of the installer URL or a transient redirect is still a
+one-shot supply-chain compromise of every pod that ever restarts.
 
 **Production alternative:** build a NemoClaw image at a known tag,
 publish it to your own registry pinned by digest (see #1438), and
 deploy that image instead of running the installer at pod start.
 
-### 5. Placeholder API key
+### 5. API key handling
 
-```yaml
-- name: COMPATIBLE_API_KEY
-  value: "dummy"
-```
-
-The manifest hardcodes a placeholder credential. In a production
-deployment this needs to be a real key, sourced from a Kubernetes
-`Secret`, not an environment variable in plain YAML.
-
-**Production alternative:**
+The manifest now loads `COMPATIBLE_API_KEY` from an optional
+Kubernetes `Secret` with a `dummy` fallback in startup shell logic
+for unauthenticated endpoints like local Dynamo/vLLM:
 
 ```yaml
 - name: COMPATIBLE_API_KEY
   valueFrom:
     secretKeyRef:
-      name: nemoclaw-credentials
-      key: compatible-api-key
+      name: nemoclaw-compatible-api-key
+      key: api-key
+      optional: true
 ```
+
+This is the correct pattern for production. The `optional: true`
+flag allows the manifest to deploy without the Secret (useful for
+evaluation against open endpoints), and the startup shell assigns
+`dummy` when the Secret is absent so the CLI's credential
+validation does not block startup. For production, create the
+Secret with a real key before applying the manifest — see the
+step-by-step in [README.md](./README.md).
 
 ### 6. No `NetworkPolicy`
 
@@ -174,8 +177,10 @@ above is acceptable as-is. At a minimum:
 2. **Build and pin a NemoClaw image** by digest. Do not `curl | bash`
    at pod start.
 3. **Source credentials from `Secret` resources**, not env vars.
-4. **Set `NEMOCLAW_POLICY_MODE=enforce`** and select only the policy
-   presets the agent actually needs.
+4. **Reduce the policy preset set.** The manifest already uses
+   `NEMOCLAW_POLICY_MODE=suggested` (a permissive but non-skip
+   default). Narrow the suggested presets to only what the agent
+   actually needs during onboard.
 5. **Attach a default-deny `NetworkPolicy`** to the `nemoclaw`
    namespace.
 6. **Set `resources.limits`** so a sandbox cannot starve the node.
