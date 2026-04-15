@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 
 const BLUEPRINT_CACHE_DIR = join(process.env.HOME ?? "/tmp", ".nemoclaw", "blueprints");
+const SAFE_BLUEPRINT_VERSION = /^[0-9A-Za-z][0-9A-Za-z._-]*$/;
 
 export interface CachedBlueprintManifest {
   version: string | null;
@@ -20,7 +21,7 @@ export function getCacheDir(): string {
 }
 
 export function getCachedBlueprintPath(version: string): string {
-  return join(BLUEPRINT_CACHE_DIR, version);
+  return join(BLUEPRINT_CACHE_DIR, validateBlueprintVersion(version));
 }
 
 export function isCached(version: string): boolean {
@@ -28,32 +29,48 @@ export function isCached(version: string): boolean {
 }
 
 export function readCachedManifest(version: string): CachedBlueprintManifest | null {
-  const blueprintPath = join(getCachedBlueprintPath(version), "blueprint.yaml");
-  if (!existsSync(blueprintPath)) {
+  try {
+    const blueprintPath = join(getCachedBlueprintPath(version), "blueprint.yaml");
+    const parsed = parse(readFileSync(blueprintPath, "utf-8")) as Record<string, unknown> | null;
+
+    return {
+      version: readString(parsed?.version),
+      min_openshell_version: readString(parsed?.min_openshell_version),
+      min_openclaw_version: readString(parsed?.min_openclaw_version),
+      digest: readString(parsed?.digest),
+      profiles: readProfiles(parsed?.profiles),
+    };
+  } catch {
     return null;
   }
+}
 
-  const parsed = parse(readFileSync(blueprintPath, "utf-8")) as Record<string, unknown> | null;
-  const profiles = parsed?.profiles;
-
-  return {
-    version: readString(parsed?.version),
-    min_openshell_version: readString(parsed?.min_openshell_version),
-    min_openclaw_version: readString(parsed?.min_openclaw_version),
-    digest: readString(parsed?.digest),
-    profiles:
-      Array.isArray(profiles) && profiles.every((profile) => typeof profile === "string")
-        ? profiles
-        : ["default"],
-  };
+function validateBlueprintVersion(version: string): string {
+  if (!SAFE_BLUEPRINT_VERSION.test(version) || version.includes("..")) {
+    throw new TypeError(`Invalid blueprint version: ${version}`);
+  }
+  return version;
 }
 
 function readString(value: unknown): string | null {
   if (value == null) {
     return null;
   }
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return String(value);
+  if (typeof value === "string") {
+    return value;
   }
-  return null;
+  throw new TypeError("Manifest field must be a string");
+}
+
+function readProfiles(profiles: unknown): string[] {
+  if (
+    !Array.isArray(profiles) ||
+    profiles.length === 0 ||
+    !profiles.every((profile) => typeof profile === "string") ||
+    new Set(profiles).size !== profiles.length
+  ) {
+    return ["default"];
+  }
+
+  return profiles;
 }

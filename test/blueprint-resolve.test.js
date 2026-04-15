@@ -48,6 +48,12 @@ describe("blueprint resolve", () => {
     expect(p).toMatch(/0\.1\.0$/);
   });
 
+  it("getCachedBlueprintPath rejects unsafe versions", async () => {
+    const { getCachedBlueprintPath } = await loadModule();
+    expect(() => getCachedBlueprintPath("../outside")).toThrow(/Invalid blueprint version/);
+    expect(() => getCachedBlueprintPath("0.1.0/extra")).toThrow(/Invalid blueprint version/);
+  });
+
   it("isCached returns false when no blueprint exists", async () => {
     const { isCached } = await loadModule();
     expect(isCached("0.1.0")).toBe(false);
@@ -72,6 +78,9 @@ describe("blueprint resolve", () => {
         'min_openshell_version: "0.1.0"',
         'min_openclaw_version: "2026.3.0"',
         "digest: abc123",
+        "profiles:",
+        "  - default",
+        "  - gpu",
         "",
       ].join("\n"),
     );
@@ -80,6 +89,7 @@ describe("blueprint resolve", () => {
     expect(m).toBeTruthy();
     expect(m.version).toBe("0.1.0");
     expect(m.digest).toBe("abc123");
+    expect(m.profiles).toEqual(["default", "gpu"]);
   });
 
   it("readCachedManifest returns default profiles when missing", async () => {
@@ -88,5 +98,28 @@ describe("blueprint resolve", () => {
     const m = readCachedManifest("0.3.0");
     expect(m).toBeTruthy();
     expect(m.profiles).toEqual(["default"]);
+  });
+
+  it("readCachedManifest rejects non-string manifest fields", async () => {
+    writeCachedBlueprint("0.4.0", "version: 123\n");
+    const { readCachedManifest } = await loadModule();
+    expect(readCachedManifest("0.4.0")).toBe(null);
+  });
+
+  it("readCachedManifest defaults empty or duplicate profiles", async () => {
+    writeCachedBlueprint("0.5.0", 'version: "0.5.0"\nprofiles: []\n');
+    writeCachedBlueprint(
+      "0.6.0",
+      ['version: "0.6.0"', "profiles:", "  - default", "  - default", ""].join("\n"),
+    );
+    const { readCachedManifest } = await loadModule();
+    expect(readCachedManifest("0.5.0")?.profiles).toEqual(["default"]);
+    expect(readCachedManifest("0.6.0")?.profiles).toEqual(["default"]);
+  });
+
+  it("readCachedManifest returns null for invalid YAML", async () => {
+    writeCachedBlueprint("0.7.0", "version: [\n");
+    const { readCachedManifest } = await loadModule();
+    expect(readCachedManifest("0.7.0")).toBe(null);
   });
 });
