@@ -31,19 +31,17 @@ Gateway: nemoclaw
 Server: https://127.0.0.1:8080/
 `;
 
-const GW_INFO_NAMED = `
+const GW_INFO_BASE = `
 Gateway Info
 
 Gateway: nemoclaw
 Gateway endpoint: https://127.0.0.1:8080/
 `;
 
-const GW_INFO_ACTIVE = `
-Gateway Info
-
-Gateway: nemoclaw
-Gateway endpoint: https://127.0.0.1:8080/
-`;
+// Both aliases reference the same fixture — previously duplicated as
+// GW_INFO_NAMED / GW_INFO_ACTIVE.
+const GW_INFO_NAMED = GW_INFO_BASE;
+const GW_INFO_ACTIVE = GW_INFO_BASE;
 
 const GW_INFO_MISSING = "No gateway metadata found";
 
@@ -176,6 +174,13 @@ describe("isGatewayHealthy", () => {
   it("returns false for Disconnected status (regression)", () => {
     // Disconnected is non-empty, so fallback must not trigger
     expect(isGatewayHealthy("Disconnected", GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(false);
+  });
+
+  it("returns true via fallback when status contains only ANSI escapes", () => {
+    // Some terminals emit bare ANSI codes with no readable text — should
+    // be treated as empty after stripping, triggering the ARM64 fallback.
+    const ansiOnly = "\x1b[0m\x1b[32m";
+    expect(isGatewayHealthy(ansiOnly, GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(true);
   });
 });
 
