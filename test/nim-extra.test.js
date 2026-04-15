@@ -1,27 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
+import { describe, expect, it } from "vitest";
 
-const nim = require("../bin/lib/nim");
+import * as nim from "../dist/lib/nim";
 
 describe("nim — extended coverage", () => {
   describe("getImageForModel edge cases", () => {
     it("returns null for empty string", () => {
-      assert.equal(nim.getImageForModel(""), null);
+      expect(nim.getImageForModel("")).toBe(null);
     });
 
     it("returns null for undefined", () => {
-      assert.equal(nim.getImageForModel(undefined), null);
+      expect(nim.getImageForModel(undefined)).toBe(null);
     });
 
     it("returns null for partial model name", () => {
-      assert.equal(nim.getImageForModel("nvidia/nemotron"), null);
+      expect(nim.getImageForModel("nvidia/nemotron")).toBe(null);
     });
 
     it("is case-sensitive", () => {
-      assert.equal(nim.getImageForModel("NVIDIA/NEMOTRON-3-NANO-30B-A3B"), null);
+      expect(nim.getImageForModel("NVIDIA/NEMOTRON-3-NANO-30B-A3B")).toBe(null);
     });
   });
 
@@ -29,45 +28,44 @@ describe("nim — extended coverage", () => {
     it("includes nemotron-3-super model", () => {
       const models = nim.listModels();
       const superModel = models.find((m) => m.name.includes("nemotron-3-super"));
-      assert.ok(superModel, "should list nemotron-3-super model");
-      assert.ok(superModel.image.includes("nvcr.io"), "image should be from nvcr.io");
+      expect(superModel).toBeTruthy();
+      expect(superModel.image).toContain("nvcr.io");
     });
 
     it("all images point to nvcr.io/nim registry", () => {
       for (const m of nim.listModels()) {
-        assert.ok(
-          m.image.startsWith("nvcr.io/nim/"),
-          `${m.name} image should start with nvcr.io/nim/, got: ${m.image}`,
+        expect(m.image, `${m.name} image should start with nvcr.io/nim/`).toMatch(
+          /^nvcr\.io\/nim\//,
         );
       }
     });
 
     it("no duplicate model names", () => {
       const names = nim.listModels().map((m) => m.name);
-      assert.equal(new Set(names).size, names.length, "duplicate model names found");
+      expect(new Set(names).size).toBe(names.length);
     });
 
     it("no duplicate images", () => {
       const images = nim.listModels().map((m) => m.image);
-      assert.equal(new Set(images).size, images.length, "duplicate images found");
+      expect(new Set(images).size).toBe(images.length);
     });
   });
 
   describe("containerName variations", () => {
     it("handles hyphenated names", () => {
-      assert.equal(nim.containerName("my-sandbox"), "nemoclaw-nim-my-sandbox");
+      expect(nim.containerName("my-sandbox")).toBe("nemoclaw-nim-my-sandbox");
     });
 
     it("handles underscored names", () => {
-      assert.equal(nim.containerName("my_sandbox"), "nemoclaw-nim-my_sandbox");
+      expect(nim.containerName("my_sandbox")).toBe("nemoclaw-nim-my_sandbox");
     });
 
     it("handles single character name", () => {
-      assert.equal(nim.containerName("x"), "nemoclaw-nim-x");
+      expect(nim.containerName("x")).toBe("nemoclaw-nim-x");
     });
 
     it("handles empty string", () => {
-      assert.equal(nim.containerName(""), "nemoclaw-nim-");
+      expect(nim.containerName("")).toBe("nemoclaw-nim-");
     });
   });
 });
