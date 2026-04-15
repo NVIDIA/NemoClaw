@@ -1806,6 +1806,16 @@ function sandboxSnapshot(sandboxName, subArgs) {
       break;
     }
     case "restore": {
+      const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+      if (isLive.status !== 0) {
+        console.error("  Failed to query live sandbox state from OpenShell.");
+        process.exit(1);
+      }
+      const liveNames = parseLiveSandboxNames(isLive.output || "");
+      if (!liveNames.has(sandboxName)) {
+        console.error(`  Sandbox '${sandboxName}' is not running. Cannot restore snapshot.`);
+        process.exit(1);
+      }
       const timestamp = subArgs[1] || null;
       let backupPath;
       if (timestamp) {
