@@ -72,6 +72,13 @@ For NemoClaw-managed environments, use `nemoclaw onboard` when you need to creat
 Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemoclaw onboard`.
 :::
 
+The installer detects existing sandbox sessions before onboarding and prints a warning if any are found.
+To make the installer abort instead of continuing, set `NEMOCLAW_SINGLE_SESSION=1`:
+
+```console
+$ NEMOCLAW_SINGLE_SESSION=1 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
 Credentials are stored in `~/.nemoclaw/credentials.json`. For file permissions, plaintext storage behavior, and hardening guidance, see [Credential Storage](../security/credential-storage.md).

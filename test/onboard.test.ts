@@ -151,7 +151,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -186,7 +186,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
         "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
         "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
@@ -244,7 +244,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
         "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
         "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
@@ -437,7 +437,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -474,7 +474,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
         "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
         "ARG NEMOCLAW_PROXY_PORT=3128",
@@ -526,7 +526,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
         "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
         "ARG NEMOCLAW_PROXY_PORT=3128",
@@ -569,7 +569,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
         "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
         "ARG NEMOCLAW_PROXY_PORT=3128",
@@ -621,7 +621,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -639,14 +639,9 @@ describe("onboard helpers", () => {
         { fetchEnabled: true },
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
-      const expected = buildWebSearchDockerConfig({ fetchEnabled: true });
-      assert.match(
-        patched,
-        new RegExp(
-          `^ARG NEMOCLAW_WEB_CONFIG_B64=${expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
-          "m",
-        ),
-      );
+      assert.match(patched, /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=1$/m);
+      // Regression guard: the old secret-bearing build arg must not reappear.
+      assert.doesNotMatch(patched, /NEMOCLAW_WEB_CONFIG_B64/);
     } finally {
       if (priorBraveKey === undefined) {
         delete process.env.BRAVE_API_KEY;

@@ -67,6 +67,7 @@ const {
   planHostRemediation,
 } = require("./preflight");
 const agentOnboard = require("./agent-onboard");
+const agentDefs = require("./agent-defs");
 
 const gatewayState = require("./gateway-state");
 const validation = require("./validation");
@@ -1037,8 +1038,8 @@ function patchStagedDockerfile(
     );
   }
   dockerfile = dockerfile.replace(
-    /^ARG NEMOCLAW_WEB_CONFIG_B64=.*$/m,
-    `ARG NEMOCLAW_WEB_CONFIG_B64=${webSearch.buildWebSearchDockerConfig(webSearchConfig)}`,
+    /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=.*$/m,
+    `ARG NEMOCLAW_WEB_SEARCH_ENABLED=${webSearchConfig ? "1" : "0"}`,
   );
   // Onboard flow expects immediate dashboard access without device pairing,
   // so disable device auth for images built during onboard (see #1217).
@@ -1479,9 +1480,9 @@ const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRe
 // classifySandboxCreateFailure — see validation import above
 
 async function promptOllamaModel(gpu = null) {
-  const installed = getOllamaModelOptions(runCapture);
+  const installed = getOllamaModelOptions();
   const options = installed.length > 0 ? installed : getBootstrapOllamaModelOptions(gpu);
-  const defaultModel = getDefaultOllamaModel(runCapture, gpu);
+  const defaultModel = getDefaultOllamaModel(gpu);
   const defaultIndex = Math.max(0, options.indexOf(defaultModel));
 
   console.log("");
@@ -1537,7 +1538,7 @@ function prepareOllamaModel(model, installedModels = []) {
 
   console.log(`  Loading Ollama model: ${model}`);
   run(getOllamaWarmupCommand(model), { ignoreError: true });
-  return validateOllamaModel(model, runCapture);
+  return validateOllamaModel(model);
 }
 
 function getRequestedSandboxNameHint() {
@@ -2704,6 +2705,12 @@ async function createSandbox(
   // end-to-end with the stricter filtering. The allowlist rejects unknown
   // env vars by default, which is safer but needs careful rollout.
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
+  if (webSearchConfig?.fetchEnabled) {
+    const braveKey = getCredential(webSearch.BRAVE_API_KEY_ENV) || process.env[webSearch.BRAVE_API_KEY_ENV];
+    if (braveKey) {
+      envArgs.push(formatEnvAssignment(webSearch.BRAVE_API_KEY_ENV, braveKey));
+    }
+  }
   const blockedSandboxEnvNames = new Set([
     // Derived from REMOTE_PROVIDER_CONFIG to prevent drift
     ...Object.values(REMOTE_PROVIDER_CONFIG)
@@ -2824,10 +2831,12 @@ async function createSandbox(
   ensureDashboardForward(sandboxName, chatUiUrl);
 
   // Register only after confirmed ready — prevents phantom entries
+  const effectiveAgent = agent || agentDefs.loadAgent("openclaw");
   registry.registerSandbox({
     name: sandboxName,
     gpuEnabled: !!gpu,
     agent: agent ? agent.name : null,
+    agentVersion: fromDockerfile ? null : (effectiveAgent.expectedVersion || null),
     dangerouslySkipPermissions: dangerouslySkipPermissions || undefined,
   });
 
@@ -3349,9 +3358,9 @@ async function setupNim(gpu) {
         credentialEnv = "OPENAI_API_KEY";
         endpointUrl = getLocalProviderBaseUrl(provider);
         while (true) {
-          const installedModels = getOllamaModelOptions(runCapture);
+          const installedModels = getOllamaModelOptions();
           if (isNonInteractive()) {
-            model = requestedModel || getDefaultOllamaModel(runCapture, gpu);
+            model = requestedModel || getDefaultOllamaModel(gpu);
           } else {
             model = await promptOllamaModel(gpu);
           }
@@ -3406,9 +3415,9 @@ async function setupNim(gpu) {
         credentialEnv = "OPENAI_API_KEY";
         endpointUrl = getLocalProviderBaseUrl(provider);
         while (true) {
-          const installedModels = getOllamaModelOptions(runCapture);
+          const installedModels = getOllamaModelOptions();
           if (isNonInteractive()) {
-            model = requestedModel || getDefaultOllamaModel(runCapture, gpu);
+            model = requestedModel || getDefaultOllamaModel(gpu);
           } else {
             model = await promptOllamaModel(gpu);
           }
@@ -3604,7 +3613,7 @@ async function setupInference(
       process.exit(applyResult.status || 1);
     }
   } else if (provider === "vllm-local") {
-    const validation = validateLocalProvider(provider, runCapture);
+    const validation = validateLocalProvider(provider);
     if (!validation.ok) {
       console.error(`  ${validation.message}`);
       process.exit(1);
@@ -3629,7 +3638,7 @@ async function setupInference(
       String(LOCAL_INFERENCE_TIMEOUT_SECS),
     ]);
   } else if (provider === "ollama-local") {
-    const validation = validateLocalProvider(provider, runCapture);
+    const validation = validateLocalProvider(provider);
     if (!validation.ok) {
       console.error(`  ${validation.message}`);
       console.error("  On macOS, local inference also depends on OpenShell host routing support.");
@@ -3656,7 +3665,7 @@ async function setupInference(
     ]);
     console.log(`  Priming Ollama model: ${model}`);
     run(getOllamaWarmupCommand(model), { ignoreError: true });
-    const probe = validateOllamaModel(model, runCapture);
+    const probe = validateOllamaModel(model);
     if (!probe.ok) {
       console.error(`  ${probe.message}`);
       process.exit(1);
@@ -4010,11 +4019,6 @@ async function _setupPolicies(sandboxName, options = {}) {
           break;
         } catch (err) {
           const message = err && err.message ? err.message : String(err);
-          if (message.includes("Unimplemented")) {
-            console.error("  OpenShell policy updates are not supported by this gateway build.");
-            console.error("  This is a known issue tracked in NemoClaw #536.");
-            throw err;
-          }
           if (!message.includes("sandbox not found") || attempt === 2) {
             throw err;
           }
@@ -4054,30 +4058,12 @@ async function _setupPolicies(sandboxName, options = {}) {
         .map((s) => s.trim())
         .filter(Boolean);
       for (const name of selected) {
-        try {
-          policies.applyPreset(sandboxName, name);
-        } catch (err) {
-          const message = err && err.message ? err.message : String(err);
-          if (message.includes("Unimplemented")) {
-            console.error("  OpenShell policy updates are not supported by this gateway build.");
-            console.error("  This is a known issue tracked in NemoClaw #536.");
-          }
-          throw err;
-        }
+        policies.applyPreset(sandboxName, name);
       }
     } else {
       // Apply suggested
       for (const name of suggestions) {
-        try {
-          policies.applyPreset(sandboxName, name);
-        } catch (err) {
-          const message = err && err.message ? err.message : String(err);
-          if (message.includes("Unimplemented")) {
-            console.error("  OpenShell policy updates are not supported by this gateway build.");
-            console.error("  This is a known issue tracked in NemoClaw #536.");
-          }
-          throw err;
-        }
+        policies.applyPreset(sandboxName, name);
       }
     }
   }
@@ -4604,11 +4590,6 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
           break;
         } catch (err) {
           const message = err && err.message ? err.message : String(err);
-          if (message.includes("Unimplemented")) {
-            console.error("  OpenShell policy updates are not supported by this gateway build.");
-            console.error("  This is a known issue tracked in NemoClaw #536.");
-            throw err;
-          }
           if (!message.includes("sandbox not found") || attempt === 2) {
             throw err;
           }
@@ -4640,6 +4621,25 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   const accessByName = {};
   for (const p of resolvedPresets) accessByName[p.name] = p.access;
   const newlySelected = interactiveChoice.filter((name) => !applied.includes(name));
+  const deselected = applied.filter((name) => !interactiveChoice.includes(name));
+
+  for (const name of deselected) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        if (!policies.removePreset(sandboxName, name)) {
+          throw new Error(`Failed to remove preset '${name}'.`);
+        }
+        break;
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        if (!message.includes("sandbox not found") || attempt === 2) {
+          throw err;
+        }
+        sleep(2);
+      }
+    }
+  }
+
   for (const name of newlySelected) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
@@ -4649,11 +4649,6 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
         break;
       } catch (err) {
         const message = err && err.message ? err.message : String(err);
-        if (message.includes("Unimplemented")) {
-          console.error("  OpenShell policy updates are not supported by this gateway build.");
-          console.error("  This is a known issue tracked in NemoClaw #536.");
-          throw err;
-        }
         if (!message.includes("sandbox not found") || attempt === 2) {
           throw err;
         }

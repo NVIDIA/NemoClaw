@@ -322,6 +322,93 @@ jobs:
           path: test-sandbox-operations-*.log
           if-no-files-found: ignore
 
+  # ── Snapshot commands E2E ────────────────────────────────────
+  # Validates snapshot create/list/restore lifecycle: create a snapshot,
+  # list it, delete state, restore from snapshot, verify state recovered.
+  snapshot-commands-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run snapshot commands E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-snapshot"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-snapshot-commands.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-commands-install-log
+          path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore
+
+  # ── OpenClaw rebuild upgrade E2E ─────────────────────────────
+  # Reproduces NVBug 6076156: onboard with an older OpenClaw version,
+  # then rebuild to verify workspace state survives the upgrade.
+  rebuild-openclaw-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run OpenClaw rebuild upgrade E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-rebuild-oc"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-rebuild-openclaw.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rebuild-openclaw-install-log
+          path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore
+
+  # ── Hermes rebuild upgrade E2E ──────────────────────────────
+  # Same upgrade scenario as OpenClaw but for Hermes Agent.
+  rebuild-hermes-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run Hermes rebuild upgrade E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-rebuild-hm"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_AGENT: "hermes"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-rebuild-hermes.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rebuild-hermes-install-log
+          path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore
+
   # ── GPU E2E (Ollama local inference) ──────────────────────────
   # Enable by setting repository variable GPU_E2E_ENABLED=true
   # (Settings → Secrets and variables → Actions → Variables)
@@ -374,8 +461,8 @@ jobs:
 
   notify-on-failure:
     runs-on: ubuntu-latest
-    needs: [cloud-e2e, cloud-experimental-e2e, messaging-providers-e2e, sandbox-survival-e2e, hermes-e2e, skip-permissions-e2e, sandbox-operations-e2e, gpu-e2e]
-    if: ${{ always() && (needs.cloud-e2e.result == 'failure' || needs.cloud-experimental-e2e.result == 'failure' || needs.messaging-providers-e2e.result == 'failure' || needs.sandbox-survival-e2e.result == 'failure' || needs.hermes-e2e.result == 'failure' || needs.skip-permissions-e2e.result == 'failure' || needs.sandbox-operations-e2e.result == 'failure' || needs.gpu-e2e.result == 'failure') }}
+    needs: [cloud-e2e, cloud-experimental-e2e, messaging-providers-e2e, sandbox-survival-e2e, hermes-e2e, skip-permissions-e2e, sandbox-operations-e2e, snapshot-commands-e2e, rebuild-openclaw-e2e, rebuild-hermes-e2e, gpu-e2e]
+    if: ${{ always() && (needs.cloud-e2e.result == 'failure' || needs.cloud-experimental-e2e.result == 'failure' || needs.messaging-providers-e2e.result == 'failure' || needs.sandbox-survival-e2e.result == 'failure' || needs.hermes-e2e.result == 'failure' || needs.skip-permissions-e2e.result == 'failure' || needs.sandbox-operations-e2e.result == 'failure' || needs.snapshot-commands-e2e.result == 'failure' || needs.rebuild-openclaw-e2e.result == 'failure' || needs.rebuild-hermes-e2e.result == 'failure' || needs.gpu-e2e.result == 'failure') }}
     permissions:
       issues: write
     steps:

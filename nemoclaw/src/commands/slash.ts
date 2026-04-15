@@ -80,6 +80,13 @@ function slashStatus(): PluginCommandResult {
     lines.push("", `Rollback snapshot: ${state.migrationSnapshot}`);
   }
 
+  if (state.lastRebuildAt) {
+    lines.push("", `Last rebuild: ${state.lastRebuildAt}`);
+    if (state.lastRebuildBackupPath) {
+      lines.push(`Rebuild backup: ${state.lastRebuildBackupPath}`);
+    }
+  }
+
   return { text: lines.join("\n") };
 }
 
