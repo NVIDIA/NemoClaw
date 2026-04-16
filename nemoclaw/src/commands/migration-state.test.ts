@@ -1423,30 +1423,41 @@ describe("commands/migration-state", () => {
   // ── setConfigValue prototype pollution guard ─────────────────────
 
   describe("setConfigValue", () => {
+    const expectPrototypeClean = (): void => {
+      const probe: Record<string, unknown> = {};
+      for (const key of ["polluted", "isAdmin", "bar"]) {
+        expect(Object.prototype.hasOwnProperty.call(Object.prototype, key)).toBe(false);
+        expect(probe[key]).toBeUndefined();
+      }
+    };
+
     it.each(["__proto__", "constructor", "prototype"])(
       "rejects unsafe path segment: %s",
       (segment) => {
         const doc: Record<string, unknown> = {};
-        expect(() => { setConfigValue(doc, `${segment}.polluted`, "true"); }).toThrow(
-          /Unsafe config path segment/,
-        );
+        expect(() => {
+          setConfigValue(doc, `${segment}.polluted`, "true");
+        }).toThrow(/Unsafe config path segment/);
+        expectPrototypeClean();
       },
     );
 
     it("rejects __proto__ in nested position", () => {
       const doc: Record<string, unknown> = {};
-      expect(() =>
-        { setConfigValue(doc, "agents.__proto__.isAdmin", "true"); },
-      ).toThrow(/Unsafe config path segment/);
+      expect(() => {
+        setConfigValue(doc, "agents.__proto__.isAdmin", "true");
+      }).toThrow(/Unsafe config path segment/);
+      expectPrototypeClean();
     });
 
     it.each(["foo.prototype.bar", "foo.constructor.bar"])(
       "rejects unsafe segment in nested path: %s",
       (configPath) => {
         const doc: Record<string, unknown> = {};
-        expect(() => { setConfigValue(doc, configPath, "true"); }).toThrow(
-          /Unsafe config path segment/,
-        );
+        expect(() => {
+          setConfigValue(doc, configPath, "true");
+        }).toThrow(/Unsafe config path segment/);
+        expectPrototypeClean();
       },
     );
 
