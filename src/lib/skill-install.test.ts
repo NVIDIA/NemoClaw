@@ -13,6 +13,9 @@ import {
   postInstall,
   validateRelativePath,
   shellQuote,
+  validateSkillName,
+  removeSkill,
+  verifyRemove,
 } from "../../dist/lib/skill-install";
 
 describe("parseFrontmatter", () => {
@@ -267,5 +270,56 @@ describe("postInstall", () => {
     } finally {
       rmSync(skillDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ── validateSkillName ────────────────────────────────────────────────────────
+
+describe("validateSkillName", () => {
+  it("accepts valid skill names", () => {
+    expect(validateSkillName("my-skill")).toBe(true);
+    expect(validateSkillName("my_skill")).toBe(true);
+    expect(validateSkillName("my.skill")).toBe(true);
+    expect(validateSkillName("MySkill123")).toBe(true);
+    expect(validateSkillName("digicon-zeiss-ai-strategy")).toBe(true);
+  });
+
+  it("rejects empty string", () => {
+    expect(validateSkillName("")).toBe(false);
+  });
+
+  it("rejects names with spaces", () => {
+    expect(validateSkillName("my skill")).toBe(false);
+  });
+
+  it("rejects names with shell metacharacters", () => {
+    expect(validateSkillName("my;skill")).toBe(false);
+    expect(validateSkillName("my$skill")).toBe(false);
+    expect(validateSkillName("my/skill")).toBe(false);
+    expect(validateSkillName("../escape")).toBe(false);
+    expect(validateSkillName("my`skill`")).toBe(false);
+  });
+});
+
+// ── removeSkill / verifyRemove ───────────────────────────────────────────────
+
+describe("removeSkill (unit — no SSH)", () => {
+  it("returns success=false and a warning when sshExec returns null (sandbox unreachable)", () => {
+    const paths = resolveSkillPaths(null, "test-skill");
+
+    const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
+    const result = removeSkill(ctx, paths);
+
+    expect(result.success).toBe(false);
+    expect(result.removedUploadDir).toBe(false);
+    expect(result.messages.some((m) => m.startsWith("Warning:"))).toBe(true);
+  });
+});
+
+describe("verifyRemove (unit — no SSH)", () => {
+  it("returns false when SSH is unreachable (conservative — treat failure as not-gone)", () => {
+    const paths = resolveSkillPaths(null, "test-skill");
+    const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
+    expect(verifyRemove(ctx, paths)).toBe(false);
   });
 });

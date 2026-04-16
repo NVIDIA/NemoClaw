@@ -2636,14 +2636,20 @@ async function sandboxChannelsStart(sandboxName: string, args: string[] = []): P
 function printSkillInstallUsage(): void {
   console.log("");
   console.log("  Usage: nemoclaw <sandbox> skill install <path>");
+  console.log("         nemoclaw <sandbox> skill remove <name>");
   console.log("");
-  console.log("  Deploy a skill directory to a running sandbox.");
+  console.log("  Deploy or remove a skill in a running sandbox.");
+  console.log("");
+  console.log("  install <path>  Deploy a skill directory to the sandbox.");
   console.log(
-    "  <path> must be a skill directory containing a SKILL.md (with 'name:' frontmatter),",
+    "    <path> must be a skill directory containing a SKILL.md (with 'name:' frontmatter),",
   );
   console.log(
-    "  or a direct path to a SKILL.md file. All non-dot files in the directory are uploaded.",
+    "    or a direct path to a SKILL.md file. All non-dot files in the directory are uploaded.",
   );
+  console.log("");
+  console.log("  remove <name>   Remove an installed skill from the sandbox by name.");
+  console.log("    <name> is the skill name from SKILL.md frontmatter (e.g. my-skill).");
   console.log("");
 }
 
@@ -2694,12 +2700,86 @@ async function sandboxSkillInstall(sandboxName: string, args: string[] = []): Pr
     return;
   }
 
-  if (sub !== "install") {
+  if (sub !== "install" && sub !== "remove") {
     console.error(`  Unknown skill subcommand: ${sub}`);
-    console.error("  Valid subcommands: install");
+    console.error("  Valid subcommands: install, remove");
     process.exit(1);
   }
 
+  // ── skill remove ──────────────────────────────────────────────────────────
+  if (sub === "remove") {
+    const skillName = args[1];
+    const extraArgs = args.slice(2);
+    if (extraArgs.length > 0) {
+      console.error(`  Unknown argument(s) for skill remove: ${extraArgs.join(", ")}`);
+      console.error("  Usage: nemoclaw <sandbox> skill remove <name>");
+      process.exit(1);
+    }
+    if (!skillName) {
+      console.error("  Usage: nemoclaw <sandbox> skill remove <name>");
+      console.error("  <name> is the skill name from the SKILL.md frontmatter.");
+      process.exit(1);
+    }
+    if (!skillInstall.validateSkillName(skillName)) {
+      console.error(`  Invalid skill name: '${skillName}'`);
+      console.error("  Skill names must match [A-Za-z0-9._-].");
+      process.exit(1);
+    }
+
+    await ensureLiveSandboxOrExit(sandboxName);
+
+    const agent = agentRuntime.getSessionAgent(sandboxName);
+    const paths = skillInstall.resolveSkillPaths(agent, skillName);
+
+    const sshConfigResult = captureOpenshell(["sandbox", "ssh-config", sandboxName], {
+      ignoreError: true,
+    });
+    if (sshConfigResult.status !== 0) {
+      console.error("  Failed to obtain SSH configuration for the sandbox.");
+      process.exit(1);
+    }
+    const tmpSshConfig = path.join(
+      os.tmpdir(),
+      `nemoclaw-ssh-skill-${process.pid}-${Date.now()}.conf`,
+    );
+    fs.writeFileSync(tmpSshConfig, sshConfigResult.output, { mode: 0o600 });
+
+    try {
+      const ctx = { configFile: tmpSshConfig, sandboxName };
+
+      // Check the skill exists before attempting removal
+      if (!skillInstall.checkExisting(ctx, paths)) {
+        console.error(`  Skill '${skillName}' is not installed in sandbox '${sandboxName}'.`);
+        process.exit(1);
+      }
+
+      const result = skillInstall.removeSkill(ctx, paths);
+      for (const msg of result.messages) {
+        if (msg.startsWith("Warning:")) {
+          console.error(`  ${YW}${msg}${R}`);
+        } else {
+          console.log(`  ${D}${msg}${R}`);
+        }
+      }
+
+      const gone = skillInstall.verifyRemove(ctx, paths);
+      if (gone) {
+        console.log(`  ${G}✓${R} Skill '${skillName}' removed`);
+      } else {
+        console.error(`  Skill removal failed — '${paths.uploadDir}' still exists`);
+        process.exit(1);
+      }
+    } finally {
+      try {
+        fs.unlinkSync(tmpSshConfig);
+      } catch {
+        /* ignore */
+      }
+    }
+    return;
+  }
+
+  // ── skill install ─────────────────────────────────────────────────────────
   const skillPath = args[1];
   const extraArgs = args.slice(2);
   if (skillPath === "--help" || skillPath === "-h" || skillPath === "help") {

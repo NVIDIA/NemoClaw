@@ -152,6 +152,12 @@ export const COMMANDS: readonly CommandDef[] = [
     group: "Skills",
     scope: "sandbox",
   },
+  {
+    usage: "nemoclaw <name> skill remove",
+    description: "Remove an installed skill from the sandbox",
+    group: "Skills",
+    scope: "sandbox",
+  },
 
   // ── Policy Presets ──
   {

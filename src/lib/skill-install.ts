@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Skill install logic for `nemoclaw <sandbox> skill install <path>`.
+// Skill install/remove logic for `nemoclaw <sandbox> skill install <path>`
+// and `nemoclaw <sandbox> skill remove <name>`.
 // Validates a local SKILL.md, uploads it to the sandbox via SSH, and
 // performs agent-specific post-install steps (session refresh for
 // OpenClaw). Non-OpenClaw agents get a "restart gateway" hint until a
@@ -317,4 +318,88 @@ export function verifyInstall(ctx: SshContext, paths: SkillPaths): boolean {
   const target = shellQuote(`${paths.uploadDir}/SKILL.md`);
   const result = sshExec(ctx, `test -f ${target} && echo EXISTS`);
   return result !== null && result.stdout === "EXISTS";
+}
+
+// ── Skill removal ────────────────────────────────────────────────
+
+export interface RemoveResult {
+  success: boolean;
+  removedUploadDir: boolean;
+  removedMirrorDir: boolean;
+  clearedSessions: boolean;
+  messages: string[];
+}
+
+/**
+ * Remove a skill from the sandbox by name.
+ * Deletes the immutable upload directory, the OpenClaw mirror directory
+ * (if applicable), and clears sessions.json so the agent re-discovers
+ * the remaining skills on the next session.
+ *
+ * Only the named skill directory is deleted — other skills are untouched.
+ */
+export function removeSkill(
+  ctx: SshContext,
+  paths: SkillPaths,
+): RemoveResult {
+  const messages: string[] = [];
+
+  // 1. Remove the immutable upload directory (/sandbox/.openclaw/skills/<name>/)
+  const uploadDir = shellQuote(paths.uploadDir);
+  const removeUpload = sshExec(ctx, `rm -rf ${uploadDir}`);
+  const removedUploadDir = removeUpload !== null && removeUpload.status === 0;
+  if (!removedUploadDir) {
+    messages.push(`Warning: failed to remove upload directory ${paths.uploadDir}`);
+  }
+
+  // 2. Remove the OpenClaw mirror ($HOME/.openclaw/skills/<name>/)
+  //    mirrorDir contains $HOME which must expand on the remote shell, so we
+  //    use double quotes (not shellQuote). This is safe because skill names
+  //    are restricted to [A-Za-z0-9._-] by parseFrontmatter / the name
+  //    validation regex, so $HOME expansion is the only variable substitution.
+  let removedMirrorDir = false;
+  if (paths.isOpenClaw && paths.mirrorDir) {
+    const removeMirror = sshExec(ctx, `rm -rf "${paths.mirrorDir}"`);
+    removedMirrorDir = removeMirror !== null && removeMirror.status === 0;
+    if (!removedMirrorDir) {
+      messages.push(`Warning: failed to remove mirror directory ${paths.mirrorDir}`);
+    }
+  }
+
+  // 3. Clear sessions.json so the agent re-discovers the remaining skills.
+  let clearedSessions = false;
+  if (paths.isOpenClaw && paths.sessionFile) {
+    const clearResult = sshExec(ctx, `printf '{}' > ${shellQuote(paths.sessionFile)}`);
+    clearedSessions = clearResult !== null && clearResult.status === 0;
+    if (!clearedSessions) {
+      messages.push("Warning: failed to clear sessions (agent may need manual restart)");
+    }
+  } else if (!paths.isOpenClaw) {
+    messages.push("Restart the agent gateway for the removal to take effect.");
+  }
+
+  return {
+    success: removedUploadDir,
+    removedUploadDir,
+    removedMirrorDir,
+    clearedSessions,
+    messages,
+  };
+}
+
+/**
+ * Verify the skill directory no longer exists on the sandbox.
+ */
+export function verifyRemove(ctx: SshContext, paths: SkillPaths): boolean {
+  const target = shellQuote(paths.uploadDir);
+  const result = sshExec(ctx, `test -e ${target} && echo EXISTS || echo GONE`);
+  return result !== null && result.stdout === "GONE";
+}
+
+/**
+ * Validate that a skill name supplied on the CLI is safe to use as a remote path.
+ * Rejects anything that isn't a valid skill name ([A-Za-z0-9._-]).
+ */
+export function validateSkillName(name: string): boolean {
+  return /^[A-Za-z0-9._-]+$/.test(name) && name.length > 0;
 }
