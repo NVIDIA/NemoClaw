@@ -588,7 +588,10 @@ function resolveConfigSourcePath(manifest: SnapshotManifest, snapshotDir: string
   return path.join(snapshotDir, "openclaw", "openclaw.json");
 }
 
-function setConfigValue(
+const UNSAFE_PROPERTY_NAMES = new Set(["__proto__", "constructor", "prototype"]);
+
+/** @visibleForTesting */
+export function setConfigValue(
   document: Record<string, unknown>,
   configPath: string,
   value: string,
@@ -596,6 +599,12 @@ function setConfigValue(
   const tokens = configPath.match(/[^.[\]]+/g);
   if (!tokens || tokens.length === 0) {
     throw new Error(`Invalid config path: ${configPath}`);
+  }
+
+  for (const token of tokens) {
+    if (UNSAFE_PROPERTY_NAMES.has(token)) {
+      throw new Error(`Unsafe config path segment '${token}' in ${configPath}`);
+    }
   }
 
   let current: unknown = document;
