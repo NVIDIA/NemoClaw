@@ -1265,6 +1265,12 @@ except Exception:
     if run_installer_host_preflight; then
       run_onboard
       ONBOARD_RAN=true
+      # After onboard, check for stale sandboxes that need rebuilding (#1904).
+      # Uses --auto so it runs non-interactively in piped/CI contexts.
+      if [ "${_has_sandboxes:-0}" -gt 0 ] 2>/dev/null && command_exists nemoclaw; then
+        info "Checking for sandboxes that need upgrading…"
+        nemoclaw upgrade-sandboxes --auto 2>&1 || warn "Sandbox upgrade check failed (non-fatal)."
+      fi
     else
       warn "Skipping onboarding until the host prerequisites above are fixed."
     fi

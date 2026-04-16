@@ -86,6 +86,12 @@ If you only need one of the built-in presets, use `nemoclaw <name> policy-add` i
 $ nemoclaw my-assistant policy-add
 ```
 
+To remove a previously applied preset, use `nemoclaw <name> policy-remove`:
+
+```console
+$ nemoclaw my-assistant policy-remove
+```
+
 Use a manual YAML edit when you need to allow custom hosts that are not covered by a preset, such as an internal API or a weather service.
 
 Each entry in the `network` section defines an endpoint group with the following fields:
