@@ -1341,6 +1341,10 @@ function sandboxPolicyList(sandboxName) {
   console.log("");
 }
 
+/**
+ * Install or update a local skill directory into a live sandbox and perform
+ * any agent-specific post-install refresh needed for the new content to load.
+ */
 async function sandboxSkillInstall(sandboxName, args = []) {
   const sub = args[0];
   if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
