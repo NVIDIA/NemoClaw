@@ -80,6 +80,7 @@ const GLOBAL_COMMANDS = new Set([
   "uninstall",
   "credentials",
   "backup-all",
+  "upgrade-sandboxes",
   "help",
   "--help",
   "-h",
@@ -237,7 +238,7 @@ function isSandboxGatewayRunning(sandboxName) {
  */
 function recoverSandboxProcesses(sandboxName) {
   const agent = agentRuntime.getSessionAgent(sandboxName);
-  const agentScript = agentRuntime.buildRecoveryScript(agent);
+  const agentScript = agentRuntime.buildRecoveryScript(agent, agent?.forwardPort ?? DASHBOARD_PORT);
   // The recovery script runs as the sandbox user (non-root). This matches
   // the non-root fallback path in nemoclaw-start.sh — no privilege
   // separation, but the gateway runs and inference works.
@@ -258,7 +259,7 @@ function recoverSandboxProcesses(sandboxName) {
       // Resolve and start gateway
       'OPENCLAW="$(command -v openclaw)";',
       'if [ -z "$OPENCLAW" ]; then echo OPENCLAW_MISSING; exit 1; fi;',
-      'nohup "$OPENCLAW" gateway run > /tmp/gateway.log 2>&1 &',
+      `nohup "$OPENCLAW" gateway run --port ${DASHBOARD_PORT} > /tmp/gateway.log 2>&1 &`,
       "GPID=$!; sleep 2;",
       // Verify the gateway actually started (didn't crash immediately)
       'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; cat /tmp/gateway.log 2>/dev/null | tail -5; fi',
@@ -1601,24 +1602,33 @@ function _rebuildLog(msg) {
   console.error(`  ${D}[rebuild ${new Date().toISOString()}] ${msg}${R}`);
 }
 
-async function sandboxRebuild(sandboxName, args = []) {
+async function sandboxRebuild(sandboxName, args = [], opts = {}) {
   const verbose =
     args.includes("--verbose") ||
     args.includes("-v") ||
     process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
   const log = verbose ? _rebuildLog : () => {};
   const skipConfirm = args.includes("--yes") || args.includes("--force");
+  // When called from upgradeSandboxes in a loop, throwOnError prevents
+  // process.exit from aborting the entire batch on the first failure.
+  const bail = opts.throwOnError
+    ? (msg, code = 1) => {
+        throw new Error(msg);
+      }
+    : (_msg, code = 1) => process.exit(code);
   const sb = registry.getSandbox(sandboxName);
   if (!sb) {
     console.error(`  Sandbox '${sandboxName}' not found in registry.`);
-    process.exit(1);
+    bail(`Sandbox '${sandboxName}' not found in registry.`);
+    return;
   }
 
   // Multi-agent guard (temporary — until swarm lands)
   if (sb.agents && sb.agents.length > 1) {
     console.error("  Multi-agent sandbox rebuild is not yet supported.");
     console.error("  Back up state manually and recreate with `nemoclaw onboard`.");
-    process.exit(1);
+    bail("Multi-agent sandbox rebuild is not yet supported.");
+    return;
   }
 
   const agent = agentRuntime.getSessionAgent(sandboxName);
@@ -1660,7 +1670,8 @@ async function sandboxRebuild(sandboxName, args = []) {
   if (!liveNames.has(sandboxName)) {
     console.error(`  Sandbox '${sandboxName}' is not running. Cannot back up state.`);
     console.error("  Start it first or recreate with `nemoclaw onboard --recreate-sandbox`.");
-    process.exit(1);
+    bail(`Sandbox '${sandboxName}' is not running.`);
+    return;
   }
 
   // Step 2: Backup
@@ -1679,7 +1690,8 @@ async function sandboxRebuild(sandboxName, args = []) {
       console.error(`  Failed: ${backup.failedDirs.join(", ")}`);
     }
     console.error("  Aborting rebuild to prevent data loss.");
-    process.exit(1);
+    bail("Failed to back up sandbox state.");
+    return;
   }
   console.log(`  ${G}\u2713${R} State backed up (${backup.backedUpDirs.length} directories)`);
   console.log(`    Backup: ${backup.manifest.backupPath}`);
@@ -1705,7 +1717,8 @@ async function sandboxRebuild(sandboxName, args = []) {
   if (deleteResult.status !== 0 && !alreadyGone) {
     console.error("  Failed to delete sandbox. Aborting rebuild.");
     console.error("  State backup is preserved at: " + backup.manifest.backupPath);
-    process.exit(deleteResult.status || 1);
+    bail("Failed to delete sandbox.", deleteResult.status || 1);
+    return;
   }
   registry.removeSandbox(sandboxName);
   log(
@@ -1811,6 +1824,117 @@ async function sandboxRebuild(sandboxName, args = []) {
     );
     console.log(`    Backup available at: ${backup.manifest.backupPath}`);
   }
+}
+
+// ── Upgrade sandboxes (#1904) ────────────────────────────────────
+// Detect sandboxes running stale agent versions and offer to rebuild them.
+
+async function upgradeSandboxes(args = []) {
+  const checkOnly = args.includes("--check");
+  const auto = args.includes("--auto");
+  const skipConfirm = auto || args.includes("--yes");
+
+  const sandboxes = registry.listSandboxes().sandboxes;
+  if (sandboxes.length === 0) {
+    console.log("  No sandboxes found in the registry.");
+    return;
+  }
+
+  // Query live sandboxes so we can tell the user which are running
+  const liveResult = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  if (liveResult.status !== 0) {
+    console.error("  Failed to query running sandboxes from OpenShell.");
+    console.error("  Ensure OpenShell is running: openshell status");
+    process.exit(liveResult.status || 1);
+  }
+  const liveNames = parseLiveSandboxNames(liveResult.output || "");
+
+  // Classify sandboxes as stale, unknown, or current
+  const stale = [];
+  const unknown = [];
+  for (const sb of sandboxes) {
+    const versionCheck = sandboxVersion.checkAgentVersion(sb.name);
+    if (versionCheck.isStale) {
+      stale.push({
+        name: sb.name,
+        current: versionCheck.sandboxVersion,
+        expected: versionCheck.expectedVersion,
+        running: liveNames.has(sb.name),
+      });
+    } else if (versionCheck.detectionMethod === "unavailable") {
+      unknown.push({
+        name: sb.name,
+        expected: versionCheck.expectedVersion,
+        running: liveNames.has(sb.name),
+      });
+    }
+  }
+
+  if (stale.length === 0 && unknown.length === 0) {
+    console.log("  All sandboxes are up to date.");
+    return;
+  }
+
+  if (stale.length > 0) {
+    console.log(`\n  ${B}Stale sandboxes:${R}`);
+    for (const s of stale) {
+      const status = s.running ? `${G}running${R}` : `${D}stopped${R}`;
+      console.log(`    ${s.name}  v${s.current || "?"} → v${s.expected}  (${status})`);
+    }
+  }
+  if (unknown.length > 0) {
+    console.log(`\n  ${YW}Unknown version:${R}`);
+    for (const s of unknown) {
+      const status = s.running ? `${G}running${R}` : `${D}stopped${R}`;
+      console.log(`    ${s.name}  v? → v${s.expected}  (${status})`);
+    }
+  }
+  console.log("");
+
+  if (checkOnly) {
+    if (stale.length > 0) console.log(`  ${stale.length} sandbox(es) need upgrading.`);
+    if (unknown.length > 0) {
+      console.log(
+        `  ${unknown.length} sandbox(es) could not be version-checked; start them and rerun, or rebuild manually.`,
+      );
+    }
+    console.log("  Run `nemoclaw upgrade-sandboxes` to rebuild them.");
+    return;
+  }
+
+  const rebuildable = stale.filter((s) => s.running);
+  const stopped = stale.filter((s) => !s.running);
+  if (stopped.length > 0) {
+    console.log(`  ${D}Skipping ${stopped.length} stopped sandbox(es) — start them first.${R}`);
+  }
+  if (rebuildable.length === 0) {
+    console.log("  No running stale sandboxes to rebuild.");
+    return;
+  }
+
+  let rebuilt = 0;
+  let failed = 0;
+  for (const s of rebuildable) {
+    if (!skipConfirm) {
+      const answer = await askPrompt(`  Rebuild '${s.name}'? [y/N]: `);
+      if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
+        console.log(`  Skipped '${s.name}'.`);
+        continue;
+      }
+    }
+    try {
+      await sandboxRebuild(s.name, ["--yes"], { throwOnError: true });
+      rebuilt++;
+    } catch (err) {
+      console.error(`  ${YW}\u26a0${R} Failed to rebuild '${s.name}': ${err.message}`);
+      failed++;
+    }
+  }
+
+  console.log("");
+  if (rebuilt > 0) console.log(`  ${G}\u2713${R} ${rebuilt} sandbox(es) rebuilt.`);
+  if (failed > 0) console.log(`  ${YW}\u26a0${R} ${failed} sandbox(es) failed — see errors above.`);
+  if (failed > 0) process.exit(1);
 }
 
 // ── Pre-upgrade backup ───────────────────────────────────────────
@@ -2033,6 +2157,9 @@ function help() {
   ${G}Backup:${R}
     nemoclaw backup-all              Back up all sandbox state before upgrade
 
+  ${G}Upgrade:${R}
+    nemoclaw upgrade-sandboxes       Detect and rebuild stale sandboxes ${D}(--check, --auto)${R}
+
   Cleanup:
     nemoclaw uninstall [flags]       Run uninstall.sh (local only; no remote fallback)
 
@@ -2097,6 +2224,9 @@ const [cmd, ...args] = process.argv.slice(2);
         break;
       case "backup-all":
         backupAll();
+        break;
+      case "upgrade-sandboxes":
+        await upgradeSandboxes(args);
         break;
       case "--version":
       case "-v": {
