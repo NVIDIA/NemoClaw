@@ -49,15 +49,22 @@ RUN npm ci --omit=dev
 # trusted_env_proxy mode makes media downloads (Telegram photos, etc.) route
 # through the proxy like all other traffic. See: docs/investigation/
 # telegram-media-download-fix.md
+#
+# Strategy: rewrite the fetch-guard module export so any consumer that
+# imports the strict mode alias actually receives the trusted-env-proxy
+# function. The export pattern `withStrictGuardedFetchMode as <letter>` is
+# stable across versions while the alias letters vary between minified
+# bundles. Files that define withStrictGuardedFetchMode locally without an
+# export (e.g. mattermost.js) keep their original strict behavior.
 # hadolint ignore=SC2016,DL3059,DL4006
 RUN set -eu; \
-    matches="$(grep -RIl --include='*.js' 'import { n as withStrictGuardedFetchMode, t as fetchWithSsrFGuard }' /usr/local/lib/node_modules/openclaw/dist/)"; \
+    matches="$(grep -RIlE --include='*.js' 'export \{[^}]*withStrictGuardedFetchMode as [a-z]' /usr/local/lib/node_modules/openclaw/dist/)"; \
     test -n "$matches"; \
-    printf '%s\n' "$matches" | xargs sed -i \
-        -e 's|import { n as withStrictGuardedFetchMode, t as fetchWithSsrFGuard }|import { n as withStrictGuardedFetchMode, r as withTrustedEnvProxyGuardedFetchMode, t as fetchWithSsrFGuard }|g' \
-        -e 's|fetchWithSsrFGuard(withStrictGuardedFetchMode({|fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({|g'; \
-    grep -Rq --include='*.js' 'r as withTrustedEnvProxyGuardedFetchMode' /usr/local/lib/node_modules/openclaw/dist/; \
-    grep -Rq --include='*.js' 'fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({' /usr/local/lib/node_modules/openclaw/dist/
+    for f in $matches; do \
+        grep -q 'withTrustedEnvProxyGuardedFetchMode' "$f" || { echo "ERROR: $f missing withTrustedEnvProxyGuardedFetchMode"; exit 1; }; \
+    done; \
+    printf '%s\n' "$matches" | xargs sed -i -E 's|withStrictGuardedFetchMode as ([a-z])|withTrustedEnvProxyGuardedFetchMode as \1|g'; \
+    ! grep -REq --include='*.js' 'withStrictGuardedFetchMode as [a-z]' /usr/local/lib/node_modules/openclaw/dist/
 
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
