@@ -52,4 +52,15 @@ describe("validation-recovery helpers", () => {
       retry: "model",
     });
   });
+
+  it("classifies expired API key (HTTP 400) as credential recovery", () => {
+    expect(
+      getProbeRecovery({
+        failures: [
+          { httpStatus: 404, message: "not found" },
+          { httpStatus: 400, message: "API key expired. Please renew the API key." },
+        ],
+      }),
+    ).toEqual({ kind: "credential", retry: "credential" });
+  });
 });

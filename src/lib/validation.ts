@@ -32,6 +32,9 @@ export function classifyValidationFailure({
   if (httpStatus === 401 || httpStatus === 403) {
     return { kind: "credential", retry: "credential" };
   }
+  if (/unauthorized|forbidden|invalid api key|invalid_auth|permission|api key expired/i.test(normalized)) {
+    return { kind: "credential", retry: "credential" };
+  }
   if (httpStatus === 400) {
     return { kind: "model", retry: "model" };
   }
@@ -40,9 +43,6 @@ export function classifyValidationFailure({
   }
   if (httpStatus === 404 || httpStatus === 405) {
     return { kind: "endpoint", retry: "selection" };
-  }
-  if (/unauthorized|forbidden|invalid api key|invalid_auth|permission/i.test(normalized)) {
-    return { kind: "credential", retry: "credential" };
   }
   return { kind: "unknown", retry: "selection" };
 }

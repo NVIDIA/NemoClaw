@@ -58,6 +58,30 @@ describe("classifyValidationFailure", () => {
     });
   });
 
+  it("classifies 400 with 'API key expired' as credential (Gemini expired key)", () => {
+    expect(
+      classifyValidationFailure({
+        httpStatus: 400,
+        message: 'API key expired. Please renew the API key.',
+      }),
+    ).toEqual({
+      kind: "credential",
+      retry: "credential",
+    });
+  });
+
+  it("classifies 400 with unrelated message as model", () => {
+    expect(
+      classifyValidationFailure({
+        httpStatus: 400,
+        message: 'Invalid model configuration',
+      }),
+    ).toEqual({
+      kind: "model",
+      retry: "model",
+    });
+  });
+
   it("classifies model-not-found message as model", () => {
     expect(classifyValidationFailure({ message: "model xyz not found" })).toEqual({
       kind: "model",
