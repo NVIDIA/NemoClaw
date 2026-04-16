@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 // Import from compiled dist/ so coverage is attributed correctly.
-import { redact } from "../../dist/lib/debug";
+import { redact, createTarball } from "../../dist/lib/debug";
+import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 describe("redact", () => {
   it("redacts NVIDIA_API_KEY=value patterns", () => {
@@ -48,5 +51,41 @@ describe("redact", () => {
   it("leaves clean text unchanged", () => {
     const clean = "Hello world, no secrets here";
     expect(redact(clean)).toBe(clean);
+  });
+});
+
+describe("createTarball", () => {
+  let tempDir: string;
+  let outputDir: string;
+
+  beforeEach(() => {
+    process.exitCode = undefined;
+  });
+
+  afterEach(() => {
+    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+    if (outputDir) rmSync(outputDir, { recursive: true, force: true });
+    process.exitCode = undefined;
+  });
+
+  it("sets process.exitCode = 1 and returns false when tar fails on invalid output path", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
+    writeFileSync(join(tempDir, "dummy.txt"), "test data");
+    const ok = createTarball(tempDir, "/nonexistent/path/debug.tar.gz");
+    expect(ok).toBe(false);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("creates tarball successfully and returns true for valid output path", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
+    writeFileSync(join(tempDir, "dummy.txt"), "test data");
+    // Write output to a SEPARATE directory — writing into the source dir
+    // causes tar to see the file changing as it reads, returning exit 1.
+    outputDir = mkdtempSync(join(tmpdir(), "debug-test-out-"));
+    const output = join(outputDir, "output.tar.gz");
+    const ok = createTarball(tempDir, output);
+    expect(ok).toBe(true);
+    expect(process.exitCode).toBeUndefined();
+    expect(existsSync(output)).toBe(true);
   });
 });
