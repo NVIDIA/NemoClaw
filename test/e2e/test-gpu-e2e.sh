@@ -7,7 +7,7 @@
 # Mirrors what a user with a GPU would actually do:
 #   1. Install Ollama binary
 #   2. Run the NemoClaw installer with NEMOCLAW_PROVIDER=ollama
-#   3. Onboard starts Ollama (OLLAMA_HOST=0.0.0.0:11434), pulls model, creates sandbox
+#   3. Onboard starts Ollama (127.0.0.1:11434) + auth proxy (:11435), pulls model, creates sandbox
 #   4. Verify inference works through the sandbox
 #   5. Destroy + uninstall
 #
@@ -159,13 +159,11 @@ if [ "${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}" != "1" ]; then
   exit 1
 fi
 
-# Verify port 11434 is free (onboard needs to start Ollama on 0.0.0.0:11434)
+# Verify port 11434 is free (onboard needs to start Ollama on 127.0.0.1:11434)
 if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
   info "WARNING: Something is already listening on port 11434."
-  info "Onboard may not be able to start Ollama on 0.0.0.0:11434."
+  info "Onboard may not be able to start Ollama."
   info "On ephemeral runners this should not happen."
-  # Don't fail — onboard will detect the running Ollama and use it.
-  # The container reachability check in onboard will catch 127.0.0.1 issues.
 fi
 
 # ══════════════════════════════════════════════════════════════════
