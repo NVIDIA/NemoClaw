@@ -77,10 +77,14 @@ describe("createTarball", () => {
   it("creates tarball successfully and returns true for valid output path", () => {
     tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
     writeFileSync(join(tempDir, "dummy.txt"), "test data");
-    const output = join(tempDir, "output.tar.gz");
+    // Write output to a SEPARATE directory — writing into the source dir
+    // causes tar to see the file changing as it reads, returning exit 1.
+    const outputDir = mkdtempSync(join(tmpdir(), "debug-test-out-"));
+    const output = join(outputDir, "output.tar.gz");
     const ok = createTarball(tempDir, output);
     expect(ok).toBe(true);
     expect(process.exitCode).toBeUndefined();
     expect(existsSync(output)).toBe(true);
+    rmSync(outputDir, { recursive: true, force: true });
   });
 });
