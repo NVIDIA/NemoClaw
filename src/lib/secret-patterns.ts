@@ -66,6 +66,7 @@ export const EXPECTED_SHELL_PREFIXES = [
   "sk-",
   "xoxb-",
   "xoxp-",
+  "xoxe.xoxp-",
   "AKIA",
   "hf_",
   "glpat-",
