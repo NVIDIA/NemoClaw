@@ -21,16 +21,23 @@ import { existsSync, readFileSync } from "node:fs";
 
 /** A single audit log entry as written by the Python audit module. */
 export interface AuditEntry {
+  /** Unix epoch timestamp (seconds with fractional milliseconds). */
   readonly timestamp: number;
+  /** SHA-256 hash of the previous entry, or "genesis" for the first entry. */
   readonly prev_hash: string;
+  /** Arbitrary event payload recorded by the orchestrator. */
   readonly event: unknown;
+  /** SHA-256 hash of this entry's canonical JSON representation (excluding hash itself). */
   readonly hash: string;
 }
 
 /** Result returned by `verifyChain`. */
 export interface VerifyResult {
+  /** True if the entire chain is valid. */
   readonly valid: boolean;
+  /** Number of valid entries verified before a break (or total if valid). */
   readonly entries: number;
+  /** Human-readable description of the first chain break, if any. */
   readonly error?: string;
 }
 
@@ -140,7 +147,12 @@ export function exportEntries(path: string, since: number, limit?: number): Audi
     return [];
   }
 
-  const content = readFileSync(path, "utf-8");
+  let content: string;
+  try {
+    content = readFileSync(path, "utf-8");
+  } catch {
+    return [];
+  }
   const lines = content.split("\n").filter((line) => line.trim() !== "");
   const result: AuditEntry[] = [];
   const effectiveLimit = limit != null && limit > 0 ? limit : 0;
@@ -184,7 +196,12 @@ export function tailEntries(path: string, n?: number): AuditEntry[] {
     return [];
   }
 
-  const content = readFileSync(path, "utf-8");
+  let content: string;
+  try {
+    content = readFileSync(path, "utf-8");
+  } catch {
+    return [];
+  }
   const lines = content.split("\n").filter((line) => line.trim() !== "");
   const entries: AuditEntry[] = [];
 
