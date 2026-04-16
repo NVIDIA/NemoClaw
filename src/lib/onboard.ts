@@ -5348,6 +5348,11 @@ async function onboard(opts = {}) {
   if (!noticeAccepted) {
     process.exit(1);
   }
+  // Validate NEMOCLAW_PROVIDER early so invalid values fail before
+  // preflight (Docker/OpenShell checks). Without this, users see a
+  // misleading 'Docker is not reachable' error instead of the real
+  // problem: an unsupported provider value.
+  getRequestedProviderHint();
   const lockResult = onboardSession.acquireOnboardLock(
     `nemoclaw onboard${resume ? " --resume" : ""}${isNonInteractive() ? " --non-interactive" : ""}${requestedFromDockerfile ? ` --from ${requestedFromDockerfile}` : ""}`,
   );
