@@ -674,7 +674,7 @@ describe("onboard helpers", () => {
         "",
         "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080",
       ),
-    ).toBe("active-unnamed");
+    ).toBe("healthy");
     expect(
       getGatewayReuseState(
         "Gateway status: Connected",
