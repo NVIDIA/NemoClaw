@@ -86,6 +86,7 @@ const GLOBAL_COMMANDS = new Set([
   "uninstall",
   "credentials",
   "backup-all",
+  "upgrade-sandboxes",
   "help",
   "--help",
   "-h",
@@ -1871,6 +1872,89 @@ function sandboxSnapshot(sandboxName, subArgs) {
 }
 
 /**
+ * Check all registered sandboxes for stale agent versions and offer to rebuild
+ * them. Called after install.sh upgrades NemoClaw so existing sandboxes pick up
+ * the new OpenClaw base image instead of running on a stale Docker cache.
+ * See #1904.
+ */
+async function upgradeSandboxes(args = []) {
+  const autoRebuild = args.includes("--auto") || args.includes("--yes");
+  const checkOnly = args.includes("--check");
+  const { sandboxes } = registry.listSandboxes();
+  if (sandboxes.length === 0) {
+    console.log("  No sandboxes registered. Nothing to upgrade.");
+    return;
+  }
+
+  const liveList = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  const liveNames = parseLiveSandboxNames(liveList.output || "");
+
+  const stale = [];
+  const upToDate = [];
+  for (const sb of sandboxes) {
+    const result = sandboxVersion.checkAgentVersion(sb.name);
+    if (result.isStale) {
+      stale.push({ sb, result, live: liveNames.has(sb.name) });
+    } else {
+      upToDate.push(sb);
+    }
+  }
+
+  if (stale.length === 0) {
+    console.log(`  ${G}All ${sandboxes.length} sandbox(es) are up to date.${R}`);
+    return;
+  }
+
+  console.log(`  ${YW}${stale.length} sandbox(es) need upgrading:${R}`);
+  for (const { sb, result, live } of stale) {
+    const status = live ? `${G}running${R}` : `${D}stopped${R}`;
+    const cur = result.sandboxVersion || "unknown";
+    const exp = result.expectedVersion || "unknown";
+    console.log(`    ${B}${sb.name}${R}  ${cur} → ${exp}  (${status})`);
+  }
+  if (upToDate.length > 0) {
+    console.log(`  ${D}${upToDate.length} sandbox(es) already current.${R}`);
+  }
+
+  if (checkOnly) return;
+
+  let rebuilt = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const { sb, live } of stale) {
+    if (!live) {
+      console.log(`  ${D}Skipping '${sb.name}' — not running. Start it first, then re-run.${R}`);
+      skipped++;
+      continue;
+    }
+
+    let proceed = autoRebuild;
+    if (!proceed) {
+      const answer = await askPrompt(`  Rebuild '${sb.name}'? [y/N] `);
+      proceed = answer.toLowerCase() === "y" || answer.toLowerCase() === "yes";
+    }
+
+    if (!proceed) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      console.log(`  Rebuilding '${sb.name}'...`);
+      await sandboxRebuild(sb.name, ["--yes"]);
+      rebuilt++;
+    } catch (err) {
+      console.error(`  ${_RD}Failed to rebuild '${sb.name}': ${err.message || err}${R}`);
+      failed++;
+    }
+  }
+
+  console.log("");
+  console.log(`  Upgrade summary: ${rebuilt} rebuilt, ${skipped} skipped, ${failed} failed`);
+}
+
+/**
  * Back up all registered sandboxes. Called by install.sh before upgrading
  * NemoClaw or OpenShell so sandbox state is recoverable if the upgrade
  * destroys sandbox contents.
@@ -1967,8 +2051,9 @@ function help() {
     nemoclaw credentials list        List stored credential keys
     nemoclaw credentials reset <KEY> Remove a stored credential so onboard re-prompts
 
-  ${G}Backup:${R}
+  ${G}Backup & Upgrade:${R}
     nemoclaw backup-all              Back up all sandbox state before upgrade
+    nemoclaw upgrade-sandboxes       Detect and rebuild stale sandboxes ${D}(--check, --auto)${R}
 
   Cleanup:
     nemoclaw uninstall [flags]       Run uninstall.sh (local only; no remote fallback)
@@ -2034,6 +2119,9 @@ const [cmd, ...args] = process.argv.slice(2);
         break;
       case "backup-all":
         backupAll();
+        break;
+      case "upgrade-sandboxes":
+        await upgradeSandboxes(args);
         break;
       case "--version":
       case "-v": {

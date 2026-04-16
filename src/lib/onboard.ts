@@ -451,6 +451,28 @@ function getBlueprintMinOpenshellVersion(rootDir = ROOT) {
   return getBlueprintVersionField("min_openshell_version", rootDir);
 }
 
+/**
+ * Read the pinned base-image digest from nemoclaw-blueprint/blueprint.yaml.
+ * Returns a validated "sha256:<hex64>" string, or null when the blueprint is
+ * missing, the field is absent, or the value fails validation. See #1904.
+ */
+function getBlueprintBaseImageDigest(rootDir = ROOT) {
+  try {
+    const YAML = require("yaml");
+    const blueprintPath = path.join(rootDir, "nemoclaw-blueprint", "blueprint.yaml");
+    if (!fs.existsSync(blueprintPath)) return null;
+    const raw = fs.readFileSync(blueprintPath, "utf8");
+    const parsed = YAML.parse(raw);
+    const value = parsed && parsed.digest;
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    if (!/^sha256:[0-9a-f]{64}$/.test(trimmed)) return null;
+    return trimmed;
+  } catch {
+    return null;
+  }
+}
+
 function getBlueprintMaxOpenshellVersion(rootDir = ROOT) {
   return getBlueprintVersionField("max_openshell_version", rootDir);
 }
@@ -1064,6 +1086,15 @@ function patchStagedDockerfile(
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_DISCORD_GUILDS_B64=.*$/m,
       `ARG NEMOCLAW_DISCORD_GUILDS_B64=${encodeDockerJsonArg(discordGuilds)}`,
+    );
+  }
+  // Pin the base image to the digest declared in blueprint.yaml so Docker
+  // cannot silently reuse a stale :latest tag from the local cache. See #1904.
+  const blueprintDigest = getBlueprintBaseImageDigest(ROOT);
+  if (blueprintDigest) {
+    dockerfile = dockerfile.replace(
+      /^ARG BASE_IMAGE=.*$/m,
+      `ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base@${blueprintDigest}`,
     );
   }
   fs.writeFileSync(dockerfilePath, dockerfile);
@@ -2714,6 +2745,14 @@ async function createSandbox(
     messagingAllowedIds,
     discordGuilds,
   );
+  // Pre-pull the digest-pinned base image so `docker build` does not silently
+  // reuse a stale :latest from the local layer cache. See #1904.
+  const blueprintDigest = getBlueprintBaseImageDigest(ROOT);
+  if (blueprintDigest) {
+    const pinnedRef = `ghcr.io/nvidia/nemoclaw/sandbox-base@${blueprintDigest}`;
+    console.log(`  Pulling base image (${blueprintDigest.slice(0, 19)}...)...`);
+    run(["docker", "pull", pinnedRef], { ignoreError: true });
+  }
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
   // proxy rewrites Authorization headers with real secrets at egress.
@@ -5399,6 +5438,7 @@ module.exports = {
   getNavigationChoice,
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
+  getBlueprintBaseImageDigest,
   getBlueprintMinOpenshellVersion,
   getBlueprintMaxOpenshellVersion,
   versionGte,

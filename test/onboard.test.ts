@@ -16,6 +16,7 @@ import {
   classifySandboxCreateFailure,
   compactText,
   formatEnvAssignment,
+  getBlueprintBaseImageDigest,
   getDashboardAccessInfo,
   getDashboardForwardStartCommand,
   getNavigationChoice,
@@ -4514,5 +4515,109 @@ const { createSandbox } = require(${onboardPath});
       updateAfterCreate !== -1,
       "registry.updateSandbox(model, provider) must appear AFTER createSandbox() — regression #1881",
     );
+  });
+
+  // ── getBlueprintBaseImageDigest tests (#1904) ───────────────────
+
+  it("getBlueprintBaseImageDigest returns the sha256 digest from blueprint.yaml", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const digest = getBlueprintBaseImageDigest(repoRoot);
+    assert.ok(digest !== null, "digest should not be null for the real blueprint");
+    assert.match(digest, /^sha256:[0-9a-f]{64}$/);
+  });
+
+  it("getBlueprintBaseImageDigest returns null when blueprint directory is missing", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-digest-missing-"));
+    try {
+      assert.equal(getBlueprintBaseImageDigest(tmpDir), null);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("getBlueprintBaseImageDigest returns null when digest field is missing", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-digest-nofield-"));
+    const bpDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(bpDir, { recursive: true });
+    fs.writeFileSync(path.join(bpDir, "blueprint.yaml"), 'version: "0.1.0"\n');
+    try {
+      assert.equal(getBlueprintBaseImageDigest(tmpDir), null);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("getBlueprintBaseImageDigest rejects malformed digest values", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-digest-malformed-"));
+    const bpDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(bpDir, { recursive: true });
+    fs.writeFileSync(path.join(bpDir, "blueprint.yaml"), 'digest: "not-a-real-digest"\n');
+    try {
+      assert.equal(getBlueprintBaseImageDigest(tmpDir), null);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patchStagedDockerfile rewrites ARG BASE_IMAGE with the blueprint digest", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-digest-patch-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+    try {
+      patchStagedDockerfile(dockerfilePath, "gpt-5.4", "http://127.0.0.1:19999", "build-digest-test", "openai-api");
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG BASE_IMAGE=ghcr\.io\/nvidia\/nemoclaw\/sandbox-base@sha256:/m);
+      assert.doesNotMatch(patched, /:latest/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patchStagedDockerfile preserves when Dockerfile has no ARG BASE_IMAGE line", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-digest-nobase-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+    try {
+      patchStagedDockerfile(dockerfilePath, "gpt-5.4", "http://127.0.0.1:19999", "build-nobase", "openai-api");
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.doesNotMatch(patched, /BASE_IMAGE/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1904: createSandbox pre-pulls the digest-pinned base image", () => {
+    const source = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"), "utf-8");
+    const patchPos = source.indexOf("patchStagedDockerfile(");
+    assert.ok(patchPos !== -1, "patchStagedDockerfile call not found in onboard.ts");
+    const prePullPos = source.indexOf('run(["docker", "pull", pinnedRef]', patchPos);
+    assert.ok(prePullPos !== -1, "docker pull with pinnedRef must appear after patchStagedDockerfile — regression #1904");
+    const sandboxCreatePos = source.indexOf('"sandbox",', prePullPos);
+    assert.ok(sandboxCreatePos !== -1, "sandbox create args not found after pre-pull");
+    const createArgPos = source.indexOf('"create",', sandboxCreatePos);
+    assert.ok(createArgPos !== -1, "pre-pull must appear before sandbox create command — regression #1904");
   });
 });
