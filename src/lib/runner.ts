@@ -41,6 +41,10 @@ function run(cmd, opts = {}) {
   }
   if (result.status !== 0 && !opts.ignoreError) {
     console.error(`  Command failed (exit ${result.status}): ${redact(cmd).slice(0, 80)}`);
+    if (/^\s*openshell\s/.test(cmd)) {
+      console.error("  This error originated from the OpenShell runtime layer.");
+      console.error("  Docs: https://github.com/NVIDIA/OpenShell");
+    }
     process.exit(result.status || 1);
   }
   return result;
@@ -85,6 +89,10 @@ function runArrayCmd(cmd, opts = {}) {
   if (result.status !== 0 && !ignoreError) {
     const cmdStr = cmd.join(" ");
     console.error(`  Command failed (exit ${result.status}): ${redact(cmdStr).slice(0, 80)}`);
+    if (cmd[0] === "openshell" || cmd[0]?.endsWith("/openshell")) {
+      console.error("  This error originated from the OpenShell runtime layer.");
+      console.error("  Docs: https://github.com/NVIDIA/OpenShell");
+    }
     process.exit(result.status || 1);
   }
   return result;
@@ -107,6 +115,10 @@ function runInteractive(cmd, opts = {}) {
   }
   if (result.status !== 0 && !opts.ignoreError) {
     console.error(`  Command failed (exit ${result.status}): ${redact(cmd).slice(0, 80)}`);
+    if (/^\s*openshell\s/.test(cmd)) {
+      console.error("  This error originated from the OpenShell runtime layer.");
+      console.error("  Docs: https://github.com/NVIDIA/OpenShell");
+    }
     process.exit(result.status || 1);
   }
   return result;

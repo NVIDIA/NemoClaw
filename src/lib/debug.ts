@@ -29,6 +29,7 @@ export interface DebugOptions {
 const useColor = !process.env.NO_COLOR && process.stdout.isTTY;
 const GREEN = useColor ? "\x1b[0;32m" : "";
 const YELLOW = useColor ? "\x1b[1;33m" : "";
+const RED = useColor ? "\x1b[0;31m" : "";
 const CYAN = useColor ? "\x1b[0;36m" : "";
 const NC = useColor ? "\x1b[0m" : "";
 
@@ -38,6 +39,10 @@ function info(msg: string): void {
 
 function warn(msg: string): void {
   console.log(`${YELLOW}[debug]${NC} ${msg}`);
+}
+
+function error(msg: string): void {
+  console.error(`${RED}[debug]${NC} ${msg}`);
 }
 
 function section(title: string): void {
@@ -446,16 +451,25 @@ function collectKernelMessages(collectDir: string): void {
 // Tarball
 // ---------------------------------------------------------------------------
 
-function createTarball(collectDir: string, output: string): void {
-  spawnSync("tar", ["czf", output, "-C", dirname(collectDir), basename(collectDir)], {
+export function createTarball(collectDir: string, output: string): boolean {
+  const result = spawnSync("tar", ["czf", output, "-C", dirname(collectDir), basename(collectDir)], {
     stdio: "inherit",
     timeout: 60_000,
   });
+  if (result.status !== 0 || result.signal) {
+    const reason = result.signal
+      ? `killed by signal ${result.signal}`
+      : `exited with code ${result.status ?? "unknown"}`;
+    error(`Failed to create tarball at ${output} (tar ${reason})`);
+    process.exitCode = 1;
+    return false;
+  }
   info(`Tarball written to ${output}`);
   warn(
     "Known secrets are auto-redacted, but please review for any remaining sensitive data before sharing.",
   );
   info("Attach this file to your GitHub issue.");
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -499,13 +513,16 @@ export function runDebug(opts: DebugOptions = {}): void {
 
     collectKernelMessages(collectDir);
 
+    let tarballOk = true;
     if (output) {
-      createTarball(collectDir, output);
+      tarballOk = createTarball(collectDir, output);
     }
 
-    console.log("");
-    info("Done. If filing a bug, run with --output and attach the tarball to your issue:");
-    info("  nemoclaw debug --output /tmp/nemoclaw-debug.tar.gz");
+    if (tarballOk) {
+      console.log("");
+      info("Done. If filing a bug, run with --output and attach the tarball to your issue:");
+      info("  nemoclaw debug --output /tmp/nemoclaw-debug.tar.gz");
+    }
   } finally {
     rmSync(collectDir, { recursive: true, force: true });
   }

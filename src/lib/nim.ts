@@ -228,7 +228,7 @@ export function waitForNimHealth(port = VLLM_PORT, timeout = 300): boolean {
           "5",
           "--max-time",
           "5",
-          `http://localhost:${hostPort}/v1/models`,
+          `http://127.0.0.1:${hostPort}/v1/models`,
         ],
         { ignoreError: true },
       );
@@ -288,7 +288,7 @@ export function nimStatusByName(name: string, port?: number): NimStatus {
           "5",
           "--max-time",
           "5",
-          `http://localhost:${resolvedHostPort}/v1/models`,
+          `http://127.0.0.1:${resolvedHostPort}/v1/models`,
         ],
         { ignoreError: true },
       );
