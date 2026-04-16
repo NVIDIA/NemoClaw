@@ -188,47 +188,42 @@ describe("onboard session", () => {
     });
     fs.writeFileSync(session.LOCK_FILE, staleLock, { mode: 0o600 });
 
-    // 2. Wrap fs.statSync so that the FIRST stat (which the cleanup
-    //    helper uses for inode comparison) sees the original stale
-    //    inode, but right after that read we swap the file out for a
-    //    "fresh claim from a faster concurrent process". The second
-    //    stat (inside unlinkIfInodeMatches) will then see a different
-    //    inode and the cleanup must skip the unlink.
+    // 2. Wrap fs.statSync so the swap happens just before stat #2:
+    //    - stat #1 (inside acquireOnboardLock): reads the stale inode
+    //      and returns it unmodified. readFileSync then reads the
+    //      ORIGINAL stale lock (dead PID 999999), isProcessAlive
+    //      returns false, and acquireOnboardLock enters the stale-
+    //      cleanup path calling unlinkIfInodeMatches.
+    //    - stat #2 (inside unlinkIfInodeMatches): BEFORE the actual
+    //      stat, swap the file for a fresh claim. stat #2 then sees
+    //      a different inode → must skip the unlink.
+    //
+    //    CodeRabbit correctly flagged the original test: swapping on
+    //    stat #1 caused readFileSync to see the live PID and exit
+    //    via isProcessAlive, never reaching unlinkIfInodeMatches.
     let statCallCount = 0;
     const originalStatSync = fs.statSync;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (fs as any).statSync = function (...args: unknown[]) {
       statCallCount += 1;
-      // After the first stat (inside acquireOnboardLock), simulate the
-      // race: a concurrent fast process unlinks the stale lock and
-      // writes a fresh one with a different inode.
-      if (statCallCount === 1) {
-        try {
-          const result = (originalStatSync as unknown as (...a: unknown[]) => unknown).apply(
-            fs,
-            args,
-          );
-          // Now swap the file: unlink + recreate produces a new inode.
-          // Use a DISTINCT live PID (the parent process — typically the
-          // shell that launched the test runner) so the assertions
-          // below can verify the mutual-exclusion loser path: if
-          // acquireOnboardLock confused the fresh claim with its own
-          // pid, this test would silently pass even though the
-          // contender should lose. See CodeRabbit feedback on PR #1656.
-          fs.unlinkSync(session.LOCK_FILE);
-          fs.writeFileSync(
-            session.LOCK_FILE,
-            JSON.stringify({
-              pid: process.ppid,
-              startedAt: new Date().toISOString(),
-              command: "nemoclaw onboard (fresh claim from concurrent process)",
-            }),
-            { mode: 0o600 },
-          );
-          return result;
-        } catch (err) {
-          throw err;
-        }
+      // Just before stat #2 (inside unlinkIfInodeMatches), simulate
+      // the race: a concurrent fast process unlinks the stale lock
+      // and writes a fresh claim. stat #2 then sees a new inode.
+      if (statCallCount === 2) {
+        // Write the fresh claim to a temp file first, then rename over
+        // the stale lock. This guarantees a different inode even on
+        // tmpfs/overlayfs which can reuse inodes after unlink+recreate.
+        const tmpClaim = session.LOCK_FILE + ".race-tmp";
+        fs.writeFileSync(
+          tmpClaim,
+          JSON.stringify({
+            pid: process.ppid,
+            startedAt: new Date().toISOString(),
+            command: "nemoclaw onboard (fresh claim from concurrent process)",
+          }),
+          { mode: 0o600 },
+        );
+        fs.renameSync(tmpClaim, session.LOCK_FILE);
       }
       return (originalStatSync as unknown as (...a: unknown[]) => unknown).apply(fs, args);
     };
