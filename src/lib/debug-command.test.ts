@@ -31,7 +31,7 @@ describe("debug command", () => {
   });
 
   it("runs the debug command with parsed options", () => {
-    const runDebug = vi.fn();
+    const runDebug = vi.fn().mockReturnValue(true);
     runDebugCommand(["--sandbox", "beta"], {
       getDefaultSandbox: () => "alpha",
       runDebug,
@@ -45,7 +45,7 @@ describe("debug command", () => {
   });
 
   it("--sandbox overrides the default sandbox", () => {
-    const runDebug = vi.fn();
+    const runDebug = vi.fn().mockReturnValue(true);
     runDebugCommand(["--sandbox", "mybox"], {
       getDefaultSandbox: () => "stale-default",
       runDebug,
@@ -59,7 +59,7 @@ describe("debug command", () => {
   });
 
   it("falls back to undefined when getDefaultSandbox returns undefined", () => {
-    const runDebug = vi.fn();
+    const runDebug = vi.fn().mockReturnValue(true);
     runDebugCommand(["--quick"], {
       getDefaultSandbox: () => undefined,
       runDebug,
@@ -70,6 +70,21 @@ describe("debug command", () => {
       }) as never,
     });
     expect(runDebug).toHaveBeenCalledWith({ quick: true, sandboxName: undefined });
+  });
+
+  it("exits with code 1 when runDebug returns false (tarball failure)", () => {
+    const runDebug = vi.fn().mockReturnValue(false);
+    expect(() =>
+      runDebugCommand(["--output", "/nonexistent/path/debug.tar.gz"], {
+        getDefaultSandbox: () => "alpha",
+        runDebug,
+        log: () => {},
+        error: () => {},
+        exit: ((code: number) => {
+          throw new Error(`exit:${code}`);
+        }) as never,
+      }),
+    ).toThrow("exit:1");
   });
 
   it("exits on invalid arguments", () => {

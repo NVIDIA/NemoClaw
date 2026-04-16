@@ -5,7 +5,7 @@ import type { DebugOptions } from "./debug";
 
 export interface RunDebugCommandDeps {
   getDefaultSandbox: () => string | undefined;
-  runDebug: (options: DebugOptions) => void;
+  runDebug: (options: DebugOptions) => boolean;
   log?: (message?: string) => void;
   error?: (message?: string) => void;
   exit?: (code: number) => never;
@@ -68,6 +68,8 @@ export function parseDebugArgs(
 }
 
 export function runDebugCommand(args: string[], deps: RunDebugCommandDeps): void {
+  const exit = deps.exit ?? ((code: number) => process.exit(code));
   const opts = parseDebugArgs(args, deps);
-  deps.runDebug(opts);
+  const ok = deps.runDebug(opts);
+  if (!ok) exit(1);
 }

@@ -446,23 +446,28 @@ function collectKernelMessages(collectDir: string): void {
 // Tarball
 // ---------------------------------------------------------------------------
 
-function createTarball(collectDir: string, output: string): void {
-  spawnSync("tar", ["czf", output, "-C", dirname(collectDir), basename(collectDir)], {
+function createTarball(collectDir: string, output: string): boolean {
+  const result = spawnSync("tar", ["czf", output, "-C", dirname(collectDir), basename(collectDir)], {
     stdio: "inherit",
     timeout: 60_000,
   });
+  if (result.status !== 0) {
+    warn(`Failed to create tarball at ${output} (tar exited with code ${result.status ?? "unknown"})`);
+    return false;
+  }
   info(`Tarball written to ${output}`);
   warn(
     "Known secrets are auto-redacted, but please review for any remaining sensitive data before sharing.",
   );
   info("Attach this file to your GitHub issue.");
+  return true;
 }
 
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
 
-export function runDebug(opts: DebugOptions = {}): void {
+export function runDebug(opts: DebugOptions = {}): boolean {
   const quick = opts.quick ?? false;
   const output = opts.output ?? "";
   // Compiled location: dist/lib/debug.js → repo root is 2 levels up
@@ -499,13 +504,15 @@ export function runDebug(opts: DebugOptions = {}): void {
 
     collectKernelMessages(collectDir);
 
+    let tarballOk = true;
     if (output) {
-      createTarball(collectDir, output);
+      tarballOk = createTarball(collectDir, output);
     }
 
     console.log("");
     info("Done. If filing a bug, run with --output and attach the tarball to your issue:");
     info("  nemoclaw debug --output /tmp/nemoclaw-debug.tar.gz");
+    return tarballOk;
   } finally {
     rmSync(collectDir, { recursive: true, force: true });
   }
