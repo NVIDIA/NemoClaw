@@ -10,6 +10,7 @@ import path from "path";
 const yaml = require("js-yaml");
 
 import { ROOT } from "./runner";
+import { DASHBOARD_PORT } from "./ports";
 
 export const AGENTS_DIR = path.join(ROOT, "agents");
 
@@ -40,6 +41,8 @@ export interface AgentDefinition {
   description?: string;
   display_name?: string;
   binary_path?: string;
+  version_command?: string;
+  expected_version?: string;
   gateway_command?: string;
   device_pairing?: boolean;
   phone_home_hosts?: string[];
@@ -56,6 +59,8 @@ export interface AgentDefinition {
   readonly forwardPort: number;
   readonly configPaths: AgentConfigPaths;
   readonly stateDirs: string[];
+  readonly versionCommand: string;
+  readonly expectedVersion: string | null;
   readonly hasDevicePairing: boolean;
   readonly phoneHomeHosts: string[];
   readonly messagingPlatforms: string[];
@@ -120,8 +125,8 @@ export function loadAgent(name: string): AgentDefinition {
     get healthProbe(): AgentHealthProbe {
       return (
         (raw.health_probe as AgentHealthProbe) || {
-          url: "http://localhost:18789/",
-          port: 18789,
+          url: `http://localhost:${DASHBOARD_PORT}/`,
+          port: DASHBOARD_PORT,
           timeout_seconds: 30,
         }
       );
@@ -129,7 +134,7 @@ export function loadAgent(name: string): AgentDefinition {
 
     get forwardPort(): number {
       const ports = (raw.forward_ports as number[]) || [];
-      return ports[0] || 18789;
+      return ports[0] || DASHBOARD_PORT;
     },
 
     get configPaths(): AgentConfigPaths {
@@ -145,6 +150,14 @@ export function loadAgent(name: string): AgentDefinition {
 
     get stateDirs(): string[] {
       return (raw.state_dirs as string[]) || [];
+    },
+
+    get versionCommand(): string {
+      return (raw.version_command as string) || `${raw.binary_path || "unknown"} --version`;
+    },
+
+    get expectedVersion(): string | null {
+      return (raw.expected_version as string) || null;
     },
 
     get hasDevicePairing(): boolean {

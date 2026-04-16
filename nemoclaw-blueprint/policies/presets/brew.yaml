@@ -28,6 +28,8 @@ network_policies:
         port: 443
         access: full
     binaries:
+      - { path: /usr/bin/curl }
+      - { path: /usr/bin/git }
       - { path: /home/linuxbrew/.linuxbrew/bin/brew }
       - { path: /home/linuxbrew/.linuxbrew/bin/* }
       - { path: /home/linuxbrew/.linuxbrew/Homebrew/bin/* }

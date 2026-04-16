@@ -9,6 +9,11 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+const CREDENTIAL_RETRY_PROMPT =
+  "  Options: retry (re-enter key), back (change provider), exit [retry]: ";
+const CREDENTIAL_RETRY_PROMPT_RE =
+  /Options: retry \(re-enter key\), back \(change provider\), exit \[retry\]: /;
+
 function writeOpenAiStyleAuthRetryCurl(fakeBin, goodToken, models = ["gpt-5.4"]) {
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
@@ -127,10 +132,13 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
-  if (command.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now\\nqwen3:32b  def  20 GB  now";
-  if (command.includes("localhost:8000/v1/models")) return "";
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
+  if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now\\nqwen3:32b  def  20 GB  now";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   return "";
 };
 registry.updateSandbox = (_name, update) => updates.push(update);
@@ -300,9 +308,12 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-test"; };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "";
-  if (command.includes("localhost:11434/api/tags")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   return "";
 };
 
@@ -393,9 +404,12 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-test"; };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "";
-  if (command.includes("localhost:11434/api/tags")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   return "";
 };
 
@@ -536,7 +550,7 @@ const { setupNim } = require(${onboardPath});
     assert.ok(payload.lines.some((line) => line.includes("Chat Completions API available")));
   });
 
-  it("warms and validates Ollama via localhost before moving on", () => {
+  it("warms and validates Ollama via 127.0.0.1 before moving on", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-validation-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -578,15 +592,18 @@ credentials.prompt = async (message) => {
   return answers.shift() || "";
 };
 runner.run = (command, opts = {}) => {
-  commands.push(command);
+  commands.push(Array.isArray(command) ? command.join(" ") : command);
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
-  if (command.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
-  if (command.includes("localhost:8000/v1/models")) return "";
-  if (command.includes("api/generate")) return '{"response":"hello"}';
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
+  if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
 };
 
@@ -630,7 +647,7 @@ const { setupNim } = require(${onboardPath});
       payload.lines.some((line) => line.includes("Loading Ollama model: nemotron-3-nano:30b")),
     );
     assert.ok(
-      payload.commands.some((command) => command.includes("http://localhost:11434/api/generate")),
+      payload.commands.some((command) => command.includes("http://127.0.0.1:11434/api/generate")),
     );
   });
 
@@ -676,11 +693,14 @@ credentials.prompt = async (message) => {
 credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-good"; };
 runner.run = () => ({ status: 0 });
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
-  if (command.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
-  if (command.includes("localhost:8000/v1/models")) return "";
-  if (command.includes("api/generate")) return '{"response":"hello"}';
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
+  if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
 };
 
@@ -776,11 +796,14 @@ credentials.prompt = async (message) => {
   return answers.shift() || "";
 };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (command.includes("ollama list")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
-  if (command.includes("api/generate")) return '{"response":"hello"}';
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
+  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
 };
 
@@ -883,11 +906,14 @@ credentials.prompt = async (message) => {
   return answers.shift() || "";
 };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (command.includes("ollama list")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
-  if (command.includes("api/generate")) return '{"response":"hello"}';
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
+  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
 };
 
@@ -1494,6 +1520,218 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.model, "custom-model");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.ok(payload.lines.some((line) => line.includes("Chat Completions API available")));
+  });
+
+  it("forces chat completions for custom OpenAI-compatible endpoints even when /responses returns valid tool calls (#1932)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-custom-openai-responses-force-completions-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "custom-openai-responses-force-completions-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    // Mock curl: /v1/responses returns a VALID response with tool calls
+    // (simulates Ollama 0.20+ which exposes /v1/responses successfully)
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"error":{"message":"bad request"}}'
+status="400"
+outfile=""
+body_arg=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -d) body_arg="$2"; shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if echo "$url" | grep -q '/responses$'; then
+  body='{"id":"resp_123","output":[{"id":"fc_1","type":"function_call","name":"read","arguments":"{\\"path\\":\\"/tmp/test\\"}"},{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"OK"}]}]}'
+  status="200"
+elif echo "$url" | grep -q '/chat/completions$'; then
+  body='{"id":"chatcmpl-123","choices":[{"message":{"content":"OK"}}]}'
+  status="200"
+fi
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["3", "https://ollama.local:11434/v1", "my-model"];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  process.env.COMPATIBLE_API_KEY = "ollama-key";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "compatible-endpoint");
+    assert.equal(payload.result.model, "my-model");
+    // Even though /v1/responses returned valid tool calls, we must force
+    // chat completions because many backends (Ollama, vLLM, LiteLLM) do not
+    // correctly handle the developer role used by the Responses API.
+    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    // Verify the wizard selected chat completions (either via our forced
+    // override or via the streaming fallback — both are correct).
+    assert.ok(
+      payload.lines.some((line) => line.includes("openai-completions")),
+    );
+  });
+
+  it("honors NEMOCLAW_PREFERRED_API=openai-responses override for custom OpenAI-compatible endpoints (#1932)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-custom-openai-responses-override-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "custom-openai-responses-override-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    // Mock curl: /v1/responses returns a valid response (probe passes)
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"error":{"message":"bad request"}}'
+status="400"
+outfile=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -d) shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if echo "$url" | grep -q '/responses$'; then
+  body='{"id":"resp_123","output":[{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"OK"}]}]}'
+  status="200"
+elif echo "$url" | grep -q '/chat/completions$'; then
+  body='{"id":"chatcmpl-123","choices":[{"message":{"content":"OK"}}]}'
+  status="200"
+fi
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["3", "https://openai-proxy.example.com/v1", "gpt-4o"];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  process.env.COMPATIBLE_API_KEY = "sk-test";
+  // Explicit override: user knows their backend supports the Responses API
+  process.env.NEMOCLAW_PREFERRED_API = "openai-responses";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "compatible-endpoint");
+    assert.equal(payload.result.model, "gpt-4o");
+    // With NEMOCLAW_PREFERRED_API=openai-responses, the code path that
+    // forces openai-completions is bypassed: our override check sees the
+    // env var and uses validation.api instead. In this test, the mock
+    // curl doesn't support SSE streaming, so the probe's streaming
+    // fallback returns openai-completions regardless. A real backend with
+    // proper streaming would yield openai-responses here.
+    // The important thing: the env var is read and the forced-completions
+    // override does NOT fire, proving the escape hatch works.
+    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    // Verify the forced-override message was NOT printed (env var bypassed it)
+    assert.ok(
+      !payload.lines.some((line) =>
+        line.includes("compatible endpoints may not support the Responses API developer role"),
+      ),
+    );
   });
 
   it("returns to provider selection instead of exiting on blank custom endpoint input", () => {
@@ -2180,19 +2418,87 @@ const { setupNim } = require(${onboardPath});
       payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length,
       1,
     );
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
-    const retryPrompt = payload.prompts.find((entry) =>
-      /Type 'retry', 'back', or 'exit' \[retry\]: /.test(entry.message),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
+    const retryPrompt = payload.prompts.find((entry) => CREDENTIAL_RETRY_PROMPT_RE.test(entry.message));
     assert.deepEqual(retryPrompt, {
-      message: "  Type 'retry', 'back', or 'exit' [retry]: ",
+      message: CREDENTIAL_RETRY_PROMPT,
       secret: true,
     });
     assert.ok(payload.messages.some((message) => /NVIDIA Endpoints API key: /.test(message)));
+  });
+
+  it("treats a pasted NVIDIA API key at the retry prompt as retry and re-prompts securely", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-nvidia-paste-guard-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "nvidia-paste-guard-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeOpenAiStyleAuthRetryCurl(fakeBin, "nvapi-good", ["nim/meta/llama-3.1-70b-instruct"]);
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["1", "", "nvapi-fake-key-value", "nvapi-good", ""];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  process.env.NVIDIA_API_KEY = "nvapi-bad";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines, key: process.env.NVIDIA_API_KEY }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "nvidia-prod");
+    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    assert.equal(payload.key, "nvapi-good");
+    assert.ok(payload.lines.some((line) => line.includes("That looks like an API key")));
+    assert.ok(payload.lines.some((line) => line.includes("Treating as 'retry'")));
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
+    assert.ok(payload.messages.some((message) => /NVIDIA Endpoints API key: /.test(message)));
+    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+    assert.equal(
+      payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length,
+      1,
+    );
   });
 
   it("lets users re-enter an OpenAI API key after authorization failure", () => {
@@ -2213,9 +2519,11 @@ const runner = require(${runnerPath});
 
 const answers = ["2", "", "retry", "sk-good", ""];
 const messages = [];
+const prompts = [];
 
-credentials.prompt = async (message) => {
+credentials.prompt = async (message, opts = {}) => {
   messages.push(message);
+  prompts.push({ message, secret: opts.secret === true });
   return answers.shift() || "";
 };
 runner.runCapture = () => "";
@@ -2231,7 +2539,7 @@ const { setupNim } = require(${onboardPath});
   console.error = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines, key: process.env.OPENAI_API_KEY }));
+    originalLog(JSON.stringify({ result, messages, prompts, lines, key: process.env.OPENAI_API_KEY }));
   } finally {
     console.log = originalLog;
     console.error = originalError;
@@ -2260,11 +2568,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "openai-responses");
     assert.equal(payload.key, "sk-good");
     assert.ok(payload.lines.some((line) => line.includes("OpenAI authorization failed")));
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(payload.messages.some((message) => /OpenAI API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(
@@ -2338,11 +2642,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
     assert.equal(payload.key, "anthropic-good");
     assert.ok(payload.lines.some((line) => line.includes("Anthropic authorization failed")));
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(payload.messages.some((message) => /Anthropic API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(
@@ -2416,11 +2716,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.equal(payload.key, "gemini-good");
     assert.ok(payload.lines.some((line) => line.includes("Google Gemini authorization failed")));
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(payload.messages.some((message) => /Google Gemini API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(
@@ -2501,11 +2797,7 @@ const { setupNim } = require(${onboardPath});
         line.includes("Other OpenAI-compatible endpoint authorization failed"),
       ),
     );
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(
       payload.messages.some((message) =>
         /Other OpenAI-compatible endpoint API key: /.test(message),
@@ -2595,11 +2887,7 @@ const { setupNim } = require(${onboardPath});
         line.includes("Other Anthropic-compatible endpoint authorization failed"),
       ),
     );
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(
       payload.messages.some((message) =>
         /Other Anthropic-compatible endpoint API key: /.test(message),
@@ -2670,9 +2958,12 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "";
-  if (command.includes("localhost:11434")) return "";
-  if (command.includes("localhost:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
   return "";
 };
 
@@ -2779,9 +3070,12 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "";
-  if (command.includes("localhost:11434")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   return "";
 };
 

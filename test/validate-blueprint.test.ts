@@ -253,6 +253,19 @@ describe("base sandbox policy", () => {
     );
     expect(githubHosts).toEqual([]);
   });
+
+  it("regression #1458: baseline npm_registry must not include npm or node binaries", () => {
+    const np = policy.network_policies as Record<string, Record<string, unknown>>;
+    const npmRegistry = np.npm_registry;
+    expect(npmRegistry).toBeDefined();
+    const binaries = npmRegistry.binaries as Array<{ path: string }> | undefined;
+    expect(Array.isArray(binaries)).toBe(true);
+    const paths = (binaries ?? []).map((b) => b.path).sort();
+    // Only openclaw CLI should reach the npm registry by default.
+    // npm/node being in this list lets the agent bypass 'none' policy preset.
+    // Exact allowlist — adding any binary here requires a deliberate review.
+    expect(paths).toEqual(["/usr/local/bin/openclaw"]);
+  });
 });
 
 describe("github preset", () => {

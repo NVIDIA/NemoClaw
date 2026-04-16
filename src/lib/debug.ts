@@ -6,6 +6,9 @@ import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node
 import { platform, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
+import { DASHBOARD_PORT } from "./ports";
+import { listSandboxes } from "./registry";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -26,6 +29,7 @@ export interface DebugOptions {
 const useColor = !process.env.NO_COLOR && process.stdout.isTTY;
 const GREEN = useColor ? "\x1b[0;32m" : "";
 const YELLOW = useColor ? "\x1b[1;33m" : "";
+const RED = useColor ? "\x1b[0;31m" : "";
 const CYAN = useColor ? "\x1b[0;36m" : "";
 const NC = useColor ? "\x1b[0m" : "";
 
@@ -35,6 +39,10 @@ function info(msg: string): void {
 
 function warn(msg: string): void {
   console.log(`${YELLOW}[debug]${NC} ${msg}`);
+}
+
+function error(msg: string): void {
+  console.error(`${RED}[debug]${NC} ${msg}`);
 }
 
 function section(title: string): void {
@@ -139,6 +147,22 @@ function collectShell(collectDir: string, label: string, shellCmd: string): void
 // ---------------------------------------------------------------------------
 
 function detectSandboxName(): string {
+  // First, check the local registry for the default sandbox. This is
+  // the authoritative source — it reflects the user's actual onboard
+  // choices and survives gateway restarts. Falling back to "default"
+  // without checking the registry was the bug in #1728: debug always
+  // targeted a sandbox named "default" even though the user's sandbox
+  // was named something else (e.g. "my-assistant").
+  try {
+    const registry = listSandboxes();
+    if (registry.defaultSandbox) return registry.defaultSandbox;
+    const names = registry.sandboxes.map((s) => s.name).filter(Boolean);
+    if (names.length > 0) return names[0];
+  } catch {
+    /* registry unreadable — fall through to openshell probe */
+  }
+
+  // Fallback: ask the live gateway directly
   if (!commandExists("openshell")) return "default";
   try {
     const output = execFileSync("openshell", ["sandbox", "list"], {
@@ -378,7 +402,7 @@ function collectNetwork(collectDir: string): void {
     'code=$(curl -s -o /dev/null -w "%{http_code}" https://integrate.api.nvidia.com/v1/models); echo "HTTP $code"; if [ "$code" -ge 200 ] && [ "$code" -lt 500 ]; then echo "NIM API reachable"; else echo "NIM API unreachable"; exit 1; fi',
   );
   collectShell(collectDir, "lsof-net", "lsof -i -P -n 2>/dev/null | head -50");
-  collect(collectDir, "lsof-18789", "lsof", ["-i", ":18789"]);
+  collect(collectDir, "lsof-18789", "lsof", ["-i", `:${DASHBOARD_PORT}`]);
 }
 
 function collectOnboardSession(collectDir: string, repoDir: string): void {
@@ -427,16 +451,25 @@ function collectKernelMessages(collectDir: string): void {
 // Tarball
 // ---------------------------------------------------------------------------
 
-function createTarball(collectDir: string, output: string): void {
-  spawnSync("tar", ["czf", output, "-C", dirname(collectDir), basename(collectDir)], {
+export function createTarball(collectDir: string, output: string): boolean {
+  const result = spawnSync("tar", ["czf", output, "-C", dirname(collectDir), basename(collectDir)], {
     stdio: "inherit",
     timeout: 60_000,
   });
+  if (result.status !== 0 || result.signal) {
+    const reason = result.signal
+      ? `killed by signal ${result.signal}`
+      : `exited with code ${result.status ?? "unknown"}`;
+    error(`Failed to create tarball at ${output} (tar ${reason})`);
+    process.exitCode = 1;
+    return false;
+  }
   info(`Tarball written to ${output}`);
   warn(
     "Known secrets are auto-redacted, but please review for any remaining sensitive data before sharing.",
   );
   info("Attach this file to your GitHub issue.");
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -480,13 +513,16 @@ export function runDebug(opts: DebugOptions = {}): void {
 
     collectKernelMessages(collectDir);
 
+    let tarballOk = true;
     if (output) {
-      createTarball(collectDir, output);
+      tarballOk = createTarball(collectDir, output);
     }
 
-    console.log("");
-    info("Done. If filing a bug, run with --output and attach the tarball to your issue:");
-    info("  nemoclaw debug --output /tmp/nemoclaw-debug.tar.gz");
+    if (tarballOk) {
+      console.log("");
+      info("Done. If filing a bug, run with --output and attach the tarball to your issue:");
+      info("  nemoclaw debug --output /tmp/nemoclaw-debug.tar.gz");
+    }
   } finally {
     rmSync(collectDir, { recursive: true, force: true });
   }

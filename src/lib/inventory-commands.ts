@@ -9,6 +9,12 @@ export interface SandboxEntry {
   provider?: string | null;
   gpuEnabled?: boolean;
   policies?: string[] | null;
+  messagingChannels?: string[] | null;
+}
+
+export interface MessagingBridgeHealth {
+  channel: string;
+  conflicts: number;
 }
 
 export interface RecoveryResult {
@@ -25,10 +31,20 @@ export interface ListSandboxesCommandDeps {
   log?: (message?: string) => void;
 }
 
+export interface MessagingOverlap {
+  channel: string;
+  sandboxes: [string, string];
+}
+
 export interface ShowStatusCommandDeps {
   listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox?: string | null };
   getLiveInference: () => GatewayInference | null;
   showServiceStatus: (options: { sandboxName?: string }) => void;
+  checkMessagingBridgeHealth?: (
+    sandboxName: string,
+    channels: string[],
+  ) => MessagingBridgeHealth[];
+  backfillAndFindOverlaps?: () => MessagingOverlap[];
   log?: (message?: string) => void;
 }
 
@@ -99,4 +115,42 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
   }
 
   deps.showServiceStatus({ sandboxName: defaultSandbox || undefined });
+
+  if (deps.backfillAndFindOverlaps) {
+    const overlaps = deps.backfillAndFindOverlaps();
+    if (overlaps.length > 0) {
+      log("");
+      for (const { channel, sandboxes: pair } of overlaps) {
+        log(
+          `  ⚠ ${channel} is enabled on both '${pair[0]}' and '${pair[1]}'. Bot tokens only allow one sandbox to poll — both bridges will fail.`,
+        );
+      }
+      log(
+        "    Run `nemoclaw <sandbox> destroy` on whichever sandbox should stop polling, or rerun onboarding with the channel disabled.",
+      );
+    }
+  }
+
+  if (deps.checkMessagingBridgeHealth && defaultSandbox) {
+    // Re-fetch: backfillAndFindOverlaps above may have populated
+    // messagingChannels for the default sandbox on first run after upgrade,
+    // and the original `sandboxes` snapshot is stale.
+    const refreshed = deps.listSandboxes().sandboxes;
+    const defaultEntry = refreshed.find((sb) => sb.name === defaultSandbox);
+    const channels = defaultEntry?.messagingChannels;
+    if (Array.isArray(channels) && channels.length > 0) {
+      const degraded = deps.checkMessagingBridgeHealth(defaultSandbox, channels);
+      if (degraded.length > 0) {
+        log("");
+        for (const { channel, conflicts } of degraded) {
+          log(
+            `  ⚠ ${channel} bridge: degraded (${conflicts} conflict errors in /tmp/gateway.log)`,
+          );
+        }
+        log(
+          "    Another sandbox is likely polling with the same bot token. See docs/reference/troubleshooting.md.",
+        );
+      }
+    }
+  }
 }
