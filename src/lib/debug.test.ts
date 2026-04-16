@@ -54,7 +54,6 @@ describe("redact", () => {
   });
 });
 
-<<<<<<< HEAD
 describe("createTarball", () => {
   let tempDir: string;
   let outputDir: string;
