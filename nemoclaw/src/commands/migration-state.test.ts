@@ -1427,7 +1427,7 @@ describe("commands/migration-state", () => {
       "rejects unsafe path segment: %s",
       (segment) => {
         const doc: Record<string, unknown> = {};
-        expect(() => setConfigValue(doc, `${segment}.polluted`, "true")).toThrow(
+        expect(() => { setConfigValue(doc, `${segment}.polluted`, "true"); }).toThrow(
           /Unsafe config path segment/,
         );
       },
@@ -1436,7 +1436,7 @@ describe("commands/migration-state", () => {
     it("rejects __proto__ in nested position", () => {
       const doc: Record<string, unknown> = {};
       expect(() =>
-        setConfigValue(doc, "agents.__proto__.isAdmin", "true"),
+        { setConfigValue(doc, "agents.__proto__.isAdmin", "true"); },
       ).toThrow(/Unsafe config path segment/);
     });
 
@@ -1444,7 +1444,7 @@ describe("commands/migration-state", () => {
       "rejects unsafe segment in nested path: %s",
       (configPath) => {
         const doc: Record<string, unknown> = {};
-        expect(() => setConfigValue(doc, configPath, "true")).toThrow(
+        expect(() => { setConfigValue(doc, configPath, "true"); }).toThrow(
           /Unsafe config path segment/,
         );
       },
@@ -1453,7 +1453,9 @@ describe("commands/migration-state", () => {
     it("allows legitimate dotted paths", () => {
       const doc: Record<string, unknown> = {};
       setConfigValue(doc, "agents.list[0].workspace", "/tmp/ws");
-      expect((doc as any).agents.list[0].workspace).toBe("/tmp/ws");
+      const agents = doc.agents as Record<string, unknown>;
+      const list = agents.list as Record<string, unknown>[];
+      expect(list[0].workspace).toBe("/tmp/ws");
     });
 
     it("allows simple top-level keys", () => {
