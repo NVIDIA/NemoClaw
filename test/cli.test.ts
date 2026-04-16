@@ -211,6 +211,46 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("nemoclaw debug")).toBeTruthy();
   });
 
+  it("debug --sandbox NAME targets the specified sandbox", { timeout: 15000 }, () => {
+    const r = run("debug --quick --sandbox mybox");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Collecting diagnostics for sandbox 'mybox'");
+  });
+
+  it("debug --sandbox without a name exits 1", () => {
+    const r = run("debug --sandbox");
+    expect(r.code).not.toBe(0);
+  });
+
+  it("debug warns when default sandbox is stale", { timeout: 15000 }, () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-stale-"));
+    fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, ".nemoclaw", "sandboxes.json"),
+      JSON.stringify({ sandboxes: {}, defaultSandbox: "ghost" }),
+      { mode: 0o600 },
+    );
+    const r = runWithEnv("debug --quick 2>&1", { HOME: home });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Warning");
+    expect(r.out).toContain("ghost");
+    expect(r.out).toContain("--sandbox NAME");
+  });
+
+  it("debug --sandbox skips stale default warning", { timeout: 15000 }, () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-stale-"));
+    fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, ".nemoclaw", "sandboxes.json"),
+      JSON.stringify({ sandboxes: {}, defaultSandbox: "ghost" }),
+      { mode: 0o600 },
+    );
+    const r = runWithEnv("debug --quick --sandbox mybox 2>&1", { HOME: home });
+    expect(r.code).toBe(0);
+    expect(r.out).not.toContain("Warning");
+    expect(r.out).toContain("Collecting diagnostics for sandbox 'mybox'");
+  });
+
   it("maps --follow to openshell --tail", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-follow-"));
     const localBin = path.join(home, "bin");

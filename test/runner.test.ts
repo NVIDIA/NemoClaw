@@ -429,8 +429,11 @@ describe("regression guards", () => {
         defs.push(path.relative(repoRoot, file));
       }
     }
-    expect(defs).toHaveLength(1);
-    expect(defs[0]).toBe(path.join("src", "lib", "runner.ts"));
+    // runner.ts (CJS consumers) and shell-quote.ts (ESM consumers like config-io.ts)
+    expect(defs.sort()).toEqual([
+      path.join("src", "lib", "runner.ts"),
+      path.join("src", "lib", "shell-quote.ts"),
+    ]);
   });
 
   it("CLI rejects malicious sandbox names before shell commands (e2e)", () => {

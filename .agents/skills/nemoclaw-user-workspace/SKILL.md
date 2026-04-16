@@ -70,7 +70,7 @@ You can edit them in two ways:
 Workspace files define your agent's personality, memory, and user context.
 They persist across sandbox restarts but are **permanently deleted** when you run `nemoclaw <name> destroy`.
 
-This guide covers manual backup with CLI commands and an automated script.
+This guide covers snapshot commands, manual backup with CLI commands, and an automated script.
 
 ## Step 1: When to Back Up
 
@@ -78,7 +78,27 @@ This guide covers manual backup with CLI commands and an automated script.
 - Before major NemoClaw version upgrades
 - Periodically, if you've invested time customizing your agent
 
-## Step 2: Manual Backup
+## Step 2: Snapshot Commands
+
+The fastest way to back up and restore sandbox state is with the built-in snapshot commands.
+Snapshots capture all workspace state directories defined in the agent manifest and store them in `~/.nemoclaw/rebuild-backups/<name>/`.
+
+```console
+$ nemoclaw my-assistant snapshot create
+$ nemoclaw my-assistant snapshot list
+$ nemoclaw my-assistant snapshot restore
+```
+
+To restore a specific snapshot instead of the latest, pass a timestamp or prefix:
+
+```console
+$ nemoclaw my-assistant snapshot restore 2026-04-14T
+```
+
+The `nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
+For full details, see the Commands reference (see the `nemoclaw-user-reference` skill).
+
+## Step 3: Manual Backup
 
 Use `openshell sandbox download` to copy files from the sandbox to your host.
 
@@ -95,7 +115,7 @@ $ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/MEMORY.md "
 $ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/memory/ "$BACKUP_DIR/memory/"
 ```
 
-## Step 3: Manual Restore
+## Step 4: Manual Restore
 
 Use `openshell sandbox upload` to push files back into a sandbox.
 
@@ -111,7 +131,7 @@ $ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/MEMORY.md" /sandbox/.openclaw
 $ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/memory/" /sandbox/.openclaw/workspace/memory/
 ```
 
-## Step 4: Using the Backup Script
+## Step 5: Using the Backup Script
 
 The repository includes a convenience script at `scripts/backup-workspace.sh`.
 
@@ -137,7 +157,7 @@ Restore from a specific timestamp:
 $ ./scripts/backup-workspace.sh restore my-assistant 20260320-120000
 ```
 
-## Step 5: Verifying a Backup
+## Step 6: Verifying a Backup
 
 List backed-up files to confirm completeness:
 
