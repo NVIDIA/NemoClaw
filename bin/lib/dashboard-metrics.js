@@ -87,4 +87,10 @@ function getSandboxList() {
   };
 }
 
-module.exports = { getContainerStats, getSandboxList, parseDockerStats, parsePodmanStats, parsePercent };
+module.exports = {
+  getContainerStats,
+  getSandboxList,
+  parseDockerStats,
+  parsePodmanStats,
+  parsePercent,
+};

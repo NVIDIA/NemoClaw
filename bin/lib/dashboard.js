@@ -75,57 +75,54 @@ function handleSSE(res) {
   res.on("close", () => clearInterval(timer));
 }
 
+async function sandboxDetail(_req, res, [name]) {
+  const sandbox = registry.getSandbox(name);
+  if (!sandbox) return json(res, 404, { error: `sandbox '${name}' not found` });
+  const { sandboxes } = getSandboxList();
+  return json(res, 200, sandboxes.find((s) => s.name === name) ?? sandbox);
+}
+
+async function sandboxCommand(req, res, [name]) {
+  const body = await readBody(req);
+  if (!body.command || typeof body.command !== "string") {
+    return json(res, 400, { error: "'command' field is required and must be a string" });
+  }
+  return json(res, 200, runSandboxCommand(name, body.command));
+}
+
+async function configPut(req, res) {
+  const body = await readBody(req);
+  writeConfig(body);
+  return json(res, 200, readConfig());
+}
+
+// Route table: [method, regex, handler]. Handler receives (req, res, regexCaptureGroups).
+const ROUTES = [
+  ["GET", /^\/events\/?$/, (_req, res) => handleSSE(res)],
+  ["GET", /^\/sandboxes\/?$/, (_req, res) => json(res, 200, getSandboxList())],
+  ["GET", /^\/sandboxes\/([^/]+)\/?$/, sandboxDetail],
+  ["POST", /^\/sandboxes\/([^/]+)\/start\/?$/, (_req, res) => json(res, 200, startSandbox())],
+  ["POST", /^\/sandboxes\/([^/]+)\/stop\/?$/, (_req, res, [n]) => json(res, 200, stopSandbox(n))],
+  [
+    "POST",
+    /^\/sandboxes\/([^/]+)\/restart\/?$/,
+    (_req, res, [n]) => json(res, 200, restartSandbox(n)),
+  ],
+  ["POST", /^\/sandboxes\/([^/]+)\/commands\/?$/, sandboxCommand],
+  ["GET", /^\/config\/?$/, (_req, res) => json(res, 200, readConfig())],
+  ["PUT", /^\/config\/?$/, configPut],
+];
+
 async function handleRequest(req, res) {
   const { method, url } = req;
-  const segments = url.split("?")[0].replace(/\/$/, "").split("/").filter(Boolean);
+  const pathname = url.split("?")[0];
 
   try {
-    if (method === "GET" && segments[0] === "events") {
-      return handleSSE(res);
+    for (const [m, pattern, handler] of ROUTES) {
+      if (m !== method) continue;
+      const match = pattern.exec(pathname);
+      if (match) return await handler(req, res, match.slice(1));
     }
-
-    if (method === "GET" && segments.length === 1 && segments[0] === "sandboxes") {
-      return json(res, 200, getSandboxList());
-    }
-
-    if (method === "GET" && segments.length === 2 && segments[0] === "sandboxes") {
-      const name = segments[1];
-      const sandbox = registry.getSandbox(name);
-      if (!sandbox) return json(res, 404, { error: `sandbox '${name}' not found` });
-      const { sandboxes } = getSandboxList();
-      return json(res, 200, sandboxes.find((s) => s.name === name) ?? sandbox);
-    }
-
-    if (method === "POST" && segments.length === 3 && segments[0] === "sandboxes" && segments[2] === "start") {
-      return json(res, 200, startSandbox());
-    }
-
-    if (method === "POST" && segments.length === 3 && segments[0] === "sandboxes" && segments[2] === "stop") {
-      return json(res, 200, stopSandbox(segments[1]));
-    }
-
-    if (method === "POST" && segments.length === 3 && segments[0] === "sandboxes" && segments[2] === "restart") {
-      return json(res, 200, restartSandbox(segments[1]));
-    }
-
-    if (method === "POST" && segments.length === 3 && segments[0] === "sandboxes" && segments[2] === "commands") {
-      const body = await readBody(req);
-      if (!body.command || typeof body.command !== "string") {
-        return json(res, 400, { error: "'command' field is required and must be a string" });
-      }
-      return json(res, 200, runSandboxCommand(segments[1], body.command));
-    }
-
-    if (method === "GET" && segments.length === 1 && segments[0] === "config") {
-      return json(res, 200, readConfig());
-    }
-
-    if (method === "PUT" && segments.length === 1 && segments[0] === "config") {
-      const body = await readBody(req);
-      writeConfig(body);
-      return json(res, 200, readConfig());
-    }
-
     return json(res, 404, { error: "not found" });
   } catch (err) {
     return json(res, 500, { error: err.message });

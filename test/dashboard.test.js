@@ -54,25 +54,34 @@ afterAll(() => {
 
 function get(p) {
   return new Promise((resolve, reject) => {
-    http.get(`${baseUrl}${p}`, (res) => {
-      let body = "";
-      res.on("data", (chunk) => (body += chunk));
-      res.on("end", () => resolve({ status: res.statusCode, body, headers: res.headers }));
-    }).on("error", reject);
+    http
+      .get(`${baseUrl}${p}`, (res) => {
+        let body = "";
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => resolve({ status: res.statusCode, body, headers: res.headers }));
+      })
+      .on("error", reject);
   });
 }
 
 function post(p, data) {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(data);
-    const req = http.request(`${baseUrl}${p}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) },
-    }, (res) => {
-      let body = "";
-      res.on("data", (chunk) => (body += chunk));
-      res.on("end", () => resolve({ status: res.statusCode, body }));
-    });
+    const req = http.request(
+      `${baseUrl}${p}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload),
+        },
+      },
+      (res) => {
+        let body = "";
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => resolve({ status: res.statusCode, body }));
+      },
+    );
     req.on("error", reject);
     req.write(payload);
     req.end();
