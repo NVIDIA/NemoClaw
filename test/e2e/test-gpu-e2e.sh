@@ -294,6 +294,98 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
+# Phase 4.5: Auth proxy verification (PR #1922)
+# ══════════════════════════════════════════════════════════════════
+section "Phase 4.5: Auth proxy verification"
+
+PROXY_PORT="${NEMOCLAW_OLLAMA_PROXY_PORT:-11435}"
+TOKEN_FILE="$HOME/.nemoclaw/ollama-proxy-token"
+
+# 4.5a: Token file persisted by onboard
+if [ -f "$TOKEN_FILE" ]; then
+  pass "Proxy token persisted at $TOKEN_FILE"
+else
+  fail "Proxy token file missing — onboard did not persist token"
+fi
+
+# 4.5b: Token file permissions
+if [ -f "$TOKEN_FILE" ]; then
+  PERMS=$(stat -c "%a" "$TOKEN_FILE" 2>/dev/null || stat -f "%Lp" "$TOKEN_FILE" 2>/dev/null)
+  if [ "$PERMS" = "600" ]; then
+    pass "Token file permissions: 600"
+  else
+    fail "Token file permissions: expected 600, got $PERMS"
+  fi
+fi
+
+# 4.5c: Auth proxy is running on proxy port
+if curl -sf --connect-timeout 3 "http://127.0.0.1:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
+  pass "Auth proxy running on :${PROXY_PORT}"
+else
+  fail "Auth proxy not running on :${PROXY_PORT} — onboard should have started it"
+fi
+
+# 4.5d: Proxy rejects unauthenticated requests to protected endpoints
+PROXY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+  "http://127.0.0.1:${PROXY_PORT}/api/generate" -d '{}' 2>/dev/null) || PROXY_STATUS="000"
+if [ "$PROXY_STATUS" = "401" ]; then
+  pass "Auth proxy rejects unauthenticated POST (401)"
+else
+  fail "Auth proxy should return 401 for unauthenticated POST, got $PROXY_STATUS"
+fi
+
+# 4.5e: Proxy accepts correct token
+if [ -f "$TOKEN_FILE" ]; then
+  PROXY_TOKEN=$(cat "$TOKEN_FILE" | tr -d '[:space:]')
+  PROXY_AUTH="Bearer $PROXY_TOKEN"
+  PROXY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: $PROXY_AUTH" \
+    -X POST "http://127.0.0.1:${PROXY_PORT}/api/generate" \
+    -d '{"model":"test","prompt":"test","stream":false}' 2>/dev/null) || PROXY_STATUS="000"
+  if [ "$PROXY_STATUS" != "401" ]; then
+    pass "Auth proxy accepts correct token (status: $PROXY_STATUS)"
+  else
+    fail "Auth proxy rejected the persisted token"
+  fi
+fi
+
+# 4.5f: Container can reach proxy through host.openshell.internal
+if docker run --rm \
+  --add-host "host.openshell.internal:host-gateway" \
+  curlimages/curl:8.10.1 \
+  -sf "http://host.openshell.internal:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
+  pass "Container reachable: host.openshell.internal:${PROXY_PORT}"
+else
+  fail "Container cannot reach proxy at host.openshell.internal:${PROXY_PORT}"
+fi
+
+# 4.5g: Proxy recovery — kill and restart from persisted token
+info "Testing proxy recovery (kill + ensureOllamaAuthProxy)..."
+PROXY_PID_BEFORE=$(lsof -ti ":${PROXY_PORT}" 2>/dev/null | head -1) || true
+if [ -n "$PROXY_PID_BEFORE" ]; then
+  # Verify it's our proxy before killing
+  PROXY_CMD=$(ps -p "$PROXY_PID_BEFORE" -o args= 2>/dev/null) || true
+  if echo "$PROXY_CMD" | grep -q "ollama-auth-proxy"; then
+    kill "$PROXY_PID_BEFORE" 2>/dev/null || true
+    sleep 2
+    # Trigger recovery via nemoclaw connect (which calls ensureOllamaAuthProxy)
+    # We just verify the proxy restarts by directly invoking the recovery logic
+    # through a quick connect attempt that will restart the proxy as a side effect.
+    nemoclaw "$SANDBOX_NAME" status >/dev/null 2>&1 || true
+    sleep 2
+    if curl -sf --connect-timeout 3 "http://127.0.0.1:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
+      pass "Proxy recovered after kill (ensureOllamaAuthProxy works)"
+    else
+      fail "Proxy did not recover after kill"
+    fi
+  else
+    skip "Proxy recovery: PID on :${PROXY_PORT} is not ollama-auth-proxy"
+  fi
+else
+  skip "Proxy recovery: no PID found on :${PROXY_PORT}"
+fi
+
+# ══════════════════════════════════════════════════════════════════
 # Phase 5: Local inference through sandbox
 # ══════════════════════════════════════════════════════════════════
 section "Phase 5: Local inference through sandbox"
@@ -343,8 +435,8 @@ else
   fail "[LOCAL] Direct Ollama: empty response"
 fi
 
-# 5b: Inference through sandbox → openshell gateway → host.openshell.internal:11434 → Ollama
-info "[LOCAL] Sandbox inference test → sandbox → gateway → Ollama on GPU..."
+# 5b: Inference through sandbox → openshell gateway → host.openshell.internal:11435 (proxy) → Ollama
+info "[LOCAL] Sandbox inference test → sandbox → gateway → auth proxy → Ollama on GPU..."
 ssh_config="$(mktemp)"
 sandbox_response=""
 
@@ -370,7 +462,7 @@ if [ -n "$sandbox_response" ]; then
   sandbox_content=$(echo "$sandbox_response" | parse_chat_content 2>/dev/null) || true
   if echo "$sandbox_content" | grep -qi "PONG"; then
     pass "[LOCAL] Sandbox inference: Ollama responded through sandbox"
-    info "Full path proven: sandbox → openshell gateway → host.openshell.internal:11434 → Ollama GPU"
+    info "Full path proven: sandbox → openshell gateway → auth proxy (:11435) → Ollama GPU (:11434)"
   else
     fail "[LOCAL] Sandbox inference: expected PONG, got: ${sandbox_content:0:200}"
   fi
@@ -438,8 +530,9 @@ echo "  What this tested (real user flow):"
 echo "    - GPU detection (nvidia-smi)"
 echo "    - Ollama binary install"
 echo "    - install.sh --non-interactive with NEMOCLAW_PROVIDER=ollama"
-echo "    - Onboard: starts Ollama, pulls model, creates sandbox"
-echo "    - Local inference: direct + sandbox → gateway → Ollama on GPU"
+echo "    - Onboard: starts Ollama on localhost, starts auth proxy, pulls model, creates sandbox"
+echo "    - Auth proxy: token persistence, auth reject/accept, container reachability, recovery"
+echo "    - Local inference: direct + sandbox → gateway → auth proxy → Ollama on GPU"
 echo "    - Destroy + uninstall --delete-models"
 echo ""
 
