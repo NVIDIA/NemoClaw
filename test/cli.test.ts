@@ -1674,7 +1674,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Inference:");
     expect(r.out).toContain("unreachable");
     expect(r.out).toContain("Start Ollama and retry");
-    expect(r.out).toContain("http://localhost:11434/api/tags");
+    expect(r.out).toContain("http://127.0.0.1:11434/api/tags");
   });
 
   it("does not treat a different connected gateway as a healthy nemoclaw gateway", () => {

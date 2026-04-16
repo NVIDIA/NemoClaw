@@ -129,6 +129,7 @@ If the installed OpenShell version falls outside this range, onboarding exits wi
 
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
 The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it.
+If the directory contains unreadable files (for example, Windows system files visible in WSL), onboarding exits with an error suggesting you move the Dockerfile to a dedicated directory.
 
 ```console
 $ nemoclaw onboard --from path/to/Dockerfile
@@ -322,8 +323,10 @@ $ nemoclaw my-assistant snapshot list
 ### `nemoclaw <name> snapshot restore [timestamp]`
 
 Restore sandbox state from a snapshot.
+The sandbox must be running before you restore.
 If no timestamp is provided, the latest snapshot is used.
 Partial timestamp prefixes are accepted if they match exactly one snapshot.
+Restore performs a clean replacement of each state directory, removing files that were added after the snapshot was taken.
 
 ```console
 $ nemoclaw my-assistant snapshot restore
