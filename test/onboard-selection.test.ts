@@ -136,9 +136,9 @@ runner.runCapture = (command) => {
   // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (cmd.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
   if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now\\nqwen3:32b  def  20 GB  now";
-  if (cmd.includes("localhost:8000/v1/models")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   return "";
 };
 registry.updateSandbox = (_name, update) => updates.push(update);
@@ -312,8 +312,8 @@ runner.runCapture = (command) => {
   // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "";
-  if (cmd.includes("localhost:11434/api/tags")) return "";
-  if (cmd.includes("localhost:8000/v1/models")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   return "";
 };
 
@@ -408,8 +408,8 @@ runner.runCapture = (command) => {
   // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "";
-  if (cmd.includes("localhost:11434/api/tags")) return "";
-  if (cmd.includes("localhost:8000/v1/models")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   return "";
 };
 
@@ -550,7 +550,7 @@ const { setupNim } = require(${onboardPath});
     assert.ok(payload.lines.some((line) => line.includes("Chat Completions API available")));
   });
 
-  it("warms and validates Ollama via localhost before moving on", () => {
+  it("warms and validates Ollama via 127.0.0.1 before moving on", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-validation-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -600,9 +600,9 @@ runner.runCapture = (command) => {
   // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (cmd.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
   if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
-  if (cmd.includes("localhost:8000/v1/models")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
 };
@@ -647,7 +647,7 @@ const { setupNim } = require(${onboardPath});
       payload.lines.some((line) => line.includes("Loading Ollama model: nemotron-3-nano:30b")),
     );
     assert.ok(
-      payload.commands.some((command) => command.includes("http://localhost:11434/api/generate")),
+      payload.commands.some((command) => command.includes("http://127.0.0.1:11434/api/generate")),
     );
   });
 
@@ -697,9 +697,9 @@ runner.runCapture = (command) => {
   // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (cmd.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
   if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
-  if (cmd.includes("localhost:8000/v1/models")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
 };
@@ -800,9 +800,9 @@ runner.runCapture = (command) => {
   // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (cmd.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [] });
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
   if (cmd.includes("ollama list")) return "";
-  if (cmd.includes("localhost:8000/v1/models")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
 };
@@ -910,9 +910,9 @@ runner.runCapture = (command) => {
   // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (cmd.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [] });
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
   if (cmd.includes("ollama list")) return "";
-  if (cmd.includes("localhost:8000/v1/models")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
 };
@@ -2750,8 +2750,8 @@ runner.runCapture = (command) => {
   // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "";
-  if (cmd.includes("localhost:11434")) return "";
-  if (cmd.includes("localhost:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
+  if (cmd.includes("127.0.0.1:11434")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
   return "";
 };
 
@@ -2862,8 +2862,8 @@ runner.runCapture = (command) => {
   // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "";
-  if (cmd.includes("localhost:11434")) return "";
-  if (cmd.includes("localhost:8000/v1/models")) return "";
+  if (cmd.includes("127.0.0.1:11434")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   return "";
 };
 

@@ -44,3 +44,5 @@ export const DASHBOARD_PORT = parsePort("NEMOCLAW_DASHBOARD_PORT", SANDBOX_DASHB
 export const VLLM_PORT = parsePort("NEMOCLAW_VLLM_PORT", 8000);
 /** Ollama inference port (default 11434, override via NEMOCLAW_OLLAMA_PORT). */
 export const OLLAMA_PORT = parsePort("NEMOCLAW_OLLAMA_PORT", 11434);
+/** Ollama auth proxy port (default 11435, override via NEMOCLAW_OLLAMA_PROXY_PORT). */
+export const OLLAMA_PROXY_PORT = parsePort("NEMOCLAW_OLLAMA_PROXY_PORT", 11435);

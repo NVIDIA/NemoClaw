@@ -132,6 +132,7 @@ If the Jetson setup step fails, verify that you have `sudo` access and that Dock
 
 For JetPack 6 (L4T 36.x), the setup switches iptables to legacy mode and adjusts the Docker daemon configuration.
 For JetPack 7 (L4T 38.x / Thor), only bridge netfilter and sysctl settings are applied.
+BSP R39 and later do not require host customization and are handled automatically.
 
 If the L4T version is not recognized, the setup step is skipped and the installer continues normally.
 
@@ -443,6 +444,25 @@ In that case:
 - inspect gateway logs and blocked requests with `openshell term`
 - treat the failure as a native Discord gateway problem, not as a bridge startup problem
 
+### Messaging bridge appears running but no messages arrive
+
+Bot tokens for Telegram (`getUpdates`), Discord (gateway), and Slack (Socket Mode) only allow one active consumer per token. If two NemoClaw sandboxes are configured with the same bot token, each one kicks the other off its polling connection and neither delivers messages. `nemoclaw status` still reports the bridge as running because the gateway process itself is alive.
+
+To diagnose, open a shell in the sandbox and inspect the gateway log:
+
+```console
+$ openshell term <sandbox-name>
+$ tail -f /tmp/gateway.log
+```
+
+A repeating line like the following confirms the conflict:
+
+```text
+[telegram] getUpdates conflict: 409: Conflict: terminated by other getUpdates request; retrying in 30s.
+```
+
+To fix, run `nemoclaw <other-sandbox> destroy` on whichever sandbox should stop polling, or rerun onboarding on it with the channel disabled. Current NemoClaw warns at `nemoclaw onboard` time when another sandbox already has the same channel enabled, but sandboxes created before that check was added may still be in a conflict loop.
+
 ### Landlock filesystem restrictions silently degraded
 
 After sandbox creation, NemoClaw checks whether the host kernel supports Landlock (Linux 5.13+).
@@ -508,6 +528,17 @@ $ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
 
 If you need to run multiple sandboxes at different ports at the same time, see
 [Running multiple sandboxes simultaneously](#running-multiple-sandboxes-simultaneously).
+
+### Ollama network exposure warning during onboard
+
+When you select a local Ollama provider, onboarding binds Ollama to `0.0.0.0` so the Docker sandbox can reach the host.
+This exposes the unauthenticated Ollama API to the local network.
+NemoClaw prints a warning during onboarding to alert you to this risk.
+
+On trusted private networks, the warning is informational.
+On shared or public networks (airports, coffee shops), any adjacent device can send prompts to and enumerate models on your Ollama instance.
+
+The warning is suppressed on WSL, where Ollama binds to `127.0.0.1` instead.
 
 ### Blueprint run failed
 

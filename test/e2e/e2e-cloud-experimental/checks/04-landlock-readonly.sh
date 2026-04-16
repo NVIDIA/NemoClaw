@@ -40,7 +40,7 @@ fail_test() {
 
 # Helper: run a command inside the sandbox via openshell
 sandbox_exec() {
-  openshell sandbox exec "$SANDBOX_NAME" -- bash -c "$1" 2>&1
+  openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
 }
 
 info "Running Landlock read-only checks in sandbox: $SANDBOX_NAME"
