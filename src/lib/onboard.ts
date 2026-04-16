@@ -1024,7 +1024,7 @@ function patchStagedDockerfile(
   );
   // Honor NEMOCLAW_CONTEXT_WINDOW / NEMOCLAW_MAX_TOKENS / NEMOCLAW_REASONING
   // so the user can tune model metadata without editing the Dockerfile.
-  const POSITIVE_INT_RE = /^[0-9]+$/;
+  const POSITIVE_INT_RE = /^[1-9][0-9]*$/;
   const contextWindow = process.env.NEMOCLAW_CONTEXT_WINDOW;
   if (contextWindow && POSITIVE_INT_RE.test(contextWindow)) {
     dockerfile = dockerfile.replace(
