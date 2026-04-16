@@ -451,28 +451,6 @@ function getBlueprintMinOpenshellVersion(rootDir = ROOT) {
   return getBlueprintVersionField("min_openshell_version", rootDir);
 }
 
-/**
- * Read the pinned base-image digest from nemoclaw-blueprint/blueprint.yaml.
- * Returns a validated "sha256:<hex64>" string, or null when the blueprint is
- * missing, the field is absent, or the value fails validation. See #1904.
- */
-function getBlueprintBaseImageDigest(rootDir = ROOT) {
-  try {
-    const YAML = require("yaml");
-    const blueprintPath = path.join(rootDir, "nemoclaw-blueprint", "blueprint.yaml");
-    if (!fs.existsSync(blueprintPath)) return null;
-    const raw = fs.readFileSync(blueprintPath, "utf8");
-    const parsed = YAML.parse(raw);
-    const value = parsed && parsed.digest;
-    if (typeof value !== "string") return null;
-    const trimmed = value.trim();
-    if (!/^sha256:[0-9a-f]{64}$/.test(trimmed)) return null;
-    return trimmed;
-  } catch {
-    return null;
-  }
-}
-
 function getBlueprintMaxOpenshellVersion(rootDir = ROOT) {
   return getBlueprintVersionField("max_openshell_version", rootDir);
 }
@@ -526,7 +504,13 @@ function hydrateCredentialEnv(envName) {
   return value || null;
 }
 
-const { getCurlTimingArgs, summarizeCurlFailure, summarizeProbeFailure, runCurlProbe, runStreamingEventProbe } = httpProbe;
+const {
+  getCurlTimingArgs,
+  summarizeCurlFailure,
+  summarizeProbeFailure,
+  runCurlProbe,
+  runStreamingEventProbe,
+} = httpProbe;
 
 function getNavigationChoice(value = "") {
   const normalized = String(value || "")
@@ -823,8 +807,6 @@ function isAffirmativeAnswer(value) {
   );
 }
 
-
-
 function validateBraveSearchApiKey(apiKey) {
   return runCurlProbe([
     "-sS",
@@ -1086,15 +1068,6 @@ function patchStagedDockerfile(
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_DISCORD_GUILDS_B64=.*$/m,
       `ARG NEMOCLAW_DISCORD_GUILDS_B64=${encodeDockerJsonArg(discordGuilds)}`,
-    );
-  }
-  // Pin the base image to the digest declared in blueprint.yaml so Docker
-  // cannot silently reuse a stale :latest tag from the local cache. See #1904.
-  const blueprintDigest = getBlueprintBaseImageDigest(ROOT);
-  if (blueprintDigest) {
-    dockerfile = dockerfile.replace(
-      /^ARG BASE_IMAGE=.*$/m,
-      `ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base@${blueprintDigest}`,
     );
   }
   fs.writeFileSync(dockerfilePath, dockerfile);
@@ -2350,11 +2323,14 @@ async function recoverGatewayRuntime() {
     return true;
   }
 
-  const startResult = runOpenshell(["gateway", "start", "--name", GATEWAY_NAME, "--port", String(GATEWAY_PORT)], {
-    ignoreError: true,
-    env: getGatewayStartEnv(),
-    suppressOutput: true,
-  });
+  const startResult = runOpenshell(
+    ["gateway", "start", "--name", GATEWAY_NAME, "--port", String(GATEWAY_PORT)],
+    {
+      ignoreError: true,
+      env: getGatewayStartEnv(),
+      suppressOutput: true,
+    },
+  );
   if (startResult.status !== 0) {
     const diagnostic = compactText(
       redact(`${startResult.stderr || ""} ${startResult.stdout || ""}`),
@@ -2405,9 +2381,18 @@ async function promptValidatedSandboxName() {
       // A sandbox named 'status' makes 'nemoclaw status connect' route to
       // the global status command instead of the sandbox.
       const RESERVED_NAMES = new Set([
-        "onboard", "list", "deploy", "setup", "setup-spark",
-        "start", "stop", "status", "debug", "uninstall",
-        "credentials", "help",
+        "onboard",
+        "list",
+        "deploy",
+        "setup",
+        "setup-spark",
+        "start",
+        "stop",
+        "status",
+        "debug",
+        "uninstall",
+        "credentials",
+        "help",
       ]);
       if (RESERVED_NAMES.has(sandboxName)) {
         console.error(`  Reserved name: '${sandboxName}' is a NemoClaw CLI command.`);
@@ -2609,8 +2594,12 @@ async function createSandbox(
       });
     } catch (err) {
       if (err.code === "EACCES") {
-        console.error(`  Permission denied while copying build context from: ${path.dirname(fromResolved)}`);
-        console.error("  The --from flag uses the Dockerfile's parent directory as the Docker build context.");
+        console.error(
+          `  Permission denied while copying build context from: ${path.dirname(fromResolved)}`,
+        );
+        console.error(
+          "  The --from flag uses the Dockerfile's parent directory as the Docker build context.",
+        );
         console.error("  Move your Dockerfile to a dedicated directory and retry.");
         process.exit(1);
       }
@@ -2632,7 +2621,12 @@ async function createSandbox(
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
-  const globalPermissivePath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml");
+  const globalPermissivePath = path.join(
+    ROOT,
+    "nemoclaw-blueprint",
+    "policies",
+    "openclaw-sandbox-permissive.yaml",
+  );
   let basePolicyPath;
   if (dangerouslySkipPermissions) {
     // Permissive mode: use agent-specific permissive policy if available,
@@ -2640,7 +2634,12 @@ async function createSandbox(
     const agentPermissive = agent && agentOnboard.getAgentPermissivePolicyPath(agent);
     basePolicyPath = agentPermissive || globalPermissivePath;
   } else {
-    const defaultPolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
+    const defaultPolicyPath = path.join(
+      ROOT,
+      "nemoclaw-blueprint",
+      "policies",
+      "openclaw-sandbox.yaml",
+    );
     basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
   }
   const createArgs = [
@@ -2670,7 +2669,9 @@ async function createSandbox(
     );
     process.exit(1);
   }
-  const tokensByEnvKey = Object.fromEntries(messagingTokenDefs.map(({ envKey, token }) => [envKey, token]));
+  const tokensByEnvKey = Object.fromEntries(
+    messagingTokenDefs.map(({ envKey, token }) => [envKey, token]),
+  );
   const activeMessagingChannels = [
     ...new Set(
       messagingTokenDefs
@@ -2679,7 +2680,8 @@ async function createSandbox(
           if (envKey === "DISCORD_BOT_TOKEN") return "discord";
           if (envKey === "SLACK_BOT_TOKEN") return "slack";
           // SLACK_APP_TOKEN alone does not enable slack; bot token is required.
-          if (envKey === "SLACK_APP_TOKEN") return tokensByEnvKey["SLACK_BOT_TOKEN"] ? "slack" : null;
+          if (envKey === "SLACK_APP_TOKEN")
+            return tokensByEnvKey["SLACK_BOT_TOKEN"] ? "slack" : null;
           if (envKey === "TELEGRAM_BOT_TOKEN") return "telegram";
           return null;
         })
@@ -2745,14 +2747,6 @@ async function createSandbox(
     messagingAllowedIds,
     discordGuilds,
   );
-  // Pre-pull the digest-pinned base image so `docker build` does not silently
-  // reuse a stale :latest from the local layer cache. See #1904.
-  const blueprintDigest = getBlueprintBaseImageDigest(ROOT);
-  if (blueprintDigest) {
-    const pinnedRef = `ghcr.io/nvidia/nemoclaw/sandbox-base@${blueprintDigest}`;
-    console.log(`  Pulling base image (${blueprintDigest.slice(0, 19)}...)...`);
-    run(["docker", "pull", pinnedRef], { ignoreError: true });
-  }
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
   // proxy rewrites Authorization headers with real secrets at egress.
@@ -2773,7 +2767,8 @@ async function createSandbox(
   // never have access to the host's Kubernetes cluster or SSH agent.
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
   if (webSearchConfig?.fetchEnabled) {
-    const braveKey = getCredential(webSearch.BRAVE_API_KEY_ENV) || process.env[webSearch.BRAVE_API_KEY_ENV];
+    const braveKey =
+      getCredential(webSearch.BRAVE_API_KEY_ENV) || process.env[webSearch.BRAVE_API_KEY_ENV];
     if (braveKey) {
       envArgs.push(formatEnvAssignment(webSearch.BRAVE_API_KEY_ENV, braveKey));
     }
@@ -2892,7 +2887,7 @@ async function createSandbox(
     name: sandboxName,
     gpuEnabled: !!gpu,
     agent: agent ? agent.name : null,
-    agentVersion: fromDockerfile ? null : (effectiveAgent.expectedVersion || null),
+    agentVersion: fromDockerfile ? null : effectiveAgent.expectedVersion || null,
     dangerouslySkipPermissions: dangerouslySkipPermissions || undefined,
   });
 
@@ -2920,14 +2915,20 @@ async function createSandbox(
 
   try {
     if (process.platform === "darwin") {
-      const vmKernel = runCapture("docker info --format '{{.KernelVersion}}'", { ignoreError: true }).trim();
+      const vmKernel = runCapture("docker info --format '{{.KernelVersion}}'", {
+        ignoreError: true,
+      }).trim();
       if (vmKernel) {
         const parts = vmKernel.split(".");
         const major = parseInt(parts[0], 10);
         const minor = parseInt(parts[1], 10);
         if (!isNaN(major) && !isNaN(minor) && (major < 5 || (major === 5 && minor < 13))) {
-          console.warn(`  ⚠ Landlock: Docker VM kernel ${vmKernel} does not support Landlock (requires ≥5.13).`);
-          console.warn("    Sandbox filesystem restrictions will silently degrade (best_effort mode).");
+          console.warn(
+            `  ⚠ Landlock: Docker VM kernel ${vmKernel} does not support Landlock (requires ≥5.13).`,
+          );
+          console.warn(
+            "    Sandbox filesystem restrictions will silently degrade (best_effort mode).",
+          );
         }
       }
     } else if (process.platform === "linux") {
@@ -2938,7 +2939,9 @@ async function createSandbox(
         const minor = parseInt(parts[1], 10);
         if (!isNaN(major) && !isNaN(minor) && (major < 5 || (major === 5 && minor < 13))) {
           console.warn(`  ⚠ Landlock: Kernel ${uname} does not support Landlock (requires ≥5.13).`);
-          console.warn("    Sandbox filesystem restrictions will silently degrade (best_effort mode).");
+          console.warn(
+            "    Sandbox filesystem restrictions will silently degrade (best_effort mode).",
+          );
         }
       }
     }
@@ -2962,9 +2965,12 @@ async function setupNim(gpu) {
 
   // Detect local inference options
   const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
-  const ollamaRunning = !!runCapture(`curl -sf http://localhost:${OLLAMA_PORT}/api/tags 2>/dev/null`, {
-    ignoreError: true,
-  });
+  const ollamaRunning = !!runCapture(
+    `curl -sf http://localhost:${OLLAMA_PORT}/api/tags 2>/dev/null`,
+    {
+      ignoreError: true,
+    },
+  );
   const vllmRunning = !!runCapture(`curl -sf http://localhost:${VLLM_PORT}/v1/models 2>/dev/null`, {
     ignoreError: true,
   });
@@ -3465,7 +3471,9 @@ async function setupNim(gpu) {
         console.log("  Installing Ollama via Homebrew...");
         run("brew install ollama", { ignoreError: true });
         console.log("  Starting Ollama...");
-        run(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+        run(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
+          ignoreError: true,
+        });
         sleep(2);
         printOllamaExposureWarning();
         console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
@@ -3524,9 +3532,12 @@ async function setupNim(gpu) {
         credentialEnv = "OPENAI_API_KEY";
         endpointUrl = getLocalProviderBaseUrl(provider);
         // Query vLLM for the actual model ID
-        const vllmModelsRaw = runCapture(`curl -sf http://localhost:${VLLM_PORT}/v1/models 2>/dev/null`, {
-          ignoreError: true,
-        });
+        const vllmModelsRaw = runCapture(
+          `curl -sf http://localhost:${VLLM_PORT}/v1/models 2>/dev/null`,
+          {
+            ignoreError: true,
+          },
+        );
         try {
           const vllmModels = JSON.parse(vllmModelsRaw);
           if (vllmModels.data && vllmModels.data.length > 0) {
@@ -3776,8 +3787,7 @@ const MESSAGING_CHANNELS = [
     help: "Slack API → Your Apps → OAuth & Permissions → Bot User OAuth Token (xoxb-...).",
     label: "Slack Bot Token",
     appTokenEnvKey: "SLACK_APP_TOKEN",
-    appTokenHelp:
-      "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
+    appTokenHelp: "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
     appTokenLabel: "Slack App Token (Socket Mode)",
   },
 ];
@@ -3936,9 +3946,7 @@ async function setupMessagingChannels() {
         console.log(`  ✓ ${ch.name} — reply mode already set: ${mode}`);
       } else {
         console.log(`  ${ch.requireMentionHelp}`);
-        const answer = (await prompt("  Reply only when @mentioned? [Y/n]: "))
-          .trim()
-          .toLowerCase();
+        const answer = (await prompt("  Reply only when @mentioned? [Y/n]: ")).trim().toLowerCase();
         process.env[ch.requireMentionEnvKey] = answer === "n" || answer === "no" ? "0" : "1";
         const mode =
           process.env[ch.requireMentionEnvKey] === "0" ? "all messages" : "@mentions only";
@@ -4174,7 +4182,8 @@ async function selectPolicyTier() {
     const answer = await prompt(
       `  Select tier [1-${allTiers.length}] (default: ${allTiers.indexOf(defaultTier) + 1} ${defaultTier.name}): `,
     );
-    const idx = answer.trim() === "" ? allTiers.indexOf(defaultTier) : parseInt(answer.trim(), 10) - 1;
+    const idx =
+      answer.trim() === "" ? allTiers.indexOf(defaultTier) : parseInt(answer.trim(), 10) - 1;
     const chosen = allTiers[idx] || defaultTier;
     console.log(`  Tier: ${chosen.label}`);
     return chosen.name;
@@ -4295,7 +4304,10 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
   ];
 
   // Initial inclusion: tier presets + any already-applied extras.
-  const included = new Set([...tierNames, ...extraSelected.filter((n) => ordered.find((p) => p.name === n))]);
+  const included = new Set([
+    ...tierNames,
+    ...extraSelected.filter((n) => ordered.find((p) => p.name === n)),
+  ]);
 
   // Access levels: tier defaults for tier presets, read-write default for others.
   const accessModes = {};
@@ -4317,7 +4329,9 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
 
   // ── Non-interactive: return tier defaults silently ─────────────────
   if (isNonInteractive()) {
-    return ordered.filter((p) => included.has(p.name)).map((p) => ({ name: p.name, access: accessModes[p.name] }));
+    return ordered
+      .filter((p) => included.has(p.name))
+      .map((p) => ({ name: p.name, access: accessModes[p.name] }));
   }
 
   // ── Fallback: non-TTY ─────────────────────────────────────────────
@@ -4349,7 +4363,9 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
         }
       }
     }
-    return ordered.filter((p) => included.has(p.name)).map((p) => ({ name: p.name, access: accessModes[p.name] }));
+    return ordered
+      .filter((p) => included.has(p.name))
+      .map((p) => ({ name: p.name, access: accessModes[p.name] }));
   }
 
   // ── Raw-mode TUI ─────────────────────────────────────────────────
@@ -4409,7 +4425,11 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
       if (key === "\r" || key === "\n") {
         cleanup();
         process.stdout.write("\n");
-        resolve(ordered.filter((p) => included.has(p.name)).map((p) => ({ name: p.name, access: accessModes[p.name] })));
+        resolve(
+          ordered
+            .filter((p) => included.has(p.name))
+            .map((p) => ({ name: p.name, access: accessModes[p.name] })),
+        );
       } else if (key === "\x03") {
         cleanup();
         process.exit(1);
@@ -4788,7 +4808,9 @@ function getDashboardForwardPort(
   chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
 ) {
   const forwardTarget = resolveDashboardForwardTarget(chatUiUrl);
-  return forwardTarget.includes(":") ? (forwardTarget.split(":").pop() ?? String(CONTROL_UI_PORT)) : forwardTarget;
+  return forwardTarget.includes(":")
+    ? (forwardTarget.split(":").pop() ?? String(CONTROL_UI_PORT))
+    : forwardTarget;
 }
 
 function getDashboardForwardTarget(
@@ -4800,7 +4822,8 @@ function getDashboardForwardTarget(
 }
 
 function getDashboardForwardStartCommand(sandboxName, options = {}) {
-  const chatUiUrl = options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const chatUiUrl =
+    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
   const forwardTarget = getDashboardForwardTarget(chatUiUrl, options);
   return `${openshellShellCommand(
     ["forward", "start", "--background", forwardTarget, sandboxName],
@@ -4833,7 +4856,8 @@ function getDashboardAccessInfo(sandboxName, options = {}) {
   const token = Object.prototype.hasOwnProperty.call(options, "token")
     ? options.token
     : fetchGatewayAuthTokenFromSandbox(sandboxName);
-  const chatUiUrl = options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const chatUiUrl =
+    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
   const dashboardPort = Number(getDashboardForwardPort(chatUiUrl));
   const dashboardAccess = buildControlUiUrls(token, dashboardPort).map((url, index) => ({
     label: index === 0 ? "Dashboard" : `Alt ${index}`,
@@ -4988,7 +5012,9 @@ async function onboard(opts = {}) {
     opts.dangerouslySkipPermissions || process.env.NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS === "1";
   if (dangerouslySkipPermissions) {
     console.error("");
-    console.error("  \u26a0  --dangerously-skip-permissions: sandbox security restrictions disabled.");
+    console.error(
+      "  \u26a0  --dangerously-skip-permissions: sandbox security restrictions disabled.",
+    );
     console.error("     Network:    all known endpoints open (no method/path filtering)");
     console.error("     Filesystem: sandbox home directory is writable");
     console.error("     Use for development/testing only.");
@@ -5438,7 +5464,6 @@ module.exports = {
   getNavigationChoice,
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
-  getBlueprintBaseImageDigest,
   getBlueprintMinOpenshellVersion,
   getBlueprintMaxOpenshellVersion,
   versionGte,

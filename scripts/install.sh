@@ -1272,13 +1272,6 @@ except Exception:
     warn "Skipping onboarding — this shell still cannot resolve 'nemoclaw'."
   fi
 
-  # Post-upgrade: check for stale sandboxes and offer to rebuild them.
-  # See: https://github.com/NVIDIA/NemoClaw/issues/1904
-  if [ "${_has_sandboxes:-0}" -gt 0 ] 2>/dev/null && command_exists nemoclaw; then
-    info "Checking for sandboxes that need upgrading…"
-    nemoclaw upgrade-sandboxes 2>&1 || warn "Sandbox upgrade check failed (non-fatal). Run 'nemoclaw upgrade-sandboxes' manually."
-  fi
-
   print_done
   post_install_message
 }
