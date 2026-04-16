@@ -63,6 +63,7 @@ const { buildVersionedUninstallUrl, runUninstallCommand } = require("./lib/unins
 const agentRuntime = require("../bin/lib/agent-runtime");
 const sandboxVersion = require("./lib/sandbox-version");
 const sandboxState = require("./lib/sandbox-state");
+const { ensureOllamaAuthProxy } = require("./lib/onboard");
 const skillInstall = require("./lib/skill-install");
 
 // ── Global commands ──────────────────────────────────────────────
@@ -1075,6 +1076,8 @@ async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false 
     policies.applyPermissivePolicy(sandboxName);
   }
   checkAndRecoverSandboxProcesses(sandboxName);
+  // Ensure Ollama auth proxy is running (recovers from host reboots)
+  ensureOllamaAuthProxy();
   // Print a one-shot hint before dropping the user into the sandbox
   // shell so a fresh user knows the first thing to type. Without this,
   // `nemoclaw <name> connect` lands on a bare bash prompt and users

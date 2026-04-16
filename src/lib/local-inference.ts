@@ -12,7 +12,13 @@ import { runCurlProbe } from "./http-probe";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { shellQuote, runCapture } = require("./runner");
 
-import { VLLM_PORT, OLLAMA_PORT } from "./ports";
+import { VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } from "./ports";
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { isWsl } = require("./platform");
+
+/** Port containers use to reach Ollama — proxy on non-WSL, direct on WSL2. */
+export const OLLAMA_CONTAINER_PORT = isWsl() ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
 
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
 export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
@@ -47,7 +53,8 @@ export function getLocalProviderBaseUrl(provider: string): string | null {
     case "vllm-local":
       return `${HOST_GATEWAY_URL}:${VLLM_PORT}/v1`;
     case "ollama-local":
-      return `${HOST_GATEWAY_URL}:${OLLAMA_PORT}/v1`;
+      // Containers reach Ollama through the auth proxy, not directly.
+      return `${HOST_GATEWAY_URL}:${OLLAMA_CONTAINER_PORT}/v1`;
     default:
       return null;
   }
@@ -156,11 +163,13 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
         "-sf", `http://host.openshell.internal:${VLLM_PORT}/v1/models`,
       ];
     case "ollama-local":
+      // Check the auth proxy port, not Ollama directly. The proxy listens
+      // on 0.0.0.0 and is reachable from containers; Ollama is on 127.0.0.1.
       return [
         "docker", "run", "--rm",
         "--add-host", "host.openshell.internal:host-gateway",
         CONTAINER_REACHABILITY_IMAGE,
-        "-sf", `http://host.openshell.internal:${OLLAMA_PORT}/api/tags`,
+        "-sf", `http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/api/tags`,
       ];
     default:
       return null;
@@ -217,7 +226,7 @@ export function validateLocalProvider(
       return {
         ok: false,
         message:
-          `Local Ollama is responding on localhost, but containers cannot reach http://host.openshell.internal:${OLLAMA_PORT}. Ensure Ollama listens on 0.0.0.0:${OLLAMA_PORT} instead of 127.0.0.1 so sandboxes can reach it.`,
+          `Local Ollama is responding on localhost, but containers cannot reach the auth proxy at http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}. Ensure the Ollama auth proxy is running.`,
       };
     default:
       return {
