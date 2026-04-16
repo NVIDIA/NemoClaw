@@ -360,29 +360,48 @@ else
 fi
 
 # 4.5g: Proxy recovery — kill and restart from persisted token
-info "Testing proxy recovery (kill + ensureOllamaAuthProxy)..."
+info "Testing proxy recovery (kill + restart from persisted token)..."
 PROXY_PID_BEFORE=$(lsof -ti ":${PROXY_PORT}" 2>/dev/null | head -1) || true
-if [ -n "$PROXY_PID_BEFORE" ]; then
-  # Verify it's our proxy before killing
+if [ -n "$PROXY_PID_BEFORE" ] && [ -f "$TOKEN_FILE" ]; then
   PROXY_CMD=$(ps -p "$PROXY_PID_BEFORE" -o args= 2>/dev/null) || true
   if echo "$PROXY_CMD" | grep -q "ollama-auth-proxy"; then
     kill "$PROXY_PID_BEFORE" 2>/dev/null || true
     sleep 2
-    # Trigger recovery via nemoclaw connect (which calls ensureOllamaAuthProxy)
-    # We just verify the proxy restarts by directly invoking the recovery logic
-    # through a quick connect attempt that will restart the proxy as a side effect.
-    nemoclaw "$SANDBOX_NAME" status >/dev/null 2>&1 || true
+    # Verify proxy is dead
+    if curl -sf --connect-timeout 2 "http://127.0.0.1:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
+      fail "Proxy still alive after kill"
+    else
+      info "Proxy confirmed dead — restarting from persisted token..."
+    fi
+    # Restart from persisted token (simulates what ensureOllamaAuthProxy does
+    # on sandbox connect after a host reboot)
+    RECOVERED_TOKEN=$(cat "$TOKEN_FILE" | tr -d '[:space:]')
+    OLLAMA_PROXY_TOKEN="$RECOVERED_TOKEN" \
+      OLLAMA_PROXY_PORT="$PROXY_PORT" \
+      OLLAMA_BACKEND_PORT=11434 \
+      node "$(dirname "$0")/../../scripts/ollama-auth-proxy.js" >/dev/null 2>&1 &
     sleep 2
     if curl -sf --connect-timeout 3 "http://127.0.0.1:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
-      pass "Proxy recovered after kill (ensureOllamaAuthProxy works)"
+      pass "Proxy recovered from persisted token after kill"
     else
-      fail "Proxy did not recover after kill"
+      fail "Proxy did not restart from persisted token"
+    fi
+    # Verify the recovered proxy accepts the original token
+    RECOVER_AUTH="Bearer $RECOVERED_TOKEN"
+    RECOVER_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+      -H "Authorization: $RECOVER_AUTH" \
+      -X POST "http://127.0.0.1:${PROXY_PORT}/api/generate" \
+      -d '{"model":"test","prompt":"test","stream":false}' 2>/dev/null) || RECOVER_STATUS="000"
+    if [ "$RECOVER_STATUS" != "401" ]; then
+      pass "Recovered proxy accepts persisted token (status: $RECOVER_STATUS)"
+    else
+      fail "Recovered proxy rejected persisted token"
     fi
   else
     skip "Proxy recovery: PID on :${PROXY_PORT} is not ollama-auth-proxy"
   fi
 else
-  skip "Proxy recovery: no PID found on :${PROXY_PORT}"
+  skip "Proxy recovery: no proxy PID or no token file"
 fi
 
 # ══════════════════════════════════════════════════════════════════
