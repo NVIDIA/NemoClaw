@@ -60,6 +60,18 @@ make docs-live                    # serve locally with auto-rebuild
 
 Vitest config (`vitest.config.ts`) defines three projects: `cli`, `plugin`, and `e2e-brev`.
 
+### Mocking CJS from ESM Tests
+
+`vi.mock()` does not reliably intercept transitive `require()` calls from CJS `bin/lib/` modules imported into ESM `test/` files. Monkey-patch module exports directly via `createRequire(import.meta.url)` instead (see `test/runner.test.js`, `test/dashboard.test.js`).
+
+### npm install gotcha
+
+The root `prepare` script runs `npm install --omit=dev --ignore-scripts` and removes devDependencies (vitest, etc.). When installing new dev deps, use `npm install --ignore-scripts` to skip the prepare hook.
+
+### Known Environmental Failures
+
+In git worktrees, `.git` is a file (not a directory), so `scripts/install.sh`'s `is_source_checkout()` returns false and `test/install-preflight.test.js` reports ~12 failures unrelated to source changes. Baseline in the main checkout before assuming regressions.
+
 ## Code Style and Conventions
 
 ### Commit Messages

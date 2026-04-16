@@ -243,6 +243,31 @@ Show the sandbox list and the status of host auxiliary services (for example clo
 $ nemoclaw status
 ```
 
+### `nemoclaw dashboard`
+
+Start a local HTTP API server that exposes sandbox monitoring and control endpoints.
+The server binds to `127.0.0.1` only and is intended to back a separate web frontend on the same machine.
+
+```console
+$ nemoclaw dashboard [port]
+```
+
+The default port is `3456`. Pass a numeric argument to override, or `0` to let the OS assign a free port.
+
+| Route | Method | Description |
+|---|---|---|
+| `/sandboxes` | GET | List sandboxes with merged container stats |
+| `/sandboxes/:name` | GET | Detail for a single sandbox |
+| `/sandboxes/:name/start` | POST | Start host auxiliary services |
+| `/sandboxes/:name/stop` | POST | Stop and delete the sandbox |
+| `/sandboxes/:name/restart` | POST | Restart the sandbox |
+| `/sandboxes/:name/commands` | POST | Run a command inside the sandbox. Body: `{ "command": "..." }` |
+| `/config` | GET, PUT | Read or replace `~/.nemoclaw/nemoclaw-config.json` |
+| `/events` | GET | Server-Sent Events stream of sandbox metrics and snapshots |
+
+Container stats are collected by shelling out to `docker stats` first, falling back to `podman stats` if Docker is unavailable.
+Stop the server with `Ctrl+C`.
+
 ### `nemoclaw setup-spark`
 
 :::{warning}
