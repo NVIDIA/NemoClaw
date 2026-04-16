@@ -53,8 +53,10 @@ function validateEndpoint(policyName, index, ep, errors) {
     return;
   }
 
-  if (!ep.host) {
+  if (ep.host === undefined || ep.host === null || ep.host === "") {
     errors.push(`${loc}: missing required field: host`);
+  } else if (typeof ep.host !== "string") {
+    errors.push(`${loc}: host must be a string, got ${typeof ep.host}`);
   } else if (isDangerousHost(ep.host)) {
     errors.push(
       `${loc}: host "${ep.host}" grants access to any destination — ` +
@@ -68,22 +70,28 @@ function validateEndpoint(policyName, index, ep, errors) {
     errors.push(`${loc}: port must be an integer between 1 and 65535, got "${ep.port}"`);
   }
 
-  if (ep.protocol && !VALID_PROTOCOLS.has(ep.protocol)) {
-    errors.push(
-      `${loc}: invalid protocol "${ep.protocol}" (expected one of: ${[...VALID_PROTOCOLS].join(", ")})`,
-    );
+  if (ep.protocol !== undefined && ep.protocol !== null) {
+    if (!VALID_PROTOCOLS.has(ep.protocol)) {
+      errors.push(
+        `${loc}: invalid protocol "${ep.protocol}" (expected one of: ${[...VALID_PROTOCOLS].join(", ")})`,
+      );
+    }
   }
 
-  if (ep.enforcement && !VALID_ENFORCEMENTS.has(ep.enforcement)) {
-    errors.push(
-      `${loc}: invalid enforcement "${ep.enforcement}" (expected one of: ${[...VALID_ENFORCEMENTS].join(", ")})`,
-    );
+  if (ep.enforcement !== undefined && ep.enforcement !== null) {
+    if (!VALID_ENFORCEMENTS.has(ep.enforcement)) {
+      errors.push(
+        `${loc}: invalid enforcement "${ep.enforcement}" (expected one of: ${[...VALID_ENFORCEMENTS].join(", ")})`,
+      );
+    }
   }
 
-  if (ep.tls && !VALID_TLS.has(ep.tls)) {
-    errors.push(
-      `${loc}: invalid tls "${ep.tls}" (expected one of: ${[...VALID_TLS].join(", ")})`,
-    );
+  if (ep.tls !== undefined && ep.tls !== null) {
+    if (!VALID_TLS.has(ep.tls)) {
+      errors.push(
+        `${loc}: invalid tls "${ep.tls}" (expected one of: ${[...VALID_TLS].join(", ")})`,
+      );
+    }
   }
 
   if (ep.access !== undefined) {
@@ -139,16 +147,28 @@ function validatePolicy(filePath) {
   // are merged into a parent policy at runtime, so they do not require a
   // top-level `version`. Full policies (openclaw-sandbox.yaml, etc.) do.
   const isPresetFragment = doc.preset && typeof doc.preset === "object";
+  const hasVersion = doc.version !== undefined && doc.version !== null;
+  const hasNetworkPolicies =
+    doc.network_policies !== undefined && doc.network_policies !== null;
 
-  // Files without `network_policies` or a `preset:` block are not network-policy
-  // documents (e.g. tiers.yaml defines policy tiers, not endpoints). Skip them
-  // here — they may have their own schema that isn't this validator's concern.
-  if (!doc.network_policies && !isPresetFragment) {
+  // Skip only files that are clearly not policy documents (no version, no
+  // network_policies, no preset block — e.g. tiers.yaml defines policy tiers,
+  // not endpoints). A file that is versioned or declares network_policies is
+  // treated as a policy and must pass the full validation below.
+  if (!hasVersion && !hasNetworkPolicies && !isPresetFragment) {
     return errors;
   }
 
-  if (!isPresetFragment && (doc.version === undefined || doc.version === null)) {
+  if (!isPresetFragment && !hasVersion) {
     errors.push("missing required top-level field: version");
+  }
+
+  // A versioned policy with no `network_policies` is a misconfiguration:
+  // the file looks like a full policy but declares no endpoints. Preset
+  // fragments are allowed to omit network_policies entirely (the preset
+  // merge semantics handle additive updates).
+  if (hasVersion && !hasNetworkPolicies && !isPresetFragment) {
+    errors.push("missing required top-level field: network_policies");
   }
 
   const policies = doc.network_policies || {};

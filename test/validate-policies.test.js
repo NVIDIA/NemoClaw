@@ -257,6 +257,61 @@ tiers:
     expect(r.status).toBe(0);
   });
 
+  it("rejects a versioned policy that omits network_policies", () => {
+    // Per CodeRabbit on #1987: a file with `version:` but no
+    // `network_policies:` is a misconfiguration — it looks like a full
+    // policy but declares no endpoints. The skip-logic for non-policy
+    // files must not silently pass it.
+    const body = `
+version: 1
+# network_policies intentionally missing — should fail validation.
+`;
+    const { path: p, tmpDir } = writeTmpYaml("versioned-no-policies.yaml", body);
+    scratch = tmpDir;
+    const r = runValidator([p]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/missing required top-level field: network_policies/);
+  });
+
+  it("rejects empty-string host as missing field", () => {
+    // Per CodeRabbit on #1987: truthy checks previously let empty strings
+    // slip through. Empty host is a config bug, not "unset".
+    const body = `
+version: 1
+network_policies:
+  bad:
+    name: bad
+    endpoints:
+      - host: ""
+        port: 443
+`;
+    const { path: p, tmpDir } = writeTmpYaml("empty-host.yaml", body);
+    scratch = tmpDir;
+    const r = runValidator([p]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/missing required field: host/);
+  });
+
+  it("rejects empty-string protocol as invalid", () => {
+    // Per CodeRabbit on #1987: empty-string protocol was previously
+    // silently accepted by the truthy check.
+    const body = `
+version: 1
+network_policies:
+  bad:
+    name: bad
+    endpoints:
+      - host: example.com
+        port: 443
+        protocol: ""
+`;
+    const { path: p, tmpDir } = writeTmpYaml("empty-proto.yaml", body);
+    scratch = tmpDir;
+    const r = runValidator([p]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/invalid protocol/);
+  });
+
   it("validates all committed policy files in the repo", () => {
     const policyDir = path.join(__dirname, "..", "nemoclaw-blueprint", "policies");
     const files = [
