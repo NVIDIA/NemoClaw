@@ -173,8 +173,13 @@ describe("executeDeploy — instance name validation (#575)", () => {
         runInteractive: (command: string) => {
           calls.push(`runInteractive:${command}`);
         },
-        execFileSync: (_file: string, _args: string[], _opts?: Record<string, unknown>) => "",
-        spawnSync: () => {},
+        execFileSync: (file: string, args: string[], _opts?: Record<string, unknown>) => {
+          calls.push(`execFileSync:${file} ${args.join(" ")}`);
+          return "";
+        },
+        spawnSync: (file: string, args: string[], _opts?: Record<string, unknown>) => {
+          calls.push(`spawnSync:${file} ${args.join(" ")}`);
+        },
         log: () => {},
         error: () => {},
         stdoutWrite: () => {},
@@ -222,10 +227,15 @@ describe("executeDeploy — instance name validation (#575)", () => {
 
     // This will fail at the provider detection step (no credentials),
     // but it should NOT fail at validation — proving the name was accepted.
-    try {
-      await executeDeploy(opts);
-    } catch {
-      // Expected: either exit(1) from missing provider or brev CLI not found
+    // Catch any thrown error and explicitly assert it wasn't a name-validation
+    // failure, so a future regression can't silently pass this test.
+    const caught = await executeDeploy(opts)
+      .then(() => null)
+      .catch((error: unknown) => error);
+    if (caught) {
+      expect(String(caught)).not.toMatch(
+        /Invalid instance name|instance name is required/i,
+      );
     }
 
     // If it exited, it should be because of missing provider/brev, not name validation
