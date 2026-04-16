@@ -78,6 +78,11 @@ describe("parseFrontmatter", () => {
     expect(() => parseFrontmatter("---\nname: ../escape\n---\n")).toThrow("invalid characters");
     expect(() => parseFrontmatter("---\nname: a/b\n---\n")).toThrow("invalid characters");
   });
+
+  it("rejects dot and double-dot as skill names in frontmatter", () => {
+    expect(() => parseFrontmatter("---\nname: .\n---\n")).toThrow("invalid characters");
+    expect(() => parseFrontmatter("---\nname: ..\n---\n")).toThrow("invalid characters");
+  });
 });
 
 describe("validateRelativePath", () => {
@@ -298,6 +303,11 @@ describe("validateSkillName", () => {
     expect(validateSkillName("my/skill")).toBe(false);
     expect(validateSkillName("../escape")).toBe(false);
     expect(validateSkillName("my`skill`")).toBe(false);
+  });
+
+  it("rejects dot and double-dot to prevent directory traversal on rm -rf", () => {
+    expect(validateSkillName(".")).toBe(false);
+    expect(validateSkillName("..")).toBe(false);
   });
 });
 

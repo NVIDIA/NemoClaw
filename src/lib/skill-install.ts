@@ -70,7 +70,7 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
     throw new Error("SKILL.md frontmatter is missing required 'name' field");
   }
 
-  if (!/^[A-Za-z0-9._-]+$/.test(nameValue)) {
+  if (nameValue === "." || nameValue === ".." || !/^[A-Za-z0-9._-]+$/.test(nameValue)) {
     throw new Error(
       `SKILL.md name '${nameValue}' contains invalid characters. Only [A-Za-z0-9._-] allowed.`,
     );
@@ -401,5 +401,10 @@ export function verifyRemove(ctx: SshContext, paths: SkillPaths): boolean {
  * Rejects anything that isn't a valid skill name ([A-Za-z0-9._-]).
  */
 export function validateSkillName(name: string): boolean {
-  return /^[A-Za-z0-9._-]+$/.test(name) && name.length > 0;
+  return (
+    name.length > 0 &&
+    name !== "." &&
+    name !== ".." &&
+    /^[A-Za-z0-9._-]+$/.test(name)
+  );
 }
