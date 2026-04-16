@@ -139,6 +139,17 @@ repos:
         pass_filenames: true
         priority: 6
 
+  # ── Priority 10: project-specific validation ────────────────────────────────
+  - repo: local
+    hooks:
+      - id: validate-policy-yaml
+        name: Validate NemoClaw network-policy YAML
+        entry: node scripts/validate-policies.js
+        language: system
+        files: ^nemoclaw-blueprint/policies/.*\.yaml$
+        pass_filenames: true
+        priority: 10
+
   # ── Priority 10: linters and validation ─────────────────────────────────────
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
