@@ -44,6 +44,34 @@ describe("debug command", () => {
     expect(runDebug).toHaveBeenCalledWith({ sandboxName: "beta" });
   });
 
+  it("--sandbox overrides the default sandbox", () => {
+    const runDebug = vi.fn();
+    runDebugCommand(["--sandbox", "mybox"], {
+      getDefaultSandbox: () => "stale-default",
+      runDebug,
+      log: () => {},
+      error: () => {},
+      exit: ((code: number) => {
+        throw new Error(`exit:${code}`);
+      }) as never,
+    });
+    expect(runDebug).toHaveBeenCalledWith({ sandboxName: "mybox" });
+  });
+
+  it("falls back to undefined when getDefaultSandbox returns undefined", () => {
+    const runDebug = vi.fn();
+    runDebugCommand(["--quick"], {
+      getDefaultSandbox: () => undefined,
+      runDebug,
+      log: () => {},
+      error: () => {},
+      exit: ((code: number) => {
+        throw new Error(`exit:${code}`);
+      }) as never,
+    });
+    expect(runDebug).toHaveBeenCalledWith({ quick: true, sandboxName: undefined });
+  });
+
   it("exits on invalid arguments", () => {
     expect(() =>
       parseDebugArgs(["--output"], {

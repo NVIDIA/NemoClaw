@@ -16,27 +16,11 @@ RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
     && apt-get autoremove --purge -y \
     && rm -rf /var/lib/apt/lists/*
 
-# Patch: disable Hermes's TelegramFallbackTransport inside the sandbox.
-# The fallback transport rewrites api.telegram.org to raw IPs, which
-# OpenShell's L7 proxy rejects (hostname-based policy). Without it,
-# python-telegram-bot uses default httpx transport which respects
-# HTTPS_PROXY and routes through the proxy correctly.
-# Must run as root before USER sandbox.
-# Replace _fallback_ips method to always return empty list, which
-# skips the entire fallback transport code path.
-RUN python3 -c "\
-import pathlib, re; \
-p = pathlib.Path('/usr/local/lib/python3.11/dist-packages/gateway/platforms/telegram.py'); \
-src = p.read_text(); \
-patched = src.replace( \
-    'fallback_ips = self._fallback_ips()', \
-    'fallback_ips = []  # NemoClaw: disabled for sandbox proxy compatibility'); \
-patched = patched.replace( \
-    'if not fallback_ips:', \
-    'if False:  # NemoClaw: skip fallback discovery'); \
-assert 'NemoClaw: disabled' in patched, 'Patch failed: _fallback_ips line not found'; \
-p.write_text(patched); \
-print('[patch] Disabled TelegramFallbackTransport for sandbox proxy compatibility')"
+# Hermes v2026.4.13+ auto-detects HTTPS_PROXY and skips fallback-IP
+# transport when a proxy is present. The sandbox proxy chain
+# (decode-proxy → OpenShell L7 proxy) handles credential placeholder
+# rewriting and hostname-based policy enforcement. No monkey patch needed.
+ENV HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
 
 # Copy NemoClaw plugin for Hermes (Python-based)
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/

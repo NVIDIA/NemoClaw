@@ -14,7 +14,8 @@
 #
 #   1. Provider creation — openshell stores the real token
 #   2. Sandbox attachment — --provider flags wire providers to the sandbox
-#   3. Credential isolation — real tokens never appear in sandbox env
+#   3. Credential isolation — real tokens never appear in sandbox env,
+#      process list, or filesystem
 #   4. Config patching — openclaw.json channels use placeholder values
 #   5. Network reachability — Node.js can reach messaging APIs through proxy
 #   6. Native Discord gateway path — WebSocket path is probed separately from REST
@@ -93,10 +94,31 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-msg-provider}"
 # Default to fake tokens if not provided
 TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN:-test-fake-telegram-token-e2e}"
 DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}"
-TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789}"
+TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789,987654321}"
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
 export DISCORD_BOT_TOKEN="$DISCORD_TOKEN"
 export TELEGRAM_ALLOWED_IDS="$TELEGRAM_IDS"
+
+# Run a command inside the sandbox via stdin (avoids exposing sensitive args in process list)
+sandbox_exec_stdin() {
+  local cmd="$1"
+  local ssh_config
+  ssh_config="$(mktemp)"
+  openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null
+
+  local result
+  result=$(timeout 60 ssh -F "$ssh_config" \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=10 \
+    -o LogLevel=ERROR \
+    "openshell-${SANDBOX_NAME}" \
+    "$cmd" \
+    2>/dev/null) || true
+
+  rm -f "$ssh_config"
+  echo "$result"
+}
 
 # Run a command inside the sandbox and capture output
 sandbox_exec() {
@@ -277,6 +299,96 @@ else
   info "Subsequent phases that depend on placeholders will adapt"
 fi
 
+# M3/M4 verify the specific TELEGRAM_BOT_TOKEN / DISCORD_BOT_TOKEN
+# env vars hold placeholders. The checks below verify the real
+# host-side tokens do not appear on ANY observable surface inside
+# the sandbox: full environment, process list, or filesystem.
+
+sandbox_env_all=$(sandbox_exec "env 2>/dev/null" 2>/dev/null || true)
+sandbox_ps=$(openshell sandbox exec -n "$SANDBOX_NAME" -- \
+  sh -c 'cat /proc/[0-9]*/cmdline 2>/dev/null | tr "\0" "\n"' 2>/dev/null || true)
+
+if [ -n "$sandbox_ps" ]; then
+  info "Process cmdlines captured ($(echo "$sandbox_ps" | wc -l | tr -d ' ') lines)"
+else
+  info "Process cmdline capture returned empty — M5b/M5f will skip"
+fi
+
+# M5a: Full environment dump must not contain the real Telegram token
+if [ -z "$sandbox_env_all" ]; then
+  skip "M5a: Environment variable list is empty"
+elif echo "$sandbox_env_all" | grep -qF "$TELEGRAM_TOKEN"; then
+  fail "M5a: Real Telegram token found in full sandbox environment dump"
+else
+  pass "M5a: Real Telegram token absent from full sandbox environment"
+fi
+
+# M5b: Process list must not contain the real Telegram token
+if [ -z "$sandbox_ps" ]; then
+  skip "M5b: Process list is empty"
+elif echo "$sandbox_ps" | grep -qF "$TELEGRAM_TOKEN"; then
+  fail "M5b: Real Telegram token found in sandbox process list"
+else
+  pass "M5b: Real Telegram token absent from sandbox process list"
+fi
+
+# M5c: Recursive filesystem search for the real Telegram token.
+# Covers /sandbox (workspace), /home, /etc, /tmp, /var.
+sandbox_fs_tg=$(printf '%s' "$TELEGRAM_TOKEN" | sandbox_exec_stdin "grep -rFlm1 -f - /sandbox /home /etc /tmp /var 2>/dev/null || true")
+if [ -n "$sandbox_fs_tg" ]; then
+  fail "M5c: Real Telegram token found on sandbox filesystem: ${sandbox_fs_tg}"
+else
+  pass "M5c: Real Telegram token absent from sandbox filesystem"
+fi
+
+# M5d: Placeholder string must be present in the sandbox environment
+if [ -n "$TELEGRAM_PLACEHOLDER" ]; then
+  if echo "$sandbox_env_all" | grep -qF "$TELEGRAM_PLACEHOLDER"; then
+    pass "M5d: Telegram placeholder confirmed present in sandbox environment"
+  else
+    fail "M5d: Telegram placeholder not found in sandbox environment"
+  fi
+else
+  skip "M5d: No Telegram placeholder to verify (provider-only mode)"
+fi
+
+# M5e: Full environment dump must not contain the real Discord token
+if [ -z "$sandbox_env_all" ]; then
+  skip "M5e: Environment variable list is empty"
+elif echo "$sandbox_env_all" | grep -qF "$DISCORD_TOKEN"; then
+  fail "M5e: Real Discord token found in full sandbox environment dump"
+else
+  pass "M5e: Real Discord token absent from full sandbox environment"
+fi
+
+# M5f: Process list must not contain the real Discord token
+if [ -z "$sandbox_ps" ]; then
+  skip "M5f: Process list is empty"
+elif echo "$sandbox_ps" | grep -qF "$DISCORD_TOKEN"; then
+  fail "M5f: Real Discord token found in sandbox process list"
+else
+  pass "M5f: Real Discord token absent from sandbox process list"
+fi
+
+# M5g: Recursive filesystem search for the real Discord token
+sandbox_fs_dc=$(printf '%s' "$DISCORD_TOKEN" | sandbox_exec_stdin "grep -rFlm1 -f - /sandbox /home /etc /tmp /var 2>/dev/null || true")
+if [ -n "$sandbox_fs_dc" ]; then
+  fail "M5g: Real Discord token found on sandbox filesystem: ${sandbox_fs_dc}"
+else
+  pass "M5g: Real Discord token absent from sandbox filesystem"
+fi
+
+# M5h: Discord placeholder must be present in the sandbox environment
+if [ -n "$DISCORD_PLACEHOLDER" ]; then
+  if echo "$sandbox_env_all" | grep -qF "$DISCORD_PLACEHOLDER"; then
+    pass "M5h: Discord placeholder confirmed present in sandbox environment"
+  else
+    fail "M5h: Discord placeholder not found in sandbox environment"
+  fi
+else
+  skip "M5h: No Discord placeholder to verify (provider-only mode)"
+fi
+
 # ══════════════════════════════════════════════════════════════════
 # Phase 3: Config Patching — openclaw.json channels
 # ══════════════════════════════════════════════════════════════════
@@ -407,19 +519,21 @@ print(','.join(str(i) for i in ids))
 " 2>/dev/null || true)
 
   if [ -n "$tg_allow_from" ]; then
-    # Check that at least one of the configured IDs is present
+    # Check that all configured IDs are present
     IFS=',' read -ra expected_ids <<<"$TELEGRAM_IDS"
-    found_match=false
+    missing_ids=()
+    tg_allow_from_csv=",${tg_allow_from//[[:space:]]/},"
     for eid in "${expected_ids[@]}"; do
-      if echo "$tg_allow_from" | grep -qF "$eid"; then
-        found_match=true
-        break
+      eid="${eid//[[:space:]]/}"
+      [ -z "$eid" ] && continue
+      if [[ "$tg_allow_from_csv" != *",$eid,"* ]]; then
+        missing_ids+=("$eid")
       fi
     done
-    if [ "$found_match" = "true" ]; then
-      pass "M11c: Telegram allowFrom contains expected user ID(s): $tg_allow_from"
+    if [ ${#missing_ids[@]} -eq 0 ]; then
+      pass "M11c: Telegram allowFrom contains all expected user IDs: $tg_allow_from"
     else
-      fail "M11c: Telegram allowFrom ($tg_allow_from) does not contain any expected ID ($TELEGRAM_IDS)"
+      fail "M11c: Telegram allowFrom ($tg_allow_from) is missing IDs: ${missing_ids[*]} (expected all of: $TELEGRAM_IDS)"
     fi
   else
     skip "M11c: Telegram allowFrom not set (channel may not be configured)"

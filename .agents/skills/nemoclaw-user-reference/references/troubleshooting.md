@@ -106,13 +106,14 @@ If the Jetson setup step fails, verify that you have `sudo` access and that Dock
 
 For JetPack 6 (L4T 36.x), the setup switches iptables to legacy mode and adjusts the Docker daemon configuration.
 For JetPack 7 (L4T 38.x / Thor), only bridge netfilter and sysctl settings are applied.
+BSP R39 and later do not require host customization and are handled automatically.
 
 If the L4T version is not recognized, the setup step is skipped and the installer continues normally.
 
 ### Port already in use
 
-The NemoClaw gateway uses port `18789` by default.
-If another process is already bound to this port, onboarding fails.
+The NemoClaw dashboard uses port `18789` by default and the gateway uses port `8080`.
+If another process is already bound to one of these ports, onboarding fails.
 Identify the conflicting process, verify it is safe to stop, and terminate it:
 
 ```console
@@ -122,6 +123,39 @@ $ kill <PID>
 
 If the process does not exit, use `kill -9 <PID>` to force-terminate it.
 Then retry onboarding.
+
+Alternatively, override the conflicting port with an environment variable instead of stopping the other process:
+
+```console
+$ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
+```
+
+See Environment Variables (see the `nemoclaw-user-reference` skill) for the full list of port overrides.
+
+### Running multiple sandboxes simultaneously
+
+Each sandbox requires its own dashboard port.
+If you onboard a second sandbox without overriding the port, onboarding fails because port `18789` is already claimed by the first sandbox.
+
+Assign a distinct port to each sandbox at onboard time:
+
+```console
+$ nemoclaw onboard                              # first sandbox — uses default 18789
+$ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard  # second sandbox — uses 19000
+```
+
+Each sandbox then has its own SSH tunnel and its own dashboard URL:
+
+```text
+http://localhost:18789   ← first sandbox
+http://localhost:19000   ← second sandbox
+```
+
+You can verify which tunnel belongs to which sandbox with:
+
+```console
+$ openshell forward list
+```
 
 ## Onboarding
 
@@ -158,7 +192,11 @@ The `install-openshell.sh` script also enforces this constraint and pins fresh i
 Sandbox names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
 Uppercase letters are automatically lowercased.
 
-If the name does not match these rules, the wizard exits with an error.
+Names that collide with global CLI commands are also rejected.
+Reserved names include `onboard`, `list`, `deploy`, `setup`, `start`, `stop`, `status`, `debug`, `uninstall`, `credentials`, and `help`.
+Using a reserved name would cause the CLI to route to the global command instead of the sandbox.
+
+If the name does not match these rules or is reserved, the wizard exits with an error.
 Choose a name such as `my-assistant` or `dev1`.
 
 ### Sandbox creation fails on DGX
@@ -243,6 +281,24 @@ Follow these steps to reconnect.
 > **If the sandbox does not recover:** If the sandbox remains missing after restarting the gateway, run `nemoclaw onboard` to recreate it.
 > The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox. Workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
 > Back up your workspace first by following the instructions at Back Up and Restore (see the `nemoclaw-user-workspace` skill).
+
+### Sandbox is running an outdated agent version
+
+After upgrading NemoClaw, `nemoclaw <name> connect` and `nemoclaw <name> status` warn if the sandbox is running an older agent version than the current image.
+
+To upgrade the sandbox while preserving workspace state, run:
+
+```console
+$ nemoclaw <name> rebuild
+```
+
+The rebuild command backs up state, destroys the old sandbox, recreates it with the current image, and restores state.
+Create a snapshot before rebuilding if you want an additional safety net:
+
+```console
+$ nemoclaw <name> snapshot create
+$ nemoclaw <name> rebuild
+```
 
 ### Sandbox shows as stopped
 
@@ -403,6 +459,37 @@ $ openshell term
 
 To permanently allow an endpoint, add it to the network policy.
 Refer to Customize the Network Policy (see the `nemoclaw-user-manage-policy` skill) for details.
+
+### Dashboard not reachable after setting `NEMOCLAW_DASHBOARD_PORT`
+
+If you ran `NEMOCLAW_DASHBOARD_PORT=<port> nemoclaw onboard` and onboarding completed
+but the dashboard URL is unreachable (browser shows connection refused or the page fails
+to load), the sandbox was most likely created with an older NemoClaw version that had a
+bug where `NEMOCLAW_DASHBOARD_PORT` was parsed on the host but not passed into the sandbox
+at startup. The gateway inside the sandbox continued listening on the default port 18789
+while the SSH tunnel forwarded the custom port — leaving nothing at the other end of the
+tunnel.
+
+Re-run onboarding on the current NemoClaw release with the desired port. This rebuilds
+the sandbox image with the gateway bound to the configured port:
+
+```console
+$ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
+```
+
+If you need to run multiple sandboxes at different ports at the same time, see
+[Running multiple sandboxes simultaneously](#running-multiple-sandboxes-simultaneously).
+
+### Ollama network exposure warning during onboard
+
+When you select a local Ollama provider, onboarding binds Ollama to `0.0.0.0` so the Docker sandbox can reach the host.
+This exposes the unauthenticated Ollama API to the local network.
+NemoClaw prints a warning during onboarding to alert you to this risk.
+
+On trusted private networks, the warning is informational.
+On shared or public networks (airports, coffee shops), any adjacent device can send prompts to and enumerate models on your Ollama instance.
+
+The warning is suppressed on WSL, where Ollama binds to `127.0.0.1` instead.
 
 ### Blueprint run failed
 

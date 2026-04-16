@@ -1,0 +1,92 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Shared credential-stripping logic for config files.
+//
+// Used by:
+//   - sandbox-state.ts (rebuild backup/restore)
+//   - migration-state.ts (host→sandbox onboarding migration)
+//
+// Credentials must never be baked into sandbox filesystems or local backups.
+// They are injected at runtime via OpenShell's provider credential mechanism.
+
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+
+const CREDENTIAL_PLACEHOLDER = "[STRIPPED_BY_MIGRATION]";
+
+/**
+ * File basenames that contain sensitive auth material and should be
+ * excluded from backups entirely.
+ */
+export const CREDENTIAL_SENSITIVE_BASENAMES = new Set(["auth-profiles.json"]);
+
+/**
+ * Credential field names that MUST be stripped from config files.
+ */
+const CREDENTIAL_FIELDS = new Set([
+  "apiKey",
+  "api_key",
+  "token",
+  "secret",
+  "password",
+  "resolvedKey",
+]);
+
+/**
+ * Pattern-based detection for credential field names not covered by the
+ * explicit set above. Matches common suffixes like accessToken, privateKey,
+ * clientSecret, etc.
+ */
+const CREDENTIAL_FIELD_PATTERN =
+  /(?:access|refresh|client|bearer|auth|api|private|public|signing|session)(?:Token|Key|Secret|Password)$/;
+
+export function isCredentialField(key: string): boolean {
+  return CREDENTIAL_FIELDS.has(key) || CREDENTIAL_FIELD_PATTERN.test(key);
+}
+
+/**
+ * Recursively strip credential fields from a JSON-like object.
+ * Returns a new object with sensitive values replaced by a placeholder.
+ */
+export function stripCredentials(obj: unknown): unknown {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map(stripCredentials);
+
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    if (isCredentialField(key)) {
+      result[key] = CREDENTIAL_PLACEHOLDER;
+    } else {
+      result[key] = stripCredentials(value);
+    }
+  }
+  return result;
+}
+
+/**
+ * Strip credential fields from a JSON config file in-place.
+ * Removes the "gateway" section (contains auth tokens — regenerated at startup).
+ */
+export function sanitizeConfigFile(configPath: string): void {
+  if (!existsSync(configPath)) return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(configPath, "utf-8"));
+  } catch {
+    return; // Not valid JSON — skip (may be YAML for Hermes)
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+  const config = parsed as Record<string, unknown>;
+  delete config["gateway"];
+  const sanitized = stripCredentials(config) as Record<string, unknown>;
+  writeFileSync(configPath, JSON.stringify(sanitized, null, 2));
+  chmodSync(configPath, 0o600);
+}
+
+/**
+ * Check if a filename should be excluded from backups entirely.
+ */
+export function isSensitiveFile(filename: string): boolean {
+  return CREDENTIAL_SENSITIVE_BASENAMES.has(filename.toLowerCase());
+}

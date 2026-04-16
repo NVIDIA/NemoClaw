@@ -61,7 +61,6 @@ ARG CHAT_UI_URL=http://127.0.0.1:18789
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
 ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
-ARG NEMOCLAW_WEB_CONFIG_B64=e30=
 # Base64-encoded JSON list of messaging channel names to pre-configure
 # (e.g. ["discord","telegram"]). Channels are added with placeholder tokens
 # so the L7 proxy can rewrite them at egress. Default: empty list.
@@ -86,6 +85,11 @@ ARG NEMOCLAW_BUILD_ID=default
 # before running `nemoclaw onboard`. See #1409.
 ARG NEMOCLAW_PROXY_HOST=10.200.0.1
 ARG NEMOCLAW_PROXY_PORT=3128
+# Non-secret flag: set to "1" when the user configured Brave Search during
+# onboard. Controls whether the web search block is written to openclaw.json.
+# The actual API key is injected at runtime via openshell:resolve:env, never
+# baked into the image.
+ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
 
 # SECURITY: Promote build-args to env vars so the Python script reads them
 # via os.environ, never via string interpolation into Python source code.
@@ -97,13 +101,13 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
     NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64} \
-    NEMOCLAW_WEB_CONFIG_B64=${NEMOCLAW_WEB_CONFIG_B64} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
     NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
-    NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT}
+    NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
+    NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED}
 
 WORKDIR /sandbox
 USER sandbox
@@ -123,7 +127,6 @@ primary_model_ref = os.environ['NEMOCLAW_PRIMARY_MODEL_REF']; \
 inference_base_url = os.environ['NEMOCLAW_INFERENCE_BASE_URL']; \
 inference_api = os.environ['NEMOCLAW_INFERENCE_API']; \
 inference_compat = json.loads(base64.b64decode(os.environ['NEMOCLAW_INFERENCE_COMPAT_B64']).decode('utf-8')); \
-web_config = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_WEB_CONFIG_B64', 'e30=') or 'e30=').decode('utf-8')); \
 msg_channels = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_CHANNELS_B64', 'W10=') or 'W10=').decode('utf-8')); \
 _allowed_ids = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_ALLOWED_IDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
 _discord_guilds = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_DISCORD_GUILDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
@@ -166,14 +169,12 @@ config.update({ \
             'search': { \
                 'enabled': True, \
                 'provider': 'brave', \
-                **({'apiKey': web_config.get('apiKey', '')} if web_config.get('apiKey', '') else {}) \
+                'apiKey': 'openshell:resolve:env:BRAVE_API_KEY' \
             }, \
-            'fetch': { \
-                'enabled': bool(web_config.get('fetchEnabled', True)) \
-            } \
+            'fetch': {'enabled': True} \
         } \
     } \
-} if web_config.get('provider') == 'brave' else {}); \
+}) if os.environ.get('NEMOCLAW_WEB_SEARCH_ENABLED', '') == '1' else None; \
 path = os.path.expanduser('~/.openclaw/openclaw.json'); \
 json.dump(config, open(path, 'w'), indent=2); \
 os.chmod(path, 0o600)"

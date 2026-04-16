@@ -14,7 +14,7 @@ describe("nemoclaw-start non-root fallback", () => {
 
     expect(src).toMatch(/if \[ "\$\(id -u\)" -ne 0 \]; then/);
     expect(src).toMatch(/touch \/tmp\/gateway\.log/);
-    expect(src).toMatch(/nohup "\$OPENCLAW" gateway run >\/tmp\/gateway\.log 2>&1 &/);
+    expect(src).toMatch(/nohup "\$OPENCLAW" gateway run --port "\$\{_DASHBOARD_PORT\}" >\/tmp\/gateway\.log 2>&1 &/);
   });
 
   it("exits on config integrity failure in non-root mode", () => {
@@ -500,5 +500,47 @@ describe("nemoclaw-start signal handling", () => {
 
   it("captures AUTO_PAIR_PID from background process", () => {
     expect(src).toMatch(/AUTO_PAIR_PID=\$!/);
+  });
+});
+
+describe("nemoclaw-start CHAT_UI_URL override for configurable dashboard port (#1925)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("unconditionally sets CHAT_UI_URL when NEMOCLAW_DASHBOARD_PORT is injected", () => {
+    // When the var is present (injected via envArgs in onboard.ts), the gateway
+    // must use the configured port even if the Docker image has a different
+    // CHAT_UI_URL baked in as a Docker ENV directive.
+    const overrideBlock = src.match(
+      /if \[ -n "\$\{NEMOCLAW_DASHBOARD_PORT:-\}" \]; then([\s\S]*?)else/,
+    );
+    expect(overrideBlock).toBeTruthy();
+    // Plain assignment — the Docker ENV value cannot take precedence
+    expect(overrideBlock[1]).toContain('CHAT_UI_URL="http://127.0.0.1:${_DASHBOARD_PORT}"');
+    // Must NOT use :- in this branch — that would let the baked-in Docker ENV win
+    // and restart the gateway on the wrong port (#1925)
+    expect(overrideBlock[1]).not.toMatch(/CHAT_UI_URL=.*:-/);
+  });
+
+  it("falls back to baked-in CHAT_UI_URL when NEMOCLAW_DASHBOARD_PORT is absent", () => {
+    // When no port override was injected (default install), honour whatever
+    // CHAT_UI_URL was baked into the Docker image at onboard time.
+    const ifElseBlock = src.match(
+      /if \[ -n "\$\{NEMOCLAW_DASHBOARD_PORT:-\}" \]; then[\s\S]*?else([\s\S]*?)fi/,
+    );
+    expect(ifElseBlock).toBeTruthy();
+    expect(ifElseBlock[1]).toContain(
+      'CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${_DASHBOARD_PORT}}"',
+    );
+  });
+
+  it("passes --port to openclaw gateway run in root path (gosu gateway) (#1925)", () => {
+    // The root path (run as root, then gosu'd to the gateway user) must also
+    // pass --port so the gateway binds to the configured port. Without this,
+    // a user with NEMOCLAW_DASHBOARD_PORT set would get a gateway on 18789
+    // even though the SSH tunnel forwards the custom port.
+    const rootBlock = src.split(/# ── Root path/)[1] || "";
+    expect(rootBlock).toMatch(
+      /nohup gosu gateway "\$OPENCLAW" gateway run --port "\$\{_DASHBOARD_PORT\}" >\/tmp\/gateway\.log 2>&1 &/,
+    );
   });
 });
