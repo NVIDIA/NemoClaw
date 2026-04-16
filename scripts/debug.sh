@@ -135,7 +135,11 @@ redact() {
     -e 's/sk-[A-Za-z0-9_-]{20,}/<REDACTED>/g' \
     -e 's/xoxb-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
     -e 's/xoxp-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+    `# xoxe.xoxp- = Slack config token prefix` \
+    -e 's/xoxe\.xoxp-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+    `# AWS access key IDs: AKIA = long-term, ASIA = temporary/session` \
     -e 's/AKIA[A-Z0-9]{16}/<REDACTED>/g' \
+    -e 's/ASIA[A-Z0-9]{16}/<REDACTED>/g' \
     -e 's/hf_[A-Za-z0-9]{10,}/<REDACTED>/g' \
     -e 's/glpat-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
     -e 's/gsk_[A-Za-z0-9]{10,}/<REDACTED>/g' \

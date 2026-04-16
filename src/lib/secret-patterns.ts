@@ -27,8 +27,8 @@ export const TOKEN_PREFIX_PATTERNS: RegExp[] = [
   /xoxb-[A-Za-z0-9_-]{10,}/g,
   /xoxp-[A-Za-z0-9_-]{10,}/g,
   /xoxe\.xoxp-[A-Za-z0-9_-]{10,}/g,
-  // AWS access key IDs (always start with AKIA)
-  /AKIA[A-Z0-9]{16}/g,
+  // AWS access key IDs (AKIA = long-term, ASIA = temporary/session)
+  /A(?:K|S)IA[A-Z0-9]{16}/g,
   // HuggingFace
   /hf_[A-Za-z0-9]{10,}/g,
   // GitLab
@@ -68,6 +68,7 @@ export const EXPECTED_SHELL_PREFIXES = [
   "xoxp-",
   "xoxe.xoxp-",
   "AKIA",
+  "ASIA",
   "hf_",
   "glpat-",
   "gsk_",
