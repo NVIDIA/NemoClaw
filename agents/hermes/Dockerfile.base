@@ -22,8 +22,8 @@ FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Hermes version pinned for reproducibility.
-# Calver tag v2026.4.8 = semver 0.8.0.
-ARG HERMES_VERSION=v2026.4.8
+# Calver tag v2026.4.13 = semver 0.9.0.
+ARG HERMES_VERSION=v2026.4.13
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3=3.11.2-1+b1 \

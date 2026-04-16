@@ -455,6 +455,57 @@ function getBlueprintMaxOpenshellVersion(rootDir = ROOT) {
   return getBlueprintVersionField("max_openshell_version", rootDir);
 }
 
+// ── Base image digest resolution ────────────────────────────────
+// Pulls the sandbox-base image from GHCR and inspects it to get the
+// actual repo digest. This avoids the registry mismatch that broke
+// e2e tests in #1937 — the digest always comes from the same registry
+// we're pinning to. See #1904.
+
+const SANDBOX_BASE_IMAGE = "ghcr.io/nvidia/nemoclaw/sandbox-base";
+const SANDBOX_BASE_TAG = "latest";
+
+/**
+ * Pull sandbox-base:latest from GHCR and resolve its repo digest.
+ * Returns { digest, ref } on success, or null when the pull or
+ * inspect fails (offline, GHCR outage, local-only build).
+ */
+function pullAndResolveBaseImageDigest() {
+  const imageWithTag = `${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`;
+  try {
+    run(["docker", "pull", imageWithTag], { suppressOutput: true });
+  } catch {
+    // Pull failed — caller should fall back to unpin :latest
+    return null;
+  }
+
+  let inspectOutput;
+  try {
+    inspectOutput = runCapture(
+      ["docker", "inspect", "--format", "{{json .RepoDigests}}", imageWithTag],
+      { ignoreError: false },
+    );
+  } catch {
+    return null;
+  }
+
+  // RepoDigests is a JSON array like ["ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:abc..."].
+  // Filter to the entry matching our registry — index ordering is not guaranteed.
+  let repoDigests;
+  try {
+    repoDigests = JSON.parse(inspectOutput || "[]");
+  } catch {
+    return null;
+  }
+  const repoDigest = Array.isArray(repoDigests)
+    ? repoDigests.find((entry) => entry.startsWith(`${SANDBOX_BASE_IMAGE}@sha256:`))
+    : null;
+  if (!repoDigest) return null;
+
+  const digest = repoDigest.slice(repoDigest.indexOf("@") + 1);
+  const ref = `${SANDBOX_BASE_IMAGE}@${digest}`;
+  return { digest, ref };
+}
+
 function getStableGatewayImageRef(versionOutput = null) {
   const version = getInstalledOpenshellVersion(versionOutput);
   if (!version) return null;
@@ -992,10 +1043,25 @@ function patchStagedDockerfile(
   messagingChannels = [],
   messagingAllowedIds = {},
   discordGuilds = {},
+  baseImageRef = null,
 ) {
   const { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat } =
     getSandboxInferenceConfig(model, provider, preferredInferenceApi);
   let dockerfile = fs.readFileSync(dockerfilePath, "utf8");
+  // Pin the base image to a specific digest when available (#1904).
+  // The ref must come from pullAndResolveBaseImageDigest() — never from
+  // blueprint.yaml, whose digest belongs to a different registry.
+  // Only rewrite when the current value already points at our sandbox-base
+  // image — custom --from Dockerfiles may use a different base.
+  if (baseImageRef) {
+    dockerfile = dockerfile.replace(/^ARG BASE_IMAGE=(.*)$/m, (line, currentValue) => {
+      const trimmed = String(currentValue).trim();
+      if (trimmed.startsWith(`${SANDBOX_BASE_IMAGE}:`) || trimmed.startsWith(`${SANDBOX_BASE_IMAGE}@`)) {
+        return `ARG BASE_IMAGE=${baseImageRef}`;
+      }
+      return line;
+    });
+  }
   dockerfile = dockerfile.replace(/^ARG NEMOCLAW_MODEL=.*$/m, `ARG NEMOCLAW_MODEL=${model}`);
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_PROVIDER_KEY=.*$/m,
@@ -2913,6 +2979,29 @@ async function createSandbox(
       };
     }
   }
+  // Pull the base image and resolve its digest so the Dockerfile is pinned to
+  // exactly what we just fetched. This prevents stale :latest tags from
+  // silently reusing a cached old image after NemoClaw upgrades (#1904).
+  const resolved = pullAndResolveBaseImageDigest();
+  if (resolved) {
+    console.log(`  Pinning base image to ${resolved.digest.slice(0, 19)}...`);
+  } else {
+    // Check if the image exists locally before falling back to unpinned :latest.
+    // On a first-time install behind a firewall with no cached image, warn early
+    // so the user knows the build will likely fail.
+    const localCheck = runCapture(
+      ["docker", "image", "inspect", `${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`],
+      { ignoreError: true },
+    );
+    if (localCheck) {
+      console.warn("  Warning: could not pull base image from registry; using cached :latest.");
+    } else {
+      console.warn(`  Warning: base image ${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG} is not available locally.`);
+      console.warn("  The build will fail unless Docker can pull the image during build.");
+      console.warn("  If offline, pull the image manually first:");
+      console.warn(`    docker pull ${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`);
+    }
+  }
   patchStagedDockerfile(
     stagedDockerfile,
     model,
@@ -2924,6 +3013,7 @@ async function createSandbox(
     activeMessagingChannels,
     messagingAllowedIds,
     discordGuilds,
+    resolved ? resolved.ref : null,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
@@ -2944,6 +3034,13 @@ async function createSandbox(
   // subprocesses (gateway start, openshell CLI) but the sandbox should
   // never have access to the host's Kubernetes cluster or SSH agent.
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
+  // Pass the configured dashboard port into the sandbox so nemoclaw-start.sh
+  // can unconditionally override CHAT_UI_URL even when the Docker image was
+  // built with a different default. Without this, the baked-in Docker ENV
+  // value takes precedence and the gateway starts on the wrong port. (#1925)
+  if (process.env.NEMOCLAW_DASHBOARD_PORT) {
+    envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", String(DASHBOARD_PORT)));
+  }
   if (webSearchConfig?.fetchEnabled) {
     const braveKey =
       getCredential(webSearch.BRAVE_API_KEY_ENV) || process.env[webSearch.BRAVE_API_KEY_ENV];
@@ -4956,10 +5053,19 @@ function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CON
   // Use stdio "ignore" to prevent spawnSync from waiting on inherited pipe fds.
   // The --background flag forks a child that inherits stdout/stderr; if those are
   // pipes, spawnSync blocks until the background process exits (never).
-  runOpenshell(["forward", "start", "--background", forwardTarget, sandboxName], {
+  const fwdResult = runOpenshell(["forward", "start", "--background", forwardTarget, sandboxName], {
     ignoreError: true,
     stdio: ["ignore", "ignore", "ignore"],
   });
+  // A non-zero exit from the parent means forward start rejected before forking —
+  // typically because the port is already bound by another process (e.g. a local
+  // Docker test container with -p PORT:PORT). The error is otherwise swallowed by
+  // ignoreError + stdio:ignore, leaving the dashboard URL silently unreachable (#1925).
+  if (fwdResult && fwdResult.status !== 0) {
+    console.warn(`! Port ${portToStop} forward did not start — port may be in use by another process.`);
+    console.warn(`  Check: docker ps --format 'table {{.Names}}\\t{{.Ports}}' | grep ${portToStop}`);
+    console.warn(`  Free the port, then reconnect: nemoclaw ${sandboxName} connect`);
+  }
 }
 
 function findOpenclawJsonPath(dir) {
@@ -5670,6 +5776,9 @@ module.exports = {
   getInstalledOpenshellVersion,
   getBlueprintMinOpenshellVersion,
   getBlueprintMaxOpenshellVersion,
+  pullAndResolveBaseImageDigest,
+  SANDBOX_BASE_IMAGE,
+  SANDBOX_BASE_TAG,
   versionGte,
   getRequestedModelHint,
   getRequestedProviderHint,

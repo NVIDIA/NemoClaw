@@ -157,6 +157,31 @@ $ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
 
 See [Environment Variables](commands.md#environment-variables) for the full list of port overrides.
 
+### Running multiple sandboxes simultaneously
+
+Each sandbox requires its own dashboard port.
+If you onboard a second sandbox without overriding the port, onboarding fails because port `18789` is already claimed by the first sandbox.
+
+Assign a distinct port to each sandbox at onboard time:
+
+```console
+$ nemoclaw onboard                              # first sandbox — uses default 18789
+$ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard  # second sandbox — uses 19000
+```
+
+Each sandbox then has its own SSH tunnel and its own dashboard URL:
+
+```text
+http://localhost:18789   ← first sandbox
+http://localhost:19000   ← second sandbox
+```
+
+You can verify which tunnel belongs to which sandbox with:
+
+```console
+$ openshell forward list
+```
+
 ## Onboarding
 
 ### Cgroup v2 errors during onboard
@@ -463,6 +488,26 @@ $ openshell term
 
 To permanently allow an endpoint, add it to the network policy.
 Refer to [Customize the Network Policy](../network-policy/customize-network-policy.md) for details.
+
+### Dashboard not reachable after setting `NEMOCLAW_DASHBOARD_PORT`
+
+If you ran `NEMOCLAW_DASHBOARD_PORT=<port> nemoclaw onboard` and onboarding completed
+but the dashboard URL is unreachable (browser shows connection refused or the page fails
+to load), the sandbox was most likely created with an older NemoClaw version that had a
+bug where `NEMOCLAW_DASHBOARD_PORT` was parsed on the host but not passed into the sandbox
+at startup. The gateway inside the sandbox continued listening on the default port 18789
+while the SSH tunnel forwarded the custom port — leaving nothing at the other end of the
+tunnel.
+
+Re-run onboarding on the current NemoClaw release with the desired port. This rebuilds
+the sandbox image with the gateway bound to the configured port:
+
+```console
+$ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
+```
+
+If you need to run multiple sandboxes at different ports at the same time, see
+[Running multiple sandboxes simultaneously](#running-multiple-sandboxes-simultaneously).
 
 ### Blueprint run failed
 

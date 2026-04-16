@@ -30,8 +30,16 @@ export function parsePort(envVar: string, fallback: number): number {
 
 /** OpenShell gateway port (default 8080, override via NEMOCLAW_GATEWAY_PORT). */
 export const GATEWAY_PORT = parsePort("NEMOCLAW_GATEWAY_PORT", 8080);
-/** Dashboard UI port (default 18789, override via NEMOCLAW_DASHBOARD_PORT). */
-export const DASHBOARD_PORT = parsePort("NEMOCLAW_DASHBOARD_PORT", 18789);
+/**
+ * The default port the OpenClaw dashboard listens on inside the sandbox.
+ * The sandbox image is built with CHAT_UI_URL=http://127.0.0.1:SANDBOX_DASHBOARD_PORT
+ * (patched by patchStagedDockerfile), so the gateway starts on whichever port was
+ * configured via NEMOCLAW_DASHBOARD_PORT at onboard time. This constant represents
+ * the hardcoded default when no override is set.
+ */
+const SANDBOX_DASHBOARD_PORT = 18789;
+/** Dashboard UI port (default SANDBOX_DASHBOARD_PORT, override via NEMOCLAW_DASHBOARD_PORT). This is the host-side port. */
+export const DASHBOARD_PORT = parsePort("NEMOCLAW_DASHBOARD_PORT", SANDBOX_DASHBOARD_PORT);
 /** vLLM / NIM inference port (default 8000, override via NEMOCLAW_VLLM_PORT). */
 export const VLLM_PORT = parsePort("NEMOCLAW_VLLM_PORT", 8000);
 /** Ollama inference port (default 11434, override via NEMOCLAW_OLLAMA_PORT). */
