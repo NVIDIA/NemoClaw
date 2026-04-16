@@ -56,6 +56,7 @@ describe("redact", () => {
 
 describe("createTarball", () => {
   let tempDir: string;
+  let outputDir: string;
 
   beforeEach(() => {
     process.exitCode = undefined;
@@ -63,6 +64,7 @@ describe("createTarball", () => {
 
   afterEach(() => {
     if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+    if (outputDir) rmSync(outputDir, { recursive: true, force: true });
     process.exitCode = undefined;
   });
 
@@ -79,12 +81,11 @@ describe("createTarball", () => {
     writeFileSync(join(tempDir, "dummy.txt"), "test data");
     // Write output to a SEPARATE directory — writing into the source dir
     // causes tar to see the file changing as it reads, returning exit 1.
-    const outputDir = mkdtempSync(join(tmpdir(), "debug-test-out-"));
+    outputDir = mkdtempSync(join(tmpdir(), "debug-test-out-"));
     const output = join(outputDir, "output.tar.gz");
     const ok = createTarball(tempDir, output);
     expect(ok).toBe(true);
     expect(process.exitCode).toBeUndefined();
     expect(existsSync(output)).toBe(true);
-    rmSync(outputDir, { recursive: true, force: true });
   });
 });
