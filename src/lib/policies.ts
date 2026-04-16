@@ -9,16 +9,11 @@ const path = require("path");
 const os = require("os");
 const readline = require("readline");
 const YAML = require("yaml");
-const { ROOT, run, runCapture, shellQuote } = require("./runner");
+const { ROOT, run, runCapture } = require("./runner");
 const registry = require("./registry");
 const { loadAgent } = require("./agent-defs");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
-function getOpenshellCommand() {
-  const binary = process.env.NEMOCLAW_OPENSHELL_BIN;
-  if (!binary) return "openshell";
-  return shellQuote(binary);
-}
 
 function listPresets() {
   if (!fs.existsSync(PRESETS_DIR)) return [];
@@ -99,17 +94,19 @@ function parseCurrentPolicy(raw) {
 }
 
 /**
- * Build the openshell policy set command with properly quoted arguments.
+ * Build the openshell policy set command as an argv array.
  */
 function buildPolicySetCommand(policyFile, sandboxName) {
-  return `${getOpenshellCommand()} policy set --policy ${shellQuote(policyFile)} --wait ${shellQuote(sandboxName)}`;
+  const binary = process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
+  return [binary, "policy", "set", "--policy", policyFile, "--wait", sandboxName];
 }
 
 /**
- * Build the openshell policy get command with properly quoted arguments.
+ * Build the openshell policy get command as an argv array.
  */
 function buildPolicyGetCommand(sandboxName) {
-  return `${getOpenshellCommand()} policy get --full ${shellQuote(sandboxName)} 2>/dev/null`;
+  const binary = process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
+  return [binary, "policy", "get", "--full", sandboxName];
 }
 
 /**

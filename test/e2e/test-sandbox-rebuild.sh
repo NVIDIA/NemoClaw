@@ -96,12 +96,12 @@ fi
 # ── Step 3: Write marker files into sandbox ─────────────────────────
 info "Step 3: Writing marker files into sandbox workspace..."
 
-openshell sandbox exec "$SANDBOX_NAME" -- \
+openshell sandbox exec --name "$SANDBOX_NAME" -- \
   sh -c "mkdir -p /sandbox/.openclaw-data/workspace && echo '${MARKER_CONTENT}' > ${MARKER_FILE}" \
   || fail "Failed to write marker file"
 
 # Verify the marker file was written
-VERIFY=$(openshell sandbox exec "$SANDBOX_NAME" -- cat "$MARKER_FILE" 2>/dev/null || true)
+VERIFY=$(openshell sandbox exec --name "$SANDBOX_NAME" -- cat "$MARKER_FILE" 2>/dev/null || true)
 [ "$VERIFY" = "$MARKER_CONTENT" ] || fail "Marker file verification failed: got '$VERIFY'"
 
 pass "Marker file written and verified"
@@ -144,7 +144,7 @@ pass "Rebuild completed"
 # ── Step 6: Verify marker files survived ────────────────────────────
 info "Step 6: Verifying marker files survived rebuild..."
 
-RESTORED=$(openshell sandbox exec "$SANDBOX_NAME" -- cat "$MARKER_FILE" 2>/dev/null || true)
+RESTORED=$(openshell sandbox exec --name "$SANDBOX_NAME" -- cat "$MARKER_FILE" 2>/dev/null || true)
 if [ "$RESTORED" = "$MARKER_CONTENT" ]; then
   pass "Marker file survived rebuild"
 else

@@ -322,6 +322,34 @@ jobs:
           path: test-sandbox-operations-*.log
           if-no-files-found: ignore
 
+  # ── Inference routing (credential isolation + error classification) ──
+  # TC-INF-05: real API key absent from sandbox env/process/filesystem
+  # TC-INF-06: invalid API key → classified credential error (PR-safe)
+  # TC-INF-07: unreachable endpoint → classified transport error (PR-safe)
+  inference-routing-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run inference error classification E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_POLICY_TIER: "open"
+        run: bash test/e2e/test-inference-routing.sh
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: inference-routing-test-log
+          path: test-inference-routing-*.log
+          if-no-files-found: ignore
+
   # ── Snapshot commands E2E ────────────────────────────────────
   # Validates snapshot create/list/restore lifecycle: create a snapshot,
   # list it, delete state, restore from snapshot, verify state recovered.
@@ -351,6 +379,35 @@ jobs:
           path: /tmp/nemoclaw-e2e-install.log
           if-no-files-found: ignore
 
+  # ── Shields & config lifecycle E2E ───────────────────────────
+  # Validates shields down/up controls config mutability, config get/set/
+  # rotate-token, audit trail, and auto-restore timer.
+  shields-config-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run shields & config E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-shields"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-shields-config.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shields-config-install-log
+          path: /tmp/nemoclaw-e2e-shields-install.log
+          if-no-files-found: ignore
+
   # ── OpenClaw rebuild upgrade E2E ─────────────────────────────
   # Reproduces NVBug 6076156: onboard with an older OpenClaw version,
   # then rebuild to verify workspace state survives the upgrade.
@@ -378,6 +435,38 @@ jobs:
         with:
           name: rebuild-openclaw-install-log
           path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore
+
+  # ── Issue #1904: stale sandbox after NemoClaw upgrade ────────
+  # Exact reproduction of the reporter's scenario: install an older
+  # NemoClaw, create a sandbox, upgrade to current, verify the old
+  # sandbox is detected as stale and rebuilt with the new image.
+  upgrade-stale-sandbox-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run upgrade stale sandbox E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-upgrade-stale"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-upgrade-stale-sandbox.sh
+
+      - name: Upload install logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-stale-sandbox-logs
+          path: |
+            /tmp/nemoclaw-e2e-old-install.log
+            /tmp/nemoclaw-e2e-upgrade-install.log
           if-no-files-found: ignore
 
   # ── Hermes rebuild upgrade E2E ──────────────────────────────
@@ -461,8 +550,8 @@ jobs:
 
   notify-on-failure:
     runs-on: ubuntu-latest
-    needs: [cloud-e2e, cloud-experimental-e2e, messaging-providers-e2e, sandbox-survival-e2e, hermes-e2e, skip-permissions-e2e, sandbox-operations-e2e, snapshot-commands-e2e, rebuild-openclaw-e2e, rebuild-hermes-e2e, gpu-e2e]
-    if: ${{ always() && (needs.cloud-e2e.result == 'failure' || needs.cloud-experimental-e2e.result == 'failure' || needs.messaging-providers-e2e.result == 'failure' || needs.sandbox-survival-e2e.result == 'failure' || needs.hermes-e2e.result == 'failure' || needs.skip-permissions-e2e.result == 'failure' || needs.sandbox-operations-e2e.result == 'failure' || needs.snapshot-commands-e2e.result == 'failure' || needs.rebuild-openclaw-e2e.result == 'failure' || needs.rebuild-hermes-e2e.result == 'failure' || needs.gpu-e2e.result == 'failure') }}
+    needs: [cloud-e2e, cloud-experimental-e2e, messaging-providers-e2e, sandbox-survival-e2e, hermes-e2e, skip-permissions-e2e, sandbox-operations-e2e, inference-routing-e2e, snapshot-commands-e2e, rebuild-openclaw-e2e, upgrade-stale-sandbox-e2e, rebuild-hermes-e2e, gpu-e2e]
+    if: ${{ always() && (needs.cloud-e2e.result == 'failure' || needs.cloud-experimental-e2e.result == 'failure' || needs.messaging-providers-e2e.result == 'failure' || needs.sandbox-survival-e2e.result == 'failure' || needs.hermes-e2e.result == 'failure' || needs.skip-permissions-e2e.result == 'failure' || needs.sandbox-operations-e2e.result == 'failure' || needs.inference-routing-e2e.result == 'failure' || needs.snapshot-commands-e2e.result == 'failure' || needs.rebuild-openclaw-e2e.result == 'failure' || needs.upgrade-stale-sandbox-e2e.result == 'failure' || needs.rebuild-hermes-e2e.result == 'failure' || needs.gpu-e2e.result == 'failure') }}
     permissions:
       issues: write
     steps:

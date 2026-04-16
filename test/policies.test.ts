@@ -257,20 +257,21 @@ describe("policies", () => {
   });
 
   describe("buildPolicySetCommand", () => {
-    it("shell-quotes sandbox name to prevent injection", () => {
+    it("returns an argv array with sandbox name as a separate element", () => {
       const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-      expect(cmd).toBe("openshell policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'");
+      expect(cmd).toEqual(["openshell", "policy", "set", "--policy", "/tmp/policy.yaml", "--wait", "my-assistant"]);
     });
 
-    it("escapes shell metacharacters in sandbox name", () => {
+    it("preserves shell metacharacters literally in sandbox name (no injection)", () => {
       const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test; whoami");
-      expect(cmd.includes("'test; whoami'")).toBeTruthy();
+      expect(cmd).toContain("test; whoami");
+      // The metacharacters are a literal argv element, not shell-interpreted
     });
 
     it("places --wait before the sandbox name", () => {
       const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test-box");
       const waitIdx = cmd.indexOf("--wait");
-      const nameIdx = cmd.indexOf("'test-box'");
+      const nameIdx = cmd.indexOf("test-box");
       expect(waitIdx < nameIdx).toBeTruthy();
     });
 
@@ -278,10 +279,7 @@ describe("policies", () => {
       process.env.NEMOCLAW_OPENSHELL_BIN = "/tmp/fake path/openshell";
       try {
         const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-        assert.equal(
-          cmd,
-          "'/tmp/fake path/openshell' policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'",
-        );
+        expect(cmd).toEqual(["/tmp/fake path/openshell", "policy", "set", "--policy", "/tmp/policy.yaml", "--wait", "my-assistant"]);
       } finally {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;
       }
@@ -289,9 +287,9 @@ describe("policies", () => {
   });
 
   describe("buildPolicyGetCommand", () => {
-    it("shell-quotes sandbox name", () => {
+    it("returns an argv array with sandbox name as a separate element", () => {
       const cmd = policies.buildPolicyGetCommand("my-assistant");
-      expect(cmd).toBe("openshell policy get --full 'my-assistant' 2>/dev/null");
+      expect(cmd).toEqual(["openshell", "policy", "get", "--full", "my-assistant"]);
     });
   });
 
