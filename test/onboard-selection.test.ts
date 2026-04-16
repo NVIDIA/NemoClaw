@@ -132,10 +132,13 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
-  if (command.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now\\nqwen3:32b  def  20 GB  now";
-  if (command.includes("localhost:8000/v1/models")) return "";
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
+  if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now\\nqwen3:32b  def  20 GB  now";
+  if (cmd.includes("localhost:8000/v1/models")) return "";
   return "";
 };
 registry.updateSandbox = (_name, update) => updates.push(update);
@@ -305,9 +308,12 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-test"; };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "";
-  if (command.includes("localhost:11434/api/tags")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("localhost:11434/api/tags")) return "";
+  if (cmd.includes("localhost:8000/v1/models")) return "";
   return "";
 };
 
@@ -398,9 +404,12 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-test"; };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "";
-  if (command.includes("localhost:11434/api/tags")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("localhost:11434/api/tags")) return "";
+  if (cmd.includes("localhost:8000/v1/models")) return "";
   return "";
 };
 
@@ -583,15 +592,18 @@ credentials.prompt = async (message) => {
   return answers.shift() || "";
 };
 runner.run = (command, opts = {}) => {
-  commands.push(command);
+  commands.push(Array.isArray(command) ? command.join(" ") : command);
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
-  if (command.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
-  if (command.includes("localhost:8000/v1/models")) return "";
-  if (command.includes("api/generate")) return '{"response":"hello"}';
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
+  if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
+  if (cmd.includes("localhost:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
 };
 
@@ -681,11 +693,14 @@ credentials.prompt = async (message) => {
 credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-good"; };
 runner.run = () => ({ status: 0 });
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
-  if (command.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
-  if (command.includes("localhost:8000/v1/models")) return "";
-  if (command.includes("api/generate")) return '{"response":"hello"}';
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
+  if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
+  if (cmd.includes("localhost:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
 };
 
@@ -781,11 +796,14 @@ credentials.prompt = async (message) => {
   return answers.shift() || "";
 };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (command.includes("ollama list")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
-  if (command.includes("api/generate")) return '{"response":"hello"}';
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [] });
+  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("localhost:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
 };
 
@@ -888,11 +906,14 @@ credentials.prompt = async (message) => {
   return answers.shift() || "";
 };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (command.includes("ollama list")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
-  if (command.includes("api/generate")) return '{"response":"hello"}';
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [] });
+  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("localhost:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
 };
 
@@ -2725,9 +2746,12 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "";
-  if (command.includes("localhost:11434")) return "";
-  if (command.includes("localhost:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("localhost:11434")) return "";
+  if (cmd.includes("localhost:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
   return "";
 };
 
@@ -2834,9 +2858,12 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "";
-  if (command.includes("localhost:11434")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("localhost:11434")) return "";
+  if (cmd.includes("localhost:8000/v1/models")) return "";
   return "";
 };
 

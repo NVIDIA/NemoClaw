@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { readConfigFile, writeConfigFile } from "./config-io";
+import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 
 export interface SandboxEntry {
   name: string;
@@ -34,7 +34,7 @@ export const LOCK_MAX_RETRIES = 120;
 
 /** Acquire an advisory lock using mkdir (atomic on POSIX). */
 export function acquireLock(): void {
-  fs.mkdirSync(path.dirname(REGISTRY_FILE), { recursive: true, mode: 0o700 });
+  ensureConfigDir(path.dirname(REGISTRY_FILE));
   const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
   for (let i = 0; i < LOCK_MAX_RETRIES; i++) {
     try {

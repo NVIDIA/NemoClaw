@@ -257,20 +257,21 @@ describe("policies", () => {
   });
 
   describe("buildPolicySetCommand", () => {
-    it("shell-quotes sandbox name to prevent injection", () => {
+    it("returns an argv array with sandbox name as a separate element", () => {
       const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-      expect(cmd).toBe("openshell policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'");
+      expect(cmd).toEqual(["openshell", "policy", "set", "--policy", "/tmp/policy.yaml", "--wait", "my-assistant"]);
     });
 
-    it("escapes shell metacharacters in sandbox name", () => {
+    it("preserves shell metacharacters literally in sandbox name (no injection)", () => {
       const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test; whoami");
-      expect(cmd.includes("'test; whoami'")).toBeTruthy();
+      expect(cmd).toContain("test; whoami");
+      // The metacharacters are a literal argv element, not shell-interpreted
     });
 
     it("places --wait before the sandbox name", () => {
       const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "test-box");
       const waitIdx = cmd.indexOf("--wait");
-      const nameIdx = cmd.indexOf("'test-box'");
+      const nameIdx = cmd.indexOf("test-box");
       expect(waitIdx < nameIdx).toBeTruthy();
     });
 
@@ -278,10 +279,7 @@ describe("policies", () => {
       process.env.NEMOCLAW_OPENSHELL_BIN = "/tmp/fake path/openshell";
       try {
         const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-        assert.equal(
-          cmd,
-          "'/tmp/fake path/openshell' policy set --policy '/tmp/policy.yaml' --wait 'my-assistant'",
-        );
+        expect(cmd).toEqual(["/tmp/fake path/openshell", "policy", "set", "--policy", "/tmp/policy.yaml", "--wait", "my-assistant"]);
       } finally {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;
       }
@@ -289,9 +287,9 @@ describe("policies", () => {
   });
 
   describe("buildPolicyGetCommand", () => {
-    it("shell-quotes sandbox name", () => {
+    it("returns an argv array with sandbox name as a separate element", () => {
       const cmd = policies.buildPolicyGetCommand("my-assistant");
-      expect(cmd).toBe("openshell policy get --full 'my-assistant' 2>/dev/null");
+      expect(cmd).toEqual(["openshell", "policy", "get", "--full", "my-assistant"]);
     });
   });
 
@@ -684,6 +682,158 @@ describe("policies", () => {
     });
   });
 
+  describe("removePresetFromPolicy", () => {
+    const pypiEntries =
+      "  pypi:\n" +
+      "    name: pypi\n" +
+      "    endpoints:\n" +
+      "      - host: pypi.org\n" +
+      "        port: 443\n";
+
+    it("removes preset keys from policy YAML", () => {
+      const current =
+        "version: 1\n\n" +
+        "network_policies:\n" +
+        "  npm_yarn:\n" +
+        "    name: npm_yarn\n" +
+        "    endpoints:\n" +
+        "      - host: registry.npmjs.org\n" +
+        "        port: 443\n" +
+        "        access: full\n" +
+        "  pypi:\n" +
+        "    name: pypi\n" +
+        "    endpoints:\n" +
+        "      - host: pypi.org\n" +
+        "        port: 443\n" +
+        "        access: full\n";
+      const result = policies.removePresetFromPolicy(current, pypiEntries);
+      expect(result).toContain("npm_yarn");
+      expect(result).toContain("registry.npmjs.org");
+      expect(result).not.toContain("pypi");
+    });
+
+    it("preserves non-network sections when removing preset", () => {
+      const current =
+        "version: 1\n\n" +
+        "filesystem_policy:\n" +
+        "  include_workdir: true\n\n" +
+        "network_policies:\n" +
+        "  pypi:\n" +
+        "    name: pypi\n" +
+        "    endpoints:\n" +
+        "      - host: pypi.org\n" +
+        "        port: 443\n";
+      const result = policies.removePresetFromPolicy(current, pypiEntries);
+      expect(result).toContain("filesystem_policy");
+      expect(result).toContain("include_workdir");
+      expect(result).not.toContain("pypi");
+    });
+
+    it("returns scaffold when current policy is empty", () => {
+      const result = policies.removePresetFromPolicy("", pypiEntries);
+      expect(result).toContain("version: 1");
+    });
+
+    it("returns current policy unchanged when presetEntries is null", () => {
+      const current = "version: 1\n\nnetwork_policies:\n  npm_yarn:\n    name: npm_yarn\n";
+      const result = policies.removePresetFromPolicy(current, null);
+      expect(result).toContain("npm_yarn");
+    });
+
+    it("handles removing all network policies", () => {
+      const current =
+        "version: 1\n\nnetwork_policies:\n  pypi:\n    name: pypi\n    endpoints:\n      - host: pypi.org\n";
+      const result = policies.removePresetFromPolicy(current, pypiEntries);
+      expect(result).toContain("version: 1");
+      expect(result).toContain("network_policies");
+      expect(result).not.toContain("pypi");
+    });
+
+    it("returns policy unchanged when network_policies is a legacy array", () => {
+      const current =
+        "version: 1\n\nnetwork_policies:\n  - host: pypi.org\n    allow: true\n";
+      const result = policies.removePresetFromPolicy(current, pypiEntries);
+      expect(result).toContain("pypi.org");
+      expect(result).toContain("allow: true");
+    });
+  });
+
+  describe("selectForRemoval", () => {
+    function runSelectForRemoval(input, { applied = [] } = {}) {
+      const script = String.raw`
+const { selectForRemoval } = require(${POLICIES_PATH});
+const items = JSON.parse(process.env.NEMOCLAW_TEST_ITEMS);
+const options = JSON.parse(process.env.NEMOCLAW_TEST_OPTIONS || "{}");
+
+selectForRemoval(items, options)
+  .then((value) => {
+    process.stdout.write(String(value) + "\n");
+  })
+  .catch((error) => {
+    const message = error && error.message ? error.message : String(error);
+    process.stderr.write(message);
+    process.exit(1);
+  });
+`;
+
+      return spawnSync(process.execPath, ["-e", script], {
+        cwd: REPO_ROOT,
+        encoding: "utf-8",
+        timeout: 5000,
+        input,
+        env: {
+          ...process.env,
+          NEMOCLAW_TEST_ITEMS: JSON.stringify(SELECT_FROM_LIST_ITEMS),
+          NEMOCLAW_TEST_OPTIONS: JSON.stringify({ applied }),
+        },
+      });
+    }
+
+    it("returns null when no presets are applied", () => {
+      const result = runSelectForRemoval("1\n", { applied: [] });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("No presets are currently applied");
+      expect(result.stdout.trim()).toBe("null");
+    });
+
+    it("shows only applied presets and returns selected name", () => {
+      const result = runSelectForRemoval("1\n", { applied: ["npm"] });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("Applied presets:");
+      expect(result.stderr).toContain("1) npm");
+      expect(result.stderr).not.toContain("pypi");
+      expect(result.stdout.trim()).toBe("npm");
+    });
+
+    it("returns null for empty input", () => {
+      const result = runSelectForRemoval("\n", { applied: ["npm"] });
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toBe("null");
+    });
+
+    it("rejects non-numeric input", () => {
+      const result = runSelectForRemoval("npm\n", { applied: ["npm"] });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("Invalid preset number");
+      expect(result.stdout.trim()).toBe("null");
+    });
+
+    it("rejects out-of-range number", () => {
+      const result = runSelectForRemoval("99\n", { applied: ["npm"] });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("Invalid preset number");
+      expect(result.stdout.trim()).toBe("null");
+    });
+
+    it("selects second preset when both are applied", () => {
+      const result = runSelectForRemoval("2\n", { applied: ["npm", "pypi"] });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("1) npm");
+      expect(result.stderr).toContain("2) pypi");
+      expect(result.stdout.trim()).toBe("pypi");
+    });
+  });
+
   describe("policy-add confirmation", () => {
     it("prompts for confirmation before applying a preset", () => {
       const result = runPolicyAdd("y");
@@ -721,6 +871,92 @@ describe("policies", () => {
       expect(calls.some((call) => call.type === "prompt")).toBeFalsy();
       expect(calls.some((call) => call.type === "apply")).toBeFalsy();
       expect(result.stdout).toMatch(/Endpoints that would be opened: pypi\.org/);
+      expect(result.stdout).toMatch(/--dry-run: no changes applied\./);
+    });
+  });
+
+  describe("policy-remove confirmation", () => {
+    function runPolicyRemove(confirmAnswer, extraArgs = []) {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-remove-"));
+      const scriptPath = path.join(tmpDir, "policy-remove-check.js");
+      const script = String.raw`
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+const credentials = require(${CREDENTIALS_PATH});
+const calls = [];
+policies.selectForRemoval = async () => "pypi";
+policies.loadPreset = () => "network_policies:\n  pypi:\n    host: pypi.org\n";
+policies.getPresetEndpoints = () => ["pypi.org"];
+credentials.prompt = async (message) => {
+  calls.push({ type: "prompt", message });
+  return ${JSON.stringify(confirmAnswer)};
+};
+registry.getSandbox = (name) => (name === "test-sandbox" ? { name, policies: ["pypi"] } : null);
+registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
+policies.listPresets = () => [
+  { name: "npm", description: "npm and Yarn registry access" },
+  { name: "pypi", description: "Python Package Index (PyPI) access" },
+];
+policies.getAppliedPresets = () => ["pypi"];
+policies.removePreset = (sandboxName, presetName) => {
+  calls.push({ type: "remove", sandboxName, presetName });
+  return true;
+};
+process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-remove", ...${JSON.stringify(extraArgs)}];
+require(${CLI_PATH});
+setImmediate(() => {
+  process.stdout.write("\n__CALLS__" + JSON.stringify(calls));
+});
+`;
+
+      fs.writeFileSync(scriptPath, script);
+
+      return spawnSync(process.execPath, [scriptPath], {
+        cwd: REPO_ROOT,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+        },
+      });
+    }
+
+    it("prompts for confirmation before removing a preset", () => {
+      const result = runPolicyRemove("y");
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim());
+      expect(calls).toContainEqual({
+        type: "prompt",
+        message: "  Remove 'pypi' from sandbox 'test-sandbox'? [Y/n]: ",
+      });
+      expect(calls).toContainEqual({
+        type: "remove",
+        sandboxName: "test-sandbox",
+        presetName: "pypi",
+      });
+    });
+
+    it("skips removing the preset when confirmation is declined", () => {
+      const result = runPolicyRemove("n");
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim());
+      expect(calls).toContainEqual({
+        type: "prompt",
+        message: "  Remove 'pypi' from sandbox 'test-sandbox'? [Y/n]: ",
+      });
+      expect(calls.some((call) => call.type === "remove")).toBeFalsy();
+    });
+
+    it("does not prompt or remove when --dry-run is passed", () => {
+      const result = runPolicyRemove("y", ["--dry-run"]);
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim());
+      expect(calls.some((call) => call.type === "prompt")).toBeFalsy();
+      expect(calls.some((call) => call.type === "remove")).toBeFalsy();
+      expect(result.stdout).toMatch(/Endpoints that would be removed: pypi\.org/);
       expect(result.stdout).toMatch(/--dry-run: no changes applied\./);
     });
   });

@@ -97,6 +97,20 @@ describe("registry", () => {
     expect(registry.getDefault()).toBe("y");
   });
 
+  it("getDefault falls back when defaultSandbox points to a stale name", () => {
+    registry.registerSandbox({ name: "alive" });
+    const data = registry.load();
+    data.defaultSandbox = "deleted-sandbox";
+    registry.save(data);
+    expect(registry.getDefault()).toBe("alive");
+  });
+
+  it("getDefault returns null when registry is empty with stale pointer", () => {
+    const data = { sandboxes: {}, defaultSandbox: "ghost" };
+    registry.save(data);
+    expect(registry.getDefault()).toBe(null);
+  });
+
   it("removeSandbox last sandbox sets default to null", () => {
     registry.registerSandbox({ name: "only" });
     registry.removeSandbox("only");

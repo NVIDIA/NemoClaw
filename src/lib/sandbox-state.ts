@@ -342,6 +342,21 @@ export function restoreSandboxState(
       return { success: false, restoredDirs, failedDirs: [...localDirs] };
     }
 
+    // Remove existing state dirs before extracting so stale files from
+    // later snapshots don't persist after restoring an earlier one.
+    const rmCmd = localDirs
+      .map((d) => `rm -rf "${writableDir}/${d}"`)
+      .join(" && ");
+    _log(`Cleaning target dirs before restore: ${rmCmd}`);
+    const rmResult = spawnSync(
+      "ssh",
+      [...sshArgs(configFile, sandboxName), rmCmd],
+      { stdio: ["ignore", "pipe", "pipe"], timeout: 30000 },
+    );
+    if (rmResult.status !== 0) {
+      _log(`WARNING: pre-restore cleanup failed (exit ${rmResult.status}): ${(rmResult.stderr?.toString() || "").substring(0, 200)}`);
+    }
+
     const extractCmd = `tar -xf - -C ${writableDir}`;
     const sshResult = spawnSync(
       "ssh",

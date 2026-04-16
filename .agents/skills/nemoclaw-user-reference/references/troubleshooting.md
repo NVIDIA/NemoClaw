@@ -256,6 +256,24 @@ Follow these steps to reconnect.
 > The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox. Workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
 > Back up your workspace first by following the instructions at Back Up and Restore (see the `nemoclaw-user-workspace` skill).
 
+### Sandbox is running an outdated agent version
+
+After upgrading NemoClaw, `nemoclaw <name> connect` and `nemoclaw <name> status` warn if the sandbox is running an older agent version than the current image.
+
+To upgrade the sandbox while preserving workspace state, run:
+
+```console
+$ nemoclaw <name> rebuild
+```
+
+The rebuild command backs up state, destroys the old sandbox, recreates it with the current image, and restores state.
+Create a snapshot before rebuilding if you want an additional safety net:
+
+```console
+$ nemoclaw <name> snapshot create
+$ nemoclaw <name> rebuild
+```
+
 ### Sandbox shows as stopped
 
 The sandbox may have been stopped or deleted.
