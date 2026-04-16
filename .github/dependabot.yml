@@ -8,4 +8,4 @@ updates:
     schedule:
       interval: "weekly"
     commit-message:
-      prefix: "build(deps)"
+      prefix: "chore(deps)"
