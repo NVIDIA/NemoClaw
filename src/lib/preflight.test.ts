@@ -123,11 +123,37 @@ describe("checkPortAvailable", () => {
   });
 });
 
+// Restricted CI/sandbox environments (seccomp, gVisor, some container runtimes)
+// deny localhost binds with EPERM/EACCES even for ephemeral ports. Detect that
+// once up-front so the real-probe tests can skip gracefully instead of failing
+// the suite with a false port-conflict signal. (#544)
+let _canBindLocalhost: boolean | null = null;
+async function canBindLocalhost(): Promise<boolean> {
+  if (_canBindLocalhost !== null) return _canBindLocalhost;
+  const net = require("node:net");
+  _canBindLocalhost = await new Promise<boolean>((resolve) => {
+    const srv = net.createServer();
+    srv.once("error", () => resolve(false));
+    srv.listen(0, "127.0.0.1", () => {
+      srv.close(() => resolve(true));
+    });
+  });
+  return _canBindLocalhost;
+}
+
 describe("probePortAvailability", () => {
   // Import probePortAvailability directly for targeted testing
   const { probePortAvailability } = require("../../dist/lib/preflight");
 
   it("returns ok when port is free (real net probe)", async () => {
+    if (!(await canBindLocalhost())) {
+      // Environment denies localhost bind — probe returns an inconclusive
+      // warning rather than a false port conflict. See #544.
+      const result = await probePortAvailability(0, {});
+      expect(result.ok).toBe(true);
+      expect(result.warning).toMatch(/port probe (skipped|inconclusive)/);
+      return;
+    }
     // Use a high ephemeral port unlikely to be in use
     const result = await probePortAvailability(0, {});
     // Port 0 lets the OS pick a free port, so it should always succeed
@@ -135,6 +161,11 @@ describe("probePortAvailability", () => {
   });
 
   it("detects EADDRINUSE on an occupied port (real net probe)", async () => {
+    if (!(await canBindLocalhost())) {
+      // Can't create a conflict if we can't bind in the first place.
+      // The EPERM/inconclusive branch is exercised by the test above.
+      return;
+    }
     // Start a server on a random port, then probe it
     const net = require("node:net");
     const srv = net.createServer();
@@ -165,12 +196,23 @@ describe("probePortAvailability", () => {
 
 describe("checkPortAvailable — real probe fallback", () => {
   it("returns ok for a free port via full detection chain", async () => {
+    if (!(await canBindLocalhost())) {
+      // Restricted environment — the net probe will return an inconclusive
+      // warning rather than a false conflict. ok should still be true. (#544)
+      const result = await checkPortAvailable(0, { skipLsof: true });
+      expect(result.ok).toBe(true);
+      return;
+    }
     // skipLsof forces the net probe path; use port 0 which is always free
     const result = await checkPortAvailable(0, { skipLsof: true });
     expect(result.ok).toBe(true);
   });
 
   it("detects a real occupied port", async () => {
+    if (!(await canBindLocalhost())) {
+      // Can't manufacture a real port conflict without bind permission.
+      return;
+    }
     const net = require("node:net");
     const srv = net.createServer();
     await new Promise<void>((resolve) => srv.listen(0, "127.0.0.1", resolve));
