@@ -323,15 +323,20 @@ stop_orphaned_openshell_processes() {
     fi
   done < <(pgrep "${_pgrep_user[@]}" -x ssh 2>/dev/null || true)
 
-  # Deduplicate
-  local -A seen=()
+  # Deduplicate (portable — no associative arrays, works on Bash 3.2+)
   local -a unique_pids=()
-  for pid in "${pids[@]}"; do
-    if [ -z "${seen[$pid]:-}" ]; then
-      seen[$pid]=1
-      unique_pids+=("$pid")
-    fi
-  done
+  if [ "${#pids[@]}" -gt 0 ]; then
+    local _seen=" "
+    for pid in "${pids[@]}"; do
+      case "$_seen" in
+        *" $pid "*) ;;
+        *)
+          _seen="$_seen$pid "
+          unique_pids+=("$pid")
+          ;;
+      esac
+    done
+  fi
 
   if [ "${#unique_pids[@]}" -eq 0 ]; then
     info "No orphaned openshell processes found"
