@@ -15,7 +15,8 @@
  * are used for error reporting and do not correspond to regex patterns.
  *
  * Includes NFKC unicode normalization, zero-width character stripping,
- * and base64 decode-rescan to defeat common evasion techniques.
+ * base64 decode-rescan, URL decoding, and HTML entity decoding to
+ * defeat common evasion techniques.
  */
 
 export type Severity = "high" | "medium" | "low";
@@ -141,9 +142,20 @@ export function scanFields(fields: Record<string, string>): Finding[] {
       if (decoded !== "") {
         scanText(fieldName + "_b64decoded", normalizeText(decoded), findings);
       }
+
+      // URL-decode and re-scan if the result differs
+      const urlDecoded = tryUrlDecode(normalizedValue);
+      if (urlDecoded !== normalizedValue) {
+        scanText(fieldName + "_urldecoded", urlDecoded, findings);
+      }
+
+      // HTML entity decode and re-scan if the result differs
+      const htmlDecoded = decodeHtmlEntities(normalizedValue);
+      if (htmlDecoded !== normalizedValue) {
+        scanText(fieldName + "_htmldecoded", htmlDecoded, findings);
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[injection-scanner] error scanning field "${fieldName}": ${message}`);
       findings.push({
         field: fieldName,
         pattern: "scanner_error",
@@ -281,6 +293,63 @@ function tryBase64Decode(s: string): string {
   }
 
   return decoded.toString("utf-8");
+}
+
+/**
+ * Try to URL-decode a string. Returns the decoded text on success,
+ * or the original string if decoding fails or produces no change.
+ */
+function tryUrlDecode(s: string): string {
+  if (!/%[0-9A-Fa-f]{2}/.test(s)) {
+    return s;
+  }
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
+/** Named HTML entities to decode. */
+const HTML_ENTITIES: Record<string, string> = {
+  "&lt;": "<",
+  "&gt;": ">",
+  "&amp;": "&",
+  "&quot;": '"',
+  "&#39;": "'",
+  "&#x27;": "'",
+  "&apos;": "'",
+};
+
+/**
+ * Decode common HTML entities and numeric character references.
+ * Returns the decoded string.
+ */
+function decodeHtmlEntities(s: string): string {
+  return s.replace(/&(?:#(\d+)|#x([0-9A-Fa-f]+)|[a-z]+);/gi, (match) => {
+    const lower = match.toLowerCase();
+    if (lower in HTML_ENTITIES) {
+      return HTML_ENTITIES[lower];
+    }
+
+    const decMatch = /^&#(\d+);$/.exec(match);
+    if (decMatch) {
+      const code = Number.parseInt(decMatch[1], 10);
+      if (code > 0 && code <= 0x10ffff) {
+        return String.fromCodePoint(code);
+      }
+    }
+
+    const hexMatch = /^&#x([0-9A-Fa-f]+);$/i.exec(match);
+    if (hexMatch) {
+      const code = Number.parseInt(hexMatch[1], 16);
+      if (code > 0 && code <= 0x10ffff) {
+        return String.fromCodePoint(code);
+      }
+    }
+
+    return match;
+  });
 }
 
 function truncate(s: string, maxLen: number): string {

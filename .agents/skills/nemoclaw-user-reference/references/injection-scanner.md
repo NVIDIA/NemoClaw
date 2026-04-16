@@ -1,25 +1,5 @@
----
-title:
-  page: "NemoClaw Injection Scanner: Detect Prompt Injection in Agent Tool Calls"
-  nav: "Injection Scanner"
-description:
-  main: "Reference for the prompt injection scanner module that detects role overrides, instruction injection, tool manipulation, and data exfiltration patterns."
-  agent: "Injection scanner API reference covering 15 regex patterns across four categories (role overrides, instruction injection, tool manipulation, data exfiltration), severity levels, NFKC normalization, and base64 rescan. Use when looking up scanner patterns, severity classification, or the scanFields API."
-keywords: ["nemoclaw injection scanner", "prompt injection detection", "agent security"]
-topics: ["generative_ai", "ai_agents"]
-tags: ["openclaw", "openshell", "security", "injection", "scanning"]
-content:
-  type: reference
-  difficulty: intermediate
-  audience: ["developer", "engineer"]
-status: published
----
-
-<!--
-  SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-  SPDX-License-Identifier: Apache-2.0
--->
-
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # NemoClaw Injection Scanner: Detect Prompt Injection in Agent Tool Calls
 
 The injection scanner detects prompt injection patterns in agent tool inputs and outputs.
@@ -137,5 +117,5 @@ type Severity = "high" | "medium" | "low";
 
 ## Next Steps
 
-- Review the sandbox policy configuration in [NemoClaw Network Policies: Baseline Rules and Operator Approval](network-policies.md) to understand how network-level controls complement application-layer scanning.
-- See [NemoClaw Architecture: Plugin, Blueprint, and Sandbox Structure](architecture.md) for how the scanner fits into the NemoClaw plugin structure.
+- Review the sandbox policy configuration in NemoClaw Network Policies: Baseline Rules and Operator Approval (see the `nemoclaw-user-reference` skill) to understand how network-level controls complement application-layer scanning.
+- See NemoClaw Architecture: Plugin, Blueprint, and Sandbox Structure (see the `nemoclaw-user-reference` skill) for how the scanner fits into the NemoClaw plugin structure.
