@@ -14,7 +14,9 @@ spec:
   containers:
     # Docker daemon (DinD)
     - name: dind
-      image: docker:24-dind
+      # Pinned by digest to prevent supply-chain attacks via mutable tag references.
+      # Tag: docker:24-dind (update digest when bumping the tag).
+      image: docker:24-dind@sha256:9b17a9f25adf17b88d0a013b4f00160754adf4b07ccbe9986664a49886c2c98e
       securityContext:
         privileged: true
       env:
@@ -35,7 +37,9 @@ spec:
 
     # Workspace - runs official NemoClaw installer
     - name: workspace
-      image: node:22
+      # Pinned by digest to prevent supply-chain attacks via mutable tag references.
+      # Tag: node:22 (update digest when bumping the tag).
+      image: node:22@sha256:ecabd1cb6956d7acfffe8af6bbfbe2df42362269fd28c227f36367213d0bb777
       securityContext:
         allowPrivilegeEscalation: false
         capabilities:
@@ -128,7 +132,9 @@ spec:
   initContainers:
     # Configure Docker daemon for cgroup v2
     - name: init-docker-config
-      image: busybox
+      # Pinned by digest to prevent supply-chain attacks via mutable tag references.
+      # Tag: busybox:latest (update digest when pinning to a different tag).
+      image: busybox@sha256:1487d0af5f52b4ba31c7e465126ee2123fe3f2305d638e7827681e7cf6c83d5e
       command: ["sh", "-c", "echo '{\"default-cgroupns-mode\":\"host\"}' > /etc/docker/daemon.json"]
       volumeMounts:
         - name: docker-config
