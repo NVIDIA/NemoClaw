@@ -10,15 +10,16 @@
  */
 
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import Ajv, { type ValidateFunction } from "ajv/dist/2020.js";
 import YAML from "yaml";
 
-const REPO_ROOT = new URL("..", import.meta.url);
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 function repoPath(...segments: string[]): string {
-  return new URL(join(...segments), REPO_ROOT).pathname;
+  return join(REPO_ROOT, ...segments);
 }
 
 function loadYAML(path: string): unknown {

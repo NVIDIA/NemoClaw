@@ -141,7 +141,7 @@ Endpoint rules restrict allowed HTTP methods and URL paths.
 
 | Aspect | Detail |
 |---|---|
-| Default | Most endpoints allow GET and POST on `/**`. Some allow GET only (read-only), such as `docs.openclaw.ai`. |
+| Default | Some endpoints allow GET and POST on `/**` (for example, `clawhub.ai`). Others restrict methods and paths to specific API routes (for example, `api.anthropic.com` allows POST only to inference paths). Read-only endpoints such as `docs.openclaw.ai` and `sentry.io` allow GET only. The `npm_registry` baseline entry and the `npm`/`pypi` presets are GET-only (plus HEAD for PyPI). |
 | What you can change | Add methods (PUT, DELETE, PATCH) or restrict paths to specific prefixes. |
 | Risk if relaxed | Allowing all methods on an API endpoint gives the agent write and delete access. For example, allowing DELETE on `api.github.com` lets the agent delete repositories. |
 | Recommendation | Use GET-only rules for endpoints that the agent only reads. Add write methods only for endpoints where the agent must create or modify resources. Restrict paths to specific API routes when possible. |
@@ -342,6 +342,30 @@ The Dockerfile removes compilers and network probes from the runtime image.
 | Risk if relaxed | A compiler lets the agent build arbitrary native code, including kernel exploits or custom network tools. `netcat` enables arbitrary TCP connections that bypass HTTP-level policy enforcement. |
 | Recommendation | Keep build tools removed. If the agent needs to compile code, run the build in a separate, purpose-built container and copy artifacts into the sandbox. |
 
+### Image Digest Pinning
+
+The blueprint references the sandbox image by an immutable `@sha256:` digest instead of a mutable tag such as `:latest`.
+A registry compromise or accidental force-push cannot silently swap the sandbox image.
+
+| Aspect | Detail |
+|---|---|
+| Default | `nemoclaw-blueprint/blueprint.yaml` pins the sandbox image by digest. A CI regression test blocks any mutable-tag reference from merging. |
+| What you can change | Contributors bumping the sandbox image must update the digest in `blueprint.yaml`. Release tooling should rewrite the digest automatically. |
+| Risk if relaxed | Reverting to a mutable tag (`:latest`) allows a registry-side change to replace the sandbox image without any blueprint update, which is a supply-chain risk. |
+| Recommendation | Always reference the sandbox image by digest. If you build a custom image with `nemoclaw onboard --from`, the digest constraint does not apply to your local build. |
+
+### Auth Profile Permissions
+
+The entrypoint and migration flows enforce `chmod 600` on all `auth-profiles.json` files under `~/.openclaw`.
+This prevents other users on the host from reading stored credentials.
+
+| Aspect | Detail |
+|---|---|
+| Default | `600` permissions applied recursively at startup and after migration restores. |
+| What you can change | This is not a user-facing knob. The entrypoint enforces it. |
+| Risk if relaxed | Looser permissions let other users or processes on the host read provider API keys and tokens stored in auth profiles. |
+| Recommendation | No action needed. If you see a `permission denied` error when reading auth profiles, verify that you are running as the same user who created them. |
+
 ## Gateway Authentication Controls
 
 The OpenClaw gateway authenticates devices that connect to the Control UI dashboard.
@@ -390,6 +414,19 @@ The CLI automatically redacts secret patterns (API keys, bearer tokens, provider
 | What you can change | This is not a user-facing knob. The CLI enforces it on all command output paths. |
 | Risk if relaxed | Without redaction, secrets could appear in terminal scrollback, log files, or debug output shared in bug reports. |
 | Recommendation | No action needed. If you share `nemoclaw debug` output, verify that no secrets appear in the collected diagnostics. |
+
+### Memory Secret Scanner
+
+The NemoClaw plugin blocks the agent from writing likely secrets (API keys, tokens, private keys) into persistent memory files.
+The scanner intercepts Write, Edit, and similar tool calls targeting memory and workspace paths before they reach disk.
+
+| Aspect | Detail |
+|---|---|
+| Default | Enabled. The plugin registers a `before_tool_call` hook that scans for 14 high-confidence secret patterns. |
+| What it covers | `.openclaw-data/memory/`, `workspace/`, `agents/`, `skills/`, `hooks/`, and `MEMORY.md`. |
+| What you can change | This is not a user-facing knob. The plugin enforces it automatically. |
+| Risk if relaxed | Without scanning, the agent could persist API keys or tokens in memory files that survive across sessions and backups. |
+| Recommendation | No action needed. If a write is blocked, the agent receives an actionable error listing the detected patterns. |
 
 ## Inference Controls
 
@@ -478,6 +515,14 @@ The following patterns weaken security without providing meaningful benefit.
 | Granting write access to `/sandbox/.openclaw` | This directory contains the OpenClaw gateway configuration. A writable `.openclaw` lets the agent modify auth tokens, disable CORS, or redirect inference routing. | Store agent-writable state in `/sandbox/.openclaw-data`. |
 | Adding inference provider hosts to the network policy | Direct network access to an inference host bypasses credential isolation and usage tracking. | Use OpenShell inference routing instead of adding hosts like `api.openai.com` or `api.anthropic.com` to the network policy. |
 | Disabling device auth for remote deployments | Without device auth, any device on the network can connect to the gateway without pairing. Combined with a cloudflared tunnel, this makes the dashboard publicly accessible and unauthenticated. | Keep `NEMOCLAW_DISABLE_DEVICE_AUTH` at its default (`0`). Only set it to `1` for local headless or development environments. |
+
+## Known Limitations
+
+| Limitation | Impact | Mitigation |
+|-----------|--------|------------|
+| `openclaw agent --local` bypasses gateway | Secret scanning, network policy, and inference auth are not enforced when the agent runs in local mode. | A runtime warning is emitted when `--local` is detected. Avoid `--local` for production workflows. A future OpenClaw-level hook will close this gap. |
+| Direct filesystem writes bypass secret scanner | The scanner intercepts OpenClaw tool calls, not raw filesystem writes (e.g., `echo secret > file`). | Landlock restricts writable paths. The scanner is application-layer defense-in-depth, not a filesystem-level control. |
+| Base64/hex-encoded secrets are not detected | Content-based regex scanning cannot detect encoded or obfuscated secrets. | Use environment variables or credential stores instead of writing secrets to files. |
 
 ## Related Topics
 

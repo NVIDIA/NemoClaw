@@ -40,64 +40,102 @@ network_policies:
     endpoints:
       - host: api.anthropic.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: statsig.anthropic.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: sentry.io
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   nvidia:
     name: nvidia
     endpoints:
       - host: integrate.api.nvidia.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: inference-api.nvidia.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   github:
     name: github
     endpoints:
       - host: github.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: api.github.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   clawhub:
     name: clawhub
     endpoints:
       - host: clawhub.ai
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   openclaw_api:
     name: openclaw_api
     endpoints:
       - host: openclaw.ai
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   openclaw_docs:
     name: openclaw_docs
     endpoints:
       - host: docs.openclaw.ai
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   npm_registry:
     name: npm_registry
     endpoints:
       - host: registry.npmjs.org
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: registry.yarnpkg.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   # ── Messaging endpoints ──
 
@@ -106,42 +144,68 @@ network_policies:
     endpoints:
       - host: api.telegram.org
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   discord:
     name: discord
     endpoints:
       - host: discord.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: gateway.discord.gg
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: cdn.discordapp.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: media.discordapp.net
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   slack:
     name: slack
     endpoints:
       - host: slack.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: api.slack.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: hooks.slack.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: wss-primary.slack.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: wss-backup.slack.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   # ── Third-party services ──
 
@@ -150,65 +214,107 @@ network_policies:
     endpoints:
       - host: formulae.brew.sh
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: ghcr.io
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: raw.githubusercontent.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: objects.githubusercontent.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: pkg-containers.githubusercontent.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   jira:
     name: jira
     endpoints:
       - host: "*.atlassian.net"
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: api.atlassian.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: auth.atlassian.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   outlook:
     name: outlook
     endpoints:
       - host: outlook.office365.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: outlook.office.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: graph.microsoft.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: login.microsoftonline.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   huggingface:
     name: huggingface
     endpoints:
       - host: huggingface.co
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: cdn-lfs.huggingface.co
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
       - host: router.huggingface.co
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }
 
   brave:
     name: brave
     endpoints:
       - host: api.search.brave.com
         port: 443
+        protocol: rest
+        enforcement: enforce
         access: full
+    binaries:
+      - { path: "/**" }

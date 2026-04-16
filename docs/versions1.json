@@ -1,6 +1,34 @@
 [
   {
     "preferred": true,
+    "version": "0.0.17",
+    "url": "https://docs.nvidia.com/nemoclaw/0.0.17/"
+  },
+  {
+    "version": "0.0.16",
+    "url": "https://docs.nvidia.com/nemoclaw/0.0.16/"
+  },
+  {
+    "version": "0.0.15",
+    "url": "https://docs.nvidia.com/nemoclaw/0.0.15/"
+  },
+  {
+    "version": "0.0.14",
+    "url": "https://docs.nvidia.com/nemoclaw/0.0.14/"
+  },
+  {
+    "version": "0.0.13",
+    "url": "https://docs.nvidia.com/nemoclaw/0.0.13/"
+  },
+  {
+    "version": "0.0.12",
+    "url": "https://docs.nvidia.com/nemoclaw/0.0.12/"
+  },
+  {
+    "version": "0.0.11",
+    "url": "https://docs.nvidia.com/nemoclaw/0.0.11/"
+  },
+  {
     "version": "0.0.10",
     "url": "https://docs.nvidia.com/nemoclaw/0.0.10/"
   },

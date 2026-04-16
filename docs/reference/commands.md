@@ -64,7 +64,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```console
-$ nemoclaw onboard [--non-interactive] [--resume] [--from <Dockerfile>]
+$ nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [--yes-i-accept-third-party-software]
 ```
 
 :::{warning}
@@ -72,10 +72,35 @@ For NemoClaw-managed environments, use `nemoclaw onboard` when you need to creat
 Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemoclaw onboard`.
 :::
 
+The installer detects existing sandbox sessions before onboarding and prints a warning if any are found.
+To make the installer abort instead of continuing, set `NEMOCLAW_SINGLE_SESSION=1`:
+
+```console
+$ NEMOCLAW_SINGLE_SESSION=1 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
 Credentials are stored in `~/.nemoclaw/credentials.json`. For file permissions, plaintext storage behavior, and hardening guidance, see [Credential Storage](../security/credential-storage.md).
 The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
+
+After provider selection, the wizard prompts for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
+Three tiers are available:
+
+| Tier | Description |
+|------|-------------|
+| Restricted | Base sandbox only. No third-party network access beyond inference and core agent tooling. |
+| Balanced (default) | Full dev tooling and web search. Package installs, model downloads, and inference. No messaging platform access. |
+| Open | Broad access across third-party services including messaging and productivity. |
+
+After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access.
+For details on tiers and the presets each includes, see [Network Policies](network-policies.md#policy-tiers).
+
+In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `balanced`):
+
+```console
+$ NEMOCLAW_POLICY_TIER=restricted nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
 
 If you enable Brave Search during onboarding, NemoClaw currently stores the Brave API key in the sandbox's OpenClaw configuration.
 That means the OpenClaw agent can read the key.
@@ -106,14 +131,27 @@ $ BRAVE_API_KEY=... \
 The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
 Uppercase letters are automatically lowercased.
+Names that match global CLI commands (`status`, `list`, `debug`, etc.) are rejected to avoid routing conflicts.
+
+If you enable Slack during onboarding, the wizard collects both the Bot Token (`SLACK_BOT_TOKEN`) and the App-Level Token (`SLACK_APP_TOKEN`).
+Socket Mode requires both tokens.
+The app-level token is stored in a dedicated `slack-app` OpenShell provider and forwarded to the sandbox alongside the bot token.
+
+If you enable Discord during onboarding, the wizard can also prompt for a Discord Server ID, whether the bot should reply only to `@mentions` or to all messages in that server, and an optional Discord User ID.
+NemoClaw bakes those values into the sandbox image as Discord guild workspace config so the bot can respond in the selected server, not just in DMs.
+If you leave the Discord User ID blank, the guild config omits the user allowlist and any member of the configured server can message the bot.
+Guild responses remain mention-gated by default unless you opt into all-message replies.
 
 Before creating the gateway, the wizard runs preflight checks.
 It verifies that Docker is reachable, warns on untested runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
+The preflight also enforces the OpenShell version range declared in the blueprint (`min_openshell_version` and `max_openshell_version`).
+If the installed OpenShell version falls outside this range, onboarding exits with an actionable error and a link to compatible releases.
 
 #### `--from <Dockerfile>`
 
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
 The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it.
+If the directory contains unreadable files (for example, Windows system files visible in WSL), onboarding exits with an error suggesting you move the Dockerfile to a dedicated directory.
 
 ```console
 $ nemoclaw onboard --from path/to/Dockerfile
@@ -155,6 +193,9 @@ $ nemoclaw deploy <instance-name>
 ### `nemoclaw <name> connect`
 
 Connect to a sandbox by name.
+On a TTY, a one-shot hint prints before dropping into the sandbox shell, reminding you to run `openclaw tui` inside.
+Set `NEMOCLAW_NO_CONNECT_HINT=1` to suppress the hint in scripted workflows.
+If the sandbox is running an outdated agent version, a non-blocking warning prints before connecting with a `nemoclaw <name> rebuild` hint.
 
 ```console
 $ nemoclaw my-assistant connect
@@ -163,6 +204,11 @@ $ nemoclaw my-assistant connect
 ### `nemoclaw <name> status`
 
 Show sandbox status, health, and inference configuration.
+For local Ollama and local vLLM routes, the command also probes the host-side health endpoint and reports whether the backend is reachable.
+If the backend is down, the output includes an `Inference: unreachable` line with the local URL and a remediation hint.
+
+The Policy section displays the live enforced policy (fetched via `openshell policy get --full`), which reflects presets added or removed after sandbox creation.
+If the sandbox is running an outdated agent version, the output includes an `Update` line with the available version and a `nemoclaw <name> rebuild` hint.
 
 ```console
 $ nemoclaw my-assistant status
@@ -183,9 +229,10 @@ Stop the NIM container and delete the sandbox.
 This removes the sandbox from the registry.
 
 :::{warning}
-Destroying a sandbox permanently deletes all files inside it, including
-[workspace files](../workspace/workspace-files.md) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes).
-Back up your workspace first by following the instructions at [Back Up and Restore](../workspace/backup-restore.md).
+This command permanently deletes the sandbox **and its persistent volume**.
+All [workspace files](../workspace/workspace-files.md) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
+Back up your workspace first with `nemoclaw <name> snapshot create` or see [Backup and Restore](../workspace/backup-restore.md).
+If you want to upgrade the sandbox while preserving state, use `nemoclaw <name> rebuild` instead.
 :::
 
 ```console
@@ -218,6 +265,98 @@ List available policy presets and show which ones are applied to the sandbox.
 
 ```console
 $ nemoclaw my-assistant policy-list
+```
+
+### `nemoclaw <name> policy-remove`
+
+Remove a previously applied policy preset from a sandbox.
+The command lists only the presets currently applied, prompts you to select one, shows the endpoints that would be removed, and asks for confirmation before narrowing egress.
+
+```console
+$ nemoclaw my-assistant policy-remove
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview which endpoints would be removed without applying changes |
+
+Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox.
+
+### `nemoclaw <name> skill install <path>`
+
+Deploy a skill directory to a running sandbox.
+The command validates the `SKILL.md` frontmatter (a `name` field is required), uploads all non-dot files preserving subdirectory structure, and performs agent-specific post-install steps.
+
+```console
+$ nemoclaw my-assistant skill install ./my-skill/
+```
+
+The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field.
+Skill names must contain only alphanumeric characters, dots, hyphens, and underscores.
+
+Files with names starting with `.` (dotfiles) are skipped and listed in the output.
+Files with unsafe path characters are rejected to prevent shell injection.
+
+If the skill already exists on the sandbox, the command updates it in place and preserves chat history.
+For new installs, the agent session index is refreshed so the agent discovers the skill on the next session.
+
+### `nemoclaw <name> rebuild`
+
+Upgrade a sandbox to the current agent version while preserving workspace state.
+The command backs up workspace state, destroys the old sandbox, recreates it with the current image via `onboard --resume`, and restores workspace state into the new sandbox.
+Credentials are stripped from backups before storage.
+
+```console
+$ nemoclaw my-assistant rebuild [--yes] [--verbose]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--yes`, `--force` | Skip the confirmation prompt |
+| `--verbose` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
+
+The sandbox must be running for the backup step to succeed.
+After restore, the command runs `openclaw doctor --fix` for cross-version structure repair.
+
+### `nemoclaw backup-all`
+
+Back up all registered running sandboxes to `~/.nemoclaw/rebuild-backups/`.
+Sandboxes that are not running are skipped.
+
+```console
+$ nemoclaw backup-all
+```
+
+The installer calls `backup-all` automatically before onboarding to protect against data loss during OpenShell upgrades.
+
+### `nemoclaw <name> snapshot create`
+
+Create a timestamped snapshot of sandbox state.
+Snapshots are stored in `~/.nemoclaw/rebuild-backups/<name>/`.
+
+```console
+$ nemoclaw my-assistant snapshot create
+```
+
+### `nemoclaw <name> snapshot list`
+
+List available snapshots for a sandbox with timestamps and item counts.
+
+```console
+$ nemoclaw my-assistant snapshot list
+```
+
+### `nemoclaw <name> snapshot restore [timestamp]`
+
+Restore sandbox state from a snapshot.
+The sandbox must be running before you restore.
+If no timestamp is provided, the latest snapshot is used.
+Partial timestamp prefixes are accepted if they match exactly one snapshot.
+Restore performs a clean replacement of each state directory, removing files that were added after the snapshot was taken.
+
+```console
+$ nemoclaw my-assistant snapshot restore
+$ nemoclaw my-assistant snapshot restore 2026-04-14T
 ```
 
 ### `openshell term`
@@ -320,6 +459,29 @@ The CLI uses the local `uninstall.sh` first and falls back to the hosted script 
 ```console
 $ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models]
 ```
+
+## Environment Variables
+
+NemoClaw reads the following environment variables to configure service ports.
+Set them before running `nemoclaw onboard` or any command that starts services.
+All ports must be non-privileged integers between 1024 and 65535.
+
+| Variable | Default | Service |
+|----------|---------|---------|
+| `NEMOCLAW_GATEWAY_PORT` | 8080 | OpenShell gateway |
+| `NEMOCLAW_DASHBOARD_PORT` | 18789 | Dashboard UI |
+| `NEMOCLAW_VLLM_PORT` | 8000 | vLLM / NIM inference |
+| `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
+
+If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
+
+```console
+$ export NEMOCLAW_DASHBOARD_PORT=19000
+$ nemoclaw onboard
+```
+
+These overrides apply to onboarding, status checks, health probes, and the uninstaller.
+Defaults are unchanged when no variable is set.
 
 ### Legacy `nemoclaw setup`
 

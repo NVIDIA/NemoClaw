@@ -9,6 +9,11 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+const CREDENTIAL_RETRY_PROMPT =
+  "  Options: retry (re-enter key), back (change provider), exit [retry]: ";
+const CREDENTIAL_RETRY_PROMPT_RE =
+  /Options: retry \(re-enter key\), back \(change provider\), exit \[retry\]: /;
+
 function writeOpenAiStyleAuthRetryCurl(fakeBin, goodToken, models = ["gpt-5.4"]) {
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
@@ -88,10 +93,10 @@ describe("onboard provider selection UX", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-selection-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "selection-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -127,10 +132,13 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
-  if (command.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now\\nqwen3:32b  def  20 GB  now";
-  if (command.includes("localhost:8000/v1/models")) return "";
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
+  if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now\\nqwen3:32b  def  20 GB  now";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   return "";
 };
 registry.updateSandbox = (_name, update) => updates.push(update);
@@ -183,9 +191,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-no-recommended-label-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "no-recommended-label-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -260,9 +268,9 @@ const { setupNim } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "build-model-selection-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -300,9 +308,12 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-test"; };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "";
-  if (command.includes("localhost:11434/api/tags")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   return "";
 };
 
@@ -353,9 +364,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-build-model-retry-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "build-model-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -393,9 +404,12 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-test"; };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "";
-  if (command.includes("localhost:11434/api/tags")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   return "";
 };
 
@@ -448,9 +462,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-gemini-selection-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "gemini-selection-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -536,14 +550,14 @@ const { setupNim } = require(${onboardPath});
     assert.ok(payload.lines.some((line) => line.includes("Chat Completions API available")));
   });
 
-  it("warms and validates Ollama via localhost before moving on", () => {
+  it("warms and validates Ollama via 127.0.0.1 before moving on", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-validation-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "ollama-validation-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -578,15 +592,18 @@ credentials.prompt = async (message) => {
   return answers.shift() || "";
 };
 runner.run = (command, opts = {}) => {
-  commands.push(command);
+  commands.push(Array.isArray(command) ? command.join(" ") : command);
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
-  if (command.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
-  if (command.includes("localhost:8000/v1/models")) return "";
-  if (command.includes("api/generate")) return '{"response":"hello"}';
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
+  if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
 };
 
@@ -630,7 +647,7 @@ const { setupNim } = require(${onboardPath});
       payload.lines.some((line) => line.includes("Loading Ollama model: nemotron-3-nano:30b")),
     );
     assert.ok(
-      payload.commands.some((command) => command.includes("http://localhost:11434/api/generate")),
+      payload.commands.some((command) => command.includes("http://127.0.0.1:11434/api/generate")),
     );
   });
 
@@ -639,9 +656,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-back-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "ollama-back-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -676,11 +693,14 @@ credentials.prompt = async (message) => {
 credentials.ensureApiKey = async () => { process.env.NVIDIA_API_KEY = "nvapi-good"; };
 runner.run = () => ({ status: 0 });
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
-  if (command.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
-  if (command.includes("localhost:8000/v1/models")) return "";
-  if (command.includes("api/generate")) return '{"response":"hello"}';
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
+  if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
 };
 
@@ -729,9 +749,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-bootstrap-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "ollama-bootstrap-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const pullLog = path.join(tmpDir, "pulls.log");
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -776,11 +796,14 @@ credentials.prompt = async (message) => {
   return answers.shift() || "";
 };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (command.includes("ollama list")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
-  if (command.includes("api/generate")) return '{"response":"hello"}';
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
+  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
 };
 
@@ -833,9 +856,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-retry-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "ollama-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const pullLog = path.join(tmpDir, "pulls.log");
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -883,11 +906,14 @@ credentials.prompt = async (message) => {
   return answers.shift() || "";
 };
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (command.includes("localhost:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (command.includes("ollama list")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
-  if (command.includes("api/generate")) return '{"response":"hello"}';
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
+  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
   return "";
 };
 
@@ -944,9 +970,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-openai-model-retry-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "openai-model-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -1033,9 +1059,9 @@ const { setupNim } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "anthropic-model-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -1119,9 +1145,9 @@ const { setupNim } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "anthropic-validation-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -1211,9 +1237,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-anthropic-compatible-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "anthropic-compatible-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -1296,9 +1322,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-custom-openai-retry-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "custom-openai-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -1409,9 +1435,9 @@ const { setupNim } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "custom-openai-responses-fallback-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -1503,9 +1529,9 @@ const { setupNim } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "custom-endpoint-blank-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -1592,9 +1618,9 @@ const { setupNim } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "custom-anthropic-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -1701,9 +1727,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-model-back-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "model-back-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -1787,9 +1813,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-transport-back-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "transport-back-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -1881,9 +1907,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-selection-retry-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "selection-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -1983,9 +2009,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-build-noninteractive-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "build-noninteractive-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
 
@@ -2083,9 +2109,9 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-build-auth-retry-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "build-auth-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -2180,19 +2206,87 @@ const { setupNim } = require(${onboardPath});
       payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length,
       1,
     );
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
-    const retryPrompt = payload.prompts.find((entry) =>
-      /Type 'retry', 'back', or 'exit' \[retry\]: /.test(entry.message),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
+    const retryPrompt = payload.prompts.find((entry) => CREDENTIAL_RETRY_PROMPT_RE.test(entry.message));
     assert.deepEqual(retryPrompt, {
-      message: "  Type 'retry', 'back', or 'exit' [retry]: ",
+      message: CREDENTIAL_RETRY_PROMPT,
       secret: true,
     });
     assert.ok(payload.messages.some((message) => /NVIDIA Endpoints API key: /.test(message)));
+  });
+
+  it("treats a pasted NVIDIA API key at the retry prompt as retry and re-prompts securely", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-nvidia-paste-guard-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "nvidia-paste-guard-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeOpenAiStyleAuthRetryCurl(fakeBin, "nvapi-good", ["nim/meta/llama-3.1-70b-instruct"]);
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["1", "", "nvapi-fake-key-value", "nvapi-good", ""];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  process.env.NVIDIA_API_KEY = "nvapi-bad";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines, key: process.env.NVIDIA_API_KEY }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "nvidia-prod");
+    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    assert.equal(payload.key, "nvapi-good");
+    assert.ok(payload.lines.some((line) => line.includes("That looks like an API key")));
+    assert.ok(payload.lines.some((line) => line.includes("Treating as 'retry'")));
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
+    assert.ok(payload.messages.some((message) => /NVIDIA Endpoints API key: /.test(message)));
+    assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
+    assert.equal(
+      payload.messages.filter((message) => /Choose model \[1\]/.test(message)).length,
+      1,
+    );
   });
 
   it("lets users re-enter an OpenAI API key after authorization failure", () => {
@@ -2200,9 +2294,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-openai-auth-retry-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "openai-auth-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOpenAiStyleAuthRetryCurl(fakeBin, "sk-good", ["gpt-5.4"]);
@@ -2213,9 +2307,11 @@ const runner = require(${runnerPath});
 
 const answers = ["2", "", "retry", "sk-good", ""];
 const messages = [];
+const prompts = [];
 
-credentials.prompt = async (message) => {
+credentials.prompt = async (message, opts = {}) => {
   messages.push(message);
+  prompts.push({ message, secret: opts.secret === true });
   return answers.shift() || "";
 };
 runner.runCapture = () => "";
@@ -2231,7 +2327,7 @@ const { setupNim } = require(${onboardPath});
   console.error = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines, key: process.env.OPENAI_API_KEY }));
+    originalLog(JSON.stringify({ result, messages, prompts, lines, key: process.env.OPENAI_API_KEY }));
   } finally {
     console.log = originalLog;
     console.error = originalError;
@@ -2260,11 +2356,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "openai-responses");
     assert.equal(payload.key, "sk-good");
     assert.ok(payload.lines.some((line) => line.includes("OpenAI authorization failed")));
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(payload.messages.some((message) => /OpenAI API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(
@@ -2278,9 +2370,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-anthropic-auth-retry-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "anthropic-auth-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeAnthropicStyleAuthRetryCurl(fakeBin, "anthropic-good", ["claude-sonnet-4-6"]);
@@ -2338,11 +2430,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
     assert.equal(payload.key, "anthropic-good");
     assert.ok(payload.lines.some((line) => line.includes("Anthropic authorization failed")));
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(payload.messages.some((message) => /Anthropic API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(
@@ -2356,9 +2444,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-gemini-auth-retry-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "gemini-auth-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOpenAiStyleAuthRetryCurl(fakeBin, "gemini-good", ["gemini-2.5-flash"]);
@@ -2416,11 +2504,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.equal(payload.key, "gemini-good");
     assert.ok(payload.lines.some((line) => line.includes("Google Gemini authorization failed")));
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(payload.messages.some((message) => /Google Gemini API key: /.test(message)));
     assert.equal(payload.messages.filter((message) => /Choose \[/.test(message)).length, 1);
     assert.equal(
@@ -2436,9 +2520,9 @@ const { setupNim } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "custom-openai-auth-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOpenAiStyleAuthRetryCurl(fakeBin, "proxy-good", ["custom-model"]);
@@ -2501,11 +2585,7 @@ const { setupNim } = require(${onboardPath});
         line.includes("Other OpenAI-compatible endpoint authorization failed"),
       ),
     );
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(
       payload.messages.some((message) =>
         /Other OpenAI-compatible endpoint API key: /.test(message),
@@ -2530,9 +2610,9 @@ const { setupNim } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "custom-anthropic-auth-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeAnthropicStyleAuthRetryCurl(fakeBin, "anthropic-proxy-good", ["claude-proxy"]);
@@ -2595,11 +2675,7 @@ const { setupNim } = require(${onboardPath});
         line.includes("Other Anthropic-compatible endpoint authorization failed"),
       ),
     );
-    assert.ok(
-      payload.messages.some((message) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ),
-    );
+    assert.ok(payload.messages.some((message) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
     assert.ok(
       payload.messages.some((message) =>
         /Other Anthropic-compatible endpoint API key: /.test(message),
@@ -2623,9 +2699,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-override-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "vllm-override-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     // Fake curl: /v1/responses returns 200 (so probe detects openai-responses),
@@ -2670,9 +2746,12 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "";
-  if (command.includes("localhost:11434")) return "";
-  if (command.includes("localhost:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
   return "";
 };
 
@@ -2722,10 +2801,10 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-nim-override-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "nim-override-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "credentials.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "runner.js"));
-    const nimPath = JSON.stringify(path.join(repoRoot, "bin", "lib", "nim.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const nimPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "nim.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     // Fake curl: /v1/responses returns 200 (probe detects openai-responses)
@@ -2779,9 +2858,12 @@ credentials.prompt = async (message) => {
 };
 credentials.ensureApiKey = async () => {};
 runner.runCapture = (command) => {
-  if (command.includes("command -v ollama")) return "";
-  if (command.includes("localhost:11434")) return "";
-  if (command.includes("localhost:8000/v1/models")) return "";
+  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
+  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   return "";
 };
 

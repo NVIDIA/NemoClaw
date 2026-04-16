@@ -15,7 +15,7 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-test-"));
 process.env.HOME = tmpDir;
 
 const require = createRequire(import.meta.url);
-const registry = require("../bin/lib/registry");
+const registry = require("../dist/lib/registry");
 
 const regFile = path.join(tmpDir, ".nemoclaw", "sandboxes.json");
 
@@ -95,6 +95,20 @@ describe("registry", () => {
     registry.removeSandbox("x");
     expect(registry.getSandbox("x")).toBe(null);
     expect(registry.getDefault()).toBe("y");
+  });
+
+  it("getDefault falls back when defaultSandbox points to a stale name", () => {
+    registry.registerSandbox({ name: "alive" });
+    const data = registry.load();
+    data.defaultSandbox = "deleted-sandbox";
+    registry.save(data);
+    expect(registry.getDefault()).toBe("alive");
+  });
+
+  it("getDefault returns null when registry is empty with stale pointer", () => {
+    const data = { sandboxes: {}, defaultSandbox: "ghost" };
+    registry.save(data);
+    expect(registry.getDefault()).toBe(null);
   });
 
   it("removeSandbox last sandbox sets default to null", () => {
@@ -265,7 +279,7 @@ describe("advisory file locking", () => {
   it("concurrent writers do not corrupt the registry", () => {
     const { spawnSync } = require("child_process");
     const registryPath = path.resolve(
-      path.join(import.meta.dirname, "..", "bin", "lib", "registry.js"),
+      path.join(import.meta.dirname, "..", "dist", "lib", "registry.js"),
     );
     const homeDir = path.dirname(path.dirname(regFile));
     // Script that spawns 4 workers in parallel, each writing 5 sandboxes

@@ -7,8 +7,8 @@ import { execSync, execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, unlinkSync, readFileSync, lstatSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveOpenshell } from "../bin/lib/resolve-openshell";
-import { parseAllowedChatIds, isChatAllowed } from "../bin/lib/chat-filter.js";
+import { resolveOpenshell } from "../dist/lib/resolve-openshell";
+import { parseAllowedChatIds, isChatAllowed } from "../dist/lib/chat-filter.js";
 
 describe("service environment", () => {
   describe("start-services behavior", () => {
@@ -176,7 +176,7 @@ describe("service environment", () => {
       expect(src).toContain("XDG_RUNTIME_DIR=/tmp/.runtime");
       // Tool-specific redirects
       expect(src).toContain("GNUPGHOME=/tmp/.gnupg");
-      expect(src).toContain("PYTHONHISTFILE=/tmp/.python_history");
+      expect(src).toContain("PYTHON_HISTORY=/tmp/.python_history");
       expect(src).toContain("npm_config_prefix=/tmp/npm-global");
     });
 
@@ -352,7 +352,7 @@ describe("service environment", () => {
         expect(envFile).toContain("XDG_STATE_HOME=/tmp/.local/state");
         expect(envFile).toContain("XDG_RUNTIME_DIR=/tmp/.runtime");
         expect(envFile).toContain("GNUPGHOME=/tmp/.gnupg");
-        expect(envFile).toContain("PYTHONHISTFILE=/tmp/.python_history");
+        expect(envFile).toContain("PYTHON_HISTORY=/tmp/.python_history");
         expect(envFile).toContain("npm_config_prefix=/tmp/npm-global");
       } finally {
         try {

@@ -99,10 +99,21 @@ $ export PATH=~/.npm-global/bin:$PATH
 
 Add the `export` line to your `~/.bashrc` or `~/.zshrc` to make it permanent, then re-run the installer.
 
+### Installer fails on NVIDIA Jetson
+
+The installer auto-detects NVIDIA Jetson devices (Orin and Thor) and applies required host configuration before the normal install flow.
+If the Jetson setup step fails, verify that you have `sudo` access and that Docker is installed and running.
+
+For JetPack 6 (L4T 36.x), the setup switches iptables to legacy mode and adjusts the Docker daemon configuration.
+For JetPack 7 (L4T 38.x / Thor), only bridge netfilter and sysctl settings are applied.
+BSP R39 and later do not require host customization and are handled automatically.
+
+If the L4T version is not recognized, the setup step is skipped and the installer continues normally.
+
 ### Port already in use
 
-The NemoClaw gateway uses port `18789` by default.
-If another process is already bound to this port, onboarding fails.
+The NemoClaw dashboard uses port `18789` by default and the gateway uses port `8080`.
+If another process is already bound to one of these ports, onboarding fails.
 Identify the conflicting process, verify it is safe to stop, and terminate it:
 
 ```console
@@ -112,6 +123,39 @@ $ kill <PID>
 
 If the process does not exit, use `kill -9 <PID>` to force-terminate it.
 Then retry onboarding.
+
+Alternatively, override the conflicting port with an environment variable instead of stopping the other process:
+
+```console
+$ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
+```
+
+See Environment Variables (see the `nemoclaw-user-reference` skill) for the full list of port overrides.
+
+### Running multiple sandboxes simultaneously
+
+Each sandbox requires its own dashboard port.
+If you onboard a second sandbox without overriding the port, onboarding fails because port `18789` is already claimed by the first sandbox.
+
+Assign a distinct port to each sandbox at onboard time:
+
+```console
+$ nemoclaw onboard                              # first sandbox — uses default 18789
+$ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard  # second sandbox — uses 19000
+```
+
+Each sandbox then has its own SSH tunnel and its own dashboard URL:
+
+```text
+http://localhost:18789   ← first sandbox
+http://localhost:19000   ← second sandbox
+```
+
+You can verify which tunnel belongs to which sandbox with:
+
+```console
+$ openshell forward list
+```
 
 ## Onboarding
 
@@ -129,12 +173,30 @@ $ nemoclaw onboard
 Podman is not a tested runtime.
 If onboarding or sandbox lifecycle fails, switch to a tested runtime (Docker Desktop, Colima, or Docker Engine) and rerun onboarding.
 
+### OpenShell version above maximum
+
+Each NemoClaw release validates against a range of tested OpenShell versions.
+If the installed OpenShell version exceeds the configured maximum, `nemoclaw onboard` exits with an error:
+
+```text
+✗ openshell <version> is above the maximum supported by this NemoClaw release.
+  blueprint.yaml max_openshell_version: <max>
+```
+
+Upgrade NemoClaw to a version that supports your OpenShell release, or install a supported OpenShell version from the [OpenShell releases page](https://github.com/NVIDIA/OpenShell/releases).
+
+The `install-openshell.sh` script also enforces this constraint and pins fresh installs to the validated maximum version.
+
 ### Invalid sandbox name
 
 Sandbox names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
 Uppercase letters are automatically lowercased.
 
-If the name does not match these rules, the wizard exits with an error.
+Names that collide with global CLI commands are also rejected.
+Reserved names include `onboard`, `list`, `deploy`, `setup`, `start`, `stop`, `status`, `debug`, `uninstall`, `credentials`, and `help`.
+Using a reserved name would cause the CLI to route to the global command instead of the sandbox.
+
+If the name does not match these rules or is reserved, the wizard exits with an error.
 Choose a name such as `my-assistant` or `dev1`.
 
 ### Sandbox creation fails on DGX
@@ -220,6 +282,24 @@ Follow these steps to reconnect.
 > The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox. Workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
 > Back up your workspace first by following the instructions at Back Up and Restore (see the `nemoclaw-user-workspace` skill).
 
+### Sandbox is running an outdated agent version
+
+After upgrading NemoClaw, `nemoclaw <name> connect` and `nemoclaw <name> status` warn if the sandbox is running an older agent version than the current image.
+
+To upgrade the sandbox while preserving workspace state, run:
+
+```console
+$ nemoclaw <name> rebuild
+```
+
+The rebuild command backs up state, destroys the old sandbox, recreates it with the current image, and restores state.
+Create a snapshot before rebuilding if you want an additional safety net:
+
+```console
+$ nemoclaw <name> snapshot create
+$ nemoclaw <name> rebuild
+```
+
 ### Sandbox shows as stopped
 
 The sandbox may have been stopped or deleted.
@@ -242,6 +322,9 @@ Check the active provider and endpoint:
 $ nemoclaw <name> status
 ```
 
+For local Ollama and local vLLM, `nemoclaw <name> status` also prints an `Inference` line that probes the host-side health endpoint directly.
+If that line shows `unreachable`, start the local backend first and then retry the request.
+
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
 Then verify the credential and base URL for the provider you selected during onboarding.
 
@@ -253,6 +336,33 @@ $ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
 $ nemoclaw onboard
 ```
 
+### Agent fails at runtime after onboarding succeeds with a compatible endpoint
+
+Some OpenAI-compatible servers (such as SGLang) expose `/v1/responses` and pass
+the onboarding validation probe, but their streaming mode is incomplete.
+OpenClaw requires granular streaming events like `response.output_text.delta`
+that these backends do not emit.
+
+NemoClaw now tests streaming events during the `/v1/responses` probe and falls
+back to `/v1/chat/completions` automatically.
+If you onboarded before this check was added, re-run onboarding so the wizard
+re-probes the endpoint and bakes the correct API path into the image:
+
+```console
+$ nemoclaw onboard
+```
+
+To force `/v1/chat/completions` without re-probing, set `NEMOCLAW_PREFERRED_API`:
+
+```console
+$ NEMOCLAW_PREFERRED_API=openai-completions nemoclaw onboard
+```
+
+Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone — it patches the config
+at container startup but does not update the Dockerfile ARG baked into the
+image.
+A fresh `nemoclaw onboard` is the reliable fix.
+
 ### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
 
 This is expected behavior.
@@ -261,6 +371,81 @@ Changing or exporting it later does not rewrite the baked `openclaw.json` inside
 
 If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration.
 For the security trade-offs, refer to Security Best Practices (see the `nemoclaw-user-configure-security` skill).
+
+### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
+
+This is expected in NemoClaw-managed sandboxes.
+NemoClaw bakes channel entries into `/sandbox/.openclaw/openclaw.json` at image build time, and OpenShell keeps that path read-only at runtime.
+
+As a result, commands that try to rewrite the baked config from inside the sandbox, including `openclaw doctor --fix`, cannot repair Discord, Telegram, or Slack channel entries in place.
+
+If your Discord channel config is wrong, rerun onboarding so NemoClaw rebuilds the sandbox image with the correct messaging selection.
+Do not treat a failed `doctor --fix` run as proof that the Discord gateway path itself is broken.
+
+If `openclaw doctor` reports that it moved Telegram single-account values under `channels.telegram.accounts.default`, rerun onboarding and rebuild the sandbox rather than trying to patch `openclaw.json` in place.
+Current NemoClaw rebuilds bake Telegram in the account-based layout and set Telegram group chats to `groupPolicy: open`, which avoids the empty `groupAllowFrom` warning path for default group-chat access.
+
+### Discord bot logs in, but the channel still does not work
+
+Separate the problem into two parts:
+
+1. Baked config and provider wiring
+
+   Check that onboarding selected Discord and that the sandbox was created with the Discord messaging provider attached.
+   If Discord was skipped during onboarding, rerun onboarding and select Discord again.
+
+1. Native Discord gateway path
+
+   Successful login alone does not prove that Discord works end to end.
+   Discord also needs a working gateway connection to `gateway.discord.gg`.
+   If logs show errors such as `getaddrinfo EAI_AGAIN gateway.discord.gg`, repeated reconnect loops, or a `400` response while probing the gateway path, the problem is usually in the native gateway/proxy path rather than in the baked config.
+
+Common signs of a native gateway-path failure:
+
+- REST calls to `discord.com` succeed, but the Discord channel never becomes healthy
+- `gateway.discord.gg` fails with DNS resolution errors
+- the WebSocket path returns `400` instead of opening a tunnel
+- native command deployment fails even though the bot token itself is valid
+
+In that case:
+
+- keep the Discord policy preset applied
+- verify the sandbox was created with the Discord provider attached
+- inspect gateway logs and blocked requests with `openshell term`
+- treat the failure as a native Discord gateway problem, not as a bridge startup problem
+
+### Messaging bridge appears running but no messages arrive
+
+Bot tokens for Telegram (`getUpdates`), Discord (gateway), and Slack (Socket Mode) only allow one active consumer per token. If two NemoClaw sandboxes are configured with the same bot token, each one kicks the other off its polling connection and neither delivers messages. `nemoclaw status` still reports the bridge as running because the gateway process itself is alive.
+
+To diagnose, open a shell in the sandbox and inspect the gateway log:
+
+```console
+$ openshell term <sandbox-name>
+$ tail -f /tmp/gateway.log
+```
+
+A repeating line like the following confirms the conflict:
+
+```text
+[telegram] getUpdates conflict: 409: Conflict: terminated by other getUpdates request; retrying in 30s.
+```
+
+To fix, run `nemoclaw <other-sandbox> destroy` on whichever sandbox should stop polling, or rerun onboarding on it with the channel disabled. Current NemoClaw warns at `nemoclaw onboard` time when another sandbox already has the same channel enabled, but sandboxes created before that check was added may still be in a conflict loop.
+
+### Landlock filesystem restrictions silently degraded
+
+After sandbox creation, NemoClaw checks whether the host kernel supports Landlock (Linux 5.13+).
+If the kernel is too old or you are running on macOS (where the Docker VM kernel may lack Landlock), a warning prints:
+
+```text
+⚠ Landlock: Docker VM kernel <version> does not support Landlock (requires ≥5.13).
+  Sandbox filesystem restrictions will silently degrade (best_effort mode).
+```
+
+This warning is informational and does not block sandbox creation.
+The sandbox runs without kernel-level filesystem restrictions, relying on container mount configuration instead.
+For full filesystem enforcement, run on a Linux kernel 5.13 or later (Ubuntu 22.04 LTS and later include Landlock support).
 
 ### Sandbox lost after gateway restart
 
@@ -294,6 +479,37 @@ $ openshell term
 To permanently allow an endpoint, add it to the network policy.
 Refer to Customize the Network Policy (see the `nemoclaw-user-manage-policy` skill) for details.
 
+### Dashboard not reachable after setting `NEMOCLAW_DASHBOARD_PORT`
+
+If you ran `NEMOCLAW_DASHBOARD_PORT=<port> nemoclaw onboard` and onboarding completed
+but the dashboard URL is unreachable (browser shows connection refused or the page fails
+to load), the sandbox was most likely created with an older NemoClaw version that had a
+bug where `NEMOCLAW_DASHBOARD_PORT` was parsed on the host but not passed into the sandbox
+at startup. The gateway inside the sandbox continued listening on the default port 18789
+while the SSH tunnel forwarded the custom port — leaving nothing at the other end of the
+tunnel.
+
+Re-run onboarding on the current NemoClaw release with the desired port. This rebuilds
+the sandbox image with the gateway bound to the configured port:
+
+```console
+$ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
+```
+
+If you need to run multiple sandboxes at different ports at the same time, see
+[Running multiple sandboxes simultaneously](#running-multiple-sandboxes-simultaneously).
+
+### Ollama network exposure warning during onboard
+
+When you select a local Ollama provider, onboarding binds Ollama to `0.0.0.0` so the Docker sandbox can reach the host.
+This exposes the unauthenticated Ollama API to the local network.
+NemoClaw prints a warning during onboarding to alert you to this risk.
+
+On trusted private networks, the warning is informational.
+On shared or public networks (airports, coffee shops), any adjacent device can send prompts to and enumerate models on your Ollama instance.
+
+The warning is suppressed on WSL, where Ollama binds to `127.0.0.1` instead.
+
 ### Blueprint run failed
 
 View the error output for the failed blueprint run:
@@ -303,6 +519,72 @@ $ nemoclaw <name> logs
 ```
 
 Use `--follow` to stream logs in real time while debugging.
+
+(windows-wsl-2)=
+
+## Windows Subsystem for Linux
+
+For environment setup steps, see Windows Prerequisites (see the `nemoclaw-user-get-started` skill).
+
+### `wsl --install --no-distribution` returns Forbidden (403)
+
+Check your network connectivity.
+If you are behind a VPN, try reconnecting or switching to a different network.
+
+### `wsl -d Ubuntu` says "There is no distribution with the supplied name"
+
+The Ubuntu package was installed with `--no-launch` but never registered.
+Run `ubuntu.exe install --root` from PowerShell to register it, or reinstall without `--no-launch`:
+
+```console
+$ wsl --unregister Ubuntu
+$ wsl --install -d Ubuntu
+```
+
+### `docker info` fails inside WSL
+
+Confirm that Docker Desktop is running and that WSL integration is enabled for Ubuntu (Settings > Resources > WSL integration).
+Then restart WSL:
+
+```console
+$ wsl --shutdown
+$ wsl -d Ubuntu
+$ docker info
+```
+
+### Ollama inference fails or hangs in WSL
+
+Ollama configures context length based on your hardware.
+On some GPUs (for example RTX 3500), the default context length is not sufficient for OpenClaw.
+Force a larger context length:
+
+```console
+$ pkill -f 'ollama serve'
+$ OLLAMA_CONTEXT_LENGTH=16384 ollama serve
+```
+
+Verify that Ollama inference works:
+
+```console
+$ echo "Hello" | ollama run <model-id>
+```
+
+Replace `<model-id>` with the model you selected during onboarding (for example `qwen3.5:4b`).
+
+If `ollama serve` fails with `Error: listen tcp 127.0.0.1:11434: bind: address already in use`, check whether Ollama is configured for automatic startup:
+
+```console
+$ sudo systemctl status ollama
+```
+
+If it is active, stop it first, then start with the custom context length:
+
+```console
+$ sudo systemctl stop ollama
+$ OLLAMA_CONTEXT_LENGTH=16384 ollama serve
+```
+
+For additional troubleshooting, see the Quickstart (see the `nemoclaw-user-get-started` skill) and Windows Setup (see the `nemoclaw-user-get-started` skill) pages.
 
 ## Podman
 

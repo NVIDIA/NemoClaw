@@ -13,7 +13,7 @@ import {
   inferContainerRuntime,
   isWsl,
   shouldPatchCoredns,
-} from "../bin/lib/platform";
+} from "../dist/lib/platform";
 
 describe("platform helpers", () => {
   describe("isWsl", () => {

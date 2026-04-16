@@ -212,6 +212,7 @@ print_dashboard_urls() {
   local_url="http://127.0.0.1:${PUBLIC_PORT}/v1"
   echo "[gateway] Hermes API: ${local_url}" >&2
   echo "[gateway] Health:     ${local_url%/v1}/health" >&2
+  echo "[gateway] Connect any OpenAI-compatible frontend to this endpoint." >&2
 }
 
 # ── socat forwarder ──────────────────────────────────────────────
@@ -293,6 +294,7 @@ export NO_PROXY=\"$_NO_PROXY_VAL\"
 export http_proxy=\"$_PROXY_URL\"
 export https_proxy=\"$_PROXY_URL\"
 export no_proxy=\"$_NO_PROXY_VAL\"
+export HERMES_HOME=\"${HERMES_WRITABLE}\"
 ${_PROXY_MARKER_END}"
 
 if [ "$(id -u)" -eq 0 ]; then

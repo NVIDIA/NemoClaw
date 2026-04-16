@@ -34,8 +34,14 @@ jobs:
 
       - name: Save images to tarballs
         run: |
+          set -euo pipefail
           docker save nemoclaw-sandbox-test | gzip > /tmp/sandbox-test-image.tar.gz
           docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz
+
+      - name: Verify tarballs
+        run: |
+          gzip -t /tmp/sandbox-test-image.tar.gz
+          gzip -t /tmp/isolation-image.tar.gz
 
       - name: Upload sandbox test image
         uses: actions/upload-artifact@v4
@@ -107,3 +113,23 @@ jobs:
 
       - name: Run gateway isolation E2E tests
         run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh
+
+  test-e2e-port-overrides:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build-sandbox-images
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: isolation-image
+          path: /tmp
+
+      - name: Load image
+        run: gunzip -c /tmp/isolation-image.tar.gz | docker load
+
+      - name: Run port override E2E tests
+        run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-port-overrides.sh

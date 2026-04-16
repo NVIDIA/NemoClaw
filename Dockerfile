@@ -41,6 +41,72 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 WORKDIR /opt/nemoclaw
 RUN npm ci --omit=dev
 
+# Patch OpenClaw media fetch for proxy-only sandbox (NVIDIA/NemoClaw#1755).
+#
+# NemoClaw forces all sandbox egress through the OpenShell L7 proxy
+# (default 10.200.0.1:3128). Two layers of OpenClaw must be patched for
+# Telegram/Discord/Slack media downloads to work in this environment:
+#
+# === Patch 1: redirect strict-mode export to trusted-env-proxy ===
+# OpenClaw's media fetch path (fetch-ClF-ZgDC.js → fetchRemoteMedia) calls
+# fetchWithSsrFGuard(withStrictGuardedFetchMode({...})) unconditionally.
+# Strict mode does DNS-pinning + direct connect, which fails in the sandbox
+# netns where only the proxy is reachable. Rewriting the fetch-guard module
+# export so the strict alias maps to withTrustedEnvProxyGuardedFetchMode
+# makes the existing callsite request proxy mode without touching callers.
+# The export pattern `withStrictGuardedFetchMode as <letter>` is stable
+# across versions while alias letters drift between minified bundles.
+# Files that define withStrictGuardedFetchMode locally without an export
+# (e.g. mattermost.js) keep their original strict behavior.
+#
+# === Patch 2: env-gated bypass for assertExplicitProxyAllowed ===
+# OpenClaw 2026.4.2 added assertExplicitProxyAllowed() in fetch-guard,
+# which validates the explicit proxy URL by passing the proxy hostname
+# through resolvePinnedHostnameWithPolicy() with the *target's* SsrfPolicy.
+# When the target uses hostnameAllowlist (Telegram media policy:
+# `["api.telegram.org"]`), the proxy hostname (e.g. 10.200.0.1) gets
+# rejected with "Blocked hostname (not in allowlist)". This is an upstream
+# OpenClaw design flaw: a proxy is infrastructure, not a fetch target, and
+# should not be filtered through the target's allowlist.
+#
+# Inject an early-return guarded by `process.env.OPENSHELL_SANDBOX === "1"`
+# so the bypass only activates inside an OpenShell sandbox runtime, which
+# is what NemoClaw deploys into. OpenShell injects this env var when it
+# starts a sandbox pod; any consumer running the same openclaw bundle
+# outside an OpenShell sandbox (bare-metal, another wrapper) does not have
+# OPENSHELL_SANDBOX set and keeps the full upstream SSRF check. The L7
+# proxy itself enforces per-endpoint network policy inside the sandbox,
+# so the trust boundary for SSRF protection is unchanged.
+#
+# Image-level `ENV` does NOT work here: OpenShell controls the pod env at
+# runtime and image ENV vars set by Dockerfile are stripped. OPENSHELL_SANDBOX
+# is the only marker reliably present in the runtime.
+#
+# === Removal criteria ===
+# Patch 1: drop when OpenClaw deprecates withStrictGuardedFetchMode or
+#   when all media-fetch callsites unconditionally pass useEnvProxy.
+# Patch 2: drop when OpenClaw fixes assertExplicitProxyAllowed to skip the
+#   target hostname allowlist for the proxy hostname check (or exposes config
+#   to disable the check).
+#
+# Both patches fail-close: if grep finds no targets, the build aborts so
+# the next maintainer reviewing an OPENCLAW_VERSION bump knows to revisit.
+# hadolint ignore=SC2016,DL3059,DL4006
+RUN set -eu; \
+    # --- Patch 1: rewrite fetch-guard export --- \
+    fg_export="$(grep -RIlE --include='*.js' 'export \{[^}]*withStrictGuardedFetchMode as [a-z]' /usr/local/lib/node_modules/openclaw/dist/)"; \
+    test -n "$fg_export"; \
+    for f in $fg_export; do \
+        grep -q 'withTrustedEnvProxyGuardedFetchMode' "$f" || { echo "ERROR: $f missing withTrustedEnvProxyGuardedFetchMode"; exit 1; }; \
+    done; \
+    printf '%s\n' "$fg_export" | xargs sed -i -E 's|withStrictGuardedFetchMode as ([a-z])|withTrustedEnvProxyGuardedFetchMode as \1|g'; \
+    if grep -REq --include='*.js' 'withStrictGuardedFetchMode as [a-z]' /usr/local/lib/node_modules/openclaw/dist/; then echo "ERROR: Patch 1 left strict-mode export alias" >&2; exit 1; fi; \
+    # --- Patch 2: neutralize assertExplicitProxyAllowed --- \
+    fg_assert="$(grep -RIlE --include='*.js' 'async function assertExplicitProxyAllowed' /usr/local/lib/node_modules/openclaw/dist/)"; \
+    test -n "$fg_assert"; \
+    printf '%s\n' "$fg_assert" | xargs sed -i -E 's|(async function assertExplicitProxyAllowed\([^)]*\) \{)|\1 if (process.env.OPENSHELL_SANDBOX === "1") return; /* nemoclaw: env-gated bypass, see Dockerfile */ |'; \
+    grep -REq --include='*.js' 'assertExplicitProxyAllowed\([^)]*\) \{ if \(process\.env\.OPENSHELL_SANDBOX === "1"\) return; /\* nemoclaw' /usr/local/lib/node_modules/openclaw/dist/
+
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
 # later since /sandbox/.nemoclaw is Landlock read_write for plugin state (#804).
@@ -56,11 +122,11 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
 ARG NEMOCLAW_PROVIDER_KEY=nvidia
 ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b
+# Default dashboard port 18789 — override at runtime via NEMOCLAW_DASHBOARD_PORT.
 ARG CHAT_UI_URL=http://127.0.0.1:18789
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
 ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
-ARG NEMOCLAW_WEB_CONFIG_B64=e30=
 # Base64-encoded JSON list of messaging channel names to pre-configure
 # (e.g. ["discord","telegram"]). Channels are added with placeholder tokens
 # so the L7 proxy can rewrite them at egress. Default: empty list.
@@ -69,6 +135,10 @@ ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
 # (e.g. {"telegram":["123456789"]}). Channels with IDs get dmPolicy=allowlist;
 # channels without IDs keep the OpenClaw default (pairing). Default: empty map.
 ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
+# Base64-encoded JSON map of Discord guild configs keyed by server ID
+# (e.g. {"1234567890":{"requireMention":true,"users":["555"]}}).
+# Used to enable guild-channel responses for native Discord. Default: empty map.
+ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
 # Set to "1" to disable device-pairing auth (development/headless only).
 # Default: "0" (device auth enabled — secure by default).
 ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0
@@ -81,6 +151,11 @@ ARG NEMOCLAW_BUILD_ID=default
 # before running `nemoclaw onboard`. See #1409.
 ARG NEMOCLAW_PROXY_HOST=10.200.0.1
 ARG NEMOCLAW_PROXY_PORT=3128
+# Non-secret flag: set to "1" when the user configured Brave Search during
+# onboard. Controls whether the web search block is written to openclaw.json.
+# The actual API key is injected at runtime via openshell:resolve:env, never
+# baked into the image.
+ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
 
 # SECURITY: Promote build-args to env vars so the Python script reads them
 # via os.environ, never via string interpolation into Python source code.
@@ -92,12 +167,13 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
     NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64} \
-    NEMOCLAW_WEB_CONFIG_B64=${NEMOCLAW_WEB_CONFIG_B64} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
+    NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
-    NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT}
+    NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
+    NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED}
 
 WORKDIR /sandbox
 USER sandbox
@@ -110,6 +186,7 @@ USER sandbox
 RUN python3 -c "\
 import base64, json, os, secrets; \
 from urllib.parse import urlparse; \
+proxy_url = f\"http://{os.environ['NEMOCLAW_PROXY_HOST']}:{os.environ['NEMOCLAW_PROXY_PORT']}\"; \
 model = os.environ['NEMOCLAW_MODEL']; \
 chat_ui_url = os.environ['CHAT_UI_URL']; \
 provider_key = os.environ['NEMOCLAW_PROVIDER_KEY']; \
@@ -117,12 +194,13 @@ primary_model_ref = os.environ['NEMOCLAW_PRIMARY_MODEL_REF']; \
 inference_base_url = os.environ['NEMOCLAW_INFERENCE_BASE_URL']; \
 inference_api = os.environ['NEMOCLAW_INFERENCE_API']; \
 inference_compat = json.loads(base64.b64decode(os.environ['NEMOCLAW_INFERENCE_COMPAT_B64']).decode('utf-8')); \
-web_config = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_WEB_CONFIG_B64', 'e30=') or 'e30=').decode('utf-8')); \
 msg_channels = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_CHANNELS_B64', 'W10=') or 'W10=').decode('utf-8')); \
 _allowed_ids = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_ALLOWED_IDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
+_discord_guilds = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_DISCORD_GUILDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
 _token_keys = {'discord': 'token', 'telegram': 'botToken', 'slack': 'botToken'}; \
 _env_keys = {'discord': 'DISCORD_BOT_TOKEN', 'telegram': 'TELEGRAM_BOT_TOKEN', 'slack': 'SLACK_BOT_TOKEN'}; \
-_ch_cfg = {ch: {'accounts': {'main': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
+_ch_cfg = {ch: {'accounts': {'default': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, **({'proxy': proxy_url} if ch == 'telegram' else {}), **({'groupPolicy': 'open'} if ch == 'telegram' else {}), **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
+_ch_cfg['discord'].update({'groupPolicy': 'allowlist', 'guilds': _discord_guilds}) if 'discord' in _ch_cfg and _discord_guilds else None; \
 parsed = urlparse(chat_ui_url); \
 chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \
 origins = ['http://127.0.0.1:18789']; \
@@ -158,14 +236,12 @@ config.update({ \
             'search': { \
                 'enabled': True, \
                 'provider': 'brave', \
-                **({'apiKey': web_config.get('apiKey', '')} if web_config.get('apiKey', '') else {}) \
+                'apiKey': 'openshell:resolve:env:BRAVE_API_KEY' \
             }, \
-            'fetch': { \
-                'enabled': bool(web_config.get('fetchEnabled', True)) \
-            } \
+            'fetch': {'enabled': True} \
         } \
     } \
-} if web_config.get('provider') == 'brave' else {}); \
+}) if os.environ.get('NEMOCLAW_WEB_SEARCH_ENABLED', '') == '1' else None; \
 path = os.path.expanduser('~/.openclaw/openclaw.json'); \
 json.dump(config, open(path, 'w'), indent=2); \
 os.chmod(path, 0o600)"
@@ -194,10 +270,12 @@ USER root
 RUN mkdir -p /sandbox/.openclaw-data/logs \
         /sandbox/.openclaw-data/credentials \
         /sandbox/.openclaw-data/sandbox \
+        /sandbox/.openclaw-data/media \
     && chown sandbox:sandbox /sandbox/.openclaw-data/logs \
         /sandbox/.openclaw-data/credentials \
         /sandbox/.openclaw-data/sandbox \
-    && for dir in logs credentials sandbox; do \
+        /sandbox/.openclaw-data/media \
+    && for dir in logs credentials sandbox media; do \
         if [ -L "/sandbox/.openclaw/$dir" ]; then true; \
         elif [ -e "/sandbox/.openclaw/$dir" ]; then \
             cp -a "/sandbox/.openclaw/$dir/." "/sandbox/.openclaw-data/$dir/" 2>/dev/null || true; \
@@ -206,7 +284,40 @@ RUN mkdir -p /sandbox/.openclaw-data/logs \
         else \
             ln -s "/sandbox/.openclaw-data/$dir" "/sandbox/.openclaw/$dir"; \
         fi; \
-    done
+    done \
+    && if [ -e /sandbox/.openclaw-data/workspace/media ] && [ ! -L /sandbox/.openclaw-data/workspace/media ]; then \
+        rm -rf /sandbox/.openclaw-data/workspace/media; \
+    fi \
+    && ln -sfn /sandbox/.openclaw-data/media /sandbox/.openclaw-data/workspace/media
+
+# Ensure exec approvals path compatibility when using a stale published base
+# image that still points to ~/.openclaw/exec-approvals.json.
+RUN OPENCLAW_DIST_DIR="$(npm root -g)/openclaw/dist" \
+    && if [ ! -d "$OPENCLAW_DIST_DIR" ]; then \
+        echo "Error: OpenClaw dist directory not found: $OPENCLAW_DIST_DIR"; \
+        exit 1; \
+    fi \
+    && mkdir -p /sandbox/.openclaw-data \
+    && chown sandbox:sandbox /sandbox/.openclaw-data \
+    && chmod 755 /sandbox/.openclaw-data \
+    && LEGACY_EXEC_APPROVALS_PATH="$(printf '%b' '\176/.openclaw/exec-approvals.json')" \
+    && DATA_EXEC_APPROVALS_PATH="$(printf '%b' '\176/.openclaw-data/exec-approvals.json')" \
+    && files_with_old_path="$(grep -R --include='*.js' -l "$LEGACY_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR" || true)" \
+    && if [ -n "$files_with_old_path" ]; then \
+        files_with_old_path_file="$(mktemp)"; \
+        printf '%s\n' "$files_with_old_path" > "$files_with_old_path_file"; \
+        while IFS= read -r file; do \
+            sed -i "s#${LEGACY_EXEC_APPROVALS_PATH}#${DATA_EXEC_APPROVALS_PATH}#g" "$file"; \
+        done < "$files_with_old_path_file"; \
+        rm -f "$files_with_old_path_file"; \
+    elif ! grep -R --include='*.js' -q "$DATA_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR"; then \
+        echo "Error: Unable to verify OpenClaw exec approvals path in dist"; \
+        exit 1; \
+    fi \
+    && if grep -R --include='*.js' -n "$LEGACY_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR"; then \
+        echo "Error: OpenClaw exec approvals path patch failed"; \
+        exit 1; \
+    fi
 
 RUN chown root:root /sandbox/.openclaw \
     && rm -rf /root/.npm /sandbox/.npm \
