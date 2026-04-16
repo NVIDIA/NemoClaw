@@ -290,6 +290,35 @@ RUN mkdir -p /sandbox/.openclaw-data/logs \
     fi \
     && ln -sfn /sandbox/.openclaw-data/media /sandbox/.openclaw-data/workspace/media
 
+# Ensure exec approvals path compatibility when using a stale published base
+# image that still points to ~/.openclaw/exec-approvals.json.
+RUN OPENCLAW_DIST_DIR="$(npm root -g)/openclaw/dist" \
+    && if [ ! -d "$OPENCLAW_DIST_DIR" ]; then \
+        echo "Error: OpenClaw dist directory not found: $OPENCLAW_DIST_DIR"; \
+        exit 1; \
+    fi \
+    && mkdir -p /sandbox/.openclaw-data \
+    && chown sandbox:sandbox /sandbox/.openclaw-data \
+    && chmod 755 /sandbox/.openclaw-data \
+    && LEGACY_EXEC_APPROVALS_PATH="$(printf '%b' '\176/.openclaw/exec-approvals.json')" \
+    && DATA_EXEC_APPROVALS_PATH="$(printf '%b' '\176/.openclaw-data/exec-approvals.json')" \
+    && files_with_old_path="$(grep -R --include='*.js' -l "$LEGACY_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR" || true)" \
+    && if [ -n "$files_with_old_path" ]; then \
+        files_with_old_path_file="$(mktemp)"; \
+        printf '%s\n' "$files_with_old_path" > "$files_with_old_path_file"; \
+        while IFS= read -r file; do \
+            sed -i "s#${LEGACY_EXEC_APPROVALS_PATH}#${DATA_EXEC_APPROVALS_PATH}#g" "$file"; \
+        done < "$files_with_old_path_file"; \
+        rm -f "$files_with_old_path_file"; \
+    elif ! grep -R --include='*.js' -q "$DATA_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR"; then \
+        echo "Error: Unable to verify OpenClaw exec approvals path in dist"; \
+        exit 1; \
+    fi \
+    && if grep -R --include='*.js' -n "$LEGACY_EXEC_APPROVALS_PATH" "$OPENCLAW_DIST_DIR"; then \
+        echo "Error: OpenClaw exec approvals path patch failed"; \
+        exit 1; \
+    fi
+
 RUN chown root:root /sandbox/.openclaw \
     && rm -rf /root/.npm /sandbox/.npm \
     && find /sandbox/.openclaw -mindepth 1 -maxdepth 1 -exec chown -h root:root {} + \
