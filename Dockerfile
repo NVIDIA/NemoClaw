@@ -59,7 +59,7 @@ RUN npm ci --omit=dev
 # Files that define withStrictGuardedFetchMode locally without an export
 # (e.g. mattermost.js) keep their original strict behavior.
 #
-# === Patch 2: neutralize assertExplicitProxyAllowed ===
+# === Patch 2: env-gated bypass for assertExplicitProxyAllowed ===
 # OpenClaw 2026.4.2 added assertExplicitProxyAllowed() in fetch-guard,
 # which validates the explicit proxy URL by passing the proxy hostname
 # through resolvePinnedHostnameWithPolicy() with the *target's* SsrfPolicy.
@@ -67,16 +67,23 @@ RUN npm ci --omit=dev
 # `["api.telegram.org"]`), the proxy hostname (e.g. 10.200.0.1) gets
 # rejected with "Blocked hostname (not in allowlist)". This is an upstream
 # OpenClaw design flaw: a proxy is infrastructure, not a fetch target, and
-# should not be filtered through the target's allowlist. Neutralizing the
-# function (early return) lets the trusted env proxy be used. The L7 proxy
-# itself enforces per-endpoint network policy, so SSRF protection is
-# unchanged at the trust boundary.
+# should not be filtered through the target's allowlist.
+#
+# Inject an early-return guarded by `process.env.NEMOCLAW_SANDBOX === "1"`
+# so the bypass only activates inside NemoClaw sandbox images (where
+# `ENV NEMOCLAW_SANDBOX=1` is set below). Anyone running OpenClaw outside
+# NemoClaw — bare-metal, in another wrapper, or even in this same bundle
+# without the env var — keeps the full SSRF check. The L7 proxy itself
+# enforces per-endpoint network policy inside the sandbox, so the trust
+# boundary for SSRF protection is unchanged.
 #
 # === Removal criteria ===
 # Patch 1: drop when OpenClaw deprecates withStrictGuardedFetchMode or
 #   when all media-fetch callsites unconditionally pass useEnvProxy.
 # Patch 2: drop when OpenClaw fixes assertExplicitProxyAllowed to skip the
-#   target hostname allowlist (or exposes config to disable the check).
+#   target hostname allowlist for the proxy hostname check (or exposes config
+#   to disable the check). Also drop the `ENV NEMOCLAW_SANDBOX=1` below if no
+#   other code starts depending on it.
 #
 # Both patches fail-close: if grep finds no targets, the build aborts so
 # the next maintainer reviewing an OPENCLAW_VERSION bump knows to revisit.
@@ -93,8 +100,8 @@ RUN set -eu; \
     # --- Patch 2: neutralize assertExplicitProxyAllowed --- \
     fg_assert="$(grep -RIlE --include='*.js' 'async function assertExplicitProxyAllowed' /usr/local/lib/node_modules/openclaw/dist/)"; \
     test -n "$fg_assert"; \
-    printf '%s\n' "$fg_assert" | xargs sed -i -E 's|(async function assertExplicitProxyAllowed\([^)]*\) \{)|\1 return; /* nemoclaw: skip proxy SSRF check, see Dockerfile */ |'; \
-    grep -REq --include='*.js' 'assertExplicitProxyAllowed\([^)]*\) \{ return; /\* nemoclaw' /usr/local/lib/node_modules/openclaw/dist/
+    printf '%s\n' "$fg_assert" | xargs sed -i -E 's|(async function assertExplicitProxyAllowed\([^)]*\) \{)|\1 if (process.env.NEMOCLAW_SANDBOX === "1") return; /* nemoclaw: env-gated bypass, see Dockerfile */ |'; \
+    grep -REq --include='*.js' 'assertExplicitProxyAllowed\([^)]*\) \{ if \(process\.env\.NEMOCLAW_SANDBOX === "1"\) return; /\* nemoclaw' /usr/local/lib/node_modules/openclaw/dist/
 
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
@@ -163,6 +170,12 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
     NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED}
+
+# Marker env var read by Patch 2's env-gated bypass of OpenClaw's
+# assertExplicitProxyAllowed(). Setting it on the image scopes the bypass to
+# NemoClaw sandbox runtime; consumers running OpenClaw outside this image do
+# not have NEMOCLAW_SANDBOX set and keep the upstream SSRF check unchanged.
+ENV NEMOCLAW_SANDBOX=1
 
 WORKDIR /sandbox
 USER sandbox
