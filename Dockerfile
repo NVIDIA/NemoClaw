@@ -41,30 +41,60 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 WORKDIR /opt/nemoclaw
 RUN npm ci --omit=dev
 
-# Patch OpenClaw media fetch to use env proxy instead of DNS-pinned direct
-# connect. Inside the OpenShell sandbox all egress must go through the L7
-# proxy (10.200.0.1:3128) for credential placeholder resolution. OpenClaw's
-# SSRF guard defaults to strict mode (DNS pinning + direct connect) which
-# bypasses the proxy and fails in the sandboxed netns. Switching to
-# trusted_env_proxy mode makes media downloads (Telegram photos, etc.) route
-# through the proxy like all other traffic. See: docs/investigation/
-# telegram-media-download-fix.md
+# Patch OpenClaw media fetch for proxy-only sandbox (NVIDIA/NemoClaw#1755).
 #
-# Strategy: rewrite the fetch-guard module export so any consumer that
-# imports the strict mode alias actually receives the trusted-env-proxy
-# function. The export pattern `withStrictGuardedFetchMode as <letter>` is
-# stable across versions while the alias letters vary between minified
-# bundles. Files that define withStrictGuardedFetchMode locally without an
-# export (e.g. mattermost.js) keep their original strict behavior.
+# NemoClaw forces all sandbox egress through the OpenShell L7 proxy
+# (default 10.200.0.1:3128). Two layers of OpenClaw must be patched for
+# Telegram/Discord/Slack media downloads to work in this environment:
+#
+# === Patch 1: redirect strict-mode export to trusted-env-proxy ===
+# OpenClaw's media fetch path (fetch-ClF-ZgDC.js → fetchRemoteMedia) calls
+# fetchWithSsrFGuard(withStrictGuardedFetchMode({...})) unconditionally.
+# Strict mode does DNS-pinning + direct connect, which fails in the sandbox
+# netns where only the proxy is reachable. Rewriting the fetch-guard module
+# export so the strict alias maps to withTrustedEnvProxyGuardedFetchMode
+# makes the existing callsite request proxy mode without touching callers.
+# The export pattern `withStrictGuardedFetchMode as <letter>` is stable
+# across versions while alias letters drift between minified bundles.
+# Files that define withStrictGuardedFetchMode locally without an export
+# (e.g. mattermost.js) keep their original strict behavior.
+#
+# === Patch 2: neutralize assertExplicitProxyAllowed ===
+# OpenClaw 2026.4.2 added assertExplicitProxyAllowed() in fetch-guard,
+# which validates the explicit proxy URL by passing the proxy hostname
+# through resolvePinnedHostnameWithPolicy() with the *target's* SsrfPolicy.
+# When the target uses hostnameAllowlist (Telegram media policy:
+# `["api.telegram.org"]`), the proxy hostname (e.g. 10.200.0.1) gets
+# rejected with "Blocked hostname (not in allowlist)". This is an upstream
+# OpenClaw design flaw: a proxy is infrastructure, not a fetch target, and
+# should not be filtered through the target's allowlist. Neutralizing the
+# function (early return) lets the trusted env proxy be used. The L7 proxy
+# itself enforces per-endpoint network policy, so SSRF protection is
+# unchanged at the trust boundary.
+#
+# === Removal criteria ===
+# Patch 1: drop when OpenClaw deprecates withStrictGuardedFetchMode or
+#   when all media-fetch callsites unconditionally pass useEnvProxy.
+# Patch 2: drop when OpenClaw fixes assertExplicitProxyAllowed to skip the
+#   target hostname allowlist (or exposes config to disable the check).
+#
+# Both patches fail-close: if grep finds no targets, the build aborts so
+# the next maintainer reviewing an OPENCLAW_VERSION bump knows to revisit.
 # hadolint ignore=SC2016,DL3059,DL4006
 RUN set -eu; \
-    matches="$(grep -RIlE --include='*.js' 'export \{[^}]*withStrictGuardedFetchMode as [a-z]' /usr/local/lib/node_modules/openclaw/dist/)"; \
-    test -n "$matches"; \
-    for f in $matches; do \
+    # --- Patch 1: rewrite fetch-guard export --- \
+    fg_export="$(grep -RIlE --include='*.js' 'export \{[^}]*withStrictGuardedFetchMode as [a-z]' /usr/local/lib/node_modules/openclaw/dist/)"; \
+    test -n "$fg_export"; \
+    for f in $fg_export; do \
         grep -q 'withTrustedEnvProxyGuardedFetchMode' "$f" || { echo "ERROR: $f missing withTrustedEnvProxyGuardedFetchMode"; exit 1; }; \
     done; \
-    printf '%s\n' "$matches" | xargs sed -i -E 's|withStrictGuardedFetchMode as ([a-z])|withTrustedEnvProxyGuardedFetchMode as \1|g'; \
-    ! grep -REq --include='*.js' 'withStrictGuardedFetchMode as [a-z]' /usr/local/lib/node_modules/openclaw/dist/
+    printf '%s\n' "$fg_export" | xargs sed -i -E 's|withStrictGuardedFetchMode as ([a-z])|withTrustedEnvProxyGuardedFetchMode as \1|g'; \
+    if grep -REq --include='*.js' 'withStrictGuardedFetchMode as [a-z]' /usr/local/lib/node_modules/openclaw/dist/; then echo "ERROR: Patch 1 left strict-mode export alias" >&2; exit 1; fi; \
+    # --- Patch 2: neutralize assertExplicitProxyAllowed --- \
+    fg_assert="$(grep -RIlE --include='*.js' 'async function assertExplicitProxyAllowed' /usr/local/lib/node_modules/openclaw/dist/)"; \
+    test -n "$fg_assert"; \
+    printf '%s\n' "$fg_assert" | xargs sed -i -E 's|(async function assertExplicitProxyAllowed\([^)]*\) \{)|\1 return; /* nemoclaw: skip proxy SSRF check, see Dockerfile */ |'; \
+    grep -REq --include='*.js' 'assertExplicitProxyAllowed\([^)]*\) \{ return; /\* nemoclaw' /usr/local/lib/node_modules/openclaw/dist/
 
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
