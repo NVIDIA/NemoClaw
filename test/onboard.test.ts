@@ -878,12 +878,15 @@ describe("onboard helpers", () => {
     );
 
     // Primary start path (startGatewayWithOptions) builds gwArgs with --port.
-    assert.match(source, /const gwArgs = \["--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/);
+    assert.match(
+      source,
+      /const gwArgs = \["--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
+    );
 
     // Recovery start path (recoverGatewayRuntime) also passes --port.
     assert.match(
       source,
-      /runOpenshell\(\["gateway", "start", "--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
+      /runOpenshell\(\s*\["gateway", "start", "--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
     );
   });
 
@@ -2286,9 +2289,7 @@ const { createSandbox } = require(${onboardPath});
       payload.commands.some(
         (entry) =>
           entry.command.includes("'forward' 'start' '--background' '18789' 'my-assistant'") ||
-          entry.command.includes(
-            "'forward' 'start' '--background' '0.0.0.0:18789' 'my-assistant'",
-          ),
+          entry.command.includes("'forward' 'start' '--background' '0.0.0.0:18789' 'my-assistant'"),
       ),
       "expected dashboard forward (loopback or WSL 0.0.0.0)",
     );

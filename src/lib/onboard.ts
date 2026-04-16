@@ -28,6 +28,7 @@ const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
 const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
+const { buildSubprocessEnv } = require("./subprocess-env");
 const { DASHBOARD_PORT, GATEWAY_PORT, VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("./ports");
 const {
   getDefaultOllamaModel,
@@ -503,7 +504,13 @@ function hydrateCredentialEnv(envName) {
   return value || null;
 }
 
-const { getCurlTimingArgs, summarizeCurlFailure, summarizeProbeFailure, runCurlProbe, runStreamingEventProbe } = httpProbe;
+const {
+  getCurlTimingArgs,
+  summarizeCurlFailure,
+  summarizeProbeFailure,
+  runCurlProbe,
+  runStreamingEventProbe,
+} = httpProbe;
 
 function getNavigationChoice(value = "") {
   const normalized = String(value || "")
@@ -799,8 +806,6 @@ function isAffirmativeAnswer(value) {
       .toLowerCase(),
   );
 }
-
-
 
 function validateBraveSearchApiKey(apiKey) {
   return runCurlProbe([
@@ -1486,15 +1491,20 @@ const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRe
 // restarted after a host reboot without re-running onboard.
 // ---------------------------------------------------------------------------
 
-const PROXY_TOKEN_PATH = path.join(os.homedir(), ".nemoclaw", "ollama-proxy-token");
+const PROXY_STATE_DIR = path.join(os.homedir(), ".nemoclaw");
+const PROXY_TOKEN_PATH = path.join(PROXY_STATE_DIR, "ollama-proxy-token");
+const PROXY_PID_PATH = path.join(PROXY_STATE_DIR, "ollama-auth-proxy.pid");
 
 let ollamaProxyToken: string | null = null;
 
-function persistProxyToken(token: string): void {
-  const dir = path.dirname(PROXY_TOKEN_PATH);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+function ensureProxyStateDir(): void {
+  if (!fs.existsSync(PROXY_STATE_DIR)) {
+    fs.mkdirSync(PROXY_STATE_DIR, { recursive: true });
   }
+}
+
+function persistProxyToken(token: string): void {
+  ensureProxyStateDir();
   fs.writeFileSync(PROXY_TOKEN_PATH, token, { mode: 0o600 });
   // mode only applies on creation; ensure permissions on existing files too
   fs.chmodSync(PROXY_TOKEN_PATH, 0o600);
@@ -1506,28 +1516,85 @@ function loadPersistedProxyToken(): string | null {
       const token = fs.readFileSync(PROXY_TOKEN_PATH, "utf-8").trim();
       return token || null;
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return null;
+}
+
+function persistProxyPid(pid: number | null | undefined): void {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  ensureProxyStateDir();
+  fs.writeFileSync(PROXY_PID_PATH, `${pid}\n`, { mode: 0o600 });
+  fs.chmodSync(PROXY_PID_PATH, 0o600);
+}
+
+function loadPersistedProxyPid(): number | null {
+  try {
+    if (!fs.existsSync(PROXY_PID_PATH)) return null;
+    const raw = fs.readFileSync(PROXY_PID_PATH, "utf-8").trim();
+    const pid = Number.parseInt(raw, 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearPersistedProxyPid(): void {
+  try {
+    if (fs.existsSync(PROXY_PID_PATH)) {
+      fs.unlinkSync(PROXY_PID_PATH);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function isOllamaProxyProcess(pid: number | null | undefined): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  const cmdline = runCapture(["ps", "-p", String(pid), "-o", "args="], { ignoreError: true });
+  return Boolean(cmdline && cmdline.includes("ollama-auth-proxy.js"));
+}
+
+function spawnOllamaAuthProxy(token: string): number | null {
+  const child = spawn(process.execPath, [path.join(SCRIPTS, "ollama-auth-proxy.js")], {
+    detached: true,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      OLLAMA_PROXY_TOKEN: token,
+      OLLAMA_PROXY_PORT: String(OLLAMA_PROXY_PORT),
+      OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
+    },
+  });
+  child.unref();
+  persistProxyPid(child.pid);
+  return child.pid ?? null;
 }
 
 function killStaleProxy(): void {
   try {
-    // Only kill processes that are actually the auth proxy, not unrelated
-    // services that happen to use the same port.
-    const pidOutput = runCapture(
-      `lsof -ti :${OLLAMA_PROXY_PORT} 2>/dev/null`,
-      { ignoreError: true },
-    );
+    const persistedPid = loadPersistedProxyPid();
+    if (isOllamaProxyProcess(persistedPid)) {
+      run(["kill", String(persistedPid)], { ignoreError: true, suppressOutput: true });
+    }
+    clearPersistedProxyPid();
+
+    // Best-effort cleanup for older proxy processes created before the PID file
+    // existed. Only kill processes that are actually the auth proxy, not
+    // unrelated services that happen to use the same port.
+    const pidOutput = runCapture(["lsof", "-ti", `:${OLLAMA_PROXY_PORT}`], { ignoreError: true });
     if (pidOutput && pidOutput.trim()) {
       for (const pid of pidOutput.trim().split(/\s+/)) {
-        const cmdline = runCapture(`ps -p ${pid} -o args= 2>/dev/null`, { ignoreError: true });
-        if (cmdline && cmdline.includes("ollama-auth-proxy")) {
-          run(`kill ${pid} 2>/dev/null || true`, { ignoreError: true });
+        if (isOllamaProxyProcess(Number.parseInt(pid, 10))) {
+          run(["kill", pid], { ignoreError: true, suppressOutput: true });
         }
       }
       sleep(1);
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 function startOllamaAuthProxy(): void {
@@ -1538,21 +1605,9 @@ function startOllamaAuthProxy(): void {
   // Don't persist yet — wait until provider is confirmed in setupInference.
   // If the user backs out to a different provider, the token stays in memory
   // only and is discarded.
-
-  run(
-    `OLLAMA_PROXY_TOKEN=${shellQuote(ollamaProxyToken)} ` +
-    `OLLAMA_PROXY_PORT=${OLLAMA_PROXY_PORT} ` +
-    `OLLAMA_BACKEND_PORT=${OLLAMA_PORT} ` +
-    `node "${SCRIPTS}/ollama-auth-proxy.js" > /dev/null 2>&1 &`,
-    { ignoreError: true },
-  );
+  const pid = spawnOllamaAuthProxy(ollamaProxyToken);
   sleep(1);
-  // Verify proxy is actually listening
-  const probe = runCapture(
-    `curl -sf --connect-timeout 2 http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/tags 2>/dev/null`,
-    { ignoreError: true },
-  );
-  if (!probe) {
+  if (!isOllamaProxyProcess(pid)) {
     console.error(`  Warning: Ollama auth proxy did not start on :${OLLAMA_PROXY_PORT}`);
   }
 }
@@ -1562,33 +1617,20 @@ function startOllamaAuthProxy(): void {
  * from host reboots where the background proxy process was lost.
  */
 function ensureOllamaAuthProxy(): void {
-  // Try to load persisted token first — if none, this isn't an Ollama setup
+  // Try to load persisted token first — if none, this isn't an Ollama setup.
   const token = loadPersistedProxyToken();
   if (!token) return;
 
-  // Verify the proxy is alive AND accepts our token (not a stale proxy
-  // with a different token or an unrelated service on the same port).
-  // Use a protected endpoint, not /api/tags which is auth-exempt.
-  const probe = runCapture(
-    `curl -sf --connect-timeout 1 -H "Authorization: Bearer ${shellQuote(token)}" ` +
-    `-X POST http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/generate -d '{}' 2>/dev/null`,
-    { ignoreError: true },
-  );
-  if (probe !== null && probe !== undefined) {
+  const pid = loadPersistedProxyPid();
+  if (isOllamaProxyProcess(pid)) {
     ollamaProxyToken = token;
-    return; // proxy is alive and accepts our token
+    return;
   }
 
-  // Proxy not running or wrong token — restart it
+  // Proxy not running — restart it with the persisted token.
   killStaleProxy();
   ollamaProxyToken = token;
-  run(
-    `OLLAMA_PROXY_TOKEN=${shellQuote(token)} ` +
-    `OLLAMA_PROXY_PORT=${OLLAMA_PROXY_PORT} ` +
-    `OLLAMA_BACKEND_PORT=${OLLAMA_PORT} ` +
-    `node "${SCRIPTS}/ollama-auth-proxy.js" > /dev/null 2>&1 &`,
-    { ignoreError: true },
-  );
+  spawnOllamaAuthProxy(token);
   sleep(1);
 }
 
@@ -1623,6 +1665,15 @@ async function promptOllamaModel(gpu = null) {
     return options[index];
   }
   return promptManualModelId("  Ollama model id: ", "Ollama");
+}
+
+function printOllamaExposureWarning() {
+  console.log("");
+  console.log("  ⚠ Ollama is binding to 0.0.0.0 so the sandbox can reach it via Docker.");
+  console.log("    This exposes the Ollama API to your local network (no auth required).");
+  console.log("    On public WiFi, any device on the same network can send prompts to your GPU.");
+  console.log("    See: CNVD-2025-04094, CVE-2024-37032");
+  console.log("");
 }
 
 function pullOllamaModel(model) {
@@ -2142,11 +2193,32 @@ async function preflight() {
     { port: DASHBOARD_PORT, label: "NemoClaw dashboard" },
   ];
   for (const { port, label } of requiredPorts) {
-    const portCheck = await checkPortAvailable(port);
+    let portCheck = await checkPortAvailable(port);
     if (!portCheck.ok) {
       if ((port === GATEWAY_PORT || port === DASHBOARD_PORT) && gatewayReuseState === "healthy") {
         console.log(`  ✓ Port ${port} already owned by healthy NemoClaw runtime (${label})`);
         continue;
+      }
+      // Auto-cleanup orphaned SSH port-forward from a previous NemoClaw session
+      // (e.g. dashboard forward left behind after destroy). Only kill the process
+      // if its command line contains "openshell" to avoid killing unrelated SSH
+      // tunnels the user may have set up on the same port. (#1950)
+      if (port === DASHBOARD_PORT && portCheck.process === "ssh" && portCheck.pid) {
+        // Use `ps` to get the command line — works on Linux, macOS, and WSL.
+        const cmdline = runCapture(
+          `ps -p ${portCheck.pid} -o args= 2>/dev/null`,
+          { ignoreError: true },
+        ).trim();
+        if (cmdline.includes("openshell")) {
+          console.log(`  Cleaning up orphaned SSH port-forward on port ${port} (PID ${portCheck.pid})...`);
+          run(`kill ${portCheck.pid} 2>/dev/null || true`, { ignoreError: true });
+          sleep(1);
+          portCheck = await checkPortAvailable(port);
+          if (portCheck.ok) {
+            console.log(`  ✓ Port ${port} available after orphaned forward cleanup (${label})`);
+            continue;
+          }
+        }
       }
       console.error("");
       console.error(`  !! Port ${port} is not available.`);
@@ -2429,11 +2501,14 @@ async function recoverGatewayRuntime() {
     return true;
   }
 
-  const startResult = runOpenshell(["gateway", "start", "--name", GATEWAY_NAME, "--port", String(GATEWAY_PORT)], {
-    ignoreError: true,
-    env: getGatewayStartEnv(),
-    suppressOutput: true,
-  });
+  const startResult = runOpenshell(
+    ["gateway", "start", "--name", GATEWAY_NAME, "--port", String(GATEWAY_PORT)],
+    {
+      ignoreError: true,
+      env: getGatewayStartEnv(),
+      suppressOutput: true,
+    },
+  );
   if (startResult.status !== 0) {
     const diagnostic = compactText(
       redact(`${startResult.stderr || ""} ${startResult.stdout || ""}`),
@@ -2484,9 +2559,18 @@ async function promptValidatedSandboxName() {
       // A sandbox named 'status' makes 'nemoclaw status connect' route to
       // the global status command instead of the sandbox.
       const RESERVED_NAMES = new Set([
-        "onboard", "list", "deploy", "setup", "setup-spark",
-        "start", "stop", "status", "debug", "uninstall",
-        "credentials", "help",
+        "onboard",
+        "list",
+        "deploy",
+        "setup",
+        "setup-spark",
+        "start",
+        "stop",
+        "status",
+        "debug",
+        "uninstall",
+        "credentials",
+        "help",
       ]);
       if (RESERVED_NAMES.has(sandboxName)) {
         console.error(`  Reserved name: '${sandboxName}' is a NemoClaw CLI command.`);
@@ -2688,8 +2772,12 @@ async function createSandbox(
       });
     } catch (err) {
       if (err.code === "EACCES") {
-        console.error(`  Permission denied while copying build context from: ${path.dirname(fromResolved)}`);
-        console.error("  The --from flag uses the Dockerfile's parent directory as the Docker build context.");
+        console.error(
+          `  Permission denied while copying build context from: ${path.dirname(fromResolved)}`,
+        );
+        console.error(
+          "  The --from flag uses the Dockerfile's parent directory as the Docker build context.",
+        );
         console.error("  Move your Dockerfile to a dedicated directory and retry.");
         process.exit(1);
       }
@@ -2711,7 +2799,12 @@ async function createSandbox(
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
-  const globalPermissivePath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml");
+  const globalPermissivePath = path.join(
+    ROOT,
+    "nemoclaw-blueprint",
+    "policies",
+    "openclaw-sandbox-permissive.yaml",
+  );
   let basePolicyPath;
   if (dangerouslySkipPermissions) {
     // Permissive mode: use agent-specific permissive policy if available,
@@ -2719,7 +2812,12 @@ async function createSandbox(
     const agentPermissive = agent && agentOnboard.getAgentPermissivePolicyPath(agent);
     basePolicyPath = agentPermissive || globalPermissivePath;
   } else {
-    const defaultPolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
+    const defaultPolicyPath = path.join(
+      ROOT,
+      "nemoclaw-blueprint",
+      "policies",
+      "openclaw-sandbox.yaml",
+    );
     basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
   }
   const createArgs = [
@@ -2749,7 +2847,9 @@ async function createSandbox(
     );
     process.exit(1);
   }
-  const tokensByEnvKey = Object.fromEntries(messagingTokenDefs.map(({ envKey, token }) => [envKey, token]));
+  const tokensByEnvKey = Object.fromEntries(
+    messagingTokenDefs.map(({ envKey, token }) => [envKey, token]),
+  );
   const activeMessagingChannels = [
     ...new Set(
       messagingTokenDefs
@@ -2758,7 +2858,8 @@ async function createSandbox(
           if (envKey === "DISCORD_BOT_TOKEN") return "discord";
           if (envKey === "SLACK_BOT_TOKEN") return "slack";
           // SLACK_APP_TOKEN alone does not enable slack; bot token is required.
-          if (envKey === "SLACK_APP_TOKEN") return tokensByEnvKey["SLACK_BOT_TOKEN"] ? "slack" : null;
+          if (envKey === "SLACK_APP_TOKEN")
+            return tokensByEnvKey["SLACK_BOT_TOKEN"] ? "slack" : null;
           if (envKey === "TELEGRAM_BOT_TOKEN") return "telegram";
           return null;
         })
@@ -2830,33 +2931,31 @@ async function createSandbox(
   // See: crates/openshell-sandbox/src/secrets.rs (placeholder rewriting),
   //      crates/openshell-router/src/backend.rs (inference auth injection).
   //
-  // TODO: migrate this blocklist to the shared allowlist in
-  // src/lib/subprocess-env.ts once the sandbox create path has been validated
-  // end-to-end with the stricter filtering. The allowlist rejects unknown
-  // env vars by default, which is safer but needs careful rollout.
+  // Use the shared allowlist (subprocess-env.ts) instead of the old
+  // blocklist. The blocklist only blocked 12 specific credential names
+  // and passed EVERYTHING else — including GITHUB_TOKEN,
+  // AWS_SECRET_ACCESS_KEY, SSH_AUTH_SOCK, KUBECONFIG, NPM_TOKEN, and
+  // any CI/CD secrets that happened to be in the host environment.
+  // The allowlist inverts the default: only known-safe env vars are
+  // forwarded, everything else is dropped.
+  //
+  // For the sandbox specifically, we also strip KUBECONFIG and
+  // SSH_AUTH_SOCK — the generic allowlist includes these for host-side
+  // subprocesses (gateway start, openshell CLI) but the sandbox should
+  // never have access to the host's Kubernetes cluster or SSH agent.
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
   if (webSearchConfig?.fetchEnabled) {
-    const braveKey = getCredential(webSearch.BRAVE_API_KEY_ENV) || process.env[webSearch.BRAVE_API_KEY_ENV];
+    const braveKey =
+      getCredential(webSearch.BRAVE_API_KEY_ENV) || process.env[webSearch.BRAVE_API_KEY_ENV];
     if (braveKey) {
       envArgs.push(formatEnvAssignment(webSearch.BRAVE_API_KEY_ENV, braveKey));
     }
   }
-  const blockedSandboxEnvNames = new Set([
-    // Derived from REMOTE_PROVIDER_CONFIG to prevent drift
-    ...Object.values(REMOTE_PROVIDER_CONFIG)
-      .map((cfg) => cfg.credentialEnv)
-      .filter(Boolean),
-    // Additional credentials not in REMOTE_PROVIDER_CONFIG
-    "BEDROCK_API_KEY",
-    "DISCORD_BOT_TOKEN",
-    "SLACK_BOT_TOKEN",
-    "SLACK_APP_TOKEN",
-    "TELEGRAM_BOT_TOKEN",
-    webSearch.BRAVE_API_KEY_ENV,
-  ]);
-  const sandboxEnv = Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !blockedSandboxEnvNames.has(name)),
-  );
+  const sandboxEnv = buildSubprocessEnv();
+  // Remove host-infrastructure credentials that the generic allowlist
+  // permits for host-side processes but that must not enter the sandbox.
+  delete sandboxEnv.KUBECONFIG;
+  delete sandboxEnv.SSH_AUTH_SOCK;
   // Run without piping through awk — the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
@@ -2966,7 +3065,7 @@ async function createSandbox(
     name: sandboxName,
     gpuEnabled: !!gpu,
     agent: agent ? agent.name : null,
-    agentVersion: fromDockerfile ? null : (effectiveAgent.expectedVersion || null),
+    agentVersion: fromDockerfile ? null : effectiveAgent.expectedVersion || null,
     dangerouslySkipPermissions: dangerouslySkipPermissions || undefined,
   });
 
@@ -2994,14 +3093,20 @@ async function createSandbox(
 
   try {
     if (process.platform === "darwin") {
-      const vmKernel = runCapture("docker info --format '{{.KernelVersion}}'", { ignoreError: true }).trim();
+      const vmKernel = runCapture("docker info --format '{{.KernelVersion}}'", {
+        ignoreError: true,
+      }).trim();
       if (vmKernel) {
         const parts = vmKernel.split(".");
         const major = parseInt(parts[0], 10);
         const minor = parseInt(parts[1], 10);
         if (!isNaN(major) && !isNaN(minor) && (major < 5 || (major === 5 && minor < 13))) {
-          console.warn(`  ⚠ Landlock: Docker VM kernel ${vmKernel} does not support Landlock (requires ≥5.13).`);
-          console.warn("    Sandbox filesystem restrictions will silently degrade (best_effort mode).");
+          console.warn(
+            `  ⚠ Landlock: Docker VM kernel ${vmKernel} does not support Landlock (requires ≥5.13).`,
+          );
+          console.warn(
+            "    Sandbox filesystem restrictions will silently degrade (best_effort mode).",
+          );
         }
       }
     } else if (process.platform === "linux") {
@@ -3012,7 +3117,9 @@ async function createSandbox(
         const minor = parseInt(parts[1], 10);
         if (!isNaN(major) && !isNaN(minor) && (major < 5 || (major === 5 && minor < 13))) {
           console.warn(`  ⚠ Landlock: Kernel ${uname} does not support Landlock (requires ≥5.13).`);
-          console.warn("    Sandbox filesystem restrictions will silently degrade (best_effort mode).");
+          console.warn(
+            "    Sandbox filesystem restrictions will silently degrade (best_effort mode).",
+          );
         }
       }
     }
@@ -3036,9 +3143,12 @@ async function setupNim(gpu) {
 
   // Detect local inference options
   const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
-  const ollamaRunning = !!runCapture(`curl -sf http://localhost:${OLLAMA_PORT}/api/tags 2>/dev/null`, {
-    ignoreError: true,
-  });
+  const ollamaRunning = !!runCapture(
+    `curl -sf http://localhost:${OLLAMA_PORT}/api/tags 2>/dev/null`,
+    {
+      ignoreError: true,
+    },
+  );
   const vllmRunning = !!runCapture(`curl -sf http://localhost:${VLLM_PORT}/v1/models 2>/dev/null`, {
     ignoreError: true,
   });
@@ -3486,6 +3596,7 @@ async function setupNim(gpu) {
             run(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
           }
           sleep(2);
+          if (!isWsl()) printOllamaExposureWarning();
         }
         if (isWsl()) {
           // WSL2 doesn't need the proxy — Docker can reach the host directly.
@@ -3549,7 +3660,9 @@ async function setupNim(gpu) {
         run("brew install ollama", { ignoreError: true });
         console.log("  Starting Ollama...");
         // Bind to localhost — the auth proxy handles container access.
-        run(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+        run(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
+          ignoreError: true,
+        });
         sleep(2);
         startOllamaAuthProxy();
         console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`);
@@ -3608,9 +3721,12 @@ async function setupNim(gpu) {
         credentialEnv = "OPENAI_API_KEY";
         endpointUrl = getLocalProviderBaseUrl(provider);
         // Query vLLM for the actual model ID
-        const vllmModelsRaw = runCapture(`curl -sf http://localhost:${VLLM_PORT}/v1/models 2>/dev/null`, {
-          ignoreError: true,
-        });
+        const vllmModelsRaw = runCapture(
+          `curl -sf http://localhost:${VLLM_PORT}/v1/models 2>/dev/null`,
+          {
+            ignoreError: true,
+          },
+        );
         try {
           const vllmModels = JSON.parse(vllmModelsRaw);
           if (vllmModels.data && vllmModels.data.length > 0) {
@@ -3875,8 +3991,7 @@ const MESSAGING_CHANNELS = [
     help: "Slack API → Your Apps → OAuth & Permissions → Bot User OAuth Token (xoxb-...).",
     label: "Slack Bot Token",
     appTokenEnvKey: "SLACK_APP_TOKEN",
-    appTokenHelp:
-      "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
+    appTokenHelp: "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
     appTokenLabel: "Slack App Token (Socket Mode)",
   },
 ];
@@ -4035,9 +4150,7 @@ async function setupMessagingChannels() {
         console.log(`  ✓ ${ch.name} — reply mode already set: ${mode}`);
       } else {
         console.log(`  ${ch.requireMentionHelp}`);
-        const answer = (await prompt("  Reply only when @mentioned? [Y/n]: "))
-          .trim()
-          .toLowerCase();
+        const answer = (await prompt("  Reply only when @mentioned? [Y/n]: ")).trim().toLowerCase();
         process.env[ch.requireMentionEnvKey] = answer === "n" || answer === "no" ? "0" : "1";
         const mode =
           process.env[ch.requireMentionEnvKey] === "0" ? "all messages" : "@mentions only";
@@ -4273,7 +4386,8 @@ async function selectPolicyTier() {
     const answer = await prompt(
       `  Select tier [1-${allTiers.length}] (default: ${allTiers.indexOf(defaultTier) + 1} ${defaultTier.name}): `,
     );
-    const idx = answer.trim() === "" ? allTiers.indexOf(defaultTier) : parseInt(answer.trim(), 10) - 1;
+    const idx =
+      answer.trim() === "" ? allTiers.indexOf(defaultTier) : parseInt(answer.trim(), 10) - 1;
     const chosen = allTiers[idx] || defaultTier;
     console.log(`  Tier: ${chosen.label}`);
     return chosen.name;
@@ -4394,7 +4508,10 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
   ];
 
   // Initial inclusion: tier presets + any already-applied extras.
-  const included = new Set([...tierNames, ...extraSelected.filter((n) => ordered.find((p) => p.name === n))]);
+  const included = new Set([
+    ...tierNames,
+    ...extraSelected.filter((n) => ordered.find((p) => p.name === n)),
+  ]);
 
   // Access levels: tier defaults for tier presets, read-write default for others.
   const accessModes = {};
@@ -4416,7 +4533,9 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
 
   // ── Non-interactive: return tier defaults silently ─────────────────
   if (isNonInteractive()) {
-    return ordered.filter((p) => included.has(p.name)).map((p) => ({ name: p.name, access: accessModes[p.name] }));
+    return ordered
+      .filter((p) => included.has(p.name))
+      .map((p) => ({ name: p.name, access: accessModes[p.name] }));
   }
 
   // ── Fallback: non-TTY ─────────────────────────────────────────────
@@ -4448,7 +4567,9 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
         }
       }
     }
-    return ordered.filter((p) => included.has(p.name)).map((p) => ({ name: p.name, access: accessModes[p.name] }));
+    return ordered
+      .filter((p) => included.has(p.name))
+      .map((p) => ({ name: p.name, access: accessModes[p.name] }));
   }
 
   // ── Raw-mode TUI ─────────────────────────────────────────────────
@@ -4508,7 +4629,11 @@ async function selectTierPresetsAndAccess(tierName, allPresets, extraSelected = 
       if (key === "\r" || key === "\n") {
         cleanup();
         process.stdout.write("\n");
-        resolve(ordered.filter((p) => included.has(p.name)).map((p) => ({ name: p.name, access: accessModes[p.name] })));
+        resolve(
+          ordered
+            .filter((p) => included.has(p.name))
+            .map((p) => ({ name: p.name, access: accessModes[p.name] })),
+        );
       } else if (key === "\x03") {
         cleanup();
         process.exit(1);
@@ -4887,7 +5012,9 @@ function getDashboardForwardPort(
   chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
 ) {
   const forwardTarget = resolveDashboardForwardTarget(chatUiUrl);
-  return forwardTarget.includes(":") ? (forwardTarget.split(":").pop() ?? String(CONTROL_UI_PORT)) : forwardTarget;
+  return forwardTarget.includes(":")
+    ? (forwardTarget.split(":").pop() ?? String(CONTROL_UI_PORT))
+    : forwardTarget;
 }
 
 function getDashboardForwardTarget(
@@ -4899,7 +5026,8 @@ function getDashboardForwardTarget(
 }
 
 function getDashboardForwardStartCommand(sandboxName, options = {}) {
-  const chatUiUrl = options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const chatUiUrl =
+    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
   const forwardTarget = getDashboardForwardTarget(chatUiUrl, options);
   return `${openshellShellCommand(
     ["forward", "start", "--background", forwardTarget, sandboxName],
@@ -4932,7 +5060,8 @@ function getDashboardAccessInfo(sandboxName, options = {}) {
   const token = Object.prototype.hasOwnProperty.call(options, "token")
     ? options.token
     : fetchGatewayAuthTokenFromSandbox(sandboxName);
-  const chatUiUrl = options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  const chatUiUrl =
+    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
   const dashboardPort = Number(getDashboardForwardPort(chatUiUrl));
   const dashboardAccess = buildControlUiUrls(token, dashboardPort).map((url, index) => ({
     label: index === 0 ? "Dashboard" : `Alt ${index}`,
@@ -5087,7 +5216,9 @@ async function onboard(opts = {}) {
     opts.dangerouslySkipPermissions || process.env.NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS === "1";
   if (dangerouslySkipPermissions) {
     console.error("");
-    console.error("  \u26a0  --dangerously-skip-permissions: sandbox security restrictions disabled.");
+    console.error(
+      "  \u26a0  --dangerously-skip-permissions: sandbox security restrictions disabled.",
+    );
     console.error("     Network:    all known endpoints open (no method/path filtering)");
     console.error("     Filesystem: sandbox home directory is writable");
     console.error("     Use for development/testing only.");

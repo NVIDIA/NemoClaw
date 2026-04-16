@@ -72,31 +72,23 @@ describe("credential exposure in process arguments", () => {
     expect(src).not.toMatch(/"--credential",\s*process\.env\./);
   });
 
-  it("onboard.js does not embed sandbox secrets in the sandbox create command line", () => {
+  it("onboard.ts uses subprocess allowlist (not blocklist) for sandbox env", () => {
     const src = fs.readFileSync(ONBOARD_JS, "utf-8");
 
-    // sandboxEnv must be built with a blocklist that strips all credential env vars.
-    // The blocklist derives provider keys from REMOTE_PROVIDER_CONFIG and adds
-    // messaging tokens explicitly. Verify both mechanisms are present.
-    //
-    // TODO: migrate to the shared allowlist in subprocess-env.ts
-    // once the sandbox create path has been validated end-to-end.
-    const blocklistMatch = src.match(/const blockedSandboxEnvNames = new Set\(\[([\s\S]*?)\]\);/);
-    expect(blocklistMatch).not.toBeNull();
-    const blocklist = blocklistMatch[1];
-    // Provider credentials are derived from REMOTE_PROVIDER_CONFIG
-    expect(blocklist).toContain("REMOTE_PROVIDER_CONFIG");
-    // Messaging and additional credentials are listed explicitly
-    expect(blocklist).toContain('"BEDROCK_API_KEY"');
-    expect(blocklist).toContain('"DISCORD_BOT_TOKEN"');
-    expect(blocklist).toContain('"SLACK_BOT_TOKEN"');
-    expect(blocklist).toContain('"SLACK_APP_TOKEN"');
-    expect(blocklist).toContain('"TELEGRAM_BOT_TOKEN"');
+    // The sandbox create path must use the shared subprocess-env.ts
+    // allowlist, NOT the old blocklist. The allowlist inverts the
+    // default: only known-safe env vars are forwarded, everything
+    // else (credentials, CI secrets, SSH agent, etc.) is dropped.
+    expect(src).toMatch(/buildSubprocessEnv\(\)/);
+    // The old blocklist pattern must NOT be present
+    expect(src).not.toMatch(/blockedSandboxEnvNames/);
+    // KUBECONFIG and SSH_AUTH_SOCK must be explicitly deleted from
+    // the sandbox env even though the generic allowlist permits them
+    // for host-side processes.
+    expect(src).toMatch(/delete sandboxEnv\.KUBECONFIG/);
+    expect(src).toMatch(/delete sandboxEnv\.SSH_AUTH_SOCK/);
+    // sandboxEnv must still be passed to streamSandboxCreate
     expect(src).toMatch(/streamSandboxCreate\(createCommand, sandboxEnv(?:, \{)?/);
-    expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("NVIDIA_API_KEY"/);
-    expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("DISCORD_BOT_TOKEN"/);
-    expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("SLACK_BOT_TOKEN"/);
-    expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("SLACK_APP_TOKEN"/);
   });
 
   it("services.ts must not spread full process.env into subprocess", () => {
