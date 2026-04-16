@@ -5519,7 +5519,7 @@ async function onboard(opts = {}) {
     if (dangerouslySkipPermissions) {
       step(8, 8, "Policy presets");
       if (!waitForSandboxReady(sandboxName)) {
-        console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
+        console.error(`\n  ✗ Sandbox '${sandboxName}' not ready after creation. Giving up.`);
         process.exit(1);
       }
       policies.applyPermissivePolicy(sandboxName);
