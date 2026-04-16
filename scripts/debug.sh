@@ -131,6 +131,16 @@ redact() {
     -e 's/nvcf-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
     -e 's/ghp_[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
     -e 's/github_pat_[A-Za-z0-9_]{30,}/<REDACTED>/g' \
+    -e 's/sk-proj-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+    -e 's/sk-[A-Za-z0-9_-]{20,}/<REDACTED>/g' \
+    -e 's/xoxb-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+    -e 's/xoxp-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+    -e 's/AKIA[A-Z0-9]{16}/<REDACTED>/g' \
+    -e 's/hf_[A-Za-z0-9]{10,}/<REDACTED>/g' \
+    -e 's/glpat-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+    -e 's/gsk_[A-Za-z0-9]{10,}/<REDACTED>/g' \
+    -e 's/pypi-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
+    -e 's/sk-ant-[A-Za-z0-9_-]{10,}/<REDACTED>/g' \
     -e 's/(Bearer )[^ ]+/\1<REDACTED>/gi'
 }
 
