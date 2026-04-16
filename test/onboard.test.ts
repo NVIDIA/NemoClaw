@@ -151,7 +151,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -186,7 +186,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
         "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
         "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
@@ -244,7 +244,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
         "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
         "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
@@ -437,7 +437,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -474,7 +474,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
         "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
         "ARG NEMOCLAW_PROXY_PORT=3128",
@@ -526,7 +526,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
         "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
         "ARG NEMOCLAW_PROXY_PORT=3128",
@@ -569,7 +569,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
         "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
         "ARG NEMOCLAW_PROXY_PORT=3128",
@@ -621,7 +621,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -639,14 +639,9 @@ describe("onboard helpers", () => {
         { fetchEnabled: true },
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
-      const expected = buildWebSearchDockerConfig({ fetchEnabled: true });
-      assert.match(
-        patched,
-        new RegExp(
-          `^ARG NEMOCLAW_WEB_CONFIG_B64=${expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
-          "m",
-        ),
-      );
+      assert.match(patched, /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=1$/m);
+      // Regression guard: the old secret-bearing build arg must not reappear.
+      assert.doesNotMatch(patched, /NEMOCLAW_WEB_CONFIG_B64/);
     } finally {
       if (priorBraveKey === undefined) {
         delete process.env.BRAVE_API_KEY;
@@ -1993,6 +1988,18 @@ const { setupInference } = require(${onboardPath});
     assert.match(source, /exists \? "update" : "create"/);
     // Only one openshell call should be made (no create-then-update fallback).
     assert.match(source, /const result = runOpenshell\(args, runOpts\)/);
+  });
+
+  it("marks the unused agent_setup/openclaw sibling step as skipped (#1834)", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // When agent path is taken, openclaw must be marked skipped.
+    assert.match(source, /handleAgentSetup[\s\S]*?markStepSkipped\("openclaw"\)/);
+    // When default openclaw path is taken, agent_setup must be marked skipped.
+    assert.match(source, /setupOpenclaw[\s\S]*?markStepSkipped\("agent_setup"\)/);
   });
 
   it("starts the sandbox step before prompting for the sandbox name", () => {
@@ -4487,5 +4494,25 @@ const { createSandbox } = require(${onboardPath});
     // Non-interactive still exits within this function
     assert.match(fnBody, /isNonInteractive\(\)/);
     assert.match(fnBody, /process\.exit\(1\)/);
+  });
+
+  it("regression #1881: registry.updateSandbox(model/provider) is called AFTER createSandbox", () => {
+    // updateSandbox() silently no-ops when the entry does not exist yet.
+    // This asserts that the model/provider update comes AFTER createSandbox()
+    // returns, not before registerSandbox() is called (the original bug).
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const createSandboxPos = source.indexOf("sandboxName = await createSandbox(");
+    assert.ok(createSandboxPos !== -1, "createSandbox call not found in onboard.ts");
+    const updateAfterCreate = source.indexOf(
+      "registry.updateSandbox(sandboxName, { model, provider })",
+      createSandboxPos,
+    );
+    assert.ok(
+      updateAfterCreate !== -1,
+      "registry.updateSandbox(model, provider) must appear AFTER createSandbox() — regression #1881",
+    );
   });
 });

@@ -65,7 +65,7 @@ _TOOL_REDIRECTS=(
   'GIT_CONFIG_GLOBAL=/tmp/.gitconfig'
   'GNUPGHOME=/tmp/.gnupg'
   'PYTHONUSERBASE=/tmp/.local'
-  'PYTHONHISTFILE=/tmp/.python_history'
+  'PYTHON_HISTORY=/tmp/.python_history'
   'CLAUDE_CONFIG_DIR=/tmp/.claude'
   'npm_config_prefix=/tmp/npm-global'
 )

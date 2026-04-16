@@ -23,13 +23,33 @@ status: published
 Workspace files define your agent's personality, memory, and user context.
 They persist across sandbox restarts but are **permanently deleted** when you run `nemoclaw <name> destroy`.
 
-This guide covers manual backup with CLI commands and an automated script.
+This guide covers snapshot commands, manual backup with CLI commands, and an automated script.
 
 ## When to Back Up
 
 - **Before running `nemoclaw <name> destroy`**
 - Before major NemoClaw version upgrades
 - Periodically, if you've invested time customizing your agent
+
+## Snapshot Commands
+
+The fastest way to back up and restore sandbox state is with the built-in snapshot commands.
+Snapshots capture all workspace state directories defined in the agent manifest and store them in `~/.nemoclaw/rebuild-backups/<name>/`.
+
+```console
+$ nemoclaw my-assistant snapshot create
+$ nemoclaw my-assistant snapshot list
+$ nemoclaw my-assistant snapshot restore
+```
+
+To restore a specific snapshot instead of the latest, pass a timestamp or prefix:
+
+```console
+$ nemoclaw my-assistant snapshot restore 2026-04-14T
+```
+
+The `nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
+For full details, see the [Commands reference](../reference/commands.md).
 
 ## Manual Backup
 
