@@ -3,8 +3,15 @@
 """
 NemoClaw plugin for Hermes Agent.
 
-Provides sandbox status tools and a startup banner when Hermes runs inside
-an OpenShell sandbox managed by NemoClaw.
+Provides sandbox status tools, skill hot-reload, and a startup banner when
+Hermes runs inside an OpenShell sandbox managed by NemoClaw.
+
+Skill hot-reload: Hermes caches its skill slash-command registry in a
+module-global dict on first scan. New skills dropped on disk are invisible
+until the cache is cleared. This plugin provides a nemoclaw_reload_skills
+tool that clears the cache and re-scans, letting the agent pick up new
+skills without a gateway restart. The on_session_start hook also refreshes
+skills automatically at session boundaries.
 """
 
 import json
@@ -104,6 +111,49 @@ def _handle_info(tool_input, context):
     return json.dumps(_get_sandbox_info(), indent=2)
 
 
+def _reload_skills():
+    """Clear the Hermes skill slash-command cache and re-scan skill directories.
+
+    Hermes's ``agent.skill_commands`` module caches discovered skills in a
+    module-global dict (``_skill_commands``).  ``get_skill_commands()`` only
+    scans on first call, so skills installed after gateway startup are
+    invisible.  We clear the dict and call ``scan_skill_commands()`` to force
+    a fresh scan.
+
+    Returns the dict of discovered skills, or None on failure.
+    """
+    try:
+        import agent.skill_commands as sc
+
+        sc._skill_commands.clear()
+        return sc.scan_skill_commands()
+    except ImportError:
+        return None
+    except Exception:
+        return None
+
+
+def _handle_reload_skills(tool_input, context):
+    """Handle the nemoclaw_reload_skills tool call."""
+    commands = _reload_skills()
+    if commands is None:
+        return (
+            "Failed to reload skills. The agent.skill_commands module may "
+            "not be available in this Hermes version."
+        )
+
+    if not commands:
+        return "Skill reload complete. No skills found in skill directories."
+
+    names = sorted(commands.keys())
+    lines = [f"Skill reload complete. {len(names)} skill(s) discovered:", ""]
+    for name in names:
+        info = commands[name]
+        desc = info.get("description", "no description")
+        lines.append(f"  {name}: {desc}")
+    return "\n".join(lines)
+
+
 def register(ctx):
     """Register NemoClaw tools and hooks with Hermes."""
 
@@ -142,8 +192,32 @@ def register(ctx):
         description="NemoClaw sandbox info (JSON)",
     )
 
+    # Register skill reload tool
+    ctx.register_tool(
+        name="nemoclaw_reload_skills",
+        toolset="nemoclaw",
+        schema={
+            "type": "function",
+            "function": {
+                "name": "nemoclaw_reload_skills",
+                "description": (
+                    "Reload and re-discover skills from the skill directories. "
+                    "Call this after new skills have been installed to make them "
+                    "available as slash commands without restarting the gateway."
+                ),
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        handler=_handle_reload_skills,
+        description="Reload skills from disk without gateway restart",
+    )
+
     # Startup banner on session start
     def _on_session_start(**kwargs):
+        # Refresh skill cache so skills installed since last session are
+        # immediately available as slash commands.
+        _reload_skills()
+
         info = _get_sandbox_info()
         banner = (
             "\n"
@@ -153,7 +227,8 @@ def register(ctx):
             f"  \u2502  Model:     {info['model']:<40}\u2502\n"
             f"  \u2502  Provider:  {info['provider']:<40}\u2502\n"
             f"  \u2502  Gateway:   {info['gateway']:<40}\u2502\n"
-            "  \u2502  Tools:     nemoclaw_status, nemoclaw_info          \u2502\n"
+            "  \u2502  Tools:     nemoclaw_status, nemoclaw_info,         \u2502\n"
+            "  \u2502             nemoclaw_reload_skills                   \u2502\n"
             "  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n"
         )
         try:

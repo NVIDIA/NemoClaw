@@ -429,8 +429,11 @@ describe("regression guards", () => {
         defs.push(path.relative(repoRoot, file));
       }
     }
-    expect(defs).toHaveLength(1);
-    expect(defs[0]).toBe(path.join("src", "lib", "runner.ts"));
+    // runner.ts (CJS consumers) and shell-quote.ts (ESM consumers like config-io.ts)
+    expect(defs.sort()).toEqual([
+      path.join("src", "lib", "runner.ts"),
+      path.join("src", "lib", "shell-quote.ts"),
+    ]);
   });
 
   it("CLI rejects malicious sandbox names before shell commands (e2e)", () => {
@@ -740,6 +743,24 @@ describe("regression guards", () => {
     it("src/nemoclaw.ts does not pipe curl to shell", () => {
       const src = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"), "utf-8");
       expect(findJsViolations(src)).toEqual([]);
+    });
+  });
+
+  describe("uninstall fallback hardening (#577)", () => {
+    it("src/lib/uninstall-command.ts does not execute remote uninstall script fallback", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "src", "lib", "uninstall-command.ts"),
+        "utf-8",
+      );
+      const start = src.indexOf("export function runUninstallCommand(");
+      expect(start).toBeGreaterThan(-1);
+      const uninstallBlock = src.slice(start);
+
+      expect(uninstallBlock).not.toMatch(/exec(File)?Sync(?:Impl)?\(\s*["'](?:curl|wget)["']/);
+      expect(uninstallBlock).not.toMatch(
+        /spawnSyncImpl\(\s*["'](?:bash|sh)["']\s*,\s*\[[^\]]*(?:uninstallScript|https?:\/\/)[^\]]*\]/,
+      );
+      expect(uninstallBlock).toContain("Remote uninstall fallback is disabled for security.");
     });
   });
 });

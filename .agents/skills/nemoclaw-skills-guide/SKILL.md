@@ -26,10 +26,10 @@ Covers installation, inference configuration, network policy management, monitor
 For project maintainers.
 Covers the daily maintainer cadence (morning standup, daytime loop, evening handoff), cutting releases, finding PRs to review, and performing security code reviews.
 
-### `nemoclaw-contributor-*` (1 skill)
+### `nemoclaw-contributor-*` (2 skills)
 
 For contributors to the NemoClaw codebase.
-Covers drafting documentation updates from recent commits.
+Covers creating pull requests that follow the project template and drafting documentation updates from recent commits.
 
 ## Skill Catalog
 
@@ -64,6 +64,7 @@ Covers drafting documentation updates from recent commits.
 
 | Skill | Summary |
 |-------|---------|
+| `nemoclaw-contributor-create-pr` | Create GitHub pull requests that follow the NemoClaw PR template, including pre-PR checks, conventional commit titles, and DCO sign-off. |
 | `nemoclaw-contributor-update-docs` | Scan recent git commits for user-facing changes and draft or update the corresponding documentation pages. |
 
 ## Getting Started
@@ -79,7 +80,7 @@ Skills are cumulative. Each role includes the skills from the roles above it:
 | Role | Skills included | Count | Start with |
 |------|----------------|-------|------------|
 | User | `nemoclaw-user-*` | 9 | `nemoclaw-user-get-started` |
-| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 10 | `nemoclaw-user-overview` |
-| Maintainer | All skills | 16 | `nemoclaw-maintainer-morning` |
+| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 11 | `nemoclaw-user-overview` |
+| Maintainer | All skills | 17 | `nemoclaw-maintainer-morning` |
 
 After identifying the role, present the applicable skills from the Skill Catalog above and recommend the starting skill.

@@ -18,7 +18,7 @@ import * as onboardSession from "./onboard-session";
 export interface OnboardContext {
   step: (current: number, total: number, message: string) => void;
   runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string | null;
-  openshellShellCommand: (args: string[]) => string;
+  openshellShellCommand: (args: string[], options?: { openshellBinary?: string }) => string;
   buildSandboxConfigSyncScript: (config: Record<string, unknown>) => string;
   writeSandboxConfigSyncFile: (script: string) => string;
   cleanupTempDir: (file: string, prefix: string) => void;

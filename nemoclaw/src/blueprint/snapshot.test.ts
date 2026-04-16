@@ -178,6 +178,48 @@ describe("snapshot", () => {
         expect.anything(),
       );
     });
+
+    it("runs best-effort chown after successful copy", async () => {
+      addDir(`${SNAP}/openclaw`);
+      mockExeca
+        .mockResolvedValueOnce({ exitCode: 0 }) // cp
+        .mockResolvedValueOnce({ exitCode: 0, stderr: "" }); // chown
+
+      expect(await restoreIntoSandbox(SNAP, "mybox")).toBe(true);
+      expect(mockExeca).toHaveBeenCalledTimes(2);
+      expect(mockExeca).toHaveBeenNthCalledWith(
+        2,
+        "openshell",
+        [
+          "sandbox",
+          "exec",
+          "mybox",
+          "--",
+          "chown",
+          "-R",
+          "sandbox:sandbox",
+          "/sandbox/.openclaw-data",
+        ],
+        { reject: false },
+      );
+    });
+
+    it("returns true even when chown fails (best-effort)", async () => {
+      addDir(`${SNAP}/openclaw`);
+      mockExeca
+        .mockResolvedValueOnce({ exitCode: 0 }) // cp succeeds
+        .mockResolvedValueOnce({ exitCode: 1, stderr: "chown: operation not permitted" }); // chown fails
+
+      expect(await restoreIntoSandbox(SNAP, "mybox")).toBe(true);
+    });
+
+    it("does not call chown when cp fails", async () => {
+      addDir(`${SNAP}/openclaw`);
+      mockExeca.mockResolvedValueOnce({ exitCode: 1 }); // cp fails
+
+      expect(await restoreIntoSandbox(SNAP)).toBe(false);
+      expect(mockExeca).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("cutoverHost", () => {

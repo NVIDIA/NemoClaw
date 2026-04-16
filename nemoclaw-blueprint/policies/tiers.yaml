@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Tier definitions for the NemoClaw policy selector.
+#
+# Each tier maps to a named posture. The base sandbox policy
+# (openclaw-sandbox.yaml) is always applied regardless of tier.
+# Tiers add presets on top of that baseline.
+#
+# access values:
+#   read       — GET only (or equivalent read-only rules for that service)
+#   read-write — GET + POST/PUT/PATCH (explicitly opt-in; never the default)
+
+tiers:
+  - name: restricted
+    label: Restricted
+    description: Base sandbox only. No third-party network access beyond inference and core agent tooling.
+    presets: []
+
+  - name: balanced
+    label: Balanced
+    description: Full dev tooling and web search. Package installs, model downloads, and inference. No messaging platform access.
+    presets:
+      - { name: npm,          access: read-write }
+      - { name: pypi,         access: read-write }
+      - { name: huggingface,  access: read-write }
+      - { name: brew,         access: read-write }
+      - { name: brave,        access: read-write }
+
+  - name: open
+    label: Open
+    description: Broad access across third-party services including messaging and productivity. User accepts responsibility for the expanded scope.
+    presets:
+      - { name: npm,          access: read-write }
+      - { name: pypi,         access: read-write }
+      - { name: huggingface,  access: read-write }
+      - { name: brew,         access: read-write }
+      - { name: brave,        access: read-write }
+      - { name: slack,        access: read-write }
+      - { name: discord,      access: read-write }
+      - { name: telegram,     access: read-write }
+      - { name: jira,         access: read-write }
+      - { name: outlook,      access: read-write }

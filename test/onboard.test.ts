@@ -16,6 +16,8 @@ import {
   classifySandboxCreateFailure,
   compactText,
   formatEnvAssignment,
+  getDashboardAccessInfo,
+  getDashboardForwardStartCommand,
   getNavigationChoice,
   getGatewayReuseState,
   getPortConflictServiceHints,
@@ -23,6 +25,7 @@ import {
   getSandboxInferenceConfig,
   getInstalledOpenshellVersion,
   getBlueprintMinOpenshellVersion,
+  getBlueprintMaxOpenshellVersion,
   versionGte,
   getRequestedModelHint,
   getRequestedProviderHint,
@@ -38,6 +41,8 @@ import {
   normalizeProviderBaseUrl,
   parsePolicyPresetEnv,
   patchStagedDockerfile,
+  pullAndResolveBaseImageDigest,
+  SANDBOX_BASE_IMAGE,
   printSandboxCreateRecoveryHints,
   resolveDashboardForwardTarget,
   summarizeCurlFailure,
@@ -148,7 +153,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -183,7 +188,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
         "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
         "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
@@ -241,7 +246,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
         "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
         "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
@@ -381,6 +386,75 @@ describe("onboard helpers", () => {
     expect(resolveDashboardForwardTarget("http://10.0.0.25:18789")).toBe("0.0.0.0:18789");
   });
 
+  it("includes a VS Code/WSL dashboard URL when running under WSL", () => {
+    const access = getDashboardAccessInfo("the-crucible", {
+      token: "secret-token",
+      chatUiUrl: "http://127.0.0.1:19999",
+      env: { WSL_DISTRO_NAME: "Ubuntu" },
+      platform: "linux",
+      release: "6.6.87.2-microsoft-standard-WSL2",
+      runCapture: (command) => (command.includes("hostname -I") ? "172.24.240.1\n" : ""),
+    });
+
+    expect(access).toEqual([
+      { label: "Dashboard", url: "http://127.0.0.1:19999/#token=secret-token" },
+      { label: "VS Code/WSL", url: "http://172.24.240.1:19999/#token=secret-token" },
+    ]);
+  });
+
+  it("binds the dashboard forward to all interfaces under WSL", () => {
+    const command = getDashboardForwardStartCommand("the-crucible", {
+      chatUiUrl: "http://127.0.0.1:19999",
+      env: { WSL_DISTRO_NAME: "Ubuntu" },
+      openshellBinary: "/usr/bin/openshell",
+      platform: "linux",
+      release: "6.6.87.2-microsoft-standard-WSL2",
+    });
+
+    expect(command).toContain("forward");
+    expect(command).toContain("start");
+    expect(command).toContain("--background");
+    // On WSL, bind to all interfaces so the Windows-side browser can reach the port.
+    // The sandbox image is built with CHAT_UI_URL=http://127.0.0.1:19999, so the
+    // gateway listens on 19999 inside the sandbox — openshell maps host:19999 →
+    // sandbox:19999 (same port both sides, the only mapping openshell supports).
+    expect(command).toContain("0.0.0.0:19999");
+    expect(command).toContain("the-crucible");
+  });
+
+  it("uses the default port as-is when NEMOCLAW_DASHBOARD_PORT is not overridden", () => {
+    const command = getDashboardForwardStartCommand("the-crucible", {
+      chatUiUrl: "http://127.0.0.1:18789",
+      openshellBinary: "/usr/bin/openshell",
+    });
+
+    expect(command).toContain("--background");
+    // Default port — forward same port on both sides using the bare port number.
+    // Must not regress to all-interfaces (0.0.0.0:18789) or port:port (18789:18789) forms.
+    expect(command).toContain("18789");
+    expect(command).not.toContain("0.0.0.0:18789");
+    expect(command).not.toContain("18789:18789");
+    expect(command).toContain("the-crucible");
+  });
+
+  it("forwards a custom port as-is on non-WSL loopback", () => {
+    const command = getDashboardForwardStartCommand("the-crucible", {
+      chatUiUrl: "http://127.0.0.1:19000",
+      openshellBinary: "/usr/bin/openshell",
+    });
+
+    expect(command).toContain("--background");
+    // The gateway is configured to listen on the same port (via CHAT_UI_URL baked at
+    // onboard time), so host:19000 → sandbox:19000 is the correct mapping.
+    // Non-WSL loopback must use the plain port — not the all-interfaces (0.0.0.0:19000)
+    // form and not any port:port variant (openshell does not support asymmetric mapping).
+    expect(command).toContain("19000");
+    expect(command).not.toContain("0.0.0.0:19000");
+    expect(command).not.toContain("19000:19000");
+    expect(command).not.toContain("19000:18789");
+    expect(command).toContain("the-crucible");
+  });
+
   it("prints platform-appropriate service hints for port conflicts", () => {
     expect(getPortConflictServiceHints("darwin").join("\n")).toMatch(/launchctl unload/);
     expect(getPortConflictServiceHints("darwin").join("\n")).not.toMatch(/systemctl --user/);
@@ -402,7 +476,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -439,7 +513,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
         "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
         "ARG NEMOCLAW_PROXY_PORT=3128",
@@ -491,7 +565,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
         "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
         "ARG NEMOCLAW_PROXY_PORT=3128",
@@ -534,7 +608,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
         "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
         "ARG NEMOCLAW_PROXY_PORT=3128",
@@ -586,7 +660,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -604,14 +678,9 @@ describe("onboard helpers", () => {
         { fetchEnabled: true },
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
-      const expected = buildWebSearchDockerConfig({ fetchEnabled: true });
-      assert.match(
-        patched,
-        new RegExp(
-          `^ARG NEMOCLAW_WEB_CONFIG_B64=${expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
-          "m",
-        ),
-      );
+      assert.match(patched, /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=1$/m);
+      // Regression guard: the old secret-bearing build arg must not reappear.
+      assert.doesNotMatch(patched, /NEMOCLAW_WEB_CONFIG_B64/);
     } finally {
       if (priorBraveKey === undefined) {
         delete process.env.BRAVE_API_KEY;
@@ -746,6 +815,62 @@ describe("onboard helpers", () => {
     expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(v)).toBe(true);
   });
 
+  it("getBlueprintMaxOpenshellVersion reads max_openshell_version from blueprint.yaml", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-max-version-"));
+    const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(blueprintDir, "blueprint.yaml"),
+      [
+        'version: "0.1.0"',
+        'min_openshell_version: "0.0.24"',
+        'max_openshell_version: "0.0.26"',
+        'min_openclaw_version: "2026.3.0"',
+      ].join("\n"),
+    );
+    try {
+      expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe("0.0.26");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("getBlueprintMaxOpenshellVersion returns null on missing or unparseable blueprint", () => {
+    // Missing directory
+    const missingDir = path.join(
+      os.tmpdir(),
+      "nemoclaw-blueprint-max-missing-" + Date.now().toString(),
+    );
+    expect(getBlueprintMaxOpenshellVersion(missingDir)).toBe(null);
+
+    // Present file, missing field — must NOT block onboard
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-no-max-field-"));
+    const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.writeFileSync(path.join(blueprintDir, "blueprint.yaml"), 'version: "0.1.0"\n');
+    try {
+      expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe(null);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("shipped blueprint.yaml exposes a parseable max_openshell_version", () => {
+    const repoRoot = path.resolve(import.meta.dirname, "..");
+    const v = getBlueprintMaxOpenshellVersion(repoRoot);
+    expect(v).not.toBe(null);
+    expect(/^[0-9]+\.[0-9]+\.[0-9]+/.test(v)).toBe(true);
+  });
+
+  it("max_openshell_version is greater than or equal to min_openshell_version in shipped blueprint", () => {
+    const repoRoot = path.resolve(import.meta.dirname, "..");
+    const min = getBlueprintMinOpenshellVersion(repoRoot);
+    const max = getBlueprintMaxOpenshellVersion(repoRoot);
+    expect(min).not.toBe(null);
+    expect(max).not.toBe(null);
+    expect(versionGte(max, min)).toBe(true);
+  });
+
   it("pins the gateway image to the installed OpenShell release version", () => {
     expect(getInstalledOpenshellVersion("openshell 0.0.12")).toBe("0.0.12");
     expect(getInstalledOpenshellVersion("openshell 0.0.13-dev.8+gbbcaed2ea")).toBe("0.0.13");
@@ -783,6 +908,25 @@ describe("onboard helpers", () => {
     ).toBe(false);
     expect(isGatewayHealthy("Gateway status: Disconnected", "Gateway: nemoclaw")).toBe(false);
     expect(isGatewayHealthy("Gateway status: Connected", "Gateway: something-else")).toBe(false);
+  });
+
+  it("passes --port GATEWAY_PORT through every gateway start path", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // Primary start path (startGatewayWithOptions) builds gwArgs with --port.
+    assert.match(
+      source,
+      /const gwArgs = \["--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
+    );
+
+    // Recovery start path (recoverGatewayRuntime) also passes --port.
+    assert.match(
+      source,
+      /runOpenshell\(\s*\["gateway", "start", "--name", GATEWAY_NAME, "--port", String\(GATEWAY_PORT\)\]/,
+    );
   });
 
   it("classifies gateway reuse states conservatively", () => {
@@ -828,6 +972,125 @@ describe("onboard helpers", () => {
       ),
     ).toBe("foreign-active");
     expect(getGatewayReuseState("", "")).toBe("missing");
+  });
+
+  it("prints doctor logs automatically when gateway fails to start (#1605)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-diag-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "gateway-diag.cjs");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    // Fake openshell:
+    //   gateway start  — emits ANSI color codes + \r\n (mirrors real gateway output), exits 1
+    //   doctor logs    — emits ANSI sequences, an OOMKilled message, and a fake nvapi- credential
+    //                    to exercise ANSI stripping and redaction in the doctor-log path
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [[ "$*" == *"doctor"*"logs"* ]]; then
+  printf "\\033[31mERROR\\033[0m k3s cluster crashed: OOMKilled\\r\\n"
+  printf "  Container nemoclaw_k3s ran out of memory\\r\\n"
+  printf "  Gateway auth token: nvapi-fakecredential-9999\\r\\n"
+  exit 0
+fi
+if [[ "$*" == *"gateway"*"start"* ]]; then
+  printf "\\033[33mDeploying\\033[0m gateway nemoclaw...\\r\\n"
+  printf "\\r\\nWaiting for gateway health...\\r\\n"
+  exit 1
+fi
+exit 1
+`,
+      { mode: 0o755 },
+    );
+
+    // Script runs in a child process: patching p-retry to be immediate avoids the
+    // 10 s + 30 s minTimeout delays, and NEMOCLAW_HEALTH_POLL_COUNT=0 skips the
+    // health-poll loop so the function throws "Gateway failed to start" on the
+    // first attempt. With exitOnFailure:true the catch block should auto-print
+    // doctor logs to stderr and then call process.exit(1).
+    const script = `
+const mod = require("module");
+const origLoad = mod._load;
+mod._load = function(req, parent, isMain) {
+  if (req === "p-retry") {
+    return async (fn, opts) => {
+      try {
+        return await fn({ attemptNumber: 1, retriesLeft: 0 });
+      } catch (e) {
+        if (opts && opts.onFailedAttempt) {
+          opts.onFailedAttempt(Object.assign(e, { attemptNumber: 1, retriesLeft: 0 }));
+        }
+        throw e;
+      }
+    };
+  }
+  return origLoad.call(this, req, parent, isMain);
+};
+const { startGateway } = require(${onboardPath});
+startGateway(null).catch(() => {});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const nodeExec = process.execPath;
+    const result = spawnSync(nodeExec, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "0",
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    // The process exits 1 because startGateway calls process.exit(1) on failure.
+    assert.equal(result.status, 1, `unexpected exit code; stderr:\n${result.stderr}`);
+
+    // Fix 3: doctor logs are auto-printed to stderr.
+    assert.ok(
+      result.stderr.includes("Gateway logs:"),
+      `expected "Gateway logs:" header in stderr:\n${result.stderr}`,
+    );
+    assert.ok(
+      result.stderr.includes("OOMKilled"),
+      `expected doctor log output in stderr:\n${result.stderr}`,
+    );
+
+    // ANSI sequences must be stripped from both stdout (gateway start output) and
+    // stderr (doctor logs). A raw \x1b in the output means the regex failed.
+    assert.ok(
+      !result.stdout.includes("\x1b"),
+      `unexpected ANSI escape in stdout:\n${result.stdout}`,
+    );
+    assert.ok(
+      !result.stderr.includes("\x1b"),
+      `unexpected ANSI escape in stderr:\n${result.stderr}`,
+    );
+
+    // Credentials in doctor logs must be redacted, never printed verbatim.
+    assert.ok(
+      !result.stderr.includes("nvapi-fakecredential-9999"),
+      `credential leaked verbatim in stderr:\n${result.stderr}`,
+    );
+
+    // Fix 2: the \r\n -> \naiting rendering artifact must not appear.
+    assert.ok(
+      !result.stdout.includes("\naiting"),
+      `\\naiting artifact present in stdout:\n${result.stdout}`,
+    );
+
+    // Fix 1: gateway start output is printed per-line under the header, not as
+    // one collapsed blob. "Deploying" and "Waiting" must appear on separate lines.
+    const gatewayLines = result.stdout
+      .split("\n")
+      .filter((l) => l.includes("Deploying") || l.includes("Waiting"));
+    assert.ok(
+      gatewayLines.length >= 2,
+      `expected "Deploying" and "Waiting" on separate lines in stdout:\n${result.stdout}`,
+    );
   });
 
   it("classifies sandbox reuse states from openshell outputs", () => {
@@ -1261,12 +1524,13 @@ const { setupInference } = require(${onboardPath});
 
     expect(result.status).toBe(0);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
+    assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
-    assert.match(commands[1].command, /'--credential' 'NVIDIA_API_KEY'/);
-    assert.doesNotMatch(commands[1].command, /nvapi-secret-value/);
-    assert.match(commands[1].command, /provider' 'create'/);
-    assert.match(commands[2].command, /inference' 'set'/);
+    assert.match(commands[1].command, /'provider' 'get'/);
+    assert.match(commands[2].command, /'--credential' 'NVIDIA_API_KEY'/);
+    assert.doesNotMatch(commands[2].command, /nvapi-secret-value/);
+    assert.match(commands[2].command, /provider' 'update'/);
+    assert.match(commands[3].command, /inference' 'set'/);
   });
 
   it("detects when the live inference route already matches the requested provider and model", () => {
@@ -1459,6 +1723,8 @@ const registry = require(${registryPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  // provider-get returns not-found so we exercise the create path
+  if (command.includes("'provider' 'get'")) return { status: 1 };
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -1502,12 +1768,13 @@ const { setupInference } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
+    assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
-    assert.match(commands[1].command, /'--type' 'anthropic'/);
-    assert.match(commands[1].command, /'--credential' 'ANTHROPIC_API_KEY'/);
-    assert.doesNotMatch(commands[1].command, /sk-ant-secret-value/);
-    assert.match(commands[2].command, /'--provider' 'anthropic-prod'/);
+    assert.match(commands[1].command, /'provider' 'get'/);
+    assert.match(commands[2].command, /'--type' 'anthropic'/);
+    assert.match(commands[2].command, /'--credential' 'ANTHROPIC_API_KEY'/);
+    assert.doesNotMatch(commands[2].command, /sk-ant-secret-value/);
+    assert.match(commands[3].command, /'--provider' 'anthropic-prod'/);
   });
 
   it("updates OpenAI-compatible providers without passing an unsupported --type flag", () => {
@@ -1529,11 +1796,9 @@ const runner = require(${runnerPath});
 const registry = require(${registryPath});
 
 const commands = [];
-let callIndex = 0;
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
-  callIndex += 1;
-  return { status: callIndex === 2 ? 1 : 0 };
+  return { status: 0 };
 };
 runner.runCapture = (command) => {
   if (command.includes("inference") && command.includes("get")) {
@@ -1578,7 +1843,7 @@ const { setupInference } = require(${onboardPath});
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
-    assert.match(commands[1].command, /provider' 'create'/);
+    assert.match(commands[1].command, /'provider' 'get'/);
     assert.match(commands[2].command, /provider' 'update' 'openai-api'/);
     assert.doesNotMatch(commands[2].command, /'--type'/);
     assert.match(commands[3].command, /inference' 'set' '--no-verify'/);
@@ -1754,17 +2019,29 @@ const { setupInference } = require(${onboardPath});
     assert.match(recoverySource, /local curl invocation error/);
   });
 
-  it("suppresses expected provider-create AlreadyExists noise when update succeeds", () => {
+  it("checks provider existence before create/update to avoid AlreadyExists noise (#1155)", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
 
-    assert.match(source, /stdio: \["ignore", "pipe", "pipe"\]/);
-    // upsertProvider must NOT have its own console.log for Created/Updated —
-    // runner passthrough handles output, so duplicating it causes #1506.
-    assert.doesNotMatch(source, /console\.log\(`✓ Created provider \$\{name\}`\)/);
-    assert.doesNotMatch(source, /console\.log\(`✓ Updated provider \$\{name\}`\)/);
+    // upsertProvider must check existence first so it never triggers AlreadyExists.
+    assert.match(source, /providerExistsInGateway\(name\)/);
+    assert.match(source, /exists \? "update" : "create"/);
+    // Only one openshell call should be made (no create-then-update fallback).
+    assert.match(source, /const result = runOpenshell\(args, runOpts\)/);
+  });
+
+  it("marks the unused agent_setup/openclaw sibling step as skipped (#1834)", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    // When agent path is taken, openclaw must be marked skipped.
+    assert.match(source, /handleAgentSetup[\s\S]*?markStepSkipped\("openclaw"\)/);
+    // When default openclaw path is taken, agent_setup must be marked skipped.
+    assert.match(source, /setupOpenclaw[\s\S]*?markStepSkipped\("agent_setup"\)/);
   });
 
   it("starts the sandbox step before prompting for the sandbox name", () => {
@@ -1894,8 +2171,9 @@ const { setupInference } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.equal(payload.openai, "sk-stored-secret");
-    assert.equal(payload.commands[1].env.OPENAI_API_KEY, "sk-stored-secret");
-    assert.doesNotMatch(payload.commands[1].command, /sk-stored-secret/);
+    // commands[0]=gateway select, [1]=provider get, [2]=provider update
+    assert.equal(payload.commands[2].env.OPENAI_API_KEY, "sk-stored-secret");
+    assert.doesNotMatch(payload.commands[2].command, /sk-stored-secret/);
   });
 
   it("drops stale local sandbox registry entries when the live sandbox is gone", () => {
@@ -2047,10 +2325,12 @@ const { createSandbox } = require(${onboardPath});
     assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
     assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
     assert.ok(
-      payload.commands.some((entry) =>
-        entry.command.includes("'forward' 'start' '--background' '18789' 'my-assistant'"),
+      payload.commands.some(
+        (entry) =>
+          entry.command.includes("'forward' 'start' '--background' '18789' 'my-assistant'") ||
+          entry.command.includes("'forward' 'start' '--background' '0.0.0.0:18789' 'my-assistant'"),
       ),
-      "expected default loopback dashboard forward",
+      "expected dashboard forward (loopback or WSL 0.0.0.0)",
     );
   });
 
@@ -2142,6 +2422,129 @@ const { createSandbox } = require(${onboardPath});
     );
   });
 
+  it("injects NEMOCLAW_DASHBOARD_PORT into sandbox create envArgs when set (#1925)", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dashboard-port-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "dashboard-port-envargs.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
+  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  // Custom port: dashboard readiness curl uses 19000 (DASHBOARD_PORT from env)
+  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:19000/")) return "ok";
+  if (command.includes("'forward' 'list'")) return "19000 -> my-assistant:19000";
+  return "";
+};
+registry.registerSandbox = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  const sandboxName = await createSandbox(null, "gpt-5.4");
+  console.log(JSON.stringify({ sandboxName, commands }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    // Strip CHAT_UI_URL so createSandbox falls back to http://127.0.0.1:19000.
+    // Without this, a CHAT_UI_URL set in the developer's shell or CI would be
+    // inherited, causing chatUiUrl to use the wrong port and making the forward
+    // command assertion below fail spuriously.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { CHAT_UI_URL: _stripped, ...inheritedEnv } = process.env;
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...inheritedEnv,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_DASHBOARD_PORT: "19000",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payloadLine = result.stdout
+      .trim()
+      .split("\n")
+      .slice()
+      .reverse()
+      .find((line) => line.startsWith("{") && line.endsWith("}"));
+    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(payloadLine);
+    const createCommand = payload.commands.find((entry) =>
+      entry.command.includes("'sandbox' 'create'"),
+    );
+    assert.ok(createCommand, "expected sandbox create command");
+    // Part 1 of fix (#1925): NEMOCLAW_DASHBOARD_PORT must be in envArgs so
+    // nemoclaw-start.sh can unconditionally override CHAT_UI_URL at runtime,
+    // overriding whatever value the Docker image had baked in.
+    assert.match(createCommand.command, /'NEMOCLAW_DASHBOARD_PORT=19000'/);
+    // Forward must use same-port mapping (openshell does not support asymmetric)
+    assert.ok(
+      payload.commands.some(
+        (entry) =>
+          entry.command.includes("'forward' 'start' '--background' '19000' 'my-assistant'") ||
+          entry.command.includes(
+            "'forward' 'start' '--background' '0.0.0.0:19000' 'my-assistant'",
+          ),
+      ),
+      "expected dashboard forward for port 19000",
+    );
+    assert.ok(
+      !payload.commands.some((entry) => entry.command.includes("19000:18789")),
+      "forward must not use asymmetric 19000:18789 mapping",
+    );
+    assert.ok(
+      !payload.commands.some((entry) => entry.command.includes("19000:19000")),
+      "forward must not use port:port form (openshell does not support it)",
+    );
+  });
+
   it(
     "creates providers for messaging tokens and attaches them to the sandbox",
     { timeout: 60_000 },
@@ -2174,6 +2577,8 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  // provider-get returns not-found so messaging providers are created fresh
+  if (command.includes("'provider' 'get'")) return { status: 1 };
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -2469,9 +2874,11 @@ const { createSandbox } = require(${onboardPath});
         "should NOT delete sandbox when providers already exist in gateway",
       );
 
-      // Providers should still be upserted on reuse (credential refresh)
+      // Providers should still be upserted on reuse (credential refresh).
+      // Since the mock reports providers as existing (run returns status 0),
+      // upsertProvider issues 'update' rather than 'create'.
       const providerUpserts = payload.commands.filter((entry) =>
-        entry.command.includes("'provider' 'create'"),
+        entry.command.includes("'provider' 'update'"),
       );
       assert.ok(
         providerUpserts.some((e) => e.command.includes("my-assistant-discord-bridge")),
@@ -3014,6 +3421,8 @@ const runner = require(${runnerPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push(command);
+  // First call is provider-get (not found), second is provider-create (success)
+  if (command.includes("'provider' 'get'")) return { status: 1, stdout: "", stderr: "" };
   return { status: 0, stdout: "", stderr: "" };
 };
 const { upsertProvider } = require(${onboardPath});
@@ -3031,9 +3440,10 @@ console.log(JSON.stringify({ result, commands }));
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.deepEqual(payload.result, { ok: true });
-    assert.equal(payload.commands.length, 1);
-    assert.match(payload.commands[0], /'provider' 'create' '--name' 'discord-bridge'/);
-    assert.match(payload.commands[0], /'--credential' 'DISCORD_BOT_TOKEN'/);
+    assert.equal(payload.commands.length, 2);
+    assert.match(payload.commands[0], /'provider' 'get'/);
+    assert.match(payload.commands[1], /'provider' 'create' '--name' 'discord-bridge'/);
+    assert.match(payload.commands[1], /'--credential' 'DISCORD_BOT_TOKEN'/);
   });
 
   it("upsertProvider does not add its own log line on top of runner output (#1506)", () => {
@@ -3052,6 +3462,8 @@ console.log(JSON.stringify({ result, commands }));
     const script = `
 const runner = require(${runnerPath});
 runner.run = (command, opts = {}) => {
+  // First call is provider-get (not found)
+  if (command.includes("'provider' 'get'")) return { status: 1, stdout: "", stderr: "" };
   // Simulate runner passthrough: writeRedactedResult writes stdout to terminal
   process.stdout.write("✓ Created provider test-bridge\\n");
   return { status: 0, stdout: "✓ Created provider test-bridge", stderr: "" };
@@ -3074,7 +3486,7 @@ upsertProvider("test-bridge", "generic", "TEST_TOKEN", null, { TEST_TOKEN: "tok"
     assert.equal(lines.length, 1, `Expected 1 log line but got ${lines.length}: ${result.stdout}`);
   });
 
-  it("upsertProvider falls back to update when create fails", () => {
+  it("upsertProvider updates existing provider instead of creating (#1155)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upsert-provider-update-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3090,14 +3502,10 @@ upsertProvider("test-bridge", "generic", "TEST_TOKEN", null, { TEST_TOKEN: "tok"
     const script = `
 const runner = require(${runnerPath});
 const commands = [];
-let callCount = 0;
 runner.run = (command, opts = {}) => {
   commands.push(command);
-  callCount++;
-  // First call (create) fails, second call (update) succeeds
-  return callCount === 1
-    ? { status: 1, stdout: "", stderr: "already exists" }
-    : { status: 0, stdout: "", stderr: "" };
+  // provider-get succeeds (provider exists), then update succeeds
+  return { status: 0, stdout: "", stderr: "" };
 };
 const { upsertProvider } = require(${onboardPath});
 const result = upsertProvider("inference", "openai", "NVIDIA_API_KEY", "https://integrate.api.nvidia.com/v1");
@@ -3115,7 +3523,7 @@ console.log(JSON.stringify({ result, commands }));
     const payload = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.deepEqual(payload.result, { ok: true });
     assert.equal(payload.commands.length, 2);
-    assert.match(payload.commands[0], /'provider' 'create'/);
+    assert.match(payload.commands[0], /'provider' 'get'/);
     assert.match(payload.commands[1], /'provider' 'update'/);
     assert.match(
       payload.commands[1],
@@ -3123,7 +3531,7 @@ console.log(JSON.stringify({ result, commands }));
     );
   });
 
-  it("upsertProvider returns error details when both create and update fail", () => {
+  it("upsertProvider returns error details when create or update fails", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upsert-provider-fail-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3139,6 +3547,8 @@ console.log(JSON.stringify({ result, commands }));
     const script = `
 const runner = require(${runnerPath});
 runner.run = (command, opts = {}) => {
+  // provider-get says not found, then create fails
+  if (command.includes("'provider' 'get'")) return { status: 1, stdout: "", stderr: "" };
   return { status: 1, stdout: "", stderr: "gateway unreachable" };
 };
 const { upsertProvider } = require(${onboardPath});
@@ -3599,7 +4009,8 @@ const { setupInference } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
+    // gateway select + provider get + provider update + inference set
+    assert.equal(commands.length, 4);
   });
 
   it("accepts gateway inference output that omits the Route line", () => {
@@ -3668,7 +4079,8 @@ const { setupInference } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
-    assert.equal(commands.length, 3);
+    // gateway select + provider get + provider update + inference set
+    assert.equal(commands.length, 4);
   });
 
   it(
@@ -3703,6 +4115,8 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  // provider-get returns not-found so messaging providers are created fresh
+  if (command.includes("'provider' 'get'")) return { status: 1 };
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -4243,5 +4657,283 @@ const { createSandbox } = require(${onboardPath});
     // Non-interactive still exits within this function
     assert.match(fnBody, /isNonInteractive\(\)/);
     assert.match(fnBody, /process\.exit\(1\)/);
+  });
+
+  it("regression #1881: registry.updateSandbox(model/provider) is called AFTER createSandbox", () => {
+    // updateSandbox() silently no-ops when the entry does not exist yet.
+    // This asserts that the model/provider update comes AFTER createSandbox()
+    // returns, not before registerSandbox() is called (the original bug).
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const createSandboxPos = source.indexOf("sandboxName = await createSandbox(");
+    assert.ok(createSandboxPos !== -1, "createSandbox call not found in onboard.ts");
+    const updateAfterCreate = source.indexOf(
+      "registry.updateSandbox(sandboxName, { model, provider })",
+      createSandboxPos,
+    );
+    assert.ok(
+      updateAfterCreate !== -1,
+      "registry.updateSandbox(model, provider) must appear AFTER createSandbox() — regression #1881",
+    );
+  });
+
+  // ── Base image digest pinning (#1904) ──────────────────────────
+
+  it("patchStagedDockerfile rewrites ARG BASE_IMAGE when baseImageRef is provided", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-base-image-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    const fakeRef =
+      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-pin",
+        "openai-api",
+        null,
+        null,
+        [],
+        {},
+        {},
+        fakeRef,
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG BASE_IMAGE=ghcr\.io\/nvidia\/nemoclaw\/sandbox-base@sha256:a{64}$/m);
+      // Model patching still works alongside base image pinning
+      assert.match(patched, /^ARG NEMOCLAW_MODEL=gpt-5\.4$/m);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patchStagedDockerfile preserves ARG BASE_IMAGE when baseImageRef is null", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-base-image-null-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-nopin",
+        "openai-api",
+        null,
+        null,
+        [],
+        {},
+        {},
+        null,
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(
+        patched,
+        /^ARG BASE_IMAGE=ghcr\.io\/nvidia\/nemoclaw\/sandbox-base:latest$/m,
+        "BASE_IMAGE should remain unchanged when baseImageRef is null",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patchStagedDockerfile is safe when Dockerfile has no ARG BASE_IMAGE line", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-no-base-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    const fakeRef =
+      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-nobase",
+        "openai-api",
+        null,
+        null,
+        [],
+        {},
+        {},
+        fakeRef,
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      // No ARG BASE_IMAGE in original, so the ref should not appear
+      assert.ok(!patched.includes("ARG BASE_IMAGE="), "Should not inject BASE_IMAGE when line is absent");
+      // Other patching should still work
+      assert.match(patched, /^ARG NEMOCLAW_MODEL=gpt-5\.4$/m);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1904: BASE_IMAGE must reference sandbox-base, not openshell-community", () => {
+    // This is the exact bug that broke all e2e tests in PR #1937:
+    // the code read a digest from blueprint.yaml (openshell-community registry)
+    // and applied it to nemoclaw/sandbox-base (different registry).
+    // Verify that patchStagedDockerfile only writes refs to sandbox-base.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-regression-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    const correctRef =
+      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-regression",
+        "openai-api",
+        null,
+        null,
+        [],
+        {},
+        {},
+        correctRef,
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      const baseLine = patched.split("\n").find((l) => l.startsWith("ARG BASE_IMAGE="));
+      assert.ok(baseLine, "ARG BASE_IMAGE line must exist");
+      assert.ok(
+        baseLine.includes("nemoclaw/sandbox-base"),
+        `BASE_IMAGE must reference nemoclaw/sandbox-base, got: ${baseLine}`,
+      );
+      assert.ok(
+        !baseLine.includes("openshell-community"),
+        `BASE_IMAGE must NOT reference openshell-community — regression #1937. Got: ${baseLine}`,
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patchStagedDockerfile does NOT overwrite custom --from BASE_IMAGE that differs from sandbox-base", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-custom-base-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    const customBase = "my-registry.example.com/my-custom-image:v2";
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        `ARG BASE_IMAGE=${customBase}`,
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    const sandboxRef =
+      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-custom",
+        "openai-api",
+        null,
+        null,
+        [],
+        {},
+        {},
+        sandboxRef,
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      const baseLine = patched.split("\n").find((l) => l.startsWith("ARG BASE_IMAGE="));
+      assert.ok(baseLine, "ARG BASE_IMAGE line must exist");
+      assert.ok(
+        baseLine.includes(customBase),
+        `Custom --from BASE_IMAGE must be preserved, got: ${baseLine}`,
+      );
+      assert.ok(
+        !baseLine.includes("sandbox-base"),
+        `Custom --from BASE_IMAGE must NOT be overwritten with sandbox-base, got: ${baseLine}`,
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1904: pullAndResolveBaseImageDigest uses sandbox-base registry", () => {
+    // Structural check: verify the constant matches the Dockerfile default
+    // and does NOT reference the openshell-community registry.
+    assert.ok(
+      SANDBOX_BASE_IMAGE.includes("nemoclaw/sandbox-base"),
+      `SANDBOX_BASE_IMAGE must reference nemoclaw/sandbox-base, got: ${SANDBOX_BASE_IMAGE}`,
+    );
+    assert.ok(
+      !SANDBOX_BASE_IMAGE.includes("openshell-community"),
+      `SANDBOX_BASE_IMAGE must NOT reference openshell-community, got: ${SANDBOX_BASE_IMAGE}`,
+    );
+  });
+
+  it("regression #1904: createSandbox calls pullAndResolveBaseImageDigest before patchStagedDockerfile", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const pullPos = source.indexOf("pullAndResolveBaseImageDigest()");
+    assert.ok(pullPos !== -1, "pullAndResolveBaseImageDigest() call not found in onboard.ts");
+    const patchPos = source.indexOf("patchStagedDockerfile(", pullPos);
+    assert.ok(
+      patchPos > pullPos,
+      "pullAndResolveBaseImageDigest must be called BEFORE patchStagedDockerfile — regression #1904",
+    );
   });
 });
