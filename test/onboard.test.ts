@@ -175,6 +175,49 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("patches context window, max tokens, and reasoning from env vars", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-model-meta-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_CONTEXT_WINDOW=131072",
+        "ARG NEMOCLAW_MAX_TOKENS=4096",
+        "ARG NEMOCLAW_REASONING=false",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    const saved = {
+      NEMOCLAW_CONTEXT_WINDOW: process.env.NEMOCLAW_CONTEXT_WINDOW,
+      NEMOCLAW_MAX_TOKENS: process.env.NEMOCLAW_MAX_TOKENS,
+      NEMOCLAW_REASONING: process.env.NEMOCLAW_REASONING,
+    };
+    process.env.NEMOCLAW_CONTEXT_WINDOW = "32768";
+    process.env.NEMOCLAW_MAX_TOKENS = "8192";
+    process.env.NEMOCLAW_REASONING = "true";
+
+    try {
+      patchStagedDockerfile(dockerfilePath, "gpt-5.4", "http://127.0.0.1:19999", "build-meta", "openai-api");
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_CONTEXT_WINDOW=32768$/m);
+      assert.match(patched, /^ARG NEMOCLAW_MAX_TOKENS=8192$/m);
+      assert.match(patched, /^ARG NEMOCLAW_REASONING=true$/m);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("patches the staged Dockerfile with Discord guild config for server workspaces", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-discord-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
