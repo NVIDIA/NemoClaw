@@ -20,6 +20,16 @@ describe("resolveDashboardForwardTarget", () => {
     );
   });
 
+  it("preserves a custom loopback port", () => {
+    expect(resolveDashboardForwardTarget("http://127.0.0.1:19999")).toBe("19999");
+  });
+
+  it("preserves a custom remote port", () => {
+    expect(resolveDashboardForwardTarget("https://my-server.example.com:19999")).toBe(
+      "0.0.0.0:19999",
+    );
+  });
+
   it("returns port-only for empty input", () => {
     expect(resolveDashboardForwardTarget("")).toBe("18789");
   });
@@ -102,5 +112,12 @@ describe("buildControlUiUrls", () => {
     process.env.CHAT_UI_URL = "  ";
     const urls = buildControlUiUrls("tok");
     expect(urls).toHaveLength(1);
+  });
+
+  it("uses the configured port in the displayed URL when NEMOCLAW_DASHBOARD_PORT overrides the default (#1925)", () => {
+    // getDashboardAccessInfo passes dashboardPort explicitly so the URL shown to
+    // the user reflects the custom port — not the default 18789.
+    const urls = buildControlUiUrls("my-token", 19000);
+    expect(urls).toEqual(["http://127.0.0.1:19000/#token=my-token"]);
   });
 });

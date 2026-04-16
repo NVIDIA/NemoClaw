@@ -65,7 +65,7 @@ _TOOL_REDIRECTS=(
   'GIT_CONFIG_GLOBAL=/tmp/.gitconfig'
   'GNUPGHOME=/tmp/.gnupg'
   'PYTHONUSERBASE=/tmp/.local'
-  'PYTHONHISTFILE=/tmp/.python_history'
+  'PYTHON_HISTORY=/tmp/.python_history'
   'CLAUDE_CONFIG_DIR=/tmp/.claude'
   'npm_config_prefix=/tmp/npm-global'
 )
@@ -155,8 +155,34 @@ case "${1:-}" in
   nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
 esac
 NEMOCLAW_CMD=("$@")
-CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:18789}"
-PUBLIC_PORT=18789
+# Validate NEMOCLAW_DASHBOARD_PORT if set (same behavior as ports.js: fail fast).
+_DASHBOARD_PORT_RAW="${NEMOCLAW_DASHBOARD_PORT:-}"
+if [ -z "$_DASHBOARD_PORT_RAW" ]; then
+  _DASHBOARD_PORT=18789
+else
+  _DASHBOARD_PORT="$(printf '%s' "$_DASHBOARD_PORT_RAW" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  case "$_DASHBOARD_PORT" in
+    *[!0-9]* | '')
+      echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$_DASHBOARD_PORT" -lt 1024 ] || [ "$_DASHBOARD_PORT" -gt 65535 ]; then
+    echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
+    exit 1
+  fi
+fi
+# When NEMOCLAW_DASHBOARD_PORT is explicitly set (injected at sandbox create time
+# via envArgs in onboard.ts), unconditionally override CHAT_UI_URL so the gateway
+# starts on the configured port even if the Docker image has a different value
+# baked in. Without this, the Docker ENV takes precedence and the gateway listens
+# on the wrong port while the SSH tunnel forwards the custom port. (#1925)
+if [ -n "${NEMOCLAW_DASHBOARD_PORT:-}" ]; then
+  CHAT_UI_URL="http://127.0.0.1:${_DASHBOARD_PORT}"
+else
+  CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${_DASHBOARD_PORT}}"
+fi
+PUBLIC_PORT="$_DASHBOARD_PORT"
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
 
@@ -458,6 +484,18 @@ openclaw() {
       echo "" >&2
       echo "This rebuilds the sandbox with your updated settings." >&2
       return 1
+      ;;
+    agent)
+      # Warn when --local is used — it bypasses gateway protections including
+      # secret scanning, network policy, and inference auth. Ref: #1632
+      local _arg
+      for _arg in "$@"; do
+        if [ "$_arg" = "--local" ]; then
+          echo "[SECURITY] Warning: 'openclaw agent --local' bypasses the NemoClaw gateway." >&2
+          echo "[SECURITY] Secret scanning, network policy, and inference auth are NOT enforced in local mode." >&2
+          break
+        fi
+      done
       ;;
   esac
   command openclaw "$@"
@@ -863,7 +901,7 @@ if [ "$(id -u)" -ne 0 ]; then
   chmod 600 /tmp/auto-pair.log
 
   # Start gateway in background, auto-pair, then wait
-  nohup "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
+  nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
   trap cleanup SIGTERM SIGINT
@@ -922,7 +960,7 @@ harden_openclaw_symlinks
 # SECURITY: The sandbox user cannot kill this process because it runs
 # under a different UID. The fake-HOME attack no longer works because
 # the agent cannot restart the gateway with a tampered config.
-nohup gosu gateway "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
+nohup gosu gateway "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
 GATEWAY_PID=$!
 echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
 trap cleanup SIGTERM SIGINT
