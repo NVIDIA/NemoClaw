@@ -238,7 +238,14 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     );
   }
 
-  const name = validateName(instanceName, "instance name");
+  let name: string;
+  try {
+    name = validateName(instanceName, "instance name");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    error(`  ${message}`);
+    return exit(1);
+  }
   const qname = shellQuote(name);
   const gpu = env.NEMOCLAW_GPU || "a2-highgpu-1g:nvidia-tesla-a100:1";
   const brevProvider = String(env.NEMOCLAW_BREV_PROVIDER || "gcp").trim().toLowerCase();
@@ -248,7 +255,14 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
   const skipStartServices = ["1", "true"].includes(
     String(env.NEMOCLAW_DEPLOY_NO_START_SERVICES || "").toLowerCase(),
   );
-  const sandboxName = validateName(env.NEMOCLAW_SANDBOX_NAME || "my-assistant", "sandbox name");
+  let sandboxName: string;
+  try {
+    sandboxName = validateName(env.NEMOCLAW_SANDBOX_NAME || "my-assistant", "sandbox name");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    error(`  ${message}`);
+    return exit(1);
+  }
   const credentials: DeployCredentials = {
     NVIDIA_API_KEY: getCredential("NVIDIA_API_KEY"),
     OPENAI_API_KEY: getCredential("OPENAI_API_KEY"),

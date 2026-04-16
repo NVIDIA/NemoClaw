@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { validateName } from "../../dist/lib/runner";
 import {
   buildDeployEnvLines,
+  executeDeploy,
   findBrevInstanceStatus,
   inferDeployProvider,
   isBrevInstanceFailed,
@@ -142,5 +144,38 @@ describe("Brev status helpers", () => {
         shell_status: "NOT READY",
       }),
     ).toBe(false);
+  });
+});
+
+describe("executeDeploy", () => {
+  it("exits before reading credentials when instance name is invalid (#575)", async () => {
+    const getCredential = vi.fn(() => "should-not-use");
+    const error = vi.fn();
+    const exit = vi.fn((code: number) => {
+      throw new Error(`exit:${code}`);
+    }) as (code: number) => never;
+
+    await expect(
+      executeDeploy({
+        instanceName: "foo;bar",
+        env: {},
+        rootDir: "/tmp",
+        getCredential,
+        validateName,
+        shellQuote: (value: string) => `'${value}'`,
+        run: vi.fn(),
+        runInteractive: vi.fn(),
+        execFileSync: vi.fn(() => ""),
+        spawnSync: vi.fn(() => ({ status: 0 })),
+        log: vi.fn(),
+        error,
+        stdoutWrite: vi.fn(),
+        exit,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    expect(getCredential).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalled();
+    expect(String(error.mock.calls[0]?.[0])).toMatch(/Invalid instance name/);
   });
 });

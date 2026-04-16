@@ -63,6 +63,20 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Unknown command")).toBeTruthy();
   });
 
+  it("deploy rejects invalid instance names before credential prompts (#575)", () => {
+    const r = run('deploy "foo;bar"');
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/Invalid instance name/);
+    expect(r.out).not.toContain("NVIDIA API Key required");
+  });
+
+  it("deploy rejects command-substitution instance names (#575)", () => {
+    const r = run("deploy '$(id)'");
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/Invalid instance name/);
+    expect(r.out).not.toContain("NVIDIA API Key required");
+  });
+
   it("list exits 0", () => {
     const r = run("list");
     expect(r.code).toBe(0);
