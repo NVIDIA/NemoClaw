@@ -112,6 +112,7 @@ cleanup() {
     openshell gateway destroy -g nemoclaw 2>/dev/null || true
   fi
   pkill -f "ollama serve" 2>/dev/null || true
+  pkill -f "ollama-auth-proxy" 2>/dev/null || true
 }
 trap cleanup EXIT
 
