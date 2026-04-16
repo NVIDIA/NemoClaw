@@ -63,9 +63,9 @@ export function getLocalProviderBaseUrl(provider: string): string | null {
 export function getLocalProviderValidationBaseUrl(provider: string): string | null {
   switch (provider) {
     case "vllm-local":
-      return `http://localhost:${VLLM_PORT}/v1`;
+      return `http://127.0.0.1:${VLLM_PORT}/v1`;
     case "ollama-local":
-      return `http://localhost:${OLLAMA_PORT}/v1`;
+      return `http://127.0.0.1:${OLLAMA_PORT}/v1`;
     default:
       return null;
   }
@@ -74,9 +74,9 @@ export function getLocalProviderValidationBaseUrl(provider: string): string | nu
 export function getLocalProviderHealthEndpoint(provider: string): string | null {
   switch (provider) {
     case "vllm-local":
-      return `http://localhost:${VLLM_PORT}/v1/models`;
+      return `http://127.0.0.1:${VLLM_PORT}/v1/models`;
     case "ollama-local":
-      return `http://localhost:${OLLAMA_PORT}/api/tags`;
+      return `http://127.0.0.1:${OLLAMA_PORT}/api/tags`;
     default:
       return null;
   }
@@ -192,13 +192,13 @@ export function validateLocalProvider(
       case "vllm-local":
         return {
           ok: false,
-          message: `Local vLLM was selected, but nothing is responding on http://localhost:${VLLM_PORT}.`,
+          message: `Local vLLM was selected, but nothing is responding on http://127.0.0.1:${VLLM_PORT}.`,
         };
       case "ollama-local":
         return {
           ok: false,
           message:
-            `Local Ollama was selected, but nothing is responding on http://localhost:${OLLAMA_PORT}.`,
+            `Local Ollama was selected, but nothing is responding on http://127.0.0.1:${OLLAMA_PORT}.`,
         };
       default:
         return { ok: false, message: "The selected local inference provider is unavailable." };
@@ -220,13 +220,13 @@ export function validateLocalProvider(
       return {
         ok: false,
         message:
-          `Local vLLM is responding on localhost, but containers cannot reach http://host.openshell.internal:${VLLM_PORT}. Ensure the server is reachable from containers, not only from the host shell.`,
+          `Local vLLM is responding on 127.0.0.1, but containers cannot reach http://host.openshell.internal:${VLLM_PORT}. Ensure the server is reachable from containers, not only from the host shell.`,
       };
     case "ollama-local":
       return {
         ok: false,
         message:
-          `Local Ollama is responding on localhost, but containers cannot reach the auth proxy at http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}. Ensure the Ollama auth proxy is running.`,
+          `Local Ollama is responding on 127.0.0.1, but containers cannot reach the auth proxy at http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}. Ensure the Ollama auth proxy is running.`,
       };
     default:
       return {
@@ -259,7 +259,7 @@ export function parseOllamaTags(output: unknown): string[] {
 
 export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
   const capture = runCaptureImpl ?? runCapture;
-  const tagsOutput = capture(["curl", "-sf", `http://localhost:${OLLAMA_PORT}/api/tags`], {
+  const tagsOutput = capture(["curl", "-sf", `http://127.0.0.1:${OLLAMA_PORT}/api/tags`], {
     ignoreError: true,
   });
   const tagsParsed = parseOllamaTags(tagsOutput);
@@ -304,7 +304,7 @@ export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string
   // names is not feasible. This is the one intentional bash -c exception.
   return [
     "bash", "-c",
-    `nohup curl -s http://localhost:${OLLAMA_PORT}/api/generate -H 'Content-Type: application/json' -d ${shellQuote(payload)} >/dev/null 2>&1 &`,
+    `nohup curl -s http://127.0.0.1:${OLLAMA_PORT}/api/generate -H 'Content-Type: application/json' -d ${shellQuote(payload)} >/dev/null 2>&1 &`,
   ];
 }
 
@@ -322,7 +322,7 @@ export function getOllamaProbeCommand(
   return [
     "curl", "-sS",
     "--max-time", String(timeoutSeconds),
-    `http://localhost:${OLLAMA_PORT}/api/generate`,
+    `http://127.0.0.1:${OLLAMA_PORT}/api/generate`,
     "-H", "Content-Type: application/json",
     "-d", payload,
   ];

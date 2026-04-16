@@ -106,6 +106,7 @@ If the Jetson setup step fails, verify that you have `sudo` access and that Dock
 
 For JetPack 6 (L4T 36.x), the setup switches iptables to legacy mode and adjusts the Docker daemon configuration.
 For JetPack 7 (L4T 38.x / Thor), only bridge netfilter and sysctl settings are applied.
+BSP R39 and later do not require host customization and are handled automatically.
 
 If the L4T version is not recognized, the setup step is skipped and the installer continues normally.
 
@@ -478,6 +479,17 @@ $ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
 
 If you need to run multiple sandboxes at different ports at the same time, see
 [Running multiple sandboxes simultaneously](#running-multiple-sandboxes-simultaneously).
+
+### Ollama network exposure warning during onboard
+
+When you select a local Ollama provider, onboarding binds Ollama to `0.0.0.0` so the Docker sandbox can reach the host.
+This exposes the unauthenticated Ollama API to the local network.
+NemoClaw prints a warning during onboarding to alert you to this risk.
+
+On trusted private networks, the warning is informational.
+On shared or public networks (airports, coffee shops), any adjacent device can send prompts to and enumerate models on your Ollama instance.
+
+The warning is suppressed on WSL, where Ollama binds to `127.0.0.1` instead.
 
 ### Blueprint run failed
 

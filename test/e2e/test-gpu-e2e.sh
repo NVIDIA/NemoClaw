@@ -161,7 +161,7 @@ if [ "${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}" != "1" ]; then
 fi
 
 # Verify port 11434 is free (onboard needs to start Ollama on 127.0.0.1:11434)
-if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
   info "WARNING: Something is already listening on port 11434."
   info "Onboard may not be able to start Ollama."
   info "On ephemeral runners this should not happen."
@@ -189,7 +189,7 @@ fi
 # If the Ollama installer started a system service, stop it so onboard
 # can start Ollama with OLLAMA_HOST=0.0.0.0:11434 (required for containers).
 # This needs the ollama process to be owned by our user, or systemctl access.
-if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
   info "Ollama service is running — attempting to stop for clean onboard..."
   # Try systemctl first (works if user has permissions)
   systemctl --user stop ollama 2>/dev/null || true
@@ -198,7 +198,7 @@ if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
   pkill -f "ollama serve" 2>/dev/null || true
   sleep 2
 
-  if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+  if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
     info "Could not stop existing Ollama — onboard will use it as-is"
   else
     pass "Existing Ollama stopped — port 11434 is free for onboard"
@@ -288,8 +288,8 @@ else
 fi
 
 # 4d: Ollama is running and reachable
-if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
-  pass "Ollama running on localhost:11434 (started by onboard)"
+if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+  pass "Ollama running on 127.0.0.1:11434 (started by onboard)"
 else
   fail "Ollama not running — onboard should have started it"
 fi
@@ -415,7 +415,7 @@ section "Phase 5: Local inference through sandbox"
 CONFIGURED_MODEL="${NEMOCLAW_MODEL:-}"
 if [ -n "$CONFIGURED_MODEL" ]; then
   # Verify the expected model is actually available in Ollama
-  if curl -sf http://localhost:11434/api/tags 2>/dev/null \
+  if curl -sf http://127.0.0.1:11434/api/tags 2>/dev/null \
     | python3 -c "import json,sys; m=[x['name'] for x in json.load(sys.stdin).get('models',[])]; sys.exit(0 if '$CONFIGURED_MODEL' in m or any('$CONFIGURED_MODEL' in x for x in m) else 1)" 2>/dev/null; then
     info "Using NEMOCLAW_MODEL: $CONFIGURED_MODEL (confirmed in Ollama)"
   else
@@ -424,7 +424,7 @@ if [ -n "$CONFIGURED_MODEL" ]; then
   fi
 fi
 if [ -z "$CONFIGURED_MODEL" ]; then
-  CONFIGURED_MODEL=$(curl -sf http://localhost:11434/api/tags 2>/dev/null \
+  CONFIGURED_MODEL=$(curl -sf http://127.0.0.1:11434/api/tags 2>/dev/null \
     | python3 -c "import json,sys; m=json.load(sys.stdin).get('models',[]); print(m[0]['name'] if m else '')" 2>/dev/null || echo "")
   if [ -n "$CONFIGURED_MODEL" ]; then
     info "Auto-detected Ollama model: $CONFIGURED_MODEL"
@@ -434,9 +434,9 @@ if [ -z "$CONFIGURED_MODEL" ]; then
 fi
 
 # 5a: Direct Ollama inference (host-side, OpenAI-compatible)
-info "[LOCAL] Direct Ollama test → localhost:11434/v1/chat/completions..."
+info "[LOCAL] Direct Ollama test → 127.0.0.1:11434/v1/chat/completions..."
 direct_response=$(curl -s --max-time 120 \
-  -X POST http://localhost:11434/v1/chat/completions \
+  -X POST http://127.0.0.1:11434/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d "{
     \"model\": \"$CONFIGURED_MODEL\",
@@ -550,7 +550,7 @@ echo "  What this tested (real user flow):"
 echo "    - GPU detection (nvidia-smi)"
 echo "    - Ollama binary install"
 echo "    - install.sh --non-interactive with NEMOCLAW_PROVIDER=ollama"
-echo "    - Onboard: starts Ollama on localhost, starts auth proxy, pulls model, creates sandbox"
+echo "    - Onboard: starts Ollama on 127.0.0.1, starts auth proxy, pulls model, creates sandbox"
 echo "    - Auth proxy: token persistence, auth reject/accept, container reachability, recovery"
 echo "    - Local inference: direct + sandbox → gateway → auth proxy → Ollama on GPU"
 echo "    - Destroy + uninstall --delete-models"
