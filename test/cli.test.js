@@ -69,6 +69,15 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("No sandboxes")).toBeTruthy();
   });
 
+  it("dashboard command starts the server (port 0 = OS-assigned)", () => {
+    // Port 0 lets the OS pick a free port. runWithEnv (execSync) kills the
+    // process when the timeout fires; 1500 ms is enough for the server to bind
+    // and print its startup line.
+    const r = runWithEnv("dashboard 0", {}, 1500);
+    expect(r.out).not.toContain("Unknown command");
+    expect(r.out).toContain("running at");
+  });
+
   it("start does not prompt for NVIDIA_API_KEY before launching local services", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-start-no-key-"));
     const localBin = path.join(home, "bin");

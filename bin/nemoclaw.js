@@ -69,6 +69,7 @@ const GLOBAL_COMMANDS = new Set([
   "status",
   "debug",
   "uninstall",
+  "dashboard",
   "help",
   "--help",
   "-h",
@@ -1255,6 +1256,12 @@ const [cmd, ...args] = process.argv.slice(2);
       case "list":
         await listSandboxes();
         break;
+      case "dashboard": {
+        const port = parseInt(args.find((a) => /^\d+$/.test(a)) || "3456", 10);
+        const { startDashboard } = require("./lib/dashboard");
+        startDashboard(port);
+        break;
+      }
       case "--version":
       case "-v": {
         console.log(`nemoclaw v${getVersion()}`);
