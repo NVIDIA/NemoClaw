@@ -603,9 +603,7 @@ export function setConfigValue(
 
   for (const token of tokens) {
     if (UNSAFE_PROPERTY_NAMES.has(token)) {
-      throw new Error(
-        `Unsafe config path segment '${token}' in ${configPath}`,
-      );
+      throw new Error(`Unsafe config path segment '${token}' in ${configPath}`);
     }
   }
 
