@@ -216,6 +216,10 @@ describe("shouldSkipResponsesProbe", () => {
     expect(shouldSkipResponsesProbe("nvidia-prod")).toBe(true);
   });
 
+  it("skips the Responses probe for gemini-api (Gemini does not support /v1/responses)", () => {
+    expect(shouldSkipResponsesProbe("gemini-api")).toBe(true);
+  });
+
   it("does not skip the Responses probe for other providers", () => {
     expect(shouldSkipResponsesProbe("openai-api")).toBe(false);
     expect(shouldSkipResponsesProbe("anthropic-api")).toBe(false);

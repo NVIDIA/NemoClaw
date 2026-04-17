@@ -96,9 +96,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 11 presets", () => {
+    it("returns all 12 presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(11);
+      expect(presets.length).toBe(12);
     });
 
     it("each preset has name and description", () => {
@@ -120,6 +120,7 @@ describe("policies", () => {
         "github",
         "huggingface",
         "jira",
+        "local-inference",
         "npm",
         "outlook",
         "pypi",
@@ -152,6 +153,21 @@ describe("policies", () => {
         expect(content).toContain("/usr/local/bin/node");
         expect(content).toContain("/usr/bin/node");
       }
+    });
+
+    it("local-inference preset targets host.openshell.internal on Ollama and vLLM ports", () => {
+      const content = policies.loadPreset("local-inference");
+      expect(content).toContain("host.openshell.internal");
+      expect(content).toContain("port: 11434");
+      expect(content).toContain("port: 8000");
+    });
+
+    it("local-inference preset restricts binaries to openclaw and claude", () => {
+      const content = policies.loadPreset("local-inference");
+      expect(content).toContain("/usr/local/bin/openclaw");
+      expect(content).toContain("/usr/local/bin/claude");
+      // Should NOT include node — only agent binaries need inference access
+      expect(content).not.toContain("/usr/local/bin/node");
     });
   });
 

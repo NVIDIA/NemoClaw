@@ -142,6 +142,25 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("suggests local-inference preset when provider is ollama-local", () => {
+    const presets = getSuggestedPolicyPresets({ provider: "ollama-local" });
+    expect(presets).toContain("local-inference");
+    expect(presets).toContain("pypi");
+    expect(presets).toContain("npm");
+  });
+
+  it("suggests local-inference preset when provider is vllm-local", () => {
+    const presets = getSuggestedPolicyPresets({ provider: "vllm-local" });
+    expect(presets).toContain("local-inference");
+  });
+
+  it("does not suggest local-inference for cloud providers", () => {
+    expect(getSuggestedPolicyPresets({ provider: "nvidia-prod" })).not.toContain("local-inference");
+    expect(getSuggestedPolicyPresets({ provider: "openai-api" })).not.toContain("local-inference");
+    expect(getSuggestedPolicyPresets({ provider: null })).not.toContain("local-inference");
+    expect(getSuggestedPolicyPresets({})).not.toContain("local-inference");
+  });
+
   it("patches the staged Dockerfile with the selected model and chat UI URL", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");

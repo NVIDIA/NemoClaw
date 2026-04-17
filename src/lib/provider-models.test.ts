@@ -189,4 +189,77 @@ describe("provider model helpers", () => {
       message: "Unexpected model catalog response: expected a top-level data array",
     });
   });
+
+  it("sends API key as ?key= query param when authMode is query-param (Gemini)", () => {
+    const result = fetchOpenAiLikeModels(
+      "https://generativelanguage.googleapis.com/v1beta/openai/",
+      "AIzaFakeKey123",
+      {
+        authMode: "query-param",
+        runCurlProbeImpl: (argv) => {
+          const url = argv.at(-1);
+          expect(url).toBe(
+            "https://generativelanguage.googleapis.com/v1beta/openai/models?key=AIzaFakeKey123",
+          );
+          expect(argv.join(" ")).not.toContain("Authorization: Bearer");
+          return {
+            ok: true,
+            httpStatus: 200,
+            curlStatus: 0,
+            body: JSON.stringify({ data: [{ id: "gemini-2.5-flash" }] }),
+            stderr: "",
+            message: "",
+          };
+        },
+      },
+    );
+
+    expect(result).toEqual({ ok: true, ids: ["gemini-2.5-flash"] });
+  });
+
+  it("uses Bearer header by default even when an API key is provided", () => {
+    fetchOpenAiLikeModels("https://api.openai.com/v1", "sk-test", {
+      runCurlProbeImpl: (argv) => {
+        const url = argv.at(-1);
+        expect(url).toBe("https://api.openai.com/v1/models");
+        expect(url).not.toContain("?key=");
+        expect(argv).toContain("Authorization: Bearer sk-test");
+        return {
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body: JSON.stringify({ data: [{ id: "gpt-4.1" }] }),
+          stderr: "",
+          message: "",
+        };
+      },
+    });
+  });
+
+  it("validates Gemini models with query-param auth when authMode is passed through", () => {
+    const result = validateOpenAiLikeModel(
+      "Google Gemini",
+      "https://generativelanguage.googleapis.com/v1beta/openai/",
+      "gemini-2.5-flash",
+      "AIzaFakeKey123",
+      {
+        authMode: "query-param",
+        runCurlProbeImpl: (argv) => {
+          const url = argv.at(-1);
+          expect(url).toContain("?key=AIzaFakeKey123");
+          expect(argv.join(" ")).not.toContain("Authorization: Bearer");
+          return {
+            ok: true,
+            httpStatus: 200,
+            curlStatus: 0,
+            body: JSON.stringify({ data: [{ id: "gemini-2.5-flash" }] }),
+            stderr: "",
+            message: "",
+          };
+        },
+      },
+    );
+
+    expect(result).toEqual({ ok: true, validated: true });
+  });
 });
