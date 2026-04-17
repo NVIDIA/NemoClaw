@@ -380,22 +380,20 @@ remove_nemoclaw_cli() {
     warn "Leaving ${NEMOCLAW_SHIM_DIR}/nemoclaw in place because it is not an installer-managed shim."
   fi
 
-  # Belt-and-suspenders: if nemoclaw is still on PATH after npm uninstall
-  # (e.g. nvm resolved to a different node version than the one used during
-  # install), try to remove it from all nvm prefixes.
-  if command -v nemoclaw >/dev/null 2>&1; then
-    local remaining
-    remaining="$(command -v nemoclaw 2>/dev/null || true)"
-    if [ -n "$remaining" ] && [[ "$remaining" == */.nvm/* ]]; then
+  # Belt-and-suspenders: clean any leftover nemoclaw installs from nvm-managed
+  # node prefixes, even if the active PATH no longer points at them.
+  local nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  if [ -d "$nvm_dir/versions/node" ]; then
+    local remaining mod_dir
+    while IFS= read -r -d '' remaining; do
       rm -f "$remaining"
       info "Removed leftover nemoclaw binary at $remaining"
-      # Also clean the lib/node_modules symlink if present.
-      local mod_dir
-      mod_dir="$(dirname "$(dirname "$remaining")")/lib/node_modules/nemoclaw"
-      if [ -e "$mod_dir" ]; then
-        rm -rf "$mod_dir"
-      fi
-    fi
+    done < <(find "$nvm_dir/versions/node" -path '*/bin/nemoclaw' -print0 2>/dev/null)
+
+    while IFS= read -r -d '' mod_dir; do
+      rm -rf "$mod_dir"
+      info "Removed leftover nemoclaw module at $mod_dir"
+    done < <(find "$nvm_dir/versions/node" -path '*/lib/node_modules/nemoclaw' -print0 2>/dev/null)
   fi
 
   remove_nemoclaw_alias_from_profile
