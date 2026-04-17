@@ -1242,6 +1242,13 @@ function shouldRequireResponsesToolCalling(provider) {
   );
 }
 
+// Google Gemini rejects requests that carry both an Authorization: Bearer
+// header and a ?key= query parameter ("Multiple authentication credentials
+// received"). Send the API key as ?key= only for Gemini. See issue #1960.
+function getProbeAuthMode(provider) {
+  return provider === "gemini-api" ? "query-param" : undefined;
+}
+
 // shouldSkipResponsesProbe and isNvcfFunctionNotFoundForAccount /
 // nvcfFunctionNotFoundMessage — see validation import above. They live in
 // src/lib/validation.ts so they can be unit-tested independently.
@@ -1256,13 +1263,22 @@ function getValidationProbeCurlArgs(opts) {
   return ["--connect-timeout", "10", "--max-time", "15"];
 }
 
-function probeResponsesToolCalling(endpointUrl, model, apiKey) {
+function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
+  const useQueryParam = options.authMode === "query-param";
+  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
+  const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  const authHeader = !useQueryParam && normalizedKey
+    ? ["-H", `Authorization: Bearer ${normalizedKey}`]
+    : [];
+  const url = useQueryParam && normalizedKey
+    ? `${baseUrl}/responses?key=${normalizedKey}`
+    : `${baseUrl}/responses`;
   const result = runCurlProbe([
     "-sS",
     ...getValidationProbeCurlArgs(),
     "-H",
     "Content-Type: application/json",
-    ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+    ...authHeader,
     "-d",
     JSON.stringify({
       model,
@@ -1284,7 +1300,7 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey) {
         },
       ],
     }),
-    `${String(endpointUrl).replace(/\/+$/, "")}/responses`,
+    url,
   ]);
 
   if (!result.ok) {
@@ -1304,12 +1320,21 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey) {
 }
 
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
+  const useQueryParam = options.authMode === "query-param";
+  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
+  const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  const authHeader = !useQueryParam && normalizedKey
+    ? ["-H", `Authorization: Bearer ${normalizedKey}`]
+    : [];
+  const appendKey = (path) =>
+    useQueryParam && normalizedKey ? `${baseUrl}${path}?key=${normalizedKey}` : `${baseUrl}${path}`;
+
   const responsesProbe =
     options.requireResponsesToolCalling === true
       ? {
           name: "Responses API with tool calling",
           api: "openai-responses",
-          execute: () => probeResponsesToolCalling(endpointUrl, model, apiKey),
+          execute: () => probeResponsesToolCalling(endpointUrl, model, apiKey, { authMode: options.authMode }),
         }
       : {
           name: "Responses API",
@@ -1320,15 +1345,13 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               ...getValidationProbeCurlArgs(),
               "-H",
               "Content-Type: application/json",
-              ...(apiKey
-                ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`]
-                : []),
+              ...authHeader,
               "-d",
               JSON.stringify({
                 model,
                 input: "Reply with exactly: OK",
               }),
-              `${String(endpointUrl).replace(/\/+$/, "")}/responses`,
+              appendKey("/responses"),
             ]),
         };
 
@@ -1341,13 +1364,13 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
         ...getValidationProbeCurlArgs(),
         "-H",
         "Content-Type: application/json",
-        ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+        ...authHeader,
         "-d",
         JSON.stringify({
           model,
           messages: [{ role: "user", content: "Reply with exactly: OK" }],
         }),
-        `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
+        appendKey("/chat/completions"),
       ]),
   };
 
@@ -1372,14 +1395,14 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
           ...getValidationProbeCurlArgs(),
           "-H",
           "Content-Type: application/json",
-          ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+          ...authHeader,
           "-d",
           JSON.stringify({
             model,
             input: "Reply with exactly: OK",
             stream: true,
           }),
-          `${String(endpointUrl).replace(/\/+$/, "")}/responses`,
+          appendKey("/responses"),
         ]);
         if (!streamResult.ok && streamResult.missingEvents.length > 0) {
           // Backend responds but lacks required streaming events — fall back
@@ -3695,12 +3718,14 @@ async function setupNim(gpu) {
           const defaultModel = requestedModel || _envModelRemote || remoteConfig.defaultModel;
           let modelValidator = null;
           if (selected.key === "openai" || selected.key === "gemini") {
+            const modelAuthMode = getProbeAuthMode(provider);
             modelValidator = (candidate) =>
               validateOpenAiLikeModel(
                 remoteConfig.label,
                 endpointUrl,
                 candidate,
                 getCredential(credentialEnv),
+                ...(modelAuthMode ? [{ authMode: modelAuthMode }] : []),
               );
           } else if (selected.key === "anthropic") {
             modelValidator = (candidate) =>
@@ -3825,6 +3850,7 @@ async function setupNim(gpu) {
                   {
                     requireResponsesToolCalling: shouldRequireResponsesToolCalling(provider),
                     skipResponsesProbe: shouldSkipResponsesProbe(provider),
+                    authMode: getProbeAuthMode(provider),
                   },
                 );
                 if (validation.ok) {
@@ -3856,6 +3882,7 @@ async function setupNim(gpu) {
               {
                 requireResponsesToolCalling: shouldRequireResponsesToolCalling(provider),
                 skipResponsesProbe: shouldSkipResponsesProbe(provider),
+                authMode: getProbeAuthMode(provider),
               },
             );
             if (validation.ok) {
@@ -6120,5 +6147,6 @@ module.exports = {
   writeSandboxConfigSyncFile,
   patchStagedDockerfile,
   ensureOllamaAuthProxy,
+  getProbeAuthMode,
   getValidationProbeCurlArgs,
 };
