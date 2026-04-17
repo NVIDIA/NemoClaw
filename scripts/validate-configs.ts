@@ -86,6 +86,70 @@ function formatError(err: { instancePath: string; keyword?: string; message?: st
   return `  ${path}: ${detail}`;
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Dangerous-host semantic check (ref: #1445)
+//
+// JSON Schema can enforce structure (required fields, enums, ranges) but
+// can't express "this value grants access to everywhere". A commit that
+// sets `host: "*"` or `host: "0.0.0.0/0"` on a network-policy endpoint
+// would pass the schema yet widen egress to anything. Walk the parsed
+// documents after schema validation and reject those patterns explicitly.
+// Subdomain wildcards like "*.example.com" remain allowed — they're a
+// legitimate pattern for real deployments.
+// ────────────────────────────────────────────────────────────────────
+
+const DANGEROUS_HOSTS: ReadonlySet<string> = new Set([
+  "*",
+  "0.0.0.0",
+  "0.0.0.0/0",
+  "::",
+  "::/0",
+]);
+
+function isDangerousHost(host: unknown): boolean {
+  if (typeof host !== "string") return false;
+  const trimmed = host.trim();
+  if (DANGEROUS_HOSTS.has(trimmed)) return true;
+  // Bare "*" with any non-domain suffix (e.g. "*:443") is also a catch-all.
+  if (trimmed === "*" || trimmed.startsWith("*:")) return true;
+  return false;
+}
+
+interface DangerousHostFinding {
+  path: string;
+  host: string;
+}
+
+/**
+ * Walk a parsed policy document (full `network_policies` map or a preset
+ * fragment with a `preset:` block) and return every endpoint whose host
+ * is in DANGEROUS_HOSTS. Safe to call on any shape — unknown structures
+ * just return [].
+ */
+function findDangerousHosts(data: unknown): DangerousHostFinding[] {
+  const findings: DangerousHostFinding[] = [];
+  if (!data || typeof data !== "object") return findings;
+  const doc = data as Record<string, unknown>;
+  const policies = doc.network_policies;
+  if (!policies || typeof policies !== "object" || Array.isArray(policies)) return findings;
+  for (const [policyName, policy] of Object.entries(policies as Record<string, unknown>)) {
+    if (!policy || typeof policy !== "object") continue;
+    const endpoints = (policy as Record<string, unknown>).endpoints;
+    if (!Array.isArray(endpoints)) continue;
+    endpoints.forEach((ep, i) => {
+      if (!ep || typeof ep !== "object") return;
+      const host = (ep as Record<string, unknown>).host;
+      if (isDangerousHost(host)) {
+        findings.push({
+          path: `/network_policies/${policyName}/endpoints/${i}/host`,
+          host: String(host),
+        });
+      }
+    });
+  }
+  return findings;
+}
+
 function main(): void {
   const args = process.argv.slice(2);
 
@@ -144,12 +208,25 @@ function main(): void {
       }
 
       const valid = validate(data);
-      if (!valid && validate.errors) {
+      const schemaErrors = !valid && validate.errors ? validate.errors.length : 0;
+      // Semantic check: walk the parsed doc and reject catch-all hosts.
+      // Runs regardless of schema outcome so operators see all issues at once.
+      const dangerous = findDangerousHosts(data);
+
+      if (schemaErrors > 0 || dangerous.length > 0) {
         console.error(`FAIL: ${file}`);
-        for (const err of validate.errors) {
-          console.error(formatError(err));
+        if (schemaErrors > 0 && validate.errors) {
+          for (const err of validate.errors) {
+            console.error(formatError(err));
+          }
         }
-        totalErrors += validate.errors.length;
+        for (const finding of dangerous) {
+          console.error(
+            `  ${finding.path}: host "${finding.host}" grants access to any destination — ` +
+              `use a specific hostname (subdomain wildcards like "*.example.com" are allowed)`,
+          );
+        }
+        totalErrors += schemaErrors + dangerous.length;
       } else {
         console.log(`OK:   ${file}`);
       }
@@ -165,4 +242,10 @@ function main(): void {
   }
 }
 
-main();
+// Export for unit tests without re-running main().
+export { DANGEROUS_HOSTS, isDangerousHost, findDangerousHosts };
+
+// Only run main() when invoked directly (skip on test `import`).
+if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("validate-configs.ts")) {
+  main();
+}
