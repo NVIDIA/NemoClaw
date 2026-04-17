@@ -42,10 +42,12 @@ describe("registry", () => {
     registry.registerSandbox({
       name: "alpha",
       gpuEnabled: false,
+      dashboardPort: 19000,
       model: "nvidia/nemotron-3-super-120b-a12b",
       provider: "nvidia-prod",
     });
     const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes.alpha.dashboardPort).toBe(19000);
     expect(data.sandboxes.alpha.model).toBe("nvidia/nemotron-3-super-120b-a12b");
     expect(data.sandboxes.alpha.provider).toBe("nvidia-prod");
   });

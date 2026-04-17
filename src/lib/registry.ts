@@ -13,6 +13,7 @@ export interface SandboxEntry {
   nimContainer?: string | null;
   provider?: string | null;
   gpuEnabled?: boolean;
+  dashboardPort?: number | null;
   policies?: string[];
   policyTier?: string | null;
   agent?: string | null;
@@ -161,6 +162,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       nimContainer: entry.nimContainer || null,
       provider: entry.provider || null,
       gpuEnabled: entry.gpuEnabled || false,
+      dashboardPort: entry.dashboardPort || null,
       policies: entry.policies || [],
       policyTier: entry.policyTier || null,
       agent: entry.agent || null,

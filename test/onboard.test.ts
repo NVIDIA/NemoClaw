@@ -2736,6 +2736,120 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
+  it("fails fast when another sandbox already owns the requested dashboard port", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dashboard-conflict-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "dashboard-port-conflict-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, ".nemoclaw"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, ".nemoclaw", "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          first: {
+            name: "first",
+            model: "nvidia/nemotron-3-super-120b-a12b",
+            provider: "nvidia-prod",
+          },
+        },
+        defaultSandbox: "first",
+      }),
+    );
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then
+  exit 1
+fi
+if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then
+  exit 0
+fi
+exit 0
+`,
+      { mode: 0o755 },
+    );
+
+    const script = `
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "second");
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Sandbox 'first' already uses dashboard port 18789\./);
+    assert.match(
+      result.stderr,
+      /NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard/,
+    );
+  });
+
+  it("treats legacy sandbox entries without dashboardPort as default 18789", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-legacy-dashboard-port-"));
+    const scriptPath = path.join(tmpDir, "legacy-dashboard-port-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    fs.mkdirSync(path.join(tmpDir, ".nemoclaw"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, ".nemoclaw", "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          first: {
+            name: "first",
+            model: "nvidia/nemotron-3-super-120b-a12b",
+            provider: "nvidia-prod",
+          },
+        },
+        defaultSandbox: "first",
+      }),
+    );
+
+    const script = `
+const { findDashboardPortConflict } = require(${onboardPath});
+
+const legacyConflict = findDashboardPortConflict("second", 18789);
+const customConflict = findDashboardPortConflict("second", 19000);
+console.log(JSON.stringify({
+  legacyConflict: legacyConflict ? legacyConflict.name : null,
+  customConflict: customConflict ? customConflict.name : null,
+}));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_DASHBOARD_PORT: "19000",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.legacyConflict, "first");
+    assert.equal(payload.customConflict, null);
+  });
+
   it("aborts onboard when a messaging provider upsert fails", { timeout: 60_000 }, async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-provider-fail-"));

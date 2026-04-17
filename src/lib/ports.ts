@@ -37,9 +37,9 @@ export const GATEWAY_PORT = parsePort("NEMOCLAW_GATEWAY_PORT", 8080);
  * configured via NEMOCLAW_DASHBOARD_PORT at onboard time. This constant represents
  * the hardcoded default when no override is set.
  */
-const SANDBOX_DASHBOARD_PORT = 18789;
-/** Dashboard UI port (default SANDBOX_DASHBOARD_PORT, override via NEMOCLAW_DASHBOARD_PORT). This is the host-side port. */
-export const DASHBOARD_PORT = parsePort("NEMOCLAW_DASHBOARD_PORT", SANDBOX_DASHBOARD_PORT);
+export const DEFAULT_DASHBOARD_PORT = 18789;
+/** Dashboard UI port (default DEFAULT_DASHBOARD_PORT, override via NEMOCLAW_DASHBOARD_PORT). This is the host-side port. */
+export const DASHBOARD_PORT = parsePort("NEMOCLAW_DASHBOARD_PORT", DEFAULT_DASHBOARD_PORT);
 /** vLLM / NIM inference port (default 8000, override via NEMOCLAW_VLLM_PORT). */
 export const VLLM_PORT = parsePort("NEMOCLAW_VLLM_PORT", 8000);
 /** Ollama inference port (default 11434, override via NEMOCLAW_OLLAMA_PORT). */

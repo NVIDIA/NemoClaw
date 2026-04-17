@@ -6,7 +6,7 @@ const { execFileSync, spawnSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
-const { DASHBOARD_PORT } = require("./lib/ports");
+const { DEFAULT_DASHBOARD_PORT, DASHBOARD_PORT } = require("./lib/ports");
 
 // ---------------------------------------------------------------------------
 // Color / style — respects NO_COLOR and non-TTY environments.
@@ -241,7 +241,10 @@ function isSandboxGatewayRunning(sandboxName) {
  */
 function recoverSandboxProcesses(sandboxName) {
   const agent = agentRuntime.getSessionAgent(sandboxName);
-  const agentScript = agentRuntime.buildRecoveryScript(agent, agent?.forwardPort ?? DASHBOARD_PORT);
+  const sandbox = registry.getSandbox(sandboxName);
+  const dashboardPort =
+    sandbox?.dashboardPort != null ? Number(sandbox.dashboardPort) : DEFAULT_DASHBOARD_PORT;
+  const agentScript = agentRuntime.buildRecoveryScript(agent, agent?.forwardPort ?? dashboardPort);
   // The recovery script runs as the sandbox user (non-root). This matches
   // the non-root fallback path in nemoclaw-start.sh — no privilege
   // separation, but the gateway runs and inference works.
@@ -252,7 +255,7 @@ function recoverSandboxProcesses(sandboxName) {
       "[ -f ~/.bashrc ] && . ~/.bashrc 2>/dev/null;",
       // Re-check liveness before touching anything — another caller may have
       // already recovered the gateway between our initial check and now (TOCTOU).
-      `if curl -sf --max-time 3 http://127.0.0.1:${DASHBOARD_PORT}/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;`,
+      `if curl -sf --max-time 3 http://127.0.0.1:${dashboardPort}/ > /dev/null 2>&1; then echo ALREADY_RUNNING; exit 0; fi;`,
       // Clean stale lock files from the previous run (gateway checks these)
       "rm -rf /tmp/openclaw-*/gateway.*.lock 2>/dev/null;",
       // Clean stale temp files from the previous run
@@ -262,7 +265,7 @@ function recoverSandboxProcesses(sandboxName) {
       // Resolve and start gateway
       'OPENCLAW="$(command -v openclaw)";',
       'if [ -z "$OPENCLAW" ]; then echo OPENCLAW_MISSING; exit 1; fi;',
-      `nohup "$OPENCLAW" gateway run --port ${DASHBOARD_PORT} > /tmp/gateway.log 2>&1 &`,
+      `nohup "$OPENCLAW" gateway run --port ${dashboardPort} > /tmp/gateway.log 2>&1 &`,
       "GPID=$!; sleep 2;",
       // Verify the gateway actually started (didn't crash immediately)
       'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; cat /tmp/gateway.log 2>/dev/null | tail -5; fi',
@@ -282,7 +285,12 @@ function recoverSandboxProcesses(sandboxName) {
  */
 function ensureSandboxPortForward(sandboxName) {
   const agent = agentRuntime.getSessionAgent(sandboxName);
-  const port = agent ? String(agent.forwardPort) : DASHBOARD_FORWARD_PORT;
+  const sandbox = registry.getSandbox(sandboxName);
+  const port = agent
+    ? String(agent.forwardPort)
+    : String(
+        sandbox?.dashboardPort != null ? Number(sandbox.dashboardPort) : DEFAULT_DASHBOARD_PORT,
+      );
   runOpenshell(["forward", "stop", port], { ignoreError: true });
   runOpenshell(["forward", "start", "--background", port, sandboxName], {
     ignoreError: true,

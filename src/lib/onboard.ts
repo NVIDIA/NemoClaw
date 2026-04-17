@@ -30,7 +30,14 @@ const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
 const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
 const { buildSubprocessEnv } = require("./subprocess-env");
-const { DASHBOARD_PORT, GATEWAY_PORT, VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("./ports");
+const {
+  DEFAULT_DASHBOARD_PORT,
+  DASHBOARD_PORT,
+  GATEWAY_PORT,
+  VLLM_PORT,
+  OLLAMA_PORT,
+  OLLAMA_PROXY_PORT,
+} = require("./ports");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -2812,6 +2819,44 @@ async function promptValidatedSandboxName() {
   process.exit(1);
 }
 
+function getSandboxDashboardPort(sandboxName) {
+  const sandbox = registry.getSandbox(sandboxName);
+  const rawPort =
+    sandbox && sandbox.dashboardPort ? Number(sandbox.dashboardPort) : DEFAULT_DASHBOARD_PORT;
+  return Number.isFinite(rawPort) && rawPort > 0 ? rawPort : DEFAULT_DASHBOARD_PORT;
+}
+
+function findDashboardPortConflict(sandboxName, dashboardPort) {
+  const sandboxes = registry.listSandboxes().sandboxes || [];
+  return (
+    sandboxes.find((entry) => {
+      if (!entry || entry.name === sandboxName) return false;
+      const entryPort =
+        entry.dashboardPort != null && entry.dashboardPort !== ""
+          ? Number(entry.dashboardPort)
+          : DEFAULT_DASHBOARD_PORT;
+      return Number.isFinite(entryPort) && entryPort === dashboardPort;
+    }) || null
+  );
+}
+
+function assertDashboardPortConflictFree(sandboxName, dashboardPort) {
+  const conflictingSandbox = findDashboardPortConflict(sandboxName, dashboardPort);
+  if (!conflictingSandbox) {
+    return;
+  }
+
+  console.error(
+    `  Sandbox '${conflictingSandbox.name}' already uses dashboard port ${dashboardPort}.`,
+  );
+  console.error(
+    "  Reusing that port would repoint the OpenClaw UI at the new sandbox and invalidate the other sandbox's URL.",
+  );
+  console.error("  Re-run onboarding with a distinct port, for example:");
+  console.error(`    NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard`);
+  process.exit(1);
+}
+
 // ── Step 5: Sandbox ──────────────────────────────────────────────
 
 // eslint-disable-next-line complexity
@@ -2832,6 +2877,7 @@ async function createSandbox(
   const sandboxName = sandboxNameOverride || (await promptValidatedSandboxName());
   const effectivePort = agent ? agent.forwardPort : CONTROL_UI_PORT;
   const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${effectivePort}`;
+  const dashboardPort = Number(getDashboardForwardPort(chatUiUrl));
 
   // Check whether messaging providers will be needed — this must happen before
   // the sandbox reuse decision so we can detect stale sandboxes that were created
@@ -2927,6 +2973,10 @@ async function createSandbox(
 
   // Reconcile local registry state with the live OpenShell gateway state.
   const liveExists = pruneStaleSandboxEntry(sandboxName);
+
+  if (!liveExists) {
+    assertDashboardPortConflictFree(sandboxName, dashboardPort);
+  }
 
   // Declared outside the liveExists block so it is accessible during
   // post-creation restore (the sandbox create path runs after the block).
@@ -3412,6 +3462,7 @@ async function createSandbox(
     model: model || null,
     provider: provider || null,
     gpuEnabled: !!gpu,
+    dashboardPort,
     agent: agent ? agent.name : null,
     agentVersion: fromDockerfile ? null : effectiveAgent.expectedVersion || null,
     dangerouslySkipPermissions: dangerouslySkipPermissions || undefined,
@@ -5469,9 +5520,10 @@ function getDashboardAccessInfo(sandboxName, options = {}) {
   const token = Object.prototype.hasOwnProperty.call(options, "token")
     ? options.token
     : fetchGatewayAuthTokenFromSandbox(sandboxName);
+  const storedPort = getSandboxDashboardPort(sandboxName);
   const chatUiUrl =
-    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
-  const dashboardPort = Number(getDashboardForwardPort(chatUiUrl));
+    options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${storedPort}`;
+  const dashboardPort = Number(getDashboardForwardPort(chatUiUrl || `http://127.0.0.1:${storedPort}`));
   const dashboardAccess = buildControlUiUrls(token, dashboardPort).map((url, index) => ({
     label: index === 0 ? "Dashboard" : `Alt ${index}`,
     url: buildAuthenticatedDashboardUrl(url, null),
@@ -6112,6 +6164,7 @@ module.exports = {
   providerExistsInGateway,
   parsePolicyPresetEnv,
   pruneStaleSandboxEntry,
+  findDashboardPortConflict,
   repairRecordedSandbox,
   recoverGatewayRuntime,
   resolveDashboardForwardTarget,
