@@ -80,7 +80,15 @@ export function verifyChain(path: string): VerifyResult {
   for (let i = 0; i < lines.length; i++) {
     let entry: AuditEntry;
     try {
-      entry = JSON.parse(lines[i]) as AuditEntry;
+      const parsed: unknown = JSON.parse(lines[i]);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        return {
+          valid: false,
+          entries: count,
+          error: `expected object at line ${String(i + 1)}`,
+        };
+      }
+      entry = parsed as AuditEntry;
     } catch {
       return {
         valid: false,
@@ -160,7 +168,9 @@ export function exportEntries(path: string, since: number, limit?: number): Audi
   for (const line of lines) {
     let entry: AuditEntry;
     try {
-      entry = JSON.parse(line) as AuditEntry;
+      const parsed: unknown = JSON.parse(line);
+      if (!isAuditEntry(parsed)) continue;
+      entry = parsed;
     } catch {
       continue;
     }
@@ -207,7 +217,10 @@ export function tailEntries(path: string, n?: number): AuditEntry[] {
 
   for (const line of lines) {
     try {
-      entries.push(JSON.parse(line) as AuditEntry);
+      const parsed: unknown = JSON.parse(line);
+      if (isAuditEntry(parsed)) {
+        entries.push(parsed);
+      }
     } catch {
       continue;
     }
@@ -221,6 +234,20 @@ export function tailEntries(path: string, n?: number): AuditEntry[] {
 }
 
 // ── Internal helpers ─────────────────────────────────────────
+
+/** Runtime type guard: returns true if value looks like a valid AuditEntry. */
+function isAuditEntry(value: unknown): value is AuditEntry {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const obj = value as Record<string, unknown>;
+  return (
+    typeof obj["timestamp"] === "number" &&
+    typeof obj["prev_hash"] === "string" &&
+    typeof obj["hash"] === "string" &&
+    "event" in obj
+  );
+}
 
 /**
  * Compute the SHA-256 hash of a record using canonical JSON serialization.
