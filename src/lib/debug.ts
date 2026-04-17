@@ -451,6 +451,10 @@ function collectKernelMessages(collectDir: string): void {
 // Tarball
 // ---------------------------------------------------------------------------
 
+/**
+ * Archive the collected diagnostics into a tarball and print the sharing
+ * guidance that goes with the generated file.
+ */
 export function createTarball(collectDir: string, output: string): boolean {
   const result = spawnSync("tar", ["czf", output, "-C", dirname(collectDir), basename(collectDir)], {
     stdio: "inherit",
@@ -472,10 +476,30 @@ export function createTarball(collectDir: string, output: string): boolean {
   return true;
 }
 
+/**
+ * Return the final user-facing completion lines for the debug command.
+ * When a tarball was already written, the tarball creation step has already
+ * printed the attachment guidance, so we do not repeat it here.
+ */
+export function getDebugCompletionMessages(output?: string): string[] {
+  if (output) {
+    return [];
+  }
+
+  return [
+    "Done. If filing a bug, run with --output and attach the tarball to your issue:",
+    "  nemoclaw debug --output /tmp/nemoclaw-debug.tar.gz",
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
 
+/**
+ * Collect local and sandbox diagnostics for a NemoClaw environment and
+ * optionally bundle the results into a tarball for issue reporting.
+ */
 export function runDebug(opts: DebugOptions = {}): void {
   const quick = opts.quick ?? false;
   const output = opts.output ?? "";
@@ -520,8 +544,9 @@ export function runDebug(opts: DebugOptions = {}): void {
 
     if (tarballOk) {
       console.log("");
-      info("Done. If filing a bug, run with --output and attach the tarball to your issue:");
-      info("  nemoclaw debug --output /tmp/nemoclaw-debug.tar.gz");
+      for (const message of getDebugCompletionMessages(output)) {
+        info(message);
+      }
     }
   } finally {
     rmSync(collectDir, { recursive: true, force: true });

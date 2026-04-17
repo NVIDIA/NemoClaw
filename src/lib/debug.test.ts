@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
-// Import from compiled dist/ so coverage is attributed correctly.
-import { redact, createTarball } from "../../dist/lib/debug";
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+// Import from compiled dist/ so coverage is attributed correctly.
+import { createTarball, getDebugCompletionMessages, redact } from "../../dist/lib/debug";
 
 describe("redact", () => {
   it("redacts NVIDIA_API_KEY=value patterns", () => {
@@ -87,5 +87,18 @@ describe("createTarball", () => {
     expect(ok).toBe(true);
     expect(process.exitCode).toBeUndefined();
     expect(existsSync(output)).toBe(true);
+  });
+});
+
+describe("getDebugCompletionMessages", () => {
+  it("suggests --output when no tarball path is provided", () => {
+    expect(getDebugCompletionMessages()).toEqual([
+      "Done. If filing a bug, run with --output and attach the tarball to your issue:",
+      "  nemoclaw debug --output /tmp/nemoclaw-debug.tar.gz",
+    ]);
+  });
+
+  it("omits the redundant --output hint when a tarball was already written", () => {
+    expect(getDebugCompletionMessages("/tmp/nemoclaw-debug.tar.gz")).toEqual([]);
   });
 });

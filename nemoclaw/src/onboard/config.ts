@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-let configDir = join(process.env.HOME ?? tmpdir(), ".nemoclaw");
+let configDir = join(homedir(), ".nemoclaw");
 
 export type EndpointType =
   | "build"
@@ -35,7 +35,21 @@ export function describeOnboardEndpoint(config: NemoClawOnboardConfig): string {
     return "Managed Inference Route (inference.local)";
   }
 
-  return `${config.endpointType} (${config.endpointUrl})`;
+  let safeUrl = config.endpointUrl;
+  try {
+    const parsed = new URL(config.endpointUrl);
+    if (parsed.password) parsed.password = "****";
+    if (parsed.username) parsed.username = "****";
+    for (const key of [...parsed.searchParams.keys()]) {
+      if (/(token|key|secret|auth|sig|credential|password)/i.test(key)) {
+        parsed.searchParams.set(key, "****");
+      }
+    }
+    safeUrl = parsed.toString();
+  } catch {
+    // Not a valid URL — show as-is
+  }
+  return `${config.endpointType} (${safeUrl})`;
 }
 
 export function describeOnboardProvider(config: NemoClawOnboardConfig): string {

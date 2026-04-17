@@ -41,6 +41,8 @@ const {
 const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
+const shields = require("./lib/shields");
+const sandboxConfig = require("./lib/sandbox-config");
 const { parseGatewayInference } = require("./lib/inference-config");
 const { probeLocalProviderHealth } = require("./lib/local-inference");
 const { getVersion } = require("./lib/version");
@@ -1139,6 +1141,36 @@ async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false 
   checkAndRecoverSandboxProcesses(sandboxName);
   // Ensure Ollama auth proxy is running (recovers from host reboots)
   ensureOllamaAuthProxy();
+
+  // ── Inference route swap (#1248) ──────────────────────────────────
+  // When the user has multiple sandboxes with different providers, the
+  // cluster-wide inference.local route may still point at the *other*
+  // provider. Re-set it to match this sandbox's persisted config.
+  try {
+    const sb = registry.getSandbox(sandboxName);
+    if (sb && sb.provider && sb.model) {
+      const live = parseGatewayInference(
+        captureOpenshell(["inference", "get"], { ignoreError: true }).output,
+      );
+      if (!live || live.provider !== sb.provider || live.model !== sb.model) {
+        console.log(
+          `  Switching inference route to ${sb.provider}/${sb.model} for sandbox '${sandboxName}'`,
+        );
+        const swapResult = runOpenshell(
+          ["inference", "set", "--provider", sb.provider, "--model", sb.model, "--no-verify"],
+          { ignoreError: true },
+        );
+        if (swapResult.status !== 0) {
+          console.error(
+            `  ${YW}Warning: failed to switch inference route — connect will proceed anyway.${R}`,
+          );
+        }
+      }
+    }
+  } catch {
+    /* non-fatal — don't block connect on inference route swap failure */
+  }
+
   // Print a one-shot hint before dropping the user into the sandbox
   // shell so a fresh user knows the first thing to type. Without this,
   // `nemoclaw <name> connect` lands on a bare bash prompt and users
@@ -1402,6 +1434,10 @@ function sandboxPolicyList(sandboxName) {
   console.log("");
 }
 
+/**
+ * Install or update a local skill directory into a live sandbox and perform
+ * any agent-specific post-install refresh needed for the new content to load.
+ */
 async function sandboxSkillInstall(sandboxName, args = []) {
   const sub = args[0];
   if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
@@ -1523,9 +1559,9 @@ async function sandboxSkillInstall(sandboxName, args = []) {
     console.log(`  ${G}✓${R} Uploaded ${uploaded} file(s) to sandbox`);
 
     // 7. Post-install (OpenClaw mirror + refresh, or restart hint).
-    //    Skip session refresh on updates — the agent already knows the skill;
-    //    clearing sessions would destroy chat history unnecessarily.
-    const post = skillInstall.postInstall(ctx, paths, skillDir, { skipRefresh: isUpdate });
+    //    OpenClaw caches skill content per session, so always refresh the
+    //    session index after an install/update to avoid stale SKILL.md data.
+    const post = skillInstall.postInstall(ctx, paths, skillDir);
     for (const msg of post.messages) {
       if (msg.startsWith("Warning:")) {
         console.error(`  ${YW}${msg}${R}`);
@@ -2305,9 +2341,12 @@ const [cmd, ...args] = process.argv.slice(2);
   }
 
   // Sandbox-scoped commands: nemoclaw <name> <action>
-  // If the registry doesn't know this name but the action is connect or skill,
-  // attempt recovery — the sandbox may still be live with a stale registry.
-  if (!registry.getSandbox(cmd) && (args[0] === "connect" || args[0] === "skill")) {
+  // If the registry doesn't know this name but the action is a sandbox-scoped
+  // command, attempt recovery — the sandbox may still be live with a stale registry.
+  if (
+    !registry.getSandbox(cmd) &&
+    ["connect", "skill", "shields", "config"].includes(args[0] || "")
+  ) {
     validateName(cmd, "sandbox name");
     await recoverRegistryEntries({ requestedSandboxName: cmd });
   }
@@ -2350,10 +2389,98 @@ const [cmd, ...args] = process.argv.slice(2);
       case "snapshot":
         sandboxSnapshot(cmd, actionArgs);
         break;
+      case "shields": {
+        const shieldsSub = actionArgs[0];
+        const shieldsFlags = actionArgs.slice(1);
+        switch (shieldsSub) {
+          case "down": {
+            const opts = { timeout: null, reason: null, policy: "permissive" };
+            for (let i = 0; i < shieldsFlags.length; i++) {
+              if (shieldsFlags[i] === "--timeout") {
+                if (i + 1 >= shieldsFlags.length || shieldsFlags[i + 1].startsWith("--")) {
+                  console.error("  --timeout requires a value (e.g. 5m, 30m, 300)");
+                  process.exit(1);
+                }
+                opts.timeout = shieldsFlags[++i];
+              } else if (shieldsFlags[i] === "--reason") {
+                if (i + 1 >= shieldsFlags.length || shieldsFlags[i + 1].startsWith("--")) {
+                  console.error("  --reason requires a value");
+                  process.exit(1);
+                }
+                opts.reason = shieldsFlags[++i];
+              } else if (shieldsFlags[i] === "--policy") {
+                if (i + 1 >= shieldsFlags.length || shieldsFlags[i + 1].startsWith("--")) {
+                  console.error("  --policy requires a value (e.g. permissive, /path/to/policy.yaml)");
+                  process.exit(1);
+                }
+                opts.policy = shieldsFlags[++i];
+              } else {
+                console.error(`  Unknown flag: ${shieldsFlags[i]}`);
+                process.exit(1);
+              }
+            }
+            shields.shieldsDown(cmd, opts);
+            break;
+          }
+          case "up":
+            shields.shieldsUp(cmd);
+            break;
+          case "status":
+            shields.shieldsStatus(cmd);
+            break;
+          default:
+            console.error("  Usage: nemoclaw <name> shields <down|up|status>");
+            console.error("    down  [--timeout 5m] [--reason 'text'] [--policy permissive]");
+            console.error("    up    Restore policy from snapshot");
+            console.error("    status  Show current shields state");
+            process.exit(1);
+        }
+        break;
+      }
+      case "config": {
+        const configSub = actionArgs[0];
+        switch (configSub) {
+          case "get": {
+            const configOpts = { key: null, format: "json" };
+            for (let i = 1; i < actionArgs.length; i++) {
+              if (actionArgs[i] === "--key") configOpts.key = actionArgs[++i];
+              else if (actionArgs[i] === "--format") configOpts.format = actionArgs[++i];
+            }
+            sandboxConfig.configGet(cmd, configOpts);
+            break;
+          }
+          case "set": {
+            const setOpts = { key: null, value: null, restart: false };
+            for (let i = 1; i < actionArgs.length; i++) {
+              if (actionArgs[i] === "--key") setOpts.key = actionArgs[++i];
+              else if (actionArgs[i] === "--value") setOpts.value = actionArgs[++i];
+              else if (actionArgs[i] === "--restart") setOpts.restart = true;
+            }
+            sandboxConfig.configSet(cmd, setOpts);
+            break;
+          }
+          case "rotate-token": {
+            const tokenOpts = { fromEnv: null, fromStdin: false };
+            for (let i = 1; i < actionArgs.length; i++) {
+              if (actionArgs[i] === "--from-env") tokenOpts.fromEnv = actionArgs[++i];
+              else if (actionArgs[i] === "--from-stdin") tokenOpts.fromStdin = true;
+            }
+            await sandboxConfig.configRotateToken(cmd, tokenOpts);
+            break;
+          }
+          default:
+            console.error("  Usage: nemoclaw <name> config <get|set|rotate-token>");
+            console.error("    get           [--key dotpath] [--format json|yaml]");
+            console.error("    set           --key <dotpath> --value <value> [--restart]");
+            console.error("    rotate-token  [--from-env <VAR>] [--from-stdin]");
+            process.exit(1);
+        }
+        break;
+      }
       default:
         console.error(`  Unknown action: ${action}`);
         console.error(
-          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, rebuild, destroy`,
+          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, rebuild, shields, config, destroy`,
         );
         process.exit(1);
     }
