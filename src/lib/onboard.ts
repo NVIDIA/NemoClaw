@@ -2978,6 +2978,14 @@ async function createSandbox(
       note(`  Sandbox '${sandboxName}' exists but is not ready — recreating it.`);
     }
 
+    const previousEntry = registry.getSandbox(sandboxName);
+    if (previousEntry?.policies?.length > 0) {
+      onboardSession.updateSession((current) => {
+        current.policyPresets = previousEntry.policies;
+        return current;
+      });
+    }
+
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
     // Destroy old sandbox
@@ -5916,8 +5924,9 @@ async function onboard(opts = {}) {
       onboardSession.markStepSkipped("agent_setup");
     }
 
-    const recordedPolicyPresets = Array.isArray(session?.policyPresets)
-      ? session.policyPresets
+    const latestSession = onboardSession.loadSession();
+    const recordedPolicyPresets = Array.isArray(latestSession?.policyPresets)
+      ? latestSession.policyPresets
       : null;
     if (dangerouslySkipPermissions) {
       step(8, 8, "Policy presets");
@@ -5952,10 +5961,7 @@ async function onboard(opts = {}) {
         });
         const appliedPolicyPresets = await setupPoliciesWithSelection(sandboxName, {
           selectedPresets:
-            resume &&
-            session?.steps?.policies?.status !== "complete" &&
-            Array.isArray(recordedPolicyPresets) &&
-            recordedPolicyPresets.length > 0
+            Array.isArray(recordedPolicyPresets) && recordedPolicyPresets.length > 0
               ? recordedPolicyPresets
               : null,
           enabledChannels: selectedMessagingChannels,
