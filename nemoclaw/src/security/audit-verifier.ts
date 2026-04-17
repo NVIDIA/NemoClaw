@@ -286,7 +286,7 @@ function canonicalJsonStringify(value: unknown): string {
     const obj = value as Record<string, unknown>;
     const sortedKeys = Object.keys(obj).sort();
     const pairs = sortedKeys.map(
-      (key) => `${JSON.stringify(key)}:${canonicalJsonStringify(obj[key])}`,
+      (key) => `${escapeNonAscii(JSON.stringify(key))}:${canonicalJsonStringify(obj[key])}`,
     );
     return `{${pairs.join(",")}}`;
   }
