@@ -20,6 +20,25 @@ const SELECT_FROM_LIST_ITEMS = [
   { name: "pypi", description: "Python Package Index (PyPI) access" },
 ];
 
+async function withEnv(name, value, callback) {
+  const originalValue = process.env[name];
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+
+  try {
+    return await callback();
+  } finally {
+    if (originalValue === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = originalValue;
+    }
+  }
+}
+
 function runPolicyAdd(confirmAnswer, extraArgs = []) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-add-"));
   const scriptPath = path.join(tmpDir, "policy-add-check.js");
@@ -203,24 +222,19 @@ describe("policies", () => {
   });
 
   describe("applyPreset disclosure logging", () => {
-    it("logs egress endpoints before applying", () => {
+    it("logs egress endpoints before applying", async () => {
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const originalBin = process.env.NEMOCLAW_OPENSHELL_BIN;
-      process.env.NEMOCLAW_OPENSHELL_BIN = "echo";
 
       try {
-        policies.applyPreset("test-sandbox", "npm");
-        const messages = logSpy.mock.calls.map((c) => c[0]);
-        expect(
-          messages.some((m) => typeof m === "string" && m.includes("Widening sandbox egress")),
-        ).toBe(true);
+        await withEnv("NEMOCLAW_OPENSHELL_BIN", "echo", async () => {
+          policies.applyPreset("test-sandbox", "npm");
+          const messages = logSpy.mock.calls.map((c) => c[0]);
+          expect(
+            messages.some((m) => typeof m === "string" && m.includes("Widening sandbox egress")),
+          ).toBe(true);
+        });
       } finally {
-        if (originalBin === undefined) {
-          delete process.env.NEMOCLAW_OPENSHELL_BIN;
-        } else {
-          process.env.NEMOCLAW_OPENSHELL_BIN = originalBin;
-        }
         logSpy.mockRestore();
         errSpy.mockRestore();
       }
@@ -242,52 +256,42 @@ describe("policies", () => {
       }
     });
 
-    it("does not log when preset exists but has no host entries", () => {
+    it("does not log when preset exists but has no host entries", async () => {
       const noHostPreset =
         "preset:\n  name: empty\n\nnetwork_policies:\n  empty_rule:\n    name: empty_rule\n    endpoints: []\n";
       const loadSpy = vi.spyOn(policies, "loadPreset").mockReturnValue(noHostPreset);
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const originalBin = process.env.NEMOCLAW_OPENSHELL_BIN;
-      process.env.NEMOCLAW_OPENSHELL_BIN = "echo";
 
       try {
-        policies.applyPreset("test-sandbox", "empty");
-        const messages = logSpy.mock.calls.map((c) => c[0]);
-        expect(
-          messages.some((m) => typeof m === "string" && m.includes("Widening sandbox egress")),
-        ).toBe(false);
+        await withEnv("NEMOCLAW_OPENSHELL_BIN", "echo", async () => {
+          policies.applyPreset("test-sandbox", "empty");
+          const messages = logSpy.mock.calls.map((c) => c[0]);
+          expect(
+            messages.some((m) => typeof m === "string" && m.includes("Widening sandbox egress")),
+          ).toBe(false);
+        });
       } finally {
-        if (originalBin === undefined) {
-          delete process.env.NEMOCLAW_OPENSHELL_BIN;
-        } else {
-          process.env.NEMOCLAW_OPENSHELL_BIN = originalBin;
-        }
         loadSpy.mockRestore();
         logSpy.mockRestore();
         errSpy.mockRestore();
       }
     });
 
-    it("returns false when current policy cannot be read", () => {
+    it("returns false when current policy cannot be read", async () => {
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const originalBin = process.env.NEMOCLAW_OPENSHELL_BIN;
-      process.env.NEMOCLAW_OPENSHELL_BIN = "/definitely-missing-openshell-binary";
 
       try {
-        expect(policies.applyPreset("test-sandbox", "npm")).toBe(false);
-        expect(
-          errSpy.mock.calls.some(
-            (call) =>
-              typeof call[0] === "string" && call[0].includes("Failed to read current policy for sandbox"),
-          ),
-        ).toBe(true);
+        await withEnv("NEMOCLAW_OPENSHELL_BIN", "/definitely-missing-openshell-binary", async () => {
+          expect(policies.applyPreset("test-sandbox", "npm")).toBe(false);
+          expect(
+            errSpy.mock.calls.some(
+              (call) =>
+                typeof call[0] === "string" && call[0].includes("Failed to read current policy for sandbox"),
+            ),
+          ).toBe(true);
+        });
       } finally {
-        if (originalBin === undefined) {
-          delete process.env.NEMOCLAW_OPENSHELL_BIN;
-        } else {
-          process.env.NEMOCLAW_OPENSHELL_BIN = originalBin;
-        }
         errSpy.mockRestore();
       }
     });
