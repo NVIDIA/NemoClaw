@@ -1141,6 +1141,36 @@ async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false 
   checkAndRecoverSandboxProcesses(sandboxName);
   // Ensure Ollama auth proxy is running (recovers from host reboots)
   ensureOllamaAuthProxy();
+
+  // ── Inference route swap (#1248) ──────────────────────────────────
+  // When the user has multiple sandboxes with different providers, the
+  // cluster-wide inference.local route may still point at the *other*
+  // provider. Re-set it to match this sandbox's persisted config.
+  try {
+    const sb = registry.getSandbox(sandboxName);
+    if (sb && sb.provider && sb.model) {
+      const live = parseGatewayInference(
+        captureOpenshell(["inference", "get"], { ignoreError: true }).output,
+      );
+      if (!live || live.provider !== sb.provider || live.model !== sb.model) {
+        console.log(
+          `  Switching inference route to ${sb.provider}/${sb.model} for sandbox '${sandboxName}'`,
+        );
+        const swapResult = runOpenshell(
+          ["inference", "set", "--provider", sb.provider, "--model", sb.model, "--no-verify"],
+          { ignoreError: true },
+        );
+        if (swapResult.status !== 0) {
+          console.error(
+            `  ${YW}Warning: failed to switch inference route — connect will proceed anyway.${R}`,
+          );
+        }
+      }
+    }
+  } catch {
+    /* non-fatal — don't block connect on inference route swap failure */
+  }
+
   // Print a one-shot hint before dropping the user into the sandbox
   // shell so a fresh user knows the first thing to type. Without this,
   // `nemoclaw <name> connect` lands on a bare bash prompt and users

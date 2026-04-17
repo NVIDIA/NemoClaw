@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { homedir } from "node:os";
 import {
   describeOnboardEndpoint,
   describeOnboardProvider,
@@ -144,7 +145,7 @@ describe("onboard/config", () => {
 
     it("returns parsed config when file exists", () => {
       const config = makeConfig();
-      const configPath = `${process.env.HOME ?? "/tmp"}/.nemoclaw/config.json`;
+      const configPath = `${homedir()}/.nemoclaw/config.json`;
       store.set(configPath, JSON.stringify(config));
       expect(loadOnboardConfig()).toEqual(config);
     });

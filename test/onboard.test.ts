@@ -142,6 +142,25 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("suggests local-inference preset when provider is ollama-local", () => {
+    const presets = getSuggestedPolicyPresets({ provider: "ollama-local" });
+    expect(presets).toContain("local-inference");
+    expect(presets).toContain("pypi");
+    expect(presets).toContain("npm");
+  });
+
+  it("suggests local-inference preset when provider is vllm-local", () => {
+    const presets = getSuggestedPolicyPresets({ provider: "vllm-local" });
+    expect(presets).toContain("local-inference");
+  });
+
+  it("does not suggest local-inference for cloud providers", () => {
+    expect(getSuggestedPolicyPresets({ provider: "nvidia-prod" })).not.toContain("local-inference");
+    expect(getSuggestedPolicyPresets({ provider: "openai-api" })).not.toContain("local-inference");
+    expect(getSuggestedPolicyPresets({ provider: null })).not.toContain("local-inference");
+    expect(getSuggestedPolicyPresets({})).not.toContain("local-inference");
+  });
+
   it("patches the staged Dockerfile with the selected model and chat UI URL", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
@@ -3067,6 +3086,119 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(
         payload.commands.some((entry) => entry.command.includes("'sandbox' 'create'")),
         "should create a new sandbox when --recreate-sandbox is set",
+      );
+    },
+  );
+
+  it(
+    "recreating a sandbox preserves the user's policy preset selections",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-recreate-preserves-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "recreate-preserves.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+      const sessionModulePath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "onboard-session.js"),
+      );
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const onboardSession = require(${sessionModulePath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
+  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  if (command.includes("'forward' 'list'")) return "";
+  if (command.includes("sandbox exec") && command.includes("curl")) return "ok";
+  return "";
+};
+
+// Existing sandbox has a custom preset selection: only "npm" (not the
+// full "balanced" tier). Recreating the sandbox must preserve this
+// customisation rather than reverting to the tier defaults.
+registry.getSandbox = () => ({
+  name: "my-assistant",
+  gpuEnabled: false,
+  policies: ["npm"],
+  policyTier: "balanced",
+});
+registry.registerSandbox = () => true;
+registry.removeSandbox = () => true;
+
+const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"))});
+preflight.checkPortAvailable = async () => ({ ok: true });
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
+  await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  const session = onboardSession.loadSession();
+  console.log(JSON.stringify({ policyPresets: session && session.policyPresets }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+
+      assert.deepEqual(
+        payload.policyPresets,
+        ["npm"],
+        "createSandbox should write the previous sandbox's policy presets to the onboard session before destroying it so they can be reapplied after recreation",
       );
     },
   );

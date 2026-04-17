@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-let configDir = join(process.env.HOME ?? tmpdir(), ".nemoclaw");
+let configDir = join(homedir(), ".nemoclaw");
 
 export type EndpointType =
   | "build"

@@ -3,6 +3,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type fs from "node:fs";
+import { homedir } from "node:os";
 import { loadState, saveState, clearState, type NemoClawState } from "./state.js";
 
 const store = new Map<string, string>();
@@ -24,7 +25,7 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
-const STATE_PATH = `${process.env.HOME ?? "/tmp"}/.nemoclaw/state/nemoclaw.json`;
+const STATE_PATH = `${homedir()}/.nemoclaw/state/nemoclaw.json`;
 
 describe("blueprint/state", () => {
   beforeEach(() => {

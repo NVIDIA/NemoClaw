@@ -515,6 +515,11 @@ if ! e2e_cloud_experimental_phase_enabled phase5; then
 else
   export SANDBOX_NAME CLOUD_EXPERIMENTAL_MODEL REPO NVIDIA_API_KEY
 
+  # Ensure PATH includes /usr/local/bin and ~/.local/bin so child bash
+  # processes (checks/*.sh) can find openshell and other tools installed
+  # during Phase 3. Without this, check scripts exit 127. (#1969)
+  export PATH="/usr/local/bin:${HOME}/.local/bin:${PATH}"
+
   shopt -s nullglob
   case_scripts=("$E2E_CLOUD_EXPERIMENTAL_READY_DIR"/*.sh)
   shopt -u nullglob
