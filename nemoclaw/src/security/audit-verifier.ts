@@ -274,7 +274,7 @@ function canonicalJsonStringify(value: unknown): string {
   }
 
   if (typeof value === "string") {
-    return JSON.stringify(value);
+    return escapeNonAscii(JSON.stringify(value));
   }
 
   if (Array.isArray(value)) {
@@ -292,4 +292,22 @@ function canonicalJsonStringify(value: unknown): string {
   }
 
   return JSON.stringify(value);
+}
+
+/**
+ * Escape non-ASCII characters to \\uXXXX sequences to match Python's
+ * `json.dumps(ensure_ascii=True)` default behavior. Characters above
+ * U+FFFF are encoded as surrogate pairs (\\uXXXX\\uXXXX).
+ */
+function escapeNonAscii(s: string): string {
+  let result = "";
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    if (code > 0x7f) {
+      result += `\\u${code.toString(16).padStart(4, "0")}`;
+    } else {
+      result += s[i];
+    }
+  }
+  return result;
 }

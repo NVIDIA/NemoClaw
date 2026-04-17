@@ -330,4 +330,22 @@ describe("cross-format verification", () => {
     const result = verifyChain(auditPath);
     expect(result).toEqual({ valid: true, entries: 2 });
   });
+
+  it("verifies entries with non-ASCII event data (ensure_ascii parity)", () => {
+    // Python: json.dumps({"event":{"msg":"héllo"},"prev_hash":"genesis","timestamp":1700000000}, separators=(",",":"), sort_keys=True)
+    // With ensure_ascii=True (default): {"event":{"msg":"h\\u00e9llo"},"prev_hash":"genesis","timestamp":1700000000}
+    const payload = '{"event":{"msg":"h\\u00e9llo"},"prev_hash":"genesis","timestamp":1700000000}';
+    const hash = sha256(payload);
+
+    const entry: AuditEntry = {
+      timestamp: 1700000000,
+      prev_hash: "genesis",
+      event: { msg: "h\u00e9llo" },
+      hash,
+    };
+
+    writeFileSync(auditPath, JSON.stringify(entry) + "\n", "utf-8");
+    const result = verifyChain(auditPath);
+    expect(result).toEqual({ valid: true, entries: 1 });
+  });
 });
