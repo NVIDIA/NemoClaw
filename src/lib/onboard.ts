@@ -6,6 +6,7 @@
 // Supports non-interactive mode via --non-interactive flag or
 // NEMOCLAW_NON_INTERACTIVE=1 env var for CI/CD pipelines.
 
+const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -71,6 +72,7 @@ const agentOnboard = require("./agent-onboard");
 const agentDefs = require("./agent-defs");
 
 const gatewayState = require("./gateway-state");
+const sandboxState = require("./sandbox-state");
 const validation = require("./validation");
 const urlUtils = require("./url-utils");
 const buildContext = require("./build-context");
@@ -790,6 +792,70 @@ function providerExistsInGateway(name) {
     stdio: ["ignore", "ignore", "ignore"],
   });
   return result.status === 0;
+}
+
+/**
+ * Compute a SHA-256 hash of a credential value for change detection.
+ * Stored in the sandbox registry so we can detect rotation on reuse
+ * without needing to read the credential back from OpenShell.
+ * @param {string} value - Credential value to hash.
+ * @returns {string|null} Hex-encoded SHA-256 hash, or null if value is falsy.
+ */
+function hashCredential(value) {
+  if (!value) return null;
+  return crypto.createHash("sha256").update(String(value).trim()).digest("hex");
+}
+
+/**
+ * Detect whether any messaging provider credential has been rotated since
+ * the sandbox was created, by comparing SHA-256 hashes of the current
+ * token values against hashes stored in the sandbox registry.
+ *
+ * Returns `changed: false` for legacy sandboxes that have no stored hashes
+ * (conservative — avoids unnecessary rebuilds after upgrade).
+ *
+ * @param {string} sandboxName - Name of the sandbox to check.
+ * @param {Array<{name: string, envKey: string, token: string|null}>} tokenDefs
+ * @returns {{ changed: boolean, changedProviders: string[] }}
+ */
+function detectMessagingCredentialRotation(sandboxName, tokenDefs) {
+  const sb = registry.getSandbox(sandboxName);
+  const storedHashes = sb?.providerCredentialHashes || {};
+  const changedProviders = [];
+  for (const { name, envKey, token } of tokenDefs) {
+    if (!token) continue;
+    const storedHash = storedHashes[envKey];
+    if (!storedHash) continue;
+    if (storedHash !== hashCredential(token)) {
+      changedProviders.push(name);
+    }
+  }
+  return { changed: changedProviders.length > 0, changedProviders };
+}
+
+// Tri-state probe factory for messaging-conflict backfill. An upfront liveness
+// check is necessary because `openshell provider get` exits non-zero for both
+// "provider not attached" and "gateway unreachable"; without the liveness
+// gate, a transient gateway failure would be recorded as "no providers" and
+// permanently suppress future backfill retries.
+function makeConflictProbe() {
+  let gatewayAlive = null;
+  const isGatewayAlive = () => {
+    if (gatewayAlive === null) {
+      const result = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+      // runCaptureOpenshell returns stdout/stderr as a single string; treat
+      // any non-empty output as a sign openshell answered. Empty output with
+      // ignoreError typically means the binary failed to produce anything.
+      gatewayAlive = typeof result === "string" && result.length > 0;
+    }
+    return gatewayAlive;
+  };
+  return {
+    providerExists: (name) => {
+      if (!isGatewayAlive()) return "error";
+      return providerExistsInGateway(name) ? "present" : "absent";
+    },
+  };
 }
 
 function verifyInferenceRoute(_provider, _model) {
@@ -2461,9 +2527,14 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
         }
         console.log("  Waiting for gateway health...");
 
-        const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 5);
-        const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
+        // ARM64 (e.g. Raspberry Pi) needs more time: k3s takes 90-180s to init
+        const isArm64 = process.arch === "arm64";
+        const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 5);
+        const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", isArm64 ? 10 : 2);
         for (let i = 0; i < healthPollCount; i++) {
+          // Ensure the gateway is selected before each probe (non-TTY environments
+          // like ARM64 may not have it selected automatically)
+          runCaptureOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
           const status = runCaptureOpenshell(["status"], { ignoreError: true });
           const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
             ignoreError: true,
@@ -2702,6 +2773,49 @@ async function createSandbox(
   const getMessagingToken = (envKey) =>
     getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
 
+  // The UI toggle list can include channels the user toggled on but then
+  // skipped the token prompt for. Only channels with a real token will have a
+  // provider attached, so the conflict check must filter out the skipped ones
+  // (otherwise we warn about phantom channels that will never poll).
+  const conflictCheckChannels: string[] = Array.isArray(enabledChannels)
+    ? enabledChannels.filter((name) => {
+        const def = MESSAGING_CHANNELS.find((c) => c.name === name);
+        return def ? !!getMessagingToken(def.envKey) : false;
+      })
+    : [];
+
+  // Messaging channels like Telegram (getUpdates), Discord (gateway), and Slack
+  // (Socket Mode) enforce one consumer per bot token. Two sandboxes sharing
+  // a token silently break both bridges (see #1953). Warn before we commit.
+  if (conflictCheckChannels.length > 0) {
+    const {
+      backfillMessagingChannels,
+      findChannelConflicts,
+    } = require("./messaging-conflict");
+    backfillMessagingChannels(registry, makeConflictProbe());
+    const conflicts = findChannelConflicts(sandboxName, conflictCheckChannels, registry);
+    if (conflicts.length > 0) {
+      for (const { channel, sandbox } of conflicts) {
+        console.log(
+          `  ⚠ Sandbox '${sandbox}' already has ${channel} enabled. Bot tokens only allow one sandbox to poll — continuing will break both bridges.`,
+        );
+      }
+      if (isNonInteractive()) {
+        console.error(
+          "  Aborting: resolve the messaging channel conflict above or run `nemoclaw <sandbox> destroy` on the other sandbox.",
+        );
+        process.exit(1);
+      }
+      const answer = (await promptOrDefault("  Continue anyway? [y/N]: ", null, "n"))
+        .trim()
+        .toLowerCase();
+      if (answer !== "y" && answer !== "yes") {
+        console.log("  Aborting sandbox creation.");
+        process.exit(1);
+      }
+    }
+  }
+
   // When enabledChannels is provided (from the toggle picker), only include
   // channels the user selected. When null (backward compat), include all.
   const enabledEnvKeys =
@@ -2748,6 +2862,10 @@ async function createSandbox(
   // Reconcile local registry state with the live OpenShell gateway state.
   const liveExists = pruneStaleSandboxEntry(sandboxName);
 
+  // Declared outside the liveExists block so it is accessible during
+  // post-creation restore (the sandbox create path runs after the block).
+  let pendingStateRestore = null;
+
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
 
@@ -2758,7 +2876,14 @@ async function createSandbox(
       hasMessagingTokens &&
       messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
 
-    if (!isRecreateSandbox() && !needsProviderMigration) {
+    // Detect whether any messaging credential has been rotated since the
+    // sandbox was created. Provider credentials are resolved once at sandbox
+    // startup, so a rotated token requires a rebuild to take effect.
+    const credentialRotation = hasMessagingTokens
+      ? detectMessagingCredentialRotation(sandboxName, messagingTokenDefs)
+      : { changed: false, changedProviders: [] };
+
+    if (!isRecreateSandbox() && !needsProviderMigration && !credentialRotation.changed) {
       if (isNonInteractive()) {
         if (existingSandboxState === "ready") {
           // Upsert messaging providers even on reuse so credential changes take
@@ -2800,9 +2925,53 @@ async function createSandbox(
       }
     }
 
+    // Back up workspace state before destroying the sandbox when triggered
+    // by credential rotation, so files can be restored after recreation.
+    if (credentialRotation.changed && existingSandboxState === "ready") {
+      const rotatedNames = credentialRotation.changedProviders.join(", ");
+      console.log(`  Messaging credential(s) rotated: ${rotatedNames}`);
+      console.log("  Rebuilding sandbox to propagate new credentials to the L7 proxy...");
+      try {
+        const backup = sandboxState.backupSandboxState(sandboxName);
+        if (backup.success) {
+          note(`  ✓ State backed up (${backup.backedUpDirs.length} directories)`);
+          pendingStateRestore = backup;
+        } else {
+          console.error("  State backup failed — aborting rebuild to prevent data loss.");
+          console.error("  Pass --recreate-sandbox to force recreation without backup.");
+          upsertMessagingProviders(messagingTokenDefs);
+          // Update stored hashes so the next onboard doesn't re-detect rotation.
+          const abortHashes = {};
+          for (const { envKey, token } of messagingTokenDefs) {
+            if (token) abortHashes[envKey] = hashCredential(token);
+          }
+          if (Object.keys(abortHashes).length > 0) {
+            registry.updateSandbox(sandboxName, { providerCredentialHashes: abortHashes });
+          }
+          ensureDashboardForward(sandboxName, chatUiUrl);
+          return sandboxName;
+        }
+      } catch (err) {
+        console.error(`  State backup threw: ${err.message} — aborting rebuild.`);
+        console.error("  Pass --recreate-sandbox to force recreation without backup.");
+        upsertMessagingProviders(messagingTokenDefs);
+        const abortHashes = {};
+        for (const { envKey, token } of messagingTokenDefs) {
+          if (token) abortHashes[envKey] = hashCredential(token);
+        }
+        if (Object.keys(abortHashes).length > 0) {
+          registry.updateSandbox(sandboxName, { providerCredentialHashes: abortHashes });
+        }
+        ensureDashboardForward(sandboxName, chatUiUrl);
+        return sandboxName;
+      }
+    }
+
     if (needsProviderMigration) {
       console.log(`  Sandbox '${sandboxName}' exists but messaging providers are not attached.`);
       console.log("  Recreating to ensure credentials flow through the provider pipeline.");
+    } else if (credentialRotation.changed) {
+      // Message already printed above during backup.
     } else if (existingSandboxState === "ready") {
       note(`  Sandbox '${sandboxName}' exists and is ready — recreating by explicit request.`);
     } else {
@@ -3158,6 +3327,12 @@ async function createSandbox(
 
   // Register only after confirmed ready — prevents phantom entries
   const effectiveAgent = agent || agentDefs.loadAgent("openclaw");
+  const providerCredentialHashes = {};
+  for (const { envKey, token } of messagingTokenDefs) {
+    if (token) {
+      providerCredentialHashes[envKey] = hashCredential(token);
+    }
+  }
   registry.registerSandbox({
     name: sandboxName,
     model: model || null,
@@ -3166,7 +3341,26 @@ async function createSandbox(
     agent: agent ? agent.name : null,
     agentVersion: fromDockerfile ? null : effectiveAgent.expectedVersion || null,
     dangerouslySkipPermissions: dangerouslySkipPermissions || undefined,
+    providerCredentialHashes:
+      Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
+    messagingChannels: activeMessagingChannels,
   });
+
+  // Restore workspace state if we backed it up during credential rotation.
+  if (pendingStateRestore?.success) {
+    note("  Restoring workspace state after credential rotation...");
+    const restore = sandboxState.restoreSandboxState(
+      sandboxName,
+      pendingStateRestore.manifest.backupPath,
+    );
+    if (restore.success) {
+      note(`  ✓ State restored (${restore.restoredDirs.length} directories)`);
+    } else {
+      console.error(
+        `  Warning: partial restore. Manual recovery: ${pendingStateRestore.manifest.backupPath}`,
+      );
+    }
+  }
 
   // DNS proxy — run a forwarder in the sandbox pod so the isolated
   // sandbox namespace can resolve hostnames (fixes #626).
@@ -3493,7 +3687,26 @@ async function setupNim(gpu) {
                 remoteConfig.helpUrl,
               );
               if (validation.ok) {
-                preferredInferenceApi = validation.api;
+                // Force chat completions for all OpenAI-compatible endpoints
+                // unless the user explicitly opted in to responses via env var.
+                // Many backends (Ollama, vLLM, LiteLLM) expose /v1/responses
+                // but do not correctly handle the `developer` role used by the
+                // Responses API — messages with that role are silently dropped,
+                // causing the model to receive no system prompt or tool
+                // definitions. Chat completions uses the `system` role which
+                // is universally supported.
+                // See: https://github.com/NVIDIA/NemoClaw/issues/1932
+                const explicitApi = (process.env.NEMOCLAW_PREFERRED_API || "").trim().toLowerCase();
+                if (explicitApi && explicitApi !== "openai-completions" && explicitApi !== "chat-completions") {
+                  preferredInferenceApi = validation.api;
+                } else {
+                  if (validation.api !== "openai-completions") {
+                    console.log(
+                      "  ℹ Using chat completions API (compatible endpoints may not support the Responses API developer role)",
+                    );
+                  }
+                  preferredInferenceApi = "openai-completions";
+                }
                 break;
               }
               if (
@@ -5708,6 +5921,10 @@ async function onboard(opts = {}) {
       : null;
     if (dangerouslySkipPermissions) {
       step(8, 8, "Policy presets");
+      if (!waitForSandboxReady(sandboxName)) {
+        console.error(`\n  ✗ Sandbox '${sandboxName}' not ready after creation. Giving up.`);
+        process.exit(1);
+      }
       policies.applyPermissivePolicy(sandboxName);
       onboardSession.markStepComplete("policies", {
         sandboxName,
@@ -5834,6 +6051,8 @@ module.exports = {
   summarizeProbeFailure,
   hasResponsesToolCall,
   upsertProvider,
+  hashCredential,
+  detectMessagingCredentialRotation,
   hydrateCredentialEnv,
   pruneKnownHostsEntries,
   shouldIncludeBuildContextPath,
