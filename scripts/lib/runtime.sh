@@ -290,6 +290,9 @@ check_local_provider_health() {
 detect_kubelet_conflict() {
   KUBELET_CONFLICT_DETAIL=""
 
+  # Kubelet conflicts only apply on Linux (cgroup namespace sharing).
+  [ "$(uname -s)" = "Linux" ] || return 1
+
   if pgrep -x kubelet >/dev/null 2>&1 || pgrep -x kubelite >/dev/null 2>&1 || pgrep -x k3s >/dev/null 2>&1; then
     KUBELET_CONFLICT_DETAIL="kubelet process detected"
     return 0

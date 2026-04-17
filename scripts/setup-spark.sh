@@ -112,27 +112,33 @@ if [ -f "$DAEMON_JSON" ]; then
     else
       info "Updating Docker daemon cgroupns mode to 'host'..."
       python3 -c "
-import json
+import json, os, tempfile
 with open('$DAEMON_JSON') as f:
     d = json.load(f)
 d['default-cgroupns-mode'] = 'host'
-with open('$DAEMON_JSON', 'w') as f:
+dirn = os.path.dirname('$DAEMON_JSON')
+fd, tmp = tempfile.mkstemp(dir=dirn, suffix='.tmp')
+with os.fdopen(fd, 'w') as f:
     json.dump(d, f, indent=2)
+os.replace(tmp, '$DAEMON_JSON')
 "
       NEEDS_RESTART=true
     fi
   else
     info "Adding cgroupns=host to Docker daemon config..."
     python3 -c "
-import json
+import json, os, tempfile
 try:
     with open('$DAEMON_JSON') as f:
         d = json.load(f)
-except:
+except (IOError, json.JSONDecodeError):
     d = {}
 d['default-cgroupns-mode'] = 'host'
-with open('$DAEMON_JSON', 'w') as f:
+dirn = os.path.dirname('$DAEMON_JSON')
+fd, tmp = tempfile.mkstemp(dir=dirn, suffix='.tmp')
+with os.fdopen(fd, 'w') as f:
     json.dump(d, f, indent=2)
+os.replace(tmp, '$DAEMON_JSON')
 "
     NEEDS_RESTART=true
   fi
