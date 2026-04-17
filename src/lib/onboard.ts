@@ -46,6 +46,11 @@ const {
   getProviderSelectionConfig,
   parseGatewayInference,
 } = require("./inference-config");
+
+// Providers that run on the host and need the local-inference policy preset.
+// Shared constant so getSuggestedPolicyPresets() and setupPoliciesWithSelection()
+// stay in sync.
+const LOCAL_INFERENCE_PROVIDERS = ["ollama-local", "vllm-local"];
 const { inferContainerRuntime, isWsl, shouldPatchCoredns } = require("./platform");
 const { resolveOpenshell } = require("./resolve-openshell");
 const {
@@ -264,6 +269,7 @@ function repairRecordedSandbox(sandboxName) {
 
 const { streamSandboxCreate } = sandboxCreateStream;
 
+/** Spawn `openshell gateway start` and stream its output with progress heartbeats. */
 function streamGatewayStart(command, env = process.env) {
   const child = spawn("bash", ["-lc", command], {
     cwd: ROOT,
@@ -376,15 +382,35 @@ function streamGatewayStart(command, env = process.env) {
   }, 5000);
   heartbeatTimer.unref?.();
 
+  // Hard timeout to prevent indefinite hangs if the openshell process
+  // never exits (e.g. Docker daemon unresponsive, k3s restart loop). (#1830)
+  // On timeout, send SIGTERM and let the `close` event resolve the promise
+  // so the child has actually exited before the caller proceeds to retry.
+  const GATEWAY_START_TIMEOUT = envInt("NEMOCLAW_GATEWAY_START_TIMEOUT", 600) * 1000;
+  let killedByTimeout = false;
+  const killTimer = setTimeout(() => {
+    killedByTimeout = true;
+    lines.push("[NemoClaw] Gateway start timed out — killing process.");
+    child.kill("SIGTERM");
+    // If SIGTERM is ignored, force-kill after 10s.
+    setTimeout(() => {
+      if (!settled) child.kill("SIGKILL");
+    }, 10_000).unref?.();
+  }, GATEWAY_START_TIMEOUT);
+  killTimer.unref?.();
+
   return new Promise((resolve) => {
     resolvePromise = resolve;
     child.on("error", (error) => {
+      clearTimeout(killTimer);
       const detail = error?.message || String(error);
       lines.push(detail);
       finish({ status: 1, output: lines.join("\n") });
     });
     child.on("close", (code) => {
-      finish({ status: code ?? 1, output: lines.join("\n") });
+      clearTimeout(killTimer);
+      const exitCode = killedByTimeout ? 1 : (code ?? 1);
+      finish({ status: exitCode, output: lines.join("\n") });
     });
   });
 }
@@ -1237,6 +1263,13 @@ function shouldRequireResponsesToolCalling(provider) {
   );
 }
 
+// Google Gemini rejects requests that carry both an Authorization: Bearer
+// header and a ?key= query parameter ("Multiple authentication credentials
+// received"). Send the API key as ?key= only for Gemini. See issue #1960.
+function getProbeAuthMode(provider) {
+  return provider === "gemini-api" ? "query-param" : undefined;
+}
+
 // shouldSkipResponsesProbe and isNvcfFunctionNotFoundForAccount /
 // nvcfFunctionNotFoundMessage — see validation import above. They live in
 // src/lib/validation.ts so they can be unit-tested independently.
@@ -1244,17 +1277,29 @@ function shouldRequireResponsesToolCalling(provider) {
 // Per-validation-probe curl timing. Tighter than the default 60s in
 // getCurlTimingArgs() because validation must not hang the wizard for a
 // minute on a misbehaving model. See issue #1601 (Bug 3).
-function getValidationProbeCurlArgs() {
+function getValidationProbeCurlArgs(opts) {
+  if (isWsl(opts)) {
+    return ["--connect-timeout", "20", "--max-time", "30"];
+  }
   return ["--connect-timeout", "10", "--max-time", "15"];
 }
 
-function probeResponsesToolCalling(endpointUrl, model, apiKey) {
+function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
+  const useQueryParam = options.authMode === "query-param";
+  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
+  const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  const authHeader = !useQueryParam && normalizedKey
+    ? ["-H", `Authorization: Bearer ${normalizedKey}`]
+    : [];
+  const url = useQueryParam && normalizedKey
+    ? `${baseUrl}/responses?key=${encodeURIComponent(normalizedKey)}`
+    : `${baseUrl}/responses`;
   const result = runCurlProbe([
     "-sS",
     ...getValidationProbeCurlArgs(),
     "-H",
     "Content-Type: application/json",
-    ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+    ...authHeader,
     "-d",
     JSON.stringify({
       model,
@@ -1276,7 +1321,7 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey) {
         },
       ],
     }),
-    `${String(endpointUrl).replace(/\/+$/, "")}/responses`,
+    url,
   ]);
 
   if (!result.ok) {
@@ -1296,12 +1341,21 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey) {
 }
 
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
+  const useQueryParam = options.authMode === "query-param";
+  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
+  const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  const authHeader = !useQueryParam && normalizedKey
+    ? ["-H", `Authorization: Bearer ${normalizedKey}`]
+    : [];
+  const appendKey = (path) =>
+    useQueryParam && normalizedKey ? `${baseUrl}${path}?key=${encodeURIComponent(normalizedKey)}` : `${baseUrl}${path}`;
+
   const responsesProbe =
     options.requireResponsesToolCalling === true
       ? {
           name: "Responses API with tool calling",
           api: "openai-responses",
-          execute: () => probeResponsesToolCalling(endpointUrl, model, apiKey),
+          execute: () => probeResponsesToolCalling(endpointUrl, model, apiKey, { authMode: options.authMode }),
         }
       : {
           name: "Responses API",
@@ -1312,15 +1366,13 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               ...getValidationProbeCurlArgs(),
               "-H",
               "Content-Type: application/json",
-              ...(apiKey
-                ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`]
-                : []),
+              ...authHeader,
               "-d",
               JSON.stringify({
                 model,
                 input: "Reply with exactly: OK",
               }),
-              `${String(endpointUrl).replace(/\/+$/, "")}/responses`,
+              appendKey("/responses"),
             ]),
         };
 
@@ -1333,13 +1385,13 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
         ...getValidationProbeCurlArgs(),
         "-H",
         "Content-Type: application/json",
-        ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+        ...authHeader,
         "-d",
         JSON.stringify({
           model,
           messages: [{ role: "user", content: "Reply with exactly: OK" }],
         }),
-        `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
+        appendKey("/chat/completions"),
       ]),
   };
 
@@ -1364,14 +1416,14 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
           ...getValidationProbeCurlArgs(),
           "-H",
           "Content-Type: application/json",
-          ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+          ...authHeader,
           "-d",
           JSON.stringify({
             model,
             input: "Reply with exactly: OK",
             stream: true,
           }),
-          `${String(endpointUrl).replace(/\/+$/, "")}/responses`,
+          appendKey("/responses"),
         ]);
         if (!streamResult.ok && streamResult.missingEvents.length > 0) {
           // Backend responds but lacks required streaming events — fall back
@@ -1419,6 +1471,35 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     });
   }
 
+  // Single retry with doubled timeouts on timeout/connection failure.
+  // WSL2's virtualized network stack can cause the initial probe to time out
+  // before the TLS handshake completes. See issue #987.
+  const isTimeoutOrConnFailure = (cs) => cs === 28 || cs === 6 || cs === 7;
+  let retriedAfterTimeout = false;
+  if (failures.length > 0 && isTimeoutOrConnFailure(failures[0].curlStatus)) {
+    retriedAfterTimeout = true;
+    const baseArgs = getValidationProbeCurlArgs();
+    const doubledArgs = baseArgs.map((arg) =>
+      /^\d+$/.test(arg) ? String(Number(arg) * 2) : arg,
+    );
+    const retryResult = runCurlProbe([
+      "-sS",
+      ...doubledArgs,
+      "-H",
+      "Content-Type: application/json",
+      ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+      "-d",
+      JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      }),
+      `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
+    ]);
+    if (retryResult.ok) {
+      return { ok: true, api: "openai-completions", label: "Chat Completions API" };
+    }
+  }
+
   // Detect the NVCF "Function not found for account" error and reframe it
   // with an actionable next step instead of dumping the raw NVCF body.
   // See issue #1601 (Bug 2).
@@ -1435,9 +1516,15 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     };
   }
 
+  const baseMessage = failures.map((failure) => `${failure.name}: ${failure.message}`).join(" | ");
+  const wslHint =
+    isWsl() && retriedAfterTimeout
+      ? " · WSL2 detected \u2014 network verification may be slower than expected. " +
+        "Run `nemoclaw onboard` with the `--skip-verify` flag if this endpoint is known to be reachable."
+      : "";
   return {
     ok: false,
-    message: failures.map((failure) => `${failure.name}: ${failure.message}`).join(" | "),
+    message: baseMessage + wslHint,
     failures,
   };
 }
@@ -2446,6 +2533,7 @@ async function preflight() {
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
+/** Start the OpenShell gateway with retry logic and post-start health polling. */
 async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   step(2, 8, "Starting OpenShell gateway");
 
@@ -2529,8 +2617,11 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
 
         // ARM64 (e.g. Raspberry Pi) needs more time: k3s takes 90-180s to init
         const isArm64 = process.arch === "arm64";
-        const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 5);
-        const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", isArm64 ? 10 : 2);
+        // After openshell gateway start returns (container HEALTHY at Layer 1),
+        // poll application-layer connectivity (Layer 2: gRPC, TLS, port mapping).
+        // 60s default gives enough buffer for gRPC init and TLS handshake. (#1830)
+        const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 12);
+        const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", isArm64 ? 10 : 5);
         for (let i = 0; i < healthPollCount; i++) {
           // Ensure the gateway is selected before each probe (non-TTY environments
           // like ARM64 may not have it selected automatically)
@@ -2976,6 +3067,14 @@ async function createSandbox(
       note(`  Sandbox '${sandboxName}' exists and is ready — recreating by explicit request.`);
     } else {
       note(`  Sandbox '${sandboxName}' exists but is not ready — recreating it.`);
+    }
+
+    const previousEntry = registry.getSandbox(sandboxName);
+    if (previousEntry?.policies?.length > 0) {
+      onboardSession.updateSession((current) => {
+        current.policyPresets = previousEntry.policies;
+        return current;
+      });
     }
 
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
@@ -3644,12 +3743,14 @@ async function setupNim(gpu) {
           const defaultModel = requestedModel || _envModelRemote || remoteConfig.defaultModel;
           let modelValidator = null;
           if (selected.key === "openai" || selected.key === "gemini") {
+            const modelAuthMode = getProbeAuthMode(provider);
             modelValidator = (candidate) =>
               validateOpenAiLikeModel(
                 remoteConfig.label,
                 endpointUrl,
                 candidate,
                 getCredential(credentialEnv),
+                ...(modelAuthMode ? [{ authMode: modelAuthMode }] : []),
               );
           } else if (selected.key === "anthropic") {
             modelValidator = (candidate) =>
@@ -3774,6 +3875,7 @@ async function setupNim(gpu) {
                   {
                     requireResponsesToolCalling: shouldRequireResponsesToolCalling(provider),
                     skipResponsesProbe: shouldSkipResponsesProbe(provider),
+                    authMode: getProbeAuthMode(provider),
                   },
                 );
                 if (validation.ok) {
@@ -3805,6 +3907,7 @@ async function setupNim(gpu) {
               {
                 requireResponsesToolCalling: shouldRequireResponsesToolCalling(provider),
                 skipResponsesProbe: shouldSkipResponsesProbe(provider),
+                authMode: getProbeAuthMode(provider),
               },
             );
             if (validation.ok) {
@@ -4494,8 +4597,13 @@ async function setupMessagingChannels() {
   return selected;
 }
 
-function getSuggestedPolicyPresets({ enabledChannels = null, webSearchConfig = null } = {}) {
+function getSuggestedPolicyPresets({ enabledChannels = null, webSearchConfig = null, provider = null } = {}) {
   const suggestions = ["pypi", "npm"];
+
+  // Auto-suggest local-inference preset when a local provider is selected
+  if (provider && LOCAL_INFERENCE_PROVIDERS.includes(provider)) {
+    suggestions.push("local-inference");
+  }
   const usesExplicitMessagingSelection = Array.isArray(enabledChannels);
 
   const maybeSuggestMessagingPreset = (channel, envKey) => {
@@ -5110,6 +5218,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   const onSelection = typeof options.onSelection === "function" ? options.onSelection : null;
   const webSearchConfig = options.webSearchConfig || null;
   const enabledChannels = Array.isArray(options.enabledChannels) ? options.enabledChannels : null;
+  const provider = options.provider || null;
 
   step(8, 8, "Policy presets");
 
@@ -5139,6 +5248,10 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   const suggestions = tiers.resolveTierPresets(tierName).map((p) => p.name);
   // Allow credential-based overrides on top of the tier (additive only).
   if (webSearchConfig && !suggestions.includes("brave")) suggestions.push("brave");
+  // Auto-suggest local-inference preset when a local provider is selected
+  if (provider && LOCAL_INFERENCE_PROVIDERS.includes(provider) && !suggestions.includes("local-inference")) {
+    suggestions.push("local-inference");
+  }
 
   if (isNonInteractive()) {
     const policyMode = (process.env.NEMOCLAW_POLICY_MODE || "suggested").trim().toLowerCase();
@@ -5916,8 +6029,9 @@ async function onboard(opts = {}) {
       onboardSession.markStepSkipped("agent_setup");
     }
 
-    const recordedPolicyPresets = Array.isArray(session?.policyPresets)
-      ? session.policyPresets
+    const latestSession = onboardSession.loadSession();
+    const recordedPolicyPresets = Array.isArray(latestSession?.policyPresets)
+      ? latestSession.policyPresets
       : null;
     if (dangerouslySkipPermissions) {
       step(8, 8, "Policy presets");
@@ -5952,14 +6066,12 @@ async function onboard(opts = {}) {
         });
         const appliedPolicyPresets = await setupPoliciesWithSelection(sandboxName, {
           selectedPresets:
-            resume &&
-            session?.steps?.policies?.status !== "complete" &&
-            Array.isArray(recordedPolicyPresets) &&
-            recordedPolicyPresets.length > 0
+            Array.isArray(recordedPolicyPresets) && recordedPolicyPresets.length > 0
               ? recordedPolicyPresets
               : null,
           enabledChannels: selectedMessagingChannels,
           webSearchConfig,
+          provider,
           onSelection: (policyPresets) => {
             onboardSession.updateSession((current) => {
               current.policyPresets = policyPresets;
@@ -6043,6 +6155,7 @@ module.exports = {
   isOpenclawReady,
   arePolicyPresetsApplied,
   getSuggestedPolicyPresets,
+  LOCAL_INFERENCE_PROVIDERS,
   presetsCheckboxSelector,
   selectPolicyTier,
   selectTierPresetsAndAccess,
@@ -6059,4 +6172,6 @@ module.exports = {
   writeSandboxConfigSyncFile,
   patchStagedDockerfile,
   ensureOllamaAuthProxy,
+  getProbeAuthMode,
+  getValidationProbeCurlArgs,
 };

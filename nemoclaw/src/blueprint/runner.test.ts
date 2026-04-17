@@ -73,7 +73,7 @@ vi.mock("execa", () => ({
 
 vi.mock("./ssrf.js", () => ({
   // eslint-disable-next-line @typescript-eslint/require-await
-  validateEndpointUrl: vi.fn(async (url: string) => url),
+  validateEndpointUrl: vi.fn(async (url: string) => ({ url, pinnedUrl: url })),
 }));
 
 const { validateEndpointUrl } = await import("./ssrf.js");

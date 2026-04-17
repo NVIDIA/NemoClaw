@@ -35,13 +35,20 @@ while [ "$#" -gt 0 ]; do
     *) url="$1"; shift ;;
   esac
 done
-if echo "$url" | grep -q '/models$'; then
+# Also extract auth from ?key= query parameter (Gemini uses this instead of Bearer header)
+url_auth=""
+if echo "$url" | grep -q '[?&]key='; then
+  url_auth=$(echo "$url" | sed 's/.*[?&]key=\\([^&]*\\).*/\\1/')
+fi
+# Strip query params for URL path matching
+url_path=$(echo "$url" | sed 's/?.*//')
+if echo "$url_path" | grep -q '/models$'; then
   body='{"data":[${models.map((model) => `{"id":"${model}"}`).join(",")}]}'
   status="200"
-elif echo "$auth" | grep -q '${goodToken}' && echo "$url" | grep -q '/responses$'; then
+elif (echo "$auth" | grep -q '${goodToken}' || echo "$url_auth" | grep -q '${goodToken}') && echo "$url_path" | grep -q '/responses$'; then
   body='{"id":"resp_123"}'
   status="200"
-elif echo "$auth" | grep -q '${goodToken}' && echo "$url" | grep -q '/chat/completions$'; then
+elif (echo "$auth" | grep -q '${goodToken}' || echo "$url_auth" | grep -q '${goodToken}') && echo "$url_path" | grep -q '/chat/completions$'; then
   body='{"id":"chatcmpl-123"}'
   status="200"
 fi
@@ -483,7 +490,7 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
-if echo "$url" | grep -q '/chat/completions$'; then
+if echo "$url" | grep -q '/chat/completions'; then
   status="200"
   body='{"choices":[{"message":{"content":"OK"}}]}'
 fi
