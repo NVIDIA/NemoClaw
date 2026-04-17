@@ -1425,7 +1425,13 @@ async function sandboxPolicyAdd(sandboxName, args = []) {
   if (confirm.toLowerCase() === "n") return;
 
   try {
-    policies.applyPreset(sandboxName, answer);
+    const applied = policies.applyPreset(sandboxName, answer);
+    if (applied === false) {
+      console.error(
+        `  Failed to apply policy preset '${answer}' to sandbox '${sandboxName}'.`,
+      );
+      process.exit(1);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`  Failed to apply policy preset: ${message}`);
