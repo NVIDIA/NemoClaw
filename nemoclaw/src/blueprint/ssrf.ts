@@ -10,14 +10,19 @@ interface CidrRange {
 }
 
 const PRIVATE_NETWORKS: CidrRange[] = [
+  cidr("0.0.0.0", 8), // "This network" (RFC 1122) — resolves to localhost on many systems
   cidr("127.0.0.0", 8),
   cidr("10.0.0.0", 8),
   cidr("172.16.0.0", 12),
   cidr("192.168.0.0", 16),
   cidr("169.254.0.0", 16),
   cidr("100.64.0.0", 10), // RFC 6598 CGNAT (shared address space)
+  cidr("198.18.0.0", 15), // Benchmark testing (RFC 2544)
   cidr6("::1", 128),
-  cidr6("fd00::", 8),
+  cidr6("::", 128),
+  cidr6("fc00::", 7),
+  cidr6("fe80::", 10),
+  cidr6("ff00::", 8),
 ];
 
 const ALLOWED_SCHEMES = new Set(["https:", "http:"]);
@@ -115,7 +120,24 @@ export function isPrivateIp(addr: string): boolean {
   return false;
 }
 
-export async function validateEndpointUrl(url: string): Promise<string> {
+/**
+ * Result of endpoint URL validation with DNS pinning.
+ *
+ * `url` is the original URL (hostname intact).
+ * `pinnedUrl` has the hostname replaced with the first resolved IP, preventing
+ * DNS rebinding TOCTOU attacks where an attacker returns a public IP at
+ * validation time and a private IP at connection time.
+ *
+ * Callers should use `pinnedUrl` for HTTP endpoints (full protection) and `url`
+ * for HTTPS endpoints (TLS certificate validation prevents rebinding since the
+ * attacker cannot present a valid cert for the rebinding target).
+ */
+export interface ValidatedEndpoint {
+  url: string;
+  pinnedUrl: string;
+}
+
+export async function validateEndpointUrl(url: string): Promise<ValidatedEndpoint> {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -151,5 +173,11 @@ export async function validateEndpointUrl(url: string): Promise<string> {
     }
   }
 
-  return url;
+  // DNS pinning: replace hostname with the first validated IP to prevent
+  // TOCTOU rebinding between validation and connection time.
+  const pinned = new URL(url);
+  const first = addresses[0];
+  pinned.hostname = first.family === 6 ? `[${first.address}]` : first.address;
+
+  return { url, pinnedUrl: pinned.toString() };
 }

@@ -1,0 +1,9 @@
+{
+  "renameTests": [
+    "test/security-c2-dockerfile-injection.test.js",
+    "test/security-c4-manifest-traversal.test.js",
+    "test/smoke-macos-install.test.js",
+    "test/nemoclaw-start.test.js",
+    "test/nemoclaw-cli-recovery.test.js"
+  ]
+}

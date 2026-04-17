@@ -1,8 +1,10 @@
 ---
 title:
-  page: "NemoClaw Security Best Practices — Controls, Risks, and Posture Profiles"
+  page: "NemoClaw Security Best Practices: Controls, Risks, and Posture Profiles"
   nav: "Security Best Practices"
-description: "A risk framework for every configurable security control in NemoClaw: defaults, what you can change, and what happens if you do."
+description:
+  main: "A risk framework for every configurable security control in NemoClaw: defaults, what you can change, and what happens if you do."
+  agent: "Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs."
 keywords: ["nemoclaw security best practices", "sandbox security controls risk framework"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "security", "network_policy", "nemoclaw"]
@@ -43,7 +45,7 @@ The following diagram shows the default posture immediately after `nemoclaw onbo
 
 ```{mermaid}
 flowchart TB
-    subgraph HOST["Your Machine — default posture after nemoclaw onboard"]
+    subgraph HOST["Your Machine: default posture after nemoclaw onboard"]
         direction TB
 
         YOU["👤 Operator"]
@@ -51,14 +53,14 @@ flowchart TB
         subgraph NC["NemoClaw + OpenShell"]
             direction TB
 
-            subgraph SB["Sandbox — the agent's isolated world"]
+            subgraph SB["Sandbox: the agent's isolated world"]
                 direction LR
                 PROC["⚙️ Process Layer<br/>Controls what the agent can execute"]
                 FS["📁 Filesystem Layer<br/>Controls what the agent can read and write"]
                 AGENT["🤖 Agent"]
             end
 
-            subgraph GW["Gateway — the gatekeeper"]
+            subgraph GW["Gateway: the gatekeeper"]
                 direction LR
                 NET["🌐 Network Layer<br/>Controls where the agent can connect"]
                 INF["🧠 Inference Layer<br/>Controls which AI models the agent can use"]
@@ -148,7 +150,7 @@ If someone replaces a binary while the sandbox runs, the hash mismatch triggers 
 
 | Aspect | Detail |
 |---|---|
-| Default | Each endpoint restricts access to specific binaries. For example, only `/usr/bin/gh` and `/usr/bin/git` can reach `github.com`. Binary paths support glob patterns (`*` matches one path component, `**` matches recursively). |
+| Default | Each endpoint restricts access to specific binaries. For example, the `github` preset restricts access so only `/usr/bin/gh` and `/usr/bin/git` can reach `github.com`. Binary paths support glob patterns (`*` matches one path component, `**` matches recursively). |
 | What you can change | Add binaries to an endpoint entry, or omit the `binaries` field to allow any executable. |
 | Risk if relaxed | Removing binary restrictions lets any process in the sandbox reach the endpoint. An agent could use `curl`, `wget`, or a Python script to exfiltrate data to an allowed host, bypassing the intended usage pattern. |
 | Recommendation | Always scope endpoints to the binaries that need them. If the agent needs a host from a new binary, add that binary explicitly rather than removing the restriction. |
@@ -159,7 +161,7 @@ Endpoint rules restrict allowed HTTP methods and URL paths.
 
 | Aspect | Detail |
 |---|---|
-| Default | Most endpoints allow GET and POST on `/**`. Some allow GET only (read-only), such as `docs.openclaw.ai`. |
+| Default | Some endpoints allow GET and POST on `/**` (for example, `clawhub.ai`). Others restrict methods and paths to specific API routes (for example, `api.anthropic.com` allows POST only to inference paths). Read-only endpoints such as `docs.openclaw.ai` and `sentry.io` allow GET only. The `npm_registry` baseline entry and the `npm`/`pypi` presets are GET-only (plus HEAD for PyPI). |
 | What you can change | Add methods (PUT, DELETE, PATCH) or restrict paths to specific prefixes. |
 | Risk if relaxed | Allowing all methods on an API endpoint gives the agent write and delete access. For example, allowing DELETE on `api.github.com` lets the agent delete repositories. |
 | Recommendation | Use GET-only rules for endpoints that the agent only reads. Add write methods only for endpoints where the agent must create or modify resources. Restrict paths to specific API routes when possible. |
@@ -193,13 +195,15 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 
 | Preset | What it enables | Key risk |
 |---|---|---|
+| `brave` | Brave Search API. | Agent can issue search queries. |
+| `brew` | Homebrew (Linuxbrew) package manager. | Allows installing arbitrary Homebrew packages, which may contain malicious code. |
 | `discord` | Discord REST API, WebSocket gateway, CDN. | CDN endpoint (`cdn.discordapp.com`) allows GET to any path. WebSocket uses `access: full` (no inspection). |
-| `docker` | Docker Hub, NVIDIA container registry. | Allows pulling arbitrary container images into the sandbox. |
-| `huggingface` | Hugging Face model registry. | Allows downloading arbitrary models and datasets. |
+| `github` | GitHub and GitHub REST API. | Gives agent read/write access to repositories and issues via `gh` and `git`. |
+| `huggingface` | Hugging Face Hub (download-only) and inference router. | Allows downloading arbitrary models and datasets. POST is restricted to the inference router only. |
 | `jira` | Atlassian Jira API. | Gives agent read/write access to project issues and comments. |
-| `npm` | npm and Yarn registries. | Allows installing arbitrary npm packages, which may contain malicious code. |
+| `npm` | npm and Yarn registries (GET-only). | Allows installing arbitrary npm packages, which may contain malicious code. Publishing is blocked. |
 | `outlook` | Microsoft 365, Outlook. | Gives agent access to email. |
-| `pypi` | Python Package Index. | Allows installing arbitrary Python packages, which may contain malicious code. |
+| `pypi` | Python Package Index (GET and HEAD only). | Allows installing arbitrary Python packages, which may contain malicious code. Publishing is blocked. |
 | `slack` | Slack API, Socket Mode, webhooks. | WebSocket uses `access: full`. Agent can post to any channel the bot token has access to. |
 | `telegram` | Telegram Bot API. | Agent can send messages to any chat the bot token has access to. |
 
@@ -358,6 +362,92 @@ The Dockerfile removes compilers and network probes from the runtime image.
 | Risk if relaxed | A compiler lets the agent build arbitrary native code, including kernel exploits or custom network tools. `netcat` enables arbitrary TCP connections that bypass HTTP-level policy enforcement. |
 | Recommendation | Keep build tools removed. If the agent needs to compile code, run the build in a separate, purpose-built container and copy artifacts into the sandbox. |
 
+### Image Digest Pinning
+
+The blueprint references the sandbox image by an immutable `@sha256:` digest instead of a mutable tag such as `:latest`.
+A registry compromise or accidental force-push cannot silently swap the sandbox image.
+
+| Aspect | Detail |
+|---|---|
+| Default | `nemoclaw-blueprint/blueprint.yaml` pins the sandbox image by digest. A CI regression test blocks any mutable-tag reference from merging. |
+| What you can change | Contributors bumping the sandbox image must update the digest in `blueprint.yaml`. Release tooling should rewrite the digest automatically. |
+| Risk if relaxed | Reverting to a mutable tag (`:latest`) allows a registry-side change to replace the sandbox image without any blueprint update, which is a supply-chain risk. |
+| Recommendation | Always reference the sandbox image by digest. If you build a custom image with `nemoclaw onboard --from`, the digest constraint does not apply to your local build. |
+
+### Auth Profile Permissions
+
+The entrypoint and migration flows enforce `chmod 600` on all `auth-profiles.json` files under `~/.openclaw`.
+This prevents other users on the host from reading stored credentials.
+
+| Aspect | Detail |
+|---|---|
+| Default | `600` permissions applied recursively at startup and after migration restores. |
+| What you can change | This is not a user-facing knob. The entrypoint enforces it. |
+| Risk if relaxed | Looser permissions let other users or processes on the host read provider API keys and tokens stored in auth profiles. |
+| Recommendation | No action needed. If you see a `permission denied` error when reading auth profiles, verify that you are running as the same user who created them. |
+
+## Gateway Authentication Controls
+
+The OpenClaw gateway authenticates devices that connect to the Control UI dashboard.
+NemoClaw hardens these defaults at image build time.
+
+### Device Authentication
+
+Device authentication requires each connecting device to go through a pairing flow before it can interact with the gateway.
+
+| Aspect | Detail |
+|---|---|
+| Default | Enabled. The gateway requires device pairing for all connections. |
+| What you can change | Set `NEMOCLAW_DISABLE_DEVICE_AUTH=1` as a Docker build argument to disable device authentication. This is a build-time setting baked into `openclaw.json` and verified by hash at startup. |
+| Risk if relaxed | Disabling device auth allows any device on the network to connect to the gateway without proving identity. This is dangerous when combined with LAN-bind changes or cloudflared tunnels in remote deployments, resulting in an unauthenticated, publicly reachable dashboard. |
+| Recommendation | Keep device auth enabled (the default). Only disable it for headless or development environments where no untrusted devices can reach the gateway. |
+
+### Insecure Auth Derivation
+
+The `allowInsecureAuth` setting controls whether the gateway permits non-HTTPS authentication.
+
+| Aspect | Detail |
+|---|---|
+| Default | Derived from the `CHAT_UI_URL` scheme at build time. When the URL uses `http://` (local development), insecure auth is allowed. When it uses `https://` (remote or production), insecure auth is blocked. |
+| What you can change | This is derived automatically from `CHAT_UI_URL`. Set `CHAT_UI_URL` to an `https://` URL to enforce secure auth. |
+| Risk if relaxed | Allowing insecure auth over HTTPS defeats the purpose of TLS, because authentication tokens transit in cleartext. |
+| Recommendation | Use `https://` for any deployment accessible beyond `localhost`. The default local URL (`http://127.0.0.1:18789`) correctly allows insecure auth for local development. |
+
+### Auto-Pair Client Allowlist
+
+The auto-pair watcher automatically approves device pairing requests from recognized clients, so you do not need to manually approve the Control UI.
+
+| Aspect | Detail |
+|---|---|
+| Default | The watcher approves devices with `clientId` set to `openclaw-control-ui` or `clientMode` set to `webchat`. All other clients are rejected and logged. |
+| What you can change | This is not a user-facing knob. The allowlist is defined in the entrypoint script. |
+| Risk if relaxed | Approving all device types without validation lets rogue or unexpected clients pair with the gateway unchallenged. |
+| Recommendation | No action needed. The entrypoint handles this automatically. If you see `[auto-pair] rejected unknown client=...` in the logs, investigate the source of the unexpected connection. |
+
+### CLI Secret Redaction
+
+The CLI automatically redacts secret patterns (API keys, bearer tokens, provider credentials) from command output and error messages before logging them.
+
+| Aspect | Detail |
+|---|---|
+| Default | Enabled. The runner redacts secrets from stdout, stderr, and thrown error messages. |
+| What you can change | This is not a user-facing knob. The CLI enforces it on all command output paths. |
+| Risk if relaxed | Without redaction, secrets could appear in terminal scrollback, log files, or debug output shared in bug reports. |
+| Recommendation | No action needed. If you share `nemoclaw debug` output, verify that no secrets appear in the collected diagnostics. |
+
+### Memory Secret Scanner
+
+The NemoClaw plugin blocks the agent from writing likely secrets (API keys, tokens, private keys) into persistent memory files.
+The scanner intercepts Write, Edit, and similar tool calls targeting memory and workspace paths before they reach disk.
+
+| Aspect | Detail |
+|---|---|
+| Default | Enabled. The plugin registers a `before_tool_call` hook that scans for 14 high-confidence secret patterns. |
+| What it covers | `.openclaw-data/memory/`, `workspace/`, `agents/`, `skills/`, `hooks/`, and `MEMORY.md`. |
+| What you can change | This is not a user-facing knob. The plugin enforces it automatically. |
+| Risk if relaxed | Without scanning, the agent could persist API keys or tokens in memory files that survive across sessions and backups. |
+| Recommendation | No action needed. If a write is blocked, the agent receives an actionable error listing the detected patterns. |
+
 ## Inference Controls
 
 OpenShell routes all inference traffic through the gateway to isolate provider credentials from the sandbox.
@@ -420,7 +510,6 @@ Use for always-on assistants with minimal external access.
 Use when the agent needs package registries, Docker Hub, or broader GitHub access during development tasks.
 
 - Apply the `pypi` and `npm` presets for package installation.
-- Apply the `docker` preset if the agent builds or pulls container images.
 - Keep binary restrictions on all presets.
 - Review the agent's network activity periodically with `openshell term`.
 - Use operator approval for any endpoint not covered by a preset.
@@ -445,6 +534,15 @@ The following patterns weaken security without providing meaningful benefit.
 | Relying solely on the entrypoint for capability drops | The entrypoint drops dangerous capabilities using `capsh`, but this is best-effort. If `capsh` is unavailable or `CAP_SETPCAP` is not in the bounding set, the container runs with the default capability set. | Pass `--cap-drop=ALL` at the container runtime level as defense-in-depth. |
 | Granting write access to `/sandbox/.openclaw` | This directory contains the OpenClaw gateway configuration. A writable `.openclaw` lets the agent modify auth tokens, disable CORS, or redirect inference routing. | Store agent-writable state in `/sandbox/.openclaw-data`. |
 | Adding inference provider hosts to the network policy | Direct network access to an inference host bypasses credential isolation and usage tracking. | Use OpenShell inference routing instead of adding hosts like `api.openai.com` or `api.anthropic.com` to the network policy. |
+| Disabling device auth for remote deployments | Without device auth, any device on the network can connect to the gateway without pairing. Combined with a cloudflared tunnel, this makes the dashboard publicly accessible and unauthenticated. | Keep `NEMOCLAW_DISABLE_DEVICE_AUTH` at its default (`0`). Only set it to `1` for local headless or development environments. |
+
+## Known Limitations
+
+| Limitation | Impact | Mitigation |
+|-----------|--------|------------|
+| `openclaw agent --local` bypasses gateway | Secret scanning, network policy, and inference auth are not enforced when the agent runs in local mode. | A runtime warning is emitted when `--local` is detected. Avoid `--local` for production workflows. A future OpenClaw-level hook will close this gap. |
+| Direct filesystem writes bypass secret scanner | The scanner intercepts OpenClaw tool calls, not raw filesystem writes (e.g., `echo secret > file`). | Landlock restricts writable paths. The scanner is application-layer defense-in-depth, not a filesystem-level control. |
+| Base64/hex-encoded secrets are not detected | Content-based regex scanning cannot detect encoded or obfuscated secrets. | Use environment variables or credential stores instead of writing secrets to files. |
 
 ## Related Topics
 
@@ -452,6 +550,6 @@ The following patterns weaken security without providing meaningful benefit.
 - [Customize the Network Policy](../network-policy/customize-network-policy.md) for static and dynamic policy changes.
 - [Approve or Deny Network Requests](../network-policy/approve-network-requests.md) for the operator approval flow.
 - [Sandbox Hardening](../deployment/sandbox-hardening.md) for container-level security measures.
-- [Inference Profiles](../reference/inference-profiles.md) for provider configuration details.
+- [Inference Options](../inference/inference-options.md) for provider configuration details.
 - [How It Works](../about/how-it-works.md) for the protection layer architecture.
 <!-- - OpenShell [Security Best Practices](https://docs.nvidia.com/openshell/latest/security/best-practices.html) for the platform-level controls reference, including network namespace isolation, seccomp filters, SSRF protection, TLS termination, and gateway authentication. -->

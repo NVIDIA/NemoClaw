@@ -1,11 +1,15 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Security Notes
 
-## Upstream Vulnerabilities
+## Upstream vulnerability snapshot
 
-9 upstream vulnerabilities in OpenClaw@2026.4.11 transitive dependencies
-(Lark SDK `@larksuiteoapi/node-sdk` and Discord `axios`/`tar` deps).
+This note records a review snapshot for OpenClaw@2026.4.11 transitive
+dependencies (Lark SDK `@larksuiteoapi/node-sdk` and Discord `axios`/`tar`
+deps).
 
-**Mitigation:** Blocked by deny-by-default network policy in the allspark
-sandbox. Lark and Discord endpoints are not reachable.
+**Mitigation:** The tightened baseline sandbox policy blocks direct access to
+Lark and Discord endpoints by default.
 
-**Action:** Revisit when OpenClaw ships axios/tar dependency bumps.
+**Action:** Revisit when OpenClaw ships `axios`/`tar` dependency bumps.

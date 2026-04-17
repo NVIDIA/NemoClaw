@@ -2,7 +2,9 @@
 title:
   page: "NVIDIA NemoClaw Developer Guide"
   nav: "NemoClaw"
-description: "NemoClaw is an open source reference stack that simplifies running OpenClaw always-on assistants more safely, with a single command."
+description:
+  main: "NemoClaw is an open-source reference stack that simplifies running OpenClaw always-on assistants more safely, with a single command."
+  agent: "Provides an open-source reference stack that simplifies running OpenClaw always-on assistants more safely. Use when setting up NemoClaw, exploring the project, or looking for the landing page."
 keywords: ["nemoclaw open source reference stack", "openclaw always-on assistants", "nvidia openshell", "nvidia nemotron"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "inference_routing", "nemoclaw"]
@@ -25,8 +27,9 @@ status: published
 :end-before: <!-- end-badges -->
 ```
 
-NVIDIA NemoClaw is an open source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
-It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of NVIDIA Agent Toolkit, an environment designed for executing claws with additional security, and open source models like [NVIDIA Nemotron](https://build.nvidia.com).
+NVIDIA NemoClaw is an open-source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
+NemoClaw provides onboarding, lifecycle management, and OpenClaw operations within OpenShell containers.
+It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of NVIDIA Agent Toolkit, an environment designed for executing claws with additional security, and open-source models like [NVIDIA Nemotron](https://build.nvidia.com).
 
 ## Get Started
 
@@ -51,6 +54,28 @@ Install the CLI and launch a sandboxed OpenClaw instance in a few commands.
   gap: 7px;
   align-items: center;
 }
+.nc-copy-btn {
+  margin-left: auto;
+  position: relative;
+  background: none;
+  border: 0;
+  color: #8a8aa3;
+  cursor: pointer;
+  padding: 4px;
+  line-height: 0;
+}
+.nc-copy-btn:hover, .nc-copy-btn.copied { color: #76b900; }
+.nc-copy-btn svg { width: 16px; height: 16px; fill: currentColor; }
+.nc-copy-btn.copied::after {
+  content: 'Copied';
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translate(-8px, -50%);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
 .nc-term-dot { width: 12px; height: 12px; border-radius: 50%; }
 .nc-term-dot-r { background: #ff5f56; }
 .nc-term-dot-y { background: #ffbd2e; }
@@ -74,9 +99,43 @@ Install the CLI and launch a sandboxed OpenClaw instance in a few commands.
     <span class="nc-term-dot nc-term-dot-r"></span>
     <span class="nc-term-dot nc-term-dot-y"></span>
     <span class="nc-term-dot nc-term-dot-g"></span>
+    <button
+      class="nc-copy-btn"
+      type="button"
+      aria-label="Copy install command"
+      title="Copy"
+      onclick="
+        const button = this;
+        const text = button.closest('.nc-term').querySelector('.nc-cmd').textContent;
+        const show = (label, copied = false) => {
+          button.classList.toggle('copied', copied);
+          button.setAttribute('aria-label', label);
+          button.title = label;
+          clearTimeout(button._copyResetTimer);
+          button._copyResetTimer = setTimeout(() => {
+            button.classList.remove('copied');
+            button.setAttribute('aria-label', 'Copy install command');
+            button.title = 'Copy';
+            button._copyResetTimer = null;
+          }, 1200);
+        };
+        if (!navigator.clipboard) {
+          show('Copy failed');
+          return;
+        }
+        navigator.clipboard.writeText(text).then(() => show('Copied', true)).catch((err) => {
+          console.error('Failed to copy install command:', err);
+          show('Copy failed');
+        });
+      "
+    >
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <path fill-rule="evenodd" d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h1v1a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1v1z"/>
+      </svg>
+    </button>
   </div>
   <div class="nc-term-body">
-    <div><span class="nc-ps">$ </span>curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash</div>
+    <div><span class="nc-ps">$ </span><span class="nc-cmd">curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash</span></div>
   </div>
 </div>
 ```
@@ -97,7 +156,17 @@ Proceed to the [Quickstart](get-started/quickstart.md) for step-by-step instruct
 :link: about/overview
 :link-type: doc
 
-Learn what NemoClaw does and how it integrates OpenClaw with OpenShell.
+What NemoClaw is: capabilities, benefits, and typical uses.
+
++++
+{bdg-secondary}`Concept`
+:::
+
+:::{grid-item-card} Ecosystem
+:link: about/ecosystem
+:link-type: doc
+
+How OpenClaw, OpenShell, and NemoClaw form a stack and when to use NemoClaw versus OpenShell alone.
 
 +++
 {bdg-secondary}`Concept`
@@ -123,21 +192,21 @@ CLI commands for launching, connecting, monitoring, and managing sandboxes.
 {bdg-secondary}`Reference`
 :::
 
-:::{grid-item-card} Inference Profiles
-:link: reference/inference-profiles
+:::{grid-item-card} Inference Options
+:link: inference/inference-options
 :link-type: doc
 
-NVIDIA endpoint inference configuration and available models.
+Providers available during onboarding and how inference routing works.
 
 +++
-{bdg-secondary}`Reference`
+{bdg-secondary}`Concept`
 :::
 
 :::{grid-item-card} How It Works
 :link: about/how-it-works
 :link-type: doc
 
-High-level overview of the plugin, blueprint, sandbox, and inference routing.
+How NemoClaw runs: plugin, blueprint, OpenShell orchestration, routing, and policy layers.
 
 +++
 {bdg-secondary}`Concept`
@@ -167,7 +236,7 @@ Egress control, operator approval flow, and policy configuration.
 :link: workspace/workspace-files
 :link-type: doc
 
-Understand agent identity, memory, and configuration files that persist in the sandbox.
+Understand `SOUL.md`, `USER.md`, and other workspace files, plus backup and restore.
 
 +++
 {bdg-secondary}`Concept`
@@ -193,6 +262,16 @@ Task-oriented guides for inference, deployment, and policy management.
 {bdg-secondary}`How-To`
 :::
 
+:::{grid-item-card} Agent Skills
+:link: resources/agent-skills
+:link-type: doc
+
+Use AI coding assistants with NemoClaw's built-in agent skills for guided setup and operation.
+
++++
+{bdg-secondary}`Resource`
+:::
+
 ::::
 
 ---
@@ -204,17 +283,12 @@ This software automatically retrieves, accesses or interacts with external mater
 ```
 
 ```{toctree}
-:hidden:
-
-Home <self>
-```
-
-```{toctree}
 :caption: About NemoClaw
 :hidden:
 
 Overview <about/overview>
 How It Works <about/how-it-works>
+Ecosystem <about/ecosystem>
 Release Notes <about/release-notes>
 ```
 
@@ -223,12 +297,15 @@ Release Notes <about/release-notes>
 :hidden:
 
 Quickstart <get-started/quickstart>
+Windows Prerequisites <get-started/windows-setup>
 ```
 
 ```{toctree}
 :caption: Inference
 :hidden:
 
+Inference Options <inference/inference-options>
+Use Local Inference <inference/use-local-inference>
 Switch Inference Providers <inference/switch-inference-providers>
 ```
 
@@ -245,6 +322,8 @@ Customize the Network Policy <network-policy/customize-network-policy>
 :hidden:
 
 Security Best Practices <security/best-practices>
+Credential Storage <security/credential-storage>
+OpenClaw Controls <security/openclaw-controls>
 ```
 
 ```{toctree}
@@ -252,8 +331,16 @@ Security Best Practices <security/best-practices>
 :hidden:
 
 Deploy to a Remote GPU Instance <deployment/deploy-to-remote-gpu>
-Set Up the Telegram Bridge <deployment/set-up-telegram-bridge>
+Set Up Telegram <deployment/set-up-telegram-bridge>
 Sandbox Hardening <deployment/sandbox-hardening>
+```
+
+```{toctree}
+:caption: Workspace
+:hidden:
+
+Workspace Files <workspace/workspace-files>
+Backup & Restore <workspace/backup-restore>
 ```
 
 ```{toctree}
@@ -264,20 +351,11 @@ Monitor Sandbox Activity <monitoring/monitor-sandbox-activity>
 ```
 
 ```{toctree}
-:caption: Workspace
-:hidden:
-
-Workspace Files <workspace/workspace-files>
-Back Up and Restore <workspace/backup-restore>
-```
-
-```{toctree}
 :caption: Reference
 :hidden:
 
 Architecture <reference/architecture>
 Commands <reference/commands>
-Inference Profiles <reference/inference-profiles>
 Network Policies <reference/network-policies>
 Troubleshooting <reference/troubleshooting>
 ```
@@ -286,6 +364,7 @@ Troubleshooting <reference/troubleshooting>
 :caption: Resources
 :hidden:
 
+Agent Skills <resources/agent-skills>
 Report Vulnerabilities <https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md>
 resources/license
 Discord <https://discord.gg/XFpfPv9Uvx>

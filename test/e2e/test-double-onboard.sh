@@ -151,6 +151,7 @@ run_onboard() {
   local -a env_args=(
     "COMPATIBLE_API_KEY=dummy"
     "NEMOCLAW_NON_INTERACTIVE=1"
+    "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1"
     "NEMOCLAW_PROVIDER=custom"
     "NEMOCLAW_ENDPOINT_URL=${FAKE_BASE_URL}"
     "NEMOCLAW_MODEL=test-model"

@@ -14,13 +14,14 @@
 #   - Network access to integrate.api.nvidia.com
 #
 # Environment variables:
-#   NEMOCLAW_NON_INTERACTIVE=1   — required (enables non-interactive install + onboard)
-#   NEMOCLAW_SANDBOX_NAME        — sandbox name (default: e2e-nightly)
-#   NEMOCLAW_RECREATE_SANDBOX=1  — recreate sandbox if it exists from a previous run
-#   NVIDIA_API_KEY               — required for NVIDIA Endpoints inference
+#   NEMOCLAW_NON_INTERACTIVE=1             — required (enables non-interactive install + onboard)
+#   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required for non-interactive install/onboard
+#   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-nightly)
+#   NEMOCLAW_RECREATE_SANDBOX=1            — recreate sandbox if it exists from a previous run
+#   NVIDIA_API_KEY                         — required for NVIDIA Endpoints inference
 #
 # Usage:
-#   NEMOCLAW_NON_INTERACTIVE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-full-e2e.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-full-e2e.sh
 #
 # See: https://github.com/NVIDIA/NemoClaw/issues/71
 
@@ -122,6 +123,11 @@ fi
 
 if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then
   fail "NEMOCLAW_NON_INTERACTIVE=1 is required"
+  exit 1
+fi
+
+if [ "${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}" != "1" ]; then
+  fail "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is required for non-interactive install"
   exit 1
 fi
 
@@ -301,16 +307,48 @@ if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
 fi
 rm -f "$ssh_config"
 
-if [ -n "$sandbox_response" ]; then
-  sandbox_content=$(echo "$sandbox_response" | parse_chat_content 2>/dev/null) || true
-  if grep -qi "PONG" <<<"$sandbox_content"; then
-    pass "[LIVE] Sandbox inference: model responded with PONG through sandbox"
-    info "Full path proven: user → sandbox → openshell gateway → NVIDIA Endpoints → response"
+# Retry sandbox inference up to 3 times — live models are not deterministic
+# and the gateway proxy can return unexpected responses on first attempt. (#1969)
+TIMEOUT_CMD="${TIMEOUT_CMD:-}"
+sandbox_content=""
+pong_ok=false
+for pong_attempt in 1 2 3; do
+  if [ -n "$sandbox_response" ]; then
+    sandbox_content=$(echo "$sandbox_response" | parse_chat_content 2>/dev/null) || true
+    if grep -qi "PONG" <<<"$sandbox_content"; then
+      pong_ok=true
+      break
+    fi
+    info "Sandbox inference attempt ${pong_attempt}/3: got '${sandbox_content:0:80}', retrying in 5s..."
   else
-    fail "[LIVE] Sandbox inference: expected PONG, got: ${sandbox_content:0:200}"
+    info "Sandbox inference attempt ${pong_attempt}/3: empty response, retrying in 5s..."
   fi
+  [ "$pong_attempt" -lt 3 ] || break
+  sleep 5
+  # Re-fetch with verbose curl on retry to diagnose proxy issues (#1969)
+  ssh_config="$(mktemp)"
+  sandbox_response=""
+  if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
+    info "Retry $((pong_attempt + 1)): using curl -v to capture proxy request/response headers"
+    sandbox_response=$($TIMEOUT_CMD ssh -F "$ssh_config" \
+      -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null \
+      -o ConnectTimeout=10 \
+      -o LogLevel=ERROR \
+      "openshell-${SANDBOX_NAME}" \
+      "curl -v --max-time 60 https://inference.local/v1/chat/completions \
+        -H 'Content-Type: application/json' \
+        -d '{\"model\":\"nvidia/nemotron-3-super-120b-a12b\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
+      2>&1) || true
+    info "Verbose response (first 500 chars): ${sandbox_response:0:500}"
+  fi
+  rm -f "$ssh_config"
+done
+if $pong_ok; then
+  pass "[LIVE] Sandbox inference: model responded with PONG through sandbox"
+  info "Full path proven: user → sandbox → openshell gateway → NVIDIA Endpoints → response"
 else
-  fail "[LIVE] Sandbox inference: no response from inference.local inside sandbox"
+  fail "[LIVE] Sandbox inference: expected PONG after 3 attempts, got: ${sandbox_content:0:200}"
 fi
 
 # ══════════════════════════════════════════════════════════════════

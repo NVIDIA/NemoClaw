@@ -6,9 +6,11 @@ import { describe, expect, it } from "vitest";
 // coverage is attributed to dist/lib/preflight.js, which is what the
 // ratchet measures.
 import {
+  assessHost,
   checkPortAvailable,
   getMemoryInfo,
   ensureSwap,
+  planHostRemediation,
 } from "../../dist/lib/preflight";
 
 describe("checkPortAvailable", () => {
@@ -259,6 +261,231 @@ describe("getMemoryInfo", () => {
     expect(result!.totalRamMB).toBe(0);
     expect(result!.totalSwapMB).toBe(0);
     expect(result!.totalMB).toBe(0);
+  });
+});
+
+describe("assessHost", () => {
+  it("detects podman as an unsupported runtime on macOS", () => {
+    const result = assessHost({
+      platform: "darwin",
+      env: {},
+      dockerInfoOutput: "Podman Engine",
+      commandExistsImpl: (name: string) => name === "docker",
+    });
+
+    expect(result.runtime).toBe("podman");
+    expect(result.isUnsupportedRuntime).toBe(true);
+    expect(result.dockerReachable).toBe(true);
+  });
+
+  it("detects podman as an unsupported runtime on Linux", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: {},
+      dockerInfoOutput: "Podman Engine",
+      commandExistsImpl: (name: string) => name === "docker",
+    });
+
+    expect(result.runtime).toBe("podman");
+    expect(result.isUnsupportedRuntime).toBe(true);
+    expect(result.dockerReachable).toBe(true);
+  });
+
+  it("detects linux docker on cgroup v2 without requiring host cgroupns fix", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: {},
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "29.3.1",
+        OperatingSystem: "Ubuntu 24.04",
+        CgroupVersion: "2",
+      }),
+      readFileImpl: () => '{"default-cgroupns-mode":"private"}',
+      commandExistsImpl: (name: string) => name === "docker" || name === "apt-get" || name === "systemctl",
+      runCaptureImpl: (command: string) => {
+        if (command === "command -v apt-get") return "/usr/bin/apt-get";
+        if (command === "command -v systemctl") return "/usr/bin/systemctl";
+        if (command === "systemctl is-active docker") return "active";
+        if (command === "systemctl is-enabled docker") return "enabled";
+        return "";
+      },
+    });
+
+    expect(result.runtime).toBe("docker");
+    expect(result.packageManager).toBe("apt");
+    expect(result.systemctlAvailable).toBe(true);
+    expect(result.dockerServiceActive).toBe(true);
+    expect(result.dockerServiceEnabled).toBe(true);
+    expect(result.dockerCgroupVersion).toBe("v2");
+    expect(result.dockerDefaultCgroupnsMode).toBe("private");
+    expect(result.requiresHostCgroupnsFix).toBe(false);
+  });
+
+  it("marks WSL in notes when the environment indicates it", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: { WSL_DISTRO_NAME: "Ubuntu" },
+      dockerInfoOutput: "",
+      commandExistsImpl: () => false,
+    });
+
+    expect(result.isWsl).toBe(true);
+    expect(result.notes).toContain("Running under WSL");
+  });
+
+  it("detects likely headless environments", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: {},
+      dockerInfoOutput: "",
+      commandExistsImpl: () => false,
+    });
+
+    expect(result.isHeadlessLikely).toBe(true);
+    expect(result.notes).toContain("Headless environment likely");
+  });
+});
+
+describe("planHostRemediation", () => {
+  it("recommends starting docker when installed but unreachable and service inactive", () => {
+    const actions = planHostRemediation({
+      platform: "linux",
+      isWsl: false,
+      runtime: "unknown",
+      packageManager: "apt",
+      systemctlAvailable: true,
+      dockerServiceActive: false,
+      dockerServiceEnabled: true,
+      dockerInstalled: true,
+      dockerRunning: false,
+      dockerReachable: false,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "unknown",
+      dockerDefaultCgroupnsMode: "unknown",
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: false,
+      notes: [],
+    });
+
+    expect(actions[0].id).toBe("start_docker");
+    expect(actions[0].blocking).toBe(true);
+    expect(actions[0].commands).toContain("sudo systemctl start docker");
+  });
+
+  it("suggests usermod when docker service is active but daemon is unreachable", () => {
+    const actions = planHostRemediation({
+      platform: "linux",
+      isWsl: false,
+      runtime: "unknown",
+      packageManager: "apt",
+      systemctlAvailable: true,
+      dockerServiceActive: true,
+      dockerServiceEnabled: true,
+      dockerInstalled: true,
+      dockerRunning: false,
+      dockerReachable: false,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "unknown",
+      dockerDefaultCgroupnsMode: "unknown",
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: false,
+      notes: [],
+    });
+
+    expect(actions[0].id).toBe("docker_group_permission");
+    expect(actions[0].kind).toBe("sudo");
+    expect(actions[0].blocking).toBe(true);
+    expect(actions[0].commands[0]).toBe("sudo usermod -aG docker $USER");
+    expect(actions[0].commands[1]).toContain("newgrp docker");
+    expect(actions[0].commands[2]).toBe("nemoclaw onboard");
+    expect(actions[0].reason).toContain("docker group");
+  });
+
+  it("warns that podman is unsupported on macOS without blocking onboarding", () => {
+    const actions = planHostRemediation({
+      platform: "darwin",
+      isWsl: false,
+      runtime: "podman",
+      packageManager: "brew",
+      systemctlAvailable: false,
+      dockerServiceActive: null,
+      dockerServiceEnabled: null,
+      dockerInstalled: true,
+      dockerRunning: true,
+      dockerReachable: true,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "unknown",
+      dockerDefaultCgroupnsMode: "unknown",
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: true,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: false,
+      notes: [],
+    });
+
+    const action = actions.find((entry: { id: string }) => entry.id === "unsupported_runtime_warning");
+    expect(action).toBeTruthy();
+    expect(action?.blocking).toBe(false);
+  });
+
+  it("recommends installing Docker with a generic Linux hint when it is missing", () => {
+    const actions = planHostRemediation({
+      platform: "linux",
+      isWsl: false,
+      runtime: "unknown",
+      packageManager: "apt",
+      systemctlAvailable: true,
+      dockerServiceActive: null,
+      dockerServiceEnabled: null,
+      dockerInstalled: false,
+      dockerRunning: false,
+      dockerReachable: false,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "unknown",
+      dockerDefaultCgroupnsMode: "unknown",
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: false,
+      notes: [],
+    });
+
+    expect(actions[0].id).toBe("install_docker");
+    expect(actions[0].commands[0]).toContain("Install Docker Engine");
+  });
+
+  it("recommends installing openshell when missing", () => {
+    const actions = planHostRemediation({
+      platform: "linux",
+      isWsl: false,
+      runtime: "docker",
+      packageManager: "apt",
+      systemctlAvailable: true,
+      dockerServiceActive: true,
+      dockerServiceEnabled: true,
+      dockerInstalled: true,
+      dockerRunning: true,
+      dockerReachable: true,
+      nodeInstalled: true,
+      openshellInstalled: false,
+      dockerCgroupVersion: "v2",
+      dockerDefaultCgroupnsMode: "unknown",
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: false,
+      notes: [],
+    });
+
+    expect(actions.some((action: { id: string }) => action.id === "install_openshell")).toBe(true);
   });
 });
 

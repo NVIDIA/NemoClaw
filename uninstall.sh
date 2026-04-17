@@ -243,6 +243,7 @@ remove_file_with_optional_sudo() {
   info "Removed $path"
 }
 
+# Stop NemoClaw helper services (e.g. Telegram bridge, cloudflared).
 stop_helper_services() {
   if [ -x "$SCRIPT_DIR/scripts/start-services.sh" ]; then
     run_optional "Stopped NemoClaw helper services" "$SCRIPT_DIR/scripts/start-services.sh" --stop
@@ -251,18 +252,22 @@ stop_helper_services() {
   remove_glob_paths "${TMP_ROOT}/nemoclaw-services-*"
 }
 
+# Stop openshell port-forward processes on the dashboard port.
 stop_openshell_forward_processes() {
   if ! command -v pgrep >/dev/null 2>&1; then
     warn "pgrep not found; skipping local OpenShell forward process cleanup."
     return 0
   fi
 
+  local _dp="${NEMOCLAW_DASHBOARD_PORT:-18789}"
+  case "$_dp" in *[!0-9]* | '') _dp=18789 ;; esac
+
   local -a pids=()
   local pid
   while IFS= read -r pid; do
     [ -n "$pid" ] || continue
     pids+=("$pid")
-  done < <(pgrep -f 'openshell.*forward.*18789' 2>/dev/null || true)
+  done < <(pgrep -f "openshell.*forward.*${_dp}" 2>/dev/null || true)
 
   if [ "${#pids[@]}" -eq 0 ]; then
     info "No local OpenShell forward processes found"
@@ -278,6 +283,76 @@ stop_openshell_forward_processes() {
   done
 }
 
+# Kill orphaned openshell processes left behind after uninstall —
+# sandbox create, ssh-proxy, and related ssh sessions. (#1940)
+stop_orphaned_openshell_processes() {
+  if ! command -v pgrep >/dev/null 2>&1; then
+    warn "pgrep not found; skipping orphaned openshell process cleanup."
+    return 0
+  fi
+
+  local -a pids=()
+  local pid
+
+  # Scope to the original invoking user to avoid killing other users' processes
+  # on shared systems. Under sudo, SUDO_USER holds the real caller; fall back
+  # to LOGNAME, then id -un. (#1940)
+  local _user
+  _user="${SUDO_USER:-${LOGNAME:-$(id -un 2>/dev/null || echo "")}}"
+  local -a _pgrep_user=()
+  if [ -n "$_user" ]; then
+    _pgrep_user=(-u "$_user")
+  fi
+
+  # Collect openshell sandbox create, ssh-proxy, and related ssh processes.
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    pids+=("$pid")
+  done < <(pgrep "${_pgrep_user[@]}" -f "openshell (sandbox create|ssh-proxy)" 2>/dev/null || true)
+
+  # Also collect ssh processes whose command line references openshell.
+  # Match "openshell ssh-proxy" or "openshell-" (gateway name pattern) to
+  # avoid false positives on unrelated ssh sessions. User scoping via
+  # _pgrep_user provides an additional safety net.
+  local cmd
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    cmd="$(ps -p "$pid" -o args= 2>/dev/null)" || continue
+    if [[ "$cmd" == *"openshell ssh-proxy"* ]] || [[ "$cmd" == *"openshell-"* ]]; then
+      pids+=("$pid")
+    fi
+  done < <(pgrep "${_pgrep_user[@]}" -x ssh 2>/dev/null || true)
+
+  # Deduplicate (portable — no associative arrays, works on Bash 3.2+)
+  local -a unique_pids=()
+  if [ "${#pids[@]}" -gt 0 ]; then
+    local _seen=" "
+    for pid in "${pids[@]}"; do
+      case "$_seen" in
+        *" $pid "*) ;;
+        *)
+          _seen="$_seen$pid "
+          unique_pids+=("$pid")
+          ;;
+      esac
+    done
+  fi
+
+  if [ "${#unique_pids[@]}" -eq 0 ]; then
+    info "No orphaned openshell processes found"
+    return 0
+  fi
+
+  for pid in "${unique_pids[@]}"; do
+    if kill "$pid" >/dev/null 2>&1 || kill -9 "$pid" >/dev/null 2>&1; then
+      info "Stopped orphaned openshell process $pid"
+    else
+      warn "Failed to stop orphaned openshell process $pid"
+    fi
+  done
+}
+
+# Remove OpenShell sandboxes, providers, and gateway.
 remove_openshell_resources() {
   if ! command -v openshell >/dev/null 2>&1; then
     warn "openshell not found; skipping gateway/provider/sandbox cleanup."
@@ -326,6 +401,24 @@ remove_nemoclaw_alias_from_profile() {
   done
 }
 
+is_installer_managed_nemoclaw_shim() {
+  local shim_path="$1"
+  [ -f "$shim_path" ] || return 1
+
+  local contents=""
+  contents="$(cat "$shim_path" 2>/dev/null || true)"
+  local path_line="export PATH=\""
+  local path_suffix=":\$PATH\""
+  local exec_line="exec \""
+  local exec_suffix="/nemoclaw\" \"\$@\""
+  case "$contents" in
+    '#!/usr/bin/env bash'$'\n'"$path_line"*"$path_suffix"$'\n'"$exec_line"*"$exec_suffix")
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 remove_nemoclaw_cli() {
   if command -v npm >/dev/null 2>&1; then
     npm unlink -g nemoclaw >/dev/null 2>&1 || true
@@ -339,6 +432,8 @@ remove_nemoclaw_cli() {
   fi
 
   if [ -L "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
+    remove_path "${NEMOCLAW_SHIM_DIR}/nemoclaw"
+  elif is_installer_managed_nemoclaw_shim "${NEMOCLAW_SHIM_DIR}/nemoclaw"; then
     remove_path "${NEMOCLAW_SHIM_DIR}/nemoclaw"
   elif [ -f "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
     warn "Leaving ${NEMOCLAW_SHIM_DIR}/nemoclaw in place because it is not an installer-managed shim."
@@ -606,6 +701,7 @@ main() {
   step 1 "Stopping services"
   stop_helper_services
   stop_openshell_forward_processes
+  stop_orphaned_openshell_processes
 
   step 2 "OpenShell resources"
   remove_openshell_resources

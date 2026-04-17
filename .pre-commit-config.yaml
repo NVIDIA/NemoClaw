@@ -68,6 +68,25 @@ repos:
         pass_filenames: true
         priority: 4
 
+  # ── Priority 4: regenerate agent skills when docs change ──────────────────
+  - repo: local
+    hooks:
+      - id: platform-matrix-sync
+        name: Sync platform matrix to docs
+        entry: bash -c 'python3 scripts/generate-platform-docs.py && git add README.md docs/get-started/quickstart.md docs/inference/inference-options.md'
+        language: system
+        files: ^(ci/platform-matrix\.json|README\.md|docs/get-started/quickstart\.md|docs/inference/inference-options\.md|scripts/generate-platform-docs\.py)$
+        pass_filenames: false
+        priority: 3
+
+      - id: docs-to-skills
+        name: Regenerate agent skills from docs
+        entry: bash -c 'python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user && git add .agents/skills/'
+        language: system
+        files: ^(docs/.*\.md$|ci/platform-matrix\.json$|scripts/generate-platform-docs\.py$)
+        pass_filenames: false
+        priority: 4
+
   # ── Priority 5: formatters ────────────────────────────────────────────────
   - repo: https://github.com/scop/pre-commit-shfmt
     rev: v3.12.0-2
@@ -142,6 +161,16 @@ repos:
       - id: check-executables-have-shebangs
         priority: 10
       - id: check-shebang-scripts-are-executable
+        priority: 10
+
+  - repo: local
+    hooks:
+      - id: validate-config-schemas
+        name: Validate config files against JSON schemas
+        entry: npx tsx scripts/validate-configs.ts
+        language: system
+        pass_filenames: false
+        files: ^(nemoclaw-blueprint/.*\.yaml$|nemoclaw/openclaw\.plugin\.json$|schemas/.*\.json$)
         priority: 10
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
@@ -239,6 +268,14 @@ repos:
         language: system
         pass_filenames: false
         files: ^nemoclaw/
+        priority: 20
+
+      - id: test-skills-yaml
+        name: Test (skills YAML)
+        entry: npx vitest run test/skills-frontmatter.test.ts
+        language: system
+        pass_filenames: false
+        files: ^(\.agents/skills/|docs/.*\.md$|scripts/docs-to-skills\.py$|test/skills-frontmatter\.test\.js$)
         priority: 20
 
 default_language_version:

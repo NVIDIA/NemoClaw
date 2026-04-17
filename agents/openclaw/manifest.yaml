@@ -1,0 +1,92 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Agent manifest for OpenClaw.
+# Declares the integration contract between NemoClaw and the sandboxed agent.
+# This documents the current (default) agent — artifacts still live at root
+# level for backward compatibility. Phase 3 of the multi-agent plan will
+# move them here.
+
+name: openclaw
+display_name: "OpenClaw"
+description: "Gateway-based AI agent with plugin ecosystem (openclaw.ai)"
+version_constraint: ">=2026.3.0"
+language: nodejs
+license: Apache-2.0
+homepage: "https://openclaw.ai"
+
+# ── Binary & process ────────────────────────────────────────────
+install_method: npm  # npm install -g openclaw@<version>
+binary_path: /usr/local/bin/openclaw
+version_command: "openclaw --version"
+expected_version: "2026.4.2"
+gateway_command: "openclaw gateway run"
+
+# ── Health probe ────────────────────────────────────────────────
+health_probe:
+  url: "http://localhost:18789/"
+  port: 18789
+  timeout_seconds: 30
+
+# ── Dashboard / UI ──────────────────────────────────────────────
+forward_ports:
+  - 18789
+
+# ── Configuration ───────────────────────────────────────────────
+config:
+  immutable_dir: /sandbox/.openclaw
+  writable_dir: /sandbox/.openclaw-data
+  config_file: openclaw.json      # relative to immutable_dir
+  format: json
+
+# ── State directories ──────────────────────────────────────────
+state_dirs:
+  - agents
+  - extensions
+  - workspace
+  - skills
+  - hooks
+  - identity
+  - devices
+  - canvas
+  - cron
+  - memory
+  - telegram
+  - credentials
+
+# ── Authentication ──────────────────────────────────────────────
+device_pairing: true
+web_auth_method: device_pairing
+
+# ── Messaging platforms ─────────────────────────────────────────
+messaging_platforms:
+  supported:
+    - telegram
+    - discord
+    - slack
+
+# ── Inference ───────────────────────────────────────────────────
+inference:
+  provider_type: gateway_managed
+  proxy_support: explicit  # configured in openclaw.json providers block
+
+# ── Phone-home hosts ───────────────────────────────────────────
+phone_home_hosts:
+  - openclaw.ai
+  - docs.openclaw.ai
+  - clawhub.ai
+
+# ── Package registry ───────────────────────────────────────────
+package_registry:
+  hosts:
+    - registry.npmjs.org
+  binary: /usr/local/bin/npm
+
+# ── Current artifact locations ─────────────────────────────────
+# These will move into agents/openclaw/ in Phase 3.
+_legacy_paths:
+  dockerfile_base: Dockerfile.base
+  dockerfile: Dockerfile
+  start_script: scripts/nemoclaw-start.sh
+  policy: nemoclaw-blueprint/policies/openclaw-sandbox.yaml
+  plugin: nemoclaw/

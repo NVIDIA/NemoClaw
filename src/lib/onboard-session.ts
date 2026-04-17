@@ -10,6 +10,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import type { WebSearchConfig } from "./web-search";
+
 export const SESSION_VERSION = 1;
 export const SESSION_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
@@ -33,6 +35,7 @@ export interface SessionFailure {
 
 export interface SessionMetadata {
   gatewayName: string;
+  fromDockerfile: string | null;
 }
 
 export interface Session {
@@ -46,6 +49,7 @@ export interface Session {
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
+  agent: string | null;
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
@@ -53,6 +57,7 @@ export interface Session {
   credentialEnv: string | null;
   preferredInferenceApi: string | null;
   nimContainer: string | null;
+  webSearchConfig: WebSearchConfig | null;
   policyPresets: string[] | null;
   metadata: SessionMetadata;
   steps: Record<string, StepState>;
@@ -81,8 +86,9 @@ export interface SessionUpdates {
   credentialEnv?: string;
   preferredInferenceApi?: string;
   nimContainer?: string;
+  webSearchConfig?: WebSearchConfig | null;
   policyPresets?: string[];
-  metadata?: { gatewayName?: string };
+  metadata?: { gatewayName?: string; fromDockerfile?: string | null };
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -107,6 +113,7 @@ function defaultSteps(): Record<string, StepState> {
     provider_selection: { status: "pending", startedAt: null, completedAt: null, error: null },
     inference: { status: "pending", startedAt: null, completedAt: null, error: null },
     openclaw: { status: "pending", startedAt: null, completedAt: null, error: null },
+    agent_setup: { status: "pending", startedAt: null, completedAt: null, error: null },
     policies: { status: "pending", startedAt: null, completedAt: null, error: null },
   };
 }
@@ -119,7 +126,7 @@ export function redactSensitiveText(value: unknown): string | null {
   if (typeof value !== "string") return null;
   return value
     .replace(
-      /(NVIDIA_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|COMPATIBLE_API_KEY|COMPATIBLE_ANTHROPIC_API_KEY)=\S+/gi,
+      /(NVIDIA_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|COMPATIBLE_API_KEY|COMPATIBLE_ANTHROPIC_API_KEY|BRAVE_API_KEY)=\S+/gi,
       "$1=<REDACTED>",
     )
     .replace(/Bearer\s+\S+/gi, "Bearer <REDACTED>")
@@ -181,6 +188,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     lastStepStarted: overrides.lastStepStarted || null,
     lastCompletedStep: overrides.lastCompletedStep || null,
     failure: overrides.failure || null,
+    agent: overrides.agent || null,
     sandboxName: overrides.sandboxName || null,
     provider: overrides.provider || null,
     model: overrides.model || null,
@@ -188,11 +196,16 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     credentialEnv: overrides.credentialEnv || null,
     preferredInferenceApi: overrides.preferredInferenceApi || null,
     nimContainer: overrides.nimContainer || null,
+    webSearchConfig:
+      overrides.webSearchConfig && overrides.webSearchConfig.fetchEnabled === true
+        ? { fetchEnabled: true }
+        : null,
     policyPresets: Array.isArray(overrides.policyPresets)
       ? overrides.policyPresets.filter((value) => typeof value === "string")
       : null,
     metadata: {
       gatewayName: overrides.metadata?.gatewayName || "nemoclaw",
+      fromDockerfile: overrides.metadata?.fromDockerfile || null,
     },
     steps: {
       ...defaultSteps(),
@@ -210,6 +223,7 @@ export function normalizeSession(data: unknown): Session | null {
     mode: typeof d.mode === "string" ? d.mode : undefined,
     startedAt: typeof d.startedAt === "string" ? d.startedAt : undefined,
     updatedAt: typeof d.updatedAt === "string" ? d.updatedAt : undefined,
+    agent: typeof d.agent === "string" ? d.agent : null,
     sandboxName: typeof d.sandboxName === "string" ? d.sandboxName : null,
     provider: typeof d.provider === "string" ? d.provider : null,
     model: typeof d.model === "string" ? d.model : null,
@@ -218,6 +232,11 @@ export function normalizeSession(data: unknown): Session | null {
     preferredInferenceApi:
       typeof d.preferredInferenceApi === "string" ? d.preferredInferenceApi : null,
     nimContainer: typeof d.nimContainer === "string" ? d.nimContainer : null,
+    webSearchConfig:
+      isObject(d.webSearchConfig) &&
+      (d.webSearchConfig as Record<string, unknown>).fetchEnabled === true
+        ? { fetchEnabled: true }
+        : null,
     policyPresets: Array.isArray(d.policyPresets)
       ? (d.policyPresets as unknown[]).filter((value) => typeof value === "string") as string[]
       : null,
@@ -225,7 +244,10 @@ export function normalizeSession(data: unknown): Session | null {
     lastCompletedStep: typeof d.lastCompletedStep === "string" ? d.lastCompletedStep : null,
     failure: sanitizeFailure(d.failure as Record<string, unknown> | null),
     metadata: isObject(d.metadata)
-      ? ({ gatewayName: (d.metadata as Record<string, unknown>).gatewayName } as SessionMetadata)
+      ? ({
+          gatewayName: (d.metadata as Record<string, unknown>).gatewayName,
+          fromDockerfile: (d.metadata as Record<string, unknown>).fromDockerfile || null,
+        } as SessionMetadata)
       : undefined,
   } as Partial<Session>);
   normalized.resumable = d.resumable !== false;
@@ -312,6 +334,13 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+// File descriptor we hold across the lifetime of an acquired lock. On
+// release, fstat(fd).ino vs stat(path).ino confirms the on-disk path
+// still resolves to the file we created — closing the residual TOCTOU
+// window in the inode-only check by tying ownership to a live
+// descriptor rather than a value re-read from disk. See #1281.
+let heldLockFd: number | null = null;
+
 export function acquireOnboardLock(command: string | null = null): LockResult {
   ensureSessionDir();
   const payload = JSON.stringify(
@@ -324,17 +353,38 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
     2,
   );
 
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // The retry budget here used to be 2, which is the bare minimum needed
+  // for "see-stale → cleanup → reclaim". With the inode-verified cleanup
+  // below it can take a few additional spins under contention because
+  // multiple concurrent stale-cleaners can race and lose to each other
+  // before one reclaims, so give the loop a little more room.
+  // See issue #1281.
+  const MAX_ATTEMPTS = 5;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    let fd: number;
     try {
-      fs.writeFileSync(LOCK_FILE, payload, { flag: "wx", mode: 0o600 });
-      return { acquired: true, lockFile: LOCK_FILE, stale: false };
+      // openSync(..., "wx", mode) is the atomic create-or-fail
+      // primitive. We hold the resulting fd at module scope so
+      // releaseOnboardLock() can later confirm the on-disk path still
+      // resolves to the same file we created (fstat ino vs stat ino).
+      fd = fs.openSync(LOCK_FILE, "wx", 0o600);
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") {
         throw error;
       }
 
+      // Capture both the parsed lock and the inode so we can verify the
+      // file we're about to unlink is STILL the same stale file we read.
+      // Without the inode check, two concurrent processes can both read
+      // the same stale lock, and the slower one will unlink the fresh
+      // lock the faster one just claimed, breaking mutual exclusion.
+      // See issue #1281.
       let existing: LockInfo | null;
+      let staleInode: bigint | null;
       try {
+        const stat = fs.statSync(LOCK_FILE, { bigint: true });
+        staleInode = stat.ino;
         existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
       } catch (readError: unknown) {
         if ((readError as NodeJS.ErrnoException)?.code === "ENOENT") {
@@ -343,9 +393,12 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
         throw readError;
       }
       if (!existing) {
+        // Malformed lock file — leave it on disk (a human or another
+        // process may be mid-write) and retry. Pre-#1281 behavior
+        // preserved: never unlink a malformed lock automatically.
         continue;
       }
-      if (existing && isProcessAlive(existing.pid)) {
+      if (isProcessAlive(existing.pid)) {
         return {
           acquired: false,
           lockFile: LOCK_FILE,
@@ -356,20 +409,109 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
         };
       }
 
-      try {
-        fs.unlinkSync(LOCK_FILE);
-      } catch (unlinkError: unknown) {
-        if ((unlinkError as NodeJS.ErrnoException)?.code !== "ENOENT") {
-          throw unlinkError;
-        }
-      }
+      // Stale: unlink ONLY if the file on disk is still the same inode
+      // we just read. If a concurrent process already cleaned up and
+      // claimed the lock, the inode will have changed and we'll fall
+      // through to the next iteration where openSync(wx) will either
+      // succeed (we win) or fail EEXIST against the new holder (and we
+      // re-read it).
+      unlinkIfInodeMatches(LOCK_FILE, staleInode);
+      continue;
     }
+
+    // Atomic create succeeded — write the payload and keep the fd open
+    // for the lifetime of the lock so releaseOnboardLock() can verify
+    // ownership via the live descriptor.
+    try {
+      fs.writeSync(fd, payload);
+    } catch (writeError) {
+      try { fs.closeSync(fd); } catch { /* ignore */ }
+      try { fs.unlinkSync(LOCK_FILE); } catch { /* ignore */ }
+      throw writeError;
+    }
+    heldLockFd = fd;
+    return { acquired: true, lockFile: LOCK_FILE, stale: false };
   }
 
   return { acquired: false, lockFile: LOCK_FILE, stale: true };
 }
 
+/**
+ * Unlink LOCK_FILE only if its current inode equals `expectedInode`.
+ * The dual stat-then-unlink is the only portable POSIX primitive Node
+ * exposes for this — there's no atomic "unlink-if-inode" syscall — so
+ * a sufficiently unlucky race can still slip through. The window is
+ * orders of magnitude smaller than the unconditional unlink it
+ * replaces, and the outer loop will detect a wrong unlink on its next
+ * `writeFileSync(wx)` attempt because either we re-create the file
+ * or we observe the new lock with a different inode.
+ */
+function unlinkIfInodeMatches(filePath: string, expectedInode: bigint | null): void {
+  if (expectedInode === null) {
+    return;
+  }
+  try {
+    const stat = fs.statSync(filePath, { bigint: true });
+    if (stat.ino !== expectedInode) {
+      // Someone else replaced the file. Leave it alone.
+      return;
+    }
+  } catch (statError: unknown) {
+    if ((statError as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return;
+    }
+    throw statError;
+  }
+  try {
+    fs.unlinkSync(filePath);
+  } catch (unlinkError: unknown) {
+    if ((unlinkError as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      throw unlinkError;
+    }
+  }
+}
+
 export function releaseOnboardLock(): void {
+  // Preferred path: we hold the fd from a successful acquireOnboardLock.
+  // Verify the on-disk path still resolves to the same file (fstat ino
+  // == stat ino) before unlinking. If they disagree, another process
+  // has already replaced the lock and we must NOT touch their file.
+  if (heldLockFd !== null) {
+    const fd = heldLockFd;
+    heldLockFd = null;
+    try {
+      const fdStat = fs.fstatSync(fd, { bigint: true });
+      let pathInode: bigint | null = null;
+      try {
+        const pathStat = fs.statSync(LOCK_FILE, { bigint: true });
+        pathInode = pathStat.ino;
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+          // Unexpected — fall through to closing the fd.
+        }
+      }
+      if (pathInode !== null && pathInode === fdStat.ino) {
+        try {
+          fs.unlinkSync(LOCK_FILE);
+        } catch (unlinkError: unknown) {
+          if ((unlinkError as NodeJS.ErrnoException)?.code !== "ENOENT") {
+            // Best effort — surfacing this would mask the real error.
+          }
+        }
+      }
+    } catch {
+      // fstat can fail if the fd was already closed somehow; nothing
+      // safe to do beyond closing it below.
+    } finally {
+      try { fs.closeSync(fd); } catch { /* ignore */ }
+    }
+    return;
+  }
+
+  // Fallback (no fd held — e.g., a test wrote the lock file directly,
+  // or a previous release already ran): preserve the legacy pid-based
+  // behavior so we never unlink a malformed lock and never unlink a
+  // lock owned by another pid.
   try {
     if (!fs.existsSync(LOCK_FILE)) return;
     let existing: LockInfo | null = null;
@@ -400,12 +542,18 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   if (typeof updates.preferredInferenceApi === "string")
     safe.preferredInferenceApi = updates.preferredInferenceApi;
   if (typeof updates.nimContainer === "string") safe.nimContainer = updates.nimContainer;
+  if (isObject(updates.webSearchConfig) && updates.webSearchConfig.fetchEnabled === true) {
+    safe.webSearchConfig = { fetchEnabled: true };
+  } else if (updates.webSearchConfig === null) {
+    safe.webSearchConfig = null;
+  }
   if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
   }
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {
       gatewayName: updates.metadata.gatewayName,
+      fromDockerfile: (typeof updates.metadata.fromDockerfile === "string" ? updates.metadata.fromDockerfile : null),
     };
   }
   return safe;
@@ -442,6 +590,19 @@ export function markStepComplete(stepName: string, updates: SessionUpdates = {})
     session.lastCompletedStep = stepName;
     session.failure = null;
     Object.assign(session, filterSafeUpdates(updates));
+    return session;
+  });
+}
+
+export function markStepSkipped(stepName: string): Session {
+  return updateSession((session) => {
+    const step = session.steps[stepName];
+    if (!step) return session;
+    if (step.status === "complete" || step.status === "failed") return session;
+    step.status = "skipped";
+    step.startedAt = null;
+    step.completedAt = null;
+    step.error = null;
     return session;
   });
 }

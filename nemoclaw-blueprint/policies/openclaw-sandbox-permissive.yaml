@@ -1,0 +1,350 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Permissive policy for development/testing — used by --dangerously-skip-permissions.
+# All known endpoints use protocol: rest + access: full (allow any HTTP method on
+# any path). This routes traffic through the L7 proxy's normal TLS-termination
+# path so it works transparently from any execution context (sandbox exec, SSH,
+# interactive shell) without requiring proxy environment setup.
+# Filesystem: include_workdir must be false (see openclaw-sandbox.yaml for rationale).
+# Config file mutability is handled by shields down/up via kubectl exec (bypasses Landlock).
+#
+# WARNING: This policy disables most sandbox security restrictions.
+# Do not use in production.
+
+version: 1
+
+filesystem_policy:
+  # Filesystem section should mirror the default policy (openclaw-sandbox.yaml),
+  # except explicitly documented NemoClaw state paths (e.g. /sandbox/.nemoclaw).
+  # OpenShell rejects include_workdir changes and read_only path removals on
+  # live sandboxes. Config file mutability is handled separately by shields
+  # down/up via kubectl exec (bypasses Landlock).
+  include_workdir: false
+  read_only:
+    - /usr
+    - /lib
+    - /proc
+    - /dev/urandom
+    - /app
+    - /etc
+    - /var/log
+    - /sandbox
+    - /sandbox/.openclaw
+  read_write:
+    - /tmp
+    - /dev/null
+    - /sandbox/.openclaw-data
+    - /sandbox/.nemoclaw
+
+landlock:
+  compatibility: best_effort
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+network_policies:
+  # ── Base policy endpoints (all methods, all paths) ──
+
+  claude_code:
+    name: claude_code
+    endpoints:
+      - host: api.anthropic.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: statsig.anthropic.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: sentry.io
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  nvidia:
+    name: nvidia
+    endpoints:
+      - host: integrate.api.nvidia.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: inference-api.nvidia.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  github:
+    name: github
+    endpoints:
+      - host: github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: api.github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  clawhub:
+    name: clawhub
+    endpoints:
+      - host: clawhub.ai
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  openclaw_api:
+    name: openclaw_api
+    endpoints:
+      - host: openclaw.ai
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  openclaw_docs:
+    name: openclaw_docs
+    endpoints:
+      - host: docs.openclaw.ai
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  npm_registry:
+    name: npm_registry
+    endpoints:
+      - host: registry.npmjs.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: registry.yarnpkg.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  # ── Messaging endpoints ──
+
+  telegram:
+    name: telegram
+    endpoints:
+      - host: api.telegram.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  discord:
+    name: discord
+    endpoints:
+      - host: discord.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: gateway.discord.gg
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: cdn.discordapp.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: media.discordapp.net
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  slack:
+    name: slack
+    endpoints:
+      - host: slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: api.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: hooks.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: wss-primary.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: wss-backup.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  # ── Package registries ──
+
+  pypi:
+    name: pypi
+    endpoints:
+      - host: pypi.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: files.pythonhosted.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  brew:
+    name: brew
+    endpoints:
+      - host: formulae.brew.sh
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: ghcr.io
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: raw.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: objects.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: pkg-containers.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  # ── Third-party services ──
+
+  jira:
+    name: jira
+    endpoints:
+      - host: "*.atlassian.net"
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: api.atlassian.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: auth.atlassian.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  outlook:
+    name: outlook
+    endpoints:
+      - host: outlook.office365.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: outlook.office.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: graph.microsoft.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: login.microsoftonline.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  huggingface:
+    name: huggingface
+    endpoints:
+      - host: huggingface.co
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: cdn-lfs.huggingface.co
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: router.huggingface.co
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  brave:
+    name: brave
+    endpoints:
+      - host: api.search.brave.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }

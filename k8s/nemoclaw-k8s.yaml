@@ -9,6 +9,8 @@ metadata:
   labels:
     app: nemoclaw
 spec:
+  automountServiceAccountToken: false
+  enableServiceLinks: false
   containers:
     # Docker daemon (DinD)
     - name: dind
@@ -34,6 +36,13 @@ spec:
     # Workspace - runs official NemoClaw installer
     - name: workspace
       image: node:22
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
       command:
         - bash
         - -c
@@ -61,9 +70,20 @@ spec:
           docker info >/dev/null 2>&1 || { echo "Docker not ready"; exit 1; }
           echo "Docker ready"
 
+          # Default to a dummy compatible API key for unauthenticated endpoints
+          # such as Dynamo/vLLM while still allowing a Secret-backed override.
+          export COMPATIBLE_API_KEY="${COMPATIBLE_API_KEY:-dummy}"
+
           # Run official NemoClaw installer
           echo "[4/4] Running NemoClaw installer..."
-          curl -fsSL https://nvidia.com/nemoclaw.sh | bash
+          umask 077
+          curl --proto '=https' --tlsv1.2 --fail --show-error --silent \
+            --location \
+            --output /tmp/nemoclaw-install.sh \
+            https://www.nvidia.com/nemoclaw.sh
+          chmod 700 /tmp/nemoclaw-install.sh
+          bash /tmp/nemoclaw-install.sh
+          rm -f /tmp/nemoclaw-install.sh
 
           # Keep running after onboard
           echo "Onboard complete. Container staying alive."
@@ -73,7 +93,7 @@ spec:
           value: unix:///var/run/docker.sock
         # Dynamo endpoint (raw host:port for socat) - UPDATE THIS FOR YOUR CLUSTER
         - name: DYNAMO_HOST
-          value: "vllm-agg-frontend.dynamo.svc.cluster.local:8000"
+          value: "vllm-disagg-frontend.dynamo.svc.cluster.local:8000"
         # NemoClaw config (uses host.openshell.internal via socat)
         - name: NEMOCLAW_NON_INTERACTIVE
           value: "1"
@@ -82,13 +102,19 @@ spec:
         - name: NEMOCLAW_ENDPOINT_URL
           value: "http://host.openshell.internal:8000/v1"
         - name: COMPATIBLE_API_KEY
-          value: "dummy"
+          valueFrom:
+            secretKeyRef:
+              name: nemoclaw-compatible-api-key
+              key: api-key
+              optional: true
         - name: NEMOCLAW_MODEL
           value: "meta-llama/Llama-3.1-8B-Instruct"
         - name: NEMOCLAW_SANDBOX_NAME
           value: "my-assistant"
         - name: NEMOCLAW_POLICY_MODE
-          value: "skip"
+          value: "suggested"
+        - name: NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE
+          value: "1"
       volumeMounts:
         - name: docker-socket
           mountPath: /var/run
