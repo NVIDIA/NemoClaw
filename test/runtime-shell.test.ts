@@ -200,6 +200,45 @@ describe("shell runtime helpers", () => {
     expect(result.stdout.trim()).toBe("9.9.9.9");
   });
 
+  it("detect_kubelet_conflict skips on non-Linux (macOS)", () => {
+    const result = runShell(
+      `uname() { printf 'Darwin\\n'; }; source "${RUNTIME_SH}"; detect_kubelet_conflict`,
+    );
+    // Should return 1 (no conflict) on non-Linux
+    expect(result.status).toBe(1);
+  });
+
+  it("detect_kubelet_conflict returns 0 when kubelet process is found", () => {
+    const result = runShell(
+      `uname() { printf 'Linux\\n'; }
+       pgrep() { [[ "$2" == "kubelet" ]] && return 0 || return 1; }
+       source "${RUNTIME_SH}"; detect_kubelet_conflict
+       echo "$KUBELET_CONFLICT_DETAIL"`,
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("kubelet process detected");
+  });
+
+  it("detect_kubelet_conflict returns 1 when no kubelet is found", () => {
+    const result = runShell(
+      `uname() { printf 'Linux\\n'; }
+       pgrep() { return 1; }
+       command() { return 1; }
+       systemctl() { return 1; }
+       source "${RUNTIME_SH}"; detect_kubelet_conflict`,
+    );
+    expect(result.status).toBe(1);
+  });
+
+  it("warn_kubelet_conflict emits conflict detail to stderr", () => {
+    const result = runShell(
+      `warn() { echo >&2 "$1"; }; source "${RUNTIME_SH}"; warn_kubelet_conflict "MicroK8s is running"`,
+    );
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("MicroK8s is running");
+    expect(result.stderr).toContain("CrashLoopBackOff");
+  });
+
   it("does not consume installer stdin when reading the Colima VM nameserver", () => {
     const result = runShell(
       `function colima() { cat > /dev/null || true; printf 'nameserver 100.100.100.100\\n'; }

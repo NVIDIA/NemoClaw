@@ -41,6 +41,8 @@ import {
   normalizeProviderBaseUrl,
   parsePolicyPresetEnv,
   patchStagedDockerfile,
+  pullAndResolveBaseImageDigest,
+  SANDBOX_BASE_IMAGE,
   printSandboxCreateRecoveryHints,
   resolveDashboardForwardTarget,
   summarizeCurlFailure,
@@ -138,6 +140,25 @@ describe("onboard helpers", () => {
       if (originalSlackBotToken === undefined) delete process.env.SLACK_BOT_TOKEN;
       else process.env.SLACK_BOT_TOKEN = originalSlackBotToken;
     }
+  });
+
+  it("suggests local-inference preset when provider is ollama-local", () => {
+    const presets = getSuggestedPolicyPresets({ provider: "ollama-local" });
+    expect(presets).toContain("local-inference");
+    expect(presets).toContain("pypi");
+    expect(presets).toContain("npm");
+  });
+
+  it("suggests local-inference preset when provider is vllm-local", () => {
+    const presets = getSuggestedPolicyPresets({ provider: "vllm-local" });
+    expect(presets).toContain("local-inference");
+  });
+
+  it("does not suggest local-inference for cloud providers", () => {
+    expect(getSuggestedPolicyPresets({ provider: "nvidia-prod" })).not.toContain("local-inference");
+    expect(getSuggestedPolicyPresets({ provider: "openai-api" })).not.toContain("local-inference");
+    expect(getSuggestedPolicyPresets({ provider: null })).not.toContain("local-inference");
+    expect(getSuggestedPolicyPresets({})).not.toContain("local-inference");
   });
 
   it("patches the staged Dockerfile with the selected model and chat UI URL", () => {
@@ -412,7 +433,46 @@ describe("onboard helpers", () => {
     expect(command).toContain("forward");
     expect(command).toContain("start");
     expect(command).toContain("--background");
+    // On WSL, bind to all interfaces so the Windows-side browser can reach the port.
+    // The sandbox image is built with CHAT_UI_URL=http://127.0.0.1:19999, so the
+    // gateway listens on 19999 inside the sandbox — openshell maps host:19999 →
+    // sandbox:19999 (same port both sides, the only mapping openshell supports).
     expect(command).toContain("0.0.0.0:19999");
+    expect(command).toContain("the-crucible");
+  });
+
+  it("uses the default port as-is when NEMOCLAW_DASHBOARD_PORT is not overridden", () => {
+    const command = getDashboardForwardStartCommand("the-crucible", {
+      chatUiUrl: "http://127.0.0.1:18789",
+      openshellBinary: "/usr/bin/openshell",
+      isWsl: false,
+    });
+
+    expect(command).toContain("--background");
+    // Default port — forward same port on both sides using the bare port number.
+    // Must not regress to all-interfaces (0.0.0.0:18789) or port:port (18789:18789) forms.
+    expect(command).toContain("18789");
+    expect(command).not.toContain("0.0.0.0:18789");
+    expect(command).not.toContain("18789:18789");
+    expect(command).toContain("the-crucible");
+  });
+
+  it("forwards a custom port as-is on non-WSL loopback", () => {
+    const command = getDashboardForwardStartCommand("the-crucible", {
+      chatUiUrl: "http://127.0.0.1:19000",
+      openshellBinary: "/usr/bin/openshell",
+      isWsl: false,
+    });
+
+    expect(command).toContain("--background");
+    // The gateway is configured to listen on the same port (via CHAT_UI_URL baked at
+    // onboard time), so host:19000 → sandbox:19000 is the correct mapping.
+    // Non-WSL loopback must use the plain port — not the all-interfaces (0.0.0.0:19000)
+    // form and not any port:port variant (openshell does not support asymmetric mapping).
+    expect(command).toContain("19000");
+    expect(command).not.toContain("0.0.0.0:19000");
+    expect(command).not.toContain("19000:19000");
+    expect(command).not.toContain("19000:18789");
     expect(command).toContain("the-crucible");
   });
 
@@ -924,7 +984,7 @@ describe("onboard helpers", () => {
         "",
         "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080",
       ),
-    ).toBe("active-unnamed");
+    ).toBe("healthy");
     expect(
       getGatewayReuseState(
         "Gateway status: Connected",
@@ -2052,7 +2112,7 @@ const { setupInference } = require(${onboardPath});
     // the base policy from sandbox create stays in Pending status (#897).
     assert.match(
       source,
-      /if \(dangerouslySkipPermissions\) \{\s*step\(8, 8, "Policy presets"\);\s*policies\.applyPermissivePolicy\(sandboxName\);/,
+      /if \(dangerouslySkipPermissions\) \{\s*step\(8, 8, "Policy presets"\);\s*if \(!waitForSandboxReady\(sandboxName\)\) \{[\s\S]*?\}\s*policies\.applyPermissivePolicy\(sandboxName\);/,
     );
     // Must NOT just print a skip message without activating the policy.
     assert.doesNotMatch(
@@ -2400,6 +2460,138 @@ const { createSandbox } = require(${onboardPath});
         entry.command.includes("'forward' 'start' '--background' '0.0.0.0:18789' 'my-assistant'"),
       ),
       "expected remote dashboard forward target",
+    );
+  });
+
+  it("injects NEMOCLAW_DASHBOARD_PORT into sandbox create envArgs when set (#1925)", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dashboard-port-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "dashboard-port-envargs.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const commands = [];
+const _n = (command) =>
+  Array.isArray(command)
+    ? command.map((part) => "'" + String(part) + "'").join(" ")
+    : String(command);
+runner.run = (command, opts = {}) => {
+  commands.push({ command: _n(command), env: opts.env || null });
+  return { status: 0 };
+};
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ command: _n([file, ...args]), env: opts.env || null });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  const normalized = _n(command);
+  if (normalized.includes("'sandbox' 'get' 'my-assistant'")) return "";
+  if (normalized.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  // Custom port: dashboard readiness curl uses 19000 (DASHBOARD_PORT from env)
+  if (normalized.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:19000/'")) return "ok";
+  if (normalized.includes("'forward' 'list'")) return "19000 -> my-assistant:19000";
+  return "";
+};
+registry.registerSandbox = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  const sandboxName = await createSandbox(null, "gpt-5.4");
+  console.log(JSON.stringify({ sandboxName, commands }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    // Strip CHAT_UI_URL so createSandbox falls back to http://127.0.0.1:19000.
+    // Without this, a CHAT_UI_URL set in the developer's shell or CI would be
+    // inherited, causing chatUiUrl to use the wrong port and making the forward
+    // command assertion below fail spuriously.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { CHAT_UI_URL: _stripped, ...inheritedEnv } = process.env;
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...inheritedEnv,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_DASHBOARD_PORT: "19000",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payloadLine = result.stdout
+      .trim()
+      .split("\n")
+      .slice()
+      .reverse()
+      .find((line) => line.startsWith("{") && line.endsWith("}"));
+    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(payloadLine);
+    const createCommand = payload.commands.find((entry) =>
+      entry.command.includes("'sandbox' 'create'"),
+    );
+    assert.ok(createCommand, "expected sandbox create command");
+    // Part 1 of fix (#1925): NEMOCLAW_DASHBOARD_PORT must be in envArgs so
+    // nemoclaw-start.sh can unconditionally override CHAT_UI_URL at runtime,
+    // overriding whatever value the Docker image had baked in.
+    assert.match(createCommand.command, /'NEMOCLAW_DASHBOARD_PORT=19000'/);
+    // Forward must use same-port mapping (openshell does not support asymmetric)
+    assert.ok(
+      payload.commands.some(
+        (entry) =>
+          entry.command.includes("'forward' 'start' '--background' '19000' 'my-assistant'") ||
+          entry.command.includes(
+            "'forward' 'start' '--background' '0.0.0.0:19000' 'my-assistant'",
+          ),
+      ),
+      "expected dashboard forward for port 19000",
+    );
+    assert.ok(
+      !payload.commands.some((entry) => entry.command.includes("19000:18789")),
+      "forward must not use asymmetric 19000:18789 mapping",
+    );
+    assert.ok(
+      !payload.commands.some((entry) => entry.command.includes("19000:19000")),
+      "forward must not use port:port form (openshell does not support it)",
     );
   });
 
@@ -2938,6 +3130,119 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(
         payload.commands.some((entry) => entry.command.includes("'sandbox' 'create'")),
         "should create a new sandbox when --recreate-sandbox is set",
+      );
+    },
+  );
+
+  it(
+    "recreating a sandbox preserves the user's policy preset selections",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-recreate-preserves-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "recreate-preserves.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+      const sessionModulePath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "onboard-session.js"),
+      );
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const onboardSession = require(${sessionModulePath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
+  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  if (command.includes("'forward' 'list'")) return "";
+  if (command.includes("sandbox exec") && command.includes("curl")) return "ok";
+  return "";
+};
+
+// Existing sandbox has a custom preset selection: only "npm" (not the
+// full "balanced" tier). Recreating the sandbox must preserve this
+// customisation rather than reverting to the tier defaults.
+registry.getSandbox = () => ({
+  name: "my-assistant",
+  gpuEnabled: false,
+  policies: ["npm"],
+  policyTier: "balanced",
+});
+registry.registerSandbox = () => true;
+registry.removeSandbox = () => true;
+
+const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"))});
+preflight.checkPortAvailable = async () => ({ ok: true });
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
+  await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  const session = onboardSession.loadSession();
+  console.log(JSON.stringify({ policyPresets: session && session.policyPresets }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+
+      assert.deepEqual(
+        payload.policyPresets,
+        ["npm"],
+        "createSandbox should write the previous sandbox's policy presets to the onboard session before destroying it so they can be reapplied after recreation",
       );
     },
   );
@@ -3545,6 +3850,279 @@ console.log(JSON.stringify({
       "should set process.env with stored value",
     );
     assert.equal(payload.missing, null, "should return null when credential is not stored");
+  });
+
+  it("checkTelegramReachability aborts in non-interactive mode on network failure (curl exit 52)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-net-"));
+    try {
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "telegram-net.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = `
+const httpProbe = require(${httpProbePath});
+httpProbe.runCurlProbe = () => ({
+  ok: false,
+  httpStatus: 0,
+  curlStatus: 52,
+  body: "",
+  stderr: "Empty reply from server",
+  message: "curl failed (exit 52): Empty reply from server",
+});
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+const { checkTelegramReachability } = require(${onboardPath});
+(async () => {
+  await checkTelegramReachability("fake-token");
+})();
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+      });
+
+      assert.equal(result.status, 1, "should exit with code 1 in non-interactive mode");
+      assert.ok(
+        result.stderr.includes("Aborting onboarding in non-interactive mode"),
+        "should print abort message to stderr",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("checkTelegramReachability succeeds silently on HTTP 200", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-ok-"));
+    try {
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "telegram-ok.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = `
+const httpProbe = require(${httpProbePath});
+httpProbe.runCurlProbe = () => ({
+  ok: true,
+  httpStatus: 200,
+  curlStatus: 0,
+  body: '{"ok":true,"result":{"id":123,"is_bot":true}}',
+  stderr: "",
+  message: "",
+});
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+const { checkTelegramReachability } = require(${onboardPath});
+(async () => {
+  const logs = [];
+  const origLog = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  await checkTelegramReachability("valid-token");
+  console.log = origLog;
+  origLog(JSON.stringify({ logs }));
+})();
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+      assert.equal(payload.logs.length, 0, "should print no warnings on success");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("checkTelegramReachability reports token error on HTTP 401", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-401-"));
+    try {
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "telegram-401.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = `
+const httpProbe = require(${httpProbePath});
+httpProbe.runCurlProbe = () => ({
+  ok: false,
+  httpStatus: 401,
+  curlStatus: 0,
+  body: '{"ok":false,"error_code":401,"description":"Unauthorized"}',
+  stderr: "",
+  message: "HTTP 401: Unauthorized",
+});
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+const { checkTelegramReachability } = require(${onboardPath});
+(async () => {
+  const logs = [];
+  const origLog = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  await checkTelegramReachability("bad-token");
+  console.log = origLog;
+  origLog(JSON.stringify({ logs }));
+})();
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+      assert.ok(
+        payload.logs.some((l) => l.includes("Bot token was rejected by Telegram")),
+        "should report token-specific error, not network error",
+      );
+      assert.ok(
+        !payload.logs.some((l) => l.includes("not reachable")),
+        "should not report network error for token rejection",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("checkTelegramReachability reports token error on HTTP 404", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-404-"));
+    try {
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "telegram-404.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = `
+const httpProbe = require(${httpProbePath});
+httpProbe.runCurlProbe = () => ({
+  ok: false,
+  httpStatus: 404,
+  curlStatus: 0,
+  body: '{"ok":false,"error_code":404,"description":"Not Found"}',
+  stderr: "",
+  message: "HTTP 404: Not Found",
+});
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+const { checkTelegramReachability } = require(${onboardPath});
+(async () => {
+  const logs = [];
+  const origLog = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  await checkTelegramReachability("bad-token");
+  console.log = origLog;
+  origLog(JSON.stringify({ logs }));
+})();
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+      assert.ok(
+        payload.logs.some((l) => l.includes("Bot token was rejected by Telegram")),
+        "should report token-specific error, not network error",
+      );
+      assert.ok(
+        !payload.logs.some((l) => l.includes("not reachable")),
+        "should not report network error for token rejection",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("checkTelegramReachability surfaces unexpected probe failure (httpStatus 0, unknown curl code)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-unknown-"));
+    try {
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "telegram-unknown.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = `
+const httpProbe = require(${httpProbePath});
+httpProbe.runCurlProbe = () => ({
+  ok: false,
+  httpStatus: 0,
+  curlStatus: 99,
+  body: "",
+  stderr: "unknown curl failure",
+  message: "curl failed (exit 99): unknown curl failure",
+});
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+const { checkTelegramReachability } = require(${onboardPath});
+(async () => {
+  const logs = [];
+  const origLog = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  await checkTelegramReachability("fake-token");
+  console.log = origLog;
+  origLog(JSON.stringify({ logs }));
+})();
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+      });
+
+      assert.equal(result.status, 0, "should not abort on unknown curl code (non-blocking warn)");
+      const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+      assert.ok(
+        payload.logs.some((l) => l.includes("Telegram reachability probe failed")),
+        "should surface the probe failure message",
+      );
+      assert.ok(
+        !payload.logs.some((l) => l.includes("not reachable from this host")),
+        "should not trigger the network-codes branch for unknown curl codes",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("providerExistsInGateway returns false when provider is missing", () => {
@@ -4248,6 +4826,7 @@ const { createSandbox } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "messaging-noninteractive.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -4258,6 +4837,19 @@ const { createSandbox } = require(${onboardPath});
 const runner = require(${runnerPath});
 runner.run = () => ({ status: 0 });
 runner.runCapture = () => "";
+
+// Stub the Telegram reachability probe so this test doesn't make a real network
+// call — on networks where api.telegram.org is blocked (corporate proxies), the
+// non-interactive preflight would otherwise abort the test.
+const httpProbe = require(${httpProbePath});
+httpProbe.runCurlProbe = () => ({
+  ok: true,
+  httpStatus: 200,
+  curlStatus: 0,
+  body: '{"ok":true,"result":{"id":1,"is_bot":true}}',
+  stderr: "",
+  message: "",
+});
 
 const { setupMessagingChannels } = require(${onboardPath});
 
@@ -4587,6 +5179,264 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(
       updateAfterCreate !== -1,
       "registry.updateSandbox(model, provider) must appear AFTER createSandbox() — regression #1881",
+    );
+  });
+
+  // ── Base image digest pinning (#1904) ──────────────────────────
+
+  it("patchStagedDockerfile rewrites ARG BASE_IMAGE when baseImageRef is provided", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-base-image-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    const fakeRef =
+      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-pin",
+        "openai-api",
+        null,
+        null,
+        [],
+        {},
+        {},
+        fakeRef,
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG BASE_IMAGE=ghcr\.io\/nvidia\/nemoclaw\/sandbox-base@sha256:a{64}$/m);
+      // Model patching still works alongside base image pinning
+      assert.match(patched, /^ARG NEMOCLAW_MODEL=gpt-5\.4$/m);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patchStagedDockerfile preserves ARG BASE_IMAGE when baseImageRef is null", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-base-image-null-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-nopin",
+        "openai-api",
+        null,
+        null,
+        [],
+        {},
+        {},
+        null,
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(
+        patched,
+        /^ARG BASE_IMAGE=ghcr\.io\/nvidia\/nemoclaw\/sandbox-base:latest$/m,
+        "BASE_IMAGE should remain unchanged when baseImageRef is null",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patchStagedDockerfile is safe when Dockerfile has no ARG BASE_IMAGE line", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-no-base-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    const fakeRef =
+      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-nobase",
+        "openai-api",
+        null,
+        null,
+        [],
+        {},
+        {},
+        fakeRef,
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      // No ARG BASE_IMAGE in original, so the ref should not appear
+      assert.ok(!patched.includes("ARG BASE_IMAGE="), "Should not inject BASE_IMAGE when line is absent");
+      // Other patching should still work
+      assert.match(patched, /^ARG NEMOCLAW_MODEL=gpt-5\.4$/m);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1904: BASE_IMAGE must reference sandbox-base, not openshell-community", () => {
+    // This is the exact bug that broke all e2e tests in PR #1937:
+    // the code read a digest from blueprint.yaml (openshell-community registry)
+    // and applied it to nemoclaw/sandbox-base (different registry).
+    // Verify that patchStagedDockerfile only writes refs to sandbox-base.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-regression-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    const correctRef =
+      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-regression",
+        "openai-api",
+        null,
+        null,
+        [],
+        {},
+        {},
+        correctRef,
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      const baseLine = patched.split("\n").find((l) => l.startsWith("ARG BASE_IMAGE="));
+      assert.ok(baseLine, "ARG BASE_IMAGE line must exist");
+      assert.ok(
+        baseLine.includes("nemoclaw/sandbox-base"),
+        `BASE_IMAGE must reference nemoclaw/sandbox-base, got: ${baseLine}`,
+      );
+      assert.ok(
+        !baseLine.includes("openshell-community"),
+        `BASE_IMAGE must NOT reference openshell-community — regression #1937. Got: ${baseLine}`,
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patchStagedDockerfile does NOT overwrite custom --from BASE_IMAGE that differs from sandbox-base", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-custom-base-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    const customBase = "my-registry.example.com/my-custom-image:v2";
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        `ARG BASE_IMAGE=${customBase}`,
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    const sandboxRef =
+      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        "build-custom",
+        "openai-api",
+        null,
+        null,
+        [],
+        {},
+        {},
+        sandboxRef,
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      const baseLine = patched.split("\n").find((l) => l.startsWith("ARG BASE_IMAGE="));
+      assert.ok(baseLine, "ARG BASE_IMAGE line must exist");
+      assert.ok(
+        baseLine.includes(customBase),
+        `Custom --from BASE_IMAGE must be preserved, got: ${baseLine}`,
+      );
+      assert.ok(
+        !baseLine.includes("sandbox-base"),
+        `Custom --from BASE_IMAGE must NOT be overwritten with sandbox-base, got: ${baseLine}`,
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("regression #1904: pullAndResolveBaseImageDigest uses sandbox-base registry", () => {
+    // Structural check: verify the constant matches the Dockerfile default
+    // and does NOT reference the openshell-community registry.
+    assert.ok(
+      SANDBOX_BASE_IMAGE.includes("nemoclaw/sandbox-base"),
+      `SANDBOX_BASE_IMAGE must reference nemoclaw/sandbox-base, got: ${SANDBOX_BASE_IMAGE}`,
+    );
+    assert.ok(
+      !SANDBOX_BASE_IMAGE.includes("openshell-community"),
+      `SANDBOX_BASE_IMAGE must NOT reference openshell-community, got: ${SANDBOX_BASE_IMAGE}`,
+    );
+  });
+
+  it("regression #1904: createSandbox calls pullAndResolveBaseImageDigest before patchStagedDockerfile", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const pullPos = source.indexOf("pullAndResolveBaseImageDigest()");
+    assert.ok(pullPos !== -1, "pullAndResolveBaseImageDigest() call not found in onboard.ts");
+    const patchPos = source.indexOf("patchStagedDockerfile(", pullPos);
+    assert.ok(
+      patchPos > pullPos,
+      "pullAndResolveBaseImageDigest must be called BEFORE patchStagedDockerfile — regression #1904",
     );
   });
 });

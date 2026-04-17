@@ -94,7 +94,7 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-msg-provider}"
 # Default to fake tokens if not provided
 TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN:-test-fake-telegram-token-e2e}"
 DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}"
-TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789}"
+TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789,987654321}"
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
 export DISCORD_BOT_TOKEN="$DISCORD_TOKEN"
 export TELEGRAM_ALLOWED_IDS="$TELEGRAM_IDS"
@@ -519,19 +519,21 @@ print(','.join(str(i) for i in ids))
 " 2>/dev/null || true)
 
   if [ -n "$tg_allow_from" ]; then
-    # Check that at least one of the configured IDs is present
+    # Check that all configured IDs are present
     IFS=',' read -ra expected_ids <<<"$TELEGRAM_IDS"
-    found_match=false
+    missing_ids=()
+    tg_allow_from_csv=",${tg_allow_from//[[:space:]]/},"
     for eid in "${expected_ids[@]}"; do
-      if echo "$tg_allow_from" | grep -qF "$eid"; then
-        found_match=true
-        break
+      eid="${eid//[[:space:]]/}"
+      [ -z "$eid" ] && continue
+      if [[ "$tg_allow_from_csv" != *",$eid,"* ]]; then
+        missing_ids+=("$eid")
       fi
     done
-    if [ "$found_match" = "true" ]; then
-      pass "M11c: Telegram allowFrom contains expected user ID(s): $tg_allow_from"
+    if [ ${#missing_ids[@]} -eq 0 ]; then
+      pass "M11c: Telegram allowFrom contains all expected user IDs: $tg_allow_from"
     else
-      fail "M11c: Telegram allowFrom ($tg_allow_from) does not contain any expected ID ($TELEGRAM_IDS)"
+      fail "M11c: Telegram allowFrom ($tg_allow_from) is missing IDs: ${missing_ids[*]} (expected all of: $TELEGRAM_IDS)"
     fi
   else
     skip "M11c: Telegram allowFrom not set (channel may not be configured)"

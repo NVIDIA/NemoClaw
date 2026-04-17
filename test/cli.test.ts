@@ -14,7 +14,7 @@ function run(args) {
   return runWithEnv(args);
 }
 
-function runWithEnv(args, env = {}, timeout = 10000) {
+function runWithEnv(args, env = {}, timeout = Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000)) {
   try {
     const out = execSync(`node "${CLI}" ${args}`, {
       encoding: "utf-8",
@@ -1518,7 +1518,7 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      10000,
+      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
     );
 
     expect(r.code).toBe(0);
@@ -1526,7 +1526,7 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("gateway identity drift after restart")).toBeTruthy();
     const saved = JSON.parse(fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"));
     expect(saved.sandboxes.alpha).toBeTruthy();
-  }, 10000);
+  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
 
   it("recovers status after gateway runtime is reattached", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-recover-status-"));
@@ -1674,7 +1674,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Inference:");
     expect(r.out).toContain("unreachable");
     expect(r.out).toContain("Start Ollama and retry");
-    expect(r.out).toContain("http://localhost:11434/api/tags");
+    expect(r.out).toContain("http://127.0.0.1:11434/api/tags");
   });
 
   it("does not treat a different connected gateway as a healthy nemoclaw gateway", () => {
@@ -1740,14 +1740,14 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      10000,
+      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
     );
 
     expect(r.code).toBe(0);
     expect(r.out.includes("Recovered NemoClaw gateway runtime")).toBeFalsy();
     expect(r.out.includes("Could not verify sandbox 'alpha'")).toBeTruthy();
     expect(r.out.includes("verify the active gateway")).toBeTruthy();
-  }, 10000);
+  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
 
   it("matches ANSI-decorated gateway transport errors when printing lifecycle hints", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-ansi-transport-hint-"));
@@ -1804,12 +1804,12 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      10000,
+      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
     );
 
     expect(r.code).toBe(0);
     expect(r.out.includes("current gateway/runtime is not reachable")).toBeTruthy();
-  }, 10000);
+  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
 
   it("matches ANSI-decorated gateway auth errors when printing lifecycle hints", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-ansi-auth-hint-"));
@@ -1866,14 +1866,14 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      10000,
+      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
     );
 
     expect(r.code).toBe(0);
     expect(
       r.out.includes("Verify the active gateway and retry after re-establishing the runtime."),
     ).toBeTruthy();
-  }, 10000);
+  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
 
   it("explains unrecoverable gateway trust rotation after restart", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-identity-drift-"));
@@ -1929,7 +1929,7 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      10000,
+      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
     );
     expect(statusResult.code).toBe(0);
     expect(statusResult.out.includes("gateway trust material rotated after restart")).toBeTruthy();
@@ -2006,7 +2006,7 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      10000,
+      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
     );
     expect(statusResult.code).toBe(0);
     expect(
@@ -2025,7 +2025,7 @@ describe("CLI dispatch", () => {
       connectResult.out.includes("gateway is still refusing connections after restart"),
     ).toBeTruthy();
     expect(connectResult.out.includes("If the gateway never becomes healthy")).toBeTruthy();
-  }, 10000);
+  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
 
   it("explains when the named gateway is no longer configured after restart or rebuild", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-gateway-missing-"));
@@ -2083,14 +2083,14 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      10000,
+      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
     );
     expect(statusResult.code).toBe(0);
     expect(
       statusResult.out.includes("gateway is no longer configured after restart/rebuild"),
     ).toBeTruthy();
     expect(statusResult.out.includes("Start the gateway again")).toBeTruthy();
-  }, 10000);
+  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
 });
 
 describe("list shows live gateway inference", () => {
@@ -2189,4 +2189,126 @@ describe("list shows live gateway inference", () => {
     expect(r.out).toContain("llama3.2:1b");
     expect(r.out).toContain("ollama-local");
   });
+
+  // ── Issue #1904: sandbox not upgraded after NemoClaw upgrade ───
+  // Original report: user upgrades NemoClaw from v0.0.11→v0.0.15 via
+  // curl|bash. Existing sandbox still runs old OpenClaw (2026.3.11)
+  // because Docker cached the stale :latest image. upgrade-sandboxes
+  // --check should detect the version mismatch and report it.
+
+  it(
+    "upgrade-sandboxes --check detects a stale sandbox after NemoClaw upgrade (#1904)",
+    { timeout: 15000 },
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-upgrade-sandboxes-"));
+      const localBin = path.join(home, "bin");
+      const nemoclawDir = path.join(home, ".nemoclaw");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(nemoclawDir, { recursive: true });
+
+      // Registry with a sandbox that has an old agentVersion (the pre-upgrade state)
+      fs.writeFileSync(
+        path.join(nemoclawDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            "my-agent": {
+              name: "my-agent",
+              model: "nvidia/nemotron-3-super-120b-a12b",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+              agentVersion: "2026.3.11",
+            },
+          },
+          defaultSandbox: "my-agent",
+        }),
+        { mode: 0o600 },
+      );
+
+      // Fake openshell that reports the sandbox as running
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          '  echo "my-agent   Running   openclaw"',
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "--version" ]; then',
+          '  echo "openshell 0.0.24"',
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv("upgrade-sandboxes --check 2>&1", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(r.code).toBe(0);
+      // Should report the stale sandbox with version info
+      expect(r.out).toContain("my-agent");
+      expect(r.out).toContain("2026.3.11");
+      expect(r.out).toMatch(/stale|need upgrading/i);
+    },
+  );
+
+  it(
+    "upgrade-sandboxes --check reports all-current when no sandboxes are stale (#1904)",
+    { timeout: 15000 },
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-upgrade-current-"));
+      const localBin = path.join(home, "bin");
+      const nemoclawDir = path.join(home, ".nemoclaw");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(nemoclawDir, { recursive: true });
+
+      // Registry with a sandbox at the current version — should NOT be stale
+      fs.writeFileSync(
+        path.join(nemoclawDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            "my-agent": {
+              name: "my-agent",
+              model: "nvidia/nemotron-3-super-120b-a12b",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+              agentVersion: "9999.12.31",
+            },
+          },
+          defaultSandbox: "my-agent",
+        }),
+        { mode: 0o600 },
+      );
+
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          '  echo "my-agent   Running   openclaw"',
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "--version" ]; then',
+          '  echo "openshell 0.0.24"',
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv("upgrade-sandboxes --check 2>&1", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("up to date");
+    },
+  );
 });

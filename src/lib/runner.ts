@@ -14,6 +14,17 @@ if (dockerHost) {
   process.env.DOCKER_HOST = dockerHost.dockerHost;
 }
 
+function logOpenshellRuntimeHint(file, renderedCommand = "") {
+  if (
+    file === "openshell" ||
+    file?.endsWith("/openshell") ||
+    (file === "bash" && /^\s*openshell\s/.test(renderedCommand))
+  ) {
+    console.error("  This error originated from the OpenShell runtime layer.");
+    console.error("  Docs: https://github.com/NVIDIA/OpenShell");
+  }
+}
+
 /**
  * Spawn a command, streaming stdout/stderr (redacted) to the terminal.
  * Exits the process on failure unless opts.ignoreError is true.
@@ -38,6 +49,7 @@ function spawnAndHandle(file, args, opts = {}, stdio, renderedCommand) {
     console.error(
       `  Command failed (exit ${result.status}): ${redact(renderedCommand).slice(0, 80)}`,
     );
+    logOpenshellRuntimeHint(file, renderedCommand);
     process.exit(result.status || 1);
   }
   return result;
@@ -101,6 +113,7 @@ function runArrayCmd(cmd, opts = {}) {
   if (result.status !== 0 && !ignoreError) {
     const cmdStr = cmd.join(" ");
     console.error(`  Command failed (exit ${result.status}): ${redact(cmdStr).slice(0, 80)}`);
+    logOpenshellRuntimeHint(exe);
     process.exit(result.status || 1);
   }
   return result;

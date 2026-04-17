@@ -121,12 +121,13 @@ export function nvcfFunctionNotFoundMessage(model: string): string {
  * Whether the wizard should skip probing the OpenAI Responses API entirely
  * for the given inference provider. NVIDIA Build does not expose
  * `/v1/responses` for any model — every probe to that path returns
- * "404 page not found". Skipping the probe removes wasted round-trips and
- * stops the failure-message noise from leaking into chat-completions errors.
- * See issue #1601 (Bug 1).
+ * "404 page not found". Google Gemini also does not support the Responses
+ * API. Skipping the probe removes wasted round-trips and stops the
+ * failure-message noise from leaking into chat-completions errors.
+ * See issue #1601 (Bug 1) and issue #1960.
  */
 export function shouldSkipResponsesProbe(provider: string): boolean {
-  return provider === "nvidia-prod";
+  return provider === "nvidia-prod" || provider === "gemini-api";
 }
 
 /**
