@@ -28,10 +28,20 @@ afterEach(() => {
 });
 
 describe("config-io", () => {
-  it("creates config directories recursively", () => {
+  it("creates config directories recursively with mode 0o700", () => {
     const dir = path.join(makeTempDir(), "a", "b", "c");
     ensureConfigDir(dir);
     expect(fs.existsSync(dir)).toBe(true);
+    expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+  });
+
+  it("tightens pre-existing weak directory permissions to 0o700", () => {
+    const dir = path.join(makeTempDir(), "config");
+    fs.mkdirSync(dir, { mode: 0o755 });
+
+    ensureConfigDir(dir);
+
+    expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
   });
 
   it("returns the fallback when the config file is missing", () => {
@@ -49,11 +59,13 @@ describe("config-io", () => {
   it("writes and reads JSON atomically", () => {
     const dir = makeTempDir();
     const file = path.join(dir, "config.json");
-    writeConfigFile(file, { token: "abc", nested: { enabled: true } });
+    const data = { token: "abc", nested: { enabled: true } };
 
-    expect(readConfigFile(file, null)).toEqual({ token: "abc", nested: { enabled: true } });
-    const leftovers = fs.readdirSync(dir).filter((name) => name.includes(".tmp."));
-    expect(leftovers).toEqual([]);
+    writeConfigFile(file, data);
+
+    expect(readConfigFile(file, null)).toEqual(data);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    expect(fs.readdirSync(dir).filter((name) => name.includes(".tmp."))).toEqual([]);
   });
 
   it("cleans up temp files when rename fails", () => {
@@ -68,11 +80,10 @@ describe("config-io", () => {
     } finally {
       fs.renameSync = originalRename;
     }
-    const leftovers = fs.readdirSync(dir).filter((name) => name.includes(".tmp."));
-    expect(leftovers).toEqual([]);
+    expect(fs.readdirSync(dir).filter((name) => name.includes(".tmp."))).toEqual([]);
   });
 
-  it("wraps permission errors with a user-facing error", () => {
+  it("wraps permission errors with sudo and non-sudo remediation guidance", () => {
     const dir = makeTempDir();
     const file = path.join(dir, "config.json");
     const originalWrite = fs.writeFileSync;
@@ -81,9 +92,27 @@ describe("config-io", () => {
     };
     try {
       expect(() => writeConfigFile(file, { ok: true })).toThrow(ConfigPermissionError);
-      expect(() => writeConfigFile(file, { ok: true })).toThrow(/HOME points to a user-owned directory/);
+      expect(() => writeConfigFile(file, { ok: true })).toThrow(/sudo chown/);
+      expect(() => writeConfigFile(file, { ok: true })).toThrow(/\bmv\b/);
+      expect(() => writeConfigFile(file, { ok: true })).toThrow(/HOME=/);
     } finally {
       fs.writeFileSync = originalWrite;
     }
+  });
+
+  it("supports both rich and legacy constructor forms", () => {
+    const rich = new ConfigPermissionError("test error", "/some/path");
+    expect(rich.name).toBe("ConfigPermissionError");
+    expect(rich.code).toBe("EACCES");
+    expect(rich.configPath).toBe("/some/path");
+    expect(rich.filePath).toBe("/some/path");
+    expect(rich.message).toContain("test error");
+    expect(rich.remediation).toContain("sudo chown");
+    expect(rich.remediation).toContain("mv ");
+    expect(rich.remediation).toContain("HOME=");
+
+    const legacy = new ConfigPermissionError("/other/path", "write");
+    expect(legacy.filePath).toBe("/other/path");
+    expect(legacy.message).toContain("Cannot write config file");
   });
 });

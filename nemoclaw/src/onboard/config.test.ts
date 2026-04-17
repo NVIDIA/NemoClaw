@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { homedir } from "node:os";
 import {
   describeOnboardEndpoint,
   describeOnboardProvider,
@@ -71,6 +72,26 @@ describe("onboard/config", () => {
       });
       expect(describeOnboardEndpoint(config)).toBe("ollama (http://localhost:11434/v1)");
     });
+
+    it("redacts credentials from endpoint URLs", () => {
+      const config = makeConfig({
+        endpointType: "custom",
+        endpointUrl: "https://user:secret@api.example.com/v1?token=abc123",
+      });
+      const result = describeOnboardEndpoint(config);
+      expect(result).not.toContain("secret");
+      expect(result).not.toContain("abc123");
+      expect(result).toContain("api.example.com");
+      expect(result).toContain("****");
+    });
+
+    it("handles non-URL endpoint strings gracefully", () => {
+      const config = makeConfig({
+        endpointType: "local",
+        endpointUrl: "not-a-url",
+      });
+      expect(describeOnboardEndpoint(config)).toBe("local (not-a-url)");
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -124,7 +145,7 @@ describe("onboard/config", () => {
 
     it("returns parsed config when file exists", () => {
       const config = makeConfig();
-      const configPath = `${process.env.HOME ?? "/tmp"}/.nemoclaw/config.json`;
+      const configPath = `${homedir()}/.nemoclaw/config.json`;
       store.set(configPath, JSON.stringify(config));
       expect(loadOnboardConfig()).toEqual(config);
     });
