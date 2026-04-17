@@ -117,6 +117,40 @@ const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN = null;
 const GATEWAY_NAME = "nemoclaw";
 const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
+
+/**
+ * Probe whether the gateway Docker container is actually running.
+ * openshell CLI metadata can be stale after a manual `docker rm`, so this
+ * verifies the container is live before trusting a "healthy" reuse state.
+ *
+ * Returns "running" | "missing" | "unknown".
+ * - "running"  — container exists and State.Running is true
+ * - "missing"  — container was removed or exists but is stopped (not reusable)
+ * - "unknown"  — any other failure (daemon down, timeout, etc.)
+ *
+ * Callers should only trigger stale-metadata cleanup on "missing", not on
+ * "unknown", to avoid destroying a healthy gateway when Docker is temporarily
+ * unavailable.  See #2020.
+ */
+function verifyGatewayContainerRunning() {
+  const containerName = `openshell-cluster-${GATEWAY_NAME}`;
+  const result = run(
+    `docker inspect --type container --format '{{.State.Running}}' ${containerName}`,
+    { ignoreError: true, suppressOutput: true },
+  );
+  if (result.status === 0 && (result.stdout || "").trim() === "true") {
+    return "running";
+  }
+  // Container exists but is stopped (exit 0, Running !== "true")
+  if (result.status === 0) {
+    return "missing";
+  }
+  const stderr = (result.stderr || "").toString();
+  if (stderr.includes("No such object") || stderr.includes("No such container")) {
+    return "missing";
+  }
+  return "unknown";
+}
 const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
 
 const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
@@ -2364,7 +2398,24 @@ async function preflight() {
     ignoreError: true,
   });
   const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-  const gatewayReuseState = getGatewayReuseState(gatewayStatus, gwInfo, activeGatewayInfo);
+  let gatewayReuseState = getGatewayReuseState(gatewayStatus, gwInfo, activeGatewayInfo);
+
+  // Verify the gateway container is actually running — openshell CLI metadata
+  // can be stale after a manual `docker rm`. See #2020.
+  if (gatewayReuseState === "healthy") {
+    const containerState = verifyGatewayContainerRunning();
+    if (containerState === "missing") {
+      console.log("  Gateway metadata is stale (container not running). Cleaning up...");
+      runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+      destroyGateway();
+      registry.clearAll();
+      gatewayReuseState = "missing";
+      console.log("  ✓ Stale gateway metadata cleaned up");
+    } else if (containerState === "unknown") {
+      console.log("  Warning: could not verify gateway container state (Docker may be unavailable). Proceeding with cached health status.");
+    }
+  }
+
   if (gatewayReuseState === "stale" || gatewayReuseState === "active-unnamed") {
     console.log("  Cleaning up previous NemoClaw session...");
     runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
@@ -5905,7 +5956,24 @@ async function onboard(opts = {}) {
       ignoreError: true,
     });
     const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    const gatewayReuseState = getGatewayReuseState(gatewayStatus, gatewayInfo, activeGatewayInfo);
+    let gatewayReuseState = getGatewayReuseState(gatewayStatus, gatewayInfo, activeGatewayInfo);
+
+    // Verify the gateway container is actually running — openshell CLI metadata
+    // can be stale after a manual `docker rm`. See #2020.
+    if (gatewayReuseState === "healthy") {
+      const containerState = verifyGatewayContainerRunning();
+      if (containerState === "missing") {
+        console.log("  Gateway metadata is stale (container not running). Cleaning up...");
+        runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+        destroyGateway();
+        registry.clearAll();
+        gatewayReuseState = "missing";
+        console.log("  ✓ Stale gateway metadata cleaned up");
+      } else if (containerState === "unknown") {
+        console.log("  Warning: could not verify gateway container state (Docker may be unavailable). Proceeding with cached health status.");
+      }
+    }
+
     const canReuseHealthyGateway = gatewayReuseState === "healthy";
     const resumeGateway =
       resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;

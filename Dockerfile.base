@@ -161,7 +161,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/blueprint.yaml \
     echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \
     || { echo "Error: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.3.11)."; exit 1; }; \
-    OPENCLAW_MIN_VERSION=$(grep 'min_openclaw_version' /tmp/blueprint.yaml | awk '{print $2}' | tr -d '"'); \
+    OPENCLAW_MIN_VERSION=$(grep -m 1 'min_openclaw_version' /tmp/blueprint.yaml | awk '{print $2}' | tr -d '"'); \
     [ -n "$OPENCLAW_MIN_VERSION" ] \
     || { echo "Error: Could not parse min_openclaw_version from nemoclaw-blueprint/blueprint.yaml"; exit 1; }; \
     if [ "$(printf '%s\n%s' "$OPENCLAW_MIN_VERSION" "$OPENCLAW_VERSION" | sort -V | head -n1)" != "$OPENCLAW_MIN_VERSION" ]; then \

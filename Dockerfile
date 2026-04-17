@@ -41,6 +41,34 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 WORKDIR /opt/nemoclaw
 RUN npm ci --omit=dev
 
+# Upgrade OpenClaw if the base image is stale.
+#
+# The GHCR base image (sandbox-base:latest) may lag behind the version pinned
+# in Dockerfile.base. When that happens the fetch-guard patches below fail
+# because the target functions don't exist in the older OpenClaw. Rather than
+# silently skipping patches (leaving the sandbox unpatched), upgrade OpenClaw
+# in-place so every build gets the version the patches expect.
+#
+# The minimum required version comes from nemoclaw-blueprint/blueprint.yaml
+# (already COPYed to /opt/nemoclaw-blueprint/ above).
+# hadolint ignore=DL3059,DL4006
+RUN set -eu; \
+    MIN_VER=$(grep -m 1 'min_openclaw_version' /opt/nemoclaw-blueprint/blueprint.yaml | awk '{print $2}' | tr -d '"'); \
+    [ -n "$MIN_VER" ] || { echo "ERROR: Could not parse min_openclaw_version from blueprint.yaml" >&2; exit 1; }; \
+    CUR_VER=$(openclaw --version 2>/dev/null | awk '{print $2}' || echo "0.0.0"); \
+    if [ "$(printf '%s\n%s' "$MIN_VER" "$CUR_VER" | sort -V | head -n1)" = "$MIN_VER" ]; then \
+        echo "INFO: OpenClaw $CUR_VER is current (>= $MIN_VER), no upgrade needed"; \
+    else \
+        echo "INFO: Base image has OpenClaw $CUR_VER, upgrading to $MIN_VER (minimum required)"; \
+        # npm 10's atomic-move install can hit EROFS on overlayfs when the
+        # prior install spans multiple image layers (e.g. openclaw was
+        # baked into sandbox-base, then we upgrade on top here). Clearing
+        # at the shell level first gives npm a clean slate and avoids the
+        # rmdir failure inside npm's own install path.
+        rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
+        npm install -g --no-audit --no-fund --no-progress "openclaw@${MIN_VER}"; \
+    fi
+
 # Patch OpenClaw media fetch for proxy-only sandbox (NVIDIA/NemoClaw#1755).
 #
 # NemoClaw forces all sandbox egress through the OpenShell L7 proxy
@@ -89,23 +117,31 @@ RUN npm ci --omit=dev
 #   target hostname allowlist for the proxy hostname check (or exposes config
 #   to disable the check).
 #
+# SYNC WITH OPENCLAW: these patches grep for specific exports and function
+# definitions in the compiled OpenClaw dist (withStrictGuardedFetchMode,
+# assertExplicitProxyAllowed). If OpenClaw renames, removes, or restructures
+# either symbol in a future release, the grep will fail and the build will
+# abort. When bumping OPENCLAW_VERSION, verify both symbols still exist in
+# the new dist and update the regex / sed replacement accordingly.
+#
 # Both patches fail-close: if grep finds no targets, the build aborts so
 # the next maintainer reviewing an OPENCLAW_VERSION bump knows to revisit.
 # hadolint ignore=SC2016,DL3059,DL4006
 RUN set -eu; \
+    OC_DIST=/usr/local/lib/node_modules/openclaw/dist; \
     # --- Patch 1: rewrite fetch-guard export --- \
-    fg_export="$(grep -RIlE --include='*.js' 'export \{[^}]*withStrictGuardedFetchMode as [a-z]' /usr/local/lib/node_modules/openclaw/dist/)"; \
+    fg_export="$(grep -RIlE --include='*.js' 'export \{[^}]*withStrictGuardedFetchMode as [a-z]' "$OC_DIST")"; \
     test -n "$fg_export"; \
     for f in $fg_export; do \
         grep -q 'withTrustedEnvProxyGuardedFetchMode' "$f" || { echo "ERROR: $f missing withTrustedEnvProxyGuardedFetchMode"; exit 1; }; \
     done; \
     printf '%s\n' "$fg_export" | xargs sed -i -E 's|withStrictGuardedFetchMode as ([a-z])|withTrustedEnvProxyGuardedFetchMode as \1|g'; \
-    if grep -REq --include='*.js' 'withStrictGuardedFetchMode as [a-z]' /usr/local/lib/node_modules/openclaw/dist/; then echo "ERROR: Patch 1 left strict-mode export alias" >&2; exit 1; fi; \
+    if grep -REq --include='*.js' 'withStrictGuardedFetchMode as [a-z]' "$OC_DIST"; then echo "ERROR: Patch 1 left strict-mode export alias" >&2; exit 1; fi; \
     # --- Patch 2: neutralize assertExplicitProxyAllowed --- \
-    fg_assert="$(grep -RIlE --include='*.js' 'async function assertExplicitProxyAllowed' /usr/local/lib/node_modules/openclaw/dist/)"; \
+    fg_assert="$(grep -RIlE --include='*.js' 'async function assertExplicitProxyAllowed' "$OC_DIST")"; \
     test -n "$fg_assert"; \
     printf '%s\n' "$fg_assert" | xargs sed -i -E 's|(async function assertExplicitProxyAllowed\([^)]*\) \{)|\1 if (process.env.OPENSHELL_SANDBOX === "1") return; /* nemoclaw: env-gated bypass, see Dockerfile */ |'; \
-    grep -REq --include='*.js' 'assertExplicitProxyAllowed\([^)]*\) \{ if \(process\.env\.OPENSHELL_SANDBOX === "1"\) return; /\* nemoclaw' /usr/local/lib/node_modules/openclaw/dist/
+    grep -REq --include='*.js' 'assertExplicitProxyAllowed\([^)]*\) \{ if \(process\.env\.OPENSHELL_SANDBOX === "1"\) return; /\* nemoclaw' "$OC_DIST"
 
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
