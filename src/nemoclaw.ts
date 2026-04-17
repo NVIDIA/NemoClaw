@@ -1094,6 +1094,7 @@ function readGatewayLog(sandboxName) {
       ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-c", "tail -n 10 /tmp/gateway.log 2>/dev/null"],
       { encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] },
     );
+    if (result.error || result.status !== 0) return null;
     const output = (result.stdout || "").trim();
     return output || null;
   } catch {
