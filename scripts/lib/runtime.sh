@@ -7,7 +7,7 @@ socket_exists() {
 
   if [ -n "${NEMOCLAW_TEST_SOCKET_PATHS:-}" ]; then
     case ":$NEMOCLAW_TEST_SOCKET_PATHS:" in
-      *":$socket_path:"*) return 0 ;;
+    *":$socket_path:"*) return 0 ;;
     esac
     return 1
   fi
@@ -74,21 +74,21 @@ docker_host_runtime() {
   local docker_host="${1:-${DOCKER_HOST:-}}"
 
   case "$docker_host" in
-    unix://*"/.colima/default/docker.sock" | unix://*"/.config/colima/default/docker.sock")
-      printf 'colima\n'
-      ;;
-    unix://*"/podman/machine/podman.sock" | unix://*"/podman/podman.sock")
-      printf 'podman\n'
-      ;;
-    unix://*"/.docker/run/docker.sock")
-      printf 'docker-desktop\n'
-      ;;
-    "")
-      return 1
-      ;;
-    *)
-      printf 'custom\n'
-      ;;
+  unix://*"/.colima/default/docker.sock" | unix://*"/.config/colima/default/docker.sock")
+    printf 'colima\n'
+    ;;
+  unix://*"/podman/machine/podman.sock" | unix://*"/podman/podman.sock")
+    printf 'podman\n'
+    ;;
+  unix://*"/.docker/run/docker.sock")
+    printf 'docker-desktop\n'
+    ;;
+  "")
+    return 1
+    ;;
+  *)
+    printf 'custom\n'
+    ;;
   esac
 }
 
@@ -238,10 +238,10 @@ select_openshell_cluster_container() {
 _validate_port() {
   local name="$1" value="$2"
   case "$value" in
-    '' | *[!0-9]*)
-      printf 'Invalid %s=%s (expected 1024-65535)\n' "$name" "$value" >&2
-      return 1
-      ;;
+  '' | *[!0-9]*)
+    printf 'Invalid %s=%s (expected 1024-65535)\n' "$name" "$value" >&2
+    return 1
+    ;;
   esac
   [ "$value" -ge 1024 ] && [ "$value" -le 65535 ] || {
     printf 'Invalid %s=%s (expected 1024-65535)\n' "$name" "$value" >&2
@@ -257,9 +257,9 @@ get_local_provider_base_url() {
   _validate_port NEMOCLAW_VLLM_PORT "$vllm_port" || return 1
   _validate_port NEMOCLAW_OLLAMA_PORT "$ollama_port" || return 1
   case "$provider" in
-    vllm-local) printf 'http://host.openshell.internal:%s/v1\n' "$vllm_port" ;;
-    ollama-local) printf 'http://host.openshell.internal:%s/v1\n' "$ollama_port" ;;
-    *) return 1 ;;
+  vllm-local) printf 'http://host.openshell.internal:%s/v1\n' "$vllm_port" ;;
+  ollama-local) printf 'http://host.openshell.internal:%s/v1\n' "$ollama_port" ;;
+  *) return 1 ;;
   esac
 }
 
@@ -271,15 +271,15 @@ check_local_provider_health() {
   _validate_port NEMOCLAW_VLLM_PORT "$vllm_port" || return 1
   _validate_port NEMOCLAW_OLLAMA_PORT "$ollama_port" || return 1
   case "$provider" in
-    vllm-local)
-      curl -sf "http://localhost:${vllm_port}/v1/models" >/dev/null 2>&1
-      ;;
-    ollama-local)
-      curl -sf "http://localhost:${ollama_port}/api/tags" >/dev/null 2>&1
-      ;;
-    *)
-      return 1
-      ;;
+  vllm-local)
+    curl -sf "http://localhost:${vllm_port}/v1/models" >/dev/null 2>&1
+    ;;
+  ollama-local)
+    curl -sf "http://localhost:${ollama_port}/api/tags" >/dev/null 2>&1
+    ;;
+  *)
+    return 1
+    ;;
   esac
 }
 
