@@ -269,7 +269,22 @@ function canonicalJsonStringify(value: unknown): string {
     return "null";
   }
 
-  if (typeof value === "boolean" || typeof value === "number") {
+  if (typeof value === "boolean") {
+    return JSON.stringify(value);
+  }
+
+  if (typeof value === "number") {
+    // Integers beyond Number.MAX_SAFE_INTEGER lose precision in JavaScript
+    // but are preserved exactly by Python, causing hash drift. The Python
+    // audit module only writes timestamps (floats) and small integers, so
+    // this guard is defensive — it surfaces the problem early if the entry
+    // format ever includes large numeric IDs.
+    if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+      throw new Error(
+        `unsafe integer ${String(value)} exceeds Number.MAX_SAFE_INTEGER; ` +
+          "cross-language hash verification cannot guarantee correctness",
+      );
+    }
     return JSON.stringify(value);
   }
 
