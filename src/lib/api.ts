@@ -1,24 +1,31 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-"use strict";
-
-const http = require("http");
-const registry = require("./registry");
-const { getSandboxList } = require("./dashboard-metrics");
-const {
+import * as http from "http";
+import type { IncomingMessage, ServerResponse, Server } from "http";
+import * as registry from "./registry";
+import { getSandboxList } from "./api-metrics";
+import {
   stopSandbox,
   startSandbox,
   restartSandbox,
   runSandboxCommand,
   readConfig,
   writeConfig,
-} = require("./dashboard-commands");
+} from "./api-commands";
 
 const SSE_TICK_MS = 5_000;
 const SSE_SNAPSHOT_TICKS = 6;
 
-function readBody(req) {
+type RouteHandler = (
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: string[],
+) => void | Promise<void>;
+
+type Route = [string, RegExp, RouteHandler];
+
+function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     let raw = "";
     req.on("data", (chunk) => (raw += chunk));
@@ -33,7 +40,7 @@ function readBody(req) {
   });
 }
 
-function json(res, status, body) {
+function json(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     "Content-Type": "application/json",
@@ -43,7 +50,7 @@ function json(res, status, body) {
   res.end(payload);
 }
 
-function handleSSE(res) {
+function handleSSE(res: ServerResponse): void {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
@@ -53,17 +60,18 @@ function handleSSE(res) {
   res.flushHeaders();
 
   let tick = 0;
-  let previousData = null;
+  let previousData: string | null = null;
 
   function sendTick() {
     const data = getSandboxList();
+    const serialized = JSON.stringify(data);
     const isSnapshot = tick % SSE_SNAPSHOT_TICKS === 0;
-    const changed = JSON.stringify(data) !== JSON.stringify(previousData);
+    const changed = serialized !== previousData;
 
     if (isSnapshot || changed) {
       const eventType = isSnapshot ? "sandbox.snapshot" : "sandbox.metrics";
-      res.write(`event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`);
-      previousData = data;
+      res.write(`event: ${eventType}\ndata: ${serialized}\n\n`);
+      previousData = serialized;
     }
 
     tick++;
@@ -75,14 +83,22 @@ function handleSSE(res) {
   res.on("close", () => clearInterval(timer));
 }
 
-async function sandboxDetail(_req, res, [name]) {
+async function sandboxDetail(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  [name]: string[],
+): Promise<void> {
   const sandbox = registry.getSandbox(name);
   if (!sandbox) return json(res, 404, { error: `sandbox '${name}' not found` });
   const { sandboxes } = getSandboxList();
   return json(res, 200, sandboxes.find((s) => s.name === name) ?? sandbox);
 }
 
-async function sandboxCommand(req, res, [name]) {
+async function sandboxCommand(
+  req: IncomingMessage,
+  res: ServerResponse,
+  [name]: string[],
+): Promise<void> {
   const body = await readBody(req);
   if (!body.command || typeof body.command !== "string") {
     return json(res, 400, { error: "'command' field is required and must be a string" });
@@ -90,14 +106,14 @@ async function sandboxCommand(req, res, [name]) {
   return json(res, 200, runSandboxCommand(name, body.command));
 }
 
-async function configPut(req, res) {
+async function configPut(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const body = await readBody(req);
   writeConfig(body);
   return json(res, 200, readConfig());
 }
 
 // Route table: [method, regex, handler]. Handler receives (req, res, regexCaptureGroups).
-const ROUTES = [
+const ROUTES: Route[] = [
   ["GET", /^\/events\/?$/, (_req, res) => handleSSE(res)],
   ["GET", /^\/sandboxes\/?$/, (_req, res) => json(res, 200, getSandboxList())],
   ["GET", /^\/sandboxes\/([^/]+)\/?$/, sandboxDetail],
@@ -113,9 +129,9 @@ const ROUTES = [
   ["PUT", /^\/config\/?$/, configPut],
 ];
 
-async function handleRequest(req, res) {
+async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const { method, url } = req;
-  const pathname = url.split("?")[0];
+  const pathname = (url || "/").split("?")[0];
 
   try {
     for (const [m, pattern, handler] of ROUTES) {
@@ -125,24 +141,33 @@ async function handleRequest(req, res) {
     }
     return json(res, 404, { error: "not found" });
   } catch (err) {
-    return json(res, 500, { error: err.message });
+    return json(res, 500, { error: (err as Error).message });
   }
 }
 
-function createServer() {
+export function createApiServer(): Server {
   return http.createServer(handleRequest);
 }
 
-function startDashboard(port) {
-  const server = createServer();
-  server.listen(port, "127.0.0.1", () => {
-    const addr = server.address();
-    console.log(`nemoclaw dashboard running at http://127.0.0.1:${addr.port}`);
-    console.log("Press Ctrl+C to stop.");
-  });
-  process.on("SIGINT", () => {
-    server.close(() => process.exit(0));
-  });
+export interface RunApiCommandDeps {
+  port: number;
+  log?: (message?: string) => void;
+  error?: (message?: string) => void;
+  onExit?: (code: number) => void;
 }
 
-module.exports = { createServer, startDashboard };
+export function runApiCommand(deps: RunApiCommandDeps): Server {
+  const log = deps.log ?? console.log;
+  const onExit = deps.onExit ?? ((code: number) => process.exit(code));
+  const server = createApiServer();
+  server.listen(deps.port, "127.0.0.1", () => {
+    const addr = server.address();
+    const listeningPort = typeof addr === "object" && addr ? addr.port : deps.port;
+    log(`nemoclaw api running at http://127.0.0.1:${listeningPort}`);
+    log("Press Ctrl+C to stop.");
+  });
+  process.on("SIGINT", () => {
+    server.close(() => onExit(0));
+  });
+  return server;
+}

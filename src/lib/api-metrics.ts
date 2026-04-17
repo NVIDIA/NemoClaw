@@ -1,22 +1,44 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-"use strict";
+import { spawnSync } from "child_process";
+import * as registry from "./registry";
+import type { SandboxEntry } from "./registry";
 
-const { spawnSync } = require("child_process");
-const registry = require("./registry");
+export interface ContainerStat {
+  id: string;
+  name: string;
+  cpuPercent: number;
+  memUsage: string;
+  memPercent: number;
+  netIO: string;
+  blockIO: string;
+}
 
-function parsePercent(str) {
-  const n = parseFloat(str);
+export interface ContainerStats {
+  runtime: "docker" | "podman" | null;
+  containers: ContainerStat[];
+}
+
+export type SandboxWithContainer = SandboxEntry & { container: ContainerStat | null };
+
+export interface SandboxList {
+  runtime: "docker" | "podman" | null;
+  defaultSandbox: string | null;
+  sandboxes: SandboxWithContainer[];
+}
+
+export function parsePercent(str: unknown): number {
+  const n = parseFloat(String(str));
   return isNaN(n) ? 0 : n;
 }
 
-function parseDockerStats(stdout) {
+export function parseDockerStats(stdout: string): ContainerStat[] {
   return stdout
     .trim()
     .split("\n")
     .filter(Boolean)
-    .map((line) => {
+    .map((line): ContainerStat | null => {
       try {
         const raw = JSON.parse(line);
         return {
@@ -32,10 +54,10 @@ function parseDockerStats(stdout) {
         return null;
       }
     })
-    .filter(Boolean);
+    .filter((entry): entry is ContainerStat => entry !== null);
 }
 
-function parsePodmanStats(stdout) {
+export function parsePodmanStats(stdout: string): ContainerStat[] {
   try {
     const raw = JSON.parse(stdout);
     if (!Array.isArray(raw)) return [];
@@ -53,7 +75,7 @@ function parsePodmanStats(stdout) {
   }
 }
 
-function getContainerStats() {
+export function getContainerStats(): ContainerStats {
   const docker = spawnSync("docker", ["stats", "--no-stream", "--format", "{{json .}}"], {
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -73,7 +95,7 @@ function getContainerStats() {
   return { runtime: null, containers: [] };
 }
 
-function getSandboxList() {
+export function getSandboxList(): SandboxList {
   const { sandboxes, defaultSandbox } = registry.listSandboxes();
   const { runtime, containers } = getContainerStats();
 
@@ -86,11 +108,3 @@ function getSandboxList() {
     })),
   };
 }
-
-module.exports = {
-  getContainerStats,
-  getSandboxList,
-  parseDockerStats,
-  parsePodmanStats,
-  parsePercent,
-};

@@ -55,6 +55,7 @@ const {
   buildVersionedUninstallUrl,
   runUninstallCommand,
 } = require("../dist/lib/uninstall-command");
+const { runApiCommand } = require("../dist/lib/api");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -69,7 +70,7 @@ const GLOBAL_COMMANDS = new Set([
   "status",
   "debug",
   "uninstall",
-  "dashboard",
+  "api",
   "help",
   "--help",
   "-h",
@@ -1193,6 +1194,9 @@ function help() {
     nemoclaw stop                    Stop all services
     nemoclaw status                  Show sandbox list and service status
 
+  ${G}Local API:${R}
+    nemoclaw api ${D}[port]${R}              Start local HTTP API + SSE for sandbox control ${D}(default :3456)${R}
+
   Troubleshooting:
     nemoclaw debug [--quick]         Collect diagnostics for bug reports
     nemoclaw debug --output FILE     Save diagnostics tarball for GitHub issues
@@ -1256,10 +1260,14 @@ const [cmd, ...args] = process.argv.slice(2);
       case "list":
         await listSandboxes();
         break;
-      case "dashboard": {
+      case "api": {
         const port = parseInt(args.find((a) => /^\d+$/.test(a)) || "3456", 10);
-        const { startDashboard } = require("./lib/dashboard");
-        startDashboard(port);
+        runApiCommand({
+          port,
+          log: console.log,
+          error: console.error,
+          onExit: (code) => process.exit(code),
+        });
         break;
       }
       case "--version":

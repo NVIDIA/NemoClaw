@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
-import { parseDockerStats, parsePodmanStats, parsePercent } from "../bin/lib/dashboard-metrics.js";
+import { parseDockerStats, parsePodmanStats, parsePercent } from "../dist/lib/api-metrics.js";
 
 describe("parsePercent", () => {
   it("parses '1.23%' to 1.23", () => {

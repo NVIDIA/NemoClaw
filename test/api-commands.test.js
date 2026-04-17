@@ -7,14 +7,14 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 
-const commandsPath = path.join(import.meta.dirname, "..", "bin", "lib", "dashboard-commands");
+const commandsPath = path.join(import.meta.dirname, "..", "dist", "lib", "api-commands");
 
 describe("readConfig / writeConfig", () => {
   let tmpDir;
   let tmpConfigPath;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dashboard-cmd-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-api-cmd-"));
     tmpConfigPath = path.join(tmpDir, "nemoclaw-config.json");
     delete require.cache[require.resolve(commandsPath)];
   });

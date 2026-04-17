@@ -7,15 +7,15 @@ import path from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const binLib = path.join(import.meta.dirname, "..", "bin", "lib");
+const distLib = path.join(import.meta.dirname, "..", "dist", "lib");
 
 // Pre-load the SUT's dependencies and monkey-patch their exports before
-// loading dashboard.js. vi.mock doesn't reliably intercept transitive
-// require() calls inside CJS modules imported from ESM tests, so the
-// codebase convention (see test/runner.test.js) is direct monkey-patching.
-const registry = require(path.join(binLib, "registry"));
-const metrics = require(path.join(binLib, "dashboard-metrics"));
-const commands = require(path.join(binLib, "dashboard-commands"));
+// loading api.js. vi.mock doesn't reliably intercept transitive require()
+// calls inside CJS modules imported from ESM tests, so the codebase
+// convention (see test/runner.test.js) is direct monkey-patching.
+const registry = require(path.join(distLib, "registry"));
+const metrics = require(path.join(distLib, "api-metrics"));
+const commands = require(path.join(distLib, "api-commands"));
 
 registry.listSandboxes = () => ({
   sandboxes: [{ name: "test-sandbox", provider: "nim" }],
@@ -36,13 +36,13 @@ commands.runSandboxCommand = () => ({ ok: true, output: "command output" });
 commands.readConfig = () => ({ provider: "nim" });
 commands.writeConfig = () => {};
 
-const { createServer } = require(path.join(binLib, "dashboard"));
+const { createApiServer } = require(path.join(distLib, "api"));
 
 let server;
 let baseUrl;
 
 beforeAll(async () => {
-  server = createServer();
+  server = createApiServer();
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address();
   baseUrl = `http://127.0.0.1:${port}`;

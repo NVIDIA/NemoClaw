@@ -69,11 +69,11 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("No sandboxes")).toBeTruthy();
   });
 
-  it("dashboard command starts the server (port 0 = OS-assigned)", () => {
+  it("api command starts the server (port 0 = OS-assigned)", () => {
     // Port 0 lets the OS pick a free port. runWithEnv (execSync) kills the
     // process when the timeout fires; 1500 ms is enough for the server to bind
     // and print its startup line.
-    const r = runWithEnv("dashboard 0", {}, 1500);
+    const r = runWithEnv("api 0", {}, 1500);
     expect(r.out).not.toContain("Unknown command");
     expect(r.out).toContain("running at");
   });
