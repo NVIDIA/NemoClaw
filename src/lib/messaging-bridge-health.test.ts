@@ -93,6 +93,33 @@ describe("checkMessagingBridgeHealth", () => {
     expect(checkMessagingBridgeHealth("alpha", ["telegram"])).toEqual([]);
   });
 
+  it("returns empty when spawnSync reports a non-zero exit status (exec failed)", () => {
+    spawnSyncMock.mockReturnValue({
+      pid: 0,
+      output: [],
+      stdout: "",
+      stderr: "/bin/bash: alpha: command not found\n",
+      status: 127,
+      signal: null,
+    } as unknown as ReturnType<typeof spawnSync>);
+
+    expect(checkMessagingBridgeHealth("alpha", ["telegram"])).toEqual([]);
+  });
+
+  it("returns empty when spawnSync returns an error object (e.g. timeout)", () => {
+    spawnSyncMock.mockReturnValue({
+      pid: 0,
+      output: [],
+      stdout: null,
+      stderr: null,
+      status: null,
+      signal: "SIGTERM",
+      error: new Error("spawnSync timed out"),
+    } as unknown as ReturnType<typeof spawnSync>);
+
+    expect(checkMessagingBridgeHealth("alpha", ["telegram"])).toEqual([]);
+  });
+
   // Regression for #2018: `openshell sandbox exec` requires the --name/-n
   // flag. Passing the sandbox name as a positional causes the name to be
   // interpreted as the first word of the command and fails with exit 127.

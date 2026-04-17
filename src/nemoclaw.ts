@@ -1091,7 +1091,7 @@ function readGatewayLog(sandboxName) {
   try {
     const result = spawnSync(
       getOpenshellBinary(),
-      ["sandbox", "exec", sandboxName, "sh", "-c", "tail -n 10 /tmp/gateway.log 2>/dev/null"],
+      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-c", "tail -n 10 /tmp/gateway.log 2>/dev/null"],
       { encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] },
     );
     const output = (result.stdout || "").trim();

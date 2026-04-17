@@ -43,6 +43,7 @@ export function checkMessagingBridgeHealth(
       timeout: 3000,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    if (result.error || result.status !== 0) return [];
     const count = Number.parseInt((result.stdout || "").trim(), 10);
     if (!Number.isFinite(count) || count === 0) return [];
     return [{ channel: "telegram", conflicts: count }];
