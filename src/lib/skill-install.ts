@@ -15,6 +15,21 @@ import { spawnSync } from "node:child_process";
 // yaml is a production dependency (used by policies.ts, onboard.ts)
 import YAML from "yaml";
 
+// ── Skill name validation ────────────────────────────────────────
+
+/**
+ * Validate that a skill name supplied on the CLI is safe to use as a remote path.
+ * Rejects anything that isn't a valid skill name ([A-Za-z0-9._-]).
+ */
+export function validateSkillName(name: string): boolean {
+  return (
+    name.length > 0 &&
+    name !== "." &&
+    name !== ".." &&
+    /^[A-Za-z0-9._-]+$/.test(name)
+  );
+}
+
 // ── Frontmatter parsing ──────────────────────────────────────────
 
 type FrontmatterScalar = string | number | boolean | null | undefined;
@@ -70,7 +85,7 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
     throw new Error("SKILL.md frontmatter is missing required 'name' field");
   }
 
-  if (nameValue === "." || nameValue === ".." || !/^[A-Za-z0-9._-]+$/.test(nameValue)) {
+  if (!validateSkillName(nameValue)) {
     throw new Error(
       `SKILL.md name '${nameValue}' contains invalid characters. Only [A-Za-z0-9._-] allowed.`,
     );
@@ -403,17 +418,4 @@ export function verifyRemove(ctx: SshContext, paths: SkillPaths): boolean {
   }
   const result = sshExec(ctx, `${checks.join(" && ")} && echo GONE || echo EXISTS`);
   return result !== null && result.stdout === "GONE";
-}
-
-/**
- * Validate that a skill name supplied on the CLI is safe to use as a remote path.
- * Rejects anything that isn't a valid skill name ([A-Za-z0-9._-]).
- */
-export function validateSkillName(name: string): boolean {
-  return (
-    name.length > 0 &&
-    name !== "." &&
-    name !== ".." &&
-    /^[A-Za-z0-9._-]+$/.test(name)
-  );
 }
