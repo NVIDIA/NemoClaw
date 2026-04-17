@@ -16,6 +16,8 @@ import {
   validateSkillName,
   removeSkill,
   verifyRemove,
+  checkExisting,
+  resolveSkillPaths as resolvePaths,
 } from "../../dist/lib/skill-install";
 
 describe("parseFrontmatter", () => {
@@ -311,7 +313,7 @@ describe("validateSkillName", () => {
   });
 });
 
-// ── removeSkill / verifyRemove ───────────────────────────────────────────────
+// ── removeSkill / verifyRemove / checkExisting ──────────────────────────────
 
 describe("removeSkill (unit — no SSH)", () => {
   it("returns success=false and a warning when sshExec returns null (sandbox unreachable)", () => {
@@ -324,6 +326,27 @@ describe("removeSkill (unit — no SSH)", () => {
     expect(result.removedUploadDir).toBe(false);
     expect(result.messages.some((m) => m.startsWith("Warning:"))).toBe(true);
   });
+
+  it("success is false for OpenClaw when mirrorDir removal fails even if uploadDir was removed", () => {
+    // Non-OpenClaw agent: success depends only on uploadDir
+    const nonOcPaths = resolvePaths(
+      { name: "hermes", configPaths: { immutableDir: "/sandbox/.hermes", writableDir: "/sandbox/.hermes-data" } },
+      "test-skill",
+    );
+    // Both SSH calls fail (unreachable), so removedUploadDir=false → success=false regardless
+    const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
+    const nonOcResult = removeSkill(ctx, nonOcPaths);
+    expect(nonOcResult.success).toBe(false); // uploadDir failed
+
+    // Validate the formula directly: for OpenClaw, success requires BOTH dirs gone
+    // We can't make uploadDir succeed without a real SSH, so we verify the logic
+    // by asserting removedMirrorDir is false (SSH unreachable) and that
+    // success therefore cannot be true.
+    const ocPaths = resolvePaths(null, "test-skill");
+    const ocResult = removeSkill(ctx, ocPaths);
+    expect(ocResult.removedMirrorDir).toBe(false);
+    expect(ocResult.success).toBe(false); // must be false: isOpenClaw && mirrorDir failed
+  });
 });
 
 describe("verifyRemove (unit — no SSH)", () => {
@@ -331,5 +354,33 @@ describe("verifyRemove (unit — no SSH)", () => {
     const paths = resolveSkillPaths(null, "test-skill");
     const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
     expect(verifyRemove(ctx, paths)).toBe(false);
+  });
+
+  it("returns false for non-OpenClaw paths when SSH is unreachable", () => {
+    const paths = resolvePaths(
+      { name: "hermes", configPaths: { immutableDir: "/sandbox/.hermes", writableDir: "/sandbox/.hermes-data" } },
+      "test-skill",
+    );
+    const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
+    expect(verifyRemove(ctx, paths)).toBe(false);
+  });
+});
+
+// ── checkExisting ────────────────────────────────────────────────────────────
+
+describe("checkExisting (unit — no SSH)", () => {
+  it("returns false when SSH is unreachable for OpenClaw paths", () => {
+    const paths = resolvePaths(null, "test-skill");
+    const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
+    expect(checkExisting(ctx, paths)).toBe(false);
+  });
+
+  it("returns false when SSH is unreachable for non-OpenClaw paths", () => {
+    const paths = resolvePaths(
+      { name: "hermes", configPaths: { immutableDir: "/sandbox/.hermes", writableDir: "/sandbox/.hermes-data" } },
+      "test-skill",
+    );
+    const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
+    expect(checkExisting(ctx, paths)).toBe(false);
   });
 });

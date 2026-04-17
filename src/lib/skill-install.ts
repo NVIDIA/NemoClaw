@@ -303,11 +303,16 @@ export function postInstall(
 }
 
 /**
- * Check whether a skill already exists on the sandbox at the upload path.
+ * Check whether a skill already exists on the sandbox at the upload path
+ * or (for OpenClaw) the mirror path. Probing both prevents a partial removal
+ * (uploadDir gone, mirrorDir surviving) from blocking a reinstall.
  */
 export function checkExisting(ctx: SshContext, paths: SkillPaths): boolean {
-  const target = shellQuote(`${paths.uploadDir}/SKILL.md`);
-  const result = sshExec(ctx, `test -f ${target} && echo EXISTS`);
+  const checks = [`test -f ${shellQuote(`${paths.uploadDir}/SKILL.md`)}`];
+  if (paths.isOpenClaw && paths.mirrorDir) {
+    checks.push(`test -f "${paths.mirrorDir}/SKILL.md"`);
+  }
+  const result = sshExec(ctx, `{ ${checks.join(" || ")}; } && echo EXISTS || echo ABSENT`);
   return result !== null && result.stdout === "EXISTS";
 }
 
@@ -379,7 +384,7 @@ export function removeSkill(
   }
 
   return {
-    success: removedUploadDir,
+    success: removedUploadDir && (!paths.isOpenClaw || removedMirrorDir),
     removedUploadDir,
     removedMirrorDir,
     clearedSessions,
@@ -389,10 +394,14 @@ export function removeSkill(
 
 /**
  * Verify the skill directory no longer exists on the sandbox.
+ * For OpenClaw sandboxes, both the upload dir and the mirror dir must be gone.
  */
 export function verifyRemove(ctx: SshContext, paths: SkillPaths): boolean {
-  const target = shellQuote(paths.uploadDir);
-  const result = sshExec(ctx, `test -e ${target} && echo EXISTS || echo GONE`);
+  const checks = [`test ! -e ${shellQuote(paths.uploadDir)}`];
+  if (paths.isOpenClaw && paths.mirrorDir) {
+    checks.push(`test ! -e "${paths.mirrorDir}"`);
+  }
+  const result = sshExec(ctx, `${checks.join(" && ")} && echo GONE || echo EXISTS`);
   return result !== null && result.stdout === "GONE";
 }
 
