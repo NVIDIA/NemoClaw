@@ -295,6 +295,66 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(markerFile, "utf8")).not.toContain("--follow");
   });
 
+  it("uses named sandbox exec for bridge status helpers", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-messaging-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const markerFile = path.join(home, "openshell.log");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+            messagingChannels: ["telegram"],
+            agent: "hermes",
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        'printf \'%s\\n\' "$*" >> "$marker_file"',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+        '  if [ "$8" = "tail -n 200 /tmp/gateway.log 2>/dev/null | grep -cE \\"getUpdates conflict|409[[:space:]:]+Conflict\\" || true" ]; then',
+        "    echo 1",
+        "    exit 0",
+        "  fi",
+        '  if [ "$8" = "tail -n 10 /tmp/gateway.log 2>/dev/null" ]; then',
+        "    echo 'getUpdates conflict'",
+        "    exit 0",
+        "  fi",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("status", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    const log = fs.readFileSync(markerFile, "utf8");
+    expect(r.code).toBe(0);
+    expect(log).toContain(
+      'sandbox exec -n alpha -- sh -c tail -n 200 /tmp/gateway.log 2>/dev/null | grep -cE "getUpdates conflict|409[[:space:]:]+Conflict" || true',
+    );
+    expect(log).toContain("sandbox exec -n alpha -- sh -c tail -n 10 /tmp/gateway.log 2>/dev/null");
+    expect(log).not.toContain("sandbox exec alpha sh -c");
+  });
+
   it("destroys the gateway runtime when the last sandbox is removed", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-"));
     const localBin = path.join(home, "bin");
