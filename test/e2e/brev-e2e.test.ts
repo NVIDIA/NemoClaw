@@ -21,7 +21,6 @@
  *
  * Optional env vars:
  *   TEST_SUITE             — which test to run: full (default), credential-sanitization, telegram-injection, all, gpu
- *   USE_LAUNCHABLE         — "1" (default) to use CI launchable, "0" for bare brev create + brev-setup.sh
  *   LAUNCHABLE_SETUP_SCRIPT — URL to setup script for launchable path (default: brev-launchable-ci-cpu.sh on main)
  *   BREV_MIN_VCPU          — Minimum vCPUs for CPU instance (default: 4)
  *   BREV_MIN_RAM           — Minimum RAM in GB for CPU instance (default: 16)
@@ -229,7 +228,7 @@ function waitForLaunchableReady(maxWaitMs = 1_200_000, pollIntervalMs = 15_000) 
 
   throw new Error(
     `Launchable setup did not complete within ${maxWaitMs / 60_000} minutes. ` +
-      `Sentinel file ${LAUNCHABLE_SENTINEL} not found.`,
+    `Sentinel file ${LAUNCHABLE_SENTINEL} not found.`,
   );
 }
 
@@ -336,7 +335,7 @@ function createBrevInstance(elapsed) {
   try {
     execSync(
       `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --min-disk ${BREV_MIN_DISK} --provider ${BREV_PROVIDER} --sort price | ` +
-        `brev create ${INSTANCE_NAME} --startup-script @${setupScriptPath} --detached`,
+      `brev create ${INSTANCE_NAME} --startup-script @${setupScriptPath} --detached`,
       { encoding: "utf-8", timeout: 180_000, stdio: ["pipe", "inherit", "inherit"] },
     );
   } catch (createErr) {
@@ -352,7 +351,7 @@ function createBrevInstance(elapsed) {
     if (!lsOutput.includes(INSTANCE_NAME)) {
       throw new Error(
         `brev create failed and instance "${INSTANCE_NAME}" not found in brev ls. ` +
-          `Original error: ${createErr.message}`,
+        `Original error: ${createErr.message}`,
         { cause: createErr },
       );
     }
@@ -683,6 +682,16 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     }
     deleteBrevInstance(INSTANCE_NAME);
   }, 120_000); // 2 min for cleanup
+
+  it.runIf(TEST_SUITE === "deploy-cli")(
+    "deploy CLI provisions a remote sandbox end to end",
+    () => {
+      const output = runRemoteTest("test/e2e/test-full-e2e.sh");
+      expect(output).toContain("PASS");
+      expect(output).not.toMatch(/FAIL:/);
+    },
+    900_000,
+  );
 
   // NOTE: The full E2E test runs install.sh --non-interactive which destroys and
   // rebuilds the sandbox from scratch. It cannot run alongside the security tests
