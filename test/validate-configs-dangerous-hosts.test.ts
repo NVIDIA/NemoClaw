@@ -128,4 +128,28 @@ describe("findDangerousHosts", () => {
       findDangerousHosts({ network_policies: { p: { endpoints: [null, { host: 123 }] } } }),
     ).toEqual([]);
   });
+
+  it("walks network_policies in preset-shape docs (preset metadata + top-level policies)", () => {
+    // Per schemas/policy-preset.schema.json, preset files carry both a top-level
+    // `preset:` metadata block AND a top-level `network_policies:` map. Endpoints
+    // live under network_policies (not inside preset), so the existing walk
+    // covers them. Lock that in so a future schema change doesn't silently
+    // regress dangerous-host coverage for presets.
+    const presetDoc = {
+      preset: { name: "slack-like", description: "example preset" },
+      network_policies: {
+        slack: {
+          name: "slack",
+          endpoints: [
+            { host: "slack.com", port: 443 },
+            { host: "*", port: 443 }, // dangerous
+          ],
+        },
+      },
+    };
+    const findings = findDangerousHosts(presetDoc);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].host).toBe("*");
+    expect(findings[0].path).toBe("/network_policies/slack/endpoints/1/host");
+  });
 });
