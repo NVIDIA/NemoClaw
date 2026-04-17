@@ -445,6 +445,7 @@ describe("onboard helpers", () => {
     const command = getDashboardForwardStartCommand("the-crucible", {
       chatUiUrl: "http://127.0.0.1:18789",
       openshellBinary: "/usr/bin/openshell",
+      isWsl: false,
     });
 
     expect(command).toContain("--background");
@@ -460,6 +461,7 @@ describe("onboard helpers", () => {
     const command = getDashboardForwardStartCommand("the-crucible", {
       chatUiUrl: "http://127.0.0.1:19000",
       openshellBinary: "/usr/bin/openshell",
+      isWsl: false,
     });
 
     expect(command).toContain("--background");
