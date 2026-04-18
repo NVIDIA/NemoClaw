@@ -2732,7 +2732,12 @@ async function sandboxSkillRemove(sandboxName: string, args: string[] = []): Pro
   try {
     const ctx = { configFile: tmpSshConfig, sandboxName };
 
-    if (!skillInstall.checkExisting(ctx, paths)) {
+    const existsCheck = skillInstall.checkExisting(ctx, paths);
+    if (existsCheck === null) {
+      console.error(`  Could not check if skill '${skillName}' exists — sandbox may be unreachable.`);
+      process.exit(1);
+    }
+    if (!existsCheck) {
       console.error(`  Skill '${skillName}' is not installed in sandbox '${sandboxName}'.`);
       process.exit(1);
     }
@@ -2750,7 +2755,10 @@ async function sandboxSkillRemove(sandboxName: string, args: string[] = []): Pro
     if (gone) {
       console.log(`  ${G}✓${R} Skill '${skillName}' removed`);
     } else {
-      console.error(`  Skill removal failed — '${paths.uploadDir}' still exists`);
+      console.error(`  Skill removal could not be verified.`);
+      console.error(
+        `  The sandbox may be unreachable, or the skill directory may still exist.`,
+      );
       process.exit(1);
     }
   } finally {
@@ -2865,7 +2873,11 @@ async function sandboxSkillDeploy(sandboxName: string, args: string[] = []): Pro
     const ctx = { configFile: tmpSshConfig, sandboxName };
 
     // 5. Check if skill already exists (update vs fresh install)
-    const isUpdate = skillInstall.checkExisting(ctx, paths);
+    const existingCheck = skillInstall.checkExisting(ctx, paths);
+    if (existingCheck === null) {
+      console.error(`  ${YW}Warning: could not check sandbox for existing skill — treating as fresh install.${R}`);
+    }
+    const isUpdate = existingCheck === true;
 
     // 6. Upload skill directory
     const { uploaded, failed } = skillInstall.uploadDirectory(ctx, skillDir, paths.uploadDir);

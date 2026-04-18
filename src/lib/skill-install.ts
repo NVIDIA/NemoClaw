@@ -87,7 +87,7 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
 
   if (!validateSkillName(nameValue)) {
     throw new Error(
-      `SKILL.md name '${nameValue}' contains invalid characters. Only [A-Za-z0-9._-] allowed.`,
+      `SKILL.md name '${nameValue}' is invalid. Use [A-Za-z0-9._-] and do not use '.' or '..'.`,
     );
   }
 
@@ -321,14 +321,22 @@ export function postInstall(
  * Check whether a skill already exists on the sandbox at the upload path
  * or (for OpenClaw) the mirror path. Probing both prevents a partial removal
  * (uploadDir gone, mirrorDir surviving) from blocking a reinstall.
+ *
+ * Returns:
+ *   true  — skill exists
+ *   false — skill is absent
+ *   null  — SSH probe failed; existence could not be determined
  */
-export function checkExisting(ctx: SshContext, paths: SkillPaths): boolean {
+export function checkExisting(ctx: SshContext, paths: SkillPaths): boolean | null {
   const checks = [`test -f ${shellQuote(`${paths.uploadDir}/SKILL.md`)}`];
   if (paths.isOpenClaw && paths.mirrorDir) {
     checks.push(`test -f "${paths.mirrorDir}/SKILL.md"`);
   }
   const result = sshExec(ctx, `{ ${checks.join(" || ")}; } && echo EXISTS || echo ABSENT`);
-  return result !== null && result.stdout === "EXISTS";
+  if (result === null) {
+    return null;
+  }
+  return result.stdout === "EXISTS";
 }
 
 /**
