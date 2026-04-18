@@ -2690,96 +2690,83 @@ function printPluginInstallHint(): void {
 }
 
 /**
- * Install or update a local skill directory into a live sandbox and perform
- * any agent-specific post-install refresh needed for the new content to load.
+ * Remove an installed skill from a live sandbox by name.
  */
-async function sandboxSkillInstall(sandboxName: string, args: string[] = []): Promise<void> {
-  const sub = args[0];
-  if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
-    printSkillInstallUsage();
-    return;
+async function sandboxSkillRemove(sandboxName: string, args: string[] = []): Promise<void> {
+  const skillName = args[1];
+  const extraArgs = args.slice(2);
+  if (extraArgs.length > 0) {
+    console.error(`  Unknown argument(s) for skill remove: ${extraArgs.join(", ")}`);
+    console.error("  Usage: nemoclaw <sandbox> skill remove <name>");
+    process.exit(1);
   }
-
-  if (sub !== "install" && sub !== "remove") {
-    console.error(`  Unknown skill subcommand: ${sub}`);
-    console.error("  Valid subcommands: install, remove");
+  if (!skillName) {
+    console.error("  Usage: nemoclaw <sandbox> skill remove <name>");
+    console.error("  <name> is the skill name from the SKILL.md frontmatter.");
+    process.exit(1);
+  }
+  if (!skillInstall.validateSkillName(skillName)) {
+    console.error(`  Invalid skill name: '${skillName}'`);
+    console.error("  Skill names must match [A-Za-z0-9._-].");
     process.exit(1);
   }
 
-  // ── skill remove ──────────────────────────────────────────────────────────
-  if (sub === "remove") {
-    const skillName = args[1];
-    const extraArgs = args.slice(2);
-    if (extraArgs.length > 0) {
-      console.error(`  Unknown argument(s) for skill remove: ${extraArgs.join(", ")}`);
-      console.error("  Usage: nemoclaw <sandbox> skill remove <name>");
-      process.exit(1);
-    }
-    if (!skillName) {
-      console.error("  Usage: nemoclaw <sandbox> skill remove <name>");
-      console.error("  <name> is the skill name from the SKILL.md frontmatter.");
-      process.exit(1);
-    }
-    if (!skillInstall.validateSkillName(skillName)) {
-      console.error(`  Invalid skill name: '${skillName}'`);
-      console.error("  Skill names must match [A-Za-z0-9._-].");
-      process.exit(1);
-    }
+  await ensureLiveSandboxOrExit(sandboxName);
 
-    await ensureLiveSandboxOrExit(sandboxName);
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const paths = skillInstall.resolveSkillPaths(agent, skillName);
 
-    const agent = agentRuntime.getSessionAgent(sandboxName);
-    const paths = skillInstall.resolveSkillPaths(agent, skillName);
-
-    const sshConfigResult = captureOpenshell(["sandbox", "ssh-config", sandboxName], {
-      ignoreError: true,
-    });
-    if (sshConfigResult.status !== 0) {
-      console.error("  Failed to obtain SSH configuration for the sandbox.");
-      process.exit(1);
-    }
-    const tmpSshConfig = path.join(
-      os.tmpdir(),
-      `nemoclaw-ssh-skill-${process.pid}-${Date.now()}.conf`,
-    );
-    fs.writeFileSync(tmpSshConfig, sshConfigResult.output, { mode: 0o600 });
-
-    try {
-      const ctx = { configFile: tmpSshConfig, sandboxName };
-
-      // Check the skill exists before attempting removal
-      if (!skillInstall.checkExisting(ctx, paths)) {
-        console.error(`  Skill '${skillName}' is not installed in sandbox '${sandboxName}'.`);
-        process.exit(1);
-      }
-
-      const result = skillInstall.removeSkill(ctx, paths);
-      for (const msg of result.messages) {
-        if (msg.startsWith("Warning:")) {
-          console.error(`  ${YW}${msg}${R}`);
-        } else {
-          console.log(`  ${D}${msg}${R}`);
-        }
-      }
-
-      const gone = skillInstall.verifyRemove(ctx, paths);
-      if (gone) {
-        console.log(`  ${G}✓${R} Skill '${skillName}' removed`);
-      } else {
-        console.error(`  Skill removal failed — '${paths.uploadDir}' still exists`);
-        process.exit(1);
-      }
-    } finally {
-      try {
-        fs.unlinkSync(tmpSshConfig);
-      } catch {
-        /* ignore */
-      }
-    }
-    return;
+  const sshConfigResult = captureOpenshell(["sandbox", "ssh-config", sandboxName], {
+    ignoreError: true,
+  });
+  if (sshConfigResult.status !== 0) {
+    console.error("  Failed to obtain SSH configuration for the sandbox.");
+    process.exit(1);
   }
+  const tmpSshConfig = path.join(
+    os.tmpdir(),
+    `nemoclaw-ssh-skill-${process.pid}-${Date.now()}.conf`,
+  );
+  fs.writeFileSync(tmpSshConfig, sshConfigResult.output, { mode: 0o600 });
 
-  // ── skill install ─────────────────────────────────────────────────────────
+  try {
+    const ctx = { configFile: tmpSshConfig, sandboxName };
+
+    if (!skillInstall.checkExisting(ctx, paths)) {
+      console.error(`  Skill '${skillName}' is not installed in sandbox '${sandboxName}'.`);
+      process.exit(1);
+    }
+
+    const result = skillInstall.removeSkill(ctx, paths);
+    for (const msg of result.messages) {
+      if (msg.startsWith("Warning:")) {
+        console.error(`  ${YW}${msg}${R}`);
+      } else {
+        console.log(`  ${D}${msg}${R}`);
+      }
+    }
+
+    const gone = skillInstall.verifyRemove(ctx, paths);
+    if (gone) {
+      console.log(`  ${G}✓${R} Skill '${skillName}' removed`);
+    } else {
+      console.error(`  Skill removal failed — '${paths.uploadDir}' still exists`);
+      process.exit(1);
+    }
+  } finally {
+    try {
+      fs.unlinkSync(tmpSshConfig);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * Install or update a local skill directory into a live sandbox and perform
+ * any agent-specific post-install refresh needed for the new content to load.
+ */
+async function sandboxSkillDeploy(sandboxName: string, args: string[] = []): Promise<void> {
   const skillPath = args[1];
   const extraArgs = args.slice(2);
   if (skillPath === "--help" || skillPath === "-h" || skillPath === "help") {
@@ -2918,7 +2905,38 @@ async function sandboxSkillInstall(sandboxName: string, args: string[] = []): Pr
   }
 }
 
-async function sandboxPolicyRemove(sandboxName: string, args: string[] = []): Promise<void> {
+async function sandboxSkillInstall(sandboxName, args = []) {
+  const sub = args[0];
+  if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
+    console.log("");
+    console.log("  Usage: nemoclaw <sandbox> skill install <path>");
+    console.log("         nemoclaw <sandbox> skill remove <name>");
+    console.log("");
+    console.log("  Deploy or remove a skill in a running sandbox.");
+    console.log("");
+    console.log("  install <path>  Deploy a skill directory to the sandbox.");
+    console.log(
+      "    <path> must be a skill directory containing a SKILL.md (with 'name:' frontmatter),",
+    );
+    console.log(
+      "    or a direct path to a SKILL.md file. All non-dot files in the directory are uploaded.",
+    );
+    console.log("");
+    console.log("  remove <name>   Remove an installed skill from the sandbox by name.");
+    console.log("    <name> is the skill name from SKILL.md frontmatter (e.g. my-skill).");
+    console.log("");
+    return;
+  }
+
+  if (sub === "install") return sandboxSkillDeploy(sandboxName, args);
+  if (sub === "remove") return sandboxSkillRemove(sandboxName, args);
+
+  console.error(`  Unknown skill subcommand: ${sub}`);
+  console.error("  Valid subcommands: install, remove");
+  process.exit(1);
+}
+
+async function sandboxPolicyRemove(sandboxName, args = []) {
   const dryRun = args.includes("--dry-run");
   const skipConfirm =
     args.includes("--yes") ||
