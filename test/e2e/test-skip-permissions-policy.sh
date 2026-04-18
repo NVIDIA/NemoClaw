@@ -256,13 +256,13 @@ PERMS_OUTPUT=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
   stat -c '%a %U:%G' /sandbox/.openclaw/openclaw.json 2>/dev/null || true)
 info "Config perms: ${PERMS_OUTPUT}"
 
-if echo "$PERMS_OUTPUT" | grep -q "600"; then
+if [ "$(echo "$PERMS_OUTPUT" | awk '{print $1}')" = "600" ]; then
   pass "Config file mode is 600 (matches openclaw doctor expectations)"
 else
   fail "Config file mode should be 600 (got: ${PERMS_OUTPUT})"
 fi
 
-if echo "$PERMS_OUTPUT" | grep -q "sandbox:sandbox"; then
+if [ "$(echo "$PERMS_OUTPUT" | awk '{print $2}')" = "sandbox:sandbox" ]; then
   pass "Config file owned by sandbox:sandbox"
 else
   fail "Config file should be owned by sandbox:sandbox (got: ${PERMS_OUTPUT})"
@@ -273,7 +273,7 @@ DIR_PERMS=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
   stat -c '%a %U:%G' /sandbox/.openclaw 2>/dev/null || true)
 info "Config dir perms: ${DIR_PERMS}"
 
-if echo "$DIR_PERMS" | grep -q "700"; then
+if [ "$(echo "$DIR_PERMS" | awk '{print $1}')" = "700" ]; then
   pass "Config directory mode is 700"
 else
   fail "Config directory mode should be 700 (got: ${DIR_PERMS})"
