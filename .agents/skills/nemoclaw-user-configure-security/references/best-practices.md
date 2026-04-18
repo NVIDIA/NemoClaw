@@ -207,23 +207,24 @@ The container mounts system directories read-only to prevent the agent from modi
 | Risk if relaxed | Making `/usr` or `/lib` writable lets the agent replace system binaries (such as `curl` or `node`) with trojanized versions. Making `/etc` writable lets the agent modify DNS resolution, TLS trust stores, or user accounts. |
 | Recommendation | Never make system paths writable. If the agent needs a writable location for generated files, use a subdirectory of `/sandbox`. |
 
-### Read-Only `.openclaw` Config
+### Hardened `.openclaw` Wrapper
 
 The `/sandbox/.openclaw` directory contains the OpenClaw gateway configuration, including auth tokens and CORS settings.
-The container mounts it read-only while writable agent state (plugins, agent data) lives in `/sandbox/.openclaw-data` through symlinks.
+The container mounts the wrapper path read-only while writable agent state and the live config file live in `/sandbox/.openclaw-data`.
+`/sandbox/.openclaw/openclaw.json` is a fixed symlink to `/sandbox/.openclaw-data/config/openclaw.json`, so legit config updates still work without reopening the wrapper directory itself.
 
 Multiple defense layers protect this directory:
 
-- **DAC permissions.** Root owns the directory and `openclaw.json` with `chmod 444`, so the sandbox user cannot write to them.
-- **Immutable flag.** The entrypoint applies `chattr +i` to the directory and all symlinks, preventing modification even if other controls fail.
-- **Symlink validation.** At startup, the entrypoint verifies every symlink in `.openclaw` points to the expected `.openclaw-data` target. If any symlink points elsewhere, the container refuses to start.
-- **Config integrity hash.** The build process pins a SHA256 hash of `openclaw.json`. The entrypoint verifies it at startup and refuses to start if the hash does not match.
+- **DAC permissions.** Root owns the wrapper directory and the symlink entries under it, so the sandbox user cannot replace them.
+- **Immutable flag.** The entrypoint applies `chattr +i` to the directory and all wrapper symlinks, preventing modification even if other controls fail.
+- **Symlink validation.** At startup, the entrypoint verifies every symlink in `.openclaw` points to the expected target before the gateway launches.
+- **Shared live-config path.** The live config file lives in `/sandbox/.openclaw-data/config/openclaw.json`, which is writable by both the sandbox user and the gateway process so `openclaw config`, Control UI edits, and direct file updates persist cleanly.
 
 | Aspect | Detail |
 |---|---|
-| Default | The container mounts `/sandbox/.openclaw` as read-only, root-owned, immutable, and integrity-verified at startup. `/sandbox/.openclaw-data` remains writable. |
+| Default | The container mounts `/sandbox/.openclaw` as a read-only, root-owned wrapper with immutable symlinks. The live config file lives in `/sandbox/.openclaw-data/config/openclaw.json`, exposed at `/sandbox/.openclaw/openclaw.json`, and `/sandbox/.openclaw-data` remains writable. |
 | What you can change | Move `/sandbox/.openclaw` from `read_only` to `read_write` in the policy file. |
-| Risk if relaxed | A writable `.openclaw` directory lets the agent modify its own gateway config: disabling CORS, changing auth tokens, or redirecting inference to an attacker-controlled endpoint. This is the single most dangerous filesystem change. |
+| Risk if relaxed | A writable `.openclaw` directory lets the agent replace wrapper symlinks and redirect config-backed paths to attacker-controlled locations, which can enable arbitrary code execution, persistence, or privilege escalation. |
 | Recommendation | Never make `/sandbox/.openclaw` writable. |
 
 ### Writable Paths
@@ -378,7 +379,7 @@ Device authentication requires each connecting device to go through a pairing fl
 | Aspect | Detail |
 |---|---|
 | Default | Enabled. The gateway requires device pairing for all connections. |
-| What you can change | Set `NEMOCLAW_DISABLE_DEVICE_AUTH=1` as a Docker build argument to disable device authentication. This is a build-time setting baked into `openclaw.json` and verified by hash at startup. |
+| What you can change | Set `NEMOCLAW_DISABLE_DEVICE_AUTH=1` as a Docker build argument to change the initial value, or edit `gateway.controlUi.dangerouslyDisableDeviceAuth` in the sandbox's OpenClaw config afterward. |
 | Risk if relaxed | Disabling device auth allows any device on the network to connect to the gateway without proving identity. This is dangerous when combined with LAN-bind changes or cloudflared tunnels in remote deployments, resulting in an unauthenticated, publicly reachable dashboard. |
 | Recommendation | Keep device auth enabled (the default). Only disable it for headless or development environments where no untrusted devices can reach the gateway. |
 

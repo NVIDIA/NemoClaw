@@ -88,12 +88,14 @@ RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologi
     && mkdir -p /sandbox/.nemoclaw \
     && chown -R sandbox:sandbox /sandbox
 
-# Split .openclaw into immutable config dir + writable state dir.
+# Split .openclaw into an immutable wrapper + writable state dir.
 # The policy makes /sandbox/.openclaw read-only via Landlock, so the agent
-# cannot modify openclaw.json, auth tokens, or CORS settings.  Writable
-# state (agents, plugins, etc.) lives in .openclaw-data, reached via symlinks.
+# cannot replace symlinks or rewrite the wrapper layout. Writable state,
+# including the active openclaw.json, lives in .openclaw-data and is exposed
+# through fixed symlinks.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/514
 RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
+        /sandbox/.openclaw-data/config \
         /sandbox/.openclaw-data/extensions \
         /sandbox/.openclaw-data/workspace \
         /sandbox/.openclaw-data/skills \
@@ -109,6 +111,7 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
         /sandbox/.openclaw-data/sandbox \
         /sandbox/.openclaw-data/telegram \
     && mkdir -p /sandbox/.openclaw \
+    && ln -s /sandbox/.openclaw-data/config/openclaw.json /sandbox/.openclaw/openclaw.json \
     && ln -s /sandbox/.openclaw-data/agents /sandbox/.openclaw/agents \
     && ln -s /sandbox/.openclaw-data/extensions /sandbox/.openclaw/extensions \
     && ln -s /sandbox/.openclaw-data/workspace /sandbox/.openclaw/workspace \

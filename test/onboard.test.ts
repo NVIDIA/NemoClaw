@@ -172,7 +172,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -210,7 +210,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_MAX_TOKENS=4096",
         "ARG NEMOCLAW_REASONING=false",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -250,7 +250,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
         "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
         "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
         "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
@@ -308,7 +308,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
         "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
         "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
         "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
@@ -540,7 +540,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -577,7 +577,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
         "ARG NEMOCLAW_BUILD_ID=default",
         "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
         "ARG NEMOCLAW_PROXY_PORT=3128",
@@ -629,7 +629,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
         "ARG NEMOCLAW_BUILD_ID=default",
         "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
         "ARG NEMOCLAW_PROXY_PORT=3128",
@@ -672,7 +672,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
         "ARG NEMOCLAW_BUILD_ID=default",
         "ARG NEMOCLAW_PROXY_HOST=10.200.0.1",
         "ARG NEMOCLAW_PROXY_PORT=3128",
@@ -724,7 +724,7 @@ describe("onboard helpers", () => {
         "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -739,17 +739,77 @@ describe("onboard helpers", () => {
         "build-web",
         "openai-api",
         null,
-        { fetchEnabled: true },
+        { provider: "brave", fetchEnabled: true },
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
-      assert.match(patched, /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=1$/m);
-      // Regression guard: the old secret-bearing build arg must not reappear.
-      assert.doesNotMatch(patched, /NEMOCLAW_WEB_CONFIG_B64/);
+      const expected = buildWebSearchDockerConfig(
+        { provider: "brave", fetchEnabled: true },
+        "brv-test-key",
+      );
+      assert.match(
+        patched,
+        new RegExp(
+          `^ARG NEMOCLAW_WEB_CONFIG_B64=${expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+          "m",
+        ),
+      );
     } finally {
       if (priorBraveKey === undefined) {
         delete process.env.BRAVE_API_KEY;
       } else {
         process.env.BRAVE_API_KEY = priorBraveKey;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patches the staged Dockerfile with Gemini Search config when enabled", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-web-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    const priorGeminiKey = process.env.GEMINI_API_KEY;
+    process.env.GEMINI_API_KEY = "gem-test-key";
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-web",
+        "openai-api",
+        null,
+        { provider: "gemini", fetchEnabled: true },
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      const expected = buildWebSearchDockerConfig(
+        { provider: "gemini", fetchEnabled: true },
+        "gem-test-key",
+      );
+      assert.match(
+        patched,
+        new RegExp(
+          `^ARG NEMOCLAW_WEB_CONFIG_B64=${expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+          "m",
+        ),
+      );
+    } finally {
+      if (priorGeminiKey === undefined) {
+        delete process.env.GEMINI_API_KEY;
+      } else {
+        process.env.GEMINI_API_KEY = priorGeminiKey;
       }
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -2124,7 +2184,45 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
+      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*webSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
+    );
+  });
+
+  it("keeps the current web-search key on transport retries", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /if \(recovery\.kind === "transport"\) \{[\s\S]*return "retry";\s*\}/);
+    assert.match(
+      source,
+      /const action = await promptWebSearchRecovery\(provider, validation\);\s*if \(action === "back"\) return null;\s*if \(action === "credential"\) \{\s*apiKey = null;\s*usingSavedKey = false;\s*\}/s,
+    );
+  });
+
+  it("preserves an explicitly disabled web-search choice during resume", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+
+    assert.match(
+      source,
+      /const persistedWebSearchConfigRaw = normalizePersistedWebSearchConfigValue\(webSearchConfig\);/,
+    );
+    assert.match(
+      source,
+      /if \(persistedWebSearchConfigRaw && persistedWebSearchConfigRaw\.fetchEnabled === false\) \{/,
+    );
+    assert.match(source, /note\("  \[resume\] Keeping Web Search disabled\."\);/);
+    assert.match(
+      source,
+      /if \(!isAffirmativeAnswer\(enableAnswer\)\) \{\s*return \{ fetchEnabled: false \};\s*\}/,
+    );
+    assert.match(
+      source,
+      /const provider = await promptWebSearchProviderChoice\(\);\s*if \(!provider\) \{\s*return \{ fetchEnabled: false \};\s*\}/s,
     );
   });
 
@@ -5239,7 +5337,7 @@ const { createSandbox } = require(${onboardPath});
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -5281,7 +5379,7 @@ const { createSandbox } = require(${onboardPath});
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -5322,7 +5420,7 @@ const { createSandbox } = require(${onboardPath});
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -5369,7 +5467,7 @@ const { createSandbox } = require(${onboardPath});
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -5419,7 +5517,7 @@ const { createSandbox } = require(${onboardPath});
         "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_CONFIG_B64=e30=",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );

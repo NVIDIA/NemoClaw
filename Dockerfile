@@ -190,11 +190,9 @@ ARG NEMOCLAW_BUILD_ID=default
 # before running `nemoclaw onboard`. See #1409.
 ARG NEMOCLAW_PROXY_HOST=10.200.0.1
 ARG NEMOCLAW_PROXY_PORT=3128
-# Non-secret flag: set to "1" when the user configured Brave Search during
-# onboard. Controls whether the web search block is written to openclaw.json.
-# The actual API key is injected at runtime via openshell:resolve:env, never
-# baked into the image.
-ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
+# Base64-encoded non-secret OpenClaw web-search config fragment. API keys are
+# written as openshell:resolve:env references and injected at runtime.
+ARG NEMOCLAW_WEB_CONFIG_B64=e30=
 
 # SECURITY: Promote build-args to env vars so the Python script reads them
 # via os.environ, never via string interpolation into Python source code.
@@ -215,14 +213,17 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
-    NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED}
+    NEMOCLAW_WEB_CONFIG_B64=${NEMOCLAW_WEB_CONFIG_B64} \
+    OPENCLAW_STATE_DIR=/sandbox/.openclaw \
+    OPENCLAW_CONFIG_PATH=/sandbox/.openclaw-data/config/openclaw.json
 
 WORKDIR /sandbox
 USER sandbox
 
 # Write the COMPLETE openclaw.json including gateway config and auth token.
-# This file is immutable at runtime (Landlock read-only on /sandbox/.openclaw).
-# No runtime writes to openclaw.json are needed or possible.
+# The live config lives under /sandbox/.openclaw-data/config so OpenClaw CLI
+# and Control UI edits can persist after onboarding. /sandbox/.openclaw stays
+# as the immutable wrapper path and exposes the live config through a symlink.
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 # Auth token is generated per build so each image has a unique token.
 RUN python3 -c "\
@@ -276,36 +277,31 @@ config = { \
         'auth': {'token': secrets.token_hex(32)} \
     } \
 }; \
-config.update({ \
-    'tools': { \
-        'web': { \
-            'search': { \
-                'enabled': True, \
-                'provider': 'brave', \
-                'apiKey': 'openshell:resolve:env:BRAVE_API_KEY' \
-            }, \
-            'fetch': {'enabled': True} \
-        } \
-    } \
-}) if os.environ.get('NEMOCLAW_WEB_SEARCH_ENABLED', '') == '1' else None; \
-path = os.path.expanduser('~/.openclaw/openclaw.json'); \
-json.dump(config, open(path, 'w'), indent=2); \
-os.chmod(path, 0o600)"
+web_config = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_WEB_CONFIG_B64', 'e30=') or 'e30=').decode('utf-8')); \
+config.update(web_config if isinstance(web_config, dict) else {}); \
+state_dir = os.environ.get('OPENCLAW_STATE_DIR', os.path.expanduser('~/.openclaw')); \
+config_path = os.environ.get('OPENCLAW_CONFIG_PATH', os.path.join(state_dir, 'openclaw.json')); \
+wrapper_path = os.path.join(state_dir, 'openclaw.json'); \
+os.makedirs(os.path.dirname(config_path), exist_ok=True); \
+os.makedirs(state_dir, exist_ok=True); \
+os.remove(wrapper_path) if os.path.lexists(wrapper_path) and not os.path.islink(wrapper_path) else None; \
+os.remove(wrapper_path) if os.path.islink(wrapper_path) and os.path.realpath(wrapper_path) != config_path else None; \
+os.symlink(config_path, wrapper_path) if not os.path.islink(wrapper_path) else None; \
+fh = open(config_path, 'w', encoding='utf-8'); \
+json.dump(config, fh, indent=2); \
+fh.write('\n'); \
+fh.close(); \
+os.chmod(config_path, 0o660)"
 
 # Install NemoClaw plugin into OpenClaw
 RUN openclaw doctor --fix > /dev/null 2>&1 || true \
     && openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true
 
-# Lock openclaw.json via DAC: chown to root so the sandbox user cannot modify
-# it at runtime.  This works regardless of Landlock enforcement status.
-# The Landlock policy (/sandbox/.openclaw in read_only) provides defense-in-depth
-# once OpenShell enables enforcement.
+# Lock the .openclaw wrapper tree via DAC. The wrapper path stays read-only
+# and root-owned so the sandbox user cannot replace symlinks or swap the live
+# config path. The active config file itself lives in .openclaw-data/config and
+# is shared between the sandbox user and the gateway process.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/514
-# Lock the entire .openclaw directory tree.
-# SECURITY: chmod 755 (not 1777) — the sandbox user can READ but not WRITE
-# to this directory. This prevents the agent from replacing symlinks
-# (e.g., pointing /sandbox/.openclaw/hooks to an attacker-controlled path).
-# The writable state lives in .openclaw-data, reached via the symlinks.
 # hadolint ignore=DL3002
 USER root
 
@@ -369,14 +365,9 @@ RUN chown root:root /sandbox/.openclaw \
     && rm -rf /root/.npm /sandbox/.npm \
     && find /sandbox/.openclaw -mindepth 1 -maxdepth 1 -exec chown -h root:root {} + \
     && chmod 755 /sandbox/.openclaw \
-    && chmod 444 /sandbox/.openclaw/openclaw.json
-
-# Pin config hash at build time so the entrypoint can verify integrity.
-# Prevents the agent from creating a copy with a tampered config and
-# restarting the gateway pointing at it.
-RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
-    && chmod 444 /sandbox/.openclaw/.config-hash \
-    && chown root:root /sandbox/.openclaw/.config-hash
+    && chown sandbox:gateway /sandbox/.openclaw-data/config /sandbox/.openclaw-data/config/openclaw.json \
+    && chmod 2775 /sandbox/.openclaw-data/config \
+    && chmod 664 /sandbox/.openclaw-data/config/openclaw.json
 
 # DAC-protect .nemoclaw directory: /sandbox/.nemoclaw is Landlock read_write
 # (for plugin state/config), but the parent and blueprints are immutable at

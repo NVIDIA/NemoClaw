@@ -35,15 +35,15 @@ filesystem_policy:
                                     # their own runtime environment. Writable state
                                     # is restricted to /sandbox/.openclaw-data.
                                     # Ref: https://github.com/NVIDIA/NemoClaw/issues/804
-    - /sandbox/.openclaw            # Immutable gateway config — prevents agent
-                                    # from tampering with auth tokens or CORS.
-                                    # Writable state (agents, plugins) lives in
-                                    # /sandbox/.openclaw-data via symlinks.
+    - /sandbox/.openclaw            # Immutable wrapper path — prevents agent
+                                    # from replacing symlinks or swapping the
+                                    # active config path. Live config and other
+                                    # writable state live in /sandbox/.openclaw-data.
                                     # Ref: https://github.com/NVIDIA/NemoClaw/issues/514
   read_write:
     - /tmp
     - /dev/null
-    - /sandbox/.openclaw-data       # Writable agent/plugin state (symlinked from .openclaw)
+    - /sandbox/.openclaw-data       # Writable state, including the active OpenClaw config
     - /sandbox/.nemoclaw            # Plugin state and config (state.ts, config.ts).
                                     # Blueprints are root-owned; sticky bit (1755)
                                     # on parent prevents rename/delete (#1607).

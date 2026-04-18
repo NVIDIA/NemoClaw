@@ -82,6 +82,7 @@ $ NEMOCLAW_SINGLE_SESSION=1 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
 Credentials are stored in `~/.nemoclaw/credentials.json`. For file permissions, plaintext storage behavior, and hardening guidance, see [Credential Storage](../security/credential-storage.md).
+The sandbox's live OpenClaw config is stored at `/sandbox/.openclaw-data/config/openclaw.json` and exposed at `/sandbox/.openclaw/openclaw.json`, so later `openclaw config set` and dashboard config edits persist after onboarding.
 The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
 
 After provider selection, the wizard prompts for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
@@ -102,10 +103,9 @@ In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `bal
 $ NEMOCLAW_POLICY_TIER=restricted nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
-If you enable Brave Search during onboarding, NemoClaw currently stores the Brave API key in the sandbox's OpenClaw configuration.
-That means the OpenClaw agent can read the key.
-NemoClaw explores an OpenShell-hosted credential path first, but the current OpenClaw Brave runtime does not consume that path end to end yet.
-Treat Brave Search as an explicit opt-in and use a dedicated low-privilege Brave key.
+If you enable web search during onboarding, NemoClaw stores an OpenShell environment resolver in the sandbox's OpenClaw configuration as that provider's `apiKey`.
+That keeps the raw key out of `openclaw.json`, but the OpenClaw agent can still resolve and read the key at runtime.
+Treat web search as an explicit opt-in and use a dedicated low-privilege provider key.
 
 For non-interactive onboarding, you must explicitly accept the third-party software notice:
 
@@ -119,14 +119,17 @@ or:
 $ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 nemoclaw onboard --non-interactive
 ```
 
-To enable Brave Search in non-interactive mode, set:
+To enable web search in non-interactive mode, set a supported provider key:
 
 ```console
 $ BRAVE_API_KEY=... \
   nemoclaw onboard --non-interactive
 ```
 
-`BRAVE_API_KEY` enables Brave Search in non-interactive mode and also enables `web_fetch`.
+Supported keys are `BRAVE_API_KEY`, `GEMINI_API_KEY`, and `TAVILY_API_KEY`.
+If more than one is set, NemoClaw prefers Brave, then Gemini, then Tavily unless `NEMOCLAW_WEB_SEARCH_PROVIDER` is set explicitly to `brave`, `gemini`, or `tavily`.
+Whichever provider wins that selection has its key copied into the sandbox OpenClaw config, so agents can read the selected provider's `apiKey`.
+Enabling web search also enables `web_fetch`.
 
 The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.

@@ -10,7 +10,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { WebSearchConfig } from "./web-search";
+import {
+  getWebSearchCredentialEnvNames,
+  normalizePersistedWebSearchConfig,
+  type PersistedWebSearchConfig,
+} from "./web-search";
 
 export const SESSION_VERSION = 1;
 export const SESSION_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
@@ -57,7 +61,7 @@ export interface Session {
   credentialEnv: string | null;
   preferredInferenceApi: string | null;
   nimContainer: string | null;
-  webSearchConfig: WebSearchConfig | null;
+  webSearchConfig: PersistedWebSearchConfig | null;
   policyPresets: string[] | null;
   metadata: SessionMetadata;
   steps: Record<string, StepState>;
@@ -86,7 +90,7 @@ export interface SessionUpdates {
   credentialEnv?: string;
   preferredInferenceApi?: string;
   nimContainer?: string;
-  webSearchConfig?: WebSearchConfig | null;
+  webSearchConfig?: PersistedWebSearchConfig | null;
   policyPresets?: string[];
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
 }
@@ -122,13 +126,30 @@ export function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const REDACTED_CREDENTIAL_ENV_NAMES = Array.from(
+  new Set([
+    "NVIDIA_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "COMPATIBLE_API_KEY",
+    "COMPATIBLE_ANTHROPIC_API_KEY",
+    ...getWebSearchCredentialEnvNames(),
+  ]),
+);
+
+const CREDENTIAL_ASSIGNMENT_RE = new RegExp(
+  `(${REDACTED_CREDENTIAL_ENV_NAMES.map(escapeRegExp).join("|")})=\\S+`,
+  "gi",
+);
+
 export function redactSensitiveText(value: unknown): string | null {
   if (typeof value !== "string") return null;
   return value
-    .replace(
-      /(NVIDIA_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|COMPATIBLE_API_KEY|COMPATIBLE_ANTHROPIC_API_KEY|BRAVE_API_KEY)=\S+/gi,
-      "$1=<REDACTED>",
-    )
+    .replace(CREDENTIAL_ASSIGNMENT_RE, "$1=<REDACTED>")
     .replace(/Bearer\s+\S+/gi, "Bearer <REDACTED>")
     .replace(/nvapi-[A-Za-z0-9_-]{10,}/g, "<REDACTED>")
     .replace(/ghp_[A-Za-z0-9]{20,}/g, "<REDACTED>")
@@ -196,10 +217,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     credentialEnv: overrides.credentialEnv || null,
     preferredInferenceApi: overrides.preferredInferenceApi || null,
     nimContainer: overrides.nimContainer || null,
-    webSearchConfig:
-      overrides.webSearchConfig && overrides.webSearchConfig.fetchEnabled === true
-        ? { fetchEnabled: true }
-        : null,
+    webSearchConfig: normalizePersistedWebSearchConfig(overrides.webSearchConfig),
     policyPresets: Array.isArray(overrides.policyPresets)
       ? overrides.policyPresets.filter((value) => typeof value === "string")
       : null,
@@ -232,11 +250,7 @@ export function normalizeSession(data: unknown): Session | null {
     preferredInferenceApi:
       typeof d.preferredInferenceApi === "string" ? d.preferredInferenceApi : null,
     nimContainer: typeof d.nimContainer === "string" ? d.nimContainer : null,
-    webSearchConfig:
-      isObject(d.webSearchConfig) &&
-      (d.webSearchConfig as Record<string, unknown>).fetchEnabled === true
-        ? { fetchEnabled: true }
-        : null,
+    webSearchConfig: normalizePersistedWebSearchConfig(d.webSearchConfig),
     policyPresets: Array.isArray(d.policyPresets)
       ? (d.policyPresets as unknown[]).filter((value) => typeof value === "string") as string[]
       : null,
@@ -542,10 +556,15 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   if (typeof updates.preferredInferenceApi === "string")
     safe.preferredInferenceApi = updates.preferredInferenceApi;
   if (typeof updates.nimContainer === "string") safe.nimContainer = updates.nimContainer;
-  if (isObject(updates.webSearchConfig) && updates.webSearchConfig.fetchEnabled === true) {
-    safe.webSearchConfig = { fetchEnabled: true };
-  } else if (updates.webSearchConfig === null) {
-    safe.webSearchConfig = null;
+  if (Object.prototype.hasOwnProperty.call(updates, "webSearchConfig")) {
+    if (updates.webSearchConfig === null) {
+      safe.webSearchConfig = null;
+    } else {
+      const normalizedWebSearchConfig = normalizePersistedWebSearchConfig(updates.webSearchConfig);
+      if (normalizedWebSearchConfig) {
+        safe.webSearchConfig = normalizedWebSearchConfig;
+      }
+    }
   }
   if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
@@ -654,6 +673,7 @@ export function summarizeForDebug(session: Session | null = loadSession()): Reco
     credentialEnv: session.credentialEnv,
     preferredInferenceApi: session.preferredInferenceApi,
     nimContainer: session.nimContainer,
+    webSearchConfig: session.webSearchConfig,
     policyPresets: session.policyPresets,
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,

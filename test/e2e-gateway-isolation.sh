@@ -69,19 +69,37 @@ else
   fail "gateway and sandbox UIDs not distinct: $OUT"
 fi
 
-# ── Test 2: openclaw.json is not writable by sandbox user ────────
+# ── Test 2: openclaw.json resolves to the live writable config ───
 
-info "2. openclaw.json is not writable by sandbox user"
-OUT=$(run_as_sandbox "touch /sandbox/.openclaw/openclaw.json 2>&1 || echo BLOCKED")
-if echo "$OUT" | grep -q "BLOCKED\|Permission denied\|Read-only"; then
-  pass "sandbox cannot write to openclaw.json"
+info "2. openclaw.json wrapper symlink points to the live config"
+OUT=$(run_as_root "readlink -f /sandbox/.openclaw/openclaw.json")
+if [ "$OUT" = "/sandbox/.openclaw-data/config/openclaw.json" ]; then
+  pass "openclaw.json wrapper points to live config"
 else
-  fail "sandbox CAN write to openclaw.json: $OUT"
+  fail "openclaw.json wrapper points to unexpected target: $OUT"
 fi
 
-# ── Test 3: .openclaw directory is not writable by sandbox ───────
+# ── Test 3: sandbox user can update the live config ──────────────
 
-info "3. .openclaw directory not writable by sandbox (no symlink replacement)"
+info "3. sandbox user can write the live OpenClaw config"
+OUT=$(run_as_sandbox "python3 - <<'PY'
+import json
+from pathlib import Path
+path = Path('/sandbox/.openclaw/openclaw.json')
+cfg = json.loads(path.read_text())
+cfg.setdefault('gateway', {}).setdefault('controlUi', {})['allowedOrigins'] = ['https://sandbox-write.test']
+path.write_text(json.dumps(cfg))
+print('WRITABLE')
+PY")
+if echo "$OUT" | grep -q "WRITABLE"; then
+  pass "sandbox can update the live config"
+else
+  fail "sandbox could not update the live config: $OUT"
+fi
+
+# ── Test 4: .openclaw directory is not writable by sandbox ───────
+
+info "4. .openclaw directory not writable by sandbox (no symlink replacement)"
 # ln -sf may return 0 even when it fails to replace (silent failure on perm denied).
 # Verify the symlink still points to the expected target after the attempt.
 OUT=$(run_as_sandbox "ln -sf /tmp/evil /sandbox/.openclaw/hooks 2>&1; readlink /sandbox/.openclaw/hooks")
@@ -92,14 +110,22 @@ else
   fail "sandbox replaced symlink — hooks now points to: $TARGET"
 fi
 
-# ── Test 4: Config hash file exists and is valid ─────────────────
+# ── Test 5: gateway user can write the live config as well ───────
 
-info "4. Config hash exists and matches openclaw.json"
-OUT=$(run_as_root "cd /sandbox/.openclaw && sha256sum -c .config-hash --status && echo VALID || echo INVALID")
-if echo "$OUT" | grep -q "VALID"; then
-  pass "config hash matches openclaw.json"
+info "5. gateway user can write the live config"
+OUT=$(run_as_root "gosu gateway python3 - <<'PY'
+import json
+from pathlib import Path
+path = Path('/sandbox/.openclaw-data/config/openclaw.json')
+cfg = json.loads(path.read_text())
+cfg.setdefault('gateway', {}).setdefault('controlUi', {})['allowedOrigins'] = ['https://gateway-write.test']
+path.write_text(json.dumps(cfg))
+print('WRITABLE')
+PY")
+if echo "$OUT" | grep -q "WRITABLE"; then
+  pass "gateway can update the live config"
 else
-  fail "config hash mismatch: $OUT"
+  fail "gateway could not update the live config: $OUT"
 fi
 
 # ── Test 5: Update hints are disabled in sandbox config ──────────
@@ -110,16 +136,6 @@ if echo "$OUT" | grep -q "OK"; then
   pass "startup update hints disabled"
 else
   fail "startup update hints not disabled: $OUT"
-fi
-
-# ── Test 6: Config hash is not writable by sandbox ───────────────
-
-info "6. Config hash not writable by sandbox user"
-OUT=$(run_as_sandbox "echo fake > /sandbox/.openclaw/.config-hash 2>&1 || echo BLOCKED")
-if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
-  pass "sandbox cannot tamper with config hash"
-else
-  fail "sandbox CAN write to config hash: $OUT"
 fi
 
 # ── Test 7: gosu is installed ────────────────────────────────────
@@ -167,6 +183,13 @@ if [ -z "$FAILED_LINKS" ]; then
   pass "all symlinks point to .openclaw-data"
 else
   fail "symlink targets wrong:$FAILED_LINKS"
+fi
+
+OUT=$(run_as_root "readlink -f /sandbox/.openclaw/openclaw.json")
+if [ "$OUT" = "/sandbox/.openclaw-data/config/openclaw.json" ]; then
+  pass "openclaw.json symlink points to the writable config target"
+else
+  fail "openclaw.json symlink target wrong: $OUT"
 fi
 
 # ── Test 11: iptables is installed (required for network policy enforcement) ──

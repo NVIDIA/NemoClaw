@@ -17,22 +17,47 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(src).toMatch(/nohup "\$OPENCLAW" gateway run --port "\$\{_DASHBOARD_PORT\}" >\/tmp\/gateway\.log 2>&1 &/);
   });
 
-  it("exits on config integrity failure in non-root mode", () => {
+  it("exits on config layout failure in non-root mode", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-    // Non-root block must call verify_config_integrity and exit 1 on failure
-    expect(src).toMatch(/if ! verify_config_integrity; then\s+.*exit 1/s);
+    // Non-root block must call verify_config_layout and exit 1 on failure
+    expect(src).toMatch(/if ! verify_config_layout; then\s+.*exit 1/s);
     // Must not contain the old "proceeding anyway" fallback
     expect(src).not.toMatch(/proceeding anyway/i);
   });
 
-  it("calls verify_config_integrity in both root and non-root paths", () => {
+  it("calls verify_config_layout in both root and non-root paths", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
     // The function must be called at least twice: once in the non-root
     // if-block and once in the root path below it.
-    const calls = src.match(/verify_config_integrity/g) || [];
+    const calls = src.match(/verify_config_layout/g) || [];
     expect(calls.length).toBeGreaterThanOrEqual(3); // definition + 2 call sites
+  });
+
+  it("validates the full .openclaw wrapper layout, not just openclaw.json", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+    expect(src).toMatch(/OPENCLAW_WRAPPER_ENTRIES=\(/);
+    for (const entry of [
+      "openclaw.json",
+      "agents",
+      "extensions",
+      "workspace",
+      "skills",
+      "hooks",
+      "identity",
+      "devices",
+      "canvas",
+      "cron",
+      "memory",
+      "update-check.json",
+    ]) {
+      expect(src).toContain(entry);
+    }
+    expect(src).toMatch(/for name in "\$\{OPENCLAW_WRAPPER_ENTRIES\[@\]\}"; do/);
+    expect(src).toContain("OpenClaw config wrapper entry is not a symlink");
+    expect(src).toContain("OpenClaw config wrapper target mismatch");
   });
 
   it("sends startup diagnostics to stderr so they do not leak into bridge output (#1064)", () => {
@@ -251,26 +276,26 @@ describe("runtime model override (#759)", () => {
     expect(src).toContain("NEMOCLAW_MODEL_OVERRIDE");
   });
 
-  it("calls apply_model_override after verify_config_integrity in both paths", () => {
+  it("calls apply_model_override after verify_config_layout in both paths", () => {
     // Non-root path: extract from uid check to the Root path comment
     const nonRootBlock = src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)# ── Root path/);
     expect(nonRootBlock).toBeTruthy();
     expect(nonRootBlock[1]).toMatch(
-      /verify_config_integrity[\s\S]*?apply_model_override[\s\S]*?export_gateway_token/,
+      /verify_config_layout[\s\S]*?apply_model_override[\s\S]*?export_gateway_token/,
     );
 
-    // Root path: verify_config_integrity → apply_model_override → apply_cors_override
+    // Root path: verify_config_layout -> apply_model_override -> apply_cors_override
     const rootBlock = src.match(
-      /# ── Root path[\s\S]*?verify_config_integrity[\s\S]*?apply_model_override[\s\S]*?apply_cors_override[\s\S]*?export_gateway_token/,
+      /# ── Root path[\s\S]*?verify_config_layout[\s\S]*?apply_model_override[\s\S]*?apply_cors_override[\s\S]*?export_gateway_token/,
     );
     expect(rootBlock).toBeTruthy();
   });
 
-  it("recomputes config hash after override", () => {
+  it("writes the live OpenClaw config after override", () => {
     const fn = src.match(/apply_model_override\(\) \{([\s\S]*?)^}/m);
     expect(fn).toBeTruthy();
-    expect(fn[1]).toContain("sha256sum openclaw.json");
-    expect(fn[1]).toContain("config-hash");
+    expect(fn[1]).toContain('local config_file="$OPENCLAW_CONFIG_PATH"');
+    expect(fn[1]).toContain("Model override written");
   });
 
   it("is a no-op when no override env vars are set", () => {
@@ -285,11 +310,10 @@ describe("runtime model override (#759)", () => {
     expect(src).toContain("NEMOCLAW_INFERENCE_API_OVERRIDE");
   });
 
-  it("guards against symlink attacks on config and hash files", () => {
+  it("refuses model override when the live config file is missing", () => {
     const fn = src.match(/apply_model_override\(\) \{([\s\S]*?)^}/m);
     expect(fn).toBeTruthy();
-    expect(fn[1]).toContain('-L "$config_file"');
-    expect(fn[1]).toContain('-L "$hash_file"');
+    expect(fn[1]).toContain('[ ! -f "$config_file" ]');
     expect(fn[1]).toContain("Refusing model override");
   });
 
@@ -386,11 +410,11 @@ describe("runtime CORS origin override (#719)", () => {
     expect(rootBlock).toBeTruthy();
   });
 
-  it("recomputes config hash after override", () => {
+  it("writes the live OpenClaw config after override", () => {
     const fn = src.match(/apply_cors_override\(\) \{([\s\S]*?)^}/m);
     expect(fn).toBeTruthy();
-    expect(fn[1]).toContain("sha256sum openclaw.json");
-    expect(fn[1]).toContain("config-hash");
+    expect(fn[1]).toContain('local config_file="$OPENCLAW_CONFIG_PATH"');
+    expect(fn[1]).toContain("CORS override written");
   });
 
   it("is a no-op when NEMOCLAW_CORS_ORIGIN is not set", () => {
@@ -405,10 +429,10 @@ describe("runtime CORS origin override (#719)", () => {
     expect(fn[1]).toContain("^https?://");
   });
 
-  it("guards against symlink attacks", () => {
+  it("refuses CORS override when the live config file is missing", () => {
     const fn = src.match(/apply_cors_override\(\) \{([\s\S]*?)^}/m);
     expect(fn).toBeTruthy();
-    expect(fn[1]).toContain('-L "$config_file"');
+    expect(fn[1]).toContain('[ ! -f "$config_file" ]');
     expect(fn[1]).toContain("Refusing CORS override");
   });
 
@@ -463,11 +487,13 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
   });
 
   it("documents NEMOCLAW_DISABLE_DEVICE_AUTH as a build-time setting in the script header", () => {
-    // Must mention it's build-time only — setting at runtime has no effect
-    // because openclaw.json is baked and immutable
+    // Must mention it's still a build-time default and point runtime changes
+    // at the OpenClaw config instead of this env var.
     const header = src.split("set -euo pipefail")[0];
     expect(header).toMatch(/NEMOCLAW_DISABLE_DEVICE_AUTH/);
-    expect(header).toMatch(/build[- ]time/i);
+    expect(header).toMatch(/Build-time/i);
+    expect(header).toMatch(/Runtime changes belong in the/i);
+    expect(header).toMatch(/OpenClaw config, not this env var/i);
   });
 
   it("defines ALLOWED_CLIENTS and ALLOWED_MODES outside the poll loop", () => {

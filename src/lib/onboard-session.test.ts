@@ -122,18 +122,15 @@ describe("onboard session", () => {
     expect(loaded.metadata.token).toBeUndefined();
   });
 
-  it("persists and clears web search config through safe session updates", () => {
-    session.saveSession(session.createSession());
-    session.markStepComplete("provider_selection", {
-      webSearchConfig: { fetchEnabled: true },
-    });
+  it("normalizes legacy web search configs and preserves explicit disable updates", () => {
+    session.saveSession(session.createSession({ webSearchConfig: { fetchEnabled: true } }));
 
     let loaded = session.loadSession();
-    expect(loaded.webSearchConfig).toEqual({ fetchEnabled: true });
+    expect(loaded.webSearchConfig).toEqual({ provider: "brave", fetchEnabled: true });
 
-    session.completeSession({ webSearchConfig: null });
+    session.completeSession({ webSearchConfig: { provider: "brave", fetchEnabled: false } });
     loaded = session.loadSession();
-    expect(loaded.webSearchConfig).toBeNull();
+    expect(loaded.webSearchConfig).toEqual({ provider: "brave", fetchEnabled: false });
   });
 
   it("does not clear existing metadata when updates omit whitelisted metadata fields", () => {
@@ -291,13 +288,19 @@ describe("onboard session", () => {
     session.saveSession(session.createSession());
     session.markStepFailed(
       "inference",
-      "provider auth failed with NVIDIA_API_KEY=nvapi-secret Bearer topsecret sk-secret-value ghp_1234567890123456789012345",
+      "provider auth failed with NVIDIA_API_KEY=nvapi-secret BRAVE_API_KEY=brv-secret GEMINI_API_KEY=gem-secret TAVILY_API_KEY=tvly-secret Bearer topsecret sk-secret-value ghp_1234567890123456789012345",
     );
 
     const loaded = session.loadSession();
     expect(loaded.steps.inference.error).toContain("NVIDIA_API_KEY=<REDACTED>");
+    expect(loaded.steps.inference.error).toContain("BRAVE_API_KEY=<REDACTED>");
+    expect(loaded.steps.inference.error).toContain("GEMINI_API_KEY=<REDACTED>");
+    expect(loaded.steps.inference.error).toContain("TAVILY_API_KEY=<REDACTED>");
     expect(loaded.steps.inference.error).toContain("Bearer <REDACTED>");
     expect(loaded.steps.inference.error).not.toContain("nvapi-secret");
+    expect(loaded.steps.inference.error).not.toContain("brv-secret");
+    expect(loaded.steps.inference.error).not.toContain("gem-secret");
+    expect(loaded.steps.inference.error).not.toContain("tvly-secret");
     expect(loaded.steps.inference.error).not.toContain("topsecret");
     expect(loaded.steps.inference.error).not.toContain("sk-secret-value");
     expect(loaded.steps.inference.error).not.toContain("ghp_1234567890123456789012345");
@@ -305,13 +308,19 @@ describe("onboard session", () => {
   });
 
   it("summarizes the session for debug output", () => {
-    session.saveSession(session.createSession({ sandboxName: "my-assistant" }));
+    session.saveSession(
+      session.createSession({
+        sandboxName: "my-assistant",
+        webSearchConfig: { provider: "tavily", fetchEnabled: true },
+      }),
+    );
     session.markStepStarted("preflight");
     session.markStepComplete("preflight");
     session.completeSession();
     const summary = session.summarizeForDebug();
 
     expect(summary.sandboxName).toBe("my-assistant");
+    expect(summary.webSearchConfig).toEqual({ provider: "tavily", fetchEnabled: true });
     expect(summary.steps.preflight.status).toBe("complete");
     expect(summary.steps.preflight.startedAt).toBeTruthy();
     expect(summary.steps.preflight.completedAt).toBeTruthy();

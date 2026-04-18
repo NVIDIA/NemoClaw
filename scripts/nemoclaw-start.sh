@@ -6,15 +6,18 @@
 # gateway as the 'gateway' user, then drops to 'sandbox' for agent commands.
 #
 # SECURITY: The gateway runs as a separate user so the sandboxed agent cannot
-# kill it or restart it with a tampered config (CVE: fake-HOME bypass).
-# The config hash is verified at startup to detect tampering.
+# kill it or restart it with a tampered HOME or a rewritten .openclaw wrapper
+# (CVE: fake-HOME bypass). The wrapper layout and config symlink are verified
+# at startup before the gateway launches.
 #
 # Optional env:
 #   NVIDIA_API_KEY                API key for NVIDIA-hosted inference
 #   CHAT_UI_URL                   Browser origin that will access the forwarded dashboard
+#   OPENCLAW_STATE_DIR            Active OpenClaw state dir (default: /sandbox/.openclaw)
+#   OPENCLAW_CONFIG_PATH          Active OpenClaw config path
 #   NEMOCLAW_DISABLE_DEVICE_AUTH  Build-time only. Set to "1" to skip device-pairing auth
-#                                 (development/headless). Has no runtime effect — openclaw.json
-#                                 is baked at image build and verified by hash at startup.
+#                                 (development/headless). Runtime changes belong in the
+#                                 OpenClaw config, not this env var.
 #   NEMOCLAW_MODEL_OVERRIDE       Override the primary model at startup without rebuilding
 #                                 the sandbox image. Must match the model configured on
 #                                 the gateway via `openshell inference set`.
@@ -185,21 +188,84 @@ fi
 PUBLIC_PORT="$_DASHBOARD_PORT"
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
+OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-/sandbox/.openclaw}"
+OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-/sandbox/.openclaw-data/config/openclaw.json}"
+OPENCLAW_CONFIG_SYMLINK="${OPENCLAW_STATE_DIR}/openclaw.json"
+OPENCLAW_WRAPPER_ENTRIES=(
+  openclaw.json
+  agents
+  extensions
+  workspace
+  skills
+  hooks
+  identity
+  devices
+  canvas
+  cron
+  memory
+  update-check.json
+)
+export OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH
 
-# ── Config integrity check ──────────────────────────────────────
-# The config hash was pinned at build time. If it doesn't match,
-# someone (or something) has tampered with the config.
+# ── OpenClaw layout verification ────────────────────────────────
+# The .openclaw wrapper stays read-only and symlink-validated. The live
+# config file is writable and lives outside the wrapper at
+# ${OPENCLAW_CONFIG_PATH}.
 
-verify_config_integrity() {
-  local hash_file="/sandbox/.openclaw/.config-hash"
-  if [ ! -f "$hash_file" ]; then
-    echo "[SECURITY] Config hash file missing — refusing to start without integrity verification" >&2
+verify_wrapper_symlink() {
+  local name="$1"
+  local expected="$2"
+  local entry="${OPENCLAW_STATE_DIR}/${name}"
+  local target
+
+  if [ ! -L "$entry" ]; then
+    echo "[SECURITY] OpenClaw config wrapper entry is not a symlink: ${entry}" >&2
     return 1
   fi
-  if ! (cd /sandbox/.openclaw && sha256sum -c "$hash_file" --status 2>/dev/null); then
-    echo "[SECURITY] openclaw.json integrity check FAILED — config may have been tampered with" >&2
-    echo "[SECURITY] Expected hash: $(cat "$hash_file")" >&2
-    echo "[SECURITY] Actual hash:   $(sha256sum /sandbox/.openclaw/openclaw.json)" >&2
+  target="$(readlink -f "$entry" 2>/dev/null || true)"
+  if [ "$target" != "$expected" ]; then
+    echo "[SECURITY] OpenClaw config wrapper target mismatch: ${entry} -> ${target} (expected ${expected})" >&2
+    return 1
+  fi
+}
+
+verify_config_layout() {
+  local config_dir openclaw_data_dir name expected entry target
+  if [ ! -d "$OPENCLAW_STATE_DIR" ]; then
+    echo "[SECURITY] OpenClaw config wrapper directory missing: ${OPENCLAW_STATE_DIR}" >&2
+    return 1
+  fi
+  config_dir="$(dirname "$OPENCLAW_CONFIG_PATH")"
+  openclaw_data_dir="$(dirname "$config_dir")"
+  if [ ! -d "$config_dir" ]; then
+    echo "[SECURITY] OpenClaw config directory missing: ${config_dir}" >&2
+    return 1
+  fi
+
+  for name in "${OPENCLAW_WRAPPER_ENTRIES[@]}"; do
+    case "$name" in
+      openclaw.json) expected="$OPENCLAW_CONFIG_PATH" ;;
+      *) expected="${openclaw_data_dir}/${name}" ;;
+    esac
+    verify_wrapper_symlink "$name" "$expected" || return 1
+  done
+
+  for entry in "${OPENCLAW_STATE_DIR}"/*; do
+    [ -L "$entry" ] || continue
+    name="$(basename "$entry")"
+    case " ${OPENCLAW_WRAPPER_ENTRIES[*]} " in
+      *" ${name} "*) continue ;;
+    esac
+    target="$(readlink -f "$entry" 2>/dev/null || true)"
+    expected="${openclaw_data_dir}/${name}"
+    if [ "$target" != "$expected" ]; then
+      echo "[SECURITY] OpenClaw config wrapper target mismatch: ${entry} -> ${target} (expected ${expected})" >&2
+      return 1
+    fi
+  done
+
+  if [ ! -f "$OPENCLAW_CONFIG_PATH" ]; then
+    echo "[SECURITY] OpenClaw config file missing: ${OPENCLAW_CONFIG_PATH}" >&2
     return 1
   fi
 }
@@ -207,9 +273,7 @@ verify_config_integrity() {
 # ── Runtime model/provider override ──────────────────────────────
 # Patches openclaw.json at startup when NEMOCLAW_MODEL_OVERRIDE is set,
 # allowing model or provider changes without rebuilding the sandbox image.
-# Runs AFTER integrity check (detects build-time tampering) and BEFORE
-# chattr +i (locks the file permanently). Recomputes the config hash so
-# future integrity checks pass.
+# Runs after the wrapper layout is verified and before the gateway launches.
 #
 # SECURITY: These env vars come from the host (Docker/OpenShell), not from
 # inside the sandbox. The agent cannot set them. Landlock locks the file
@@ -225,20 +289,17 @@ apply_model_override() {
     || [ -n "${NEMOCLAW_REASONING:-}" ] \
     || return 0
 
-  # SECURITY: Only root can write to /sandbox/.openclaw (root:root 444).
-  # In non-root mode the sandbox user cannot modify the config.
+  # Keep host-supplied runtime overrides root-only so sandbox commands cannot
+  # silently mutate the configured model through environment variables.
   if [ "$(id -u)" -ne 0 ]; then
     printf '[SECURITY] Model/inference overrides ignored — requires root (non-root mode cannot write to config)\n' >&2
     return 0
   fi
 
-  local config_file="/sandbox/.openclaw/openclaw.json"
-  local hash_file="/sandbox/.openclaw/.config-hash"
+  local config_file="$OPENCLAW_CONFIG_PATH"
 
-  # SECURITY: Refuse to write through symlinks to prevent symlink-following attacks.
-  # Symlink validation (validate_openclaw_symlinks) runs later, so guard here too.
-  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    printf '[SECURITY] Refusing model override — config or hash path is a symlink\n' >&2
+  if [ ! -f "$config_file" ]; then
+    printf '[SECURITY] Refusing model override — config file missing: %s\n' "$config_file" >&2
     return 1
   fi
 
@@ -335,16 +396,13 @@ with open(config_file, "w") as f:
     json.dump(cfg, f, indent=2)
 PYOVERRIDE
 
-  # Recompute config hash so integrity check passes on next startup
-  (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
-  printf '[SECURITY] Config hash recomputed after model override\n' >&2
+  printf '[config] Model override written to %s\n' "$config_file" >&2
 }
 
 # ── Runtime CORS origin override ──────────────────────────────────
 # Adds a browser origin to gateway.controlUi.allowedOrigins at startup
 # without rebuilding the sandbox image. Useful for custom domains/ports.
-# Same trust model as model override: host-set env var, applied before
-# chattr +i, hash recomputed.
+# Same trust model as model override: host-set env var applied before the gateway launches.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/719
 
 apply_cors_override() {
@@ -355,11 +413,10 @@ apply_cors_override() {
     return 0
   fi
 
-  local config_file="/sandbox/.openclaw/openclaw.json"
-  local hash_file="/sandbox/.openclaw/.config-hash"
+  local config_file="$OPENCLAW_CONFIG_PATH"
 
-  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    printf '[SECURITY] Refusing CORS override — config or hash path is a symlink\n' >&2
+  if [ ! -f "$config_file" ]; then
+    printf '[SECURITY] Refusing CORS override — config file missing: %s\n' "$config_file" >&2
     return 1
   fi
 
@@ -397,15 +454,15 @@ with open(config_file, "w") as f:
     json.dump(cfg, f, indent=2)
 PYCORS
 
-  (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
-  printf '[config] Config hash recomputed after CORS override\n' >&2
+  printf '[config] CORS override written to %s\n' "$config_file" >&2
 }
 
 _read_gateway_token() {
   python3 - <<'PYTOKEN'
 import json
+import os
 try:
-    with open('/sandbox/.openclaw/openclaw.json') as f:
+    with open(os.environ.get('OPENCLAW_CONFIG_PATH', '/sandbox/.openclaw/openclaw.json')) as f:
         cfg = json.load(f)
     print(cfg.get('gateway', {}).get('auth', {}).get('token', ''))
 except Exception:
@@ -528,7 +585,10 @@ validate_openclaw_symlinks() {
     [ -L "$entry" ] || continue
     name="$(basename "$entry")"
     target="$(readlink -f "$entry" 2>/dev/null || true)"
-    expected="/sandbox/.openclaw-data/$name"
+    case "$name" in
+      openclaw.json) expected="$OPENCLAW_CONFIG_PATH" ;;
+      *) expected="/sandbox/.openclaw-data/$name" ;;
+    esac
     if [ "$target" != "$expected" ]; then
       echo "[SECURITY] Symlink $entry points to unexpected target: $target (expected $expected)" >&2
       return 1
@@ -577,7 +637,8 @@ write_auth_profile() {
   python3 - <<'PYAUTH'
 import json
 import os
-path = os.path.expanduser('~/.openclaw/agents/main/agent/auth-profiles.json')
+state_dir = os.environ.get('OPENCLAW_STATE_DIR', os.path.expanduser('~/.openclaw'))
+path = os.path.join(state_dir, 'agents', 'main', 'agent', 'auth-profiles.json')
 os.makedirs(os.path.dirname(path), exist_ok=True)
 json.dump({
     'nvidia:manual': {
@@ -817,8 +878,8 @@ fi
 if [ "$(id -u)" -ne 0 ]; then
   echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled" >&2
   export HOME=/sandbox
-  if ! verify_config_integrity; then
-    echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
+  if ! verify_config_layout; then
+    echo "[SECURITY] OpenClaw config layout check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
   apply_model_override
@@ -918,16 +979,14 @@ fi
 
 # ── Root path (full privilege separation via gosu) ─────────────
 
-# Verify config integrity before starting anything
-verify_config_integrity
+# Verify the OpenClaw config path wiring before starting anything.
+verify_config_layout
 apply_model_override
 apply_cors_override
 export_gateway_token
 install_configure_guard
 
 # Inject messaging channel config if provider tokens are present.
-# Must run AFTER integrity check (to detect build-time tampering) and
-# BEFORE chattr +i (which locks the config permanently).
 configure_messaging_channels
 
 # Write auth profile as sandbox user (needs writable .openclaw-data)
@@ -948,10 +1007,6 @@ chmod 600 /tmp/gateway.log
 touch /tmp/auto-pair.log
 chown sandbox:sandbox /tmp/auto-pair.log
 chmod 600 /tmp/auto-pair.log
-
-# Verify ALL symlinks in .openclaw point to expected .openclaw-data targets.
-# Dynamic scan so future OpenClaw symlinks are covered automatically.
-validate_openclaw_symlinks
 
 # Lock .openclaw directory after symlink validation: set the immutable flag
 # so symlinks cannot be swapped at runtime even if DAC or Landlock are
