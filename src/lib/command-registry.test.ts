@@ -17,10 +17,10 @@ import type { CommandDef } from "./command-registry";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 48 commands", () => {
+    it("should contain exactly 49 commands", () => {
       // 23 global (18 visible + 5 hidden help/version aliases)
-      // 25 sandbox (21 visible + 4 hidden shields/config)
-      expect(COMMANDS).toHaveLength(48);
+      // 26 sandbox (22 visible + 4 hidden shields/config)
+      expect(COMMANDS).toHaveLength(49);
     });
 
     it("should have no duplicate usage strings", () => {
@@ -52,9 +52,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 25 entries", () => {
-      // 21 visible + 4 hidden (shields×3 + config get)
-      expect(sandboxCommands()).toHaveLength(25);
+    it("should return exactly 26 entries", () => {
+      // 22 visible + 4 hidden (shields×3 + config get)
+      expect(sandboxCommands()).toHaveLength(26);
     });
 
     it("every entry has scope sandbox", () => {
@@ -68,7 +68,7 @@ describe("command-registry", () => {
     it("should exclude 9 hidden commands (39 visible)", () => {
       // 5 hidden global (help, --help, -h, --version, -v) +
       // 4 hidden sandbox (shields×3, config get)
-      expect(visibleCommands()).toHaveLength(39);
+      expect(visibleCommands()).toHaveLength(40);
     });
 
     it("no visible command has hidden=true", () => {
@@ -165,9 +165,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 16 unique action tokens including empty string", () => {
+    it("returns exactly 17 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(16);
+      expect(tokens).toHaveLength(17);
       // Must contain the same set as the old sandboxActions array
       const expected = new Set([
         "connect",
@@ -185,6 +185,7 @@ describe("command-registry", () => {
         "config",
         "channels",
         "gateway-token",
+        "recover",
         "",
       ]);
       expect(new Set(tokens)).toEqual(expected);

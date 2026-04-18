@@ -170,6 +170,12 @@ export const COMMANDS: readonly CommandDef[] = [
     scope: "sandbox",
   },
   {
+    usage: "nemoclaw <name> recover",
+    description: "Restart gateway and port-forward for a sandbox",
+    group: "Sandbox Management",
+    scope: "sandbox",
+  },
+  {
     usage: "nemoclaw <name> destroy",
     description: "Stop NIM + delete sandbox",
     flags: "(--yes to skip prompt)",

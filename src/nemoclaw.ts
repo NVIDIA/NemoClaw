@@ -4445,6 +4445,12 @@ const [cmd, ...args] = process.argv.slice(2);
       case "rebuild":
         await sandboxRebuild(cmd, actionArgs);
         break;
+      case "recover": {
+        const result = checkAndRecoverSandboxProcesses(cmd);
+        if (!result.checked) process.exit(0);
+        if (!result.recovered && !result.wasRunning) process.exit(1);
+        break;
+      }
       case "snapshot":
         await sandboxSnapshot(cmd, actionArgs);
         break;
@@ -4599,7 +4605,7 @@ const [cmd, ...args] = process.argv.slice(2);
       default:
         console.error(`  Unknown action: ${action}`);
         console.error(
-          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, share, rebuild, shields, config, channels, gateway-token, destroy`,
+          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, share, rebuild, recover, shields, config, channels, gateway-token, destroy`,
         );
         process.exit(1);
     }
