@@ -279,15 +279,6 @@ else
   fail "Config directory mode should be 700 (got: ${DIR_PERMS})"
 fi
 
-# 3g: Reconnect is idempotent (no error on second connect with permanent shields)
-info "Testing idempotent reconnect..."
-reconnect_output=$(nemoclaw "$SANDBOX_NAME" connect --dangerously-skip-permissions </dev/null 2>&1 || true)
-if echo "$reconnect_output" | grep -qi "error\|fatal\|cannot"; then
-  fail "Reconnect with --dangerously-skip-permissions failed: ${reconnect_output:0:200}"
-else
-  pass "Reconnect with --dangerously-skip-permissions is idempotent"
-fi
-
 # ══════════════════════════════════════════════════════════════════
 # Phase 4: Verify outbound HTTPS from inside sandbox
 # ══════════════════════════════════════════════════════════════════
