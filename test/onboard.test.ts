@@ -196,6 +196,49 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("patches context window, max tokens, and reasoning from env vars", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-model-meta-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_CONTEXT_WINDOW=131072",
+        "ARG NEMOCLAW_MAX_TOKENS=4096",
+        "ARG NEMOCLAW_REASONING=false",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    const saved = {
+      NEMOCLAW_CONTEXT_WINDOW: process.env.NEMOCLAW_CONTEXT_WINDOW,
+      NEMOCLAW_MAX_TOKENS: process.env.NEMOCLAW_MAX_TOKENS,
+      NEMOCLAW_REASONING: process.env.NEMOCLAW_REASONING,
+    };
+    process.env.NEMOCLAW_CONTEXT_WINDOW = "32768";
+    process.env.NEMOCLAW_MAX_TOKENS = "8192";
+    process.env.NEMOCLAW_REASONING = "true";
+
+    try {
+      patchStagedDockerfile(dockerfilePath, "gpt-5.4", "http://127.0.0.1:19999", "build-meta", "openai-api");
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_CONTEXT_WINDOW=32768$/m);
+      assert.match(patched, /^ARG NEMOCLAW_MAX_TOKENS=8192$/m);
+      assert.match(patched, /^ARG NEMOCLAW_REASONING=true$/m);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("patches the staged Dockerfile with Discord guild config for server workspaces", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-discord-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
@@ -445,6 +488,7 @@ describe("onboard helpers", () => {
     const command = getDashboardForwardStartCommand("the-crucible", {
       chatUiUrl: "http://127.0.0.1:18789",
       openshellBinary: "/usr/bin/openshell",
+      isWsl: false,
     });
 
     expect(command).toContain("--background");
@@ -460,6 +504,7 @@ describe("onboard helpers", () => {
     const command = getDashboardForwardStartCommand("the-crucible", {
       chatUiUrl: "http://127.0.0.1:19000",
       openshellBinary: "/usr/bin/openshell",
+      isWsl: false,
     });
 
     expect(command).toContain("--background");
@@ -1502,6 +1547,10 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("inference") && command.includes("get")) {
     return [
@@ -1819,6 +1868,10 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("inference") && command.includes("get")) {
     return [
@@ -2071,7 +2124,7 @@ const { setupInference } = require(${onboardPath});
 
     assert.match(
       source,
-      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*webSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
+      /startRecordedStep\("sandbox", \{ sandboxName, provider, model \}\);\s*selectedMessagingChannels = await setupMessagingChannels\(\);\s*onboardSession\.updateSession\(\(current\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*return current;\s*\}\);\s*sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*dangerouslySkipPermissions,\s*\);/,
     );
   });
 
@@ -2091,18 +2144,19 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
-  it("activates permissive policy via policy set when dangerouslySkipPermissions is true", () => {
+  it("enters permanent shields-down state when dangerouslySkipPermissions is true", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
 
-    // The dangerouslySkipPermissions branch must call applyPermissivePolicy to
-    // activate the policy via `openshell policy set --wait`.  Without this,
-    // the base policy from sandbox create stays in Pending status (#897).
+    // The dangerouslySkipPermissions branch must call shields.shieldsDownPermanent
+    // to activate the permissive policy, unlock the config file with doctor-aligned
+    // permissions, and record permanent shields-down state. This replaced the
+    // previous policies.applyPermissivePolicy call to unify the shields state machine.
     assert.match(
       source,
-      /if \(dangerouslySkipPermissions\) \{\s*step\(8, 8, "Policy presets"\);\s*if \(!waitForSandboxReady\(sandboxName\)\) \{[\s\S]*?\}\s*policies\.applyPermissivePolicy\(sandboxName\);/,
+      /if \(dangerouslySkipPermissions\) \{\s*step\(8, 8, "Policy presets"\);\s*if \(!waitForSandboxReady\(sandboxName\)\) \{[\s\S]*?\}\s*shields\.shieldsDownPermanent\(sandboxName\);/,
     );
     // Must NOT just print a skip message without activating the policy.
     assert.doesNotMatch(
@@ -2145,6 +2199,10 @@ const credentials = require(${credentialsPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -2275,10 +2333,14 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -2382,10 +2444,14 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -2466,16 +2532,25 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
+const _n = (command) =>
+  Array.isArray(command)
+    ? command.map((part) => "'" + String(part) + "'").join(" ")
+    : String(command);
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
+  return { status: 0 };
+};
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ command: _n([file, ...args]), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
-  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  const normalized = _n(command);
+  if (normalized.includes("'sandbox' 'get' 'my-assistant'")) return "";
+  if (normalized.includes("'sandbox' 'list'")) return "my-assistant Ready";
   // Custom port: dashboard readiness curl uses 19000 (DASHBOARD_PORT from env)
-  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:19000/")) return "ok";
-  if (command.includes("'forward' 'list'")) return "19000 -> my-assistant:19000";
+  if (normalized.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:19000/'")) return "ok";
+  if (normalized.includes("'forward' 'list'")) return "19000 -> my-assistant:19000";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -2600,12 +2675,16 @@ runner.run = (command, opts = {}) => {
   if (command.includes("'provider' 'get'")) return { status: 1 };
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
   if (command.includes("'provider' 'get'")) return "Provider: discord-bridge";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
-  if (command.includes("sandbox exec") && command.includes("curl")) return "ok";
+  if (command.includes("'sandbox' 'exec'") && command.includes("'curl'")) return "ok";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -2767,6 +2846,7 @@ runner.run = (command, opts = {}) => {
   }
   return { status: 0 };
 };
+runner.runFile = () => ({ status: 0 });
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get'")) return "";
   if (command.includes("'sandbox' 'list'")) return "";
@@ -2834,6 +2914,10 @@ const registry = require(${registryPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -3018,11 +3102,15 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
   if (command.includes("'forward' 'list'")) return "";
-  if (command.includes("sandbox exec") && command.includes("curl")) return "ok";
+  if (command.includes("'sandbox' 'exec'") && command.includes("'curl'")) return "ok";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -3231,6 +3319,10 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
@@ -3327,11 +3419,15 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
   if (command.includes("'forward' 'list'")) return "";
-  if (command.includes("sandbox exec") && command.includes("curl")) return "ok";
+  if (command.includes("'sandbox' 'exec'") && command.includes("'curl'")) return "ok";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -3442,6 +3538,10 @@ runner.run = (command, opts = {}) => {
   if (command.includes("'sandbox' 'delete'")) sandboxDeleted = true;
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   // Existing sandbox that is NOT ready initially, becomes Ready after recreation
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
@@ -3449,7 +3549,7 @@ runner.runCapture = (command) => {
     return sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
   }
   if (command.includes("'forward' 'list'")) return "";
-  if (command.includes("sandbox exec") && command.includes("curl")) return "ok";
+  if (command.includes("'sandbox' 'exec'") && command.includes("'curl'")) return "ok";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -3796,6 +3896,279 @@ console.log(JSON.stringify({
     assert.equal(payload.missing, null, "should return null when credential is not stored");
   });
 
+  it("checkTelegramReachability aborts in non-interactive mode on network failure (curl exit 52)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-net-"));
+    try {
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "telegram-net.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = `
+const httpProbe = require(${httpProbePath});
+httpProbe.runCurlProbe = () => ({
+  ok: false,
+  httpStatus: 0,
+  curlStatus: 52,
+  body: "",
+  stderr: "Empty reply from server",
+  message: "curl failed (exit 52): Empty reply from server",
+});
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+const { checkTelegramReachability } = require(${onboardPath});
+(async () => {
+  await checkTelegramReachability("fake-token");
+})();
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+      });
+
+      assert.equal(result.status, 1, "should exit with code 1 in non-interactive mode");
+      assert.ok(
+        result.stderr.includes("Aborting onboarding in non-interactive mode"),
+        "should print abort message to stderr",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("checkTelegramReachability succeeds silently on HTTP 200", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-ok-"));
+    try {
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "telegram-ok.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = `
+const httpProbe = require(${httpProbePath});
+httpProbe.runCurlProbe = () => ({
+  ok: true,
+  httpStatus: 200,
+  curlStatus: 0,
+  body: '{"ok":true,"result":{"id":123,"is_bot":true}}',
+  stderr: "",
+  message: "",
+});
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+const { checkTelegramReachability } = require(${onboardPath});
+(async () => {
+  const logs = [];
+  const origLog = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  await checkTelegramReachability("valid-token");
+  console.log = origLog;
+  origLog(JSON.stringify({ logs }));
+})();
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+      assert.equal(payload.logs.length, 0, "should print no warnings on success");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("checkTelegramReachability reports token error on HTTP 401", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-401-"));
+    try {
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "telegram-401.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = `
+const httpProbe = require(${httpProbePath});
+httpProbe.runCurlProbe = () => ({
+  ok: false,
+  httpStatus: 401,
+  curlStatus: 0,
+  body: '{"ok":false,"error_code":401,"description":"Unauthorized"}',
+  stderr: "",
+  message: "HTTP 401: Unauthorized",
+});
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+const { checkTelegramReachability } = require(${onboardPath});
+(async () => {
+  const logs = [];
+  const origLog = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  await checkTelegramReachability("bad-token");
+  console.log = origLog;
+  origLog(JSON.stringify({ logs }));
+})();
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+      assert.ok(
+        payload.logs.some((l) => l.includes("Bot token was rejected by Telegram")),
+        "should report token-specific error, not network error",
+      );
+      assert.ok(
+        !payload.logs.some((l) => l.includes("not reachable")),
+        "should not report network error for token rejection",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("checkTelegramReachability reports token error on HTTP 404", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-404-"));
+    try {
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "telegram-404.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = `
+const httpProbe = require(${httpProbePath});
+httpProbe.runCurlProbe = () => ({
+  ok: false,
+  httpStatus: 404,
+  curlStatus: 0,
+  body: '{"ok":false,"error_code":404,"description":"Not Found"}',
+  stderr: "",
+  message: "HTTP 404: Not Found",
+});
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+const { checkTelegramReachability } = require(${onboardPath});
+(async () => {
+  const logs = [];
+  const origLog = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  await checkTelegramReachability("bad-token");
+  console.log = origLog;
+  origLog(JSON.stringify({ logs }));
+})();
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+      assert.ok(
+        payload.logs.some((l) => l.includes("Bot token was rejected by Telegram")),
+        "should report token-specific error, not network error",
+      );
+      assert.ok(
+        !payload.logs.some((l) => l.includes("not reachable")),
+        "should not report network error for token rejection",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("checkTelegramReachability surfaces unexpected probe failure (httpStatus 0, unknown curl code)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-unknown-"));
+    try {
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "telegram-unknown.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = `
+const httpProbe = require(${httpProbePath});
+httpProbe.runCurlProbe = () => ({
+  ok: false,
+  httpStatus: 0,
+  curlStatus: 99,
+  body: "",
+  stderr: "unknown curl failure",
+  message: "curl failed (exit 99): unknown curl failure",
+});
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+const { checkTelegramReachability } = require(${onboardPath});
+(async () => {
+  const logs = [];
+  const origLog = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  await checkTelegramReachability("fake-token");
+  console.log = origLog;
+  origLog(JSON.stringify({ logs }));
+})();
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+      });
+
+      assert.equal(result.status, 0, "should not abort on unknown curl code (non-blocking warn)");
+      const payload = JSON.parse(result.stdout.trim().split("\n").pop());
+      assert.ok(
+        payload.logs.some((l) => l.includes("Telegram reachability probe failed")),
+        "should surface the probe failure message",
+      );
+      assert.ok(
+        !payload.logs.some((l) => l.includes("not reachable from this host")),
+        "should not trigger the network-codes branch for unknown curl codes",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("providerExistsInGateway returns false when provider is missing", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-exists-false-"));
@@ -3863,13 +4236,17 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) {
     sandboxListCalls += 1;
     return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
   }
-  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -3973,6 +4350,10 @@ const registry = require(${registryPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -4096,6 +4477,10 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("inference") && command.includes("get")) {
     return [
@@ -4165,6 +4550,10 @@ const registry = require(${registryPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
+  return { status: 0 };
+};
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -4251,10 +4640,14 @@ runner.run = (command, opts = {}) => {
   if (command.includes("'provider' 'get'")) return { status: 1 };
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -4378,10 +4771,14 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };
@@ -4473,6 +4870,7 @@ const { createSandbox } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "messaging-noninteractive.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -4483,6 +4881,19 @@ const { createSandbox } = require(${onboardPath});
 const runner = require(${runnerPath});
 runner.run = () => ({ status: 0 });
 runner.runCapture = () => "";
+
+// Stub the Telegram reachability probe so this test doesn't make a real network
+// call — on networks where api.telegram.org is blocked (corporate proxies), the
+// non-interactive preflight would otherwise abort the test.
+const httpProbe = require(${httpProbePath});
+httpProbe.runCurlProbe = () => ({
+  ok: true,
+  httpStatus: 200,
+  curlStatus: 0,
+  body: '{"ok":true,"result":{"id":1,"is_bot":true}}',
+  stderr: "",
+  message: "",
+});
 
 const { setupMessagingChannels } = require(${onboardPath});
 
@@ -4636,10 +5047,14 @@ runner.run = (command, opts = {}) => {
   commands.push({ command, env: opts.env || null });
   return { status: 0 };
 };
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  return { status: 0 };
+};
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("sandbox exec 'my-assistant' curl -sf http://localhost:18789/")) return "ok";
+  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
   if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
   return "";
 };

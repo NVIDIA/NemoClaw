@@ -103,7 +103,7 @@ selectFromList(items, options)
   return spawnSync(process.execPath, ["-e", script], {
     cwd: REPO_ROOT,
     encoding: "utf-8",
-    timeout: 5000,
+    timeout: Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 5000),
     input,
     env: {
       ...process.env,
@@ -820,7 +820,7 @@ selectForRemoval(items, options)
       return spawnSync(process.execPath, ["-e", script], {
         cwd: REPO_ROOT,
         encoding: "utf-8",
-        timeout: 5000,
+        timeout: Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 5000),
         input,
         env: {
           ...process.env,

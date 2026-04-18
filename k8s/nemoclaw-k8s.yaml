@@ -9,25 +9,54 @@ metadata:
   labels:
     app: nemoclaw
 spec:
+  securityContext:
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
   automountServiceAccountToken: false
   enableServiceLinks: false
   containers:
     # Docker daemon (DinD)
     - name: dind
-      image: docker:24-dind
+      image: docker:24-dind-rootless
       securityContext:
-        privileged: true
+        privileged: false
+        runAsUser: 1000
+        runAsNonRoot: true
+        allowPrivilegeEscalation: true  # required for newuidmap/newgidmap
+        seccompProfile:
+          type: Unconfined  # required for user namespace setup by rootlesskit
+        capabilities:
+          drop:
+            - ALL
+          add:
+            - SETUID     # newuidmap
+            - SETGID     # newgidmap
+            - SETFCAP    # file capabilities during image builds
+            - NET_ADMIN  # k3s/flannel CNI network setup
+            - NET_RAW    # k3s/flannel VXLAN and kube-proxy
       env:
         - name: DOCKER_TLS_CERTDIR
           value: ""
-      command: ["dockerd", "--host=unix:///var/run/docker.sock"]
+        # Rootlesskit: use the pod network namespace directly instead of
+        # creating an isolated slirp4netns namespace.  Without this, k3s
+        # and the socat proxy live in different network namespaces and
+        # inference routing from the sandbox to host.openshell.internal
+        # breaks.
+        - name: DOCKERD_ROOTLESS_ROOTLESSKIT_NET
+          value: "host"
+        # Rootlesskit: propagate mount events from the pod into the
+        # rootless mount namespace so k3s can bind-mount volumes into
+        # sandbox containers.
+        - name: DOCKERD_ROOTLESS_ROOTLESSKIT_FLAGS
+          value: "--propagation=rslave"
       volumeMounts:
         - name: docker-storage
-          mountPath: /var/lib/docker
+          mountPath: /home/rootless/.local/share/docker
         - name: docker-socket
-          mountPath: /var/run
+          mountPath: /run/user/1000
         - name: docker-config
-          mountPath: /etc/docker
+          mountPath: /home/rootless/.config/docker
       resources:
         requests:
           memory: "8Gi"
@@ -90,7 +119,7 @@ spec:
           exec sleep infinity
       env:
         - name: DOCKER_HOST
-          value: unix:///var/run/docker.sock
+          value: unix:///run/user/1000/docker.sock
         # Dynamo endpoint (raw host:port for socat) - UPDATE THIS FOR YOUR CLUSTER
         - name: DYNAMO_HOST
           value: "vllm-disagg-frontend.dynamo.svc.cluster.local:8000"
@@ -117,9 +146,7 @@ spec:
           value: "1"
       volumeMounts:
         - name: docker-socket
-          mountPath: /var/run
-        - name: docker-config
-          mountPath: /etc/docker
+          mountPath: /run/user/1000
       resources:
         requests:
           memory: "4Gi"
@@ -129,10 +156,15 @@ spec:
     # Configure Docker daemon for cgroup v2
     - name: init-docker-config
       image: busybox
-      command: ["sh", "-c", "echo '{\"default-cgroupns-mode\":\"host\"}' > /etc/docker/daemon.json"]
+      command:
+        - sh
+        - -c
+        - |
+          mkdir -p /config/docker
+          echo '{"default-cgroupns-mode":"host"}' > /config/docker/daemon.json
       volumeMounts:
         - name: docker-config
-          mountPath: /etc/docker
+          mountPath: /config/docker
 
   volumes:
     - name: docker-storage

@@ -14,6 +14,47 @@ if (dockerHost) {
   process.env.DOCKER_HOST = dockerHost.dockerHost;
 }
 
+function logOpenshellRuntimeHint(file, renderedCommand = "") {
+  if (
+    file === "openshell" ||
+    file?.endsWith("/openshell") ||
+    (file === "bash" && /^\s*openshell\s/.test(renderedCommand))
+  ) {
+    console.error("  This error originated from the OpenShell runtime layer.");
+    console.error("  Docs: https://github.com/NVIDIA/OpenShell");
+  }
+}
+
+/**
+ * Spawn a command, streaming stdout/stderr (redacted) to the terminal.
+ * Exits the process on failure unless opts.ignoreError is true.
+ */
+function spawnAndHandle(file, args, opts = {}, stdio, renderedCommand) {
+  const result = spawnSync(file, args, {
+    ...opts,
+    stdio,
+    cwd: ROOT,
+    env: { ...process.env, ...opts.env },
+  });
+  if (!opts.suppressOutput) {
+    writeRedactedResult(result, stdio);
+  }
+  if (result.error && !opts.ignoreError) {
+    console.error(
+      `  Command failed: ${redact(renderedCommand).slice(0, 80)}: ${result.error.message}`,
+    );
+    process.exit(1);
+  }
+  if (result.status !== 0 && !opts.ignoreError) {
+    console.error(
+      `  Command failed (exit ${result.status}): ${redact(renderedCommand).slice(0, 80)}`,
+    );
+    logOpenshellRuntimeHint(file, renderedCommand);
+    process.exit(result.status || 1);
+  }
+  return result;
+}
+
 /**
  * Run a command, streaming stdout/stderr (redacted) to the terminal.
  * Exits the process on failure unless opts.ignoreError is true.
@@ -30,24 +71,7 @@ function run(cmd, opts = {}) {
     return runArrayCmd(cmd, opts);
   }
   const stdio = opts.stdio ?? ["ignore", "pipe", "pipe"];
-  const result = spawnSync("bash", ["-c", cmd], {
-    ...opts,
-    stdio,
-    cwd: ROOT,
-    env: { ...process.env, ...opts.env },
-  });
-  if (!opts.suppressOutput) {
-    writeRedactedResult(result, stdio);
-  }
-  if (result.status !== 0 && !opts.ignoreError) {
-    console.error(`  Command failed (exit ${result.status}): ${redact(cmd).slice(0, 80)}`);
-    if (/^\s*openshell\s/.test(cmd)) {
-      console.error("  This error originated from the OpenShell runtime layer.");
-      console.error("  Docs: https://github.com/NVIDIA/OpenShell");
-    }
-    process.exit(result.status || 1);
-  }
-  return result;
+  return spawnAndHandle("bash", ["-c", cmd], opts, stdio, cmd);
 }
 
 /**
@@ -89,10 +113,7 @@ function runArrayCmd(cmd, opts = {}) {
   if (result.status !== 0 && !ignoreError) {
     const cmdStr = cmd.join(" ");
     console.error(`  Command failed (exit ${result.status}): ${redact(cmdStr).slice(0, 80)}`);
-    if (cmd[0] === "openshell" || cmd[0]?.endsWith("/openshell")) {
-      console.error("  This error originated from the OpenShell runtime layer.");
-      console.error("  Docs: https://github.com/NVIDIA/OpenShell");
-    }
+    logOpenshellRuntimeHint(exe);
     process.exit(result.status || 1);
   }
   return result;
@@ -104,24 +125,21 @@ function runArrayCmd(cmd, opts = {}) {
  */
 function runInteractive(cmd, opts = {}) {
   const stdio = opts.stdio ?? ["inherit", "pipe", "pipe"];
-  const result = spawnSync("bash", ["-c", cmd], {
-    ...opts,
-    stdio,
-    cwd: ROOT,
-    env: { ...process.env, ...opts.env },
-  });
-  if (!opts.suppressOutput) {
-    writeRedactedResult(result, stdio);
+  return spawnAndHandle("bash", ["-c", cmd], opts, stdio, cmd);
+}
+
+/**
+ * Run a program directly with argv-style arguments, bypassing shell parsing.
+ * Exits the process on failure unless opts.ignoreError is true.
+ */
+function runFile(file, args = [], opts = {}) {
+  if (opts.shell) {
+    throw new Error("runFile does not allow opts.shell=true");
   }
-  if (result.status !== 0 && !opts.ignoreError) {
-    console.error(`  Command failed (exit ${result.status}): ${redact(cmd).slice(0, 80)}`);
-    if (/^\s*openshell\s/.test(cmd)) {
-      console.error("  This error originated from the OpenShell runtime layer.");
-      console.error("  Docs: https://github.com/NVIDIA/OpenShell");
-    }
-    process.exit(result.status || 1);
-  }
-  return result;
+  const stdio = opts.stdio ?? ["ignore", "pipe", "pipe"];
+  const normalizedArgs = args.map((arg) => String(arg));
+  const rendered = [shellQuote(file), ...normalizedArgs.map((arg) => shellQuote(arg))].join(" ");
+  return spawnAndHandle(file, normalizedArgs, { ...opts, shell: false }, stdio, rendered);
 }
 
 /**
@@ -304,9 +322,9 @@ function validateName(name, label = "name") {
   if (name.length > 63) {
     throw new Error(`${label} too long (max 63 chars): '${name.slice(0, 20)}...'`);
   }
-  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
+  if (!/^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
     throw new Error(
-      `Invalid ${label}: '${name}'. Must be lowercase alphanumeric with optional internal hyphens.`,
+      `Invalid ${label}: '${name}'. Must start with a letter and contain only lowercase alphanumerics with optional internal hyphens.`,
     );
   }
   return name;
@@ -318,6 +336,7 @@ export {
   redact,
   run,
   runCapture,
+  runFile,
   runInteractive,
   shellQuote,
   validateName,

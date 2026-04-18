@@ -64,6 +64,7 @@ const REDACT_PATTERNS: [RegExp, string][] = [
     (p): [RegExp, string] => [new RegExp(p.source, p.flags), "<REDACTED>"],
   ),
   [/(Bearer )\S+/gi, "$1<REDACTED>"],
+  [/\/bot[^/\s]+\//g, "/bot<REDACTED>/"],
 ];
 
 export function redact(text: string): string {

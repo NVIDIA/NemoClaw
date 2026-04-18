@@ -34,9 +34,9 @@ describe("Gemini dual-auth credential fix (issue #1960)", () => {
       expect(onboardSrc).toMatch(/authMode.*===.*"query-param"/);
     });
 
-    it("appends ?key= to the URL when using query-param auth", () => {
-      // The compiled code must build URLs with ?key= for query-param mode
-      expect(onboardSrc).toMatch(/\?key=/);
+    it("appends ?key= to the URL with encodeURIComponent when using query-param auth", () => {
+      // The compiled code must URL-encode the key when building ?key= URLs
+      expect(onboardSrc).toMatch(/\?key=.*encodeURIComponent/);
     });
 
     it("getProbeAuthMode returns query-param for gemini-api", () => {

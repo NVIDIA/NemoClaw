@@ -122,6 +122,20 @@ describe("onboard session", () => {
     expect(loaded.metadata.token).toBeUndefined();
   });
 
+  it("persists and clears web search config through safe session updates", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      webSearchConfig: { fetchEnabled: true },
+    });
+
+    let loaded = session.loadSession();
+    expect(loaded.webSearchConfig).toEqual({ fetchEnabled: true });
+
+    session.completeSession({ webSearchConfig: null });
+    loaded = session.loadSession();
+    expect(loaded.webSearchConfig).toBeNull();
+  });
+
   it("does not clear existing metadata when updates omit whitelisted metadata fields", () => {
     session.saveSession(session.createSession({ metadata: { gatewayName: "nemoclaw" } }));
     session.markStepComplete("provider_selection", {

@@ -204,6 +204,45 @@ describe("nemoclaw-start configure guard (#1114)", () => {
   });
 });
 
+describe("nemoclaw-start configure guard blocks --local (#2016)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("blocks openclaw agent --local with a hard error and return 1", () => {
+    const guardBlock = src.match(
+      /install_configure_guard\(\) \{([\s\S]*?)^validate_openclaw_symlinks/m,
+    );
+    expect(guardBlock).toBeTruthy();
+    const body = guardBlock[1];
+    // Must contain the agent) case that checks for --local
+    expect(body).toContain("agent)");
+    expect(body).toContain('"--local"');
+    // Must print an error (not a warning) and return 1
+    expect(body).toMatch(/echo "Error:.*--local.*not supported inside NemoClaw sandboxes/);
+    expect(body).toMatch(/return 1/);
+    // Must NOT contain the old warning pattern
+    expect(body).not.toContain("[SECURITY] Warning");
+  });
+
+  it("suggests the correct alternative command without --local", () => {
+    const guardBlock = src.match(
+      /install_configure_guard\(\) \{([\s\S]*?)^validate_openclaw_symlinks/m,
+    );
+    expect(guardBlock).toBeTruthy();
+    expect(guardBlock[1]).toContain("openclaw agent --agent main");
+  });
+
+  it("allows openclaw agent without --local to pass through", () => {
+    const guardBlock = src.match(
+      /install_configure_guard\(\) \{([\s\S]*?)^validate_openclaw_symlinks/m,
+    );
+    expect(guardBlock).toBeTruthy();
+    const body = guardBlock[1];
+    // The agent) case only returns 1 inside the --local check.
+    // After the for loop, execution falls through to `command openclaw "$@"`.
+    expect(body).toContain('command openclaw "$@"');
+  });
+});
+
 describe("runtime model override (#759)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 

@@ -216,6 +216,43 @@ If neither is found, verify that Colima is running:
 $ colima status
 ```
 
+### Re-onboard fails because port 18789 is held by SSH
+
+After destroying a sandbox and gateway, the SSH port-forward process for the
+dashboard can be left running.
+Re-running onboard then fails preflight with `Port 18789 is not available.
+Blocked by: ssh`.
+
+Current NemoClaw detects this case and kills the orphaned SSH process
+automatically before retrying the port check.
+If you see the error on an older release, identify the SSH process and
+terminate it manually:
+
+```console
+$ sudo lsof -i :18789
+$ kill <PID>
+```
+
+Then re-run `nemoclaw onboard`.
+
+### Updated messaging token is not picked up
+
+Re-running `nemoclaw onboard --non-interactive` with a new
+`TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, or `SLACK_BOT_TOKEN` previously
+reported success while the sandbox kept polling with the old credential.
+Current NemoClaw stores SHA-256 hashes of messaging credentials in the
+sandbox registry at creation time and detects when a token has changed.
+When rotation is detected, NemoClaw automatically backs up workspace state,
+deletes the sandbox, recreates it with the new credential, and restores the
+backup.
+
+If you suspect a sandbox is still using a stale token, re-run onboarding so
+the credential check runs:
+
+```console
+$ nemoclaw onboard --non-interactive
+```
+
 ### Sandbox creation killed by OOM (exit 137)
 
 On systems with 8 GB RAM or less and no swap configured, the sandbox image push can exhaust available memory and get killed by the Linux OOM killer (exit code 137).
@@ -338,25 +375,23 @@ $ nemoclaw onboard
 
 ### Agent fails at runtime after onboarding succeeds with a compatible endpoint
 
-Some OpenAI-compatible servers (such as SGLang) expose `/v1/responses` and pass
-the onboarding validation probe, but their streaming mode is incomplete.
+Some OpenAI-compatible servers (such as SGLang) expose `/v1/responses` but their
+streaming mode is incomplete.
 OpenClaw requires granular streaming events like `response.output_text.delta`
 that these backends do not emit.
 
-NemoClaw now tests streaming events during the `/v1/responses` probe and falls
-back to `/v1/chat/completions` automatically.
-If you onboarded before this check was added, re-run onboarding so the wizard
-re-probes the endpoint and bakes the correct API path into the image:
+For the compatible-endpoint provider, NemoClaw now defaults to
+`/v1/chat/completions` and skips the Responses API probe entirely unless you
+opt in.
+If you onboarded an older release that selected `/v1/responses`, re-run
+onboarding so the wizard rebuilds the image with chat completions:
 
 ```console
 $ nemoclaw onboard
 ```
 
-To force `/v1/chat/completions` without re-probing, set `NEMOCLAW_PREFERRED_API`:
-
-```console
-$ NEMOCLAW_PREFERRED_API=openai-completions nemoclaw onboard
-```
+If you previously set `NEMOCLAW_PREFERRED_API=openai-responses` to force the
+Responses API, unset it before re-running onboard.
 
 Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone — it patches the config
 at container startup but does not update the Dockerfile ARG baked into the
@@ -499,16 +534,36 @@ $ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
 If you need to run multiple sandboxes at different ports at the same time, see
 [Running multiple sandboxes simultaneously](#running-multiple-sandboxes-simultaneously).
 
-### Ollama network exposure warning during onboard
+### Ollama auth proxy did not start
 
-When you select a local Ollama provider, onboarding binds Ollama to `0.0.0.0` so the Docker sandbox can reach the host.
-This exposes the unauthenticated Ollama API to the local network.
-NemoClaw prints a warning during onboarding to alert you to this risk.
+NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated
+reverse proxy on `0.0.0.0:11435` so the sandbox can reach Ollama without
+exposing it to the local network.
+If the proxy fails to start, onboarding exits before configuring inference.
 
-On trusted private networks, the warning is informational.
-On shared or public networks (airports, coffee shops), any adjacent device can send prompts to and enumerate models on your Ollama instance.
+Check whether the proxy port is occupied by another process:
 
-The warning is suppressed on WSL, where Ollama binds to `127.0.0.1` instead.
+```console
+$ sudo lsof -i :11435
+```
+
+Stop the conflicting process and re-run `nemoclaw onboard`.
+The wizard cleans up stale proxy processes from previous runs automatically,
+so most failures resolve by retrying.
+
+The proxy token is persisted to `~/.nemoclaw/ollama-proxy-token` with `0600`
+permissions.
+If the file is missing or unreadable after a host reboot, re-running
+`nemoclaw onboard` regenerates it.
+
+### Local inference health check resolves to IPv6
+
+Local inference health checks now use `127.0.0.1` instead of `localhost`.
+On systems where `localhost` resolves to `::1` first, older NemoClaw releases
+could probe the wrong address and report the local backend as unreachable
+even when it was running.
+If you see this on a current NemoClaw release, verify that the local backend
+binds an IPv4 address and not only `::1`.
 
 ### Blueprint run failed
 

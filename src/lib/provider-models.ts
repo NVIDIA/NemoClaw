@@ -126,12 +126,12 @@ export function fetchOpenAiLikeModels(
   const useQueryParam = options.authMode === "query-param";
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
   const baseUrl = `${String(endpointUrl).replace(/\/+$/, "")}/models`;
-  const url = useQueryParam && normalizedKey ? `${baseUrl}?key=${normalizedKey}` : baseUrl;
+  const url = useQueryParam && normalizedKey ? `${baseUrl}?key=${encodeURIComponent(normalizedKey)}` : baseUrl;
   try {
     const result = runCurlProbeImpl([
       "-sS",
       ...getCurlTimingArgs(),
-      ...(!useQueryParam && apiKey ? ["-H", `Authorization: Bearer ${normalizedKey}`] : []),
+      ...(!useQueryParam && normalizedKey ? ["-H", `Authorization: Bearer ${normalizedKey}`] : []),
       url,
     ]);
     return toModelCatalogFetchResult(result);

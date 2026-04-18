@@ -102,9 +102,19 @@ else
   fail "config hash mismatch: $OUT"
 fi
 
-# ── Test 5: Config hash is not writable by sandbox ───────────────
+# ── Test 5: Update hints are disabled in sandbox config ──────────
 
-info "5. Config hash not writable by sandbox user"
+info "5. Sandbox config disables startup update hints"
+OUT=$(run_as_root "python3 -c 'import json; cfg=json.load(open(\"/sandbox/.openclaw/openclaw.json\")); print(\"OK\" if cfg.get(\"update\", {}).get(\"checkOnStart\") is False else \"BAD\")'")
+if echo "$OUT" | grep -q "OK"; then
+  pass "startup update hints disabled"
+else
+  fail "startup update hints not disabled: $OUT"
+fi
+
+# ── Test 6: Config hash is not writable by sandbox ───────────────
+
+info "6. Config hash not writable by sandbox user"
 OUT=$(run_as_sandbox "echo fake > /sandbox/.openclaw/.config-hash 2>&1 || echo BLOCKED")
 if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
   pass "sandbox cannot tamper with config hash"
@@ -112,9 +122,9 @@ else
   fail "sandbox CAN write to config hash: $OUT"
 fi
 
-# ── Test 6: gosu is installed ────────────────────────────────────
+# ── Test 7: gosu is installed ────────────────────────────────────
 
-info "6. gosu binary is available"
+info "7. gosu binary is available"
 OUT=$(run_as_root "command -v gosu && gosu --version")
 if echo "$OUT" | grep -q "gosu"; then
   pass "gosu installed"
@@ -122,9 +132,9 @@ else
   fail "gosu not found: $OUT"
 fi
 
-# ── Test 7: Entrypoint PATH is locked to system dirs ─────────────
+# ── Test 8: Entrypoint PATH is locked to system dirs ─────────────
 
-info "7. Entrypoint locks PATH to system directories"
+info "8. Entrypoint locks PATH to system directories"
 # Walk the entrypoint line-by-line, eval only export lines, stop after PATH.
 OUT=$(run_as_root "bash -c 'while IFS= read -r line; do case \"\$line\" in export\\ *) eval \"\$line\" 2>/dev/null;; esac; case \"\$line\" in \"export PATH=\"*) break;; esac; done < /usr/local/bin/nemoclaw-start; echo \$PATH'")
 if echo "$OUT" | grep -q "^/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin$"; then
@@ -133,9 +143,9 @@ else
   fail "PATH not locked as expected: $OUT"
 fi
 
-# ── Test 8: openclaw resolves to expected absolute path ──────────
+# ── Test 9: openclaw resolves to expected absolute path ──────────
 
-info "8. Gateway runs the expected openclaw binary"
+info "9. Gateway runs the expected openclaw binary"
 OUT=$(run_as_root "gosu gateway which openclaw")
 if [ "$OUT" = "/usr/local/bin/openclaw" ]; then
   pass "openclaw resolves to /usr/local/bin/openclaw"
@@ -143,9 +153,9 @@ else
   fail "openclaw resolves to unexpected path: $OUT"
 fi
 
-# ── Test 9: Symlinks point to expected targets ───────────────────
+# ── Test 10: Symlinks point to expected targets ──────────────────
 
-info "9. All .openclaw symlinks point to .openclaw-data"
+info "10. All .openclaw symlinks point to .openclaw-data"
 FAILED_LINKS=""
 for link in agents extensions workspace skills hooks identity devices canvas cron memory logs credentials sandbox telegram; do
   OUT=$(run_as_root "readlink -f /sandbox/.openclaw/$link")
@@ -159,9 +169,9 @@ else
   fail "symlink targets wrong:$FAILED_LINKS"
 fi
 
-# ── Test 10: iptables is installed (required for network policy enforcement) ──
+# ── Test 11: iptables is installed (required for network policy enforcement) ──
 
-info "10. iptables is installed"
+info "11. iptables is installed"
 OUT=$(run_as_root "iptables --version 2>&1")
 if echo "$OUT" | grep -q "iptables v"; then
   pass "iptables installed: $OUT"
@@ -169,9 +179,9 @@ else
   fail "iptables not found — sandbox network policies will not be enforced: $OUT"
 fi
 
-# ── Test 11: chattr is available for immutable hardening ─────────
+# ── Test 12: chattr is available for immutable hardening ─────────
 
-info "11. chattr is available for immutable symlink hardening"
+info "12. chattr is available for immutable symlink hardening"
 OUT=$(run_as_root "command -v chattr 2>/dev/null || true")
 if [ -n "$OUT" ]; then
   pass "chattr available at $OUT"
@@ -179,9 +189,9 @@ else
   fail "chattr not found — nemoclaw-start immutable hardening will be skipped"
 fi
 
-# ── Test 12: Sandbox user cannot kill gateway-user processes ─────
+# ── Test 13: Sandbox user cannot kill gateway-user processes ─────
 
-info "12. Sandbox user cannot kill gateway-user processes"
+info "13. Sandbox user cannot kill gateway-user processes"
 # Start a dummy process as gateway, try to kill it as sandbox
 OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
   gosu gateway sleep 60 &
@@ -197,9 +207,9 @@ else
   fail "sandbox CAN kill gateway processes: $OUT"
 fi
 
-# ── Test 13: Dangerous capabilities are dropped by entrypoint ────
+# ── Test 14: Dangerous capabilities are dropped by entrypoint ────
 
-info "13. Entrypoint drops dangerous capabilities from bounding set"
+info "14. Entrypoint drops dangerous capabilities from bounding set"
 # Run capsh directly with the same --drop flags as the entrypoint, then
 # check CapBnd. This avoids running the full entrypoint which starts
 # gateway services that fail in CI without a running OpenShell environment.

@@ -210,6 +210,9 @@ If the backend is down, the output includes an `Inference: unreachable` line wit
 The Policy section displays the live enforced policy (fetched via `openshell policy get --full`), which reflects presets added or removed after sandbox creation.
 If the sandbox is running an outdated agent version, the output includes an `Update` line with the available version and a `nemoclaw <name> rebuild` hint.
 
+When other sandboxes have the same messaging channel enabled (Telegram, Discord, or Slack) with the same bot token, the output includes a cross-sandbox overlap warning so you can resolve the conflict before messages start dropping.
+The command also tails `/tmp/gateway.log` inside the default sandbox and flags Telegram `409 Conflict` errors that indicate a duplicate consumer for the bot token.
+
 ```console
 $ nemoclaw my-assistant status
 ```
@@ -318,6 +321,25 @@ $ nemoclaw my-assistant rebuild [--yes] [--verbose]
 The sandbox must be running for the backup step to succeed.
 After restore, the command runs `openclaw doctor --fix` for cross-version structure repair.
 
+### `nemoclaw upgrade-sandboxes`
+
+Rebuild sandboxes whose base image is older than the one currently pinned by NemoClaw.
+NemoClaw resolves the digest of `ghcr.io/nvidia/nemoclaw/sandbox-base:latest` from the registry, then compares it against the digest each sandbox was created with.
+Sandboxes that match the current digest are left alone.
+
+```console
+$ nemoclaw upgrade-sandboxes [--check] [--auto] [--yes]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--check` | List stale sandboxes without rebuilding any of them. Exits non-zero if any are stale. |
+| `--auto` | Rebuild every stale sandbox without prompting. Used by the installer to upgrade in place. |
+| `--yes` | Skip the confirmation prompt for the rebuild plan. |
+
+Each rebuild reuses the same workspace backup-and-restore flow as `nemoclaw <name> rebuild`, so workspace files survive the upgrade.
+If the registry is unreachable (offline or firewalled hosts), NemoClaw falls back to the unpinned `:latest` tag and reports that the digest could not be resolved instead of failing.
+
 ### `nemoclaw backup-all`
 
 Back up all registered running sandboxes to `~/.nemoclaw/rebuild-backups/`.
@@ -423,6 +445,8 @@ $ nemoclaw debug [--quick] [--sandbox NAME] [--output PATH]
 | `--sandbox NAME` | Target a specific sandbox (default: auto-detect) |
 | `--output PATH` | Write diagnostics tarball to the given path |
 
+If `--output` is set and the tarball cannot be written (for example, the destination directory is missing or read-only), the command exits non-zero so scripts can detect the failure.
+
 ### `nemoclaw credentials list`
 
 List the names of all credentials stored in `~/.nemoclaw/credentials.json`.
@@ -449,6 +473,9 @@ $ nemoclaw credentials reset NVIDIA_API_KEY
 
 Run `uninstall.sh` to remove NemoClaw sandboxes, gateway resources, related images and containers, and local state.
 The CLI uses the local `uninstall.sh` first and falls back to the hosted script if the local file is unavailable.
+
+Uninstall also stops any orphaned `openshell` host processes left behind by previous onboard or destroy cycles, including `openshell sandbox create`, `openshell ssh-proxy`, and SSH sessions spawned by OpenShell.
+Earlier releases only stopped `openshell forward` processes, so those orphans accumulated across runs.
 
 | Flag | Effect |
 |---|---|
