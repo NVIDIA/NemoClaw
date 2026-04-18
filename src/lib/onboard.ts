@@ -6,6 +6,7 @@
 // Supports non-interactive mode via --non-interactive flag or
 // NEMOCLAW_NON_INTERACTIVE=1 env var for CI/CD pipelines.
 
+const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -19,17 +20,16 @@ function envInt(name, fallback) {
   const n = Number(raw);
   return Number.isFinite(n) ? Math.max(0, Math.round(n)) : fallback;
 }
-
 /** Inference timeout (seconds) for local providers (Ollama, vLLM, NIM). */
 const LOCAL_INFERENCE_TIMEOUT_SECS = envInt("NEMOCLAW_LOCAL_INFERENCE_TIMEOUT", 180);
 
 /** Strip ANSI escape sequences before printing process output to the terminal.
  *  Covers CSI (color, erase, cursor), OSC, and C1 two-byte escapes per ECMA-48. */
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
-const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("./runner");
+const { ROOT, SCRIPTS, redact, run, runCapture, runFile, shellQuote, validateName } = require("./runner");
 const { stageOptimizedSandboxBuildContext } = require("./sandbox-build-context");
 const { buildSubprocessEnv } = require("./subprocess-env");
-const { DASHBOARD_PORT, GATEWAY_PORT, VLLM_PORT, OLLAMA_PORT } = require("./ports");
+const { DASHBOARD_PORT, GATEWAY_PORT, VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("./ports");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -45,6 +45,11 @@ const {
   getProviderSelectionConfig,
   parseGatewayInference,
 } = require("./inference-config");
+
+// Providers that run on the host and need the local-inference policy preset.
+// Shared constant so getSuggestedPolicyPresets() and setupPoliciesWithSelection()
+// stay in sync.
+const LOCAL_INFERENCE_PROVIDERS = ["ollama-local", "vllm-local"];
 const { inferContainerRuntime, isWsl, shouldPatchCoredns } = require("./platform");
 const { resolveOpenshell } = require("./resolve-openshell");
 const {
@@ -71,6 +76,7 @@ const agentOnboard = require("./agent-onboard");
 const agentDefs = require("./agent-defs");
 
 const gatewayState = require("./gateway-state");
+const sandboxState = require("./sandbox-state");
 const validation = require("./validation");
 const urlUtils = require("./url-utils");
 const buildContext = require("./build-context");
@@ -111,6 +117,40 @@ const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN = null;
 const GATEWAY_NAME = "nemoclaw";
 const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
+
+/**
+ * Probe whether the gateway Docker container is actually running.
+ * openshell CLI metadata can be stale after a manual `docker rm`, so this
+ * verifies the container is live before trusting a "healthy" reuse state.
+ *
+ * Returns "running" | "missing" | "unknown".
+ * - "running"  — container exists and State.Running is true
+ * - "missing"  — container was removed or exists but is stopped (not reusable)
+ * - "unknown"  — any other failure (daemon down, timeout, etc.)
+ *
+ * Callers should only trigger stale-metadata cleanup on "missing", not on
+ * "unknown", to avoid destroying a healthy gateway when Docker is temporarily
+ * unavailable.  See #2020.
+ */
+function verifyGatewayContainerRunning() {
+  const containerName = `openshell-cluster-${GATEWAY_NAME}`;
+  const result = run(
+    `docker inspect --type container --format '{{.State.Running}}' ${containerName}`,
+    { ignoreError: true, suppressOutput: true },
+  );
+  if (result.status === 0 && (result.stdout || "").trim() === "true") {
+    return "running";
+  }
+  // Container exists but is stopped (exit 0, Running !== "true")
+  if (result.status === 0) {
+    return "missing";
+  }
+  const stderr = (result.stderr || "").toString();
+  if (stderr.includes("No such object") || stderr.includes("No such container")) {
+    return "missing";
+  }
+  return "unknown";
+}
 const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
 
 const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
@@ -262,6 +302,7 @@ function repairRecordedSandbox(sandboxName) {
 
 const { streamSandboxCreate } = sandboxCreateStream;
 
+/** Spawn `openshell gateway start` and stream its output with progress heartbeats. */
 function streamGatewayStart(command, env = process.env) {
   const child = spawn("bash", ["-lc", command], {
     cwd: ROOT,
@@ -374,15 +415,35 @@ function streamGatewayStart(command, env = process.env) {
   }, 5000);
   heartbeatTimer.unref?.();
 
+  // Hard timeout to prevent indefinite hangs if the openshell process
+  // never exits (e.g. Docker daemon unresponsive, k3s restart loop). (#1830)
+  // On timeout, send SIGTERM and let the `close` event resolve the promise
+  // so the child has actually exited before the caller proceeds to retry.
+  const GATEWAY_START_TIMEOUT = envInt("NEMOCLAW_GATEWAY_START_TIMEOUT", 600) * 1000;
+  let killedByTimeout = false;
+  const killTimer = setTimeout(() => {
+    killedByTimeout = true;
+    lines.push("[NemoClaw] Gateway start timed out — killing process.");
+    child.kill("SIGTERM");
+    // If SIGTERM is ignored, force-kill after 10s.
+    setTimeout(() => {
+      if (!settled) child.kill("SIGKILL");
+    }, 10_000).unref?.();
+  }, GATEWAY_START_TIMEOUT);
+  killTimer.unref?.();
+
   return new Promise((resolve) => {
     resolvePromise = resolve;
     child.on("error", (error) => {
+      clearTimeout(killTimer);
       const detail = error?.message || String(error);
       lines.push(detail);
       finish({ status: 1, output: lines.join("\n") });
     });
     child.on("close", (code) => {
-      finish({ status: code ?? 1, output: lines.join("\n") });
+      clearTimeout(killTimer);
+      const exitCode = killedByTimeout ? 1 : (code ?? 1);
+      finish({ status: exitCode, output: lines.join("\n") });
     });
   });
 }
@@ -453,6 +514,57 @@ function getBlueprintMinOpenshellVersion(rootDir = ROOT) {
 
 function getBlueprintMaxOpenshellVersion(rootDir = ROOT) {
   return getBlueprintVersionField("max_openshell_version", rootDir);
+}
+
+// ── Base image digest resolution ────────────────────────────────
+// Pulls the sandbox-base image from GHCR and inspects it to get the
+// actual repo digest. This avoids the registry mismatch that broke
+// e2e tests in #1937 — the digest always comes from the same registry
+// we're pinning to. See #1904.
+
+const SANDBOX_BASE_IMAGE = "ghcr.io/nvidia/nemoclaw/sandbox-base";
+const SANDBOX_BASE_TAG = "latest";
+
+/**
+ * Pull sandbox-base:latest from GHCR and resolve its repo digest.
+ * Returns { digest, ref } on success, or null when the pull or
+ * inspect fails (offline, GHCR outage, local-only build).
+ */
+function pullAndResolveBaseImageDigest() {
+  const imageWithTag = `${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`;
+  try {
+    run(["docker", "pull", imageWithTag], { suppressOutput: true });
+  } catch {
+    // Pull failed — caller should fall back to unpin :latest
+    return null;
+  }
+
+  let inspectOutput;
+  try {
+    inspectOutput = runCapture(
+      ["docker", "inspect", "--format", "{{json .RepoDigests}}", imageWithTag],
+      { ignoreError: false },
+    );
+  } catch {
+    return null;
+  }
+
+  // RepoDigests is a JSON array like ["ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:abc..."].
+  // Filter to the entry matching our registry — index ordering is not guaranteed.
+  let repoDigests;
+  try {
+    repoDigests = JSON.parse(inspectOutput || "[]");
+  } catch {
+    return null;
+  }
+  const repoDigest = Array.isArray(repoDigests)
+    ? repoDigests.find((entry) => entry.startsWith(`${SANDBOX_BASE_IMAGE}@sha256:`))
+    : null;
+  if (!repoDigest) return null;
+
+  const digest = repoDigest.slice(repoDigest.indexOf("@") + 1);
+  const ref = `${SANDBOX_BASE_IMAGE}@${digest}`;
+  return { digest, ref };
 }
 
 function getStableGatewayImageRef(versionOutput = null) {
@@ -741,6 +853,70 @@ function providerExistsInGateway(name) {
   return result.status === 0;
 }
 
+/**
+ * Compute a SHA-256 hash of a credential value for change detection.
+ * Stored in the sandbox registry so we can detect rotation on reuse
+ * without needing to read the credential back from OpenShell.
+ * @param {string} value - Credential value to hash.
+ * @returns {string|null} Hex-encoded SHA-256 hash, or null if value is falsy.
+ */
+function hashCredential(value) {
+  if (!value) return null;
+  return crypto.createHash("sha256").update(String(value).trim()).digest("hex");
+}
+
+/**
+ * Detect whether any messaging provider credential has been rotated since
+ * the sandbox was created, by comparing SHA-256 hashes of the current
+ * token values against hashes stored in the sandbox registry.
+ *
+ * Returns `changed: false` for legacy sandboxes that have no stored hashes
+ * (conservative — avoids unnecessary rebuilds after upgrade).
+ *
+ * @param {string} sandboxName - Name of the sandbox to check.
+ * @param {Array<{name: string, envKey: string, token: string|null}>} tokenDefs
+ * @returns {{ changed: boolean, changedProviders: string[] }}
+ */
+function detectMessagingCredentialRotation(sandboxName, tokenDefs) {
+  const sb = registry.getSandbox(sandboxName);
+  const storedHashes = sb?.providerCredentialHashes || {};
+  const changedProviders = [];
+  for (const { name, envKey, token } of tokenDefs) {
+    if (!token) continue;
+    const storedHash = storedHashes[envKey];
+    if (!storedHash) continue;
+    if (storedHash !== hashCredential(token)) {
+      changedProviders.push(name);
+    }
+  }
+  return { changed: changedProviders.length > 0, changedProviders };
+}
+
+// Tri-state probe factory for messaging-conflict backfill. An upfront liveness
+// check is necessary because `openshell provider get` exits non-zero for both
+// "provider not attached" and "gateway unreachable"; without the liveness
+// gate, a transient gateway failure would be recorded as "no providers" and
+// permanently suppress future backfill retries.
+function makeConflictProbe() {
+  let gatewayAlive = null;
+  const isGatewayAlive = () => {
+    if (gatewayAlive === null) {
+      const result = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+      // runCaptureOpenshell returns stdout/stderr as a single string; treat
+      // any non-empty output as a sign openshell answered. Empty output with
+      // ignoreError typically means the binary failed to produce anything.
+      gatewayAlive = typeof result === "string" && result.length > 0;
+    }
+    return gatewayAlive;
+  };
+  return {
+    providerExists: (name) => {
+      if (!isGatewayAlive()) return "error";
+      return providerExistsInGateway(name) ? "present" : "absent";
+    },
+  };
+}
+
 function verifyInferenceRoute(_provider, _model) {
   const output = runCaptureOpenshell(["inference", "get"], { ignoreError: true });
   if (!output || /Gateway inference:\s*[\r\n]+\s*Not configured/i.test(output)) {
@@ -862,12 +1038,18 @@ async function promptBraveSearchApiKey() {
   }
 }
 
-async function ensureValidatedBraveSearchCredential() {
-  let apiKey = getCredential(webSearch.BRAVE_API_KEY_ENV);
-  let usingSavedKey = Boolean(apiKey);
+async function ensureValidatedBraveSearchCredential(nonInteractive = isNonInteractive()) {
+  const savedApiKey = getCredential(webSearch.BRAVE_API_KEY_ENV);
+  let apiKey = savedApiKey || normalizeCredentialValue(process.env[webSearch.BRAVE_API_KEY_ENV]);
+  let usingSavedKey = Boolean(savedApiKey);
 
   while (true) {
     if (!apiKey) {
+      if (nonInteractive) {
+        throw new Error(
+          "Brave Search requires BRAVE_API_KEY or a saved Brave Search credential in non-interactive mode.",
+        );
+      }
       apiKey = await promptBraveSearchApiKey();
       usingSavedKey = false;
     }
@@ -885,6 +1067,13 @@ async function ensureValidatedBraveSearchCredential() {
     console.error(prefix);
     if (validation.message) {
       console.error(`  ${validation.message}`);
+    }
+
+    if (nonInteractive) {
+      throw new Error(
+        validation.message ||
+          "Brave Search API key validation failed in non-interactive mode.",
+      );
     }
 
     const action = await promptBraveSearchRecovery(validation);
@@ -992,10 +1181,25 @@ function patchStagedDockerfile(
   messagingChannels = [],
   messagingAllowedIds = {},
   discordGuilds = {},
+  baseImageRef = null,
 ) {
   const { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat } =
     getSandboxInferenceConfig(model, provider, preferredInferenceApi);
   let dockerfile = fs.readFileSync(dockerfilePath, "utf8");
+  // Pin the base image to a specific digest when available (#1904).
+  // The ref must come from pullAndResolveBaseImageDigest() — never from
+  // blueprint.yaml, whose digest belongs to a different registry.
+  // Only rewrite when the current value already points at our sandbox-base
+  // image — custom --from Dockerfiles may use a different base.
+  if (baseImageRef) {
+    dockerfile = dockerfile.replace(/^ARG BASE_IMAGE=(.*)$/m, (line, currentValue) => {
+      const trimmed = String(currentValue).trim();
+      if (trimmed.startsWith(`${SANDBOX_BASE_IMAGE}:`) || trimmed.startsWith(`${SANDBOX_BASE_IMAGE}@`)) {
+        return `ARG BASE_IMAGE=${baseImageRef}`;
+      }
+      return line;
+    });
+  }
   dockerfile = dockerfile.replace(/^ARG NEMOCLAW_MODEL=.*$/m, `ARG NEMOCLAW_MODEL=${model}`);
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_PROVIDER_KEY=.*$/m,
@@ -1129,6 +1333,13 @@ function shouldRequireResponsesToolCalling(provider) {
   );
 }
 
+// Google Gemini rejects requests that carry both an Authorization: Bearer
+// header and a ?key= query parameter ("Multiple authentication credentials
+// received"). Send the API key as ?key= only for Gemini. See issue #1960.
+function getProbeAuthMode(provider) {
+  return provider === "gemini-api" ? "query-param" : undefined;
+}
+
 // shouldSkipResponsesProbe and isNvcfFunctionNotFoundForAccount /
 // nvcfFunctionNotFoundMessage — see validation import above. They live in
 // src/lib/validation.ts so they can be unit-tested independently.
@@ -1136,17 +1347,29 @@ function shouldRequireResponsesToolCalling(provider) {
 // Per-validation-probe curl timing. Tighter than the default 60s in
 // getCurlTimingArgs() because validation must not hang the wizard for a
 // minute on a misbehaving model. See issue #1601 (Bug 3).
-function getValidationProbeCurlArgs() {
+function getValidationProbeCurlArgs(opts) {
+  if (isWsl(opts)) {
+    return ["--connect-timeout", "20", "--max-time", "30"];
+  }
   return ["--connect-timeout", "10", "--max-time", "15"];
 }
 
-function probeResponsesToolCalling(endpointUrl, model, apiKey) {
+function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
+  const useQueryParam = options.authMode === "query-param";
+  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
+  const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  const authHeader = !useQueryParam && normalizedKey
+    ? ["-H", `Authorization: Bearer ${normalizedKey}`]
+    : [];
+  const url = useQueryParam && normalizedKey
+    ? `${baseUrl}/responses?key=${encodeURIComponent(normalizedKey)}`
+    : `${baseUrl}/responses`;
   const result = runCurlProbe([
     "-sS",
     ...getValidationProbeCurlArgs(),
     "-H",
     "Content-Type: application/json",
-    ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+    ...authHeader,
     "-d",
     JSON.stringify({
       model,
@@ -1168,7 +1391,7 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey) {
         },
       ],
     }),
-    `${String(endpointUrl).replace(/\/+$/, "")}/responses`,
+    url,
   ]);
 
   if (!result.ok) {
@@ -1188,12 +1411,21 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey) {
 }
 
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
+  const useQueryParam = options.authMode === "query-param";
+  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
+  const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  const authHeader = !useQueryParam && normalizedKey
+    ? ["-H", `Authorization: Bearer ${normalizedKey}`]
+    : [];
+  const appendKey = (path) =>
+    useQueryParam && normalizedKey ? `${baseUrl}${path}?key=${encodeURIComponent(normalizedKey)}` : `${baseUrl}${path}`;
+
   const responsesProbe =
     options.requireResponsesToolCalling === true
       ? {
           name: "Responses API with tool calling",
           api: "openai-responses",
-          execute: () => probeResponsesToolCalling(endpointUrl, model, apiKey),
+          execute: () => probeResponsesToolCalling(endpointUrl, model, apiKey, { authMode: options.authMode }),
         }
       : {
           name: "Responses API",
@@ -1204,15 +1436,13 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               ...getValidationProbeCurlArgs(),
               "-H",
               "Content-Type: application/json",
-              ...(apiKey
-                ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`]
-                : []),
+              ...authHeader,
               "-d",
               JSON.stringify({
                 model,
                 input: "Reply with exactly: OK",
               }),
-              `${String(endpointUrl).replace(/\/+$/, "")}/responses`,
+              appendKey("/responses"),
             ]),
         };
 
@@ -1225,13 +1455,13 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
         ...getValidationProbeCurlArgs(),
         "-H",
         "Content-Type: application/json",
-        ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+        ...authHeader,
         "-d",
         JSON.stringify({
           model,
           messages: [{ role: "user", content: "Reply with exactly: OK" }],
         }),
-        `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
+        appendKey("/chat/completions"),
       ]),
   };
 
@@ -1256,14 +1486,14 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
           ...getValidationProbeCurlArgs(),
           "-H",
           "Content-Type: application/json",
-          ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+          ...authHeader,
           "-d",
           JSON.stringify({
             model,
             input: "Reply with exactly: OK",
             stream: true,
           }),
-          `${String(endpointUrl).replace(/\/+$/, "")}/responses`,
+          appendKey("/responses"),
         ]);
         if (!streamResult.ok && streamResult.missingEvents.length > 0) {
           // Backend responds but lacks required streaming events — fall back
@@ -1311,6 +1541,35 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     });
   }
 
+  // Single retry with doubled timeouts on timeout/connection failure.
+  // WSL2's virtualized network stack can cause the initial probe to time out
+  // before the TLS handshake completes. See issue #987.
+  const isTimeoutOrConnFailure = (cs) => cs === 28 || cs === 6 || cs === 7;
+  let retriedAfterTimeout = false;
+  if (failures.length > 0 && isTimeoutOrConnFailure(failures[0].curlStatus)) {
+    retriedAfterTimeout = true;
+    const baseArgs = getValidationProbeCurlArgs();
+    const doubledArgs = baseArgs.map((arg) =>
+      /^\d+$/.test(arg) ? String(Number(arg) * 2) : arg,
+    );
+    const retryResult = runCurlProbe([
+      "-sS",
+      ...doubledArgs,
+      "-H",
+      "Content-Type: application/json",
+      ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+      "-d",
+      JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      }),
+      `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
+    ]);
+    if (retryResult.ok) {
+      return { ok: true, api: "openai-completions", label: "Chat Completions API" };
+    }
+  }
+
   // Detect the NVCF "Function not found for account" error and reframe it
   // with an actionable next step instead of dumping the raw NVCF body.
   // See issue #1601 (Bug 2).
@@ -1327,9 +1586,15 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     };
   }
 
+  const baseMessage = failures.map((failure) => `${failure.name}: ${failure.message}`).join(" | ");
+  const wslHint =
+    isWsl() && retriedAfterTimeout
+      ? " · WSL2 detected \u2014 network verification may be slower than expected. " +
+        "Run `nemoclaw onboard` with the `--skip-verify` flag if this endpoint is known to be reachable."
+      : "";
   return {
     ok: false,
-    message: failures.map((failure) => `${failure.name}: ${failure.message}`).join(" | "),
+    message: baseMessage + wslHint,
     failures,
   };
 }
@@ -1507,6 +1772,163 @@ const { validateAnthropicModel, validateOpenAiLikeModel } = providerModels;
 const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRecoveryHints } =
   buildContext;
 // classifySandboxCreateFailure — see validation import above
+
+// ---------------------------------------------------------------------------
+// Ollama auth proxy — keeps Ollama on localhost, exposes a token-gated proxy
+// on 0.0.0.0 so containers can reach it without exposing Ollama to the network.
+// Token is persisted to ~/.nemoclaw/ollama-proxy-token so the proxy can be
+// restarted after a host reboot without re-running onboard.
+// ---------------------------------------------------------------------------
+
+const PROXY_STATE_DIR = path.join(os.homedir(), ".nemoclaw");
+const PROXY_TOKEN_PATH = path.join(PROXY_STATE_DIR, "ollama-proxy-token");
+const PROXY_PID_PATH = path.join(PROXY_STATE_DIR, "ollama-auth-proxy.pid");
+
+let ollamaProxyToken: string | null = null;
+
+function ensureProxyStateDir(): void {
+  if (!fs.existsSync(PROXY_STATE_DIR)) {
+    fs.mkdirSync(PROXY_STATE_DIR, { recursive: true });
+  }
+}
+
+function persistProxyToken(token: string): void {
+  ensureProxyStateDir();
+  fs.writeFileSync(PROXY_TOKEN_PATH, token, { mode: 0o600 });
+  // mode only applies on creation; ensure permissions on existing files too
+  fs.chmodSync(PROXY_TOKEN_PATH, 0o600);
+}
+
+function loadPersistedProxyToken(): string | null {
+  try {
+    if (fs.existsSync(PROXY_TOKEN_PATH)) {
+      const token = fs.readFileSync(PROXY_TOKEN_PATH, "utf-8").trim();
+      return token || null;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function persistProxyPid(pid: number | null | undefined): void {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  ensureProxyStateDir();
+  fs.writeFileSync(PROXY_PID_PATH, `${pid}\n`, { mode: 0o600 });
+  fs.chmodSync(PROXY_PID_PATH, 0o600);
+}
+
+function loadPersistedProxyPid(): number | null {
+  try {
+    if (!fs.existsSync(PROXY_PID_PATH)) return null;
+    const raw = fs.readFileSync(PROXY_PID_PATH, "utf-8").trim();
+    const pid = Number.parseInt(raw, 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearPersistedProxyPid(): void {
+  try {
+    if (fs.existsSync(PROXY_PID_PATH)) {
+      fs.unlinkSync(PROXY_PID_PATH);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function isOllamaProxyProcess(pid: number | null | undefined): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  const cmdline = runCapture(["ps", "-p", String(pid), "-o", "args="], { ignoreError: true });
+  return Boolean(cmdline && cmdline.includes("ollama-auth-proxy.js"));
+}
+
+function spawnOllamaAuthProxy(token: string): number | null {
+  const child = spawn(process.execPath, [path.join(SCRIPTS, "ollama-auth-proxy.js")], {
+    detached: true,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      OLLAMA_PROXY_TOKEN: token,
+      OLLAMA_PROXY_PORT: String(OLLAMA_PROXY_PORT),
+      OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
+    },
+  });
+  child.unref();
+  persistProxyPid(child.pid);
+  return child.pid ?? null;
+}
+
+function killStaleProxy(): void {
+  try {
+    const persistedPid = loadPersistedProxyPid();
+    if (isOllamaProxyProcess(persistedPid)) {
+      run(["kill", String(persistedPid)], { ignoreError: true, suppressOutput: true });
+    }
+    clearPersistedProxyPid();
+
+    // Best-effort cleanup for older proxy processes created before the PID file
+    // existed. Only kill processes that are actually the auth proxy, not
+    // unrelated services that happen to use the same port.
+    const pidOutput = runCapture(["lsof", "-ti", `:${OLLAMA_PROXY_PORT}`], { ignoreError: true });
+    if (pidOutput && pidOutput.trim()) {
+      for (const pid of pidOutput.trim().split(/\s+/)) {
+        if (isOllamaProxyProcess(Number.parseInt(pid, 10))) {
+          run(["kill", pid], { ignoreError: true, suppressOutput: true });
+        }
+      }
+      sleep(1);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function startOllamaAuthProxy(): void {
+  const crypto = require("crypto");
+  killStaleProxy();
+
+  ollamaProxyToken = crypto.randomBytes(24).toString("hex");
+  // Don't persist yet — wait until provider is confirmed in setupInference.
+  // If the user backs out to a different provider, the token stays in memory
+  // only and is discarded.
+  const pid = spawnOllamaAuthProxy(ollamaProxyToken);
+  sleep(1);
+  if (!isOllamaProxyProcess(pid)) {
+    console.error(`  Warning: Ollama auth proxy did not start on :${OLLAMA_PROXY_PORT}`);
+  }
+}
+
+/**
+ * Ensure the auth proxy is running — called on sandbox connect to recover
+ * from host reboots where the background proxy process was lost.
+ */
+function ensureOllamaAuthProxy(): void {
+  // Try to load persisted token first — if none, this isn't an Ollama setup.
+  const token = loadPersistedProxyToken();
+  if (!token) return;
+
+  const pid = loadPersistedProxyPid();
+  if (isOllamaProxyProcess(pid)) {
+    ollamaProxyToken = token;
+    return;
+  }
+
+  // Proxy not running — restart it with the persisted token.
+  killStaleProxy();
+  ollamaProxyToken = token;
+  spawnOllamaAuthProxy(token);
+  sleep(1);
+}
+
+function getOllamaProxyToken(): string | null {
+  if (ollamaProxyToken) return ollamaProxyToken;
+  // Fall back to persisted token (resume / reconnect scenario)
+  ollamaProxyToken = loadPersistedProxyToken();
+  return ollamaProxyToken;
+}
 
 async function promptOllamaModel(gpu = null) {
   const installed = getOllamaModelOptions();
@@ -2000,7 +2422,24 @@ async function preflight() {
     ignoreError: true,
   });
   const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-  const gatewayReuseState = getGatewayReuseState(gatewayStatus, gwInfo, activeGatewayInfo);
+  let gatewayReuseState = getGatewayReuseState(gatewayStatus, gwInfo, activeGatewayInfo);
+
+  // Verify the gateway container is actually running — openshell CLI metadata
+  // can be stale after a manual `docker rm`. See #2020.
+  if (gatewayReuseState === "healthy") {
+    const containerState = verifyGatewayContainerRunning();
+    if (containerState === "missing") {
+      console.log("  Gateway metadata is stale (container not running). Cleaning up...");
+      runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+      destroyGateway();
+      registry.clearAll();
+      gatewayReuseState = "missing";
+      console.log("  ✓ Stale gateway metadata cleaned up");
+    } else if (containerState === "unknown") {
+      console.log("  Warning: could not verify gateway container state (Docker may be unavailable). Proceeding with cached health status.");
+    }
+  }
+
   if (gatewayReuseState === "stale" || gatewayReuseState === "active-unnamed") {
     console.log("  Cleaning up previous NemoClaw session...");
     runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
@@ -2060,11 +2499,32 @@ async function preflight() {
     { port: DASHBOARD_PORT, label: "NemoClaw dashboard" },
   ];
   for (const { port, label } of requiredPorts) {
-    const portCheck = await checkPortAvailable(port);
+    let portCheck = await checkPortAvailable(port);
     if (!portCheck.ok) {
       if ((port === GATEWAY_PORT || port === DASHBOARD_PORT) && gatewayReuseState === "healthy") {
         console.log(`  ✓ Port ${port} already owned by healthy NemoClaw runtime (${label})`);
         continue;
+      }
+      // Auto-cleanup orphaned SSH port-forward from a previous NemoClaw session
+      // (e.g. dashboard forward left behind after destroy). Only kill the process
+      // if its command line contains "openshell" to avoid killing unrelated SSH
+      // tunnels the user may have set up on the same port. (#1950)
+      if (port === DASHBOARD_PORT && portCheck.process === "ssh" && portCheck.pid) {
+        // Use `ps` to get the command line — works on Linux, macOS, and WSL.
+        const cmdline = runCapture(
+          `ps -p ${portCheck.pid} -o args= 2>/dev/null`,
+          { ignoreError: true },
+        ).trim();
+        if (cmdline.includes("openshell")) {
+          console.log(`  Cleaning up orphaned SSH port-forward on port ${port} (PID ${portCheck.pid})...`);
+          run(`kill ${portCheck.pid} 2>/dev/null || true`, { ignoreError: true });
+          sleep(1);
+          portCheck = await checkPortAvailable(port);
+          if (portCheck.ok) {
+            console.log(`  ✓ Port ${port} available after orphaned forward cleanup (${label})`);
+            continue;
+          }
+        }
       }
       console.error("");
       console.error(`  !! Port ${port} is not available.`);
@@ -2160,6 +2620,7 @@ async function preflight() {
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
 
+/** Start the OpenShell gateway with retry logic and post-start health polling. */
 async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   step(2, 8, "Starting OpenShell gateway");
 
@@ -2241,9 +2702,17 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
         }
         console.log("  Waiting for gateway health...");
 
-        const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 5);
-        const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
+        // ARM64 (e.g. Raspberry Pi) needs more time: k3s takes 90-180s to init
+        const isArm64 = process.arch === "arm64";
+        // After openshell gateway start returns (container HEALTHY at Layer 1),
+        // poll application-layer connectivity (Layer 2: gRPC, TLS, port mapping).
+        // 60s default gives enough buffer for gRPC init and TLS handshake. (#1830)
+        const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 12);
+        const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", isArm64 ? 10 : 5);
         for (let i = 0; i < healthPollCount; i++) {
+          // Ensure the gateway is selected before each probe (non-TTY environments
+          // like ARM64 may not have it selected automatically)
+          runCaptureOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
           const status = runCaptureOpenshell(["status"], { ignoreError: true });
           const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
             ignoreError: true,
@@ -2396,11 +2865,10 @@ async function promptValidatedSandboxName() {
       "NEMOCLAW_SANDBOX_NAME",
       "my-assistant",
     );
-    const sandboxName = (nameAnswer || "my-assistant").trim().toLowerCase();
+    const sandboxName = (nameAnswer || "my-assistant").trim();
 
-    // Validate: RFC 1123 subdomain — lowercase alphanumeric and hyphens,
-    // must start with a letter (not a digit) to satisfy Kubernetes naming.
-    if (/^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName)) {
+    try {
+      const validatedSandboxName = validateName(sandboxName, "sandbox name");
       // Reject names that collide with global CLI commands.
       // A sandbox named 'status' makes 'nemoclaw status connect' route to
       // the global status command instead of the sandbox.
@@ -2429,10 +2897,11 @@ async function promptValidatedSandboxName() {
         }
         continue;
       }
-      return sandboxName;
+      return validatedSandboxName;
+    } catch (error) {
+      console.error(`  ${error.message}`);
     }
 
-    console.error(`  Invalid sandbox name: '${sandboxName}'`);
     if (/^[0-9]/.test(sandboxName)) {
       console.error("  Names must start with a letter, not a digit.");
     } else {
@@ -2472,7 +2941,10 @@ async function createSandbox(
 ) {
   step(6, 8, "Creating sandbox");
 
-  const sandboxName = sandboxNameOverride || (await promptValidatedSandboxName());
+  const sandboxName = validateName(
+    sandboxNameOverride ?? (await promptValidatedSandboxName()),
+    "sandbox name",
+  );
   const effectivePort = agent ? agent.forwardPort : CONTROL_UI_PORT;
   const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${effectivePort}`;
 
@@ -2481,6 +2953,49 @@ async function createSandbox(
   // without provider attachments (security: prevents legacy raw-env-var leaks).
   const getMessagingToken = (envKey) =>
     getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
+
+  // The UI toggle list can include channels the user toggled on but then
+  // skipped the token prompt for. Only channels with a real token will have a
+  // provider attached, so the conflict check must filter out the skipped ones
+  // (otherwise we warn about phantom channels that will never poll).
+  const conflictCheckChannels: string[] = Array.isArray(enabledChannels)
+    ? enabledChannels.filter((name) => {
+        const def = MESSAGING_CHANNELS.find((c) => c.name === name);
+        return def ? !!getMessagingToken(def.envKey) : false;
+      })
+    : [];
+
+  // Messaging channels like Telegram (getUpdates), Discord (gateway), and Slack
+  // (Socket Mode) enforce one consumer per bot token. Two sandboxes sharing
+  // a token silently break both bridges (see #1953). Warn before we commit.
+  if (conflictCheckChannels.length > 0) {
+    const {
+      backfillMessagingChannels,
+      findChannelConflicts,
+    } = require("./messaging-conflict");
+    backfillMessagingChannels(registry, makeConflictProbe());
+    const conflicts = findChannelConflicts(sandboxName, conflictCheckChannels, registry);
+    if (conflicts.length > 0) {
+      for (const { channel, sandbox } of conflicts) {
+        console.log(
+          `  ⚠ Sandbox '${sandbox}' already has ${channel} enabled. Bot tokens only allow one sandbox to poll — continuing will break both bridges.`,
+        );
+      }
+      if (isNonInteractive()) {
+        console.error(
+          "  Aborting: resolve the messaging channel conflict above or run `nemoclaw <sandbox> destroy` on the other sandbox.",
+        );
+        process.exit(1);
+      }
+      const answer = (await promptOrDefault("  Continue anyway? [y/N]: ", null, "n"))
+        .trim()
+        .toLowerCase();
+      if (answer !== "y" && answer !== "yes") {
+        console.log("  Aborting sandbox creation.");
+        process.exit(1);
+      }
+    }
+  }
 
   // When enabledChannels is provided (from the toggle picker), only include
   // channels the user selected. When null (backward compat), include all.
@@ -2528,6 +3043,10 @@ async function createSandbox(
   // Reconcile local registry state with the live OpenShell gateway state.
   const liveExists = pruneStaleSandboxEntry(sandboxName);
 
+  // Declared outside the liveExists block so it is accessible during
+  // post-creation restore (the sandbox create path runs after the block).
+  let pendingStateRestore = null;
+
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
 
@@ -2538,7 +3057,14 @@ async function createSandbox(
       hasMessagingTokens &&
       messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
 
-    if (!isRecreateSandbox() && !needsProviderMigration) {
+    // Detect whether any messaging credential has been rotated since the
+    // sandbox was created. Provider credentials are resolved once at sandbox
+    // startup, so a rotated token requires a rebuild to take effect.
+    const credentialRotation = hasMessagingTokens
+      ? detectMessagingCredentialRotation(sandboxName, messagingTokenDefs)
+      : { changed: false, changedProviders: [] };
+
+    if (!isRecreateSandbox() && !needsProviderMigration && !credentialRotation.changed) {
       if (isNonInteractive()) {
         if (existingSandboxState === "ready") {
           // Upsert messaging providers even on reuse so credential changes take
@@ -2580,13 +3106,65 @@ async function createSandbox(
       }
     }
 
+    // Back up workspace state before destroying the sandbox when triggered
+    // by credential rotation, so files can be restored after recreation.
+    if (credentialRotation.changed && existingSandboxState === "ready") {
+      const rotatedNames = credentialRotation.changedProviders.join(", ");
+      console.log(`  Messaging credential(s) rotated: ${rotatedNames}`);
+      console.log("  Rebuilding sandbox to propagate new credentials to the L7 proxy...");
+      try {
+        const backup = sandboxState.backupSandboxState(sandboxName);
+        if (backup.success) {
+          note(`  ✓ State backed up (${backup.backedUpDirs.length} directories)`);
+          pendingStateRestore = backup;
+        } else {
+          console.error("  State backup failed — aborting rebuild to prevent data loss.");
+          console.error("  Pass --recreate-sandbox to force recreation without backup.");
+          upsertMessagingProviders(messagingTokenDefs);
+          // Update stored hashes so the next onboard doesn't re-detect rotation.
+          const abortHashes = {};
+          for (const { envKey, token } of messagingTokenDefs) {
+            if (token) abortHashes[envKey] = hashCredential(token);
+          }
+          if (Object.keys(abortHashes).length > 0) {
+            registry.updateSandbox(sandboxName, { providerCredentialHashes: abortHashes });
+          }
+          ensureDashboardForward(sandboxName, chatUiUrl);
+          return sandboxName;
+        }
+      } catch (err) {
+        console.error(`  State backup threw: ${err.message} — aborting rebuild.`);
+        console.error("  Pass --recreate-sandbox to force recreation without backup.");
+        upsertMessagingProviders(messagingTokenDefs);
+        const abortHashes = {};
+        for (const { envKey, token } of messagingTokenDefs) {
+          if (token) abortHashes[envKey] = hashCredential(token);
+        }
+        if (Object.keys(abortHashes).length > 0) {
+          registry.updateSandbox(sandboxName, { providerCredentialHashes: abortHashes });
+        }
+        ensureDashboardForward(sandboxName, chatUiUrl);
+        return sandboxName;
+      }
+    }
+
     if (needsProviderMigration) {
       console.log(`  Sandbox '${sandboxName}' exists but messaging providers are not attached.`);
       console.log("  Recreating to ensure credentials flow through the provider pipeline.");
+    } else if (credentialRotation.changed) {
+      // Message already printed above during backup.
     } else if (existingSandboxState === "ready") {
       note(`  Sandbox '${sandboxName}' exists and is ready — recreating by explicit request.`);
     } else {
       note(`  Sandbox '${sandboxName}' exists but is not ready — recreating it.`);
+    }
+
+    const previousEntry = registry.getSandbox(sandboxName);
+    if (previousEntry?.policies?.length > 0) {
+      onboardSession.updateSession((current) => {
+        current.policyPresets = previousEntry.policies;
+        return current;
+      });
     }
 
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
@@ -2759,6 +3337,29 @@ async function createSandbox(
       };
     }
   }
+  // Pull the base image and resolve its digest so the Dockerfile is pinned to
+  // exactly what we just fetched. This prevents stale :latest tags from
+  // silently reusing a cached old image after NemoClaw upgrades (#1904).
+  const resolved = pullAndResolveBaseImageDigest();
+  if (resolved) {
+    console.log(`  Pinning base image to ${resolved.digest.slice(0, 19)}...`);
+  } else {
+    // Check if the image exists locally before falling back to unpinned :latest.
+    // On a first-time install behind a firewall with no cached image, warn early
+    // so the user knows the build will likely fail.
+    const localCheck = runCapture(
+      ["docker", "image", "inspect", `${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`],
+      { ignoreError: true },
+    );
+    if (localCheck) {
+      console.warn("  Warning: could not pull base image from registry; using cached :latest.");
+    } else {
+      console.warn(`  Warning: base image ${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG} is not available locally.`);
+      console.warn("  The build will fail unless Docker can pull the image during build.");
+      console.warn("  If offline, pull the image manually first:");
+      console.warn(`    docker pull ${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`);
+    }
+  }
   patchStagedDockerfile(
     stagedDockerfile,
     model,
@@ -2770,6 +3371,7 @@ async function createSandbox(
     activeMessagingChannels,
     messagingAllowedIds,
     discordGuilds,
+    resolved ? resolved.ref : null,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
@@ -2790,6 +3392,13 @@ async function createSandbox(
   // subprocesses (gateway start, openshell CLI) but the sandbox should
   // never have access to the host's Kubernetes cluster or SSH agent.
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
+  // Pass the configured dashboard port into the sandbox so nemoclaw-start.sh
+  // can unconditionally override CHAT_UI_URL even when the Docker image was
+  // built with a different default. Without this, the baked-in Docker ENV
+  // value takes precedence and the gateway starts on the wrong port. (#1925)
+  if (process.env.NEMOCLAW_DASHBOARD_PORT) {
+    envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", String(DASHBOARD_PORT)));
+  }
   if (webSearchConfig?.fetchEnabled) {
     const braveKey =
       getCredential(webSearch.BRAVE_API_KEY_ENV) || process.env[webSearch.BRAVE_API_KEY_ENV];
@@ -2885,11 +3494,11 @@ async function createSandbox(
   // or seeing 502/503 errors during initial load.
   console.log("  Waiting for NemoClaw dashboard to become ready...");
   for (let i = 0; i < 15; i++) {
-    const readyMatch = runCapture(
-      `openshell sandbox exec ${shellQuote(sandboxName)} curl -sf http://localhost:${DASHBOARD_PORT}/ 2>/dev/null || echo "no"`,
+    const readyMatch = runCaptureOpenshell(
+      ["sandbox", "exec", sandboxName, "curl", "-sf", `http://localhost:${CONTROL_UI_PORT}/`],
       { ignoreError: true },
     );
-    if (readyMatch && !readyMatch.includes("no")) {
+    if (readyMatch) {
       console.log("  ✓ Dashboard is live");
       break;
     }
@@ -2907,21 +3516,47 @@ async function createSandbox(
 
   // Register only after confirmed ready — prevents phantom entries
   const effectiveAgent = agent || agentDefs.loadAgent("openclaw");
+  const providerCredentialHashes = {};
+  for (const { envKey, token } of messagingTokenDefs) {
+    if (token) {
+      providerCredentialHashes[envKey] = hashCredential(token);
+    }
+  }
   registry.registerSandbox({
     name: sandboxName,
+    model: model || null,
+    provider: provider || null,
     gpuEnabled: !!gpu,
     agent: agent ? agent.name : null,
     agentVersion: fromDockerfile ? null : effectiveAgent.expectedVersion || null,
     dangerouslySkipPermissions: dangerouslySkipPermissions || undefined,
+    providerCredentialHashes:
+      Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
+    messagingChannels: activeMessagingChannels,
   });
+
+  // Restore workspace state if we backed it up during credential rotation.
+  if (pendingStateRestore?.success) {
+    note("  Restoring workspace state after credential rotation...");
+    const restore = sandboxState.restoreSandboxState(
+      sandboxName,
+      pendingStateRestore.manifest.backupPath,
+    );
+    if (restore.success) {
+      note(`  ✓ State restored (${restore.restoredDirs.length} directories)`);
+    } else {
+      console.error(
+        `  Warning: partial restore. Manual recovery: ${pendingStateRestore.manifest.backupPath}`,
+      );
+    }
+  }
 
   // DNS proxy — run a forwarder in the sandbox pod so the isolated
   // sandbox namespace can resolve hostnames (fixes #626).
   console.log("  Setting up sandbox DNS proxy...");
-  run(
-    `bash "${path.join(SCRIPTS, "setup-dns-proxy.sh")}" ${shellQuote(GATEWAY_NAME)} ${shellQuote(sandboxName)} 2>&1 || true`,
-    { ignoreError: true },
-  );
+  runFile("bash", [path.join(SCRIPTS, "setup-dns-proxy.sh"), GATEWAY_NAME, sandboxName], {
+    ignoreError: true,
+  });
 
   // Check that messaging providers exist in the gateway (sandbox attachment
   // cannot be verified via CLI yet — only gateway-level existence is checked).
@@ -2990,12 +3625,12 @@ async function setupNim(gpu) {
   // Detect local inference options
   const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
   const ollamaRunning = !!runCapture(
-    `curl -sf http://localhost:${OLLAMA_PORT}/api/tags 2>/dev/null`,
+    `curl -sf http://127.0.0.1:${OLLAMA_PORT}/api/tags 2>/dev/null`,
     {
       ignoreError: true,
     },
   );
-  const vllmRunning = !!runCapture(`curl -sf http://localhost:${VLLM_PORT}/v1/models 2>/dev/null`, {
+  const vllmRunning = !!runCapture(`curl -sf http://127.0.0.1:${VLLM_PORT}/v1/models 2>/dev/null`, {
     ignoreError: true,
   });
   const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
@@ -3197,12 +3832,14 @@ async function setupNim(gpu) {
           const defaultModel = requestedModel || _envModelRemote || remoteConfig.defaultModel;
           let modelValidator = null;
           if (selected.key === "openai" || selected.key === "gemini") {
+            const modelAuthMode = getProbeAuthMode(provider);
             modelValidator = (candidate) =>
               validateOpenAiLikeModel(
                 remoteConfig.label,
                 endpointUrl,
                 candidate,
                 getCredential(credentialEnv),
+                ...(modelAuthMode ? [{ authMode: modelAuthMode }] : []),
               );
           } else if (selected.key === "anthropic") {
             modelValidator = (candidate) =>
@@ -3240,7 +3877,26 @@ async function setupNim(gpu) {
                 remoteConfig.helpUrl,
               );
               if (validation.ok) {
-                preferredInferenceApi = validation.api;
+                // Force chat completions for all OpenAI-compatible endpoints
+                // unless the user explicitly opted in to responses via env var.
+                // Many backends (Ollama, vLLM, LiteLLM) expose /v1/responses
+                // but do not correctly handle the `developer` role used by the
+                // Responses API — messages with that role are silently dropped,
+                // causing the model to receive no system prompt or tool
+                // definitions. Chat completions uses the `system` role which
+                // is universally supported.
+                // See: https://github.com/NVIDIA/NemoClaw/issues/1932
+                const explicitApi = (process.env.NEMOCLAW_PREFERRED_API || "").trim().toLowerCase();
+                if (explicitApi && explicitApi !== "openai-completions" && explicitApi !== "chat-completions") {
+                  preferredInferenceApi = validation.api;
+                } else {
+                  if (validation.api !== "openai-completions") {
+                    console.log(
+                      "  ℹ Using chat completions API (compatible endpoints may not support the Responses API developer role)",
+                    );
+                  }
+                  preferredInferenceApi = "openai-completions";
+                }
                 break;
               }
               if (
@@ -3308,6 +3964,7 @@ async function setupNim(gpu) {
                   {
                     requireResponsesToolCalling: shouldRequireResponsesToolCalling(provider),
                     skipResponsesProbe: shouldSkipResponsesProbe(provider),
+                    authMode: getProbeAuthMode(provider),
                   },
                 );
                 if (validation.ok) {
@@ -3339,6 +3996,7 @@ async function setupNim(gpu) {
               {
                 requireResponsesToolCalling: shouldRequireResponsesToolCalling(provider),
                 skipResponsesProbe: shouldSkipResponsesProbe(provider),
+                authMode: getProbeAuthMode(provider),
               },
             );
             if (validation.ok) {
@@ -3432,15 +4090,25 @@ async function setupNim(gpu) {
       } else if (selected.key === "ollama") {
         if (!ollamaRunning) {
           console.log("  Starting Ollama...");
-          // On WSL2, binding to 0.0.0.0 creates a dual-stack socket that Docker
-          // cannot reach via host-gateway. The default 127.0.0.1 binding works
-          // because WSL2 relays IPv4-only sockets to the Windows host.
-          const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} `;
-          run(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+          if (isWsl()) {
+            // On WSL2, binding to 0.0.0.0 creates a dual-stack socket that Docker
+            // cannot reach via host-gateway. The default 127.0.0.1 binding works
+            // because WSL2 relays IPv4-only sockets to the Windows host (#1104).
+            run(`ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+          } else {
+            // Bind to localhost only — the auth proxy handles container access.
+            run(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+          }
           sleep(2);
           if (!isWsl()) printOllamaExposureWarning();
         }
-        console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
+        if (isWsl()) {
+          // WSL2 doesn't need the proxy — Docker can reach the host directly.
+          console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
+        } else {
+          startOllamaAuthProxy();
+          console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`);
+        }
         provider = "ollama-local";
         credentialEnv = "OPENAI_API_KEY";
         endpointUrl = getLocalProviderBaseUrl(provider);
@@ -3495,12 +4163,13 @@ async function setupNim(gpu) {
         console.log("  Installing Ollama via Homebrew...");
         run("brew install ollama", { ignoreError: true });
         console.log("  Starting Ollama...");
-        run(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
+        // Bind to localhost — the auth proxy handles container access.
+        run(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
           ignoreError: true,
         });
         sleep(2);
-        printOllamaExposureWarning();
-        console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
+        startOllamaAuthProxy();
+        console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`);
         provider = "ollama-local";
         credentialEnv = "OPENAI_API_KEY";
         endpointUrl = getLocalProviderBaseUrl(provider);
@@ -3557,7 +4226,7 @@ async function setupNim(gpu) {
         endpointUrl = getLocalProviderBaseUrl(provider);
         // Query vLLM for the actual model ID
         const vllmModelsRaw = runCapture(
-          `curl -sf http://localhost:${VLLM_PORT}/v1/models 2>/dev/null`,
+          `curl -sf http://127.0.0.1:${VLLM_PORT}/v1/models 2>/dev/null`,
           {
             ignoreError: true,
           },
@@ -3734,12 +4403,27 @@ async function setupInference(
     const validation = validateLocalProvider(provider);
     if (!validation.ok) {
       console.error(`  ${validation.message}`);
-      console.error("  On macOS, local inference also depends on OpenShell host routing support.");
+      if (process.platform === "darwin") {
+        console.error("  On macOS, local inference also depends on OpenShell host routing support.");
+      }
       process.exit(1);
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
+    let ollamaCredential = "ollama";
+    if (!isWsl()) {
+      ensureOllamaAuthProxy();
+      const proxyToken = getOllamaProxyToken();
+      if (!proxyToken) {
+        console.error("  Ollama auth proxy token is not set. Re-run onboard to initialize the proxy.");
+        process.exit(1);
+      }
+      ollamaCredential = proxyToken;
+      // Persist token now that ollama-local is confirmed as the provider.
+      // Not persisted earlier in case the user backs out to a different provider.
+      persistProxyToken(proxyToken);
+    }
     const providerResult = upsertProvider("ollama-local", "openai", "OPENAI_API_KEY", baseUrl, {
-      OPENAI_API_KEY: "ollama",
+      OPENAI_API_KEY: ollamaCredential,
     });
     if (!providerResult.ok) {
       console.error(`  ${providerResult.message}`);
@@ -3816,6 +4500,61 @@ const MESSAGING_CHANNELS = [
   },
 ];
 
+// Curl exit codes that indicate a network-level failure (not a token problem).
+// 35 (TLS handshake failure) covers corporate proxies that MITM HTTPS.
+const TELEGRAM_NETWORK_CURL_CODES = new Set([6, 7, 28, 35, 52, 56]);
+
+async function checkTelegramReachability(token: string) {
+  const result = runCurlProbe([
+    "-sS",
+    "--connect-timeout", "5",
+    "--max-time", "10",
+    `https://api.telegram.org/bot${token}/getMe`,
+  ]);
+
+  // HTTP 200 with "ok":true — Telegram is reachable and token is valid.
+  if (result.ok) return;
+
+  // HTTP 401 or 404 — token was rejected by Telegram (not a network issue).
+  if (result.httpStatus === 401 || result.httpStatus === 404) {
+    console.log(
+      "  ⚠ Bot token was rejected by Telegram — verify the token is correct.",
+    );
+    return;
+  }
+
+  // Network-level failure — Telegram is unreachable from this host.
+  if (result.curlStatus && TELEGRAM_NETWORK_CURL_CODES.has(result.curlStatus)) {
+    console.log("");
+    console.log("  ⚠ api.telegram.org is not reachable from this host.");
+    console.log("    Telegram integration requires outbound HTTPS access to api.telegram.org.");
+    console.log("    This is commonly blocked by corporate network proxies.");
+
+    if (isNonInteractive()) {
+      console.error("  Aborting onboarding in non-interactive mode due to Telegram network reachability failure.");
+      process.exit(1);
+    } else {
+      const answer = (await promptOrDefault("    Continue anyway? [y/N]: ", null, "n"))
+        .trim()
+        .toLowerCase();
+      if (answer !== "y" && answer !== "yes") {
+        console.log("  Aborting onboarding.");
+        process.exit(1);
+      }
+    }
+    return;
+  }
+
+  // Unexpected probe failure — warn but don't block.
+  if (!result.ok && result.httpStatus > 0) {
+    console.log(
+      `  ⚠ Telegram API returned HTTP ${result.httpStatus} — the bot may not work correctly.`,
+    );
+  } else if (!result.ok) {
+    console.log(`  ⚠ Telegram reachability probe failed: ${result.message}`);
+  }
+}
+
 async function setupMessagingChannels() {
   step(5, 8, "Messaging channels");
 
@@ -3827,6 +4566,9 @@ async function setupMessagingChannels() {
     const found = MESSAGING_CHANNELS.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name);
     if (found.length > 0) {
       note(`  [non-interactive] Messaging tokens detected: ${found.join(", ")}`);
+      if (found.includes("telegram")) {
+        await checkTelegramReachability(getMessagingToken("TELEGRAM_BOT_TOKEN"));
+      }
     } else {
       note("  [non-interactive] No messaging tokens configured. Skipping.");
     }
@@ -3999,11 +4741,29 @@ async function setupMessagingChannels() {
     }
   }
   console.log("");
+
+  // Preflight: verify Telegram API is reachable from the host before sandbox creation.
+  // The non-interactive branch above already ran this probe and returned early,
+  // so this second call only fires on the interactive path — guard explicitly
+  // to make the no-double-probe invariant visible at the call site.
+  if (
+    !isNonInteractive() &&
+    selected.includes("telegram") &&
+    getMessagingToken("TELEGRAM_BOT_TOKEN")
+  ) {
+    await checkTelegramReachability(getMessagingToken("TELEGRAM_BOT_TOKEN"));
+  }
+
   return selected;
 }
 
-function getSuggestedPolicyPresets({ enabledChannels = null, webSearchConfig = null } = {}) {
+function getSuggestedPolicyPresets({ enabledChannels = null, webSearchConfig = null, provider = null } = {}) {
   const suggestions = ["pypi", "npm"];
+
+  // Auto-suggest local-inference preset when a local provider is selected
+  if (provider && LOCAL_INFERENCE_PROVIDERS.includes(provider)) {
+    suggestions.push("local-inference");
+  }
   const usesExplicitMessagingSelection = Array.isArray(enabledChannels);
 
   const maybeSuggestMessagingPreset = (channel, envKey) => {
@@ -4618,6 +5378,7 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   const onSelection = typeof options.onSelection === "function" ? options.onSelection : null;
   const webSearchConfig = options.webSearchConfig || null;
   const enabledChannels = Array.isArray(options.enabledChannels) ? options.enabledChannels : null;
+  const provider = options.provider || null;
 
   step(8, 8, "Policy presets");
 
@@ -4647,6 +5408,10 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   const suggestions = tiers.resolveTierPresets(tierName).map((p) => p.name);
   // Allow credential-based overrides on top of the tier (additive only).
   if (webSearchConfig && !suggestions.includes("brave")) suggestions.push("brave");
+  // Auto-suggest local-inference preset when a local provider is selected
+  if (provider && LOCAL_INFERENCE_PROVIDERS.includes(provider) && !suggestions.includes("local-inference")) {
+    suggestions.push("local-inference");
+  }
 
   if (isNonInteractive()) {
     const policyMode = (process.env.NEMOCLAW_POLICY_MODE || "suggested").trim().toLowerCase();
@@ -4776,10 +5541,19 @@ function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CON
   // Use stdio "ignore" to prevent spawnSync from waiting on inherited pipe fds.
   // The --background flag forks a child that inherits stdout/stderr; if those are
   // pipes, spawnSync blocks until the background process exits (never).
-  runOpenshell(["forward", "start", "--background", forwardTarget, sandboxName], {
+  const fwdResult = runOpenshell(["forward", "start", "--background", forwardTarget, sandboxName], {
     ignoreError: true,
     stdio: ["ignore", "ignore", "ignore"],
   });
+  // A non-zero exit from the parent means forward start rejected before forking —
+  // typically because the port is already bound by another process (e.g. a local
+  // Docker test container with -p PORT:PORT). The error is otherwise swallowed by
+  // ignoreError + stdio:ignore, leaving the dashboard URL silently unreachable (#1925).
+  if (fwdResult && fwdResult.status !== 0) {
+    console.warn(`! Port ${portToStop} forward did not start — port may be in use by another process.`);
+    console.warn(`  Check: docker ps --format 'table {{.Names}}\\t{{.Ports}}' | grep ${portToStop}`);
+    console.warn(`  Free the port, then reconnect: nemoclaw ${sandboxName} connect`);
+  }
 }
 
 function findOpenclawJsonPath(dir) {
@@ -5060,6 +5834,11 @@ async function onboard(opts = {}) {
   if (!noticeAccepted) {
     process.exit(1);
   }
+  // Validate NEMOCLAW_PROVIDER early so invalid values fail before
+  // preflight (Docker/OpenShell checks). Without this, users see a
+  // misleading 'Docker is not reachable' error instead of the real
+  // problem: an unsupported provider value.
+  getRequestedProviderHint();
   const lockResult = onboardSession.acquireOnboardLock(
     `nemoclaw onboard${resume ? " --resume" : ""}${isNonInteractive() ? " --non-interactive" : ""}${requestedFromDockerfile ? ` --from ${requestedFromDockerfile}` : ""}`,
   );
@@ -5201,7 +5980,24 @@ async function onboard(opts = {}) {
       ignoreError: true,
     });
     const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    const gatewayReuseState = getGatewayReuseState(gatewayStatus, gatewayInfo, activeGatewayInfo);
+    let gatewayReuseState = getGatewayReuseState(gatewayStatus, gatewayInfo, activeGatewayInfo);
+
+    // Verify the gateway container is actually running — openshell CLI metadata
+    // can be stale after a manual `docker rm`. See #2020.
+    if (gatewayReuseState === "healthy") {
+      const containerState = verifyGatewayContainerRunning();
+      if (containerState === "missing") {
+        console.log("  Gateway metadata is stale (container not running). Cleaning up...");
+        runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+        destroyGateway();
+        registry.clearAll();
+        gatewayReuseState = "missing";
+        console.log("  ✓ Stale gateway metadata cleaned up");
+      } else if (containerState === "unknown") {
+        console.log("  Warning: could not verify gateway container state (Docker may be unavailable). Proceeding with cached health status.");
+      }
+    }
+
     const canReuseHealthyGateway = gatewayReuseState === "healthy";
     const resumeGateway =
       resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
@@ -5289,7 +6085,7 @@ async function onboard(opts = {}) {
 
       startRecordedStep("inference", { sandboxName, provider, model });
       const inferenceResult = await setupInference(
-        GATEWAY_NAME,
+        sandboxName,
         model,
         provider,
         endpointUrl,
@@ -5307,31 +6103,6 @@ async function onboard(opts = {}) {
       break;
     }
 
-    if (webSearchConfig) {
-      note("  [resume] Revalidating Brave Search configuration.");
-      const braveApiKey = await ensureValidatedBraveSearchCredential();
-      if (braveApiKey) {
-        webSearchConfig = { fetchEnabled: true };
-        onboardSession.updateSession((current) => {
-          current.webSearchConfig = webSearchConfig;
-          return current;
-        });
-        note("  [resume] Reusing Brave Search configuration.");
-      } else {
-        webSearchConfig = await configureWebSearch(null);
-        onboardSession.updateSession((current) => {
-          current.webSearchConfig = webSearchConfig;
-          return current;
-        });
-      }
-    } else {
-      webSearchConfig = await configureWebSearch(webSearchConfig);
-      onboardSession.updateSession((current) => {
-        current.webSearchConfig = webSearchConfig;
-        return current;
-      });
-    }
-
     const sandboxReuseState = getSandboxReuseState(sandboxName);
     const webSearchConfigChanged = Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
     const resumeSandbox =
@@ -5340,6 +6111,9 @@ async function onboard(opts = {}) {
       session?.steps?.sandbox?.status === "complete" &&
       sandboxReuseState === "ready";
     if (resumeSandbox) {
+      if (webSearchConfig) {
+        note("  [resume] Reusing Brave Search configuration already baked into the sandbox.");
+      }
       skippedStepMessage("sandbox", sandboxName);
     } else {
       if (resume && session?.steps?.sandbox?.status === "complete") {
@@ -5360,6 +6134,17 @@ async function onboard(opts = {}) {
           }
         }
       }
+      let nextWebSearchConfig = webSearchConfig;
+      if (nextWebSearchConfig) {
+        note("  [resume] Revalidating Brave Search configuration for sandbox recreation.");
+        const braveApiKey = await ensureValidatedBraveSearchCredential();
+        nextWebSearchConfig = braveApiKey ? { fetchEnabled: true } : null;
+        if (nextWebSearchConfig) {
+          note("  [resume] Reusing Brave Search configuration.");
+        }
+      } else {
+        nextWebSearchConfig = await configureWebSearch(null);
+      }
       startRecordedStep("sandbox", { sandboxName, provider, model });
       selectedMessagingChannels = await setupMessagingChannels();
       onboardSession.updateSession((current) => {
@@ -5372,17 +6157,24 @@ async function onboard(opts = {}) {
         provider,
         preferredInferenceApi,
         sandboxName,
-        webSearchConfig,
+        nextWebSearchConfig,
         selectedMessagingChannels,
         fromDockerfile,
         agent,
         dangerouslySkipPermissions,
       );
+      webSearchConfig = nextWebSearchConfig;
       // Persist model and provider after the sandbox entry exists in the registry.
       // updateSandbox() silently no-ops when the entry is missing, so this must
       // run after createSandbox() / registerSandbox() — not before. Fixes #1881.
       registry.updateSandbox(sandboxName, { model, provider });
-      onboardSession.markStepComplete("sandbox", { sandboxName, provider, model, nimContainer });
+      onboardSession.markStepComplete("sandbox", {
+        sandboxName,
+        provider,
+        model,
+        nimContainer,
+        webSearchConfig,
+      });
     }
 
     if (agent) {
@@ -5410,11 +6202,16 @@ async function onboard(opts = {}) {
       onboardSession.markStepSkipped("agent_setup");
     }
 
-    const recordedPolicyPresets = Array.isArray(session?.policyPresets)
-      ? session.policyPresets
+    const latestSession = onboardSession.loadSession();
+    const recordedPolicyPresets = Array.isArray(latestSession?.policyPresets)
+      ? latestSession.policyPresets
       : null;
     if (dangerouslySkipPermissions) {
       step(8, 8, "Policy presets");
+      if (!waitForSandboxReady(sandboxName)) {
+        console.error(`\n  ✗ Sandbox '${sandboxName}' not ready after creation. Giving up.`);
+        process.exit(1);
+      }
       policies.applyPermissivePolicy(sandboxName);
       onboardSession.markStepComplete("policies", {
         sandboxName,
@@ -5442,14 +6239,12 @@ async function onboard(opts = {}) {
         });
         const appliedPolicyPresets = await setupPoliciesWithSelection(sandboxName, {
           selectedPresets:
-            resume &&
-            session?.steps?.policies?.status !== "complete" &&
-            Array.isArray(recordedPolicyPresets) &&
-            recordedPolicyPresets.length > 0
+            Array.isArray(recordedPolicyPresets) && recordedPolicyPresets.length > 0
               ? recordedPolicyPresets
               : null,
           enabledChannels: selectedMessagingChannels,
           webSearchConfig,
+          provider,
           onSelection: (policyPresets) => {
             onboardSession.updateSession((current) => {
               current.policyPresets = policyPresets;
@@ -5480,7 +6275,9 @@ module.exports = {
   compactText,
   copyBuildContextDir,
   classifySandboxCreateFailure,
+  configureWebSearch,
   createSandbox,
+  ensureValidatedBraveSearchCredential,
   formatEnvAssignment,
   getFutureShellPathHint,
   getGatewayStartEnv,
@@ -5490,6 +6287,9 @@ module.exports = {
   getInstalledOpenshellVersion,
   getBlueprintMinOpenshellVersion,
   getBlueprintMaxOpenshellVersion,
+  pullAndResolveBaseImageDigest,
+  SANDBOX_BASE_IMAGE,
+  SANDBOX_BASE_TAG,
   versionGte,
   getRequestedModelHint,
   getRequestedProviderHint,
@@ -5530,6 +6330,7 @@ module.exports = {
   isOpenclawReady,
   arePolicyPresetsApplied,
   getSuggestedPolicyPresets,
+  LOCAL_INFERENCE_PROVIDERS,
   presetsCheckboxSelector,
   selectPolicyTier,
   selectTierPresetsAndAccess,
@@ -5538,9 +6339,16 @@ module.exports = {
   summarizeProbeFailure,
   hasResponsesToolCall,
   upsertProvider,
+  hashCredential,
+  detectMessagingCredentialRotation,
   hydrateCredentialEnv,
   pruneKnownHostsEntries,
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
   patchStagedDockerfile,
+  ensureOllamaAuthProxy,
+  getProbeAuthMode,
+  getValidationProbeCurlArgs,
+  checkTelegramReachability,
+  TELEGRAM_NETWORK_CURL_CODES,
 };

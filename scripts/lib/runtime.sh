@@ -282,3 +282,50 @@ check_local_provider_health() {
       ;;
   esac
 }
+
+# ── Kubelet conflict detection ────────────────────────────────────
+# Returns 0 if a conflicting kubelet is detected, 1 otherwise.
+# Sets KUBELET_CONFLICT_DETAIL to a human-readable description.
+# See: https://github.com/NVIDIA/NemoClaw/issues/431
+detect_kubelet_conflict() {
+  KUBELET_CONFLICT_DETAIL=""
+
+  # Kubelet conflicts only apply on Linux (cgroup namespace sharing).
+  [ "$(uname -s)" = "Linux" ] || return 1
+
+  if pgrep -x kubelet >/dev/null 2>&1 || pgrep -x kubelite >/dev/null 2>&1 || pgrep -x k3s >/dev/null 2>&1; then
+    KUBELET_CONFLICT_DETAIL="kubelet process detected"
+    return 0
+  fi
+
+  if command -v microk8s >/dev/null 2>&1; then
+    if microk8s status 2>/dev/null | grep -q "microk8s is running"; then
+      KUBELET_CONFLICT_DETAIL="MicroK8s is running"
+      return 0
+    fi
+  fi
+
+  if systemctl is-active --quiet k3s 2>/dev/null || systemctl is-active --quiet k3s-agent 2>/dev/null; then
+    KUBELET_CONFLICT_DETAIL="k3s service is active"
+    return 0
+  fi
+
+  return 1
+}
+
+# Emit standardized warning for kubelet conflicts.
+warn_kubelet_conflict() {
+  local detail="${1:-${KUBELET_CONFLICT_DETAIL:-}}"
+  warn "⚠️  Conflicting Kubernetes detected: $detail"
+  warn ""
+  warn "The gateway runs k3s inside Docker with cgroupns=host, which will"
+  warn "conflict with the host kubelet over /sys/fs/cgroup/kubepods."
+  warn "This causes all pods to enter CrashLoopBackOff."
+  warn ""
+  warn "Options:"
+  warn "  1. Stop the host Kubernetes first:"
+  warn "     sudo microk8s stop        # for MicroK8s"
+  warn "     sudo systemctl stop k3s   # for k3s"
+  warn "     sudo systemctl stop kubelet  # for kubeadm"
+  warn "  2. Continue anyway (gateway will likely fail)"
+}

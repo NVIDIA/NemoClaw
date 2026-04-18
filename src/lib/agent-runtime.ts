@@ -53,7 +53,7 @@ export function getHealthProbeUrl(agent: AgentDefinition | null): string {
  * Returns the script string, or null if agent is null (use existing inline
  * OpenClaw script instead).
  */
-export function buildRecoveryScript(agent: AgentDefinition | null): string | null {
+export function buildRecoveryScript(agent: AgentDefinition | null, port: number): string | null {
   if (!agent) return null;
 
   const probeUrl = getHealthProbeUrl(agent);
@@ -70,7 +70,7 @@ export function buildRecoveryScript(agent: AgentDefinition | null): string | nul
     "touch /tmp/gateway.log; chmod 600 /tmp/gateway.log;",
     `AGENT_BIN=${shellQuote(binaryPath as string)}; if [ ! -x "$AGENT_BIN" ]; then AGENT_BIN="$(command -v ${shellQuote((binaryPath as string).split("/").pop()!)})"; fi;`,
     'if [ -z "$AGENT_BIN" ]; then echo AGENT_MISSING; exit 1; fi;',
-    `nohup ${gatewayCmd} > /tmp/gateway.log 2>&1 &`,
+    `nohup ${gatewayCmd} --port ${port} > /tmp/gateway.log 2>&1 &`,
     "GPID=$!; sleep 2;",
     'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; cat /tmp/gateway.log 2>/dev/null | tail -5; fi',
   ].join(" ");

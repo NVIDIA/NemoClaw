@@ -10,6 +10,7 @@ import {
   parseFrontmatter,
   resolveSkillPaths,
   collectFiles,
+  postInstall,
   validateRelativePath,
   shellQuote,
 } from "../../dist/lib/skill-install";
@@ -245,5 +246,36 @@ describe("resolveSkillPaths", () => {
     expect(paths.mirrorDir).toBeNull();
     expect(paths.sessionFile).toBeNull();
     expect(paths.isOpenClaw).toBe(false);
+  });
+});
+
+describe("postInstall", () => {
+  it("refreshes OpenClaw sessions after mirroring an updated skill", () => {
+    const skillDir = mkdtempSync(join(tmpdir(), "skill-postinstall-"));
+    const commands: string[] = [];
+    try {
+      writeFileSync(skillDir + "/SKILL.md", "---\nname: weather\n---\n# Weather\n");
+      const result = postInstall(
+        { configFile: "/tmp/ssh-config", sandboxName: "alpha" },
+        resolveSkillPaths(null, "weather"),
+        skillDir,
+        {
+          sshExecImpl: (_ctx, command) => {
+            commands.push(command);
+            return { status: 0, stdout: "", stderr: "" };
+          },
+        },
+      );
+
+      expect(result).toEqual({ success: true, messages: [] });
+      expect(commands.some((command) => command.includes("$HOME/.openclaw/skills/weather"))).toBe(
+        true,
+      );
+      expect(commands).toContain(
+        "printf '{}' > '/sandbox/.openclaw-data/agents/main/sessions/sessions.json'",
+      );
+    } finally {
+      rmSync(skillDir, { recursive: true, force: true });
+    }
   });
 });

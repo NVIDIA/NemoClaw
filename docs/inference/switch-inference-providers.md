@@ -88,11 +88,13 @@ Select the same provider and endpoint again.
 The updated streaming probe will detect incomplete `/v1/responses` support
 and select `/v1/chat/completions` automatically.
 
-To force `/v1/chat/completions` without re-probing, set `NEMOCLAW_PREFERRED_API`
-before onboarding:
+For the compatible-endpoint provider, NemoClaw uses `/v1/chat/completions` by
+default, so no env var is required to keep the safe path.
+To opt in to `/v1/responses` for a backend you have verified end to end, set
+`NEMOCLAW_PREFERRED_API` before onboarding:
 
 ```console
-$ NEMOCLAW_PREFERRED_API=openai-completions nemoclaw onboard
+$ NEMOCLAW_PREFERRED_API=openai-responses nemoclaw onboard
 ```
 
 :::{note}

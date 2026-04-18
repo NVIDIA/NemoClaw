@@ -186,7 +186,7 @@ describe("nim", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (cmd[0] === "docker" && cmd.includes("inspect")) return "running";
-        if (cmd[0] === "curl" && hasArg(cmd, "http://localhost:9000/v1/models")) return '{"data":[]}';
+        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models")) return '{"data":[]}';
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
@@ -202,7 +202,7 @@ describe("nim", () => {
           state: "running",
         });
         expect(commands.some((c) => c[0] === "docker" && c.includes("port"))).toBe(false);
-        expect(commands.some((c) => c.includes("http://localhost:9000/v1/models"))).toBe(
+        expect(commands.some((c) => c.includes("http://127.0.0.1:9000/v1/models"))).toBe(
           true,
         );
       } finally {
@@ -216,7 +216,7 @@ describe("nim", () => {
           if (!Array.isArray(cmd)) throw new Error("expected argv array");
           if (cmd[0] === "docker" && cmd.includes("inspect")) return "running";
           if (cmd[0] === "docker" && cmd.includes("port")) return mapping;
-          if (cmd[0] === "curl" && hasArg(cmd, "http://localhost:9000/v1/models")) return '{"data":[]}';
+          if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models")) return '{"data":[]}';
           return "";
         });
         const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
@@ -238,7 +238,7 @@ describe("nim", () => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (cmd[0] === "docker" && cmd.includes("inspect")) return "running";
         if (cmd[0] === "docker" && cmd.includes("port")) return "";
-        if (cmd[0] === "curl" && hasArg(cmd, "http://localhost:8000/v1/models")) return '{"data":[]}';
+        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:8000/v1/models")) return '{"data":[]}';
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
