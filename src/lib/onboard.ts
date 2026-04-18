@@ -63,6 +63,7 @@ const registry = require("./registry");
 const nim = require("./nim");
 const onboardSession = require("./onboard-session");
 const policies = require("./policies");
+const shields = require("./shields");
 const tiers = require("./tiers");
 const { ensureUsageNoticeConsent } = require("./usage-notice");
 const {
@@ -6212,7 +6213,7 @@ async function onboard(opts = {}) {
         console.error(`\n  ✗ Sandbox '${sandboxName}' not ready after creation. Giving up.`);
         process.exit(1);
       }
-      policies.applyPermissivePolicy(sandboxName);
+      shields.shieldsDownPermanent(sandboxName);
       onboardSession.markStepComplete("policies", {
         sandboxName,
         provider,

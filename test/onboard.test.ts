@@ -2144,18 +2144,19 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
-  it("activates permissive policy via policy set when dangerouslySkipPermissions is true", () => {
+  it("enters permanent shields-down state when dangerouslySkipPermissions is true", () => {
     const source = fs.readFileSync(
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
 
-    // The dangerouslySkipPermissions branch must call applyPermissivePolicy to
-    // activate the policy via `openshell policy set --wait`.  Without this,
-    // the base policy from sandbox create stays in Pending status (#897).
+    // The dangerouslySkipPermissions branch must call shields.shieldsDownPermanent
+    // to activate the permissive policy, unlock the config file with doctor-aligned
+    // permissions, and record permanent shields-down state. This replaced the
+    // previous policies.applyPermissivePolicy call to unify the shields state machine.
     assert.match(
       source,
-      /if \(dangerouslySkipPermissions\) \{\s*step\(8, 8, "Policy presets"\);\s*if \(!waitForSandboxReady\(sandboxName\)\) \{[\s\S]*?\}\s*policies\.applyPermissivePolicy\(sandboxName\);/,
+      /if \(dangerouslySkipPermissions\) \{\s*step\(8, 8, "Policy presets"\);\s*if \(!waitForSandboxReady\(sandboxName\)\) \{[\s\S]*?\}\s*shields\.shieldsDownPermanent\(sandboxName\);/,
     );
     // Must NOT just print a skip message without activating the policy.
     assert.doesNotMatch(
