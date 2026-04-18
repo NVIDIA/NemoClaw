@@ -233,6 +233,61 @@ else
   fail "nemoclaw status failed: ${status_output:0:200}"
 fi
 
+# 3d: shields status must show DOWN (permanent)
+info "Checking shields status..."
+shields_output=$(nemoclaw "$SANDBOX_NAME" shields status 2>&1)
+echo "$shields_output" | while IFS= read -r line; do info "  $line"; done
+
+if echo "$shields_output" | grep -q "Shields: DOWN"; then
+  pass "shields status reports DOWN"
+else
+  fail "shields status should show DOWN when --dangerously-skip-permissions is active"
+fi
+
+if echo "$shields_output" | grep -qi "permanent"; then
+  pass "shields status shows permanent mode"
+else
+  fail "shields status should show permanent mode"
+fi
+
+# 3e: Config file permissions must be sandbox:sandbox 0600 (doctor-aligned)
+info "Checking config file permissions inside sandbox..."
+PERMS_OUTPUT=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+  stat -c '%a %U:%G' /sandbox/.openclaw/openclaw.json 2>/dev/null || true)
+info "Config perms: ${PERMS_OUTPUT}"
+
+if echo "$PERMS_OUTPUT" | grep -q "600"; then
+  pass "Config file mode is 600 (matches openclaw doctor expectations)"
+else
+  fail "Config file mode should be 600 (got: ${PERMS_OUTPUT})"
+fi
+
+if echo "$PERMS_OUTPUT" | grep -q "sandbox:sandbox"; then
+  pass "Config file owned by sandbox:sandbox"
+else
+  fail "Config file should be owned by sandbox:sandbox (got: ${PERMS_OUTPUT})"
+fi
+
+# 3f: Config directory permissions must be sandbox:sandbox 0700
+DIR_PERMS=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+  stat -c '%a %U:%G' /sandbox/.openclaw 2>/dev/null || true)
+info "Config dir perms: ${DIR_PERMS}"
+
+if echo "$DIR_PERMS" | grep -q "700"; then
+  pass "Config directory mode is 700"
+else
+  fail "Config directory mode should be 700 (got: ${DIR_PERMS})"
+fi
+
+# 3g: Reconnect is idempotent (no error on second connect with permanent shields)
+info "Testing idempotent reconnect..."
+reconnect_output=$(nemoclaw "$SANDBOX_NAME" connect --dangerously-skip-permissions </dev/null 2>&1 || true)
+if echo "$reconnect_output" | grep -qi "error\|fatal\|cannot"; then
+  fail "Reconnect with --dangerously-skip-permissions failed: ${reconnect_output:0:200}"
+else
+  pass "Reconnect with --dangerously-skip-permissions is idempotent"
+fi
+
 # ══════════════════════════════════════════════════════════════════
 # Phase 4: Verify outbound HTTPS from inside sandbox
 # ══════════════════════════════════════════════════════════════════
