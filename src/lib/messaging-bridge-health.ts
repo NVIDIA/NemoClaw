@@ -1,16 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//
-// Messaging-channel bridge health probe.
-//
-// Scans the gateway log inside the sandbox for conflict signatures that
-// indicate another consumer is holding the messaging provider's long-poll
-// (Telegram's single-getUpdates-consumer constraint is the canonical case).
-// Results surface as a "degraded" warning in `nemoclaw <sandbox> status`.
-//
-// Only Telegram currently emits a recognisable signature — Discord/Slack
-// have similar single-consumer constraints but log differently, and the
-// regex can be extended when those patterns are known.
 
 import { spawnSync } from "node:child_process";
 import { resolveOpenshell } from "./resolve-openshell.js";
