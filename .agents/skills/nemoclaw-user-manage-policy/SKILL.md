@@ -11,7 +11,6 @@ description: "Reviews and approves blocked agent network requests in the TUI. Us
 Reviews and approves blocked agent network requests in the TUI. Use when approving or denying sandbox egress requests, managing blocked network calls, or using the approval TUI.
 
 ## Prerequisites
-
 - A running NemoClaw sandbox.
 - The OpenShell CLI on your `PATH`.
 - A running NemoClaw sandbox for dynamic changes, or the NemoClaw source repository for static changes.
@@ -20,7 +19,6 @@ Review and act on network requests that the agent makes to endpoints not listed 
 OpenShell intercepts these requests and presents them in the TUI for operator approval.
 
 ## Step 1: Open the TUI
-
 Start the OpenShell terminal UI to monitor sandbox activity:
 
 ```console
@@ -36,7 +34,6 @@ $ ssh my-gpu-box 'cd /home/ubuntu/nemoclaw && . .env && openshell term'
 The TUI displays the sandbox state, active inference provider, and a live feed of network activity.
 
 ## Step 2: Trigger a Blocked Request
-
 When the agent attempts to reach an endpoint that is not in the baseline policy, OpenShell blocks the connection and displays the request in the TUI.
 The blocked request includes the following details:
 
@@ -45,7 +42,6 @@ The blocked request includes the following details:
 - **HTTP method** and path, if available.
 
 ## Step 3: Approve or Deny the Request
-
 The TUI presents an approval prompt for each blocked request.
 
 - **Approve** the request to add the endpoint to the running policy for the current session.
@@ -55,7 +51,6 @@ Approved endpoints remain in the running policy until the sandbox stops.
 They are not persisted to the baseline policy file.
 
 ## Step 4: Run the Walkthrough
-
 To observe the approval flow in a guided session, run the walkthrough script:
 
 ```console
@@ -73,11 +68,9 @@ The sandbox policy is defined in a declarative YAML file in the NemoClaw reposit
 NemoClaw supports both static policy changes that persist across restarts and dynamic updates applied to a running sandbox through the OpenShell CLI.
 
 ## Step 5: Static Changes
-
 Static changes modify the baseline policy file and take effect after the next sandbox creation.
 
 ### Edit the Policy File
-
 Open `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and add or modify endpoint entries.
 
 If you only need one of the built-in presets, use `nemoclaw <name> policy-add` instead of editing YAML by hand:
@@ -106,7 +99,6 @@ Each entry in the `network` section defines an endpoint group with the following
 : HTTP methods and paths that are permitted.
 
 ### Re-Run Onboard
-
 Apply the updated policy by re-running the onboard wizard:
 
 ```console
@@ -116,24 +108,20 @@ $ nemoclaw onboard
 The wizard picks up the modified policy file and applies it to the sandbox.
 
 ### Verify the Policy
-
 Check that the sandbox is running with the updated policy:
 
 ```console
 $ nemoclaw <name> status
 ```
 
-## Step 6: Dynamic Changes
-
 Dynamic changes apply a policy update to a running sandbox without restarting it.
 
 ### Create a Policy File
-
 Create a YAML file with the endpoints to add.
 Follow the same format as the baseline policy in `nemoclaw-blueprint/policies/openclaw-sandbox.yaml`.
+The file must include the mandatory `version` field (e.g., `version: 1`) to be accepted by the OpenShell parser.
 
 ### Apply the Policy
-
 Use the OpenShell CLI to apply the policy update:
 
 ```console
@@ -143,13 +131,11 @@ $ openshell policy set --policy <policy-file> <sandbox-name>
 The change takes effect immediately.
 
 ### Scope of Dynamic Changes
-
 Dynamic changes apply only to the current session.
 When the sandbox stops, the running policy resets to the baseline defined in the policy file.
 To make changes permanent, update the static policy file and re-run setup.
 
 ### Approve Requests Interactively
-
 For one-off access, you can approve blocked requests in the OpenShell TUI instead of editing the baseline policy:
 
 ```console
@@ -159,7 +145,6 @@ $ openshell term
 This is useful when you want to test a destination before deciding whether it belongs in a permanent preset or custom policy file.
 
 ## Step 7: Policy Presets
-
 NemoClaw ships preset policy files for common integrations in `nemoclaw-blueprint/policies/presets/`.
 Apply a preset as-is or use it as a starting template for a custom policy.
 
@@ -182,13 +167,33 @@ Available presets:
 | `slack` | Slack API and webhooks |
 | `telegram` | Telegram Bot API |
 
-To apply a preset to a running sandbox, pass it as a policy file:
+To apply a preset to a running sandbox:
 
 ```console
-$ openshell policy set --policy nemoclaw-blueprint/policies/presets/pypi.yaml my-assistant
+$ nemoclaw <name> policy-add
+```
+
+Note that preset selection is an interactive prompt; any positional arguments for presets are ignored.
+
+For example, to interactively add PyPI access to a running sandbox:
+
+```console
+$ nemoclaw my-assistant policy-add
+```
+
+To list which presets are applied to a sandbox:
+
+```console
+$ nemoclaw <name> policy-list
 ```
 
 To include a preset in the baseline, merge its entries into `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.
+
+:::{note}
+The `openshell policy set --policy <file> <sandbox-name>` command operates on raw policy files and does not
+accept the `preset:` metadata block used in preset YAML files. Use `nemoclaw <name> policy-add` for
+presets.
+:::
 
 ## Related Skills
 
