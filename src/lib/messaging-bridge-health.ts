@@ -2,12 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import type { MessagingBridgeHealth } from "./inventory-commands.js";
 import { resolveOpenshell } from "./resolve-openshell.js";
-
-export interface BridgeConflict {
-  channel: string;
-  conflicts: number;
-}
 
 const CONFLICT_SCRIPT =
   'tail -n 200 /tmp/gateway.log 2>/dev/null | grep -cE "getUpdates conflict|409[[:space:]:]+Conflict" || true';
@@ -15,7 +11,7 @@ const CONFLICT_SCRIPT =
 export function checkMessagingBridgeHealth(
   sandboxName: string,
   channels: readonly string[] | null | undefined,
-): BridgeConflict[] {
+): MessagingBridgeHealth[] {
   if (!Array.isArray(channels) || !channels.includes("telegram")) return [];
 
   const binary = resolveOpenshell();
