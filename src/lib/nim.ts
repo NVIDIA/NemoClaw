@@ -4,15 +4,26 @@
 // NIM container management — pull, start, stop, health-check NIM images.
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { run, runCapture } = require("./runner");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { sleepSeconds } = require("./wait");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const nimImages = require("../../bin/lib/nim-images.json");
 
+import type { StdioOptions } from "node:child_process";
 import { VLLM_PORT } from "./ports";
+import { sleepSeconds } from "./wait";
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier"];
+
+type RunnerModule = typeof import("./runner");
+
+let runnerModule: RunnerModule | null = null;
+
+function loadRunner(): RunnerModule {
+  if (!runnerModule) {
+    // Lazily load runner so pure model helpers can be imported from source in tests.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    runnerModule = require("./runner") as RunnerModule;
+  }
+  return runnerModule;
+}
 
 export interface NimModel {
   name: string;
@@ -61,6 +72,8 @@ export function canRunNimWithMemory(totalMemoryMB: number): boolean {
 }
 
 export function detectGpu(): GpuDetection | null {
+  const { runCapture } = loadRunner();
+
   // Try NVIDIA first — query VRAM
   try {
     const output = runCapture(
@@ -204,11 +217,15 @@ export function isNgcLoggedIn(): boolean {
 // NGC expects literal "$oauthtoken" as the username for API key authentication.
 export function dockerLoginNgc(apiKey: string): boolean {
   const { spawnSync } = require("child_process");
-  const result = spawnSync("docker", ["login", "nvcr.io", "-u", "$oauthtoken", "--password-stdin"], {
-    input: apiKey,
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  const result = spawnSync(
+    "docker",
+    ["login", "nvcr.io", "-u", "$oauthtoken", "--password-stdin"],
+    {
+      input: apiKey,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
   if (result.error) {
     console.error(`  Docker error: ${result.error.message}`);
     return false;
@@ -225,6 +242,7 @@ export function pullNimImage(model: string): string {
     console.error(`  Unknown model: ${model}`);
     process.exit(1);
   }
+  const { run } = loadRunner();
   console.log(`  Pulling NIM image: ${image}`);
   run(["docker", "pull", image]);
   return image;
@@ -241,21 +259,30 @@ export function startNimContainerByName(name: string, model: string, port = VLLM
     console.error(`  Unknown model: ${model}`);
     process.exit(1);
   }
+  const { run } = loadRunner();
 
   run(["docker", "rm", "-f", name], { ignoreError: true });
 
   console.log(`  Starting NIM container: ${name}`);
   run([
-    "docker", "run", "-d", "--gpus", "all",
-    "-p", `${Number(port)}:8000`,
-    "--name", name,
-    "--shm-size", "16g",
+    "docker",
+    "run",
+    "-d",
+    "--gpus",
+    "all",
+    "-p",
+    `${Number(port)}:8000`,
+    "--name",
+    name,
+    "--shm-size",
+    "16g",
     image,
   ]);
   return name;
 }
 
 export function waitForNimHealth(port = VLLM_PORT, timeout = 300): boolean {
+  const { runCapture } = loadRunner();
   const start = Date.now();
   const intervalSec = 5;
   const hostPort = Number(port);
@@ -300,8 +327,9 @@ export function stopNimContainerByName(
   name: string,
   { silent = false }: { silent?: boolean } = {},
 ): void {
+  const { run } = loadRunner();
   if (!silent) console.log(`  Stopping NIM container: ${name}`);
-  const stdio = silent ? ["ignore", "ignore", "ignore"] : undefined;
+  const stdio: StdioOptions | undefined = silent ? ["ignore", "ignore", "ignore"] : undefined;
   run(["docker", "stop", name], { ignoreError: true, ...(stdio && { stdio }) });
   run(["docker", "rm", name], { ignoreError: true, ...(stdio && { stdio }) });
 }
@@ -312,11 +340,12 @@ export function nimStatus(sandboxName: string, port?: number): NimStatus {
 }
 
 export function nimStatusByName(name: string, port?: number): NimStatus {
+  const { runCapture } = loadRunner();
+
   try {
-    const state = runCapture(
-      ["docker", "inspect", "--format", "{{.State.Status}}", name],
-      { ignoreError: true },
-    );
+    const state = runCapture(["docker", "inspect", "--format", "{{.State.Status}}", name], {
+      ignoreError: true,
+    });
     if (!state) return { running: false, container: name };
 
     let healthy = false;

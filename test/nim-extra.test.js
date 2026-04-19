@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import * as nim from "../dist/lib/nim";
+import * as nim from "../src/lib/nim.js";
 
 describe("nim — extended coverage", () => {
   describe("getImageForModel edge cases", () => {

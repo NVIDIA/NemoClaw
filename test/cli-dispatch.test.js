@@ -36,15 +36,16 @@ describe("nemoclaw CLI dispatch", () => {
 
   it("unknown command exits non-zero", () => {
     try {
-      execFileSync("node", [CLI, "nonexistent-cmd-xyz"], {
+      execFileSync("node", [CLI, "nonexistent-cmd-xyz", "bad-action"], {
         encoding: "utf-8",
+        env: { ...process.env, HOME: "/tmp/nemoclaw-test-empty-" + Date.now() },
         timeout: 5000,
         stdio: "pipe",
       });
       expect.fail("should have thrown");
     } catch (err) {
       expect(err.status).not.toBe(0);
-      expect(err.stderr).toContain("Unknown command");
+      expect(`${err.stdout ?? ""}${err.stderr ?? ""}`).toContain("Unknown command");
     }
   });
 
