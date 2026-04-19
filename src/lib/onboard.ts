@@ -5539,6 +5539,13 @@ function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CON
   const portToStop = getDashboardForwardPort(chatUiUrl);
   const forwardTarget = getDashboardForwardTarget(chatUiUrl);
   runOpenshell(["forward", "stop", portToStop], { ignoreError: true });
+  // When using a custom dashboard port, also stop any lingering forward on the
+  // default port (18789) that openshell sandbox create may have auto-created.
+  // Without this, `forward list` shows both the custom and default forwards (#2007).
+  const DEFAULT_SANDBOX_PORT = "18789";
+  if (portToStop !== DEFAULT_SANDBOX_PORT) {
+    runOpenshell(["forward", "stop", DEFAULT_SANDBOX_PORT], { ignoreError: true });
+  }
   // Use stdio "ignore" to prevent spawnSync from waiting on inherited pipe fds.
   // The --background flag forks a child that inherits stdout/stderr; if those are
   // pipes, spawnSync blocks until the background process exits (never).
