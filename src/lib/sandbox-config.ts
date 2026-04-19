@@ -308,17 +308,35 @@ function configSet(sandboxName: string, opts: ConfigSetOpts = {}): void {
     process.exit(1);
   }
 
-  // 5. Show what will change
+  // 5. Validate key against known top-level config sections
+  const KNOWN_TOP_LEVEL_KEYS = new Set([
+    "llm",
+    "tts",
+    "stt",
+    "mcp",
+    "sandbox",
+    "extensions",
+    "personas",
+    "customization",
+  ]);
+  const topLevelKey = opts.key.split(".")[0];
+  if (!KNOWN_TOP_LEVEL_KEYS.has(topLevelKey)) {
+    console.error(`  Unknown config section: '${topLevelKey}'`);
+    console.error(`  Valid top-level keys: ${[...KNOWN_TOP_LEVEL_KEYS].sort().join(", ")}`);
+    process.exit(1);
+  }
+
+  // 6. Show what will change
   const oldValue = extractDotpath(config, opts.key);
   console.log(`  Agent:     ${target.agentName}`);
   console.log(`  Key:       ${opts.key}`);
   console.log(`  Old value: ${oldValue !== undefined ? JSON.stringify(oldValue) : "(not set)"}`);
   console.log(`  New value: ${JSON.stringify(parsedValue)}`);
 
-  // 6. Apply change
+  // 7. Apply change
   setDotpath(config, opts.key, parsedValue);
 
-  // 7. Write to temp file in the agent's native format
+  // 8. Write to temp file in the agent's native format
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-"));
   const tmpFile = path.join(tmpDir, target.configFile);
   fs.writeFileSync(tmpFile, serializeConfig(config, target.format), { mode: 0o600 });
