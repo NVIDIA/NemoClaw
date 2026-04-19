@@ -5,7 +5,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -15,6 +14,7 @@ import {
   buildSandboxConfigSyncScript,
   classifySandboxCreateFailure,
   compactText,
+  computeSetupPresetSuggestions,
   formatEnvAssignment,
   getDashboardAccessInfo,
   getDashboardForwardStartCommand,
@@ -34,6 +34,7 @@ import {
   getResumeSandboxConflict,
   getSandboxStateFromOutputs,
   getStableGatewayImageRef,
+  getSuggestedPolicyPresets,
   isGatewayHealthy,
   classifyValidationFailure,
   hasResponsesToolCall,
@@ -52,9 +53,6 @@ import {
 } from "../dist/lib/onboard";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context";
 import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
-
-const require = createRequire(import.meta.url);
-const { getSuggestedPolicyPresets } = require("../dist/lib/onboard.js");
 
 describe("onboard helpers", () => {
   it("classifies sandbox create timeout failures and tracks upload progress", () => {
@@ -159,6 +157,85 @@ describe("onboard helpers", () => {
     expect(getSuggestedPolicyPresets({ provider: "openai-api" })).not.toContain("local-inference");
     expect(getSuggestedPolicyPresets({ provider: null })).not.toContain("local-inference");
     expect(getSuggestedPolicyPresets({})).not.toContain("local-inference");
+  });
+
+  describe("computeSetupPresetSuggestions", () => {
+    const known = [
+      "npm", "pypi", "huggingface", "brew", "brave",
+      "slack", "discord", "telegram", "jira", "outlook",
+      "local-inference",
+    ];
+
+    it("returns balanced tier defaults without messaging presets when no channels enabled", () => {
+      const suggestions = computeSetupPresetSuggestions("balanced", {
+        enabledChannels: [],
+        knownPresetNames: known,
+      });
+      expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
+    });
+
+    it("forwards enabled messaging channels into the balanced tier suggestions", () => {
+      const suggestions = computeSetupPresetSuggestions("balanced", {
+        enabledChannels: ["telegram"],
+        knownPresetNames: known,
+      });
+      expect(suggestions).toContain("telegram");
+      expect(suggestions).toContain("npm");
+      expect(suggestions).toContain("brave");
+    });
+
+    it("forwards multiple messaging channels", () => {
+      const suggestions = computeSetupPresetSuggestions("balanced", {
+        enabledChannels: ["discord", "slack"],
+        knownPresetNames: known,
+      });
+      expect(suggestions).toContain("discord");
+      expect(suggestions).toContain("slack");
+    });
+
+    it("does not duplicate a channel already present in the tier (open tier)", () => {
+      const suggestions = computeSetupPresetSuggestions("open", {
+        enabledChannels: ["telegram", "slack"],
+        knownPresetNames: known,
+      });
+      expect(suggestions.filter((n) => n === "telegram")).toHaveLength(1);
+      expect(suggestions.filter((n) => n === "slack")).toHaveLength(1);
+    });
+
+    it("drops channel names that are not known presets", () => {
+      const suggestions = computeSetupPresetSuggestions("balanced", {
+        enabledChannels: ["telegram", "not-a-real-preset"],
+        knownPresetNames: known,
+      });
+      expect(suggestions).toContain("telegram");
+      expect(suggestions).not.toContain("not-a-real-preset");
+    });
+
+    it("still adds brave when webSearchConfig is provided", () => {
+      const suggestions = computeSetupPresetSuggestions("restricted", {
+        webSearchConfig: { provider: "brave" },
+        knownPresetNames: known,
+      });
+      expect(suggestions).toContain("brave");
+    });
+
+    it("adds local-inference for local providers", () => {
+      const suggestions = computeSetupPresetSuggestions("balanced", {
+        provider: "ollama-local",
+        knownPresetNames: known,
+      });
+      expect(suggestions).toContain("local-inference");
+    });
+
+    it("ignores enabledChannels when null (non-explicit selection)", () => {
+      const suggestions = computeSetupPresetSuggestions("balanced", {
+        enabledChannels: null,
+        knownPresetNames: known,
+      });
+      expect(suggestions).not.toContain("telegram");
+      expect(suggestions).not.toContain("slack");
+      expect(suggestions).not.toContain("discord");
+    });
   });
 
   it("patches the staged Dockerfile with the selected model and chat UI URL", () => {
