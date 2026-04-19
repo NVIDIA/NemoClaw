@@ -1074,7 +1074,7 @@ function checkMessagingBridgeHealth(sandboxName, channels) {
   try {
     const result = spawnSync(
       getOpenshellBinary(),
-      ["sandbox", "exec", sandboxName, "sh", "-c", script],
+      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-c", script],
       { encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] },
     );
     const count = Number.parseInt((result.stdout || "").trim(), 10);
