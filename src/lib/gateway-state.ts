@@ -125,6 +125,13 @@ export function getGatewayReuseState(
   return "missing";
 }
 
+export function parseSandboxPhase(getOutput: string): string | null {
+  if (typeof getOutput !== "string") return null;
+  const clean = stripAnsi(getOutput);
+  const match = clean.match(/^\s*Phase:\s+(\S+)/m);
+  return match ? match[1] : null;
+}
+
 export function getSandboxStateFromOutputs(
   sandboxName: string,
   getOutput = "",

@@ -486,14 +486,18 @@ openclaw() {
       return 1
       ;;
     agent)
-      # Warn when --local is used — it bypasses gateway protections including
-      # secret scanning, network policy, and inference auth. Ref: #1632
+      # Block --local inside sandbox — it bypasses gateway protections and can
+      # crash the container's main process, bricking the sandbox. Ref: #1632, #2016
       local _arg
       for _arg in "$@"; do
         if [ "$_arg" = "--local" ]; then
-          echo "[SECURITY] Warning: 'openclaw agent --local' bypasses the NemoClaw gateway." >&2
-          echo "[SECURITY] Secret scanning, network policy, and inference auth are NOT enforced in local mode." >&2
-          break
+          echo "Error: 'openclaw agent --local' is not supported inside NemoClaw sandboxes." >&2
+          echo "The --local flag bypasses the gateway's security protections (secret scanning," >&2
+          echo "network policy, inference auth) and can crash the sandbox." >&2
+          echo "" >&2
+          echo "Instead, run without --local to use the gateway's managed inference route:" >&2
+          echo "  openclaw agent --agent main -m \"hello\"" >&2
+          return 1
         fi
       done
       ;;

@@ -13,6 +13,7 @@ import {
   hasStaleGateway,
   hasActiveGatewayInfo,
   getReportedGatewayName,
+  parseSandboxPhase,
 } from "../src/lib/gateway-state.js";
 
 // Realistic CLI outputs
@@ -181,6 +182,39 @@ describe("isGatewayHealthy", () => {
     // be treated as empty after stripping, triggering the ARM64 fallback.
     const ansiOnly = "\x1b[0m\x1b[32m";
     expect(isGatewayHealthy(ansiOnly, GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(true);
+  });
+});
+
+describe("parseSandboxPhase", () => {
+  it("extracts Ready phase from sandbox get output", () => {
+    const output = ["Sandbox:", "", "  Id: abc", "  Name: my-assistant", "  Phase: Ready"].join(
+      "\n",
+    );
+    expect(parseSandboxPhase(output)).toBe("Ready");
+  });
+
+  it("extracts Provisioning phase from sandbox get output", () => {
+    const output = [
+      "Sandbox:",
+      "",
+      "  Id: abc",
+      "  Name: my-assistant",
+      "  Phase: Provisioning",
+    ].join("\n");
+    expect(parseSandboxPhase(output)).toBe("Provisioning");
+  });
+
+  it("strips ANSI codes before parsing", () => {
+    const output = "  \x1b[1mPhase:\x1b[0m Ready";
+    expect(parseSandboxPhase(output)).toBe("Ready");
+  });
+
+  it("returns null for empty string", () => {
+    expect(parseSandboxPhase("")).toBeNull();
+  });
+
+  it("returns null when no Phase line is present", () => {
+    expect(parseSandboxPhase("Sandbox:\n  Id: abc\n  Name: test")).toBeNull();
   });
 });
 

@@ -31,7 +31,7 @@ const {
   validateName,
 } = require("./lib/runner");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
-const { startGatewayForRecovery } = require("./lib/onboard");
+const { startGatewayForRecovery, pruneKnownHostsEntries } = require("./lib/onboard");
 const {
   getCredential,
   deleteCredential,
@@ -67,6 +67,7 @@ const sandboxVersion = require("./lib/sandbox-version");
 const sandboxState = require("./lib/sandbox-state");
 const { ensureOllamaAuthProxy } = require("./lib/onboard");
 const skillInstall = require("./lib/skill-install");
+const { parseSandboxPhase } = require("./lib/gateway-state");
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -473,7 +474,8 @@ async function recoverRegistryEntries({ requestedSandboxName = null } = {}) {
   }
 
   const seeded = seedRecoveryMetadata(current, session, requestedSandboxName);
-  const shouldProbeLiveGateway = current.sandboxes.length > 0 || Boolean(session?.sandboxName);
+  const shouldProbeLiveGateway =
+    current.sandboxes.length > 0 || Boolean(session?.sandboxName) || Boolean(requestedSandboxName);
   const recoveredFromGateway = shouldProbeLiveGateway
     ? await recoverRegistryFromLiveGateway(seeded.metadataByName)
     : 0;
@@ -728,6 +730,18 @@ async function getReconciledSandboxGatewayState(sandboxName) {
 async function ensureLiveSandboxOrExit(sandboxName) {
   const lookup = await getReconciledSandboxGatewayState(sandboxName);
   if (lookup.state === "present") {
+    const phase = parseSandboxPhase(lookup.output || "");
+    if (phase && phase !== "Ready") {
+      console.error(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
+      console.error(
+        "  This usually happens when a process crash inside the sandbox prevented clean startup.",
+      );
+      console.error("");
+      console.error(
+        `  Run \`nemoclaw ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,
+      );
+      process.exit(1);
+    }
     return lookup;
   }
   if (lookup.state === "missing") {
@@ -747,15 +761,30 @@ async function ensureLiveSandboxOrExit(sandboxName) {
     process.exit(1);
   }
   if (lookup.state === "identity_drift") {
-    console.error(
-      `  Sandbox '${sandboxName}' is recorded locally, but the gateway trust material rotated after restart.`,
-    );
-    if (lookup.output) {
-      console.error(lookup.output);
+    // Gateway SSH keys rotated after restart — clear stale known_hosts and retry.
+    console.error("  Gateway SSH identity changed after restart — clearing stale host keys...");
+    const knownHostsPath = path.join(os.homedir(), ".ssh", "known_hosts");
+    if (fs.existsSync(knownHostsPath)) {
+      try {
+        const kh = fs.readFileSync(knownHostsPath, "utf8");
+        const cleaned = pruneKnownHostsEntries(kh);
+        if (cleaned !== kh) fs.writeFileSync(knownHostsPath, cleaned);
+      } catch {
+        /* best-effort cleanup */
+      }
     }
+    const retry = await getReconciledSandboxGatewayState(sandboxName);
+    if (retry.state === "present") {
+      console.error("  ✓ Reconnected after clearing stale SSH host keys.");
+      return retry;
+    }
+    // Retry failed — fall through to error
     console.error(
-      "  Existing sandbox connections cannot be reattached safely after this gateway identity change.",
+      `  Could not reconnect to sandbox '${sandboxName}' after clearing stale host keys.`,
     );
+    if (retry.output) {
+      console.error(retry.output);
+    }
     console.error(
       "  Recreate this sandbox with `nemoclaw onboard` once the gateway runtime is stable.",
     );
@@ -1093,6 +1122,21 @@ function backfillAndFindOverlaps() {
   }
 }
 
+function readGatewayLog(sandboxName) {
+  const { spawnSync } = require("child_process");
+  try {
+    const result = spawnSync(
+      getOpenshellBinary(),
+      ["sandbox", "exec", sandboxName, "sh", "-c", "tail -n 10 /tmp/gateway.log 2>/dev/null"],
+      { encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const output = (result.stdout || "").trim();
+    return output || null;
+  } catch {
+    return null;
+  }
+}
+
 function showStatus() {
   const { showStatus: showServiceStatus } = require("./lib/services");
   showStatusCommand({
@@ -1102,6 +1146,7 @@ function showStatus() {
     showServiceStatus,
     checkMessagingBridgeHealth,
     backfillAndFindOverlaps,
+    readGatewayLog,
     log: console.log,
   });
 }
@@ -1133,10 +1178,14 @@ async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false 
     /* non-fatal — don't block connect on version check failure */
   }
 
-  if (dangerouslySkipPermissions) {
+  // Check both the CLI flag and the registry for dangerously-skip-permissions.
+  // The registry flag persists from onboard, so subsequent connects without
+  // the CLI flag still enter permanent shields-down state.
+  const sb = registry.getSandbox(sandboxName);
+  const effectiveSkipPerms = dangerouslySkipPermissions || sb?.dangerouslySkipPermissions;
+  if (effectiveSkipPerms) {
     printDangerouslySkipPermissionsWarning();
-    const policies = require("./lib/policies");
-    policies.applyPermissivePolicy(sandboxName);
+    shields.shieldsDownPermanent(sandboxName);
   }
   checkAndRecoverSandboxProcesses(sandboxName);
   // Ensure Ollama auth proxy is running (recovers from host reboots)
@@ -1222,7 +1271,9 @@ async function sandboxStatus(sandboxName) {
     console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
     if (sb.dangerouslySkipPermissions) {
-      console.log(`    Permissions: dangerously-skip-permissions (open)`);
+      console.log(`    Permissions: dangerously-skip-permissions (shields permanently down)`);
+    } else if (shields.isShieldsDown(sandboxName)) {
+      console.log(`    Permissions: shields down (check \`shields status\` for details)`);
     }
 
     // Agent version check
@@ -1252,6 +1303,18 @@ async function sandboxStatus(sandboxName) {
       console.log("");
     }
     console.log(lookup.output);
+    const phase = parseSandboxPhase(lookup.output || "");
+    if (phase && phase !== "Ready") {
+      console.log("");
+      console.log(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
+      console.log(
+        "  This usually happens when a process crash inside the sandbox prevented clean startup.",
+      );
+      console.log("");
+      console.log(
+        `  Run \`nemoclaw ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,
+      );
+    }
   } else if (lookup.state === "missing") {
     registry.removeSandbox(sandboxName);
     const session = onboardSession.loadSession();
@@ -2345,7 +2408,7 @@ const [cmd, ...args] = process.argv.slice(2);
   // command, attempt recovery — the sandbox may still be live with a stale registry.
   if (
     !registry.getSandbox(cmd) &&
-    ["connect", "skill", "shields", "config"].includes(args[0] || "")
+    ["connect", "skill", "shields", "config", ""].includes(args[0] || "")
   ) {
     validateName(cmd, "sandbox name");
     await recoverRegistryEntries({ requestedSandboxName: cmd });

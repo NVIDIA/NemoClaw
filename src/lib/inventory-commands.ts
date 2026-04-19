@@ -10,6 +10,7 @@ export interface SandboxEntry {
   gpuEnabled?: boolean;
   policies?: string[] | null;
   messagingChannels?: string[] | null;
+  agent?: string | null;
 }
 
 export interface MessagingBridgeHealth {
@@ -45,6 +46,7 @@ export interface ShowStatusCommandDeps {
     channels: string[],
   ) => MessagingBridgeHealth[];
   backfillAndFindOverlaps?: () => MessagingOverlap[];
+  readGatewayLog?: (sandboxName: string) => string | null;
   log?: (message?: string) => void;
 }
 
@@ -150,6 +152,18 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
         log(
           "    Another sandbox is likely polling with the same bot token. See docs/reference/troubleshooting.md.",
         );
+
+        // Surface gateway log tail for Hermes sandboxes when messaging is degraded.
+        if (deps.readGatewayLog && defaultEntry?.agent === "hermes") {
+          const logTail = deps.readGatewayLog(defaultSandbox);
+          if (logTail) {
+            log("");
+            log("  Messaging gateway log (last 10 lines):");
+            for (const line of logTail.split("\n")) {
+              log(`    ${line}`);
+            }
+          }
+        }
       }
     }
   }

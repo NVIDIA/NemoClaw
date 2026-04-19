@@ -2,28 +2,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Verify shellQuote is applied to sandboxName in shell commands
+// Verify sandbox names stay validated and out of raw shell command strings.
 import fs from "fs";
 import path from "path";
 import { describe, it, expect } from "vitest";
 
-describe("sandboxName shell quoting in onboard.js", () => {
+describe("sandboxName command hardening in onboard.js", () => {
   const src = fs.readFileSync(
     path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
     "utf-8",
   );
 
-  it("quotes sandboxName in openshell sandbox exec command", () => {
-    expect(src).toMatch(/openshell sandbox exec \$\{shellQuote\(sandboxName\)\}/);
+  it("re-validates sandboxName at the createSandbox boundary", () => {
+    expect(src).toMatch(/const sandboxName = validateName\(/);
   });
 
-  it("quotes sandboxName in setup-dns-proxy.sh command", () => {
-    expect(src).toMatch(
-      /setup-dns-proxy\.sh.*\$\{shellQuote\(GATEWAY_NAME\)\}.*\$\{shellQuote\(sandboxName\)\}/,
-    );
+  it("runs setup-dns-proxy.sh through the argv helper instead of bash -c interpolation", () => {
+    expect(src).toMatch(/runFile\("bash",\s*\[path\.join\(SCRIPTS, "setup-dns-proxy\.sh"\),/);
   });
 
-  it("does not have unquoted sandboxName in runCapture or run calls", () => {
+  it("does not have raw sandboxName interpolation in run or runCapture template literals", () => {
     // Match run()/runCapture() calls that span multiple lines and contain
     // template literals, so multiline invocations are not missed.
     const callPattern = /\b(run|runCapture)\s*\(\s*`([^`]*)`/g;
