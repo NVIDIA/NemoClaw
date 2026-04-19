@@ -55,13 +55,14 @@ export function createAgentSandbox(agent: AgentDefinition): {
 
   if (baseDockerfile) {
     const baseImageTag = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base:latest`;
-    const inspectResult = run(`docker image inspect ${shellQuote(baseImageTag)} >/dev/null 2>&1`, {
+    const inspectResult = run(["docker", "image", "inspect", baseImageTag], {
       ignoreError: true,
+      stdio: ["ignore", "ignore", "ignore"],
     });
     if (inspectResult.status !== 0) {
       console.log(`  Building ${agent.displayName} base image (first time only)...`);
       run(
-        `docker build -f ${shellQuote(baseDockerfile)} -t ${shellQuote(baseImageTag)} ${shellQuote(ROOT)}`,
+        ["docker", "build", "-f", baseDockerfile, "-t", baseImageTag, ROOT],
         { stdio: ["ignore", "inherit", "inherit"] },
       );
       console.log(`  \u2713 Base image built: ${baseImageTag}`);
@@ -156,6 +157,10 @@ export async function handleAgentSetup(
     const script = buildSandboxConfigSyncScript(sandboxConfig);
     const scriptFile = writeSandboxConfigSyncFile(script);
     try {
+      // NOTE: This call retains the shell string form because it requires stdin
+      // redirection (< scriptFile) which cannot be expressed as a pure argv array
+      // without access to the openshell binary path. A full migration requires
+      // exposing getOpenshellBinary() or runOpenshell() in the OnboardContext.
       run(
         `${openshellShellCommand(["sandbox", "connect", sandboxName])} < ${shellQuote(scriptFile)}`,
         { stdio: ["ignore", "ignore", "inherit"] },
