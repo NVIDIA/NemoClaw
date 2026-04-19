@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: dco-check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dco-check:
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check DCO bypass list
+        id: dco-bypass
+        env:
+          USERNAME: ${{ github.event.pull_request.user.login }}
+        run: |
+          if grep -Fxq "$USERNAME" .github/dco-bypass.txt; then
+            echo "bypass=true" >> "$GITHUB_OUTPUT"
+            echo "Author is in dco-bypass.txt; skipping DCO sign-off requirement."
+          else
+            echo "bypass=false" >> "$GITHUB_OUTPUT"
+            echo "Author is not in dco-bypass.txt; DCO sign-off is required."
+          fi
+
+      - name: Check PR body for Signed-off-by
+        if: ${{ steps.dco-bypass.outputs.bypass != 'true' }}
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          normalized_body="$(printf '%s\n' "$PR_BODY" | tr -d '\r')"
+
+          if ! printf '%s\n' "$normalized_body" | grep -qP '^Signed-off-by:\s+.+\s+<[^<>]+>$'; then
+            echo "::error::PR description must contain a DCO sign-off line."
+            echo "::error::Expected format: Signed-off-by: Your Name <your-email@example.com>"
+            exit 1
+          fi
+
+          echo "PR description contains a DCO sign-off."

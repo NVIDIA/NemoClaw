@@ -28,9 +28,14 @@ NC='\033[0m'
 
 info() { echo -e "${GREEN}>>>${NC} $1"; }
 warn() { echo -e "${YELLOW}>>>${NC} $1"; }
-fail() { echo -e "${RED}>>>${NC} $1"; exit 1; }
+fail() {
+  echo -e "${RED}>>>${NC} $1"
+  exit 1
+}
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/runtime.sh
+source "$SCRIPT_DIR/lib/runtime.sh"
 
 # ── Pre-flight checks ─────────────────────────────────────────────
 
@@ -48,7 +53,7 @@ if [ -z "$REAL_USER" ]; then
   warn "Could not detect non-root user. Docker group will not be configured."
 fi
 
-command -v docker > /dev/null || fail "Docker not found. DGX Spark should have Docker pre-installed."
+command -v docker >/dev/null || fail "Docker not found. DGX Spark should have Docker pre-installed."
 
 # ── 1. Docker group ───────────────────────────────────────────────
 
@@ -59,6 +64,28 @@ if [ -n "$REAL_USER" ]; then
     info "Adding '$REAL_USER' to docker group..."
     usermod -aG docker "$REAL_USER"
     info "Added. Group will take effect on next login (or use 'newgrp docker')."
+  fi
+fi
+
+# ── 1b. Check for conflicting Kubernetes installations ────────────
+#
+# If another kubelet is running on the host, cgroupns=host causes
+# cgroup path conflicts → CrashLoopBackOff.
+# See: https://github.com/NVIDIA/NemoClaw/issues/431
+
+if detect_kubelet_conflict; then
+  warn_kubelet_conflict "$KUBELET_CONFLICT_DETAIL"
+  warn ""
+
+  if [ -t 0 ]; then
+    if ! read -rp "Continue anyway? [y/N] " reply; then
+      fail "Aborted (no input). Stop the conflicting Kubernetes service and retry."
+    fi
+    if [[ ! "$reply" =~ ^[Yy] ]]; then
+      fail "Aborted. Stop the conflicting Kubernetes service and retry."
+    fi
+  else
+    fail "Conflicting Kubernetes detected. Stop it first or run interactively to override."
   fi
 fi
 
@@ -85,34 +112,40 @@ if [ -f "$DAEMON_JSON" ]; then
     else
       info "Updating Docker daemon cgroupns mode to 'host'..."
       python3 -c "
-import json
+import json, os, tempfile
 with open('$DAEMON_JSON') as f:
     d = json.load(f)
 d['default-cgroupns-mode'] = 'host'
-with open('$DAEMON_JSON', 'w') as f:
+dirn = os.path.dirname('$DAEMON_JSON')
+fd, tmp = tempfile.mkstemp(dir=dirn, suffix='.tmp')
+with os.fdopen(fd, 'w') as f:
     json.dump(d, f, indent=2)
+os.replace(tmp, '$DAEMON_JSON')
 "
       NEEDS_RESTART=true
     fi
   else
     info "Adding cgroupns=host to Docker daemon config..."
     python3 -c "
-import json
+import json, os, tempfile
 try:
     with open('$DAEMON_JSON') as f:
         d = json.load(f)
-except:
+except (IOError, json.JSONDecodeError):
     d = {}
 d['default-cgroupns-mode'] = 'host'
-with open('$DAEMON_JSON', 'w') as f:
+dirn = os.path.dirname('$DAEMON_JSON')
+fd, tmp = tempfile.mkstemp(dir=dirn, suffix='.tmp')
+with os.fdopen(fd, 'w') as f:
     json.dump(d, f, indent=2)
+os.replace(tmp, '$DAEMON_JSON')
 "
     NEEDS_RESTART=true
   fi
 else
   info "Creating Docker daemon config with cgroupns=host..."
   mkdir -p "$(dirname "$DAEMON_JSON")"
-  echo '{ "default-cgroupns-mode": "host" }' > "$DAEMON_JSON"
+  echo '{ "default-cgroupns-mode": "host" }' >"$DAEMON_JSON"
   NEEDS_RESTART=true
 fi
 
@@ -123,7 +156,7 @@ if [ "$NEEDS_RESTART" = true ]; then
   systemctl restart docker
   # Wait for Docker to be ready
   for i in 1 2 3 4 5 6 7 8 9 10; do
-    if docker info > /dev/null 2>&1; then
+    if docker info >/dev/null 2>&1; then
       break
     fi
     [ "$i" -eq 10 ] && fail "Docker didn't come back after restart. Check 'systemctl status docker'."
@@ -137,5 +170,3 @@ fi
 echo ""
 info "DGX Spark Docker configuration complete."
 info ""
-info "Next step: run 'nemoclaw onboard' to set up your sandbox."
-info "  nemoclaw onboard"

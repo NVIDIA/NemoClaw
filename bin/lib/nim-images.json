@@ -7,7 +7,7 @@
     },
     {
       "name": "nvidia/nemotron-3-nano-30b-a3b",
-      "image": "nvcr.io/nim/nvidia/nemotron-3-nano-30b-a3b:latest",
+      "image": "nvcr.io/nim/nvidia/nemotron-3-nano:latest",
       "minGpuMemoryMB": 8192
     },
     {

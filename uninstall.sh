@@ -7,7 +7,7 @@
 #   - NemoClaw helper services
 #   - All OpenShell sandboxes plus the NemoClaw gateway/providers
 #   - NemoClaw/OpenShell/OpenClaw Docker images built or pulled for the sandbox flow
-#   - ~/.nemoclaw plus ~/.config/{openshell,nemoclaw} state
+#   - ~/.nemoclaw plus ~/.config/{openshell,nemoclaw} state, including onboard-session.json
 #   - Global nemoclaw npm install/link
 #   - OpenShell binary if it was installed to the standard installer path
 #
@@ -21,9 +21,9 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 if [[ -z "${NO_COLOR:-}" && -t 1 ]]; then
   if [[ "${COLORTERM:-}" == "truecolor" || "${COLORTERM:-}" == "24bit" ]]; then
-    C_GREEN=$'\033[38;2;118;185;0m'   # #76B900 — exact NVIDIA green
+    C_GREEN=$'\033[38;2;118;185;0m' # #76B900 — exact NVIDIA green
   else
-    C_GREEN=$'\033[38;5;148m'          # closest 256-color on dark backgrounds
+    C_GREEN=$'\033[38;5;148m' # closest 256-color on dark backgrounds
   fi
   C_BOLD=$'\033[1m'
   C_DIM=$'\033[2m'
@@ -36,12 +36,16 @@ fi
 
 info() { printf "${C_GREEN}[uninstall]${C_RESET} %s\n" "$*"; }
 warn() { printf "${C_YELLOW}[uninstall]${C_RESET} %s\n" "$*"; }
-fail() { printf "${C_RED}[uninstall]${C_RESET} %s\n" "$*" >&2; exit 1; }
-ok()   { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
+fail() {
+  printf "${C_RED}[uninstall]${C_RESET} %s\n" "$*" >&2
+  exit 1
+}
+ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
 
 # spin "label" cmd [args...]  — spinner wrapper, same as installer.
 spin() {
-  local msg="$1"; shift
+  local msg="$1"
+  shift
 
   if [[ ! -t 1 ]]; then
     info "$msg"
@@ -49,7 +53,8 @@ spin() {
     return
   fi
 
-  local log; log=$(mktemp)
+  local log
+  log=$(mktemp)
   "$@" >"$log" 2>&1 &
   local pid=$! i=0
   local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
@@ -59,7 +64,8 @@ spin() {
     sleep 0.08
   done
 
-  wait "$pid"; local status=$?
+  wait "$pid"
+  local status=$?
   if [[ $status -eq 0 ]]; then
     printf "\r  ${C_GREEN}✓${C_RESET}  %s\n" "$msg"
   else
@@ -147,7 +153,7 @@ while [ $# -gt 0 ]; do
       DELETE_MODELS=true
       shift
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -184,15 +190,18 @@ confirm() {
     read -r reply || true
   fi
   case "$reply" in
-    y|Y|yes|YES) ;;
-    *) info "Aborted."; exit 0 ;;
+    y | Y | yes | YES) ;;
+    *)
+      info "Aborted."
+      exit 0
+      ;;
   esac
 }
 
 run_optional() {
   local description="$1"
   shift
-  if "$@" > /dev/null 2>&1; then
+  if "$@" >/dev/null 2>&1; then
     info "$description"
   else
     warn "$description skipped"
@@ -223,7 +232,7 @@ remove_file_with_optional_sudo() {
     return 0
   fi
 
-  if [ -w "$path" ] || [ -w "$(dirname "$path")" ]; then
+  if [ -w "$(dirname "$path")" ]; then
     rm -f "$path"
   elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
     warn "Skipping privileged removal of $path in non-interactive mode."
@@ -234,6 +243,7 @@ remove_file_with_optional_sudo() {
   info "Removed $path"
 }
 
+# Stop NemoClaw helper services (e.g. Telegram bridge, cloudflared).
 stop_helper_services() {
   if [ -x "$SCRIPT_DIR/scripts/start-services.sh" ]; then
     run_optional "Stopped NemoClaw helper services" "$SCRIPT_DIR/scripts/start-services.sh" --stop
@@ -242,18 +252,22 @@ stop_helper_services() {
   remove_glob_paths "${TMP_ROOT}/nemoclaw-services-*"
 }
 
+# Stop openshell port-forward processes on the dashboard port.
 stop_openshell_forward_processes() {
-  if ! command -v pgrep > /dev/null 2>&1; then
+  if ! command -v pgrep >/dev/null 2>&1; then
     warn "pgrep not found; skipping local OpenShell forward process cleanup."
     return 0
   fi
+
+  local _dp="${NEMOCLAW_DASHBOARD_PORT:-18789}"
+  case "$_dp" in *[!0-9]* | '') _dp=18789 ;; esac
 
   local -a pids=()
   local pid
   while IFS= read -r pid; do
     [ -n "$pid" ] || continue
     pids+=("$pid")
-  done < <(pgrep -f 'openshell.*forward.*18789' 2>/dev/null || true)
+  done < <(pgrep -f "openshell.*forward.*${_dp}" 2>/dev/null || true)
 
   if [ "${#pids[@]}" -eq 0 ]; then
     info "No local OpenShell forward processes found"
@@ -261,7 +275,7 @@ stop_openshell_forward_processes() {
   fi
 
   for pid in "${pids[@]}"; do
-    if kill "$pid" > /dev/null 2>&1 || kill -9 "$pid" > /dev/null 2>&1; then
+    if kill "$pid" >/dev/null 2>&1 || kill -9 "$pid" >/dev/null 2>&1; then
       info "Stopped OpenShell forward process $pid"
     else
       warn "Failed to stop OpenShell forward process $pid"
@@ -269,8 +283,78 @@ stop_openshell_forward_processes() {
   done
 }
 
+# Kill orphaned openshell processes left behind after uninstall —
+# sandbox create, ssh-proxy, and related ssh sessions. (#1940)
+stop_orphaned_openshell_processes() {
+  if ! command -v pgrep >/dev/null 2>&1; then
+    warn "pgrep not found; skipping orphaned openshell process cleanup."
+    return 0
+  fi
+
+  local -a pids=()
+  local pid
+
+  # Scope to the original invoking user to avoid killing other users' processes
+  # on shared systems. Under sudo, SUDO_USER holds the real caller; fall back
+  # to LOGNAME, then id -un. (#1940)
+  local _user
+  _user="${SUDO_USER:-${LOGNAME:-$(id -un 2>/dev/null || echo "")}}"
+  local -a _pgrep_user=()
+  if [ -n "$_user" ]; then
+    _pgrep_user=(-u "$_user")
+  fi
+
+  # Collect openshell sandbox create, ssh-proxy, and related ssh processes.
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    pids+=("$pid")
+  done < <(pgrep "${_pgrep_user[@]}" -f "openshell (sandbox create|ssh-proxy)" 2>/dev/null || true)
+
+  # Also collect ssh processes whose command line references openshell.
+  # Match "openshell ssh-proxy" or "openshell-" (gateway name pattern) to
+  # avoid false positives on unrelated ssh sessions. User scoping via
+  # _pgrep_user provides an additional safety net.
+  local cmd
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    cmd="$(ps -p "$pid" -o args= 2>/dev/null)" || continue
+    if [[ "$cmd" == *"openshell ssh-proxy"* ]] || [[ "$cmd" == *"openshell-"* ]]; then
+      pids+=("$pid")
+    fi
+  done < <(pgrep "${_pgrep_user[@]}" -x ssh 2>/dev/null || true)
+
+  # Deduplicate (portable — no associative arrays, works on Bash 3.2+)
+  local -a unique_pids=()
+  if [ "${#pids[@]}" -gt 0 ]; then
+    local _seen=" "
+    for pid in "${pids[@]}"; do
+      case "$_seen" in
+        *" $pid "*) ;;
+        *)
+          _seen="$_seen$pid "
+          unique_pids+=("$pid")
+          ;;
+      esac
+    done
+  fi
+
+  if [ "${#unique_pids[@]}" -eq 0 ]; then
+    info "No orphaned openshell processes found"
+    return 0
+  fi
+
+  for pid in "${unique_pids[@]}"; do
+    if kill "$pid" >/dev/null 2>&1 || kill -9 "$pid" >/dev/null 2>&1; then
+      info "Stopped orphaned openshell process $pid"
+    else
+      warn "Failed to stop orphaned openshell process $pid"
+    fi
+  done
+}
+
+# Remove OpenShell sandboxes, providers, and gateway.
 remove_openshell_resources() {
-  if ! command -v openshell > /dev/null 2>&1; then
+  if ! command -v openshell >/dev/null 2>&1; then
     warn "openshell not found; skipping gateway/provider/sandbox cleanup."
     return 0
   fi
@@ -284,10 +368,61 @@ remove_openshell_resources() {
   run_optional "Destroyed gateway '${DEFAULT_GATEWAY}'" openshell gateway destroy -g "$DEFAULT_GATEWAY"
 }
 
+# Remove NemoClaw PATH/alias entries from shell profiles.
+# Handles both the current block-marker format (# NemoClaw PATH setup …
+# # end NemoClaw PATH setup) and the legacy single-line alias format
+# (# NemoClaw CLI alias + one alias line).
+remove_nemoclaw_alias_from_profile() {
+  local profiles=(
+    "$HOME/.bashrc"
+    "$HOME/.zshrc"
+    "$HOME/.profile"
+    "$HOME/.config/fish/config.fish"
+    "$HOME/.tcshrc"
+    "$HOME/.cshrc"
+  )
+  local p
+  for p in "${profiles[@]}"; do
+    [ -f "$p" ] || continue
+    local changed=false
+    # Current format: block between start/end markers.
+    if grep -qF '# NemoClaw PATH setup' "$p" 2>/dev/null; then
+      sed -i.bak '/^# NemoClaw PATH setup$/,/^# end NemoClaw PATH setup$/d' "$p" && rm -f "${p}.bak"
+      changed=true
+    fi
+    # Legacy format: marker + one alias line.
+    if grep -qF '# NemoClaw CLI alias' "$p" 2>/dev/null; then
+      sed -i.bak '/^# NemoClaw CLI alias$/{N;d;}' "$p" && rm -f "${p}.bak"
+      changed=true
+    fi
+    if [ "$changed" = true ]; then
+      info "Removed NemoClaw PATH entries from $p"
+    fi
+  done
+}
+
+is_installer_managed_nemoclaw_shim() {
+  local shim_path="$1"
+  [ -f "$shim_path" ] || return 1
+
+  local contents=""
+  contents="$(cat "$shim_path" 2>/dev/null || true)"
+  local path_line="export PATH=\""
+  local path_suffix=":\$PATH\""
+  local exec_line="exec \""
+  local exec_suffix="/nemoclaw\" \"\$@\""
+  case "$contents" in
+    '#!/usr/bin/env bash'$'\n'"$path_line"*"$path_suffix"$'\n'"$exec_line"*"$exec_suffix")
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 remove_nemoclaw_cli() {
-  if command -v npm > /dev/null 2>&1; then
-    npm unlink -g nemoclaw > /dev/null 2>&1 || true
-    if npm uninstall -g --loglevel=error nemoclaw > /dev/null 2>&1; then
+  if command -v npm >/dev/null 2>&1; then
+    npm unlink -g nemoclaw >/dev/null 2>&1 || true
+    if npm uninstall -g --loglevel=error nemoclaw >/dev/null 2>&1; then
       info "Removed global nemoclaw npm package"
     else
       warn "Global nemoclaw npm package not found or already removed"
@@ -296,9 +431,15 @@ remove_nemoclaw_cli() {
     warn "npm not found; skipping nemoclaw npm uninstall."
   fi
 
-  if [ -L "${NEMOCLAW_SHIM_DIR}/nemoclaw" ] || [ -f "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
+  if [ -L "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
     remove_path "${NEMOCLAW_SHIM_DIR}/nemoclaw"
+  elif is_installer_managed_nemoclaw_shim "${NEMOCLAW_SHIM_DIR}/nemoclaw"; then
+    remove_path "${NEMOCLAW_SHIM_DIR}/nemoclaw"
+  elif [ -f "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
+    warn "Leaving ${NEMOCLAW_SHIM_DIR}/nemoclaw in place because it is not an installer-managed shim."
   fi
+
+  remove_nemoclaw_alias_from_profile
 }
 
 remove_docker_resources() {
@@ -314,12 +455,12 @@ remove_nemoclaw_state() {
 }
 
 remove_related_docker_containers() {
-  if ! command -v docker > /dev/null 2>&1; then
+  if ! command -v docker >/dev/null 2>&1; then
     warn "docker not found; skipping Docker container cleanup."
     return 0
   fi
 
-  if ! docker info > /dev/null 2>&1; then
+  if ! docker info >/dev/null 2>&1; then
     warn "docker is not running; skipping Docker container cleanup."
     return 0
   fi
@@ -351,7 +492,7 @@ remove_related_docker_containers() {
   local removed_any=false
   local container_id
   for container_id in "${container_ids[@]}"; do
-    if docker rm -f "$container_id" > /dev/null 2>&1; then
+    if docker rm -f "$container_id" >/dev/null 2>&1; then
       info "Removed Docker container $container_id"
       removed_any=true
     else
@@ -365,12 +506,12 @@ remove_related_docker_containers() {
 }
 
 remove_related_docker_images() {
-  if ! command -v docker > /dev/null 2>&1; then
+  if ! command -v docker >/dev/null 2>&1; then
     warn "docker not found; skipping Docker image cleanup."
     return 0
   fi
 
-  if ! docker info > /dev/null 2>&1; then
+  if ! docker info >/dev/null 2>&1; then
     warn "docker is not running; skipping Docker image cleanup."
     return 0
   fi
@@ -402,7 +543,7 @@ remove_related_docker_images() {
   local removed_any=false
   local image_id
   for image_id in "${image_ids[@]}"; do
-    if docker rmi -f "$image_id" > /dev/null 2>&1; then
+    if docker rmi -f "$image_id" >/dev/null 2>&1; then
       info "Removed Docker image $image_id"
       removed_any=true
     else
@@ -422,12 +563,12 @@ gateway_volume_candidates() {
 }
 
 remove_related_docker_volumes() {
-  if ! command -v docker > /dev/null 2>&1; then
+  if ! command -v docker >/dev/null 2>&1; then
     warn "docker not found; skipping Docker volume cleanup."
     return 0
   fi
 
-  if ! docker info > /dev/null 2>&1; then
+  if ! docker info >/dev/null 2>&1; then
     warn "docker is not running; skipping Docker volume cleanup."
     return 0
   fi
@@ -446,8 +587,8 @@ remove_related_docker_volumes() {
 
   local removed_any=false
   for volume_name in "${volume_names[@]}"; do
-    if docker volume inspect "$volume_name" > /dev/null 2>&1; then
-      if docker volume rm -f "$volume_name" > /dev/null 2>&1; then
+    if docker volume inspect "$volume_name" >/dev/null 2>&1; then
+      if docker volume rm -f "$volume_name" >/dev/null 2>&1; then
         info "Removed Docker volume $volume_name"
         removed_any=true
       else
@@ -467,19 +608,59 @@ remove_optional_ollama_models() {
     return 0
   fi
 
-  if ! command -v ollama > /dev/null 2>&1; then
+  if ! command -v ollama >/dev/null 2>&1; then
     warn "ollama not found; skipping model cleanup."
     return 0
   fi
 
   local model
   for model in "${OLLAMA_MODELS[@]}"; do
-    if ollama rm "$model" > /dev/null 2>&1; then
+    if ollama rm "$model" >/dev/null 2>&1; then
       info "Removed Ollama model '$model'"
     else
       warn "Ollama model '$model' not found or already removed"
     fi
   done
+}
+
+remove_nemoclaw_swap() {
+  if [ ! -f /swapfile ]; then
+    info "No /swapfile found; skipping swap cleanup."
+    return 0
+  fi
+
+  if [ ! -f "$NEMOCLAW_STATE_DIR/managed_swap" ]; then
+    warn "No NemoClaw-managed swap marker found, skipping swap cleanup."
+    return 0
+  fi
+
+  local swap_file
+  swap_file=$(cat "$NEMOCLAW_STATE_DIR/managed_swap" 2>/dev/null || echo "")
+  if [ "$swap_file" != "/swapfile" ]; then
+    warn "Marker file does not point to /swapfile, skipping swap cleanup."
+    return 0
+  fi
+
+  if [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
+    warn "Skipping swap cleanup in non-interactive mode (requires sudo)."
+    return 0
+  fi
+
+  info "Deactivating and removing /swapfile..."
+  sudo swapoff /swapfile 2>/dev/null || true
+  sudo rm -f /swapfile
+
+  if [ -f /swapfile ]; then
+    warn "Failed to remove /swapfile. Please remove it manually."
+    return 1
+  fi
+
+  # Clean fstab entry
+  if grep -q '/swapfile' /etc/fstab 2>/dev/null; then
+    sudo sed -i '\|^/swapfile[[:space:]]|d' /etc/fstab
+    info "Removed /swapfile entry from /etc/fstab"
+  fi
+  info "Swap file removed"
 }
 
 remove_runtime_temp_artifacts() {
@@ -495,7 +676,7 @@ remove_openshell_binary() {
 
   local removed=false
   local current_path=""
-  if command -v openshell > /dev/null 2>&1; then
+  if command -v openshell >/dev/null 2>&1; then
     current_path="$(command -v openshell)"
   fi
 
@@ -520,6 +701,7 @@ main() {
   step 1 "Stopping services"
   stop_helper_services
   stop_openshell_forward_processes
+  stop_orphaned_openshell_processes
 
   step 2 "OpenShell resources"
   remove_openshell_resources
@@ -534,6 +716,10 @@ main() {
   remove_optional_ollama_models
 
   step 6 "State and binaries"
+  info "Removing NemoClaw-managed swap file..."
+  remove_nemoclaw_swap
+
+  info "Removing runtime temp artifacts..."
   remove_runtime_temp_artifacts
   remove_openshell_binary
   remove_nemoclaw_state

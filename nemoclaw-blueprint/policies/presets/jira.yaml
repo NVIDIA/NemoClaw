@@ -33,3 +33,5 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/node }

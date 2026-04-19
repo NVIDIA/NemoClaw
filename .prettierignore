@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+nemoclaw/node_modules/
+nemoclaw/dist/
+nemoclaw-blueprint/
+docs/_build/
+*.md

@@ -1,0 +1,9 @@
+{
+  "renameTests": [
+    "test/credential-exposure.test.js",
+    "test/credentials.test.js",
+    "test/gateway-cleanup.test.js",
+    "test/service-env.test.js",
+    "test/ssh-known-hosts.test.js"
+  ]
+}

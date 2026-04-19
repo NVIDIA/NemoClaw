@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Docs Skip List
+#
+# Features and commits listed here are excluded from the
+# nemoclaw-contributor-update-docs skill. The skill reads this file
+# before mapping commits to doc pages and silently skips any match.
+#
+# Use this when a feature is merged but not ready for public docs
+# (experimental, under UX review, pending approval, etc.).
+#
+# Format
+# ------
+# skip-features:   substring matches against commit messages and
+#                   changed file paths. Any commit whose message or
+#                   diff file list contains a listed string is skipped.
+#
+# skip-terms:      terms that must never appear in generated docs,
+#                   even if the commit itself is not skipped. The skill
+#                   checks drafted content against this list before
+#                   writing. Use for names, flags, or concepts that
+#                   are not ready for public mention.
+#
+# Lines starting with '#' are comments. Inline comments after a value
+# are supported (everything after ' # ' is ignored).
+#
+# Remember to remove entries once the feature is ready for docs.
+
+skip-features:
+  - "--dangerously-skip-permissions"     # experimental flag, pending UX review
+  - "openclaw-sandbox-permissive.yaml"   # permissive policy file, same feature
+  - "shields and config commands"        # experimental sandbox-mgmt commands (#1976), not advertised
+  - "src/lib/shields.ts"                 # shields implementation, experimental
+  - "src/lib/shields-timer.ts"           # shields auto-restore timer, experimental
+  - "src/lib/shields-audit.ts"           # shields audit trail, experimental
+  - "src/lib/sandbox-config.ts"          # config get/set/rotate-token, experimental
+  - "test/shields"                       # shields tests, experimental
+  - "test/config-set.test.ts"            # config set tests, experimental
+  - "test/config-rotate-token.test.ts"   # config rotate-token tests, experimental
+  - "test/e2e/test-shields-config.sh"    # shields/config E2E, experimental
+  - "shields-status"                     # plugin shields-status command, experimental
+  - "config-show"                        # plugin config-show command, experimental
+
+skip-terms:
+  - "dangerously-skip-permissions"       # do not mention this flag anywhere in docs
+  - "permissive mode"                    # do not reference this concept in docs
+  - "Hermes"
+  - "shields down"                       # experimental shields command, not advertised
+  - "shields up"                         # experimental shields command, not advertised
+  - "shields status"                     # experimental shields command, not advertised
+  - "config rotate-token"                # experimental config command, not advertised
+  - "rotate-token"                       # experimental config command, not advertised

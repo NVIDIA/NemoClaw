@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Migrate and run OpenClaw inside OpenShell with optional NIM-backed inference",
   "license": "Apache-2.0",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "openclaw": {
@@ -17,22 +18,20 @@
     "lint:fix": "eslint 'src/**/*.ts' --fix",
     "format": "prettier --write 'src/**/*.ts'",
     "format:check": "prettier --check 'src/**/*.ts'",
-    "test": "vitest run",
-    "test:watch": "vitest",
     "check": "npm run lint && npm run format:check && tsc --noEmit",
     "clean": "rm -rf dist/"
   },
   "dependencies": {
     "commander": "^13.1.0",
+    "execa": "^9.6.1",
     "json5": "^2.2.3",
     "tar": "^7.0.0",
     "yaml": "^2.4.0"
   },
   "devDependencies": {
-    "@types/node": "^20.19.37",
+    "@types/node": "^22.0.0",
     "@typescript-eslint/eslint-plugin": "^8.57.0",
     "@typescript-eslint/parser": "^8.57.0",
-    "@vitest/coverage-v8": "^4.1.0",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.8.1",
@@ -40,7 +39,7 @@
     "vitest": "^4.1.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.16.0"
   },
   "files": [
     "dist/",

@@ -2,11 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-const CONFIG_DIR = join(process.env.HOME ?? "/tmp", ".nemoclaw");
+let configDir = join(homedir(), ".nemoclaw");
 
-export type EndpointType = "build" | "ncp" | "nim-local" | "vllm" | "ollama" | "custom";
+export type EndpointType =
+  | "build"
+  | "openai"
+  | "anthropic"
+  | "gemini"
+  | "ncp"
+  | "nim-local"
+  | "vllm"
+  | "ollama"
+  | "custom";
 
 export interface NemoClawOnboardConfig {
   endpointType: EndpointType;
@@ -25,7 +35,21 @@ export function describeOnboardEndpoint(config: NemoClawOnboardConfig): string {
     return "Managed Inference Route (inference.local)";
   }
 
-  return `${config.endpointType} (${config.endpointUrl})`;
+  let safeUrl = config.endpointUrl;
+  try {
+    const parsed = new URL(config.endpointUrl);
+    if (parsed.password) parsed.password = "****";
+    if (parsed.username) parsed.username = "****";
+    for (const key of [...parsed.searchParams.keys()]) {
+      if (/(token|key|secret|auth|sig|credential|password)/i.test(key)) {
+        parsed.searchParams.set(key, "****");
+      }
+    }
+    safeUrl = parsed.toString();
+  } catch {
+    // Not a valid URL — show as-is
+  }
+  return `${config.endpointType} (${safeUrl})`;
 }
 
 export function describeOnboardProvider(config: NemoClawOnboardConfig): string {
@@ -35,17 +59,23 @@ export function describeOnboardProvider(config: NemoClawOnboardConfig): string {
 
   switch (config.endpointType) {
     case "build":
-      return "NVIDIA Endpoint API";
+      return "NVIDIA Endpoints";
+    case "openai":
+      return "OpenAI";
+    case "anthropic":
+      return "Anthropic";
+    case "gemini":
+      return "Google Gemini";
     case "ollama":
       return "Local Ollama";
     case "vllm":
       return "Local vLLM";
     case "nim-local":
-      return "Local NIM";
+      return "Local NVIDIA NIM";
     case "ncp":
       return "NVIDIA Cloud Partner";
     case "custom":
-      return "Managed Inference Route";
+      return "Other OpenAI-compatible endpoint";
     default:
       return "Unknown";
   }
@@ -55,14 +85,21 @@ let configDirCreated = false;
 
 function ensureConfigDir(): void {
   if (configDirCreated) return;
-  if (!existsSync(CONFIG_DIR)) {
-    mkdirSync(CONFIG_DIR, { recursive: true });
+  if (!existsSync(configDir)) {
+    try {
+      mkdirSync(configDir, { recursive: true });
+    } catch {
+      configDir = join(tmpdir(), ".nemoclaw");
+      if (!existsSync(configDir)) {
+        mkdirSync(configDir, { recursive: true });
+      }
+    }
   }
   configDirCreated = true;
 }
 
 function configPath(): string {
-  return join(CONFIG_DIR, "config.json");
+  return join(configDir, "config.json");
 }
 
 export function loadOnboardConfig(): NemoClawOnboardConfig | null {

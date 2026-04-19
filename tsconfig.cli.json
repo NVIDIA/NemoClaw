@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "moduleDetection": "force",
+    "types": ["node"]
+  },
+  "include": ["bin/**/*.ts", "scripts/**/*.ts", "src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "nemoclaw"]
+}

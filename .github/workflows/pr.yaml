@@ -15,78 +15,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
+  # Detect which files changed so we can skip expensive jobs for docs-only PRs.
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 2
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
         with:
-          node-version: "22"
-          cache: npm
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!**/*.md'
+              - '!docs/**'
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Install ruff
-        run: uv tool install ruff
-
-      - name: Install Node dependencies
-        working-directory: nemoclaw
-        run: npm install
-
-      - name: Run all linters
-        run: make check
-
-  test-unit:
+  checks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
+      - name: Run basic checks
+        uses: ./.github/actions/basic-checks
 
-      - name: Install root dependencies
-        run: npm install
+      - name: Verify platform matrix is in sync
+        run: python3 scripts/generate-platform-docs.py --check
 
-      - name: Install and build TypeScript plugin
-        working-directory: nemoclaw
-        run: |
-          npm install
-          npm run build
-
-      - name: Run root unit tests
-        run: node --test --experimental-test-coverage test/*.test.js
-
-      - name: Run TypeScript unit tests with coverage
-        working-directory: nemoclaw
-        run: npx vitest run --coverage
-
-      - name: Check coverage ratchet
-        run: bash scripts/check-coverage-ratchet.sh
-
-  test-e2e-sandbox:
+  test-e2e-ollama-proxy:
+    needs: [checks, changes]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: "22"
+      - name: Run Ollama auth proxy E2E tests
+        run: bash test/e2e-ollama-proxy.sh
 
-      - name: Build sandbox test image
-        run: docker build -f test/Dockerfile.sandbox -t nemoclaw-sandbox-test .
-
-      - name: Run sandbox E2E tests
-        run: docker run --rm -v "${{ github.workspace }}/test:/opt/test" nemoclaw-sandbox-test /opt/test/e2e-test.sh
+  sandbox-images-and-e2e:
+    needs: [checks, changes]
+    if: needs.changes.outputs.code == 'true'
+    uses: ./.github/workflows/sandbox-images-and-e2e.yaml
+    with:
+      run_arm64: true
