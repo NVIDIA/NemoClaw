@@ -31,7 +31,7 @@ const {
   validateName,
 } = require("./lib/runner");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
-const { startGatewayForRecovery } = require("./lib/onboard");
+const { startGatewayForRecovery, pruneKnownHostsEntries } = require("./lib/onboard");
 const {
   getCredential,
   deleteCredential,
@@ -474,7 +474,8 @@ async function recoverRegistryEntries({ requestedSandboxName = null } = {}) {
   }
 
   const seeded = seedRecoveryMetadata(current, session, requestedSandboxName);
-  const shouldProbeLiveGateway = current.sandboxes.length > 0 || Boolean(session?.sandboxName);
+  const shouldProbeLiveGateway =
+    current.sandboxes.length > 0 || Boolean(session?.sandboxName) || Boolean(requestedSandboxName);
   const recoveredFromGateway = shouldProbeLiveGateway
     ? await recoverRegistryFromLiveGateway(seeded.metadataByName)
     : 0;
@@ -760,15 +761,30 @@ async function ensureLiveSandboxOrExit(sandboxName) {
     process.exit(1);
   }
   if (lookup.state === "identity_drift") {
-    console.error(
-      `  Sandbox '${sandboxName}' is recorded locally, but the gateway trust material rotated after restart.`,
-    );
-    if (lookup.output) {
-      console.error(lookup.output);
+    // Gateway SSH keys rotated after restart — clear stale known_hosts and retry.
+    console.error("  Gateway SSH identity changed after restart — clearing stale host keys...");
+    const knownHostsPath = path.join(os.homedir(), ".ssh", "known_hosts");
+    if (fs.existsSync(knownHostsPath)) {
+      try {
+        const kh = fs.readFileSync(knownHostsPath, "utf8");
+        const cleaned = pruneKnownHostsEntries(kh);
+        if (cleaned !== kh) fs.writeFileSync(knownHostsPath, cleaned);
+      } catch {
+        /* best-effort cleanup */
+      }
     }
+    const retry = await getReconciledSandboxGatewayState(sandboxName);
+    if (retry.state === "present") {
+      console.error("  ✓ Reconnected after clearing stale SSH host keys.");
+      return retry;
+    }
+    // Retry failed — fall through to error
     console.error(
-      "  Existing sandbox connections cannot be reattached safely after this gateway identity change.",
+      `  Could not reconnect to sandbox '${sandboxName}' after clearing stale host keys.`,
     );
+    if (retry.output) {
+      console.error(retry.output);
+    }
     console.error(
       "  Recreate this sandbox with `nemoclaw onboard` once the gateway runtime is stable.",
     );
@@ -1162,10 +1178,14 @@ async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false 
     /* non-fatal — don't block connect on version check failure */
   }
 
-  if (dangerouslySkipPermissions) {
+  // Check both the CLI flag and the registry for dangerously-skip-permissions.
+  // The registry flag persists from onboard, so subsequent connects without
+  // the CLI flag still enter permanent shields-down state.
+  const sb = registry.getSandbox(sandboxName);
+  const effectiveSkipPerms = dangerouslySkipPermissions || sb?.dangerouslySkipPermissions;
+  if (effectiveSkipPerms) {
     printDangerouslySkipPermissionsWarning();
-    const policies = require("./lib/policies");
-    policies.applyPermissivePolicy(sandboxName);
+    shields.shieldsDownPermanent(sandboxName);
   }
   checkAndRecoverSandboxProcesses(sandboxName);
   // Ensure Ollama auth proxy is running (recovers from host reboots)
@@ -1251,7 +1271,9 @@ async function sandboxStatus(sandboxName) {
     console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
     if (sb.dangerouslySkipPermissions) {
-      console.log(`    Permissions: dangerously-skip-permissions (open)`);
+      console.log(`    Permissions: dangerously-skip-permissions (shields permanently down)`);
+    } else if (shields.isShieldsDown(sandboxName)) {
+      console.log(`    Permissions: shields down (check \`shields status\` for details)`);
     }
 
     // Agent version check
@@ -2386,7 +2408,7 @@ const [cmd, ...args] = process.argv.slice(2);
   // command, attempt recovery — the sandbox may still be live with a stale registry.
   if (
     !registry.getSandbox(cmd) &&
-    ["connect", "skill", "shields", "config"].includes(args[0] || "")
+    ["connect", "skill", "shields", "config", ""].includes(args[0] || "")
   ) {
     validateName(cmd, "sandbox name");
     await recoverRegistryEntries({ requestedSandboxName: cmd });

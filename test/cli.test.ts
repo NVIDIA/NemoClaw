@@ -1940,7 +1940,9 @@ describe("CLI dispatch", () => {
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
     expect(connectResult.code).toBe(1);
-    expect(connectResult.out.includes("gateway trust material rotated after restart")).toBeTruthy();
+    // After the auto-recovery attempt (clear stale host keys + retry), the
+    // fake openshell still returns the handshake error, so recovery fails.
+    expect(connectResult.out.includes("Could not reconnect")).toBeTruthy();
     expect(connectResult.out.includes("Recreate this sandbox")).toBeTruthy();
   });
 

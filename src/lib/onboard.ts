@@ -63,6 +63,7 @@ const registry = require("./registry");
 const nim = require("./nim");
 const onboardSession = require("./onboard-session");
 const policies = require("./policies");
+const shields = require("./shields");
 const tiers = require("./tiers");
 const { ensureUsageNoticeConsent } = require("./usage-notice");
 const {
@@ -138,7 +139,7 @@ function verifyGatewayContainerRunning() {
     `docker inspect --type container --format '{{.State.Running}}' ${containerName}`,
     { ignoreError: true, suppressOutput: true },
   );
-  if (result.status === 0 && (result.stdout || "").trim() === "true") {
+  if (result.status === 0 && String(result.stdout || "").trim() === "true") {
     return "running";
   }
   // Container exists but is stopped (exit 0, Running !== "true")
@@ -6403,7 +6404,7 @@ async function onboard(opts = {}) {
         console.error(`\n  ✗ Sandbox '${sandboxName}' not ready after creation. Giving up.`);
         process.exit(1);
       }
-      policies.applyPermissivePolicy(sandboxName);
+      shields.shieldsDownPermanent(sandboxName);
       onboardSession.markStepComplete("policies", {
         sandboxName,
         provider,
