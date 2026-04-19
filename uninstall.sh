@@ -420,6 +420,18 @@ is_installer_managed_nemoclaw_shim() {
 }
 
 remove_nemoclaw_cli() {
+  # Source nvm if available (curl|bash runs non-interactive, nvm not auto-loaded)
+  if [ -z "$(command -v npm 2>/dev/null)" ]; then
+    for nvm_script in "$HOME/.nvm/nvm.sh" "${NVM_DIR:-}/nvm.sh"; do
+      if [ -f "$nvm_script" ]; then
+        . "$nvm_script" --no-use 2>/dev/null
+        # Activate the default or current nvm alias so npm is on PATH
+        nvm use default >/dev/null 2>&1 || nvm use current >/dev/null 2>&1 || true
+        break
+      fi
+    done
+  fi
+
   if command -v npm >/dev/null 2>&1; then
     npm unlink -g nemoclaw >/dev/null 2>&1 || true
     if npm uninstall -g --loglevel=error nemoclaw >/dev/null 2>&1; then
@@ -429,6 +441,16 @@ remove_nemoclaw_cli() {
     fi
   else
     warn "npm not found; skipping nemoclaw npm uninstall."
+  fi
+
+  # Fallback: if nemoclaw binary is still on PATH, remove it directly
+  if command -v nemoclaw >/dev/null 2>&1; then
+    local nemoclaw_bin
+    nemoclaw_bin="$(command -v nemoclaw)"
+    if [ -f "$nemoclaw_bin" ]; then
+      remove_path "$nemoclaw_bin"
+      info "Removed leftover nemoclaw binary at $nemoclaw_bin"
+    fi
   fi
 
   if [ -L "${NEMOCLAW_SHIM_DIR}/nemoclaw" ]; then
