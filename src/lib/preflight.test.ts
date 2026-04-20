@@ -128,6 +128,12 @@ describe("checkPortAvailable", () => {
 // once up-front so the real-probe tests can skip gracefully instead of failing
 // the suite with a false port-conflict signal. (#544)
 let _canBindLocalhost: boolean | null = null;
+/**
+ * Detect once whether the current environment allows localhost TCP binds.
+ * Restricted environments (seccomp, gVisor, some container runtimes) deny
+ * localhost binds with EPERM/EACCES even for ephemeral ports. Caches the
+ * result so the probe only runs once per test suite. (#544)
+ */
 async function canBindLocalhost(): Promise<boolean> {
   if (_canBindLocalhost !== null) return _canBindLocalhost;
   const net = require("node:net");
