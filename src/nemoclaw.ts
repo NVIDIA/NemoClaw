@@ -1486,14 +1486,42 @@ async function sandboxPolicyAdd(sandboxName, args = []) {
 
 function sandboxPolicyList(sandboxName) {
   const allPresets = policies.listPresets();
-  const applied = policies.getAppliedPresets(sandboxName);
+  const registryPresets = policies.getAppliedPresets(sandboxName);
+
+  // getGatewayPresets returns null when gateway is unreachable, or an
+  // array of matched preset names when reachable (possibly empty).
+  const gatewayPresets = policies.getGatewayPresets(sandboxName);
 
   console.log("");
   console.log(`  Policy presets for sandbox '${sandboxName}':`);
   allPresets.forEach((p) => {
-    const marker = applied.includes(p.name) ? "●" : "○";
-    console.log(`    ${marker} ${p.name} — ${p.description}`);
+    const inRegistry = registryPresets.includes(p.name);
+    const inGateway = gatewayPresets ? gatewayPresets.includes(p.name) : null;
+
+    let marker;
+    let suffix = "";
+    if (inGateway === null) {
+      // Gateway unreachable — fall back to registry-only display
+      marker = inRegistry ? "●" : "○";
+    } else if (inRegistry && inGateway) {
+      marker = "●";
+    } else if (!inRegistry && !inGateway) {
+      marker = "○";
+    } else if (inGateway && !inRegistry) {
+      marker = "●";
+      suffix = " (active on gateway, missing from local state)";
+    } else {
+      // inRegistry && !inGateway
+      marker = "○";
+      suffix = " (recorded locally, not active on gateway)";
+    }
+    console.log(`    ${marker} ${p.name} — ${p.description}${suffix}`);
   });
+
+  if (gatewayPresets === null) {
+    console.log("");
+    console.log("  ⚠ Could not query gateway — showing local state only.");
+  }
   console.log("");
 }
 
@@ -1940,6 +1968,40 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
     console.error(`  Manual restore available from: ${backup.manifest.backupPath}`);
   } else {
     console.log(`  ${G}\u2713${R} State restored (${restore.restoredDirs.length} directories)`);
+  }
+
+  // Step 5.5: Restore policy presets (#1952)
+  // Policy presets live in the gateway policy engine, not the sandbox filesystem.
+  // They are lost when the sandbox is destroyed and recreated. Re-apply any
+  // presets that were captured in the backup manifest.
+  const savedPresets = backup.manifest.policyPresets || [];
+  if (savedPresets.length > 0) {
+    console.log("");
+    console.log("  Restoring policy presets...");
+    log(`Policy presets to restore: [${savedPresets.join(",")}]`);
+    const restoredPresets: string[] = [];
+    const failedPresets: string[] = [];
+    for (const presetName of savedPresets) {
+      try {
+        log(`Applying preset: ${presetName}`);
+        const applied = policies.applyPreset(sandboxName, presetName);
+        if (applied) {
+          restoredPresets.push(presetName);
+        } else {
+          failedPresets.push(presetName);
+        }
+      } catch (err) {
+        log(`Failed to apply preset '${presetName}': ${err.message || err}`);
+        failedPresets.push(presetName);
+      }
+    }
+    if (restoredPresets.length > 0) {
+      console.log(`  ${G}\u2713${R} Policy presets restored: ${restoredPresets.join(", ")}`);
+    }
+    if (failedPresets.length > 0) {
+      console.error(`  ${YW}\u26a0${R} Failed to restore presets: ${failedPresets.join(", ")}`);
+      console.error(`    Re-apply manually with: nemoclaw ${sandboxName} policy-add`);
+    }
   }
 
   // Step 6: Post-restore agent-specific migration

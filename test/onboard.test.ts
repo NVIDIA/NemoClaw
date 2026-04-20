@@ -2418,7 +2418,7 @@ runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
   if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (command.includes("'forward' 'list'")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -2492,6 +2492,97 @@ const { createSandbox } = require(${onboardPath});
     );
   });
 
+  it("rejects sandbox creation when the dashboard port is already forwarded for a different sandbox", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-forward-collision-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "forward-collision-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+runner.run = (command, opts = {}) => {
+  return { status: 0 };
+};
+runner.runFile = (file, args = [], opts = {}) => {
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
+  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
+  // Port 18789 is already forwarded by a DIFFERENT sandbox (other-sandbox)
+  if (command.includes("'forward' 'list'")) return "other-sandbox 127.0.0.1 18789 99999 running";
+  return "";
+};
+registry.registerSandbox = () => true;
+registry.removeSandbox = () => true;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  await createSandbox(null, "gpt-5.4");
+  // Should not reach here — the collision guard must throw.
+  console.log("ERROR_NO_THROW");
+  process.exit(1);
+})().catch((error) => {
+  console.log(JSON.stringify({ error: error.message }));
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.ok(!result.stdout.includes("ERROR_NO_THROW"), "expected createSandbox to throw on port collision");
+    const payloadLine = result.stdout
+      .trim()
+      .split("\n")
+      .slice()
+      .reverse()
+      .find((line) => line.startsWith("{") && line.endsWith("}"));
+    assert.ok(payloadLine, `expected JSON error payload in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(payloadLine);
+    assert.match(payload.error, /Port 18789 is already forwarded for sandbox 'other-sandbox'/);
+  });
+
   it("binds the dashboard forward to 0.0.0.0 when CHAT_UI_URL points to a remote host", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-remote-forward-"));
@@ -2529,7 +2620,7 @@ runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
   if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (command.includes("'forward' 'list'")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -2627,7 +2718,7 @@ runner.runCapture = (command) => {
   if (normalized.includes("'sandbox' 'list'")) return "my-assistant Ready";
   // Custom port: dashboard readiness curl uses 19000 (DASHBOARD_PORT from env)
   if (normalized.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:19000/'")) return "ok";
-  if (normalized.includes("'forward' 'list'")) return "19000 -> my-assistant:19000";
+  if (normalized.includes("'forward' 'list'")) return "my-assistant 127.0.0.1 19000 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -2760,7 +2851,7 @@ runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
   if (command.includes("'provider' 'get'")) return "Provider: discord-bridge";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (command.includes("'forward' 'list'")) return "my-assistant 127.0.0.1 18789 12345 running";
   if (command.includes("'sandbox' 'exec'") && command.includes("'curl'")) return "ok";
   return "";
 };
@@ -3003,7 +3094,7 @@ runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
   // All messaging providers already exist in gateway
   if (command.includes("'provider' 'get'")) return "Provider: exists";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (command.includes("'forward' 'list'")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -3293,7 +3384,7 @@ runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
   if (command.includes("'forward' 'list'")) return "";
-  if (command.includes("sandbox exec") && command.includes("curl")) return "ok";
+  if (command.includes("'sandbox' 'exec'") && command.includes("curl")) return "ok";
   return "";
 };
 
@@ -3403,7 +3494,7 @@ runner.runFile = (file, args = [], opts = {}) => {
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (command.includes("'forward' 'list'")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -4324,7 +4415,7 @@ runner.runCapture = (command) => {
     return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
   }
   if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (command.includes("'forward' 'list'")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -4436,7 +4527,7 @@ runner.runFile = (file, args = [], opts = {}) => {
 runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (command.includes("'forward' 'list'")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -4725,7 +4816,7 @@ runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
   if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (command.includes("'forward' 'list'")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -4856,7 +4947,7 @@ runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
   if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (command.includes("'forward' 'list'")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -5132,7 +5223,7 @@ runner.runCapture = (command) => {
   if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
   if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
   if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (command.includes("'forward' 'list'")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
