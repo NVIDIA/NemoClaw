@@ -922,12 +922,12 @@ describe("onboard helpers", () => {
       [
         'version: "0.1.0"',
         'min_openshell_version: "0.0.24"',
-        'max_openshell_version: "0.0.26"',
+        'max_openshell_version: "0.0.29"',
         'min_openclaw_version: "2026.3.0"',
       ].join("\n"),
     );
     try {
-      expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe("0.0.26");
+      expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe("0.0.29");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

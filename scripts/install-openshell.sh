@@ -38,7 +38,10 @@ info "Detected $OS_LABEL ($ARCH_LABEL)"
 MIN_VERSION="0.0.24"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.0.26"
+# Landlock filesystem policy enforcement requires >= 0.0.29
+# (NVIDIA/OpenShell#810 fixes the drop_privileges/Landlock ordering bug
+# that caused /sandbox to remain writable on 0.0.26).
+MAX_VERSION="0.0.29"
 # Pin fresh installs to this version instead of pulling "latest".
 PIN_VERSION="$MAX_VERSION"
 
