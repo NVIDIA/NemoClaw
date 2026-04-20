@@ -6215,8 +6215,8 @@ const { createSandbox } = require(${onboardPath});
       path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
       "utf-8",
     );
-    const pullPos = source.indexOf("pullAndResolveBaseImageDigest()");
-    assert.ok(pullPos !== -1, "pullAndResolveBaseImageDigest() call not found in onboard.ts");
+    const pullPos = source.search(/pullAndResolveBaseImageDigest\(/);
+    assert.ok(pullPos !== -1, "pullAndResolveBaseImageDigest(...) call not found in onboard.ts");
     const patchPos = source.indexOf("patchStagedDockerfile(", pullPos);
     assert.ok(
       patchPos > pullPos,

@@ -189,6 +189,7 @@ const webSearch: typeof import("./web-search") = require("./web-search");
 import { listChannels } from "./sandbox-channels";
 import type { AgentDefinition } from "./agent-defs";
 import type { GatewayInference, ProviderSelectionConfig } from "./inference-config";
+import type { GpuDetection } from "./nim";
 import type { GpuInfo, ValidationResult } from "./local-inference";
 import type { ContainerRuntime } from "./platform";
 import type { SandboxEntry } from "./registry";
@@ -639,14 +640,57 @@ function getBlueprintMaxOpenshellVersion(rootDir = ROOT): string | null {
 
 const SANDBOX_BASE_IMAGE = "ghcr.io/nvidia/nemoclaw/sandbox-base";
 const SANDBOX_BASE_TAG = "latest";
+const SANDBOX_BASE_IMAGE_GPU = "ghcr.io/nvidia/nemoclaw/sandbox-base-gpu";
+const SANDBOX_BASE_TAG_GPU = "latest";
+
+// True when the user has opted into a GPU-enabled sandbox via
+// NEMOCLAW_GPU_MODE=1. This flips two knobs in tandem: it selects the
+// sandbox-base-gpu image and it passes --gpu
+// to both `openshell gateway start` and `openshell sandbox create` so the
+// pod gets real NVIDIA device nodes.
+//
+// Kept as a pure function (no caching) so tests can flip the env var
+// per-case. Throws when the user forces GPU mode on a host that has no
+// NVIDIA GPU so we fail fast rather than wasting 10+ minutes pulling a
+// large base image that will never run.
+function isGpuSandboxMode(gpu: GpuDetection | null = null): boolean {
+  const raw = (process.env.NEMOCLAW_GPU_MODE || "").trim().toLowerCase();
+  if (raw === "0" || raw === "false" || raw === "no" || raw === "") return false;
+  if (raw === "1" || raw === "true" || raw === "yes") {
+    if (!gpu || gpu.type !== "nvidia") {
+      throw new Error(
+        "NEMOCLAW_GPU_MODE=1 but no NVIDIA GPU detected. " +
+          "Unset NEMOCLAW_GPU_MODE or run on a host with an NVIDIA GPU.",
+      );
+    }
+    return true;
+  }
+  throw new Error(
+    `Unsupported NEMOCLAW_GPU_MODE='${process.env.NEMOCLAW_GPU_MODE}'. ` +
+      "Expected one of: 0, 1, true, false, yes, no (empty = off).",
+  );
+}
+
+function getSandboxBaseImage(gpuMode: boolean): string {
+  return gpuMode ? SANDBOX_BASE_IMAGE_GPU : SANDBOX_BASE_IMAGE;
+}
+
+function getSandboxBaseTag(gpuMode: boolean): string {
+  return gpuMode ? SANDBOX_BASE_TAG_GPU : SANDBOX_BASE_TAG;
+}
 
 /**
- * Pull sandbox-base:latest from GHCR and resolve its repo digest.
+ * Pull sandbox-base:latest (or sandbox-base-gpu:latest when gpuMode is
+ * true) from GHCR and resolve its repo digest.
  * Returns { digest, ref } on success, or null when the pull or
  * inspect fails (offline, GHCR outage, local-only build).
  */
-function pullAndResolveBaseImageDigest(): { digest: string; ref: string } | null {
-  const imageWithTag = `${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`;
+function pullAndResolveBaseImageDigest(
+  { gpuMode = false }: { gpuMode?: boolean } = {},
+): { digest: string; ref: string } | null {
+  const baseImage = getSandboxBaseImage(gpuMode);
+  const baseTag = getSandboxBaseTag(gpuMode);
+  const imageWithTag = `${baseImage}:${baseTag}`;
   const pullResult = dockerPull(imageWithTag, { ignoreError: true, suppressOutput: true });
   if (pullResult.status !== 0) {
     // Pull failed — caller should fall back to unpin :latest
@@ -667,12 +711,12 @@ function pullAndResolveBaseImageDigest(): { digest: string; ref: string } | null
     return null;
   }
   const repoDigest = Array.isArray(repoDigests)
-    ? repoDigests.find((entry) => entry.startsWith(`${SANDBOX_BASE_IMAGE}@sha256:`))
+    ? repoDigests.find((entry) => entry.startsWith(`${baseImage}@sha256:`))
     : null;
   if (!repoDigest) return null;
 
   const digest = repoDigest.slice(repoDigest.indexOf("@") + 1);
-  const ref = `${SANDBOX_BASE_IMAGE}@${digest}`;
+  const ref = `${baseImage}@${digest}`;
   return { digest, ref };
 }
 
@@ -1601,9 +1645,11 @@ function patchStagedDockerfile(
       /^ARG BASE_IMAGE=(.*)$/m,
       (line: string, currentValue: string) => {
         const trimmed = String(currentValue).trim();
+        const ourBaseImages = [SANDBOX_BASE_IMAGE, SANDBOX_BASE_IMAGE_GPU];
         if (
-          trimmed.startsWith(`${SANDBOX_BASE_IMAGE}:`) ||
-          trimmed.startsWith(`${SANDBOX_BASE_IMAGE}@`)
+          ourBaseImages.some(
+            (img) => trimmed.startsWith(`${img}:`) || trimmed.startsWith(`${img}@`),
+          )
         ) {
           return `ARG BASE_IMAGE=${baseImageRef}`;
         }
@@ -2837,6 +2883,40 @@ async function preflight(): Promise<ReturnType<typeof nim.detectGpu>> {
     console.log("  ⓘ Local NIM unavailable — no GPU detected");
   }
 
+  // If GPU mode is requested, fail fast on misconfigurations rather than
+  // walking the user through inference/messaging prompts (steps 3-5) before
+  // discovering the problem in step 6 ("Creating sandbox"). Two checks:
+  //   1. NEMOCLAW_GPU_MODE=1 with no NVIDIA GPU — handled inside
+  //      isGpuSandboxMode(), which throws with a clear message.
+  //   2. NEMOCLAW_GPU_MODE=1 with no locally cached GPU base image — the
+  //      GPU base is currently local-only (no upstream GHCR publish yet),
+  //      so a missing local cache means the user skipped the
+  //      `docker build -f Dockerfile.base.gpu` step from GPU-QUICKSTART.md.
+  if (isGpuSandboxMode(gpu)) {
+    const gpuImage = `${SANDBOX_BASE_IMAGE_GPU}:${SANDBOX_BASE_TAG_GPU}`;
+    // TODO: when sandbox-base-gpu is published to GHCR, replace this strict
+    // local-cache check with pullAndResolveBaseImageDigest({ gpuMode: true })
+    // (with a local-cache fallback) so first-time users get auto-pulled,
+    // matching the CPU base-image flow. Strict local check is correct today
+    // because the GPU base is intentionally local-only.
+    const cached = dockerImageInspect(gpuImage, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    if (cached.status !== 0) {
+      throw new Error(
+        `NEMOCLAW_GPU_MODE=1 but the GPU base image is not cached locally:\n` +
+          `    ${gpuImage}\n\n` +
+          `Build it locally first (BuildKit required):\n` +
+          `    DOCKER_BUILDKIT=1 docker build \\\n` +
+          `      -f Dockerfile.base.gpu \\\n` +
+          `      -t ${gpuImage} .\n\n` +
+          `See GPU-QUICKSTART.md for host prerequisites.`,
+      );
+    }
+    console.log(`  ✓ GPU base image cached locally: ${gpuImage}`);
+  }
+
   // Memory / swap check (Linux only)
   if (process.platform === "linux") {
     const mem = getMemoryInfo();
@@ -2932,11 +3012,21 @@ async function startGatewayWithOptions(
   }
 
   const gwArgs = ["--name", GATEWAY_NAME, "--port", String(GATEWAY_PORT)];
-  // Do NOT pass --gpu here. On DGX Spark (and most GPU hosts), inference is
-  // routed through a host-side provider (Ollama, vLLM, or cloud API) — the
-  // sandbox itself does not need direct GPU access. Passing --gpu causes
+  // Default: do NOT pass --gpu. On DGX Spark (and most GPU hosts), inference
+  // is routed through a host-side provider (Ollama, vLLM, or cloud API) —
+  // the sandbox itself does not need direct GPU access. Passing --gpu causes
   // FailedPrecondition errors when the gateway's k3s device plugin cannot
   // allocate GPUs. See: https://build.nvidia.com/spark/nemoclaw/instructions
+  //
+  // Exception: NEMOCLAW_GPU_MODE=1 opts the sandbox into GPU passthrough
+  // for CUDA workloads that need direct device access. This adds --gpu
+  // to the gateway so the k3s NVIDIA device plugin can satisfy
+  // `resources.limits.nvidia.com/gpu: 1`. Requires: CDI spec on the host
+  // (`nvidia-ctk cdi generate`), NVIDIA Container Toolkit configured as
+  // default runtime, and a GPU-capable host.
+  if (isGpuSandboxMode(_gpu)) {
+    gwArgs.push("--gpu");
+  }
   const gatewayEnv = getGatewayStartEnv();
   if (gatewayEnv.OPENSHELL_CLUSTER_IMAGE) {
     console.log(`  Using pinned OpenShell gateway image: ${gatewayEnv.OPENSHELL_CLUSTER_IMAGE}`);
@@ -3775,6 +3865,7 @@ async function createSandbox(
 
   // Create sandbox (use -- echo to avoid dropping into interactive shell)
   // Pass the base policy so sandbox starts in proxy mode (required for policy updates later)
+  const gpuMode = isGpuSandboxMode(gpu);
   const globalPermissivePath = path.join(
     ROOT,
     "nemoclaw-blueprint",
@@ -3788,6 +3879,14 @@ async function createSandbox(
     const agentPermissive = agent && agentOnboard.getAgentPermissivePolicyPath(agent);
     basePolicyPath = agentPermissive || globalPermissivePath;
   } else {
+    // Both default and GPU modes use the same base policy. In GPU mode the
+    // GPU device nodes (/dev/nvidia*) and /proc rw are added by OpenShell's
+    // supervisor at sandbox-create time via enrich_proto_baseline_paths()
+    // (crates/openshell-sandbox/src/lib.rs), triggered by --gpu plus a
+    // non-empty network_policies block. Verified empirically against a
+    // live sandbox: `openshell policy get <name> --full` shows the device
+    // nodes and /proc rw appended on top of the source policy.
+    void gpuMode;
     const defaultPolicyPath = path.join(
       ROOT,
       "nemoclaw-blueprint",
@@ -3804,7 +3903,11 @@ async function createSandbox(
     "--policy",
     basePolicyPath,
   ];
-  // --gpu is intentionally omitted. See comment in startGateway().
+  // In default mode --gpu is intentionally omitted (see startGateway() comment).
+  // In GPU mode we forward it so the pod gets real CUDA device nodes.
+  if (gpuMode) {
+    createArgs.push("--gpu");
+  }
 
   // Create OpenShell providers for messaging credentials so they flow through
   // the provider/placeholder system instead of raw env vars. The L7 proxy
@@ -3892,26 +3995,26 @@ async function createSandbox(
   // Pull the base image and resolve its digest so the Dockerfile is pinned to
   // exactly what we just fetched. This prevents stale :latest tags from
   // silently reusing a cached old image after NemoClaw upgrades (#1904).
-  const resolved = pullAndResolveBaseImageDigest();
+  const resolved = pullAndResolveBaseImageDigest({ gpuMode });
   if (resolved) {
     console.log(`  Pinning base image to ${resolved.digest.slice(0, 19)}...`);
   } else {
     // Check if the image exists locally before falling back to unpinned :latest.
     // On a first-time install behind a firewall with no cached image, warn early
     // so the user knows the build will likely fail.
-    const localCheck = dockerImageInspect(`${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`, {
+    const baseImage = getSandboxBaseImage(gpuMode);
+    const baseTag = getSandboxBaseTag(gpuMode);
+    const localCheck = dockerImageInspect(`${baseImage}:${baseTag}`, {
       ignoreError: true,
       suppressOutput: true,
     });
     if (localCheck.status === 0) {
       console.warn("  Warning: could not pull base image from registry; using cached :latest.");
     } else {
-      console.warn(
-        `  Warning: base image ${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG} is not available locally.`,
-      );
+      console.warn(`  Warning: base image ${baseImage}:${baseTag} is not available locally.`);
       console.warn("  The build will fail unless Docker can pull the image during build.");
       console.warn("  If offline, pull the image manually first:");
-      console.warn(`    docker pull ${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`);
+      console.warn(`    docker pull ${baseImage}:${baseTag}`);
     }
   }
   const buildId = String(Date.now());
@@ -3926,7 +4029,15 @@ async function createSandbox(
     activeMessagingChannels,
     messagingAllowedIds,
     discordGuilds,
-    resolved ? resolved.ref : null,
+    // In GPU mode the Dockerfile's default ARG BASE_IMAGE points at the CPU
+    // sandbox-base image and MUST be rewritten to sandbox-base-gpu — even if
+    // the GHCR pull failed (e.g. when the GPU base is only available
+    // locally). Fall back to the unpinned `:latest` GPU tag below.
+    resolved
+      ? resolved.ref
+      : gpuMode
+        ? `${getSandboxBaseImage(true)}:${getSandboxBaseTag(true)}`
+        : null,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
@@ -7747,6 +7858,11 @@ module.exports = {
   pullAndResolveBaseImageDigest,
   SANDBOX_BASE_IMAGE,
   SANDBOX_BASE_TAG,
+  SANDBOX_BASE_IMAGE_GPU,
+  SANDBOX_BASE_TAG_GPU,
+  isGpuSandboxMode,
+  getSandboxBaseImage,
+  getSandboxBaseTag,
   versionGte,
   getRequestedModelHint,
   getRequestedProviderHint,
