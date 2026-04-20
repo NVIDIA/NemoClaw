@@ -292,7 +292,7 @@ test_sbx_02_connect_chat() {
 
   log "  Sending one-shot message to agent via SSH..."
   local reply
-  reply=$(sandbox_exec "openclaw agent --agent main --local -m 'Say exactly: HELLO_E2E' --session-id e2e-test" 2>&1) || true
+  reply=$(sandbox_exec "openclaw agent --agent main -m 'Say exactly: HELLO_E2E' --session-id e2e-test" 2>&1) || true
 
   if echo "$reply" | grep -qi "HELLO_E2E"; then
     pass "TC-SBX-02: Agent replied with expected token"
