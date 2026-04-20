@@ -260,7 +260,9 @@ print_done() {
       printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$(detect_shell_profile)"
     fi
     printf "  %s$%s nemoclaw %s connect\n" "$C_GREEN" "$C_RESET" "$sandbox_name"
-    if [[ "$agent_name" == "openclaw" || -z "$agent_name" ]]; then
+    if [[ "$agent_name" == "hermes" ]]; then
+      printf "  %ssandbox@%s$%s hermes\n" "$C_GREEN" "$sandbox_name" "$C_RESET"
+    else
       printf "  %ssandbox@%s$%s openclaw tui\n" "$C_GREEN" "$sandbox_name" "$C_RESET"
     fi
   elif [[ "$NEMOCLAW_READY_NOW" == true ]]; then
