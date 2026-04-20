@@ -218,12 +218,12 @@ verify_config_integrity() {
 
 apply_model_override() {
   # Any of these env vars trigger a config patch
-  [ -n "${NEMOCLAW_MODEL_OVERRIDE:-}" ] \
-    || [ -n "${NEMOCLAW_INFERENCE_API_OVERRIDE:-}" ] \
-    || [ -n "${NEMOCLAW_CONTEXT_WINDOW:-}" ] \
-    || [ -n "${NEMOCLAW_MAX_TOKENS:-}" ] \
-    || [ -n "${NEMOCLAW_REASONING:-}" ] \
-    || return 0
+  [ -n "${NEMOCLAW_MODEL_OVERRIDE:-}" ] ||
+    [ -n "${NEMOCLAW_INFERENCE_API_OVERRIDE:-}" ] ||
+    [ -n "${NEMOCLAW_CONTEXT_WINDOW:-}" ] ||
+    [ -n "${NEMOCLAW_MAX_TOKENS:-}" ] ||
+    [ -n "${NEMOCLAW_REASONING:-}" ] ||
+    return 0
 
   # SECURITY: Only root can write to /sandbox/.openclaw (root:root 444).
   # In non-root mode the sandbox user cannot modify the config.
@@ -759,6 +759,18 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 
+# axios + NODE_USE_ENV_PROXY double-proxy fix (NemoClaw#2109).
+# Node.js 22 sets NODE_USE_ENV_PROXY=1 in the OpenShell base image, which
+# intercepts all https.request() calls and handles proxy via CONNECT tunnel.
+# axios also reads HTTPS_PROXY, causing a double-proxy conflict that produces
+# malformed URLs (https://host:3128/) rejected by the L7 proxy.
+# The preload script disables axios's own proxy handling so NODE_USE_ENV_PROXY
+# takes over — the correct path for all other Node.js HTTP clients.
+_AXIOS_FIX_SCRIPT="/opt/nemoclaw-blueprint/scripts/axios-proxy-fix.js"
+if [ -f "$_AXIOS_FIX_SCRIPT" ] && [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_AXIOS_FIX_SCRIPT"
+fi
+
 # OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
 # time a user connects via `openshell sandbox connect`.  The connect path spawns
 # `/bin/bash -i` (interactive, non-login), which sources ~/.bashrc — NOT
@@ -861,25 +873,25 @@ if [ "$(id -u)" -ne 0 ]; then
       current="$(readlink -f "$link_path" 2>/dev/null || true)"
       expected="$(readlink -f "$target" 2>/dev/null || true)"
       [ "$current" != "$expected" ] || return 0
-      ln -snf "$target" "$link_path" 2>/dev/null \
-        && echo "[setup] repaired identity symlink" >&2 \
-        || echo "[setup] could not repair identity symlink" >&2
+      ln -snf "$target" "$link_path" 2>/dev/null &&
+        echo "[setup] repaired identity symlink" >&2 ||
+        echo "[setup] could not repair identity symlink" >&2
       return 0
     fi
 
     # Nothing exists yet — create the symlink.
     if [ ! -e "$link_path" ]; then
-      ln -snf "$target" "$link_path" 2>/dev/null \
-        && echo "[setup] created identity symlink" >&2 \
-        || echo "[setup] could not create identity symlink" >&2
+      ln -snf "$target" "$link_path" 2>/dev/null &&
+        echo "[setup] created identity symlink" >&2 ||
+        echo "[setup] could not create identity symlink" >&2
       return 0
     fi
 
     # A non-symlink entry exists — back it up, then replace.
     local backup
     backup="${link_path}.bak.$(date +%s)"
-    if mv "$link_path" "$backup" 2>/dev/null \
-      && ln -snf "$target" "$link_path" 2>/dev/null; then
+    if mv "$link_path" "$backup" 2>/dev/null &&
+      ln -snf "$target" "$link_path" 2>/dev/null; then
       echo "[setup] replaced non-symlink identity path (backup: ${backup})" >&2
     else
       echo "[setup] could not replace ${link_path}; writes may fail" >&2
@@ -895,9 +907,9 @@ if [ "$(id -u)" -ne 0 ]; then
       mkdir -p "${data_dir}/${sub}" 2>/dev/null || true
     done
     if find "$data_dir" ! -uid "$(id -u)" -print -quit 2>/dev/null | grep -q .; then
-      chown -R "$(id -u):$(id -g)" "$data_dir" 2>/dev/null \
-        && echo "[setup] fixed ownership on ${data_dir}" >&2 \
-        || echo "[setup] could not fix ownership on ${data_dir}; writes may fail" >&2
+      chown -R "$(id -u):$(id -g)" "$data_dir" 2>/dev/null &&
+        echo "[setup] fixed ownership on ${data_dir}" >&2 ||
+        echo "[setup] could not fix ownership on ${data_dir}; writes may fail" >&2
     fi
     ensure_identity_symlink "$data_dir" "$openclaw_dir"
   }
