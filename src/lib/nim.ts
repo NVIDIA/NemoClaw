@@ -176,6 +176,47 @@ export function detectGpu(): GpuDetection | null {
   return null;
 }
 
+// Check if Docker has stored credentials for nvcr.io.
+// Docker Desktop (macOS/Windows/WSL) stores creds in the OS keychain and
+// leaves an empty marker entry { "nvcr.io": {} } in auths after a successful
+// login. That marker plus a global credsStore is treated as logged in.
+export function isNgcLoggedIn(): boolean {
+  try {
+    const os = require("os");
+    const fs = require("fs");
+    const path = require("path");
+    const config = path.join(os.homedir(), ".docker", "config.json");
+    const data = fs.readFileSync(config, "utf-8");
+    const parsed = JSON.parse(data);
+    if (parsed?.credHelpers?.["nvcr.io"]) return true;
+    const auths = parsed?.auths || {};
+    const entry = auths["nvcr.io"] || auths["https://nvcr.io"];
+    if (entry?.auth) return true;
+    if (entry && parsed?.credsStore) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+// NGC expects literal "$oauthtoken" as the username for API key authentication.
+export function dockerLoginNgc(apiKey: string): boolean {
+  const { spawnSync } = require("child_process");
+  const result = spawnSync("docker", ["login", "nvcr.io", "-u", "$oauthtoken", "--password-stdin"], {
+    input: apiKey,
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  if (result.error) {
+    console.error(`  Docker error: ${result.error.message}`);
+    return false;
+  }
+  if (result.status !== 0 && result.stderr) {
+    console.error(`  Docker login error: ${result.stderr.trim()}`);
+  }
+  return result.status === 0;
+}
+
 export function pullNimImage(model: string): string {
   const image = getImageForModel(model);
   if (!image) {

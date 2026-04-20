@@ -3066,6 +3066,7 @@ nimMod.pullNimImage = () => {};
 nimMod.containerName = () => "nemoclaw-nim-test";
 nimMod.startNimContainerByName = () => "container-123";
 nimMod.waitForNimHealth = () => true;
+nimMod.isNgcLoggedIn = () => true;
 
 // Select option 7 (nim-local), then model 1
 const answers = ["7", "1"];
