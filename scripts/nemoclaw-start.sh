@@ -801,6 +801,12 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 PROXYEOF
+  # axios double-proxy fix: also expose NODE_OPTIONS in connect sessions so that
+  # interactive shells and user commands started via `openshell sandbox connect`
+  # also benefit from the preload. (NemoClaw#2109)
+  if [ -f "$_AXIOS_FIX_SCRIPT" ] && [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
+    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_AXIOS_FIX_SCRIPT\""
+  fi
   # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
   echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
   for _redir in "${_TOOL_REDIRECTS[@]}"; do

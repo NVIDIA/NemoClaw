@@ -561,5 +561,47 @@ describe("service environment", () => {
         }
       }
     });
+
+    it("regression #2109: proxy-env.sh includes NODE_OPTIONS --require when NODE_USE_ENV_PROXY=1 and fix script exists", () => {
+      const fakeDataDir = join(tmpdir(), `nemoclaw-axios-fix-test-${process.pid}`);
+      const fakeFixScript = join(fakeDataDir, "axios-proxy-fix.js");
+      execFileSync("mkdir", ["-p", fakeDataDir]);
+      const tmpFile = join(tmpdir(), `nemoclaw-axios-fix-env-${process.pid}.sh`);
+      try {
+        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+        const persistBlock = execFileSync(
+          "sed",
+          ["-n", "/^_PROXY_URL=/,/^chmod 644/p", scriptPath],
+          { encoding: "utf-8" },
+        );
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `PROXY_HOST="10.200.0.1"`,
+          `PROXY_PORT="3128"`,
+          `NODE_USE_ENV_PROXY=1`,
+          `_TOOL_REDIRECTS=()`,
+          persistBlock
+            .trimEnd()
+            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`)
+            .replaceAll("/opt/nemoclaw-blueprint/scripts/axios-proxy-fix.js", fakeFixScript),
+        ].join("\n");
+        // Create a fake fix script so the -f check passes
+        writeFileSync(fakeFixScript, "// fake", { mode: 0o644 });
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
+        expect(envFile).toContain("NODE_OPTIONS");
+        expect(envFile).toContain("--require");
+        expect(envFile).toContain(fakeFixScript);
+      } finally {
+        try {
+          execFileSync("rm", ["-rf", fakeDataDir, tmpFile]);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
   });
 });
