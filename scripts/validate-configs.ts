@@ -22,7 +22,11 @@ interface ConfigTarget {
   files: string[];
 }
 
-/** All config files validated by default (paths relative to repo root). */
+/**
+ * Build the list of config files and their corresponding JSON Schemas.
+ * Preset YAML files are discovered dynamically from the presets directory.
+ * Returns an array of {@link ConfigTarget} objects ready for validation.
+ */
 function discoverTargets(): ConfigTarget[] {
   const targets: ConfigTarget[] = [
     {
@@ -62,6 +66,10 @@ function discoverTargets(): ConfigTarget[] {
   return targets;
 }
 
+/**
+ * Read and parse a config file relative to the repository root.
+ * YAML files are parsed with the `yaml` library; everything else is parsed as JSON.
+ */
 function loadFile(repoRelative: string): unknown {
   const abs = join(REPO_ROOT, repoRelative);
   const raw = readFileSync(abs, "utf-8");
@@ -71,11 +79,20 @@ function loadFile(repoRelative: string): unknown {
   return JSON.parse(raw);
 }
 
+/**
+ * Read and parse a JSON Schema file relative to the repository root.
+ * Returns the parsed schema object ready for AJV compilation.
+ */
 function loadSchema(repoRelative: string): object {
   const abs = join(REPO_ROOT, repoRelative);
   return JSON.parse(readFileSync(abs, "utf-8")) as object;
 }
 
+/**
+ * Format a single AJV validation error into a human-readable string.
+ * Includes the JSON Pointer path and a detail message, expanding
+ * `additionalProperty` and `unevaluatedProperty` params for clarity.
+ */
 function formatError(err: { instancePath: string; keyword?: string; message?: string; params?: Record<string, unknown> }): string {
   const path = err.instancePath || "/";
   const detail = err.params?.additionalProperty
@@ -106,6 +123,11 @@ const DANGEROUS_HOSTS: ReadonlySet<string> = new Set([
   "::/0",
 ]);
 
+/**
+ * Return true if `host` is a catch-all value that grants access to any destination.
+ * Rejects exact members of {@link DANGEROUS_HOSTS} and bare wildcard-with-port patterns
+ * like `*:443`. Subdomain wildcards such as `*.example.com` are intentionally allowed.
+ */
 function isDangerousHost(host: unknown): boolean {
   if (typeof host !== "string") return false;
   const trimmed = host.trim();
@@ -150,6 +172,11 @@ function findDangerousHosts(data: unknown): DangerousHostFinding[] {
   return findings;
 }
 
+/**
+ * Entry point: validate all config files (or a single file via --file/--schema flags)
+ * against their JSON Schemas, then run the dangerous-host semantic check.
+ * Exits with a non-zero code if any validation errors or dangerous hosts are found.
+ */
 function main(): void {
   const args = process.argv.slice(2);
 
