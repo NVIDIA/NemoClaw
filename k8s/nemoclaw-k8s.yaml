@@ -103,6 +103,8 @@ spec:
           value: "0"              # explicitly deny exec into inner containers
         - name: BUILD
           value: "0"              # deny build (installer pulls pre-built images)
+        - name: BIND_CONFIG
+          value: "127.0.0.1:2375" # listen on localhost only — unreachable from other pods
       volumeMounts:
         - name: docker-socket
           mountPath: /docker-socket
