@@ -260,11 +260,19 @@ print_done() {
       printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$(detect_shell_profile)"
     fi
     printf "  %s$%s nemoclaw %s connect\n" "$C_GREEN" "$C_RESET" "$sandbox_name"
-    if [[ "$agent_name" == "hermes" ]]; then
-      printf "  %ssandbox@%s$%s hermes\n" "$C_GREEN" "$sandbox_name" "$C_RESET"
-    else
-      printf "  %ssandbox@%s$%s openclaw tui\n" "$C_GREEN" "$sandbox_name" "$C_RESET"
-    fi
+    local agent_cmd
+    case "$agent_name" in
+      hermes)
+        agent_cmd="hermes"
+        ;;
+      "" | openclaw)
+        agent_cmd="openclaw tui"
+        ;;
+      *)
+        agent_cmd="$agent_name"
+        ;;
+    esac
+    printf "  %ssandbox@%s$%s %s\n" "$C_GREEN" "$sandbox_name" "$C_RESET" "$agent_cmd"
   elif [[ "$NEMOCLAW_READY_NOW" == true ]]; then
     printf "  ${C_GREEN}NemoClaw CLI is installed.${C_RESET}\n"
     printf "  ${C_DIM}Onboarding has not run yet.${C_RESET}\n"
