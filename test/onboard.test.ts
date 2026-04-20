@@ -2312,11 +2312,14 @@ const { createSandbox } = require(${onboardPath});
 `;
     fs.writeFileSync(scriptPath, script);
 
+    // Ensure host shell env cannot change the requested dashboard port in this test.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { NEMOCLAW_DASHBOARD_PORT: _ignoredDashboardPort, ...inheritedEnv } = process.env;
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
       encoding: "utf-8",
       env: {
-        ...process.env,
+        ...inheritedEnv,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",

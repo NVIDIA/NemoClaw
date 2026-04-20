@@ -5523,7 +5523,7 @@ function getDashboardAccessInfo(sandboxName, options = {}) {
   const storedPort = getSandboxDashboardPort(sandboxName);
   const chatUiUrl =
     options.chatUiUrl || process.env.CHAT_UI_URL || `http://127.0.0.1:${storedPort}`;
-  const dashboardPort = Number(getDashboardForwardPort(chatUiUrl || `http://127.0.0.1:${storedPort}`));
+  const dashboardPort = Number(getDashboardForwardPort(chatUiUrl));
   const dashboardAccess = buildControlUiUrls(token, dashboardPort).map((url, index) => ({
     label: index === 0 ? "Dashboard" : `Alt ${index}`,
     url: buildAuthenticatedDashboardUrl(url, null),

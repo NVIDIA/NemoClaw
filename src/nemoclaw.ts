@@ -242,8 +242,9 @@ function isSandboxGatewayRunning(sandboxName) {
 function recoverSandboxProcesses(sandboxName) {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const sandbox = registry.getSandbox(sandboxName);
-  const dashboardPort =
+  const rawPort =
     sandbox?.dashboardPort != null ? Number(sandbox.dashboardPort) : DEFAULT_DASHBOARD_PORT;
+  const dashboardPort = Number.isFinite(rawPort) ? rawPort : DEFAULT_DASHBOARD_PORT;
   const agentScript = agentRuntime.buildRecoveryScript(agent, agent?.forwardPort ?? dashboardPort);
   // The recovery script runs as the sandbox user (non-root). This matches
   // the non-root fallback path in nemoclaw-start.sh — no privilege
@@ -286,11 +287,11 @@ function recoverSandboxProcesses(sandboxName) {
 function ensureSandboxPortForward(sandboxName) {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const sandbox = registry.getSandbox(sandboxName);
+  const rawPort =
+    sandbox?.dashboardPort != null ? Number(sandbox.dashboardPort) : DEFAULT_DASHBOARD_PORT;
   const port = agent
     ? String(agent.forwardPort)
-    : String(
-        sandbox?.dashboardPort != null ? Number(sandbox.dashboardPort) : DEFAULT_DASHBOARD_PORT,
-      );
+    : String(Number.isFinite(rawPort) ? rawPort : DEFAULT_DASHBOARD_PORT);
   runOpenshell(["forward", "stop", port], { ignoreError: true });
   runOpenshell(["forward", "start", "--background", port, sandboxName], {
     ignoreError: true,
