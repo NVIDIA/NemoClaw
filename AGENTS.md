@@ -31,7 +31,7 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 
 | Task | Command |
 |------|---------|
-| Install all deps | `npm install && cd nemoclaw && npm install && npm run build && cd .. && cd nemoclaw-blueprint && uv sync && cd ..` |
+| Install all deps | `npm install && npm link && cd nemoclaw && npm install && npm run build && cd .. && cd nemoclaw-blueprint && uv sync && cd ..` |
 | Build plugin | `cd nemoclaw && npm run build` |
 | Watch mode | `cd nemoclaw && npm run dev` |
 | Run all tests | `npm test` |
