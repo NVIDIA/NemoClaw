@@ -52,6 +52,10 @@ describe("platform helpers", () => {
         getPodmanSocketCandidates({ platform: "linux", home: "/tmp/test-home", uid: 1001 }),
       ).toEqual(["/run/user/1001/podman/podman.sock", "/run/podman/podman.sock"]);
     });
+
+    it("returns no Podman socket paths on unsupported platforms", () => {
+      expect(getPodmanSocketCandidates({ platform: "win32", home: "C:/Users/test" })).toEqual([]);
+    });
   });
 
   describe("getDockerSocketCandidates", () => {

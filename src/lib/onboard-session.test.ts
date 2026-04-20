@@ -349,4 +349,18 @@ describe("onboard session", () => {
     expect(summary.failure.message).toContain("Bearer <REDACTED>");
     expect(summary.failure.message).not.toContain("abcdefghijklmnopqrstuvwxyz");
   });
+
+  it("re-sanitizes in-memory failures in debug summaries", () => {
+    const rawSession = session.createSession({
+      failure: {
+        step: "provider_selection",
+        message: "Bearer abcdefghijklmnopqrstuvwxyz",
+        recordedAt: "2026-04-01T00:00:00.000Z",
+      },
+    });
+
+    const summary = session.summarizeForDebug(rawSession);
+    expect(summary.failure.message).toContain("Bearer <REDACTED>");
+    expect(summary.failure.message).not.toContain("abcdefghijklmnopqrstuvwxyz");
+  });
 });
