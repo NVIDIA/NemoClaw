@@ -49,7 +49,7 @@
         "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
         "protocol": { "type": "string", "enum": ["rest"] },
         "enforcement": { "type": "string", "enum": ["enforce", "audit"] },
-        "tls": { "type": "string", "enum": ["terminate", "passthrough"] },
+        "tls": { "type": "string", "enum": ["terminate", "passthrough", "skip"] },
         "access": { "type": "string", "enum": ["full"] },
         "rules": {
           "type": "array",

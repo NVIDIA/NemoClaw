@@ -59,6 +59,7 @@ export interface Session {
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
   policyPresets: string[] | null;
+  messagingChannels: string[] | null;
   metadata: SessionMetadata;
   steps: Record<string, StepState>;
 }
@@ -88,6 +89,7 @@ export interface SessionUpdates {
   nimContainer?: string;
   webSearchConfig?: WebSearchConfig | null;
   policyPresets?: string[];
+  messagingChannels?: string[];
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
 }
 
@@ -203,6 +205,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     policyPresets: Array.isArray(overrides.policyPresets)
       ? overrides.policyPresets.filter((value) => typeof value === "string")
       : null,
+    messagingChannels: Array.isArray(overrides.messagingChannels)
+      ? overrides.messagingChannels.filter((value) => typeof value === "string")
+      : null,
     metadata: {
       gatewayName: overrides.metadata?.gatewayName || "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile || null,
@@ -239,6 +244,9 @@ export function normalizeSession(data: unknown): Session | null {
         : null,
     policyPresets: Array.isArray(d.policyPresets)
       ? (d.policyPresets as unknown[]).filter((value) => typeof value === "string") as string[]
+      : null,
+    messagingChannels: Array.isArray(d.messagingChannels)
+      ? (d.messagingChannels as unknown[]).filter((value) => typeof value === "string") as string[]
       : null,
     lastStepStarted: typeof d.lastStepStarted === "string" ? d.lastStepStarted : null,
     lastCompletedStep: typeof d.lastCompletedStep === "string" ? d.lastCompletedStep : null,
@@ -549,6 +557,9 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   }
   if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
+  }
+  if (Array.isArray(updates.messagingChannels)) {
+    safe.messagingChannels = updates.messagingChannels.filter((value) => typeof value === "string");
   }
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {

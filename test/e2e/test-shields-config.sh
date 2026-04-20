@@ -201,15 +201,31 @@ else
   fail "shields down did not report success: ${SHIELDS_DOWN_OUTPUT}"
 fi
 
-# Check permissions changed
+# Check permissions changed — should be sandbox:sandbox 600/700 (doctor-aligned)
 PERMS_DOWN=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
-  stat -c '%a' "${CONFIG_PATH}" 2>/dev/null || true)
+  stat -c '%a %U:%G' "${CONFIG_PATH}" 2>/dev/null || true)
 info "Config perms (shields DOWN): ${PERMS_DOWN}"
 
-if echo "$PERMS_DOWN" | grep -q "666\|664\|644"; then
-  pass "Config file permissions relaxed (${PERMS_DOWN})"
+if [ "$(echo "$PERMS_DOWN" | awk '{print $1}')" = "600" ]; then
+  pass "Config file mode is 600 (doctor-aligned, ${PERMS_DOWN})"
 else
-  fail "Config file permissions not relaxed after shields down: ${PERMS_DOWN}"
+  fail "Config file should be mode 600 after shields down: ${PERMS_DOWN}"
+fi
+
+if [ "$(echo "$PERMS_DOWN" | awk '{print $2}')" = "sandbox:sandbox" ]; then
+  pass "Config file owned by sandbox:sandbox after shields down"
+else
+  fail "Config file should be owned by sandbox:sandbox: ${PERMS_DOWN}"
+fi
+
+DIR_PERMS_DOWN=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+  stat -c '%a %U:%G' "$(dirname "${CONFIG_PATH}")" 2>/dev/null || true)
+info "Config dir perms (shields DOWN): ${DIR_PERMS_DOWN}"
+
+if [ "$(echo "$DIR_PERMS_DOWN" | awk '{print $1}')" = "700" ]; then
+  pass "Config directory mode is 700 (doctor-aligned)"
+else
+  fail "Config directory should be mode 700 after shields down: ${DIR_PERMS_DOWN}"
 fi
 
 # ══════════════════════════════════════════════════════════════════

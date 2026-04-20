@@ -122,6 +122,29 @@ describe("onboard session", () => {
     expect(loaded.metadata.token).toBeUndefined();
   });
 
+  it("persists messagingChannels across save/load roundtrips", () => {
+    const created = session.createSession();
+    created.messagingChannels = ["telegram", "slack"];
+    session.saveSession(created);
+
+    const loaded = session.loadSession();
+    expect(loaded.messagingChannels).toEqual(["telegram", "slack"]);
+  });
+
+  it("filters non-string entries out of persisted messagingChannels", () => {
+    const created = session.createSession();
+    created.messagingChannels = ["telegram", 42, null, "discord"];
+    session.saveSession(created);
+
+    const loaded = session.loadSession();
+    expect(loaded.messagingChannels).toEqual(["telegram", "discord"]);
+  });
+
+  it("defaults messagingChannels to null for fresh sessions", () => {
+    const fresh = session.createSession();
+    expect(fresh.messagingChannels).toBeNull();
+  });
+
   it("persists and clears web search config through safe session updates", () => {
     session.saveSession(session.createSession());
     session.markStepComplete("provider_selection", {

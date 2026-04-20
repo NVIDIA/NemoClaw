@@ -41,6 +41,11 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
 ARG NEMOCLAW_PROVIDER_KEY=custom
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
+# CHAT_UI_URL is a legacy name shared with the OpenClaw build arg. For
+# Hermes this URL points at the OpenAI-compatible API server (port 8642,
+# exposing /v1 and /health), NOT a browser chat UI. Callers authenticate
+# via a bearer token in the Authorization header. See
+# agents/hermes/manifest.yaml (dashboard.kind: api).
 ARG CHAT_UI_URL=http://127.0.0.1:8642
 ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
 ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=

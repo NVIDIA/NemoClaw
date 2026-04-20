@@ -215,6 +215,11 @@ export function getAgentDashboardInfo(agent: AgentDefinition): {
 
 /**
  * Print the dashboard UI section for a non-OpenClaw agent.
+ *
+ * When the agent manifest declares `dashboard.kind: api`, we print the
+ * endpoint as an API (no tokenized URL fragment — the caller authenticates
+ * via a header) and use the manifest-supplied label/path. Otherwise we fall
+ * back to the original UI-style output used by browser dashboards.
  */
 export function printDashboardUi(
   _sandboxName: string,
@@ -226,15 +231,31 @@ export function printDashboardUi(
   },
 ): void {
   const info = getAgentDashboardInfo(agent);
+  const { kind, label, path } = agent.dashboard;
+
+  if (kind === "api") {
+    console.log(`  ${info.displayName} ${label}`);
+    console.log(`  Port ${info.port} must be forwarded before connecting.`);
+    const seen = new Set<string>();
+    for (const baseUrl of deps.buildControlUiUrls(null, info.port)) {
+      const withoutHash = baseUrl.split("#")[0].replace(/\/$/, "");
+      const url = path && path !== "/" ? `${withoutHash}${path}` : `${withoutHash}/`;
+      if (seen.has(url)) continue;
+      seen.add(url);
+      console.log(`  ${url}`);
+    }
+    return;
+  }
+
   if (token) {
-    console.log(`  ${info.displayName} UI (tokenized URL; treat it like a password)`);
+    console.log(`  ${info.displayName} ${label} (tokenized URL; treat it like a password)`);
     console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
     for (const url of deps.buildControlUiUrls(token, info.port)) {
       console.log(`  ${url}`);
     }
   } else {
     deps.note("  Could not read gateway token from the sandbox (download failed).");
-    console.log(`  ${info.displayName} UI`);
+    console.log(`  ${info.displayName} ${label}`);
     console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
     for (const url of deps.buildControlUiUrls(null, info.port)) {
       console.log(`  ${url}`);

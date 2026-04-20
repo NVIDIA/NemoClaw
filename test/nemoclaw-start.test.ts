@@ -243,6 +243,30 @@ describe("nemoclaw-start configure guard blocks --local (#2016)", () => {
   });
 });
 
+describe("nemoclaw-start configure guard blocks config set/unset (#1973)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("adds a config) case that matches only set and unset subcommands", () => {
+    expect(src).toMatch(/config\)\s+case "\$2" in\s+set \| unset\)/);
+  });
+
+  it("prints an actionable error quoting the invoked subcommand and returns 1", () => {
+    expect(src).toContain("'openclaw config $2' cannot modify config inside the sandbox");
+    expect(src).toMatch(/set \| unset\)[\s\S]*?return 1/);
+  });
+
+  it("redirects users to nemoclaw onboard --resume", () => {
+    expect(src).toMatch(/set \| unset\)[\s\S]*?nemoclaw onboard --resume/);
+  });
+
+  it("does not block immutable subcommands (get, list) — they fall through to the real binary", () => {
+    // The config) arm only enumerates mutating subcommands. Read-only ones are
+    // not matched, so execution falls through to `command openclaw "$@"` below.
+    expect(src).not.toMatch(/config\)\s+case "\$2" in[\s\S]*?\b(get|list|show|view)\)/);
+    expect(src).toContain('command openclaw "$@"');
+  });
+});
+
 describe("runtime model override (#759)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
