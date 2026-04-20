@@ -574,6 +574,11 @@ describe("service environment", () => {
           ["-n", "/^_PROXY_URL=/,/^chmod 644/p", scriptPath],
           { encoding: "utf-8" },
         );
+        if (!persistBlock.trim()) {
+          throw new Error(
+            "sed anchors (_PROXY_URL=…chmod 644) not found in nemoclaw-start.sh — test cannot run",
+          );
+        }
         const wrapper = [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
