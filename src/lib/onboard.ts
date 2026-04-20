@@ -1333,11 +1333,16 @@ function shouldRequireResponsesToolCalling(provider) {
   );
 }
 
-// Google Gemini rejects requests that carry both an Authorization: Bearer
-// header and a ?key= query parameter ("Multiple authentication credentials
-// received"). Send the API key as ?key= only for Gemini. See issue #1960.
-function getProbeAuthMode(provider) {
-  return provider === "gemini-api" ? "query-param" : undefined;
+// The Gemini OpenAI-compat endpoint at /v1beta/openai/ requires
+// `Authorization: Bearer <KEY>` and rejects `?key=<KEY>` with HTTP 400
+// "Missing or invalid Authorization header." The dual-auth rejection
+// described in #1960 applies to the native /v1beta/models/...:generateContent
+// endpoint, which the onboarder probes do not use. Both callers of this
+// helper (probeOpenAiLikeEndpoint, probeResponsesToolCalling) target the
+// OpenAI-compat URL, so returning undefined for every provider is correct:
+// probes default to Bearer auth and Gemini onboarding succeeds.
+function getProbeAuthMode(_provider) {
+  return undefined;
 }
 
 // shouldSkipResponsesProbe and isNvcfFunctionNotFoundForAccount /
