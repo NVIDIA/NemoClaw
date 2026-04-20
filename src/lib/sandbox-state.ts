@@ -49,6 +49,7 @@ export interface RebuildManifest {
   writableDir: string;
   backupPath: string;
   blueprintDigest: string | null;
+  policyPresets?: string[];
   instances?: InstanceBackup[];
 }
 
@@ -186,6 +187,14 @@ export function backupSandboxState(sandboxName: string): BackupResult {
   const backupPath = path.join(REBUILD_BACKUPS_DIR, sandboxName, timestamp);
   mkdirSync(backupPath, { recursive: true, mode: 0o700 });
 
+  // Capture applied policy presets from the registry so they can be
+  // re-applied after rebuild. Presets live in the gateway policy engine,
+  // not on the sandbox filesystem, so they are lost on destroy/recreate.
+  const policyPresets: string[] = sb?.policies && sb.policies.length > 0
+    ? [...sb.policies]
+    : [];
+  _log(`policyPresets from registry: [${policyPresets.join(",")}]`);
+
   const manifest: RebuildManifest = {
     version: MANIFEST_VERSION,
     sandboxName,
@@ -197,6 +206,7 @@ export function backupSandboxState(sandboxName: string): BackupResult {
     writableDir,
     backupPath,
     blueprintDigest: computeBlueprintDigest(),
+    policyPresets,
   };
 
   const backedUpDirs: string[] = [];

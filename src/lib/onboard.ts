@@ -63,6 +63,7 @@ const registry = require("./registry");
 const nim = require("./nim");
 const onboardSession = require("./onboard-session");
 const policies = require("./policies");
+const shields = require("./shields");
 const tiers = require("./tiers");
 const { ensureUsageNoticeConsent } = require("./usage-notice");
 const {
@@ -455,7 +456,11 @@ function step(n, total, msg) {
 }
 
 function getInstalledOpenshellVersion(versionOutput = null) {
-  const output = String(versionOutput ?? runCapture("openshell -V", { ignoreError: true })).trim();
+  const openshellBin = resolveOpenshell();
+  if (!versionOutput && !openshellBin) return null;
+  const output = String(
+    versionOutput ?? runCapture([openshellBin, "-V"], { ignoreError: true }),
+  ).trim();
   const match = output.match(/openshell\s+([0-9]+\.[0-9]+\.[0-9]+)/i);
   if (!match) return null;
   return match[1];
@@ -590,12 +595,17 @@ function openshellShellCommand(args, options = {}) {
   return [shellQuote(openshellBinary), ...args.map((arg) => shellQuote(arg))].join(" ");
 }
 
+function openshellArgv(args, options = {}) {
+  const openshellBinary = options.openshellBinary || getOpenshellBinary();
+  return [openshellBinary, ...args];
+}
+
 function runOpenshell(args, opts = {}) {
-  return run(openshellShellCommand(args), opts);
+  return run(openshellArgv(args, opts), opts);
 }
 
 function runCaptureOpenshell(args, opts = {}) {
-  return runCapture(openshellShellCommand(args), opts);
+  return runCapture(openshellArgv(args, opts), opts);
 }
 
 // URL/string utilities — delegated to src/lib/url-utils.ts
@@ -1333,11 +1343,16 @@ function shouldRequireResponsesToolCalling(provider) {
   );
 }
 
-// Google Gemini rejects requests that carry both an Authorization: Bearer
-// header and a ?key= query parameter ("Multiple authentication credentials
-// received"). Send the API key as ?key= only for Gemini. See issue #1960.
-function getProbeAuthMode(provider) {
-  return provider === "gemini-api" ? "query-param" : undefined;
+// The Gemini OpenAI-compat endpoint at /v1beta/openai/ requires
+// `Authorization: Bearer <KEY>` and rejects `?key=<KEY>` with HTTP 400
+// "Missing or invalid Authorization header." The dual-auth rejection
+// described in #1960 applies to the native /v1beta/models/...:generateContent
+// endpoint, which the onboarder probes do not use. Both callers of this
+// helper (probeOpenAiLikeEndpoint, probeResponsesToolCalling) target the
+// OpenAI-compat URL, so returning undefined for every provider is correct:
+// probes default to Bearer auth and Gemini onboarding succeeds.
+function getProbeAuthMode(_provider) {
+  return undefined;
 }
 
 // shouldSkipResponsesProbe and isNvcfFunctionNotFoundForAccount /
@@ -1966,7 +1981,7 @@ function printOllamaExposureWarning() {
 }
 
 function pullOllamaModel(model) {
-  const result = spawnSync("bash", ["-c", `ollama pull ${shellQuote(model)}`], {
+  const result = spawnSync("ollama", ["pull", model], {
     cwd: ROOT,
     encoding: "utf8",
     stdio: "inherit",
@@ -2108,7 +2123,7 @@ function getResumeConfigConflicts(session, opts = {}) {
 }
 
 function getContainerRuntime() {
-  const info = runCapture("docker info 2>/dev/null", { ignoreError: true });
+  const info = runCapture(["docker", "info"], { ignoreError: true });
   return inferContainerRuntime(info);
 }
 
@@ -2199,6 +2214,7 @@ function destroyGateway() {
   }
   // openshell gateway destroy doesn't remove Docker volumes, which leaves
   // corrupted cluster state that breaks the next gateway start. Clean them up.
+  // Shell required: pipe (|), && chaining, || fallback.
   run(
     `docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | grep . && docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs docker volume rm || true`,
     { ignoreError: true },
@@ -2460,21 +2476,21 @@ async function preflight() {
   if (gatewayReuseState === "missing") {
     const containerName = `openshell-cluster-${GATEWAY_NAME}`;
     const inspectResult = run(
-      `docker inspect --type container --format '{{.State.Status}}' ${containerName} 2>/dev/null`,
+      ["docker", "inspect", "--type", "container", "--format", "{{.State.Status}}", containerName],
       { ignoreError: true, suppressOutput: true },
     );
     if (inspectResult.status === 0) {
       console.log("  Cleaning up orphaned gateway container...");
-      run(`docker stop ${containerName} >/dev/null 2>&1`, {
+      run(["docker", "stop", containerName], {
         ignoreError: true,
         suppressOutput: true,
       });
-      run(`docker rm ${containerName} >/dev/null 2>&1`, {
+      run(["docker", "rm", containerName], {
         ignoreError: true,
         suppressOutput: true,
       });
       const postInspectResult = run(
-        `docker inspect --type container ${containerName} 2>/dev/null`,
+        ["docker", "inspect", "--type", "container", containerName],
         {
           ignoreError: true,
           suppressOutput: true,
@@ -2778,7 +2794,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
   const runtime = getContainerRuntime();
   if (shouldPatchCoredns(runtime)) {
     console.log("  Patching CoreDNS DNS forwarding...");
-    run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" ${GATEWAY_NAME} 2>&1 || true`, {
+    run(["bash", path.join(SCRIPTS, "fix-coredns.sh"), GATEWAY_NAME], {
       ignoreError: true,
     });
   }
@@ -2843,7 +2859,7 @@ async function recoverGatewayRuntime() {
       process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
       const runtime = getContainerRuntime();
       if (shouldPatchCoredns(runtime)) {
-        run(`bash "${path.join(SCRIPTS, "fix-coredns.sh")}" ${GATEWAY_NAME} 2>&1 || true`, {
+        run(["bash", path.join(SCRIPTS, "fix-coredns.sh"), GATEWAY_NAME], {
           ignoreError: true,
         });
       }
@@ -3432,7 +3448,7 @@ async function createSandbox(
   });
 
   // Clean up build context regardless of outcome
-  run(`rm -rf "${buildCtx}"`, { ignoreError: true });
+  run(["rm", "-rf", buildCtx], { ignoreError: true });
 
   if (createResult.status !== 0) {
     const failure = classifySandboxCreateFailure(createResult.output);
@@ -3493,9 +3509,10 @@ async function createSandbox(
   // This prevents port forwards from connecting to a non-existent port
   // or seeing 502/503 errors during initial load.
   console.log("  Waiting for NemoClaw dashboard to become ready...");
+  const openshellBin = getOpenshellBinary();
   for (let i = 0; i < 15; i++) {
     const readyMatch = runCaptureOpenshell(
-      ["sandbox", "exec", sandboxName, "curl", "-sf", `http://localhost:${CONTROL_UI_PORT}/`],
+      ["sandbox", "exec", sandboxName, "curl", "-sf", `http://localhost:${effectivePort}/`],
       { ignoreError: true },
     );
     if (readyMatch) {
@@ -3574,9 +3591,7 @@ async function createSandbox(
 
   try {
     if (process.platform === "darwin") {
-      const vmKernel = runCapture("docker info --format '{{.KernelVersion}}'", {
-        ignoreError: true,
-      }).trim();
+      const vmKernel = runCapture(["docker", "info", "--format", "{{.KernelVersion}}"], { ignoreError: true }).trim();
       if (vmKernel) {
         const parts = vmKernel.split(".");
         const major = parseInt(parts[0], 10);
@@ -3591,7 +3606,7 @@ async function createSandbox(
         }
       }
     } else if (process.platform === "linux") {
-      const uname = runCapture("uname -r", { ignoreError: true }).trim();
+      const uname = runCapture(["uname", "-r"], { ignoreError: true }).trim();
       if (uname) {
         const parts = uname.split(".");
         const major = parseInt(parts[0], 10);
@@ -3623,14 +3638,12 @@ async function setupNim(gpu) {
   let preferredInferenceApi = null;
 
   // Detect local inference options
+  // "command -v" is a shell builtin — must go through bash.
   const hasOllama = !!runCapture("command -v ollama", { ignoreError: true });
-  const ollamaRunning = !!runCapture(
-    `curl -sf http://127.0.0.1:${OLLAMA_PORT}/api/tags 2>/dev/null`,
-    {
-      ignoreError: true,
-    },
-  );
-  const vllmRunning = !!runCapture(`curl -sf http://127.0.0.1:${VLLM_PORT}/v1/models 2>/dev/null`, {
+  const ollamaRunning = !!runCapture(["curl", "-sf", `http://127.0.0.1:${OLLAMA_PORT}/api/tags`], {
+    ignoreError: true,
+  });
+  const vllmRunning = !!runCapture(["curl", "-sf", `http://127.0.0.1:${VLLM_PORT}/v1/models`], {
     ignoreError: true,
   });
   const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
@@ -4044,6 +4057,34 @@ async function setupNim(gpu) {
           }
           model = sel.name;
 
+          // Ensure Docker is logged in to NGC registry before pulling NIM images.
+          if (!nim.isNgcLoggedIn()) {
+            if (isNonInteractive()) {
+              console.error(
+                "  Docker is not logged in to nvcr.io. In non-interactive mode, run `docker login nvcr.io` first and retry.",
+              );
+              process.exit(1);
+            }
+            console.log("");
+            console.log("  NGC API Key required to pull NIM images.");
+            console.log("  Get one from: https://org.ngc.nvidia.com/setup/api-key");
+            console.log("");
+            let ngcKey = normalizeCredentialValue(await prompt("  NGC API Key: ", { secret: true }));
+            if (!ngcKey) {
+              console.error("  NGC API Key is required for Local NIM.");
+              process.exit(1);
+            }
+            if (!nim.dockerLoginNgc(ngcKey)) {
+              console.error("  Failed to login to NGC registry. Check your API key and try again.");
+              console.log("");
+              ngcKey = normalizeCredentialValue(await prompt("  NGC API Key: ", { secret: true }));
+              if (!ngcKey || !nim.dockerLoginNgc(ngcKey)) {
+                console.error("  NGC login failed. Cannot pull NIM images.");
+                process.exit(1);
+              }
+            }
+          }
+
           console.log(`  Pulling NIM image for ${model}...`);
           nim.pullNimImage(model);
 
@@ -4090,15 +4131,12 @@ async function setupNim(gpu) {
       } else if (selected.key === "ollama") {
         if (!ollamaRunning) {
           console.log("  Starting Ollama...");
-          if (isWsl()) {
-            // On WSL2, binding to 0.0.0.0 creates a dual-stack socket that Docker
-            // cannot reach via host-gateway. The default 127.0.0.1 binding works
-            // because WSL2 relays IPv4-only sockets to the Windows host (#1104).
-            run(`ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
-          } else {
-            // Bind to localhost only — the auth proxy handles container access.
-            run(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
-          }
+          // On WSL2, binding to 0.0.0.0 creates a dual-stack socket that Docker
+          // cannot reach via host-gateway. The default 127.0.0.1 binding works
+          // because WSL2 relays IPv4-only sockets to the Windows host.
+          // Shell required: backgrounding (&), env var prefix, output redirection.
+          const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} `;
+          run(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
           sleep(2);
           if (!isWsl()) printOllamaExposureWarning();
         }
@@ -4161,12 +4199,10 @@ async function setupNim(gpu) {
       } else if (selected.key === "install-ollama") {
         // macOS only — this option is gated by process.platform === "darwin" above
         console.log("  Installing Ollama via Homebrew...");
-        run("brew install ollama", { ignoreError: true });
+        run(["brew", "install", "ollama"], { ignoreError: true });
         console.log("  Starting Ollama...");
-        // Bind to localhost — the auth proxy handles container access.
-        run(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
-          ignoreError: true,
-        });
+        // Shell required: backgrounding (&), env var prefix, output redirection.
+        run(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
         sleep(2);
         startOllamaAuthProxy();
         console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`);
@@ -4225,12 +4261,9 @@ async function setupNim(gpu) {
         credentialEnv = "OPENAI_API_KEY";
         endpointUrl = getLocalProviderBaseUrl(provider);
         // Query vLLM for the actual model ID
-        const vllmModelsRaw = runCapture(
-          `curl -sf http://127.0.0.1:${VLLM_PORT}/v1/models 2>/dev/null`,
-          {
-            ignoreError: true,
-          },
-        );
+        const vllmModelsRaw = runCapture(["curl", "-sf", `http://127.0.0.1:${VLLM_PORT}/v1/models`], {
+          ignoreError: true,
+        });
         try {
           const vllmModels = JSON.parse(vllmModelsRaw);
           if (vllmModels.data && vllmModels.data.length > 0) {
@@ -4687,6 +4720,7 @@ async function setupMessagingChannels() {
         console.log(`  ✓ ${ch.name} token saved`);
       } else {
         console.log(`  Skipped ${ch.name} (no token entered)`);
+        enabled.delete(ch.name);
         continue;
       }
     }
@@ -4742,19 +4776,23 @@ async function setupMessagingChannels() {
   }
   console.log("");
 
+  // Channels where the user declined to enter a token were dropped from
+  // `enabled` inside the per-channel loop, so only channels with credentials
+  // configured remain in the Set.
+
   // Preflight: verify Telegram API is reachable from the host before sandbox creation.
   // The non-interactive branch above already ran this probe and returned early,
   // so this second call only fires on the interactive path — guard explicitly
   // to make the no-double-probe invariant visible at the call site.
   if (
     !isNonInteractive() &&
-    selected.includes("telegram") &&
+    enabled.has("telegram") &&
     getMessagingToken("TELEGRAM_BOT_TOKEN")
   ) {
     await checkTelegramReachability(getMessagingToken("TELEGRAM_BOT_TOKEN"));
   }
 
-  return selected;
+  return Array.from(enabled);
 }
 
 function getSuggestedPolicyPresets({ enabledChannels = null, webSearchConfig = null, provider = null } = {}) {
@@ -4802,9 +4840,10 @@ async function setupOpenclaw(sandboxName, model, provider) {
     const script = buildSandboxConfigSyncScript(sandboxConfig);
     const scriptFile = writeSandboxConfigSyncFile(script);
     try {
+      const scriptContent = fs.readFileSync(scriptFile, "utf-8");
       run(
-        `${openshellShellCommand(["sandbox", "connect", sandboxName])} < ${shellQuote(scriptFile)}`,
-        { stdio: ["ignore", "ignore", "inherit"] },
+        openshellArgv(["sandbox", "connect", sandboxName]),
+        { stdio: ["pipe", "ignore", "inherit"], input: scriptContent },
       );
     } finally {
       cleanupTempDir(scriptFile, "nemoclaw-sync");
@@ -5372,6 +5411,23 @@ async function presetsCheckboxSelector(allPresets, initialSelected) {
   });
 }
 
+function computeSetupPresetSuggestions(tierName, options = {}) {
+  const { enabledChannels = null, webSearchConfig = null, provider = null } = options;
+  const known = Array.isArray(options.knownPresetNames) ? new Set(options.knownPresetNames) : null;
+  const suggestions = tiers.resolveTierPresets(tierName).map((p) => p.name);
+  const add = (name) => {
+    if (suggestions.includes(name)) return;
+    if (known && !known.has(name)) return;
+    suggestions.push(name);
+  };
+  if (webSearchConfig) add("brave");
+  if (provider && LOCAL_INFERENCE_PROVIDERS.includes(provider)) add("local-inference");
+  if (Array.isArray(enabledChannels)) {
+    for (const channel of enabledChannels) add(channel);
+  }
+  return suggestions;
+}
+
 // eslint-disable-next-line complexity
 async function setupPoliciesWithSelection(sandboxName, options = {}) {
   const selectedPresets = Array.isArray(options.selectedPresets) ? options.selectedPresets : null;
@@ -5404,14 +5460,12 @@ async function setupPoliciesWithSelection(sandboxName, options = {}) {
   // Tier selection — determines the default preset list for this install.
   const tierName = await selectPolicyTier();
   registry.updateSandbox(sandboxName, { policyTier: tierName });
-  // Seed suggestions from the tier's default preset names (for non-interactive path).
-  const suggestions = tiers.resolveTierPresets(tierName).map((p) => p.name);
-  // Allow credential-based overrides on top of the tier (additive only).
-  if (webSearchConfig && !suggestions.includes("brave")) suggestions.push("brave");
-  // Auto-suggest local-inference preset when a local provider is selected
-  if (provider && LOCAL_INFERENCE_PROVIDERS.includes(provider) && !suggestions.includes("local-inference")) {
-    suggestions.push("local-inference");
-  }
+  const suggestions = computeSetupPresetSuggestions(tierName, {
+    enabledChannels,
+    webSearchConfig,
+    provider,
+    knownPresetNames: allPresets.map((p) => p.name),
+  });
 
   if (isNonInteractive()) {
     const policyMode = (process.env.NEMOCLAW_POLICY_MODE || "suggested").trim().toLowerCase();
@@ -5537,6 +5591,28 @@ const { resolveDashboardForwardTarget, buildControlUiUrls } = dashboard;
 function ensureDashboardForward(sandboxName, chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`) {
   const portToStop = getDashboardForwardPort(chatUiUrl);
   const forwardTarget = getDashboardForwardTarget(chatUiUrl);
+  // Detect port already claimed by a different sandbox and fail fast with an
+  // actionable message rather than silently stealing that sandbox's forward.
+  // (Same sandbox is always allowed — covers reconnect and resume paths.)
+  const existingForwards = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
+  // Parse line-by-line to avoid false positives from substring matches.
+  // openshell forward list columns: SANDBOX  BIND  PORT  PID  STATUS
+  // Port is at column index 2; sandbox name is at column index 0.
+  const portLine = existingForwards
+    ?.split("\n")
+    .map((l) => l.trim())
+    .find((l) => {
+      const parts = l.split(/\s+/);
+      return parts[2] === portToStop;
+    });
+  const portOwner = portLine ? (portLine.split(/\s+/)[0] ?? null) : null;
+  if (portOwner !== null && portOwner !== sandboxName) {
+    throw new Error(
+      `Port ${portToStop} is already forwarded for sandbox '${portOwner}'. ` +
+        `Set CHAT_UI_URL to a different local port (e.g. http://127.0.0.1:18790) ` +
+        `before onboarding a second sandbox.`,
+    );
+  }
   runOpenshell(["forward", "stop", portToStop], { ignoreError: true });
   // Use stdio "ignore" to prevent spawnSync from waiting on inherited pipe fds.
   // The --background flag forks a child that inherits stdout/stderr; if those are
@@ -6182,6 +6258,7 @@ async function onboard(opts = {}) {
         step,
         runCaptureOpenshell,
         openshellShellCommand,
+        openshellBinary: getOpenshellBinary(),
         buildSandboxConfigSyncScript,
         writeSandboxConfigSyncFile,
         cleanupTempDir,
@@ -6206,13 +6283,16 @@ async function onboard(opts = {}) {
     const recordedPolicyPresets = Array.isArray(latestSession?.policyPresets)
       ? latestSession.policyPresets
       : null;
+    const recordedMessagingChannels = Array.isArray(latestSession?.messagingChannels)
+      ? latestSession.messagingChannels
+      : [];
     if (dangerouslySkipPermissions) {
       step(8, 8, "Policy presets");
       if (!waitForSandboxReady(sandboxName)) {
         console.error(`\n  ✗ Sandbox '${sandboxName}' not ready after creation. Giving up.`);
         process.exit(1);
       }
-      policies.applyPermissivePolicy(sandboxName);
+      shields.shieldsDownPermanent(sandboxName);
       onboardSession.markStepComplete("policies", {
         sandboxName,
         provider,
@@ -6242,7 +6322,10 @@ async function onboard(opts = {}) {
             Array.isArray(recordedPolicyPresets) && recordedPolicyPresets.length > 0
               ? recordedPolicyPresets
               : null,
-          enabledChannels: selectedMessagingChannels,
+          enabledChannels:
+            selectedMessagingChannels.length > 0
+              ? selectedMessagingChannels
+              : recordedMessagingChannels,
           webSearchConfig,
           provider,
           onSelection: (policyPresets) => {
@@ -6330,6 +6413,7 @@ module.exports = {
   isOpenclawReady,
   arePolicyPresetsApplied,
   getSuggestedPolicyPresets,
+  computeSetupPresetSuggestions,
   LOCAL_INFERENCE_PROVIDERS,
   presetsCheckboxSelector,
   selectPolicyTier,
