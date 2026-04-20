@@ -360,7 +360,7 @@ Instead:
 
 1. Upgrade to a NemoClaw release that includes the newer `openclaw` version.
 2. If you build NemoClaw from source, bump the pinned `openclaw` version in `Dockerfile.base` and rebuild the sandbox base image.
-3. Back up any workspace files you need, then recreate the sandbox so it uses the rebuilt image.
+3. Run `nemoclaw <name> rebuild` to recreate the sandbox with the updated image. The rebuild command automatically backs up workspace state before destroying the old sandbox and restores it afterward.
 
 ### Inference requests time out
 
