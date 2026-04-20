@@ -1827,6 +1827,88 @@ describe("installer flag parsing", () => {
     expect(output).toMatch(/--provider requires a provider name/);
     expect(output).toMatch(/NemoClaw Installer/);
   });
+
+  it("forwards --provider into the onboard environment for non-interactive installs", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-provider-forward-"));
+    const fakeBin = path.join(tmp, "bin");
+    const prefix = path.join(tmp, "prefix");
+    const onboardLog = path.join(tmp, "onboard.log");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+
+    writeNodeStub(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+if [ "$1" = "info" ]; then
+  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  exit 0
+fi
+exit 0
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "openshell 0.0.22"
+  exit 0
+fi
+exit 0
+`,
+    );
+    writeNpmStub(
+      fakeBin,
+      `if [ "$1" = "pack" ]; then
+  tmpdir="$4"
+  mkdir -p "$tmpdir/package"
+  tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
+  exit 0
+fi
+if [ "$1" = "install" ]; then exit 0; fi
+if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
+printf 'args:%s\\n' "$*" >> "$NEMOCLAW_ONBOARD_LOG"
+printf 'provider:%s\\n' "\${NEMOCLAW_PROVIDER:-}" >> "$NEMOCLAW_ONBOARD_LOG"
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi`,
+    );
+
+    const result = spawnSync(
+      "bash",
+      [
+        INSTALLER,
+        "--non-interactive",
+        "--provider",
+        "openai",
+        "--yes-i-accept-third-party-software",
+      ],
+      {
+        cwd: path.join(import.meta.dirname, ".."),
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmp,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          NPM_PREFIX: prefix,
+          NEMOCLAW_ONBOARD_LOG: onboardLog,
+        },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const onboardInvocation = fs.readFileSync(onboardLog, "utf-8");
+    expect(onboardInvocation).toMatch(
+      /^args:onboard --non-interactive --yes-i-accept-third-party-software$/m,
+    );
+    expect(onboardInvocation).toMatch(/^provider:openai$/m);
+  });
 });
 
 // ---------------------------------------------------------------------------
