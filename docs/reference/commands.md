@@ -64,7 +64,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```console
-$ nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [--yes-i-accept-third-party-software]
+$ nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--provider <name>] [--agent <name>] [--yes-i-accept-third-party-software]
 ```
 
 :::{warning}
@@ -117,6 +117,12 @@ or:
 
 ```console
 $ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 nemoclaw onboard --non-interactive
+```
+
+To pick a non-default provider in scripted installs, pass `--provider` or set `NEMOCLAW_PROVIDER`:
+
+```console
+$ nemoclaw onboard --non-interactive --provider openai --yes-i-accept-third-party-software
 ```
 
 To enable Brave Search in non-interactive mode, set:

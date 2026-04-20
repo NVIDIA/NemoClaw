@@ -6,6 +6,7 @@ export interface OnboardCommandOptions {
   resume: boolean;
   recreateSandbox: boolean;
   fromDockerfile: string | null;
+  provider: string | null;
   acceptThirdPartySoftware: boolean;
   agent: string | null;
   dangerouslySkipPermissions: boolean;
@@ -36,7 +37,7 @@ const ONBOARD_BASE_ARGS = [
 
 function onboardUsageLines(noticeAcceptFlag: string): string[] {
   return [
-    `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--agent <name>] [--dangerously-skip-permissions] [${noticeAcceptFlag}]`,
+    `  Usage: nemoclaw onboard [--non-interactive] [--resume] [--recreate-sandbox] [--from <Dockerfile>] [--provider <name>] [--agent <name>] [--dangerously-skip-permissions] [${noticeAcceptFlag}]`,
     "",
   ];
 }
@@ -67,6 +68,18 @@ export function parseOnboardArgs(
       exit(1);
     }
     parsedArgs.splice(fromIdx, 2);
+  }
+
+  let provider: string | null = null;
+  const providerIdx = parsedArgs.indexOf("--provider");
+  if (providerIdx !== -1) {
+    provider = parsedArgs[providerIdx + 1] || null;
+    if (!provider || provider.startsWith("--")) {
+      error("  --provider requires a provider name");
+      printOnboardUsage(error, noticeAcceptFlag);
+      exit(1);
+    }
+    parsedArgs.splice(providerIdx, 2);
   }
 
   let agent: string | null = null;
@@ -101,6 +114,7 @@ export function parseOnboardArgs(
     resume: parsedArgs.includes("--resume"),
     recreateSandbox: parsedArgs.includes("--recreate-sandbox"),
     fromDockerfile,
+    provider,
     acceptThirdPartySoftware:
       parsedArgs.includes(noticeAcceptFlag) || String(deps.env[noticeAcceptEnv] || "") === "1",
     agent,

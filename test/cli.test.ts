@@ -122,6 +122,7 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out.includes("Usage: nemoclaw onboard")).toBeTruthy();
     expect(r.out.includes("--from <Dockerfile>")).toBeTruthy();
+    expect(r.out.includes("--provider <name>")).toBeTruthy();
   });
 
   it("unknown onboard option exits 1", () => {
@@ -140,6 +141,13 @@ describe("CLI dispatch", () => {
     const r = run("onboard --yes-i-accept-third-party-software --non-interactiv");
     expect(r.code).toBe(1);
     expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
+  });
+
+  it("accepts onboard --provider in CLI parsing", () => {
+    const r = run("onboard --provider openai --non-interactiv");
+    expect(r.code).toBe(1);
+    expect(r.out.includes("Unknown onboard option(s): --non-interactiv")).toBeTruthy();
+    expect(r.out.includes("Unknown onboard option(s): --provider")).toBeFalsy();
   });
 
   it("setup --help exits 0 and shows onboard usage", () => {

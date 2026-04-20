@@ -29,6 +29,7 @@ describe("onboard command", () => {
       resume: true,
       recreateSandbox: false,
       fromDockerfile: null,
+      provider: null,
       acceptThirdPartySoftware: true,
       agent: null,
       dangerouslySkipPermissions: false,
@@ -54,6 +55,7 @@ describe("onboard command", () => {
       resume: false,
       recreateSandbox: false,
       fromDockerfile: null,
+      provider: null,
       acceptThirdPartySoftware: true,
       agent: null,
       dangerouslySkipPermissions: false,
@@ -78,6 +80,7 @@ describe("onboard command", () => {
       resume: true,
       recreateSandbox: false,
       fromDockerfile: null,
+      provider: null,
       acceptThirdPartySoftware: false,
       agent: null,
       dangerouslySkipPermissions: false,
@@ -102,6 +105,7 @@ describe("onboard command", () => {
     expect(runOnboard).not.toHaveBeenCalled();
     expect(lines.join("\n")).toContain("Usage: nemoclaw onboard");
     expect(lines.join("\n")).toContain("--from <Dockerfile>");
+    expect(lines.join("\n")).toContain("--provider <name>");
     expect(lines.join("\n")).toContain("--agent <name>");
     expect(lines.join("\n")).toContain("--dangerously-skip-permissions");
   });
@@ -125,10 +129,54 @@ describe("onboard command", () => {
       resume: true,
       recreateSandbox: false,
       fromDockerfile: "/tmp/Custom.Dockerfile",
+      provider: null,
       acceptThirdPartySoftware: false,
       agent: null,
       dangerouslySkipPermissions: false,
     });
+  });
+
+  it("parses --provider <name>", () => {
+    expect(
+      parseOnboardArgs(
+        ["--non-interactive", "--provider", "openai"],
+        "--yes-i-accept-third-party-software",
+        "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        {
+          env: {},
+          error: () => {},
+          exit: ((code: number) => {
+            throw new Error(String(code));
+          }) as never,
+        },
+      ),
+    ).toEqual({
+      nonInteractive: true,
+      resume: false,
+      recreateSandbox: false,
+      fromDockerfile: null,
+      provider: "openai",
+      acceptThirdPartySoftware: false,
+      agent: null,
+      dangerouslySkipPermissions: false,
+    });
+  });
+
+  it("exits when --provider is missing its provider name", () => {
+    expect(() =>
+      parseOnboardArgs(
+        ["--provider"],
+        "--yes-i-accept-third-party-software",
+        "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        {
+          env: {},
+          error: () => {},
+          exit: ((code: number) => {
+            throw new Error(`exit:${code}`);
+          }) as never,
+        },
+      ),
+    ).toThrow("exit:1");
   });
 
   it("exits when --from is missing its Dockerfile path", () => {
@@ -188,6 +236,7 @@ describe("onboard command", () => {
       resume: false,
       recreateSandbox: false,
       fromDockerfile: null,
+      provider: null,
       acceptThirdPartySoftware: false,
       agent: "openclaw",
       dangerouslySkipPermissions: true,
@@ -239,6 +288,7 @@ describe("onboard command", () => {
       resume: false,
       recreateSandbox: false,
       fromDockerfile: null,
+      provider: null,
       acceptThirdPartySoftware: false,
       agent: null,
       dangerouslySkipPermissions: false,

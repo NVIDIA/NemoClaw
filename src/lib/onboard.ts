@@ -5827,6 +5827,9 @@ function skippedStepMessage(stepName, detail, reason = "resume") {
 async function onboard(opts = {}) {
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
+  if (opts.provider) {
+    process.env.NEMOCLAW_PROVIDER = opts.provider;
+  }
   const dangerouslySkipPermissions =
     opts.dangerouslySkipPermissions || process.env.NEMOCLAW_DANGEROUSLY_SKIP_PERMISSIONS === "1";
   if (dangerouslySkipPermissions) {

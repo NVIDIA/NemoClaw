@@ -1805,6 +1805,28 @@ describe("installer flag parsing", () => {
     expect(result.status).toBe(0);
     expect(`${result.stdout}${result.stderr}`).toMatch(/NEMOCLAW_INSTALL_TAG/);
   });
+
+  it("--help documents the provider flag", () => {
+    const result = spawnSync("bash", [INSTALLER, "--help"], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/--provider <name>/);
+  });
+
+  it("rejects --provider without a provider name", () => {
+    const result = spawnSync("bash", [INSTALLER, "--provider"], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+    });
+
+    expect(result.status).not.toBe(0);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/--provider requires a provider name/);
+    expect(output).toMatch(/NemoClaw Installer/);
+  });
 });
 
 // ---------------------------------------------------------------------------

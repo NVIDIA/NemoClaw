@@ -301,6 +301,7 @@ usage() {
   printf "    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- [options]\n\n"
   printf "  ${C_DIM}Options:${C_RESET}\n"
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
+  printf "    --provider <name>    Default inference provider for non-interactive onboard\n"
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice in non-interactive mode\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
@@ -1180,10 +1181,19 @@ post_install_message() {
 main() {
   # Parse flags
   NON_INTERACTIVE=""
+  PROVIDER=""
   ACCEPT_THIRD_PARTY_SOFTWARE=""
-  for arg in "$@"; do
-    case "$arg" in
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
       --non-interactive) NON_INTERACTIVE=1 ;;
+      --provider)
+        shift
+        if [[ $# -eq 0 || "$1" == --* ]]; then
+          usage
+          error "--provider requires a provider name"
+        fi
+        PROVIDER="$1"
+        ;;
       --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
       --version | -v)
         local version_suffix
@@ -1197,14 +1207,17 @@ main() {
         ;;
       *)
         usage
-        error "Unknown option: $arg"
+        error "Unknown option: $1"
         ;;
     esac
+    shift
   done
   # Also honor env var
   NON_INTERACTIVE="${NON_INTERACTIVE:-${NEMOCLAW_NON_INTERACTIVE:-}}"
+  PROVIDER="${PROVIDER:-${NEMOCLAW_PROVIDER:-}}"
   ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE:-${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}}"
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
+  export NEMOCLAW_PROVIDER="${PROVIDER}"
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
 
   _INSTALL_START=$SECONDS
