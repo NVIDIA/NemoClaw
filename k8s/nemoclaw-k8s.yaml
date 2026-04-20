@@ -106,10 +106,29 @@ spec:
           # Run official NemoClaw installer
           echo "[4/4] Running NemoClaw installer..."
           umask 077
+
+          # Preflight: ensure sha256sum is available for integrity verification
+          command -v sha256sum >/dev/null 2>&1 || {
+            echo "FATAL: sha256sum not found — cannot verify installer integrity. Aborting."
+            exit 1
+          }
+
+          # Expected SHA-256 of the installer script — update when upgrading
+          # To refresh: scripts/check-installer-hash.sh --update
+          NEMOCLAW_INSTALLER_SHA256="1ae2bc0a538637272167cda8338b322cbb475b731cae14b0833e5a9dadcbad91"
+
           curl --proto '=https' --tlsv1.2 --fail --show-error --silent \
             --location \
             --output /tmp/nemoclaw-install.sh \
             https://www.nvidia.com/nemoclaw.sh
+
+          # Verify integrity before execution
+          echo "${NEMOCLAW_INSTALLER_SHA256}  /tmp/nemoclaw-install.sh" | sha256sum -c - || {
+            echo "FATAL: Installer checksum mismatch — possible tampering. Aborting."
+            rm -f /tmp/nemoclaw-install.sh
+            exit 1
+          }
+
           chmod 700 /tmp/nemoclaw-install.sh
           bash /tmp/nemoclaw-install.sh
           rm -f /tmp/nemoclaw-install.sh

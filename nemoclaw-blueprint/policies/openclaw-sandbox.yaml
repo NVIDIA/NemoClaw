@@ -242,13 +242,14 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
-      # WebSocket gateway — must use access: full (CONNECT tunnel) instead
-      # of protocol: rest. The proxy's HTTP idle timeout (~2 min) kills
-      # long-lived WebSocket connections; a CONNECT tunnel avoids
-      # HTTP-level timeouts entirely. Matches presets/discord.yaml. See #409.
+      # WebSocket gateway — pure L4 CONNECT tunnel. OpenShell v0.0.15+
+      # auto-terminates TLS unconditionally (NVIDIA/OpenShell#544), which
+      # also applies to WSS. tls: skip restores the pre-v0.0.15 pass-
+      # through behaviour needed here. Matches presets/discord.yaml.
       - host: gateway.discord.gg
         port: 443
         access: full
+        tls: skip
       - host: cdn.discordapp.com
         port: 443
         protocol: rest

@@ -172,6 +172,17 @@ describe("onboard session", () => {
     expect(loaded.metadata.token).toBeUndefined();
   });
 
+  it("drops non-string gatewayName during normalization", () => {
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({ version: 1, metadata: { gatewayName: 123 } }),
+    );
+    const loaded = session.loadSession();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.metadata.gatewayName).toBe("nemoclaw");
+  });
+
   it("returns null for corrupt session data", () => {
     fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
     fs.writeFileSync(session.SESSION_FILE, "not-json");
@@ -346,6 +357,20 @@ describe("onboard session", () => {
     session.markStepFailed("provider_selection", "Bearer abcdefghijklmnopqrstuvwxyz");
     const summary = session.summarizeForDebug();
 
+    expect(summary.failure.message).toContain("Bearer <REDACTED>");
+    expect(summary.failure.message).not.toContain("abcdefghijklmnopqrstuvwxyz");
+  });
+
+  it("re-sanitizes in-memory failures in debug summaries", () => {
+    const rawSession = session.createSession({
+      failure: {
+        step: "provider_selection",
+        message: "Bearer abcdefghijklmnopqrstuvwxyz",
+        recordedAt: "2026-04-01T00:00:00.000Z",
+      },
+    });
+
+    const summary = session.summarizeForDebug(rawSession);
     expect(summary.failure.message).toContain("Bearer <REDACTED>");
     expect(summary.failure.message).not.toContain("abcdefghijklmnopqrstuvwxyz");
   });

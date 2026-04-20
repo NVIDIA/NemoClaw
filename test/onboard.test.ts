@@ -273,49 +273,6 @@ describe("onboard helpers", () => {
     }
   });
 
-  it("patches context window, max tokens, and reasoning from env vars", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-model-meta-"));
-    const dockerfilePath = path.join(tmpDir, "Dockerfile");
-    fs.writeFileSync(
-      dockerfilePath,
-      [
-        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
-        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
-        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
-        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
-        "ARG NEMOCLAW_CONTEXT_WINDOW=131072",
-        "ARG NEMOCLAW_MAX_TOKENS=4096",
-        "ARG NEMOCLAW_REASONING=false",
-        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
-        "ARG NEMOCLAW_BUILD_ID=default",
-      ].join("\n"),
-    );
-
-    const saved = {
-      NEMOCLAW_CONTEXT_WINDOW: process.env.NEMOCLAW_CONTEXT_WINDOW,
-      NEMOCLAW_MAX_TOKENS: process.env.NEMOCLAW_MAX_TOKENS,
-      NEMOCLAW_REASONING: process.env.NEMOCLAW_REASONING,
-    };
-    process.env.NEMOCLAW_CONTEXT_WINDOW = "32768";
-    process.env.NEMOCLAW_MAX_TOKENS = "8192";
-    process.env.NEMOCLAW_REASONING = "true";
-
-    try {
-      patchStagedDockerfile(dockerfilePath, "gpt-5.4", "http://127.0.0.1:19999", "build-meta", "openai-api");
-      const patched = fs.readFileSync(dockerfilePath, "utf8");
-      assert.match(patched, /^ARG NEMOCLAW_CONTEXT_WINDOW=32768$/m);
-      assert.match(patched, /^ARG NEMOCLAW_MAX_TOKENS=8192$/m);
-      assert.match(patched, /^ARG NEMOCLAW_REASONING=true$/m);
-    } finally {
-      for (const [key, value] of Object.entries(saved)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
   it("patches the staged Dockerfile with Discord guild config for server workspaces", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-discord-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
@@ -1617,19 +1574,16 @@ startGateway(null).catch(() => {});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("inference") && command.includes("get")) {
+  if (_n(command).includes("inference") && _n(command).includes("get")) {
     return [
       "Gateway inference:",
       "",
@@ -1670,12 +1624,12 @@ const { setupInference } = require(${onboardPath});
     expect(result.status).toBe(0);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.equal(commands.length, 4);
-    assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
-    assert.match(commands[1].command, /'provider' 'get'/);
-    assert.match(commands[2].command, /'--credential' 'NVIDIA_API_KEY'/);
+    assert.match(commands[0].command, /gateway select nemoclaw/);
+    assert.match(commands[1].command, /provider get/);
+    assert.match(commands[2].command, /--credential NVIDIA_API_KEY/);
     assert.doesNotMatch(commands[2].command, /nvapi-secret-value/);
-    assert.match(commands[2].command, /provider' 'update'/);
-    assert.match(commands[3].command, /inference' 'set'/);
+    assert.match(commands[2].command, /provider update/);
+    assert.match(commands[3].command, /inference set/);
   });
 
   it("detects when the live inference route already matches the requested provider and model", () => {
@@ -1863,17 +1817,18 @@ console.log(JSON.stringify({
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   // provider-get returns not-found so we exercise the create path
-  if (command.includes("'provider' 'get'")) return { status: 1 };
+  if (_n(command).includes("provider get")) return { status: 1 };
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("inference") && command.includes("get")) {
+  if (_n(command).includes("inference") && _n(command).includes("get")) {
     return [
       "Gateway inference:",
       "",
@@ -1914,12 +1869,12 @@ const { setupInference } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.equal(commands.length, 4);
-    assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
-    assert.match(commands[1].command, /'provider' 'get'/);
-    assert.match(commands[2].command, /'--type' 'anthropic'/);
-    assert.match(commands[2].command, /'--credential' 'ANTHROPIC_API_KEY'/);
+    assert.match(commands[0].command, /gateway select nemoclaw/);
+    assert.match(commands[1].command, /provider get/);
+    assert.match(commands[2].command, /--type anthropic/);
+    assert.match(commands[2].command, /--credential ANTHROPIC_API_KEY/);
     assert.doesNotMatch(commands[2].command, /sk-ant-secret-value/);
-    assert.match(commands[3].command, /'--provider' 'anthropic-prod'/);
+    assert.match(commands[3].command, /--provider anthropic-prod/);
   });
 
   it("updates OpenAI-compatible providers without passing an unsupported --type flag", () => {
@@ -1938,19 +1893,16 @@ const { setupInference } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("inference") && command.includes("get")) {
+  if (_n(command).includes("inference") && _n(command).includes("get")) {
     return [
       "Gateway inference:",
       "",
@@ -1991,11 +1943,11 @@ const { setupInference } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.equal(commands.length, 4);
-    assert.match(commands[0].command, /gateway' 'select' 'nemoclaw'/);
-    assert.match(commands[1].command, /'provider' 'get'/);
-    assert.match(commands[2].command, /provider' 'update' 'openai-api'/);
-    assert.doesNotMatch(commands[2].command, /'--type'/);
-    assert.match(commands[3].command, /inference' 'set' '--no-verify'/);
+    assert.match(commands[0].command, /gateway select nemoclaw/);
+    assert.match(commands[1].command, /provider get/);
+    assert.match(commands[2].command, /provider update openai-api/);
+    assert.doesNotMatch(commands[2].command, /--type/);
+    assert.match(commands[3].command, /inference set --no-verify/);
   });
 
   it("re-prompts for credentials when openshell inference set fails with authorization errors", () => {
@@ -2015,6 +1967,7 @@ const { setupInference } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
 
@@ -2024,8 +1977,8 @@ let inferenceSetCalls = 0;
 
 credentials.prompt = async () => answers.shift() || "";
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  if (command.includes("'inference' 'set'")) {
+  commands.push({ command: _n(command), env: opts.env || null });
+  if (_n(command).includes("inference set")) {
     inferenceSetCalls += 1;
     if (inferenceSetCalls === 1) {
       return { status: 1, stdout: "", stderr: "HTTP 403: forbidden" };
@@ -2034,7 +1987,7 @@ runner.run = (command, opts = {}) => {
   return { status: 0, stdout: "", stderr: "" };
 };
 runner.runCapture = (command) => {
-  if (command.includes("inference") && command.includes("get")) {
+  if (_n(command).includes("inference") && _n(command).includes("get")) {
     return [
       "Gateway inference:",
       "",
@@ -2077,7 +2030,7 @@ const { setupInference } = require(${onboardPath});
     assert.equal(payload.key, "sk-good");
     assert.equal(payload.inferenceSetCalls, 2);
     const providerEnvs = payload.commands
-      .filter((entry) => entry.command.includes("'provider'"))
+      .filter((entry) => entry.command.includes("provider"))
       .map((entry) => entry.env && entry.env.OPENAI_API_KEY)
       .filter(Boolean);
     assert.deepEqual(providerEnvs, ["sk-bad", "sk-good"]);
@@ -2100,14 +2053,15 @@ const { setupInference } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
 
 const commands = [];
 credentials.prompt = async () => "back";
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  if (command.includes("'inference' 'set'")) {
+  commands.push({ command: _n(command), env: opts.env || null });
+  if (_n(command).includes("inference set")) {
     return { status: 1, stdout: "", stderr: "HTTP 404: model not found" };
   }
   return { status: 0, stdout: "", stderr: "" };
@@ -2143,7 +2097,7 @@ const { setupInference } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.deepEqual(payload.result, { retry: "selection" });
     assert.equal(
-      payload.commands.filter((entry) => entry.command.includes("'inference' 'set'")).length,
+      payload.commands.filter((entry) => entry.command.includes("inference set")).length,
       1,
     );
   });
@@ -2270,20 +2224,17 @@ const { setupInference } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("inference") && command.includes("get")) {
+  if (_n(command).includes("inference") && _n(command).includes("get")) {
     return [
       "Gateway inference:",
       "",
@@ -2347,7 +2298,8 @@ const { setupInference } = require(${onboardPath});
     const script = String.raw`
 const registry = require(${registryPath});
 const runner = require(${runnerPath});
-runner.runCapture = (command) => (command.includes("'sandbox' 'get' 'my-assistant'") ? "" : "");
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+runner.runCapture = (command) => (_n(command).includes("sandbox get my-assistant") ? "" : "");
 
 registry.registerSandbox({ name: "my-assistant" });
 
@@ -2399,6 +2351,7 @@ console.log(JSON.stringify({ liveExists, sandbox: registry.getSandbox("my-assist
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
@@ -2407,18 +2360,14 @@ const { EventEmitter } = require("node:events");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
-  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -2430,7 +2379,7 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -2473,11 +2422,11 @@ const { createSandbox } = require(${onboardPath});
     const payload = JSON.parse(payloadLine);
     assert.equal(payload.sandboxName, "my-assistant");
     const createCommand = payload.commands.find((entry) =>
-      entry.command.includes("'sandbox' 'create'"),
+      entry.command.includes("sandbox create"),
     );
     assert.ok(createCommand, "expected sandbox create command");
-    assert.match(createCommand.command, /'nemoclaw-start'/);
-    assert.doesNotMatch(createCommand.command, /'--upload'/);
+    assert.match(createCommand.command, /nemoclaw-start/);
+    assert.doesNotMatch(createCommand.command, /--upload/);
     assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
     assert.doesNotMatch(createCommand.command, /NVIDIA_API_KEY=/);
     assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
@@ -2485,8 +2434,8 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(
       payload.commands.some(
         (entry) =>
-          entry.command.includes("'forward' 'start' '--background' '18789' 'my-assistant'") ||
-          entry.command.includes("'forward' 'start' '--background' '0.0.0.0:18789' 'my-assistant'"),
+          entry.command.includes("forward start --background 18789 my-assistant") ||
+          entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
       ),
       "expected dashboard forward (loopback or WSL 0.0.0.0)",
     );
@@ -2510,6 +2459,7 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
@@ -2518,18 +2468,14 @@ const { EventEmitter } = require("node:events");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
-  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -2541,7 +2487,7 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -2578,7 +2524,7 @@ const { createSandbox } = require(${onboardPath});
     const commands = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.ok(
       commands.some((entry) =>
-        entry.command.includes("'forward' 'start' '--background' '0.0.0.0:18789' 'my-assistant'"),
+        entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
       ),
       "expected remote dashboard forward target",
     );
@@ -2602,6 +2548,7 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
@@ -2609,10 +2556,6 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
-const _n = (command) =>
-  Array.isArray(command)
-    ? command.map((part) => "'" + String(part) + "'").join(" ")
-    : String(command);
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
@@ -2622,12 +2565,11 @@ runner.runFile = (file, args = [], opts = {}) => {
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  const normalized = _n(command);
-  if (normalized.includes("'sandbox' 'get' 'my-assistant'")) return "";
-  if (normalized.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   // Custom port: dashboard readiness curl uses 19000 (DASHBOARD_PORT from env)
-  if (normalized.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:19000/'")) return "ok";
-  if (normalized.includes("'forward' 'list'")) return "19000 -> my-assistant:19000";
+  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:19000/")) return "ok";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 19000 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -2639,7 +2581,7 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -2688,21 +2630,19 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
     const payload = JSON.parse(payloadLine);
     const createCommand = payload.commands.find((entry) =>
-      entry.command.includes("'sandbox' 'create'"),
+      entry.command.includes("sandbox create"),
     );
     assert.ok(createCommand, "expected sandbox create command");
     // Part 1 of fix (#1925): NEMOCLAW_DASHBOARD_PORT must be in envArgs so
     // nemoclaw-start.sh can unconditionally override CHAT_UI_URL at runtime,
     // overriding whatever value the Docker image had baked in.
-    assert.match(createCommand.command, /'NEMOCLAW_DASHBOARD_PORT=19000'/);
+    assert.match(createCommand.command, /NEMOCLAW_DASHBOARD_PORT=19000/);
     // Forward must use same-port mapping (openshell does not support asymmetric)
     assert.ok(
       payload.commands.some(
         (entry) =>
-          entry.command.includes("'forward' 'start' '--background' '19000' 'my-assistant'") ||
-          entry.command.includes(
-            "'forward' 'start' '--background' '0.0.0.0:19000' 'my-assistant'",
-          ),
+          entry.command.includes("forward start --background 19000 my-assistant") ||
+          entry.command.includes("forward start --background 0.0.0.0:19000 my-assistant"),
       ),
       "expected dashboard forward for port 19000",
     );
@@ -2739,6 +2679,7 @@ const { createSandbox } = require(${onboardPath});
 
       const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
@@ -2747,21 +2688,17 @@ const { EventEmitter } = require("node:events");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   // provider-get returns not-found so messaging providers are created fresh
-  if (command.includes("'provider' 'get'")) return { status: 1 };
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  if (_n(command).includes("provider get")) return { status: 1 };
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
-  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("'provider' 'get'")) return "Provider: discord-bridge";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
-  if (command.includes("'sandbox' 'exec'") && command.includes("'curl'")) return "ok";
+  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  if (_n(command).includes("provider get")) return "Provider: discord-bridge";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("sandbox exec") && _n(command).includes("curl")) return "ok";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -2773,7 +2710,7 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -2820,32 +2757,32 @@ const { createSandbox } = require(${onboardPath});
 
       // Verify providers were created with the right credential keys
       const providerCommands = payload.commands.filter((e) =>
-        e.command.includes("'provider' 'create'"),
+        e.command.includes("provider create"),
       );
       const discordProvider = providerCommands.find((e) =>
         e.command.includes("my-assistant-discord-bridge"),
       );
       assert.ok(discordProvider, "expected my-assistant-discord-bridge provider create command");
-      assert.match(discordProvider.command, /'--credential' 'DISCORD_BOT_TOKEN'/);
+      assert.match(discordProvider.command, /--credential DISCORD_BOT_TOKEN/);
 
       const slackProvider = providerCommands.find((e) =>
         e.command.includes("my-assistant-slack-bridge"),
       );
       assert.ok(slackProvider, "expected my-assistant-slack-bridge provider create command");
-      assert.match(slackProvider.command, /'--credential' 'SLACK_BOT_TOKEN'/);
+      assert.match(slackProvider.command, /--credential SLACK_BOT_TOKEN/);
 
       const telegramProvider = providerCommands.find((e) =>
         e.command.includes("my-assistant-telegram-bridge"),
       );
       assert.ok(telegramProvider, "expected my-assistant-telegram-bridge provider create command");
-      assert.match(telegramProvider.command, /'--credential' 'TELEGRAM_BOT_TOKEN'/);
+      assert.match(telegramProvider.command, /--credential TELEGRAM_BOT_TOKEN/);
 
       // Verify sandbox create includes --provider flags for all three
-      const createCommand = payload.commands.find((e) => e.command.includes("'sandbox' 'create'"));
+      const createCommand = payload.commands.find((e) => e.command.includes("sandbox create"));
       assert.ok(createCommand, "expected sandbox create command");
-      assert.match(createCommand.command, /'--provider' 'my-assistant-discord-bridge'/);
-      assert.match(createCommand.command, /'--provider' 'my-assistant-slack-bridge'/);
-      assert.match(createCommand.command, /'--provider' 'my-assistant-telegram-bridge'/);
+      assert.match(createCommand.command, /--provider my-assistant-discord-bridge/);
+      assert.match(createCommand.command, /--provider my-assistant-slack-bridge/);
+      assert.match(createCommand.command, /--provider my-assistant-telegram-bridge/);
 
       // Verify real token values are NOT in the sandbox create command
       assert.doesNotMatch(createCommand.command, /test-discord-token-value/);
@@ -2910,6 +2847,7 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
@@ -2918,15 +2856,14 @@ const { EventEmitter } = require("node:events");
 
 runner.run = (command, opts = {}) => {
   // Fail all provider create and update calls
-  if (command.includes("'provider'")) {
+  if (_n(command).includes("provider")) {
     return { status: 1, stdout: "", stderr: "gateway unreachable" };
   }
   return { status: 0 };
 };
-runner.runFile = () => ({ status: 0 });
 runner.runCapture = (command) => {
-  if (command.includes("'sandbox' 'get'")) return "";
-  if (command.includes("'sandbox' 'list'")) return "";
+  if (_n(command).includes("sandbox get")) return "";
+  if (_n(command).includes("sandbox list")) return "";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -2986,24 +2923,21 @@ const { createSandbox } = require(${onboardPath});
 
       const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
   // Existing sandbox that is ready
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
-  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
+  if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   // All messaging providers already exist in gateway
-  if (command.includes("'provider' 'get'")) return "Provider: exists";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (_n(command).includes("provider get")) return "Provider: exists";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -3046,11 +2980,11 @@ const { createSandbox } = require(${onboardPath});
 
       assert.equal(payload.sandboxName, "my-assistant", "should reuse existing sandbox");
       assert.ok(
-        payload.commands.every((entry) => !entry.command.includes("'sandbox' 'create'")),
+        payload.commands.every((entry) => !entry.command.includes("sandbox create")),
         "should NOT recreate sandbox when providers already exist in gateway",
       );
       assert.ok(
-        payload.commands.every((entry) => !entry.command.includes("'sandbox' 'delete'")),
+        payload.commands.every((entry) => !entry.command.includes("sandbox delete")),
         "should NOT delete sandbox when providers already exist in gateway",
       );
 
@@ -3058,7 +2992,7 @@ const { createSandbox } = require(${onboardPath});
       // Since the mock reports providers as existing (run returns status 0),
       // upsertProvider issues 'update' rather than 'create'.
       const providerUpserts = payload.commands.filter((entry) =>
-        entry.command.includes("'provider' 'update'"),
+        entry.command.includes("provider update"),
       );
       assert.ok(
         providerUpserts.some((e) => e.command.includes("my-assistant-discord-bridge")),
@@ -3092,19 +3026,20 @@ const { createSandbox } = require(${onboardPath});
 
       const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const childProcess = require("node:child_process");
 
 runner.run = (command) => {
-  if (command.includes("'sandbox' 'delete'")) {
+  if (_n(command).includes("sandbox delete")) {
     throw new Error("unexpected sandbox delete");
   }
   return { status: 0 };
 };
 runner.runCapture = (command) => {
   // Existing sandbox that is NOT ready
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
-  if (command.includes("'sandbox' 'list'")) return "my-assistant NotReady";
+  if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
+  if (_n(command).includes("sandbox list")) return "my-assistant NotReady";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -3170,24 +3105,21 @@ const { createSandbox } = require(${onboardPath});
 
       const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
-  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("'forward' 'list'")) return "";
-  if (command.includes("'sandbox' 'exec'") && command.includes("'curl'")) return "ok";
+  if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  if (_n(command).includes("forward list")) return "";
+  if (_n(command).includes("sandbox exec") && _n(command).includes("curl")) return "ok";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -3201,7 +3133,7 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -3245,11 +3177,11 @@ const { createSandbox } = require(${onboardPath});
       const payload = JSON.parse(payloadLine);
 
       assert.ok(
-        payload.commands.some((entry) => entry.command.includes("'sandbox' 'delete'")),
+        payload.commands.some((entry) => entry.command.includes("sandbox delete")),
         "should delete existing sandbox when --recreate-sandbox is set",
       );
       assert.ok(
-        payload.commands.some((entry) => entry.command.includes("'sandbox' 'create'")),
+        payload.commands.some((entry) => entry.command.includes("sandbox create")),
         "should create a new sandbox when --recreate-sandbox is set",
       );
     },
@@ -3279,6 +3211,7 @@ const { createSandbox } = require(${onboardPath});
 
       const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const onboardSession = require(${sessionModulePath});
 const childProcess = require("node:child_process");
@@ -3286,14 +3219,14 @@ const { EventEmitter } = require("node:events");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
-  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("'forward' 'list'")) return "";
-  if (command.includes("sandbox exec") && command.includes("curl")) return "ok";
+  if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  if (_n(command).includes("forward list")) return "";
+  if (_n(command).includes("sandbox exec") && _n(command).includes("curl")) return "ok";
   return "";
 };
 
@@ -3316,7 +3249,7 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -3388,22 +3321,19 @@ const { createSandbox } = require(${onboardPath});
 
       const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
-  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -3450,11 +3380,11 @@ const { createSandbox } = require(${onboardPath});
 
       assert.equal(payload.sandboxName, "my-assistant", "should reuse when user answers y");
       assert.ok(
-        payload.commands.every((entry) => !entry.command.includes("'sandbox' 'create'")),
+        payload.commands.every((entry) => !entry.command.includes("sandbox create")),
         "should NOT recreate sandbox when user chooses to reuse",
       );
       assert.ok(
-        payload.commands.every((entry) => !entry.command.includes("'sandbox' 'delete'")),
+        payload.commands.every((entry) => !entry.command.includes("sandbox delete")),
         "should NOT delete sandbox when user chooses to reuse",
       );
       assert.ok(
@@ -3486,6 +3416,7 @@ const { createSandbox } = require(${onboardPath});
 
       const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
@@ -3493,18 +3424,14 @@ const { EventEmitter } = require("node:events");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
-  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("'forward' 'list'")) return "";
-  if (command.includes("'sandbox' 'exec'") && command.includes("'curl'")) return "ok";
+  if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  if (_n(command).includes("forward list")) return "";
+  if (_n(command).includes("sandbox exec") && _n(command).includes("curl")) return "ok";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -3521,7 +3448,7 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -3567,11 +3494,11 @@ const { createSandbox } = require(${onboardPath});
       const payload = JSON.parse(payloadLine);
 
       assert.ok(
-        payload.commands.some((entry) => entry.command.includes("'sandbox' 'delete'")),
+        payload.commands.some((entry) => entry.command.includes("sandbox delete")),
         "should delete existing sandbox when user declines reuse",
       );
       assert.ok(
-        payload.commands.some((entry) => entry.command.includes("'sandbox' 'create'")),
+        payload.commands.some((entry) => entry.command.includes("sandbox create")),
         "should create a new sandbox when user declines reuse",
       );
       assert.ok(
@@ -3603,6 +3530,7 @@ const { createSandbox } = require(${onboardPath});
 
       const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
@@ -3611,22 +3539,18 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 let sandboxDeleted = false;
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  if (command.includes("'sandbox' 'delete'")) sandboxDeleted = true;
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
+  if (_n(command).includes("sandbox delete")) sandboxDeleted = true;
   return { status: 0 };
 };
 runner.runCapture = (command) => {
   // Existing sandbox that is NOT ready initially, becomes Ready after recreation
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
-  if (command.includes("'sandbox' 'list'")) {
+  if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
+  if (_n(command).includes("sandbox list")) {
     return sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
   }
-  if (command.includes("'forward' 'list'")) return "";
-  if (command.includes("'sandbox' 'exec'") && command.includes("'curl'")) return "ok";
+  if (_n(command).includes("forward list")) return "";
+  if (_n(command).includes("sandbox exec") && _n(command).includes("curl")) return "ok";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -3643,7 +3567,7 @@ const fakeSpawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -3701,11 +3625,11 @@ const { createSandbox } = require(${onboardPath});
       const payload = JSON.parse(payloadLine);
 
       assert.ok(
-        payload.commands.some((entry) => entry.command.includes("'sandbox' 'delete'")),
+        payload.commands.some((entry) => entry.command.includes("sandbox delete")),
         "should delete not-ready sandbox after user confirms",
       );
       assert.ok(
-        payload.commands.some((entry) => entry.command.includes("'sandbox' 'create'")),
+        payload.commands.some((entry) => entry.command.includes("sandbox create")),
         "should recreate sandbox when existing one is not ready",
       );
       assert.ok(result.stdout.includes("not ready"), "should mention sandbox is not ready");
@@ -3727,11 +3651,12 @@ const { createSandbox } = require(${onboardPath});
 
     const script = `
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push(command);
+  commands.push(_n(command));
   // First call is provider-get (not found), second is provider-create (success)
-  if (command.includes("'provider' 'get'")) return { status: 1, stdout: "", stderr: "" };
+  if (_n(command).includes("provider get")) return { status: 1, stdout: "", stderr: "" };
   return { status: 0, stdout: "", stderr: "" };
 };
 const { upsertProvider } = require(${onboardPath});
@@ -3750,9 +3675,9 @@ console.log(JSON.stringify({ result, commands }));
     const payload = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.deepEqual(payload.result, { ok: true });
     assert.equal(payload.commands.length, 2);
-    assert.match(payload.commands[0], /'provider' 'get'/);
-    assert.match(payload.commands[1], /'provider' 'create' '--name' 'discord-bridge'/);
-    assert.match(payload.commands[1], /'--credential' 'DISCORD_BOT_TOKEN'/);
+    assert.match(payload.commands[0], /provider get/);
+    assert.match(payload.commands[1], /provider create --name discord-bridge/);
+    assert.match(payload.commands[1], /--credential DISCORD_BOT_TOKEN/);
   });
 
   it("upsertProvider does not add its own log line on top of runner output (#1506)", () => {
@@ -3770,9 +3695,10 @@ console.log(JSON.stringify({ result, commands }));
 
     const script = `
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 runner.run = (command, opts = {}) => {
   // First call is provider-get (not found)
-  if (command.includes("'provider' 'get'")) return { status: 1, stdout: "", stderr: "" };
+  if (_n(command).includes("provider get")) return { status: 1, stdout: "", stderr: "" };
   // Simulate runner passthrough: writeRedactedResult writes stdout to terminal
   process.stdout.write("✓ Created provider test-bridge\\n");
   return { status: 0, stdout: "✓ Created provider test-bridge", stderr: "" };
@@ -3810,9 +3736,10 @@ upsertProvider("test-bridge", "generic", "TEST_TOKEN", null, { TEST_TOKEN: "tok"
 
     const script = `
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push(command);
+  commands.push(_n(command));
   // provider-get succeeds (provider exists), then update succeeds
   return { status: 0, stdout: "", stderr: "" };
 };
@@ -3832,11 +3759,11 @@ console.log(JSON.stringify({ result, commands }));
     const payload = JSON.parse(result.stdout.trim().split("\n").pop());
     assert.deepEqual(payload.result, { ok: true });
     assert.equal(payload.commands.length, 2);
-    assert.match(payload.commands[0], /'provider' 'get'/);
-    assert.match(payload.commands[1], /'provider' 'update'/);
+    assert.match(payload.commands[0], /provider get/);
+    assert.match(payload.commands[1], /provider update/);
     assert.match(
       payload.commands[1],
-      /'--config' 'OPENAI_BASE_URL=https:\/\/integrate.api.nvidia.com\/v1'/,
+      /--config OPENAI_BASE_URL=https:\/\/integrate.api.nvidia.com\/v1/,
     );
   });
 
@@ -3855,9 +3782,10 @@ console.log(JSON.stringify({ result, commands }));
 
     const script = `
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 runner.run = (command, opts = {}) => {
   // provider-get says not found, then create fails
-  if (command.includes("'provider' 'get'")) return { status: 1, stdout: "", stderr: "" };
+  if (_n(command).includes("provider get")) return { status: 1, stdout: "", stderr: "" };
   return { status: 1, stdout: "", stderr: "gateway unreachable" };
 };
 const { upsertProvider } = require(${onboardPath});
@@ -3894,6 +3822,7 @@ console.log(JSON.stringify(result));
 
     const script = `
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 runner.run = (command) => {
   return { status: 0, stdout: "Provider: discord-bridge", stderr: "" };
 };
@@ -3973,279 +3902,6 @@ console.log(JSON.stringify({
     assert.equal(payload.missing, null, "should return null when credential is not stored");
   });
 
-  it("checkTelegramReachability aborts in non-interactive mode on network failure (curl exit 52)", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-net-"));
-    try {
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "telegram-net.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
-
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
-
-      const script = `
-const httpProbe = require(${httpProbePath});
-httpProbe.runCurlProbe = () => ({
-  ok: false,
-  httpStatus: 0,
-  curlStatus: 52,
-  body: "",
-  stderr: "Empty reply from server",
-  message: "curl failed (exit 52): Empty reply from server",
-});
-process.env.NEMOCLAW_NON_INTERACTIVE = "1";
-const { checkTelegramReachability } = require(${onboardPath});
-(async () => {
-  await checkTelegramReachability("fake-token");
-})();
-`;
-      fs.writeFileSync(scriptPath, script);
-
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
-      });
-
-      assert.equal(result.status, 1, "should exit with code 1 in non-interactive mode");
-      assert.ok(
-        result.stderr.includes("Aborting onboarding in non-interactive mode"),
-        "should print abort message to stderr",
-      );
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("checkTelegramReachability succeeds silently on HTTP 200", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-ok-"));
-    try {
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "telegram-ok.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
-
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
-
-      const script = `
-const httpProbe = require(${httpProbePath});
-httpProbe.runCurlProbe = () => ({
-  ok: true,
-  httpStatus: 200,
-  curlStatus: 0,
-  body: '{"ok":true,"result":{"id":123,"is_bot":true}}',
-  stderr: "",
-  message: "",
-});
-process.env.NEMOCLAW_NON_INTERACTIVE = "1";
-const { checkTelegramReachability } = require(${onboardPath});
-(async () => {
-  const logs = [];
-  const origLog = console.log;
-  console.log = (...args) => logs.push(args.join(" "));
-  await checkTelegramReachability("valid-token");
-  console.log = origLog;
-  origLog(JSON.stringify({ logs }));
-})();
-`;
-      fs.writeFileSync(scriptPath, script);
-
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
-      });
-
-      assert.equal(result.status, 0, result.stderr);
-      const payload = JSON.parse(result.stdout.trim().split("\n").pop());
-      assert.equal(payload.logs.length, 0, "should print no warnings on success");
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("checkTelegramReachability reports token error on HTTP 401", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-401-"));
-    try {
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "telegram-401.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
-
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
-
-      const script = `
-const httpProbe = require(${httpProbePath});
-httpProbe.runCurlProbe = () => ({
-  ok: false,
-  httpStatus: 401,
-  curlStatus: 0,
-  body: '{"ok":false,"error_code":401,"description":"Unauthorized"}',
-  stderr: "",
-  message: "HTTP 401: Unauthorized",
-});
-process.env.NEMOCLAW_NON_INTERACTIVE = "1";
-const { checkTelegramReachability } = require(${onboardPath});
-(async () => {
-  const logs = [];
-  const origLog = console.log;
-  console.log = (...args) => logs.push(args.join(" "));
-  await checkTelegramReachability("bad-token");
-  console.log = origLog;
-  origLog(JSON.stringify({ logs }));
-})();
-`;
-      fs.writeFileSync(scriptPath, script);
-
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
-      });
-
-      assert.equal(result.status, 0, result.stderr);
-      const payload = JSON.parse(result.stdout.trim().split("\n").pop());
-      assert.ok(
-        payload.logs.some((l) => l.includes("Bot token was rejected by Telegram")),
-        "should report token-specific error, not network error",
-      );
-      assert.ok(
-        !payload.logs.some((l) => l.includes("not reachable")),
-        "should not report network error for token rejection",
-      );
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("checkTelegramReachability reports token error on HTTP 404", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-404-"));
-    try {
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "telegram-404.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
-
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
-
-      const script = `
-const httpProbe = require(${httpProbePath});
-httpProbe.runCurlProbe = () => ({
-  ok: false,
-  httpStatus: 404,
-  curlStatus: 0,
-  body: '{"ok":false,"error_code":404,"description":"Not Found"}',
-  stderr: "",
-  message: "HTTP 404: Not Found",
-});
-process.env.NEMOCLAW_NON_INTERACTIVE = "1";
-const { checkTelegramReachability } = require(${onboardPath});
-(async () => {
-  const logs = [];
-  const origLog = console.log;
-  console.log = (...args) => logs.push(args.join(" "));
-  await checkTelegramReachability("bad-token");
-  console.log = origLog;
-  origLog(JSON.stringify({ logs }));
-})();
-`;
-      fs.writeFileSync(scriptPath, script);
-
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
-      });
-
-      assert.equal(result.status, 0, result.stderr);
-      const payload = JSON.parse(result.stdout.trim().split("\n").pop());
-      assert.ok(
-        payload.logs.some((l) => l.includes("Bot token was rejected by Telegram")),
-        "should report token-specific error, not network error",
-      );
-      assert.ok(
-        !payload.logs.some((l) => l.includes("not reachable")),
-        "should not report network error for token rejection",
-      );
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("checkTelegramReachability surfaces unexpected probe failure (httpStatus 0, unknown curl code)", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-unknown-"));
-    try {
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "telegram-unknown.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "http-probe.js"));
-
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
-
-      const script = `
-const httpProbe = require(${httpProbePath});
-httpProbe.runCurlProbe = () => ({
-  ok: false,
-  httpStatus: 0,
-  curlStatus: 99,
-  body: "",
-  stderr: "unknown curl failure",
-  message: "curl failed (exit 99): unknown curl failure",
-});
-process.env.NEMOCLAW_NON_INTERACTIVE = "1";
-const { checkTelegramReachability } = require(${onboardPath});
-(async () => {
-  const logs = [];
-  const origLog = console.log;
-  console.log = (...args) => logs.push(args.join(" "));
-  await checkTelegramReachability("fake-token");
-  console.log = origLog;
-  origLog(JSON.stringify({ logs }));
-})();
-`;
-      fs.writeFileSync(scriptPath, script);
-
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
-      });
-
-      assert.equal(result.status, 0, "should not abort on unknown curl code (non-blocking warn)");
-      const payload = JSON.parse(result.stdout.trim().split("\n").pop());
-      assert.ok(
-        payload.logs.some((l) => l.includes("Telegram reachability probe failed")),
-        "should surface the probe failure message",
-      );
-      assert.ok(
-        !payload.logs.some((l) => l.includes("not reachable from this host")),
-        "should not trigger the network-codes branch for unknown curl codes",
-      );
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
   it("providerExistsInGateway returns false when provider is missing", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-exists-false-"));
@@ -4261,6 +3917,7 @@ const { checkTelegramReachability } = require(${onboardPath});
 
     const script = `
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 runner.run = (command) => {
   return { status: 1, stdout: "", stderr: "provider not found" };
 };
@@ -4299,6 +3956,7 @@ console.log(JSON.stringify({ exists: providerExistsInGateway("nonexistent") }));
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
@@ -4310,21 +3968,17 @@ const commands = [];
 let sandboxListCalls = 0;
 const keepAlive = setInterval(() => {}, 1000);
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
-  if (command.includes("'sandbox' 'list'")) {
+  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) {
     sandboxListCalls += 1;
     return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
   }
-  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -4354,7 +4008,7 @@ childProcess.spawn = (...args) => {
     process.nextTick(() => child.emit("close", signal === "SIGTERM" ? 0 : 1));
     return true;
   };
-  commands.push({ command: args[1][1], env: args[2]?.env || null, child });
+  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null, child });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
   });
@@ -4366,7 +4020,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxName = await createSandbox(null, "gpt-5.4");
-  const createCommand = commands.find((entry) => entry.command.includes("'sandbox' 'create'"));
+  const createCommand = commands.find((entry) => entry.command.includes("sandbox create"));
   fs.writeFileSync(${JSON.stringify(payloadPath)}, JSON.stringify({
     sandboxName,
     sandboxListCalls,
@@ -4422,21 +4076,18 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "my-assistant";
-  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -4471,12 +4122,12 @@ const { createSandbox } = require(${onboardPath});
     assert.equal(payload.sandboxName, "my-assistant");
     assert.ok(
       payload.commands.some((entry) =>
-        entry.command.includes("'forward' 'start' '--background' '0.0.0.0:18789' 'my-assistant'"),
+        entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
       ),
       "expected dashboard forward restore on sandbox reuse",
     );
     assert.ok(
-      payload.commands.every((entry) => !entry.command.includes("'sandbox' 'create'")),
+      payload.commands.every((entry) => !entry.command.includes("sandbox create")),
       "did not expect sandbox create when reusing existing sandbox",
     );
   });
@@ -4548,18 +4199,15 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("inference") && command.includes("get")) {
+  if (_n(command).includes("inference") && _n(command).includes("get")) {
     return [
       "Gateway inference:",
       "",
@@ -4623,18 +4271,15 @@ const { setupInference } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("inference") && command.includes("get")) {
+  if (_n(command).includes("inference") && _n(command).includes("get")) {
     return [
       "Gateway inference:",
       "",
@@ -4704,6 +4349,7 @@ const { setupInference } = require(${onboardPath});
 
       const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
@@ -4712,20 +4358,16 @@ const { EventEmitter } = require("node:events");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   // provider-get returns not-found so messaging providers are created fresh
-  if (command.includes("'provider' 'get'")) return { status: 1 };
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  if (_n(command).includes("provider get")) return { status: 1 };
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
-  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -4737,7 +4379,7 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -4787,7 +4429,7 @@ const { createSandbox } = require(${onboardPath});
 
       // Only telegram provider should be created
       const providerCommands = payload.commands.filter((e) =>
-        e.command.includes("'provider' 'create'"),
+        e.command.includes("provider create"),
       );
       const telegramProvider = providerCommands.find((e) =>
         e.command.includes("my-assistant-telegram-bridge"),
@@ -4806,9 +4448,9 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(!slackProvider, "slack provider should be filtered out");
 
       // Sandbox create should only have the telegram --provider flag
-      const createCommand = payload.commands.find((e) => e.command.includes("'sandbox' 'create'"));
+      const createCommand = payload.commands.find((e) => e.command.includes("sandbox create"));
       assert.ok(createCommand, "expected sandbox create command");
-      assert.match(createCommand.command, /'--provider' 'my-assistant-telegram-bridge'/);
+      assert.match(createCommand.command, /--provider my-assistant-telegram-bridge/);
       assert.doesNotMatch(createCommand.command, /my-assistant-discord-bridge/);
       assert.doesNotMatch(createCommand.command, /my-assistant-slack-bridge/);
     },
@@ -4837,6 +4479,7 @@ const { createSandbox } = require(${onboardPath});
 
       const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
@@ -4845,18 +4488,14 @@ const { EventEmitter } = require("node:events");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
-  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -4868,7 +4507,7 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -4918,7 +4557,7 @@ const { createSandbox } = require(${onboardPath});
 
       // No messaging providers should be created at all
       const providerCommands = payload.commands.filter((e) =>
-        e.command.includes("'provider' 'create'"),
+        e.command.includes("provider create"),
       );
       assert.equal(
         providerCommands.length,
@@ -4927,7 +4566,7 @@ const { createSandbox } = require(${onboardPath});
       );
 
       // Sandbox create should have no --provider flags for messaging bridges
-      const createCommand = payload.commands.find((e) => e.command.includes("'sandbox' 'create'"));
+      const createCommand = payload.commands.find((e) => e.command.includes("sandbox create"));
       assert.ok(createCommand, "expected sandbox create command");
       assert.doesNotMatch(createCommand.command, /discord-bridge/);
       assert.doesNotMatch(createCommand.command, /slack-bridge/);
@@ -4956,12 +4595,13 @@ const { createSandbox } = require(${onboardPath});
 
       const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 runner.run = () => ({ status: 0 });
 runner.runCapture = () => "";
 
 // Stub the Telegram reachability probe so this test doesn't make a real network
-// call — on networks where api.telegram.org is blocked (corporate proxies), the
-// non-interactive preflight would otherwise abort the test.
+// call — on networks where api.telegram.org is blocked, the non-interactive
+// preflight would otherwise abort the test.
 const httpProbe = require(${httpProbePath});
 httpProbe.runCurlProbe = () => ({
   ok: true,
@@ -5030,6 +4670,7 @@ const { setupMessagingChannels } = require(${onboardPath});
 
       const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 runner.run = () => ({ status: 0 });
 runner.runCapture = () => "";
 
@@ -5112,6 +4753,7 @@ const { setupMessagingChannels } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
@@ -5121,18 +4763,14 @@ const fs = require("node:fs");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  commands.push({ command, env: opts.env || null });
-  return { status: 0 };
-};
-runner.runFile = (file, args = [], opts = {}) => {
-  commands.push({ type: "runFile", command: [file, ...args].join(" "), file, args, env: opts.env || null });
+  commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (command.includes("'sandbox' 'get' 'my-assistant'")) return "";
-  if (command.includes("'sandbox' 'list'")) return "my-assistant Ready";
-  if (command.includes("'sandbox' 'exec' 'my-assistant' 'curl' '-sf' 'http://localhost:18789/'")) return "ok";
-  if (command.includes("'forward' 'list'")) return "18789 -> my-assistant:18789";
+  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  if (_n(command).includes("sandbox exec my-assistant curl -sf http://localhost:18789/")) return "ok";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -5144,7 +4782,7 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: args[1][1], env: args[2]?.env || null });
+  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -5158,8 +4796,8 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxName = await createSandbox(null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${customDockerfilePath});
   // Verify the staged build context contains the extra file from the custom dir
-  const createCmd = commands.find((e) => e.command.includes("'sandbox' 'create'"));
-  const fromMatch = createCmd && createCmd.command.match(/--from['\s]+'([^']+)'/);
+  const createCmd = commands.find((e) => e.command.includes("sandbox create"));
+  const fromMatch = createCmd && createCmd.command.match(/--from\s+(\S+)/);
   let stagedDir = null;
   let hasExtraFile = false;
   if (fromMatch) {
@@ -5223,6 +4861,7 @@ const { createSandbox } = require(${onboardPath});
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});

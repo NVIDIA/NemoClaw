@@ -10,7 +10,7 @@ import os from "os";
 import path from "path";
 import { spawnSync } from "child_process";
 
-import { ROOT, run, shellQuote } from "./runner";
+import { ROOT, run } from "./runner";
 import { loadAgent, resolveAgentName, type AgentDefinition } from "./agent-defs";
 import { getProviderSelectionConfig } from "./inference-config";
 import * as onboardSession from "./onboard-session";
@@ -19,6 +19,7 @@ export interface OnboardContext {
   step: (current: number, total: number, message: string) => void;
   runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string | null;
   openshellShellCommand: (args: string[], options?: { openshellBinary?: string }) => string;
+  openshellBinary: string;
   buildSandboxConfigSyncScript: (config: Record<string, unknown>) => string;
   writeSandboxConfigSyncFile: (script: string) => string;
   cleanupTempDir: (file: string, prefix: string) => void;
@@ -55,13 +56,14 @@ export function createAgentSandbox(agent: AgentDefinition): {
 
   if (baseDockerfile) {
     const baseImageTag = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base:latest`;
-    const inspectResult = run(`docker image inspect ${shellQuote(baseImageTag)} >/dev/null 2>&1`, {
-      ignoreError: true,
-    });
+    const inspectResult = run(
+      ["docker", "image", "inspect", baseImageTag],
+      { ignoreError: true, suppressOutput: true },
+    );
     if (inspectResult.status !== 0) {
       console.log(`  Building ${agent.displayName} base image (first time only)...`);
       run(
-        `docker build -f ${shellQuote(baseDockerfile)} -t ${shellQuote(baseImageTag)} ${shellQuote(ROOT)}`,
+        ["docker", "build", "-f", baseDockerfile, "-t", baseImageTag, ROOT],
         { stdio: ["ignore", "inherit", "inherit"] },
       );
       console.log(`  \u2713 Base image built: ${baseImageTag}`);
@@ -121,6 +123,7 @@ export async function handleAgentSetup(
     step,
     runCaptureOpenshell,
     openshellShellCommand,
+    openshellBinary: openshellBin,
     buildSandboxConfigSyncScript,
     writeSandboxConfigSyncFile,
     cleanupTempDir,
@@ -156,9 +159,10 @@ export async function handleAgentSetup(
     const script = buildSandboxConfigSyncScript(sandboxConfig);
     const scriptFile = writeSandboxConfigSyncFile(script);
     try {
+      const scriptContent = fs.readFileSync(scriptFile, "utf-8");
       run(
-        `${openshellShellCommand(["sandbox", "connect", sandboxName])} < ${shellQuote(scriptFile)}`,
-        { stdio: ["ignore", "ignore", "inherit"] },
+        [openshellBin, "sandbox", "connect", sandboxName],
+        { stdio: ["pipe", "ignore", "inherit"], input: scriptContent },
       );
     } finally {
       cleanupTempDir(scriptFile, "nemoclaw-sync");
@@ -215,6 +219,11 @@ export function getAgentDashboardInfo(agent: AgentDefinition): {
 
 /**
  * Print the dashboard UI section for a non-OpenClaw agent.
+ *
+ * When the agent manifest declares `dashboard.kind: api`, we print the
+ * endpoint as an API (no tokenized URL fragment — the caller authenticates
+ * via a header) and use the manifest-supplied label/path. Otherwise we fall
+ * back to the original UI-style output used by browser dashboards.
  */
 export function printDashboardUi(
   _sandboxName: string,
@@ -226,15 +235,31 @@ export function printDashboardUi(
   },
 ): void {
   const info = getAgentDashboardInfo(agent);
+  const { kind, label, path } = agent.dashboard;
+
+  if (kind === "api") {
+    console.log(`  ${info.displayName} ${label}`);
+    console.log(`  Port ${info.port} must be forwarded before connecting.`);
+    const seen = new Set<string>();
+    for (const baseUrl of deps.buildControlUiUrls(null, info.port)) {
+      const withoutHash = baseUrl.split("#")[0].replace(/\/$/, "");
+      const url = path && path !== "/" ? `${withoutHash}${path}` : `${withoutHash}/`;
+      if (seen.has(url)) continue;
+      seen.add(url);
+      console.log(`  ${url}`);
+    }
+    return;
+  }
+
   if (token) {
-    console.log(`  ${info.displayName} UI (tokenized URL; treat it like a password)`);
+    console.log(`  ${info.displayName} ${label} (tokenized URL; treat it like a password)`);
     console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
     for (const url of deps.buildControlUiUrls(token, info.port)) {
       console.log(`  ${url}`);
     }
   } else {
     deps.note("  Could not read gateway token from the sandbox (download failed).");
-    console.log(`  ${info.displayName} UI`);
+    console.log(`  ${info.displayName} ${label}`);
     console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
     for (const url of deps.buildControlUiUrls(null, info.port)) {
       console.log(`  ${url}`);
