@@ -96,7 +96,8 @@ Dynamic changes apply a policy update to a running sandbox without restarting it
 
 Create a YAML file with the endpoints to add.
 Follow the same format as the baseline policy in `nemoclaw-blueprint/policies/openclaw-sandbox.yaml`.
-The file must include the mandatory `version` field (e.g., `version: 1`) to be accepted by the OpenShell parser.
+Add a top-level `version` field (for example, `version: 1`).
+OpenShell rejects policy YAML that omits this field.
 
 ### Apply the Policy
 
