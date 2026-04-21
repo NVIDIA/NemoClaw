@@ -5199,4 +5199,19 @@ const { createSandbox } = require(${onboardPath});
       "pullAndResolveBaseImageDigest must be called BEFORE patchStagedDockerfile — regression #1904",
     );
   });
+
+  it("fails fast on unsupported host platform before Docker reachability checks", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const hostSupportCheck = source.indexOf('host.hostSupport && host.hostSupport.status === "error"');
+    assert.ok(hostSupportCheck !== -1, "unsupported host-support check not found in preflight()");
+    const dockerCheck = source.indexOf("if (!host.dockerReachable)");
+    assert.ok(dockerCheck !== -1, "docker reachability check not found in preflight()");
+    assert.ok(
+      hostSupportCheck < dockerCheck,
+      "unsupported host-support check must run before docker reachability checks",
+    );
+  });
 });

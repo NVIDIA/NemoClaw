@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   assessHost,
   checkPortAvailable,
+  classifyHostSupport,
   getMemoryInfo,
   ensureSwap,
   planHostRemediation,
@@ -330,6 +331,8 @@ describe("assessHost", () => {
     });
 
     expect(result.isWsl).toBe(true);
+    expect(result.hostSupport?.status).toBe("warning");
+    expect(result.hostSupport?.code).toBe("CAVEATED_PLATFORM");
     expect(result.notes).toContain("Running under WSL");
   });
 
@@ -344,9 +347,128 @@ describe("assessHost", () => {
     expect(result.isHeadlessLikely).toBe(true);
     expect(result.notes).toContain("Headless environment likely");
   });
+
+  it("classifies macOS Apple Silicon as caveated", () => {
+    const result = assessHost({
+      platform: "darwin",
+      arch: "arm64",
+      env: {},
+      dockerInfoOutput: "",
+      commandExistsImpl: () => false,
+    });
+
+    expect(result.hostSupport?.status).toBe("warning");
+    expect(result.hostSupport?.code).toBe("CAVEATED_PLATFORM");
+  });
+
+  it("classifies macOS Intel as unsupported", () => {
+    const result = assessHost({
+      platform: "darwin",
+      arch: "x64",
+      env: {},
+      dockerInfoOutput: "",
+      commandExistsImpl: () => false,
+    });
+
+    expect(result.hostSupport?.status).toBe("error");
+    expect(result.hostSupport?.code).toBe("UNSUPPORTED_ARCH");
+  });
+
+  it("classifies native Windows as unsupported", () => {
+    const result = assessHost({
+      platform: "win32",
+      env: {},
+      commandExistsImpl: () => false,
+    });
+
+    expect(result.hostSupport?.status).toBe("error");
+    expect(result.hostSupport?.code).toBe("UNSUPPORTED_PLATFORM");
+  });
+});
+
+describe("classifyHostSupport", () => {
+  it("marks Linux as tested", () => {
+    const result = classifyHostSupport({ platform: "linux", isWsl: false });
+    expect(result.status).toBe("ok");
+    expect(result.code).toBe("TESTED_PLATFORM");
+  });
+
+  it("marks WSL as caveated", () => {
+    const result = classifyHostSupport({ platform: "linux", isWsl: true });
+    expect(result.status).toBe("warning");
+    expect(result.code).toBe("CAVEATED_PLATFORM");
+  });
 });
 
 describe("planHostRemediation", () => {
+  it("returns a blocking unsupported-host action for native Windows", () => {
+    const actions = planHostRemediation({
+      platform: "win32",
+      isWsl: false,
+      runtime: "unknown",
+      packageManager: "unknown",
+      systemctlAvailable: false,
+      dockerServiceActive: null,
+      dockerServiceEnabled: null,
+      dockerInstalled: false,
+      dockerRunning: false,
+      dockerReachable: false,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "unknown",
+      dockerDefaultCgroupnsMode: "unknown",
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: false,
+      hostSupport: {
+        status: "error",
+        code: "UNSUPPORTED_PLATFORM",
+        message: "Native Windows host detected: run NemoClaw inside WSL2 with Docker Desktop backend.",
+      },
+      notes: [],
+    });
+
+    expect(actions).toHaveLength(1);
+    expect(actions[0].id).toBe("unsupported_host_platform");
+    expect(actions[0].blocking).toBe(true);
+    expect(actions[0].commands.join("\n")).toMatch(/WSL2/);
+  });
+
+  it("adds a non-blocking caveat action for macOS Apple Silicon", () => {
+    const actions = planHostRemediation({
+      platform: "darwin",
+      arch: "arm64",
+      isWsl: false,
+      runtime: "docker-desktop",
+      packageManager: "brew",
+      systemctlAvailable: false,
+      dockerServiceActive: null,
+      dockerServiceEnabled: null,
+      dockerInstalled: true,
+      dockerRunning: true,
+      dockerReachable: true,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "unknown",
+      dockerDefaultCgroupnsMode: "unknown",
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: false,
+      hostSupport: {
+        status: "warning",
+        code: "CAVEATED_PLATFORM",
+        message: "macOS (Apple Silicon) host detected: tested with limitations.",
+      },
+      notes: [],
+    });
+
+    const caveat = actions.find((action: { id: string }) => action.id === "host_platform_caveat");
+    expect(caveat).toBeTruthy();
+    expect(caveat?.blocking).toBe(false);
+  });
+
   it("recommends starting docker when installed but unreachable and service inactive", () => {
     const actions = planHostRemediation({
       platform: "linux",

@@ -85,8 +85,23 @@ export type PackageManager = "apt" | "dnf" | "yum" | "brew" | "pacman" | "unknow
 
 export type RemediationKind = "info" | "manual" | "auto" | "sudo";
 
+export type HostSupportStatus = "ok" | "warning" | "error";
+
+export type HostSupportCode =
+  | "TESTED_PLATFORM"
+  | "CAVEATED_PLATFORM"
+  | "UNSUPPORTED_PLATFORM"
+  | "UNSUPPORTED_ARCH";
+
+export interface HostSupportAssessment {
+  status: HostSupportStatus;
+  code: HostSupportCode;
+  message: string;
+}
+
 export interface HostAssessment {
   platform: NodeJS.Platform | string;
+  arch?: string;
   isWsl: boolean;
   runtime: ContainerRuntime;
   packageManager?: PackageManager;
@@ -105,6 +120,7 @@ export interface HostAssessment {
   isUnsupportedRuntime: boolean;
   isHeadlessLikely: boolean;
   hasNvidiaGpu: boolean;
+  hostSupport?: HostSupportAssessment;
   notes: string[];
 }
 
@@ -119,6 +135,7 @@ export interface RemediationAction {
 
 export interface AssessHostOpts {
   platform?: NodeJS.Platform;
+  arch?: string;
   env?: NodeJS.ProcessEnv;
   release?: string;
   procVersion?: string;
@@ -246,8 +263,91 @@ function parseSystemctlState(value = ""): boolean | null {
   return null;
 }
 
+function hostSupportCommands(hostSupport: HostSupportAssessment): string[] {
+  if (hostSupport.code === "UNSUPPORTED_PLATFORM") {
+    return [
+      "Use a tested platform from docs/get-started/quickstart.md.",
+      "If you are on Windows, run NemoClaw inside WSL2 with Docker Desktop backend.",
+      "Then rerun `nemoclaw onboard`.",
+    ];
+  }
+
+  if (hostSupport.code === "UNSUPPORTED_ARCH") {
+    return [
+      "Use macOS on Apple Silicon or Linux from the tested platform matrix.",
+      "Then rerun `nemoclaw onboard`.",
+    ];
+  }
+
+  if (hostSupport.code === "CAVEATED_PLATFORM") {
+    return [
+      "Continue if this setup matches your environment, or switch to the primary Linux + Docker path.",
+      "If onboarding fails, follow the troubleshooting guide and rerun `nemoclaw onboard`.",
+    ];
+  }
+
+  return [];
+}
+
+export function classifyHostSupport(opts: {
+  platform: NodeJS.Platform | string;
+  arch?: string;
+  isWsl?: boolean;
+}): HostSupportAssessment {
+  const platform = opts.platform;
+  const arch = String(opts.arch || "");
+  const isWsl = Boolean(opts.isWsl);
+
+  if (platform === "linux" && !isWsl) {
+    return {
+      status: "ok",
+      code: "TESTED_PLATFORM",
+      message: "Linux host detected: tested platform.",
+    };
+  }
+
+  if (platform === "linux" && isWsl) {
+    return {
+      status: "warning",
+      code: "CAVEATED_PLATFORM",
+      message: "Windows WSL2 host detected: tested with limitations.",
+    };
+  }
+
+  if (platform === "darwin" && arch === "arm64") {
+    return {
+      status: "warning",
+      code: "CAVEATED_PLATFORM",
+      message: "macOS (Apple Silicon) host detected: tested with limitations.",
+    };
+  }
+
+  if (platform === "darwin" && !arch) {
+    return {
+      status: "warning",
+      code: "CAVEATED_PLATFORM",
+      message: "macOS host detected: tested with limitations on Apple Silicon.",
+    };
+  }
+
+  if (platform === "darwin") {
+    return {
+      status: "error",
+      code: "UNSUPPORTED_ARCH",
+      message: "macOS Intel host detected: unsupported platform for NemoClaw onboarding.",
+    };
+  }
+
+  return {
+    status: "error",
+    code: "UNSUPPORTED_PLATFORM",
+    message: `${platform} host detected: unsupported platform for NemoClaw onboarding.`,
+  };
+}
+
 export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const platform = opts.platform ?? process.platform;
+  const arch = opts.arch ?? process.arch;
   const env = opts.env ?? process.env;
   const runCaptureImpl =
     opts.runCaptureImpl ??
@@ -302,9 +402,12 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     platform === "linux" && systemctlAvailable && dockerInstalled
       ? parseSystemctlState(runCaptureImpl("systemctl is-enabled docker", { ignoreError: true }))
       : null;
+  const isWsl = detectWsl({ platform, env, release, procVersion });
+  const hostSupport = classifyHostSupport({ platform, arch, isWsl });
   const assessment: HostAssessment = {
     platform,
-    isWsl: detectWsl({ platform, env, release, procVersion }),
+    arch,
+    isWsl,
     runtime,
     packageManager,
     systemctlAvailable,
@@ -323,6 +426,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     isUnsupportedRuntime: runtime === "podman",
     isHeadlessLikely: isHeadlessLikely(env),
     hasNvidiaGpu,
+    hostSupport,
     notes: [],
   };
 
@@ -341,6 +445,36 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
 
 export function planHostRemediation(assessment: HostAssessment): RemediationAction[] {
   const actions: RemediationAction[] = [];
+  const hostSupport =
+    assessment.hostSupport ??
+    classifyHostSupport({
+      platform: assessment.platform,
+      arch: assessment.arch,
+      isWsl: assessment.isWsl,
+    });
+
+  if (hostSupport.status === "error") {
+    actions.push({
+      id: "unsupported_host_platform",
+      title: "Use a tested host platform",
+      kind: "manual",
+      reason: hostSupport.message,
+      commands: hostSupportCommands(hostSupport),
+      blocking: true,
+    });
+    return actions;
+  }
+
+  if (hostSupport.status === "warning") {
+    actions.push({
+      id: "host_platform_caveat",
+      title: "Host platform is tested with limitations",
+      kind: "info",
+      reason: hostSupport.message,
+      commands: hostSupportCommands(hostSupport),
+      blocking: false,
+    });
+  }
 
   if (!assessment.dockerInstalled) {
     const installCommands: Record<PackageManager, string> = {

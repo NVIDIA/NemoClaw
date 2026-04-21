@@ -2495,6 +2495,17 @@ async function preflight() {
   step(1, 8, "Preflight checks");
 
   const host = assessHost();
+  if (host.hostSupport && host.hostSupport.status === "error") {
+    console.error(`  ${host.hostSupport.message}`);
+    printRemediationActions(planHostRemediation(host));
+    process.exit(1);
+  }
+  if (host.hostSupport && host.hostSupport.status === "warning") {
+    console.log(`  ⚠ ${host.hostSupport.message}`);
+  }
+  if (host.hostSupport && host.hostSupport.status === "ok") {
+    console.log(`  ✓ ${host.hostSupport.message}`);
+  }
 
   // Docker / runtime
   if (!host.dockerReachable) {
