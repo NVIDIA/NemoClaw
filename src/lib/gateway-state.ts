@@ -26,16 +26,27 @@ export type GatewayReuseState =
 
 export type SandboxState = "ready" | "not_ready" | "missing";
 
+function parseSandboxRow(output: string, sandboxName: string): string[] | null {
+  if (typeof output !== "string") return null;
+  const clean = stripAnsi(output);
+  for (const line of clean.split("\n")) {
+    const cols = line.trim().split(/\s+/);
+    if (cols[0] === sandboxName) return cols;
+  }
+  return null;
+}
+
+export function parseSandboxStatus(output: string, sandboxName: string): string | null {
+  const cols = parseSandboxRow(output, sandboxName);
+  return cols && cols.length >= 2 ? cols[1] : null;
+}
+
 /**
  * Check if a sandbox is in Ready state from `openshell sandbox list` output.
  * Strips ANSI codes and exact-matches the sandbox name in the first column.
  */
 export function isSandboxReady(output: string, sandboxName: string): boolean {
-  const clean = stripAnsi(output);
-  return clean.split("\n").some((l) => {
-    const cols = l.trim().split(/\s+/);
-    return cols[0] === sandboxName && cols.includes("Ready") && !cols.includes("NotReady");
-  });
+  return parseSandboxStatus(output, sandboxName) === "Ready";
 }
 
 /**
