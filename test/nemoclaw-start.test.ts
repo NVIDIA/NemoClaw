@@ -302,7 +302,8 @@ describe("runtime model override (#759)", () => {
     expect(fn).toBeTruthy();
     // Guard checks all override env vars before returning early
     expect(fn[1]).toContain("NEMOCLAW_MODEL_OVERRIDE");
-    expect(fn[1]).toContain("|| return 0");
+    // shfmt may format `|| return 0` as a standalone `return 0` on its own line
+    expect(fn[1]).toMatch(/\|\|\s*return 0|^\s*return 0/m);
   });
 
   it("supports optional NEMOCLAW_INFERENCE_API_OVERRIDE for cross-provider switches", () => {

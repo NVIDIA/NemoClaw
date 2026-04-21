@@ -586,6 +586,7 @@ describe("service environment", () => {
           `PROXY_PORT="3128"`,
           `NODE_USE_ENV_PROXY=1`,
           `_TOOL_REDIRECTS=()`,
+          "set +u  # array expansion safe on macOS bash",
           persistBlock
             .trimEnd()
             .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`)
@@ -600,6 +601,53 @@ describe("service environment", () => {
         expect(envFile).toContain("NODE_OPTIONS");
         expect(envFile).toContain("--require");
         expect(envFile).toContain(fakeFixScript);
+      } finally {
+        try {
+          execFileSync("rm", ["-rf", fakeDataDir, tmpFile]);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("regression #2109: proxy-env.sh does NOT include NODE_OPTIONS when NODE_USE_ENV_PROXY is unset", () => {
+      const fakeDataDir = join(tmpdir(), `nemoclaw-axios-noop-test-${process.pid}`);
+      const fakeFixScript = join(fakeDataDir, "axios-proxy-fix.js");
+      execFileSync("mkdir", ["-p", fakeDataDir]);
+      const tmpFile = join(tmpdir(), `nemoclaw-axios-noop-env-${process.pid}.sh`);
+      try {
+        const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+        const persistBlock = execFileSync(
+          "sed",
+          ["-n", "/^_PROXY_URL=/,/^chmod 644/p", scriptPath],
+          { encoding: "utf-8" },
+        );
+        if (!persistBlock.trim()) {
+          throw new Error(
+            "sed anchors not found in nemoclaw-start.sh — test cannot run",
+          );
+        }
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `PROXY_HOST="10.200.0.1"`,
+          `PROXY_PORT="3128"`,
+          // NODE_USE_ENV_PROXY intentionally NOT set
+          `_TOOL_REDIRECTS=()`,
+          "set +u  # array expansion safe on macOS bash",
+          persistBlock
+            .trimEnd()
+            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`)
+            .replaceAll("/opt/nemoclaw-blueprint/scripts/axios-proxy-fix.js", fakeFixScript),
+        ].join("\n");
+        writeFileSync(fakeFixScript, "// fake", { mode: 0o644 });
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
+        // NODE_OPTIONS preload should NOT be injected when NODE_USE_ENV_PROXY is not 1
+        expect(envFile).not.toContain("--require");
+        expect(envFile).not.toContain("axios-proxy-fix");
       } finally {
         try {
           execFileSync("rm", ["-rf", fakeDataDir, tmpFile]);
