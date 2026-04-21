@@ -3,7 +3,7 @@
 
 import assert from "node:assert";
 import { describe, expect, it } from "vitest";
-import { sleepMs, sleepSeconds } from "../src/lib/wait.ts";
+import { sleepMs, sleepSeconds } from "../src/lib/wait.js";
 
 describe("wait utility", () => {
   it("sleepMs blocks for approximately the requested time", () => {

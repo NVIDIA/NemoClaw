@@ -273,7 +273,6 @@ export function waitForNimHealth(port = VLLM_PORT, timeout = 300): boolean {
     } catch {
       /* ignored */
     }
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     sleepSeconds(intervalSec);
   }
   console.error(`  NIM did not become healthy within ${timeout}s.`);
