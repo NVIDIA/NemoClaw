@@ -127,22 +127,26 @@ tar xzf "$tmpdir/$ASSET" -C "$tmpdir"
 
 target_dir="/usr/local/bin"
 
+# Record the pinned version so that binaries with unparseable --version output
+# (e.g. openshell 0.0.29 self-reports "m-dev") can still pass the version gate
+# on subsequent runs without triggering a redundant re-download. The sidecar
+# is written inside each install branch so that the sudo path writes it with
+# elevated privileges; under `set -e` any write failure aborts rather than
+# silently missing the sidecar.
 if [ -w "$target_dir" ]; then
   install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
+  printf '%s\n' "$PIN_VERSION" >"$target_dir/.openshell-installed-version"
 elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
   target_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"
   mkdir -p "$target_dir"
   install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
+  printf '%s\n' "$PIN_VERSION" >"$target_dir/.openshell-installed-version"
   warn "Installed openshell to $target_dir/openshell (user-local path)"
   warn "For future shells, run: export PATH=\"$target_dir:\$PATH\""
   warn "Add that export to your shell profile, or open a new shell before using openshell directly."
 else
   sudo install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
+  printf '%s\n' "$PIN_VERSION" | sudo tee "$target_dir/.openshell-installed-version" >/dev/null
 fi
-
-# Record the pinned version so that binaries with unparseable --version output
-# (e.g. openshell 0.0.29 self-reports "m-dev") can still pass the version gate
-# on subsequent runs without triggering a redundant re-download.
-echo "$PIN_VERSION" >"$target_dir/.openshell-installed-version" 2>/dev/null || true
 
 info "$("$target_dir/openshell" --version 2>&1 || echo openshell) installed"

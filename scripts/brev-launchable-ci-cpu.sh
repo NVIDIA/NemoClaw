@@ -28,7 +28,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/<ref>/scripts/brev-launchable-ci-cpu.sh | bash
 #
 # Environment overrides:
-#   OPENSHELL_VERSION     — OpenShell CLI release tag (default: v0.0.20)
+#   OPENSHELL_VERSION     — OpenShell CLI release tag (default: v0.0.29)
 #   NEMOCLAW_REF          — NemoClaw git ref to clone (default: main)
 #   NEMOCLAW_CLONE_DIR    — Where to clone NemoClaw (default: ~/NemoClaw)
 #   SKIP_DOCKER_PULL      — Set to 1 to skip Docker image pre-pulls
@@ -40,7 +40,7 @@
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────
-OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.24}"
+OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.29}"
 NEMOCLAW_REF="${NEMOCLAW_REF:-main}"
 TARGET_USER="${SUDO_USER:-$(id -un)}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
