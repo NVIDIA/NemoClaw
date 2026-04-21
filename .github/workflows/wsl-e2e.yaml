@@ -159,7 +159,10 @@ jobs:
           $script = @"
           set -euo pipefail
           cd '$env:WSL_WORKDIR'
-          export NEMOCLAW_EXEC_TIMEOUT=30000
+          # WSL process-spawn overhead pushes CLI runtime close to the test
+          # budget; keep exec timeout aligned with the vitest test timeout so
+          # tests that legitimately consume their full budget aren't killed.
+          export NEMOCLAW_EXEC_TIMEOUT=60000
           export NEMOCLAW_TEST_TIMEOUT=60000
           npx vitest run --testTimeout 60000
           "@
