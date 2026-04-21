@@ -2455,10 +2455,57 @@ async function upgradeSandboxes(args = []) {
 
 // ── Snapshot ─────────────────────────────────────────────────────
 
+function parseSnapshotCreateFlags(flags) {
+  const opts = { name: null };
+  for (let i = 0; i < flags.length; i++) {
+    const flag = flags[i];
+    if (flag === "--name") {
+      if (i + 1 >= flags.length || flags[i + 1].startsWith("--")) {
+        console.error("  --name requires a value");
+        process.exit(1);
+      }
+      opts.name = flags[++i];
+    } else {
+      console.error(`  Unknown flag: ${flag}`);
+      process.exit(1);
+    }
+  }
+  return opts;
+}
+
+function formatSnapshotVersion(b) {
+  return `v${b.snapshotVersion}`;
+}
+
+function renderSnapshotTable(backups) {
+  const rows = backups.map((b) => ({
+    version: formatSnapshotVersion(b),
+    name: b.name || "",
+    timestamp: b.timestamp,
+    backupPath: b.backupPath,
+  }));
+  const widths = {
+    version: Math.max(7, ...rows.map((r) => r.version.length)),
+    name: Math.max(4, ...rows.map((r) => r.name.length)),
+    timestamp: Math.max(9, ...rows.map((r) => r.timestamp.length)),
+    backupPath: Math.max(4, ...rows.map((r) => r.backupPath.length)),
+  };
+  const pad = (s, n) => s + " ".repeat(Math.max(0, n - s.length));
+  console.log(
+    `    ${B}${pad("Version", widths.version)}  ${pad("Name", widths.name)}  ${pad("Timestamp", widths.timestamp)}  ${pad("Path", widths.backupPath)}${R}`,
+  );
+  for (const r of rows) {
+    console.log(
+      `    ${pad(r.version, widths.version)}  ${pad(r.name, widths.name)}  ${pad(r.timestamp, widths.timestamp)}  ${D}${pad(r.backupPath, widths.backupPath)}${R}`,
+    );
+  }
+}
+
 function sandboxSnapshot(sandboxName, subArgs) {
   const subcommand = subArgs[0] || "help";
   switch (subcommand) {
     case "create": {
+      const opts = parseSnapshotCreateFlags(subArgs.slice(1));
       const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
       if (isLive.status !== 0) {
         console.error("  Failed to query live sandbox state from OpenShell.");
@@ -2469,17 +2516,24 @@ function sandboxSnapshot(sandboxName, subArgs) {
         console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
         process.exit(1);
       }
-      console.log(`  Creating snapshot of '${sandboxName}'...`);
-      const result = sandboxState.backupSandboxState(sandboxName);
+      const label = opts.name ? ` (--name ${opts.name})` : "";
+      console.log(`  Creating snapshot of '${sandboxName}'${label}...`);
+      const result = sandboxState.backupSandboxState(sandboxName, { name: opts.name });
       if (result.success) {
+        const v = formatSnapshotVersion(result.manifest);
+        const nameSuffix = result.manifest.name ? ` name=${result.manifest.name}` : "";
         console.log(
-          `  ${G}\u2713${R} Snapshot created (${result.backedUpDirs.length} directories)`,
+          `  ${G}\u2713${R} Snapshot ${v}${nameSuffix} created (${result.backedUpDirs.length} directories)`,
         );
         console.log(`    ${result.manifest.backupPath}`);
       } else {
-        console.error("  Snapshot failed.");
-        if (result.failedDirs.length > 0) {
-          console.error(`  Failed directories: ${result.failedDirs.join(", ")}`);
+        if (result.error) {
+          console.error(`  ${result.error}`);
+        } else {
+          console.error("  Snapshot failed.");
+          if (result.failedDirs.length > 0) {
+            console.error(`  Failed directories: ${result.failedDirs.join(", ")}`);
+          }
         }
         process.exit(1);
       }
@@ -2493,15 +2547,10 @@ function sandboxSnapshot(sandboxName, subArgs) {
       }
       console.log(`  Snapshots for '${sandboxName}':`);
       console.log("");
-      for (const b of backups) {
-        const dirs = b.stateDirs?.length || 0;
-        const version = b.agentVersion || "unknown";
-        console.log(`    ${b.timestamp}  ${D}(${dirs} dirs, agent v${version})${R}`);
-        console.log(`      ${b.backupPath}`);
-      }
+      renderSnapshotTable(backups);
       console.log("");
       console.log(`  ${backups.length} snapshot(s). Restore with:`);
-      console.log(`    nemoclaw ${sandboxName} snapshot restore [timestamp]`);
+      console.log(`    nemoclaw ${sandboxName} snapshot restore [version|name|timestamp]`);
       break;
     }
     case "restore": {
@@ -2515,26 +2564,20 @@ function sandboxSnapshot(sandboxName, subArgs) {
         console.error(`  Sandbox '${sandboxName}' is not running. Cannot restore snapshot.`);
         process.exit(1);
       }
-      const timestamp = subArgs[1] || null;
+      const selector = subArgs[1] || null;
       let backupPath;
-      if (timestamp) {
-        const all = sandboxState.listBackups(sandboxName);
-        const matches = all.filter(
-          (b) => b.timestamp === timestamp || b.timestamp.startsWith(timestamp),
-        );
-        if (matches.length === 0) {
-          console.error(`  No snapshot matching '${timestamp}' found for '${sandboxName}'.`);
+      if (selector) {
+        const { match } = sandboxState.findBackup(sandboxName, selector);
+        if (!match) {
+          console.error(`  No snapshot matching '${selector}' found for '${sandboxName}'.`);
+          console.error("  Selector must be an exact version (v<N>), name, or timestamp.");
           console.error("  Run: nemoclaw " + sandboxName + " snapshot list");
           process.exit(1);
         }
-        if (matches.length > 1) {
-          console.error(`  Snapshot selector '${timestamp}' is ambiguous.`);
-          console.error("  Matching timestamps:");
-          for (const m of matches) console.error(`    ${m.timestamp}`);
-          console.error("  Re-run with an exact timestamp from `snapshot list`.");
-          process.exit(1);
-        }
-        backupPath = matches[0].backupPath;
+        backupPath = match.backupPath;
+        const v = formatSnapshotVersion(match);
+        const nameSuffix = match.name ? ` name=${match.name}` : "";
+        console.log(`  Using snapshot ${v}${nameSuffix} (${match.timestamp})`);
       } else {
         const latest = sandboxState.getLatestBackup(sandboxName);
         if (!latest) {
@@ -2542,7 +2585,9 @@ function sandboxSnapshot(sandboxName, subArgs) {
           process.exit(1);
         }
         backupPath = latest.backupPath;
-        console.log(`  Using latest snapshot: ${latest.timestamp}`);
+        const v = formatSnapshotVersion(latest);
+        const nameSuffix = latest.name ? ` name=${latest.name}` : "";
+        console.log(`  Using latest snapshot ${v}${nameSuffix} (${latest.timestamp})`);
       }
       console.log(`  Restoring snapshot into '${sandboxName}'...`);
       const result = sandboxState.restoreSandboxState(sandboxName, backupPath);
@@ -2562,9 +2607,12 @@ function sandboxSnapshot(sandboxName, subArgs) {
     }
     default:
       console.log(`  Usage:`);
-      console.log(`    nemoclaw ${sandboxName} snapshot create          Create a snapshot`);
+      console.log(`    nemoclaw ${sandboxName} snapshot create [--name <name>]`);
+      console.log(`                                             Create a snapshot (auto-versioned v1, v2, ...)`);
       console.log(`    nemoclaw ${sandboxName} snapshot list            List available snapshots`);
-      console.log(`    nemoclaw ${sandboxName} snapshot restore [ts]    Restore from a snapshot`);
+      console.log(`    nemoclaw ${sandboxName} snapshot restore [selector]`);
+      console.log(`                                             Restore by version (v1), name, or timestamp.`);
+      console.log(`                                             Omit to restore the most recent.`);
       break;
   }
 }
