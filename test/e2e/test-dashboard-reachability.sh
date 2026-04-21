@@ -26,7 +26,7 @@ if [ -z "${NEMOCLAW_E2E_NO_TIMEOUT:-}" ]; then
 fi
 
 # ── Config ───────────────────────────────────────────────────────────────────
-SANDBOX="test-dash"
+SANDBOX="${NEMOCLAW_E2E_SANDBOX_NAME:-test-dash-$$}"
 DASHBOARD_PORT="${NEMOCLAW_DASHBOARD_PORT:-18789}"
 DASHBOARD_URL="http://127.0.0.1:${DASHBOARD_PORT}/"
 POLL_ATTEMPTS=30
@@ -201,10 +201,17 @@ setup_sandbox() {
 
   # Defensively re-establish the port-forward. nemoclaw onboard already
   # starts it, but an earlier crashed run can leave a stale entry and the
-  # dashboard test is meaningless without a live forward.
+  # dashboard test is meaningless without a live forward. Stop any existing
+  # forward first so `forward start` is never a no-op against a stale
+  # listener — if the fresh start fails we must fail the suite, since
+  # TC-DASH-0{1,2,3} against a lingering listener would pass spuriously.
   log "Ensuring port-forward on $DASHBOARD_PORT..."
-  openshell forward start --background "$DASHBOARD_PORT" "$SANDBOX" \
-    >>"$LOG_FILE" 2>&1 || log "  forward start returned non-zero (may already be running)"
+  openshell forward stop "$DASHBOARD_PORT" >/dev/null 2>&1 || true
+  if ! openshell forward start --background "$DASHBOARD_PORT" "$SANDBOX" \
+    >>"$LOG_FILE" 2>&1; then
+    echo -e "${RED}FATAL: failed to establish dashboard forward on $DASHBOARD_PORT${NC}"
+    exit 1
+  fi
 
   log "Sandbox '$SANDBOX' onboarded successfully"
   echo ""
