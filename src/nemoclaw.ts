@@ -73,6 +73,16 @@ const {
   createSystemDeps: createSessionDeps,
 } = require("./lib/sandbox-session-state");
 
+import {
+  KNOWN_CHANNELS,
+  clearChannelTokens,
+  getChannelDef,
+  getChannelTokenKeys,
+  knownChannelNames,
+  persistChannelTokens,
+} from "./lib/sandbox-channels";
+import { isNonInteractive } from "./lib/onboard";
+
 // ── Global commands ──────────────────────────────────────────────
 
 const GLOBAL_COMMANDS = new Set([
@@ -1626,6 +1636,117 @@ function sandboxPolicyList(sandboxName) {
   console.log("");
 }
 
+// ── Messaging channels ───────────────────────────────────────────
+
+function sandboxChannelsList(sandboxName) {
+  console.log("");
+  console.log(`  Known messaging channels for sandbox '${sandboxName}':`);
+  for (const [name, channel] of Object.entries(KNOWN_CHANNELS)) {
+    console.log(`    ${name} — ${channel.description}`);
+  }
+  console.log("");
+}
+
+async function promptAndRebuild(sandboxName, actionDesc) {
+  if (isNonInteractive()) {
+    console.log("");
+    console.log(
+      `  Change queued. Run 'nemoclaw ${sandboxName} rebuild' to apply (${actionDesc}).`,
+    );
+    return;
+  }
+  const answer = (await askPrompt(`  Rebuild '${sandboxName}' now to apply? [Y/n]: `))
+    .trim()
+    .toLowerCase();
+  if (answer === "n" || answer === "no") {
+    console.log(
+      `  Run 'nemoclaw ${sandboxName} rebuild' when you are ready to apply (${actionDesc}).`,
+    );
+    return;
+  }
+  await sandboxRebuild(sandboxName, ["--yes"]);
+}
+
+async function sandboxChannelsAdd(sandboxName, args = []) {
+  const dryRun = args.includes("--dry-run");
+  const channelArg = args.find((arg) => !arg.startsWith("-"));
+  if (!channelArg) {
+    console.error("  Usage: nemoclaw <sandbox> channels add <channel> [--dry-run]");
+    console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
+    process.exit(1);
+  }
+
+  const channel = getChannelDef(channelArg);
+  if (!channel) {
+    console.error(`  Unknown channel '${channelArg}'.`);
+    console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
+    process.exit(1);
+  }
+
+  if (dryRun) {
+    console.log(`  --dry-run: would enable channel '${channelArg}' for '${sandboxName}'.`);
+    return;
+  }
+
+  const tokenKeys = getChannelTokenKeys(channel);
+  const acquired = {};
+  for (const envKey of tokenKeys) {
+    const isPrimary = envKey === channel.envKey;
+    const help = isPrimary ? channel.help : channel.appTokenHelp;
+    const label = isPrimary ? channel.label : channel.appTokenLabel;
+    const existing = getCredential(envKey);
+    if (existing) {
+      acquired[envKey] = existing;
+      continue;
+    }
+    if (isNonInteractive()) {
+      console.error(`  Missing ${envKey} for channel '${channelArg}'.`);
+      console.error(
+        `  Set ${envKey} in the environment or via 'nemoclaw credentials' before running in non-interactive mode.`,
+      );
+      process.exit(1);
+    }
+    console.log("");
+    console.log(`  ${help}`);
+    const token = (await askPrompt(`  ${label}: `, { secret: true })).trim();
+    if (!token) {
+      console.error(`  Aborted — no value entered for ${envKey}.`);
+      process.exit(1);
+    }
+    acquired[envKey] = token;
+  }
+
+  persistChannelTokens(acquired);
+  console.log(`  ${G}✓${R} Saved ${channelArg} credentials.`);
+  await promptAndRebuild(sandboxName, `add '${channelArg}'`);
+}
+
+async function sandboxChannelsRemove(sandboxName, args = []) {
+  const dryRun = args.includes("--dry-run");
+  const channelArg = args.find((arg) => !arg.startsWith("-"));
+  if (!channelArg) {
+    console.error("  Usage: nemoclaw <sandbox> channels remove <channel> [--dry-run]");
+    console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
+    process.exit(1);
+  }
+
+  const channel = getChannelDef(channelArg);
+  if (!channel) {
+    console.error(`  Unknown channel '${channelArg}'.`);
+    console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
+    process.exit(1);
+  }
+
+  if (dryRun) {
+    console.log(`  --dry-run: would remove channel '${channelArg}' for '${sandboxName}'.`);
+    return;
+  }
+
+  clearChannelTokens(channel);
+  console.log(`  ${G}✓${R} Cleared stored ${channelArg} credentials.`);
+  await promptAndRebuild(sandboxName, `remove '${channelArg}'`);
+}
+
 /**
  * Install or update a local skill directory into a live sandbox and perform
  * any agent-specific post-install refresh needed for the new content to load.
@@ -2528,6 +2649,11 @@ function help() {
     nemoclaw <name> policy-remove [preset] Remove an applied policy preset ${D}(--yes, --dry-run)${R}
     nemoclaw <name> policy-list      List presets ${D}(● = applied)${R}
 
+  ${G}Messaging Channels:${R}
+    nemoclaw <name> channels list            List supported messaging channels
+    nemoclaw <name> channels add <channel>   Save credentials and rebuild ${D}(telegram|discord|slack)${R}
+    nemoclaw <name> channels remove <channel> Clear credentials and rebuild
+
   ${G}Compatibility Commands:${R}
     nemoclaw setup                   Deprecated alias for ${B}nemoclaw onboard${R}
     nemoclaw setup-spark             Deprecated alias for ${B}nemoclaw onboard${R}
@@ -2638,7 +2764,7 @@ const [cmd, ...args] = process.argv.slice(2);
   // command, attempt recovery — the sandbox may still be live with a stale registry.
   if (
     !registry.getSandbox(cmd) &&
-    ["connect", "skill", "shields", "config", ""].includes(args[0] || "")
+    ["connect", "skill", "shields", "config", "channels", ""].includes(args[0] || "")
   ) {
     validateName(cmd, "sandbox name");
     await recoverRegistryEntries({ requestedSandboxName: cmd });
@@ -2730,6 +2856,31 @@ const [cmd, ...args] = process.argv.slice(2);
         }
         break;
       }
+      case "channels": {
+        const channelsSub = actionArgs[0];
+        const channelsArgs = actionArgs.slice(1);
+        switch (channelsSub) {
+          case "list":
+          case undefined:
+          case "":
+            sandboxChannelsList(cmd);
+            break;
+          case "add":
+            await sandboxChannelsAdd(cmd, channelsArgs);
+            break;
+          case "remove":
+            await sandboxChannelsRemove(cmd, channelsArgs);
+            break;
+          default:
+            console.error(`  Unknown channels subcommand: ${channelsSub}`);
+            console.error("  Usage: nemoclaw <name> channels <list|add|remove> [args]");
+            console.error("    list                  List supported messaging channels");
+            console.error("    add <channel>         Store credentials and rebuild the sandbox");
+            console.error("    remove <channel>      Clear credentials and rebuild the sandbox");
+            process.exit(1);
+        }
+        break;
+      }
       case "config": {
         const configSub = actionArgs[0];
         switch (configSub) {
@@ -2773,7 +2924,7 @@ const [cmd, ...args] = process.argv.slice(2);
       default:
         console.error(`  Unknown action: ${action}`);
         console.error(
-          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, rebuild, shields, config, destroy`,
+          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, rebuild, shields, config, channels, destroy`,
         );
         process.exit(1);
     }

@@ -89,6 +89,8 @@ const sandboxCreateStream = require("./sandbox-create-stream");
 const validationRecovery = require("./validation-recovery");
 const webSearch = require("./web-search");
 
+import { listChannels } from "./sandbox-channels";
+
 /**
  * Create a temp file inside a directory with a cryptographically random name.
  * Uses fs.mkdtempSync (OS-level mkdtemp) to avoid predictable filenames that
@@ -4515,48 +4517,7 @@ async function setupInference(
 
 // ── Step 6: Messaging channels ───────────────────────────────────
 
-const MESSAGING_CHANNELS = [
-  {
-    name: "telegram",
-    envKey: "TELEGRAM_BOT_TOKEN",
-    description: "Telegram bot messaging",
-    help: "Create a bot via @BotFather on Telegram, then copy the token.",
-    label: "Telegram Bot Token",
-    userIdEnvKey: "TELEGRAM_ALLOWED_IDS",
-    userIdHelp: "Send /start to @userinfobot on Telegram to get your numeric user ID.",
-    userIdLabel: "Telegram User ID (for DM access)",
-    allowIdsMode: "dm",
-  },
-  {
-    name: "discord",
-    envKey: "DISCORD_BOT_TOKEN",
-    description: "Discord bot messaging",
-    help: "Discord Developer Portal → Applications → Bot → Reset/Copy Token.",
-    label: "Discord Bot Token",
-    serverIdEnvKey: "DISCORD_SERVER_ID",
-    serverIdHelp:
-      "Enable Developer Mode in Discord, then right-click your server and copy the Server ID.",
-    serverIdLabel: "Discord Server ID (for guild workspace access)",
-    requireMentionEnvKey: "DISCORD_REQUIRE_MENTION",
-    requireMentionHelp:
-      "Choose whether the bot should reply only when @mentioned or to all messages in this server.",
-    userIdEnvKey: "DISCORD_USER_ID",
-    userIdHelp:
-      "Optional: enable Developer Mode in Discord, then right-click your user/avatar and copy the User ID. Leave blank to allow any member of the configured server to message the bot.",
-    userIdLabel: "Discord User ID (optional guild allowlist)",
-    allowIdsMode: "guild",
-  },
-  {
-    name: "slack",
-    envKey: "SLACK_BOT_TOKEN",
-    description: "Slack bot messaging",
-    help: "Slack API → Your Apps → OAuth & Permissions → Bot User OAuth Token (xoxb-...).",
-    label: "Slack Bot Token",
-    appTokenEnvKey: "SLACK_APP_TOKEN",
-    appTokenHelp: "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
-    appTokenLabel: "Slack App Token (Socket Mode)",
-  },
-];
+const MESSAGING_CHANNELS = listChannels();
 
 // Curl exit codes that indicate a network-level failure (not a token problem).
 // 35 (TLS handshake failure) covers corporate proxies that MITM HTTPS.
@@ -4634,7 +4595,7 @@ async function setupMessagingChannels() {
   }
 
   // Single-keypress toggle selector — pre-select channels that already have tokens.
-  // Press 1/2/3 to instantly toggle a channel; press Enter to continue.
+  // Press a channel number to toggle; press Enter to continue.
   const enabled = new Set(
     MESSAGING_CHANNELS.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name),
   );
@@ -4657,7 +4618,7 @@ async function setupMessagingChannels() {
       output.write(`    [${i + 1}] ${marker} ${ch.name} — ${ch.description}${status}\n`);
     });
     output.write("\n");
-    output.write("  Press 1-3 to toggle, Enter when done: ");
+    output.write(`  Press 1-${MESSAGING_CHANNELS.length} to toggle, Enter when done: `);
   };
 
   showList();
@@ -6436,6 +6397,7 @@ module.exports = {
   setupMessagingChannels,
   setupNim,
   isInferenceRouteReady,
+  isNonInteractive,
   isOpenclawReady,
   arePolicyPresetsApplied,
   getSuggestedPolicyPresets,

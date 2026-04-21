@@ -499,6 +499,22 @@ openclaw() {
           ;;
       esac
       ;;
+    channels)
+      case "$2" in
+        list | "" | -h | --help) ;;
+        *)
+          echo "Error: 'openclaw channels $2' cannot modify channels inside the sandbox." >&2
+          echo "The sandbox config is read-only (Landlock enforced) for security." >&2
+          echo "" >&2
+          echo "To add or remove messaging channels, exit the sandbox and run:" >&2
+          echo "  nemoclaw <sandbox> channels add <telegram|discord|slack>" >&2
+          echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack>" >&2
+          echo "" >&2
+          echo "These stage the change and rebuild the sandbox to apply it." >&2
+          return 1
+          ;;
+      esac
+      ;;
     agent)
       # Block --local inside sandbox — it bypasses gateway protections and can
       # crash the container's main process, bricking the sandbox. Ref: #1632, #2016
