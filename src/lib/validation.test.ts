@@ -58,6 +58,45 @@ describe("classifyValidationFailure", () => {
     });
   });
 
+  it("classifies 400 + expired key message as credential (#1942 — Gemini)", () => {
+    // Gemini returns HTTP 400 with this exact message when the API key has expired.
+    // Must classify as "credential" so the onboard wizard prompts to re-enter the
+    // key instead of looping back to provider selection.
+    expect(
+      classifyValidationFailure({
+        httpStatus: 400,
+        message: "API key expired. Please renew the API key.",
+      }),
+    ).toEqual({
+      kind: "credential",
+      retry: "credential",
+    });
+  });
+
+  it("classifies 400 + API_KEY_INVALID message as credential (#1942 — Gemini)", () => {
+    // Gemini also uses "API_KEY_INVALID" as the status string for revoked keys.
+    expect(
+      classifyValidationFailure({
+        httpStatus: 400,
+        message: "API_KEY_INVALID: API key not valid. Please pass a valid API key.",
+      }),
+    ).toEqual({
+      kind: "credential",
+      retry: "credential",
+    });
+  });
+
+  it("classifies 400 without credential message as model (regression guard)", () => {
+    // HTTP 400 without a credential-bearing message still routes to "model"
+    // so existing gemini model-selection retry behavior stays intact.
+    expect(
+      classifyValidationFailure({ httpStatus: 400, message: "model xyz not found" }),
+    ).toEqual({
+      kind: "model",
+      retry: "model",
+    });
+  });
+
   it("classifies model-not-found message as model", () => {
     expect(classifyValidationFailure({ message: "model xyz not found" })).toEqual({
       kind: "model",
