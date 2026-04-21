@@ -86,6 +86,21 @@ describe("classifyValidationFailure", () => {
     });
   });
 
+  it("classifies bare 'API key not valid' message as credential (#1942 — Gemini .message only)", () => {
+    // When the message field is extracted without the API_KEY_INVALID status
+    // prefix, the bare wording must still classify as credential. Flagged by
+    // CodeRabbit on #2132.
+    expect(
+      classifyValidationFailure({
+        httpStatus: 400,
+        message: "API key not valid. Please pass a valid API key.",
+      }),
+    ).toEqual({
+      kind: "credential",
+      retry: "credential",
+    });
+  });
+
   it("classifies 400 without credential message as model (regression guard)", () => {
     // HTTP 400 without a credential-bearing message still routes to "model"
     // so existing gemini model-selection retry behavior stays intact.

@@ -38,7 +38,7 @@ export function classifyValidationFailure({
   // this check the onboard flow skips the key re-entry prompt and loops
   // back to provider selection. See #1942.
   if (
-    /api key expired|api[_ ]key[_ ]invalid|unauthorized|forbidden|invalid api key|invalid_auth|permission/i.test(
+    /api key (expired|not valid)|api[_ ]key[_ ]invalid|unauthorized|forbidden|invalid api key|invalid_auth|permission/i.test(
       normalized,
     )
   ) {
