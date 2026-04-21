@@ -485,6 +485,20 @@ openclaw() {
       echo "This rebuilds the sandbox with your updated settings." >&2
       return 1
       ;;
+    config)
+      case "$2" in
+        set | unset)
+          echo "Error: 'openclaw config $2' cannot modify config inside the sandbox." >&2
+          echo "The sandbox config is read-only (Landlock enforced) for security." >&2
+          echo "" >&2
+          echo "To change your configuration, exit the sandbox and run:" >&2
+          echo "  nemoclaw onboard --resume" >&2
+          echo "" >&2
+          echo "This rebuilds the sandbox with your updated settings." >&2
+          return 1
+          ;;
+      esac
+      ;;
     agent)
       # Block --local inside sandbox — it bypasses gateway protections and can
       # crash the container's main process, bricking the sandbox. Ref: #1632, #2016

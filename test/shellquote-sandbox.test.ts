@@ -21,6 +21,14 @@ describe("sandboxName command hardening in onboard.js", () => {
     expect(src).toMatch(/runFile\("bash",\s*\[path\.join\(SCRIPTS, "setup-dns-proxy\.sh"\),/);
   });
 
+  it("forwards opts to openshellArgv so openshellBinary overrides are not dropped", () => {
+    // Regression guard: runOpenshell and runCaptureOpenshell must pass opts
+    // through to openshellArgv. Without this, callers that supply
+    // { openshellBinary: customPath } silently fall back to the default binary.
+    expect(src).toMatch(/function runOpenshell\(args, opts[^)]*\)\s*\{[^}]*openshellArgv\(args,\s*opts\)/s);
+    expect(src).toMatch(/function runCaptureOpenshell\(args, opts[^)]*\)\s*\{[^}]*openshellArgv\(args,\s*opts\)/s);
+  });
+
   it("does not have raw sandboxName interpolation in run or runCapture template literals", () => {
     // Match run()/runCapture() calls that span multiple lines and contain
     // template literals, so multiline invocations are not missed.

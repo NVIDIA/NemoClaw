@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Verifies the pinned NemoClaw installer SHA-256 in k8s/nemoclaw-k8s.yaml
+# still matches the upstream script at https://www.nvidia.com/nemoclaw.sh.
+# Runs on every PR and push to main, plus a weekly scheduled check.
+
+name: installer-hash-check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  schedule:
+    # Weekly fallback in case upstream changes between PRs
+    - cron: "30 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-hash:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Verify installer hash is current
+        run: bash scripts/check-installer-hash.sh

@@ -474,6 +474,75 @@ function getAppliedPresets(sandboxName) {
   return sandbox ? sandbox.policies || [] : [];
 }
 
+/**
+ * Query the gateway for the currently loaded policy and determine which
+ * presets are actually enforced by matching network_policies entries
+ * against known preset definitions.
+ *
+ * Returns an array of preset names whose network_policies keys are all
+ * found in the gateway's loaded policy, or `null` when the gateway
+ * cannot be reached / returns an unparseable response.  Callers use
+ * `null` to distinguish "gateway unreachable" from "gateway has no
+ * matching presets" (`[]`).
+ */
+function getGatewayPresets(sandboxName) {
+  let rawPolicy = "";
+  try {
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+  } catch {
+    return null;
+  }
+
+  const currentPolicy = parseCurrentPolicy(rawPolicy);
+  if (!currentPolicy) return null;
+
+  let parsed;
+  try {
+    parsed = YAML.parse(currentPolicy);
+  } catch {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== "object") return null;
+
+  // Gateway returned valid YAML but has no network_policies section —
+  // this is a reachable gateway with an empty/default policy.
+  const gatewayPolicies = parsed.network_policies;
+  if (!gatewayPolicies || typeof gatewayPolicies !== "object" || Array.isArray(gatewayPolicies)) {
+    return [];
+  }
+
+  const gatewayPolicyNames = new Set(Object.keys(gatewayPolicies));
+  const matched = [];
+
+  for (const preset of listPresets()) {
+    const content = loadPreset(preset.name);
+    if (!content) continue;
+    const entries = extractPresetEntries(content);
+    if (!entries) continue;
+
+    let presetPolicies;
+    try {
+      const wrapped = "network_policies:\n" + entries;
+      const presetParsed = YAML.parse(wrapped);
+      presetPolicies = presetParsed?.network_policies;
+    } catch {
+      continue;
+    }
+
+    if (!presetPolicies || typeof presetPolicies !== "object") continue;
+
+    // A preset is considered "active on gateway" if ALL of its
+    // network_policies keys exist in the gateway's loaded policy.
+    const presetKeys = Object.keys(presetPolicies);
+    if (presetKeys.length > 0 && presetKeys.every((k) => gatewayPolicyNames.has(k))) {
+      matched.push(preset.name);
+    }
+  }
+
+  return matched;
+}
+
 function selectFromList(items, { applied = [] } = {}) {
   return new Promise((resolve) => {
     process.stderr.write("\n  Available presets:\n");
@@ -586,6 +655,7 @@ export {
   removePreset,
   applyPermissivePolicy,
   getAppliedPresets,
+  getGatewayPresets,
   selectFromList,
   selectForRemoval,
 };

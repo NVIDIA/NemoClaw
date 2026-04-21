@@ -268,4 +268,123 @@ describe("nim", () => {
       }
     });
   });
+
+  describe("isNgcLoggedIn", () => {
+    const fs = require("fs");
+    const os = require("os");
+
+    function mockDockerConfig(config: string | null) {
+      const origReadFileSync = fs.readFileSync;
+      const origHomedir = os.homedir;
+      os.homedir = () => "/mock-home";
+      if (config === null) {
+        fs.readFileSync = () => { throw new Error("ENOENT"); };
+      } else {
+        fs.readFileSync = (p: string, ...args: unknown[]) => {
+          if (typeof p === "string" && p.includes(".docker/config.json")) return config;
+          return origReadFileSync(p, ...args);
+        };
+      }
+      return () => {
+        fs.readFileSync = origReadFileSync;
+        os.homedir = origHomedir;
+      };
+    }
+
+    it("returns true when credHelpers has nvcr.io", () => {
+      const restore = mockDockerConfig(JSON.stringify({ credHelpers: { "nvcr.io": "secretservice" } }));
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(true);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns true when auths has nvcr.io with auth field", () => {
+      const restore = mockDockerConfig(JSON.stringify({ auths: { "nvcr.io": { auth: "dXNlcjpwYXNz" } } }));
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(true);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns true when auths has https://nvcr.io with auth field", () => {
+      const restore = mockDockerConfig(
+        JSON.stringify({ auths: { "https://nvcr.io": { auth: "dXNlcjpwYXNz" } } }),
+      );
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(true);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when auths has nvcr.io but empty entry", () => {
+      const restore = mockDockerConfig(JSON.stringify({ auths: { "nvcr.io": {} } }));
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when config file is missing", () => {
+      const restore = mockDockerConfig(null);
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when config has malformed JSON", () => {
+      const restore = mockDockerConfig("not json");
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when auths is empty and no credHelpers", () => {
+      const restore = mockDockerConfig(JSON.stringify({ auths: {} }));
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns true when empty nvcr.io marker exists and credsStore is set (Docker Desktop)", () => {
+      const restore = mockDockerConfig(
+        JSON.stringify({ credsStore: "desktop", auths: { "nvcr.io": {} } }),
+      );
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(true);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when credsStore is set but no nvcr.io marker (not logged in)", () => {
+      const restore = mockDockerConfig(
+        JSON.stringify({ credsStore: "desktop", auths: {} }),
+      );
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when empty nvcr.io marker exists but no credsStore", () => {
+      const restore = mockDockerConfig(JSON.stringify({ auths: { "nvcr.io": {} } }));
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+  });
 });

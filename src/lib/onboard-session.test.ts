@@ -122,6 +122,29 @@ describe("onboard session", () => {
     expect(loaded.metadata.token).toBeUndefined();
   });
 
+  it("persists messagingChannels across save/load roundtrips", () => {
+    const created = session.createSession();
+    created.messagingChannels = ["telegram", "slack"];
+    session.saveSession(created);
+
+    const loaded = session.loadSession();
+    expect(loaded.messagingChannels).toEqual(["telegram", "slack"]);
+  });
+
+  it("filters non-string entries out of persisted messagingChannels", () => {
+    const created = session.createSession();
+    created.messagingChannels = ["telegram", 42, null, "discord"];
+    session.saveSession(created);
+
+    const loaded = session.loadSession();
+    expect(loaded.messagingChannels).toEqual(["telegram", "discord"]);
+  });
+
+  it("defaults messagingChannels to null for fresh sessions", () => {
+    const fresh = session.createSession();
+    expect(fresh.messagingChannels).toBeNull();
+  });
+
   it("persists and clears web search config through safe session updates", () => {
     session.saveSession(session.createSession());
     session.markStepComplete("provider_selection", {
@@ -147,6 +170,17 @@ describe("onboard session", () => {
     const loaded = session.loadSession();
     expect(loaded.metadata.gatewayName).toBe("nemoclaw");
     expect(loaded.metadata.token).toBeUndefined();
+  });
+
+  it("drops non-string gatewayName during normalization", () => {
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({ version: 1, metadata: { gatewayName: 123 } }),
+    );
+    const loaded = session.loadSession();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.metadata.gatewayName).toBe("nemoclaw");
   });
 
   it("returns null for corrupt session data", () => {
@@ -323,6 +357,20 @@ describe("onboard session", () => {
     session.markStepFailed("provider_selection", "Bearer abcdefghijklmnopqrstuvwxyz");
     const summary = session.summarizeForDebug();
 
+    expect(summary.failure.message).toContain("Bearer <REDACTED>");
+    expect(summary.failure.message).not.toContain("abcdefghijklmnopqrstuvwxyz");
+  });
+
+  it("re-sanitizes in-memory failures in debug summaries", () => {
+    const rawSession = session.createSession({
+      failure: {
+        step: "provider_selection",
+        message: "Bearer abcdefghijklmnopqrstuvwxyz",
+        recordedAt: "2026-04-01T00:00:00.000Z",
+      },
+    });
+
+    const summary = session.summarizeForDebug(rawSession);
     expect(summary.failure.message).toContain("Bearer <REDACTED>");
     expect(summary.failure.message).not.toContain("abcdefghijklmnopqrstuvwxyz");
   });

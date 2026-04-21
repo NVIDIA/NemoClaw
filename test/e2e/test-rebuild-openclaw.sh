@@ -8,11 +8,13 @@
 #   2. Build a base image with an OLDER OpenClaw version (2026.3.11)
 #   3. Create a sandbox from that old image via openshell directly
 #   4. Write marker files into workspace state dirs
+#   4.5 Apply policy presets (npm, pypi) and verify they are active (#1952)
 #   5. Restore the current base image
 #   6. Run `nemoclaw <name> rebuild --yes`
 #   7. Verify marker files survived the rebuild
 #   8. Verify the sandbox now reports the CURRENT version
 #   9. Verify no credentials leaked into the local backup
+#   10. Verify policy presets survived the rebuild (#1952)
 #
 # Prerequisites:
 #   - Docker running
@@ -177,7 +179,7 @@ reg = {'sandboxes': {'${SANDBOX_NAME}': {
     'model': 'nvidia/nemotron-3-super-120b-a12b',
     'provider': 'nvidia-prod',
     'gpuEnabled': False,
-    'policies': [],
+    'policies': ['npm', 'pypi'],
     'policyTier': None,
     'agent': None,
     'agentVersion': '${OLD_OPENCLAW_VERSION}'
@@ -185,7 +187,10 @@ reg = {'sandboxes': {'${SANDBOX_NAME}': {
 with open('${REGISTRY_FILE}', 'w') as f:
     json.dump(reg, f, indent=2)
 
-# Update session to point at this sandbox
+# Update session to point at this sandbox.
+# Mark preflight and gateway steps as complete so that rebuild's
+# onboard --resume skips them (the gateway is already running and
+# port 8080 is legitimately in use).
 sess_path = '${SESSION_FILE}'
 try:
     with open(sess_path) as f:
@@ -194,12 +199,98 @@ except Exception:
     sess = {}
 sess['sandboxName'] = '${SANDBOX_NAME}'
 sess['status'] = 'complete'
+sess['resumable'] = True
+sess['lastCompletedStep'] = 'gateway'
+sess['failure'] = None
+now = __import__('datetime').datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.000Z')
+complete = {'status': 'complete', 'startedAt': now, 'completedAt': now, 'error': None}
+pending  = {'status': 'pending',  'startedAt': None, 'completedAt': None, 'error': None}
+sess['steps'] = {
+    'preflight': complete,
+    'gateway': complete,
+    'sandbox': pending,
+    'provider_selection': pending,
+    'inference': pending,
+    'openclaw': pending,
+    'agent_setup': pending,
+    'policies': pending,
+}
 with open(sess_path, 'w') as f:
     json.dump(sess, f, indent=2)
 print('Registry and session updated')
 "
 
 pass "Markers written, sandbox registered"
+
+# ── Phase 4.5: Apply policy presets (#1952) ─────────────────────────
+info "Phase 4.5: Applying policy presets (npm, pypi) to sandbox..."
+
+# Apply each preset to the live gateway policy engine. Resolve the NemoClaw
+# module directory from the `nemoclaw` binary on PATH (portable across
+# install methods: npm link, npm -g, source checkout).
+NEMOCLAW_BIN="$(command -v nemoclaw)"
+# nemoclaw is a shell wrapper; extract the real node binary path from it
+# to find the node_modules root.
+NEMOCLAW_MODULE_DIR="$(node -e "
+  try { console.log(require.resolve('nemoclaw/package.json').replace('/package.json','')); }
+  catch(e) {
+    // Fallback: walk up from the nemoclaw bin wrapper
+    const fs = require('fs'), path = require('path');
+    const wrapper = fs.readFileSync('${NEMOCLAW_BIN}', 'utf-8');
+    const m = wrapper.match(/exec\\s+\"?([^\"\\s]+node)\"?/);
+    if (m) {
+      const nodeDir = path.dirname(path.dirname(m[1]));
+      const candidate = path.join(nodeDir, 'lib/node_modules/nemoclaw');
+      if (fs.existsSync(path.join(candidate, 'dist/lib/policies.js'))) {
+        console.log(candidate);
+        process.exit(0);
+      }
+    }
+    // Last resort: relative to the repo root
+    const repoCandidate = '${REPO_ROOT}';
+    if (fs.existsSync(path.join(repoCandidate, 'dist/lib/policies.js'))) {
+      console.log(repoCandidate);
+      process.exit(0);
+    }
+    console.error('Cannot locate nemoclaw module directory');
+    process.exit(1);
+  }
+" 2>/dev/null)" || fail "Cannot locate nemoclaw module directory"
+diag "NemoClaw module dir: ${NEMOCLAW_MODULE_DIR}"
+
+for preset in npm pypi; do
+  info "  Applying preset: ${preset}"
+  node -e "
+    const policies = require('${NEMOCLAW_MODULE_DIR}/dist/lib/policies.js');
+    const ok = policies.applyPreset('${SANDBOX_NAME}', '${preset}');
+    if (!ok) { console.error('applyPreset returned false for ${preset}'); process.exit(1); }
+  " || fail "Failed to apply preset: ${preset}"
+done
+
+# Verify presets are in the live gateway policy
+PRE_REBUILD_POLICY=$(openshell policy get --full "${SANDBOX_NAME}" 2>&1 || true)
+if echo "${PRE_REBUILD_POLICY}" | grep -qi "npm\|registry.npmjs.org"; then
+  pass "npm preset active in gateway policy"
+else
+  fail "npm preset not found in live gateway policy before rebuild"
+fi
+if echo "${PRE_REBUILD_POLICY}" | grep -qi "pypi\|pypi.org"; then
+  pass "pypi preset active in gateway policy"
+else
+  fail "pypi preset not found in live gateway policy before rebuild"
+fi
+
+# Verify presets in registry
+PRE_REBUILD_PRESETS=$(python3 -c "
+import json
+with open('${REGISTRY_FILE}') as f:
+    data = json.load(f)
+sb = data.get('sandboxes', {}).get('${SANDBOX_NAME}', {})
+print(','.join(sb.get('policies', [])))
+" 2>/dev/null || echo "error")
+diag "Pre-rebuild registry policies: ${PRE_REBUILD_PRESETS}"
+
+pass "Policy presets applied and verified"
 
 # Diagnostic dump before rebuild
 diag "Pre-rebuild state:"
@@ -287,6 +378,65 @@ if [ -d "$BACKUP_DIR" ]; then
   fi
 else
   fail "Backup directory missing: $BACKUP_DIR"
+fi
+
+# ── Phase 7b: Verify policy presets survived rebuild (#1952) ────────
+info "Verifying policy presets survived rebuild..."
+
+# Check registry still has the presets
+POST_REBUILD_PRESETS=$(python3 -c "
+import json
+with open('${REGISTRY_FILE}') as f:
+    data = json.load(f)
+sb = data.get('sandboxes', {}).get('${SANDBOX_NAME}', {})
+print(','.join(sb.get('policies', [])))
+" 2>/dev/null || echo "error")
+diag "Post-rebuild registry policies: ${POST_REBUILD_PRESETS}"
+
+if echo "${POST_REBUILD_PRESETS}" | grep -q "npm"; then
+  pass "npm preset survived rebuild (in registry)"
+else
+  fail "npm preset LOST after rebuild — issue #1952"
+fi
+if echo "${POST_REBUILD_PRESETS}" | grep -q "pypi"; then
+  pass "pypi preset survived rebuild (in registry)"
+else
+  fail "pypi preset LOST after rebuild — issue #1952"
+fi
+
+# Check the live gateway policy still has the preset endpoints
+POST_REBUILD_POLICY=$(openshell policy get --full "${SANDBOX_NAME}" 2>&1 || true)
+if echo "${POST_REBUILD_POLICY}" | grep -qi "npm\|registry.npmjs.org"; then
+  pass "npm preset active in gateway policy after rebuild"
+else
+  fail "npm preset not in live gateway policy after rebuild — issue #1952"
+fi
+if echo "${POST_REBUILD_POLICY}" | grep -qi "pypi\|pypi.org"; then
+  pass "pypi preset active in gateway policy after rebuild"
+else
+  fail "pypi preset not in live gateway policy after rebuild — issue #1952"
+fi
+
+# Check backup manifest recorded the presets
+if [ -d "$BACKUP_DIR" ]; then
+  MANIFEST_PRESETS=$(find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
+    | sort -r | head -1 \
+    | xargs -I{} python3 -c "
+import json, sys
+try:
+    with open('{}/rebuild-manifest.json') as f:
+        m = json.load(f)
+    presets = m.get('policyPresets', [])
+    print(','.join(presets) if presets else 'NONE')
+except Exception as e:
+    print('ERROR: ' + str(e))
+" 2>/dev/null || echo "error")
+  if echo "${MANIFEST_PRESETS}" | grep -q "npm" \
+    && echo "${MANIFEST_PRESETS}" | grep -q "pypi"; then
+    pass "Backup manifest contains policyPresets: ${MANIFEST_PRESETS}"
+  else
+    fail "Backup manifest missing expected policyPresets (npm,pypi): got '${MANIFEST_PRESETS}' — issue #1952"
+  fi
 fi
 
 # ── Cleanup ─────────────────────────────────────────────────────────
