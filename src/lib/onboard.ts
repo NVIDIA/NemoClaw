@@ -3929,11 +3929,8 @@ function getSuggestedPolicyPresets({ enabledChannels = null, webSearchConfig = n
 
   if (
     getCredential("HEYGEN_API_KEY") ||
-    process.env.HEYGEN_API_KEY ||
     getCredential("HEYGEN_ACCESS_TOKEN") ||
-    process.env.HEYGEN_ACCESS_TOKEN ||
-    getCredential("HEYGEN_REFRESH_TOKEN") ||
-    process.env.HEYGEN_REFRESH_TOKEN
+    getCredential("HEYGEN_REFRESH_TOKEN")
   ) {
     suggestions.push("heygen");
     if (process.stdout.isTTY && !isNonInteractive() && process.env.CI !== "true") {

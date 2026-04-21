@@ -49,3 +49,4 @@ network_policies:
           - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
