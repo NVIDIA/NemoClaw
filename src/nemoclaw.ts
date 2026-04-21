@@ -44,7 +44,7 @@ const policies = require("./lib/policies");
 const shields = require("./lib/shields");
 const sandboxConfig = require("./lib/sandbox-config");
 const { parseGatewayInference } = require("./lib/inference-config");
-const { probeLocalProviderHealth } = require("./lib/local-inference");
+const { probeProviderHealth } = require("./lib/inference-health");
 const { getVersion } = require("./lib/version");
 const onboardSession = require("./lib/onboard-session");
 const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
@@ -1282,11 +1282,13 @@ async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false 
     !["1", "true"].includes(String(process.env.NEMOCLAW_NO_CONNECT_HINT || ""))
   ) {
     console.log("");
+    const agentName = sb?.agent || "openclaw";
+    const agentCmd = agentName === "openclaw" ? "openclaw tui" : agentName;
     console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
     console.log(
-      `  ${D}Inside the sandbox, run \`openclaw tui\` to start chatting with the agent.${R}`,
+      `  ${D}Inside the sandbox, run \`${agentCmd}\` to start chatting with the agent.${R}`,
     );
-    console.log(`  ${D}Type \`exit\` (or Ctrl-D) to return to the host shell.${R}`);
+    console.log(`  ${D}Type \`/exit\` to leave the chat, then \`exit\` to return to the host shell.${R}`);
     console.log("");
   }
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
@@ -1305,19 +1307,25 @@ async function sandboxStatus(sandboxName) {
   );
   const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
   const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
-  const localInferenceHealth =
-    typeof currentProvider === "string" ? probeLocalProviderHealth(currentProvider) : null;
+  const inferenceHealth =
+    typeof currentProvider === "string" ? probeProviderHealth(currentProvider) : null;
   if (sb) {
     console.log("");
     console.log(`  Sandbox: ${sb.name}`);
     console.log(`    Model:    ${currentModel}`);
     console.log(`    Provider: ${currentProvider}`);
-    if (localInferenceHealth) {
-      console.log(
-        `    Inference: ${localInferenceHealth.ok ? `${G}healthy${R}` : `${_RD}unreachable${R}`} (${localInferenceHealth.endpoint})`,
-      );
-      if (!localInferenceHealth.ok) {
-        console.log(`      ${localInferenceHealth.detail}`);
+    if (inferenceHealth) {
+      if (!inferenceHealth.probed) {
+        console.log(`    Inference: ${D}not probed${R} (${inferenceHealth.detail})`);
+      } else if (inferenceHealth.ok) {
+        console.log(
+          `    Inference: ${G}healthy${R} (${inferenceHealth.endpoint})`,
+        );
+      } else {
+        console.log(
+          `    Inference: ${_RD}unreachable${R} (${inferenceHealth.endpoint})`,
+        );
+        console.log(`      ${inferenceHealth.detail}`);
       }
     }
     console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);

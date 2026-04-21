@@ -156,10 +156,11 @@ describe("policies", () => {
       }
     });
 
-    it("local-inference preset targets host.openshell.internal on Ollama and vLLM ports", () => {
+    it("local-inference preset targets host.openshell.internal on Ollama, proxy, and vLLM ports", () => {
       const content = policies.loadPreset("local-inference");
       expect(content).toContain("host.openshell.internal");
       expect(content).toContain("port: 11434");
+      expect(content).toContain("port: 11435");
       expect(content).toContain("port: 8000");
     });
 
@@ -606,12 +607,26 @@ describe("policies", () => {
       }
     });
 
-    it("messaging REST presets do not pin deprecated tls termination", () => {
-      for (const name of ["discord", "slack", "telegram"]) {
-        const content = policies.loadPreset(name);
+    it("messaging WebSocket presets keep tls: skip on gateway endpoints", () => {
+      const cases = [
+        { preset: "discord", pattern: /host:\s*gateway\.discord\.gg[\s\S]*?tls:\s*skip/ },
+        { preset: "slack", pattern: /host:\s*wss-primary\.slack\.com[\s\S]*?tls:\s*skip/ },
+        { preset: "slack", pattern: /host:\s*wss-backup\.slack\.com[\s\S]*?tls:\s*skip/ },
+      ];
+
+      for (const { preset, pattern } of cases) {
+        const content = policies.loadPreset(preset);
         expect(content).toBeTruthy();
-        expect(content.includes("tls: terminate")).toBe(false);
+        expect(content).toMatch(pattern);
       }
+    });
+
+    it("telegram REST preset uses tls: terminate for L7 proxy", () => {
+      const content = policies.loadPreset("telegram");
+      expect(content).toBeTruthy();
+      expect(content).toMatch(
+        /host:\s*api\.telegram\.org[\s\S]*?protocol:\s*rest[\s\S]*?tls:\s*terminate/,
+      );
     });
 
     it("pypi preset allows HEAD for pip lazy-wheel metadata checks", () => {

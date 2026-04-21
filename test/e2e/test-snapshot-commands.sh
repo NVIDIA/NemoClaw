@@ -127,7 +127,7 @@ else
 fi
 
 # Extract the timestamp from list output for targeted restore later
-SNAPSHOT_TIMESTAMP=$(echo "$LIST_OUTPUT" | grep -oE "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}" | head -1 || true)
+SNAPSHOT_TIMESTAMP=$(echo "$LIST_OUTPUT" | grep -oE "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]+Z" | head -1 || true)
 [ -n "${SNAPSHOT_TIMESTAMP}" ] || fail "Failed to parse a snapshot timestamp from list output: ${LIST_OUTPUT}"
 info "Snapshot timestamp: ${SNAPSHOT_TIMESTAMP}"
 

@@ -188,14 +188,23 @@ function parseDockerInfoSummary(info = ""): string | undefined {
 function readDockerDefaultCgroupnsMode(
   readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
 ): "host" | "private" | "unknown" {
-  try {
-    const raw = readFileImpl("/etc/docker/daemon.json", "utf-8");
-    const parsed = JSON.parse(raw) as { ["default-cgroupns-mode"]?: unknown };
-    const mode = parsed["default-cgroupns-mode"];
-    return mode === "host" || mode === "private" ? mode : "unknown";
-  } catch {
-    return "unknown";
+  const paths = [
+    "/etc/docker/daemon.json",
+    "/home/rootless/.config/docker/daemon.json",
+  ];
+  for (const filePath of paths) {
+    try {
+      const raw = readFileImpl(filePath, "utf-8");
+      const parsed = JSON.parse(raw) as {
+        ["default-cgroupns-mode"]?: unknown;
+      };
+      const mode = parsed["default-cgroupns-mode"];
+      if (mode === "host" || mode === "private") return mode;
+    } catch {
+      // Try next path
+    }
   }
+  return "unknown";
 }
 
 function isHeadlessLikely(env: NodeJS.ProcessEnv): boolean {
