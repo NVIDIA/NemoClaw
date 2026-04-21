@@ -78,7 +78,7 @@ onboard_sandbox() {
     return 1
   fi
 
-  if ! nemoclaw list 2>/dev/null | grep -q "$name"; then
+  if ! nemoclaw list 2>/dev/null | grep -Fqw -- "$name"; then
     log "  [onboard_sandbox] Sandbox '$name' not found in nemoclaw list after onboard"
     return 1
   fi
@@ -136,7 +136,7 @@ install_nemoclaw() {
 
   local install_sandbox
   install_sandbox="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
-  if nemoclaw list 2>/dev/null | grep -q "$install_sandbox"; then
+  if nemoclaw list 2>/dev/null | grep -Fqw -- "$install_sandbox"; then
     log "Destroying install sandbox '$install_sandbox'..."
     nemoclaw "$install_sandbox" destroy --yes 2>/dev/null || true
   fi
@@ -167,7 +167,7 @@ preflight() {
     rm -f "$HOME/.nemoclaw/onboard.lock"
   fi
 
-  if nemoclaw list 2>/dev/null | grep -q "$SANDBOX"; then
+  if nemoclaw list 2>/dev/null | grep -Fqw -- "$SANDBOX"; then
     log "Cleaning up leftover sandbox: $SANDBOX"
     nemoclaw "$SANDBOX" destroy --yes 2>/dev/null || true
   fi
@@ -284,7 +284,7 @@ teardown() {
   log ""
   log "=== Teardown ==="
   openshell forward stop "$DASHBOARD_PORT" 2>/dev/null || true
-  if nemoclaw list 2>/dev/null | grep -q "$SANDBOX"; then
+  if nemoclaw list 2>/dev/null | grep -Fqw -- "$SANDBOX"; then
     log "Destroying sandbox '$SANDBOX'..."
     nemoclaw "$SANDBOX" destroy --yes 2>/dev/null || true
   fi
