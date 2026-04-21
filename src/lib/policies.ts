@@ -9,16 +9,11 @@ const path = require("path");
 const os = require("os");
 const readline = require("readline");
 const YAML = require("yaml");
-const { ROOT, run, runCapture, shellQuote } = require("./runner");
+const { ROOT, run, runCapture } = require("./runner");
 const registry = require("./registry");
 const { loadAgent } = require("./agent-defs");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
-function getOpenshellCommand() {
-  const binary = process.env.NEMOCLAW_OPENSHELL_BIN;
-  if (!binary) return "openshell";
-  return shellQuote(binary);
-}
 
 function listPresets() {
   if (!fs.existsSync(PRESETS_DIR)) return [];
@@ -99,17 +94,19 @@ function parseCurrentPolicy(raw) {
 }
 
 /**
- * Build the openshell policy set command with properly quoted arguments.
+ * Build the openshell policy set command as an argv array.
  */
 function buildPolicySetCommand(policyFile, sandboxName) {
-  return `${getOpenshellCommand()} policy set --policy ${shellQuote(policyFile)} --wait ${shellQuote(sandboxName)}`;
+  const binary = process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
+  return [binary, "policy", "set", "--policy", policyFile, "--wait", sandboxName];
 }
 
 /**
- * Build the openshell policy get command with properly quoted arguments.
+ * Build the openshell policy get command as an argv array.
  */
 function buildPolicyGetCommand(sandboxName) {
-  return `${getOpenshellCommand()} policy get --full ${shellQuote(sandboxName)} 2>/dev/null`;
+  const binary = process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
+  return [binary, "policy", "get", "--full", sandboxName];
 }
 
 /**
@@ -477,6 +474,75 @@ function getAppliedPresets(sandboxName) {
   return sandbox ? sandbox.policies || [] : [];
 }
 
+/**
+ * Query the gateway for the currently loaded policy and determine which
+ * presets are actually enforced by matching network_policies entries
+ * against known preset definitions.
+ *
+ * Returns an array of preset names whose network_policies keys are all
+ * found in the gateway's loaded policy, or `null` when the gateway
+ * cannot be reached / returns an unparseable response.  Callers use
+ * `null` to distinguish "gateway unreachable" from "gateway has no
+ * matching presets" (`[]`).
+ */
+function getGatewayPresets(sandboxName) {
+  let rawPolicy = "";
+  try {
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+  } catch {
+    return null;
+  }
+
+  const currentPolicy = parseCurrentPolicy(rawPolicy);
+  if (!currentPolicy) return null;
+
+  let parsed;
+  try {
+    parsed = YAML.parse(currentPolicy);
+  } catch {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== "object") return null;
+
+  // Gateway returned valid YAML but has no network_policies section —
+  // this is a reachable gateway with an empty/default policy.
+  const gatewayPolicies = parsed.network_policies;
+  if (!gatewayPolicies || typeof gatewayPolicies !== "object" || Array.isArray(gatewayPolicies)) {
+    return [];
+  }
+
+  const gatewayPolicyNames = new Set(Object.keys(gatewayPolicies));
+  const matched = [];
+
+  for (const preset of listPresets()) {
+    const content = loadPreset(preset.name);
+    if (!content) continue;
+    const entries = extractPresetEntries(content);
+    if (!entries) continue;
+
+    let presetPolicies;
+    try {
+      const wrapped = "network_policies:\n" + entries;
+      const presetParsed = YAML.parse(wrapped);
+      presetPolicies = presetParsed?.network_policies;
+    } catch {
+      continue;
+    }
+
+    if (!presetPolicies || typeof presetPolicies !== "object") continue;
+
+    // A preset is considered "active on gateway" if ALL of its
+    // network_policies keys exist in the gateway's loaded policy.
+    const presetKeys = Object.keys(presetPolicies);
+    if (presetKeys.length > 0 && presetKeys.every((k) => gatewayPolicyNames.has(k))) {
+      matched.push(preset.name);
+    }
+  }
+
+  return matched;
+}
+
 function selectFromList(items, { applied = [] } = {}) {
   return new Promise((resolve) => {
     process.stderr.write("\n  Available presets:\n");
@@ -589,6 +655,7 @@ export {
   removePreset,
   applyPermissivePolicy,
   getAppliedPresets,
+  getGatewayPresets,
   selectFromList,
   selectForRemoval,
 };

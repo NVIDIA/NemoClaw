@@ -9,6 +9,13 @@ export interface SandboxEntry {
   provider?: string | null;
   gpuEnabled?: boolean;
   policies?: string[] | null;
+  messagingChannels?: string[] | null;
+  agent?: string | null;
+}
+
+export interface MessagingBridgeHealth {
+  channel: string;
+  conflicts: number;
 }
 
 export interface RecoveryResult {
@@ -22,13 +29,26 @@ export interface ListSandboxesCommandDeps {
   recoverRegistryEntries: () => Promise<RecoveryResult>;
   getLiveInference: () => GatewayInference | null;
   loadLastSession: () => { sandboxName?: string | null } | null;
+  /** Detect active SSH sessions for a sandbox. Returns session count or null if unavailable. */
+  getActiveSessionCount?: (sandboxName: string) => number | null;
   log?: (message?: string) => void;
+}
+
+export interface MessagingOverlap {
+  channel: string;
+  sandboxes: [string, string];
 }
 
 export interface ShowStatusCommandDeps {
   listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox?: string | null };
   getLiveInference: () => GatewayInference | null;
   showServiceStatus: (options: { sandboxName?: string }) => void;
+  checkMessagingBridgeHealth?: (
+    sandboxName: string,
+    channels: string[],
+  ) => MessagingBridgeHealth[];
+  backfillAndFindOverlaps?: () => MessagingOverlap[];
+  readGatewayLog?: (sandboxName: string) => string | null;
   log?: (message?: string) => void;
 }
 
@@ -74,7 +94,9 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
     const provider = sb.provider || "unknown";
     const gpu = sb.gpuEnabled ? "GPU" : "CPU";
     const presets = sb.policies && sb.policies.length > 0 ? sb.policies.join(", ") : "none";
-    log(`    ${sb.name}${def}`);
+    const sessionCount = deps.getActiveSessionCount ? deps.getActiveSessionCount(sb.name) : null;
+    const connected = sessionCount !== null && sessionCount > 0 ? " ●" : "";
+    log(`    ${sb.name}${def}${connected}`);
     log(`      model: ${model}  provider: ${provider}  ${gpu}  policies: ${presets}`);
   }
   log("");
@@ -99,4 +121,54 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
   }
 
   deps.showServiceStatus({ sandboxName: defaultSandbox || undefined });
+
+  if (deps.backfillAndFindOverlaps) {
+    const overlaps = deps.backfillAndFindOverlaps();
+    if (overlaps.length > 0) {
+      log("");
+      for (const { channel, sandboxes: pair } of overlaps) {
+        log(
+          `  ⚠ ${channel} is enabled on both '${pair[0]}' and '${pair[1]}'. Bot tokens only allow one sandbox to poll — both bridges will fail.`,
+        );
+      }
+      log(
+        "    Run `nemoclaw <sandbox> destroy` on whichever sandbox should stop polling, or rerun onboarding with the channel disabled.",
+      );
+    }
+  }
+
+  if (deps.checkMessagingBridgeHealth && defaultSandbox) {
+    // Re-fetch: backfillAndFindOverlaps above may have populated
+    // messagingChannels for the default sandbox on first run after upgrade,
+    // and the original `sandboxes` snapshot is stale.
+    const refreshed = deps.listSandboxes().sandboxes;
+    const defaultEntry = refreshed.find((sb) => sb.name === defaultSandbox);
+    const channels = defaultEntry?.messagingChannels;
+    if (Array.isArray(channels) && channels.length > 0) {
+      const degraded = deps.checkMessagingBridgeHealth(defaultSandbox, channels);
+      if (degraded.length > 0) {
+        log("");
+        for (const { channel, conflicts } of degraded) {
+          log(
+            `  ⚠ ${channel} bridge: degraded (${conflicts} conflict errors in /tmp/gateway.log)`,
+          );
+        }
+        log(
+          "    Another sandbox is likely polling with the same bot token. See docs/reference/troubleshooting.md.",
+        );
+
+        // Surface gateway log tail for Hermes sandboxes when messaging is degraded.
+        if (deps.readGatewayLog && defaultEntry?.agent === "hermes") {
+          const logTail = deps.readGatewayLog(defaultSandbox);
+          if (logTail) {
+            log("");
+            log("  Messaging gateway log (last 10 lines):");
+            for (const line of logTail.split("\n")) {
+              log(`    ${line}`);
+            }
+          }
+        }
+      }
+    }
+  }
 }

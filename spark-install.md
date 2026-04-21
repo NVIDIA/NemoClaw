@@ -54,7 +54,7 @@ Use this to run inference locally on the DGX Spark's GPU instead of routing to c
 ### 1. Verify the NVIDIA Container Runtime
 
 ```bash
-docker run --rm --runtime=nvidia --gpus all ubuntu nvidia-smi
+docker run --rm --runtime=nvidia --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi
 ```
 
 If this fails, configure the NVIDIA runtime and restart Docker:

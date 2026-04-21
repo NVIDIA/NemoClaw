@@ -16,12 +16,16 @@ export const SESSION_VERSION = 1;
 export const SESSION_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
-const VALID_STEP_STATES = new Set(["pending", "in_progress", "complete", "failed", "skipped"]);
+const STEP_STATES = ["pending", "in_progress", "complete", "failed", "skipped"] as const;
+const VALID_STEP_STATES = new Set<string>(STEP_STATES);
+
+type UnknownRecord = { [key: string]: unknown };
+type StepStatus = (typeof STEP_STATES)[number];
 
 // ── Types ────────────────────────────────────────────────────────
 
 export interface StepState {
-  status: string;
+  status: StepStatus;
   startedAt: string | null;
   completedAt: string | null;
   error: string | null;
@@ -59,6 +63,7 @@ export interface Session {
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
   policyPresets: string[] | null;
+  messagingChannels: string[] | null;
   metadata: SessionMetadata;
   steps: Record<string, StepState>;
 }
@@ -88,7 +93,30 @@ export interface SessionUpdates {
   nimContainer?: string;
   webSearchConfig?: WebSearchConfig | null;
   policyPresets?: string[];
+  messagingChannels?: string[];
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
+}
+
+export interface DebugSessionSummary {
+  version: number;
+  sessionId: string;
+  status: string;
+  resumable: boolean;
+  mode: string;
+  startedAt: string;
+  updatedAt: string;
+  sandboxName: string | null;
+  provider: string | null;
+  model: string | null;
+  endpointUrl: string | null;
+  credentialEnv: string | null;
+  preferredInferenceApi: string | null;
+  nimContainer: string | null;
+  policyPresets: string[] | null;
+  lastStepStarted: string | null;
+  lastCompletedStep: string | null;
+  failure: SessionFailure | null;
+  steps: Record<string, StepState>;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -118,8 +146,63 @@ function defaultSteps(): Record<string, StepState> {
   };
 }
 
-export function isObject(value: unknown): value is Record<string, unknown> {
+export function isObject(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function readStringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+function readStepStatus(value: unknown): StepStatus | null {
+  if (value === "pending") return value;
+  if (value === "in_progress") return value;
+  if (value === "complete") return value;
+  if (value === "failed") return value;
+  if (value === "skipped") return value;
+  return null;
+}
+
+function parseWebSearchConfig(value: unknown): WebSearchConfig | null {
+  return isObject(value) && value.fetchEnabled === true ? { fetchEnabled: true } : null;
+}
+
+function parseSessionMetadata(value: unknown): SessionMetadata | undefined {
+  if (!isObject(value)) return undefined;
+  return {
+    gatewayName: readString(value.gatewayName) ?? "nemoclaw",
+    fromDockerfile: readString(value.fromDockerfile),
+  };
+}
+
+function parseStepState(value: unknown): StepState | null {
+  if (!isObject(value)) return null;
+  const status = readStepStatus(value.status);
+  if (!status) return null;
+  return {
+    status,
+    startedAt: readString(value.startedAt),
+    completedAt: readString(value.completedAt),
+    error: redactSensitiveText(value.error),
+  };
+}
+
+function parseLockInfo(value: unknown): LockInfo | null {
+  if (!isObject(value) || typeof value.pid !== "number") return null;
+  return {
+    pid: value.pid,
+    startedAt: readString(value.startedAt),
+    command: readString(value.command),
+  };
 }
 
 export function redactSensitiveText(value: unknown): string | null {
@@ -140,17 +223,14 @@ export function sanitizeFailure(
   input: { step?: unknown; message?: unknown; recordedAt?: unknown } | null | undefined,
 ): SessionFailure | null {
   if (!input) return null;
-  const step = typeof input.step === "string" ? input.step : null;
+  const step = readString(input.step);
   const message = redactSensitiveText(input.message);
-  const recordedAt =
-    typeof input.recordedAt === "string" ? input.recordedAt : new Date().toISOString();
+  const recordedAt = readString(input.recordedAt) ?? new Date().toISOString();
   return step || message ? { step, message, recordedAt } : null;
 }
 
 export function validateStep(step: unknown): boolean {
-  if (!isObject(step)) return false;
-  if (!VALID_STEP_STATES.has(step.status as string)) return false;
-  return true;
+  return parseStepState(step) !== null;
 }
 
 export function redactUrl(value: unknown): string | null {
@@ -179,93 +259,70 @@ export function createSession(overrides: Partial<Session> = {}): Session {
   const now = new Date().toISOString();
   return {
     version: SESSION_VERSION,
-    sessionId: overrides.sessionId || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    sessionId: overrides.sessionId ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
     resumable: true,
     status: "in_progress",
-    mode: overrides.mode || "interactive",
-    startedAt: overrides.startedAt || now,
-    updatedAt: overrides.updatedAt || now,
-    lastStepStarted: overrides.lastStepStarted || null,
-    lastCompletedStep: overrides.lastCompletedStep || null,
-    failure: overrides.failure || null,
-    agent: overrides.agent || null,
-    sandboxName: overrides.sandboxName || null,
-    provider: overrides.provider || null,
-    model: overrides.model || null,
-    endpointUrl: overrides.endpointUrl || null,
-    credentialEnv: overrides.credentialEnv || null,
-    preferredInferenceApi: overrides.preferredInferenceApi || null,
-    nimContainer: overrides.nimContainer || null,
-    webSearchConfig:
-      overrides.webSearchConfig && overrides.webSearchConfig.fetchEnabled === true
-        ? { fetchEnabled: true }
-        : null,
-    policyPresets: Array.isArray(overrides.policyPresets)
-      ? overrides.policyPresets.filter((value) => typeof value === "string")
-      : null,
+    mode: overrides.mode ?? "interactive",
+    startedAt: overrides.startedAt ?? now,
+    updatedAt: overrides.updatedAt ?? now,
+    lastStepStarted: overrides.lastStepStarted ?? null,
+    lastCompletedStep: overrides.lastCompletedStep ?? null,
+    failure: overrides.failure ?? null,
+    agent: overrides.agent ?? null,
+    sandboxName: overrides.sandboxName ?? null,
+    provider: overrides.provider ?? null,
+    model: overrides.model ?? null,
+    endpointUrl: overrides.endpointUrl ?? null,
+    credentialEnv: overrides.credentialEnv ?? null,
+    preferredInferenceApi: overrides.preferredInferenceApi ?? null,
+    nimContainer: overrides.nimContainer ?? null,
+    webSearchConfig: parseWebSearchConfig(overrides.webSearchConfig),
+    policyPresets: readStringArray(overrides.policyPresets),
+    messagingChannels: readStringArray(overrides.messagingChannels),
     metadata: {
-      gatewayName: overrides.metadata?.gatewayName || "nemoclaw",
-      fromDockerfile: overrides.metadata?.fromDockerfile || null,
+      gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
+      fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
     },
     steps: {
       ...defaultSteps(),
-      ...(overrides.steps || {}),
+      ...(overrides.steps ?? {}),
     },
   };
 }
 
 // eslint-disable-next-line complexity
 export function normalizeSession(data: unknown): Session | null {
-  if (!isObject(data) || (data as Record<string, unknown>).version !== SESSION_VERSION) return null;
-  const d = data as Record<string, unknown>;
-  const normalized = createSession({
-    sessionId: typeof d.sessionId === "string" ? d.sessionId : undefined,
-    mode: typeof d.mode === "string" ? d.mode : undefined,
-    startedAt: typeof d.startedAt === "string" ? d.startedAt : undefined,
-    updatedAt: typeof d.updatedAt === "string" ? d.updatedAt : undefined,
-    agent: typeof d.agent === "string" ? d.agent : null,
-    sandboxName: typeof d.sandboxName === "string" ? d.sandboxName : null,
-    provider: typeof d.provider === "string" ? d.provider : null,
-    model: typeof d.model === "string" ? d.model : null,
-    endpointUrl: typeof d.endpointUrl === "string" ? redactUrl(d.endpointUrl) : null,
-    credentialEnv: typeof d.credentialEnv === "string" ? d.credentialEnv : null,
-    preferredInferenceApi:
-      typeof d.preferredInferenceApi === "string" ? d.preferredInferenceApi : null,
-    nimContainer: typeof d.nimContainer === "string" ? d.nimContainer : null,
-    webSearchConfig:
-      isObject(d.webSearchConfig) &&
-      (d.webSearchConfig as Record<string, unknown>).fetchEnabled === true
-        ? { fetchEnabled: true }
-        : null,
-    policyPresets: Array.isArray(d.policyPresets)
-      ? (d.policyPresets as unknown[]).filter((value) => typeof value === "string") as string[]
-      : null,
-    lastStepStarted: typeof d.lastStepStarted === "string" ? d.lastStepStarted : null,
-    lastCompletedStep: typeof d.lastCompletedStep === "string" ? d.lastCompletedStep : null,
-    failure: sanitizeFailure(d.failure as Record<string, unknown> | null),
-    metadata: isObject(d.metadata)
-      ? ({
-          gatewayName: (d.metadata as Record<string, unknown>).gatewayName,
-          fromDockerfile: (d.metadata as Record<string, unknown>).fromDockerfile || null,
-        } as SessionMetadata)
-      : undefined,
-  } as Partial<Session>);
-  normalized.resumable = d.resumable !== false;
-  normalized.status = typeof d.status === "string" ? d.status : normalized.status;
+  if (!isObject(data) || data.version !== SESSION_VERSION) return null;
 
-  if (isObject(d.steps)) {
-    for (const [name, step] of Object.entries(d.steps as Record<string, unknown>)) {
-      if (
-        Object.prototype.hasOwnProperty.call(normalized.steps, name) &&
-        validateStep(step)
-      ) {
-        const s = step as Record<string, unknown>;
-        normalized.steps[name] = {
-          status: s.status as string,
-          startedAt: typeof s.startedAt === "string" ? s.startedAt : null,
-          completedAt: typeof s.completedAt === "string" ? s.completedAt : null,
-          error: redactSensitiveText(s.error),
-        };
+  const normalized = createSession({
+    sessionId: readString(data.sessionId) ?? undefined,
+    mode: readString(data.mode) ?? undefined,
+    startedAt: readString(data.startedAt) ?? undefined,
+    updatedAt: readString(data.updatedAt) ?? undefined,
+    agent: readString(data.agent),
+    sandboxName: readString(data.sandboxName),
+    provider: readString(data.provider),
+    model: readString(data.model),
+    endpointUrl: typeof data.endpointUrl === "string" ? redactUrl(data.endpointUrl) : null,
+    credentialEnv: readString(data.credentialEnv),
+    preferredInferenceApi: readString(data.preferredInferenceApi),
+    nimContainer: readString(data.nimContainer),
+    webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
+    policyPresets: readStringArray(data.policyPresets),
+    messagingChannels: readStringArray(data.messagingChannels),
+    lastStepStarted: readString(data.lastStepStarted),
+    lastCompletedStep: readString(data.lastCompletedStep),
+    failure: sanitizeFailure(isObject(data.failure) ? data.failure : null),
+    metadata: parseSessionMetadata(data.metadata),
+  });
+  normalized.resumable = data.resumable !== false;
+  normalized.status = readString(data.status) ?? normalized.status;
+
+  if (isObject(data.steps)) {
+    for (const [name, step] of Object.entries(data.steps)) {
+      const parsedStep = parseStepState(step);
+      if (Object.prototype.hasOwnProperty.call(normalized.steps, name) && parsedStep) {
+        normalized.steps[name] = parsedStep;
       }
     }
   }
@@ -312,13 +369,7 @@ export function clearSession(): void {
 
 function parseLockFile(contents: string): LockInfo | null {
   try {
-    const parsed = JSON.parse(contents);
-    if (typeof parsed?.pid !== "number") return null;
-    return {
-      pid: parsed.pid,
-      startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : null,
-      command: typeof parsed.command === "string" ? parsed.command : null,
-    };
+    return parseLockInfo(JSON.parse(contents));
   } catch {
     return null;
   }
@@ -330,9 +381,16 @@ function isProcessAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error: unknown) {
-    return (error as NodeJS.ErrnoException)?.code === "EPERM";
+    return isErrnoException(error) && error.code === "EPERM";
   }
 }
+
+// File descriptor we hold across the lifetime of an acquired lock. On
+// release, fstat(fd).ino vs stat(path).ino confirms the on-disk path
+// still resolves to the file we created — closing the residual TOCTOU
+// window in the inode-only check by tying ownership to a live
+// descriptor rather than a value re-read from disk. See #1281.
+let heldLockFd: number | null = null;
 
 export function acquireOnboardLock(command: string | null = null): LockResult {
   ensureSessionDir();
@@ -346,28 +404,52 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
     2,
   );
 
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // The retry budget here used to be 2, which is the bare minimum needed
+  // for "see-stale → cleanup → reclaim". With the inode-verified cleanup
+  // below it can take a few additional spins under contention because
+  // multiple concurrent stale-cleaners can race and lose to each other
+  // before one reclaims, so give the loop a little more room.
+  // See issue #1281.
+  const MAX_ATTEMPTS = 5;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    let fd: number;
     try {
-      fs.writeFileSync(LOCK_FILE, payload, { flag: "wx", mode: 0o600 });
-      return { acquired: true, lockFile: LOCK_FILE, stale: false };
+      // openSync(..., "wx", mode) is the atomic create-or-fail
+      // primitive. We hold the resulting fd at module scope so
+      // releaseOnboardLock() can later confirm the on-disk path still
+      // resolves to the same file we created (fstat ino vs stat ino).
+      fd = fs.openSync(LOCK_FILE, "wx", 0o600);
     } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") {
+      if (!isErrnoException(error) || error.code !== "EEXIST") {
         throw error;
       }
 
+      // Capture both the parsed lock and the inode so we can verify the
+      // file we're about to unlink is STILL the same stale file we read.
+      // Without the inode check, two concurrent processes can both read
+      // the same stale lock, and the slower one will unlink the fresh
+      // lock the faster one just claimed, breaking mutual exclusion.
+      // See issue #1281.
       let existing: LockInfo | null;
+      let staleInode: bigint | null;
       try {
+        const stat = fs.statSync(LOCK_FILE, { bigint: true });
+        staleInode = stat.ino;
         existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
       } catch (readError: unknown) {
-        if ((readError as NodeJS.ErrnoException)?.code === "ENOENT") {
+        if (isErrnoException(readError) && readError.code === "ENOENT") {
           continue;
         }
         throw readError;
       }
       if (!existing) {
+        // Malformed lock file — leave it on disk (a human or another
+        // process may be mid-write) and retry. Pre-#1281 behavior
+        // preserved: never unlink a malformed lock automatically.
         continue;
       }
-      if (existing && isProcessAlive(existing.pid)) {
+      if (isProcessAlive(existing.pid)) {
         return {
           acquired: false,
           lockFile: LOCK_FILE,
@@ -378,27 +460,128 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
         };
       }
 
+      // Stale: unlink ONLY if the file on disk is still the same inode
+      // we just read. If a concurrent process already cleaned up and
+      // claimed the lock, the inode will have changed and we'll fall
+      // through to the next iteration where openSync(wx) will either
+      // succeed (we win) or fail EEXIST against the new holder (and we
+      // re-read it).
+      unlinkIfInodeMatches(LOCK_FILE, staleInode);
+      continue;
+    }
+
+    // Atomic create succeeded — write the payload and keep the fd open
+    // for the lifetime of the lock so releaseOnboardLock() can verify
+    // ownership via the live descriptor.
+    try {
+      fs.writeSync(fd, payload);
+    } catch (writeError) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* ignore */
+      }
       try {
         fs.unlinkSync(LOCK_FILE);
-      } catch (unlinkError: unknown) {
-        if ((unlinkError as NodeJS.ErrnoException)?.code !== "ENOENT") {
-          throw unlinkError;
-        }
+      } catch {
+        /* ignore */
       }
+      throw writeError;
     }
+    heldLockFd = fd;
+    return { acquired: true, lockFile: LOCK_FILE, stale: false };
   }
 
   return { acquired: false, lockFile: LOCK_FILE, stale: true };
 }
 
+/**
+ * Unlink LOCK_FILE only if its current inode equals `expectedInode`.
+ * The dual stat-then-unlink is the only portable POSIX primitive Node
+ * exposes for this — there's no atomic "unlink-if-inode" syscall — so
+ * a sufficiently unlucky race can still slip through. The window is
+ * orders of magnitude smaller than the unconditional unlink it
+ * replaces, and the outer loop will detect a wrong unlink on its next
+ * `writeFileSync(wx)` attempt because either we re-create the file
+ * or we observe the new lock with a different inode.
+ */
+function unlinkIfInodeMatches(filePath: string, expectedInode: bigint | null): void {
+  if (expectedInode === null) {
+    return;
+  }
+  try {
+    const stat = fs.statSync(filePath, { bigint: true });
+    if (stat.ino !== expectedInode) {
+      // Someone else replaced the file. Leave it alone.
+      return;
+    }
+  } catch (statError: unknown) {
+    if (isErrnoException(statError) && statError.code === "ENOENT") {
+      return;
+    }
+    throw statError;
+  }
+  try {
+    fs.unlinkSync(filePath);
+  } catch (unlinkError: unknown) {
+    if (!isErrnoException(unlinkError) || unlinkError.code !== "ENOENT") {
+      throw unlinkError;
+    }
+  }
+}
+
 export function releaseOnboardLock(): void {
+  // Preferred path: we hold the fd from a successful acquireOnboardLock.
+  // Verify the on-disk path still resolves to the same file (fstat ino
+  // == stat ino) before unlinking. If they disagree, another process
+  // has already replaced the lock and we must NOT touch their file.
+  if (heldLockFd !== null) {
+    const fd = heldLockFd;
+    heldLockFd = null;
+    try {
+      const fdStat = fs.fstatSync(fd, { bigint: true });
+      let pathInode: bigint | null = null;
+      try {
+        const pathStat = fs.statSync(LOCK_FILE, { bigint: true });
+        pathInode = pathStat.ino;
+      } catch (error: unknown) {
+        if (!isErrnoException(error) || error.code !== "ENOENT") {
+          // Unexpected — fall through to closing the fd.
+        }
+      }
+      if (pathInode !== null && pathInode === fdStat.ino) {
+        try {
+          fs.unlinkSync(LOCK_FILE);
+        } catch (unlinkError: unknown) {
+          if (!isErrnoException(unlinkError) || unlinkError.code !== "ENOENT") {
+            // Best effort — surfacing this would mask the real error.
+          }
+        }
+      }
+    } catch {
+      // fstat can fail if the fd was already closed somehow; nothing
+      // safe to do beyond closing it below.
+    } finally {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // ignore
+      }
+    }
+    return;
+  }
+
+  // Fallback (no fd held — e.g., a test wrote the lock file directly,
+  // or a previous release already ran): preserve the legacy pid-based
+  // behavior so we never unlink a malformed lock and never unlink a
+  // lock owned by another pid.
   try {
     if (!fs.existsSync(LOCK_FILE)) return;
     let existing: LockInfo | null = null;
     try {
       existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
     } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return;
+      if (isErrnoException(error) && error.code === "ENOENT") return;
       throw error;
     }
     if (!existing) return;
@@ -430,10 +613,16 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
   }
+  if (Array.isArray(updates.messagingChannels)) {
+    safe.messagingChannels = updates.messagingChannels.filter((value) => typeof value === "string");
+  }
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {
       gatewayName: updates.metadata.gatewayName,
-      fromDockerfile: (typeof updates.metadata.fromDockerfile === "string" ? updates.metadata.fromDockerfile : null),
+      fromDockerfile:
+        typeof updates.metadata.fromDockerfile === "string"
+          ? updates.metadata.fromDockerfile
+          : null,
     };
   }
   return safe;
@@ -514,10 +703,9 @@ export function completeSession(updates: SessionUpdates = {}): Session {
   });
 }
 
-export function summarizeForDebug(session: Session | null = loadSession()): Record<
-  string,
-  unknown
-> | null {
+export function summarizeForDebug(
+  session: Session | null = loadSession(),
+): DebugSessionSummary | null {
   if (!session) return null;
   return {
     version: session.version,
@@ -537,7 +725,7 @@ export function summarizeForDebug(session: Session | null = loadSession()): Reco
     policyPresets: session.policyPresets,
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,
-    failure: session.failure,
+    failure: sanitizeFailure(session.failure),
     steps: Object.fromEntries(
       Object.entries(session.steps).map(([name, step]) => [
         name,

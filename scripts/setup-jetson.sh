@@ -26,15 +26,25 @@ get_jetpack_version() {
   revision="$(printf '%s\n' "$release_line" | sed -n 's/^.*REVISION: \([0-9][0-9]*\)\..*$/\1/p')"
   l4t_version="${release}.${revision}"
 
+  if [[ -z "$release" ]]; then
+    info "Jetson detected but could not parse L4T release — skipping host setup" >&2
+    return 0
+  fi
+
+  if ((release >= 39)); then
+    info "Jetson detected (L4T $l4t_version) — this version does not require any host setup" >&2
+    return 0
+  fi
+
   case "$l4t_version" in
     36.*)
       printf "%s" "jp6"
       ;;
     38.*)
-      printf "%s" "jp7"
+      printf "%s" "jp7-r38"
       ;;
     *)
-      info "Jetson detected (L4T $l4t_version) but version is not recognized — skipping host setup"
+      info "Jetson detected (L4T $l4t_version) but version is not recognized — skipping host setup" >&2
       ;;
   esac
 }
@@ -52,8 +62,8 @@ configure_jetson_host() {
       "${SUDO[@]}" update-alternatives --set iptables /usr/sbin/iptables-legacy
       "${SUDO[@]}" sed -i '/"iptables": false,/d; /"bridge": "none"/d; s/"default-runtime": "nvidia",/"default-runtime": "nvidia"/' /etc/docker/daemon.json
       ;;
-    jp7)
-      # JP7 (Thor) does not need iptables or Docker daemon.json changes.
+    jp7-r38)
+      # JP7 R38 does not need iptables or Docker daemon.json changes.
       ;;
     *)
       error "Unsupported Jetson version: $jetpack_version"

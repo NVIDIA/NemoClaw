@@ -113,4 +113,11 @@ describe("buildControlUiUrls", () => {
     const urls = buildControlUiUrls("tok");
     expect(urls).toHaveLength(1);
   });
+
+  it("uses the configured port in the displayed URL when NEMOCLAW_DASHBOARD_PORT overrides the default (#1925)", () => {
+    // getDashboardAccessInfo passes dashboardPort explicitly so the URL shown to
+    // the user reflects the custom port — not the default 18789.
+    const urls = buildControlUiUrls("my-token", 19000);
+    expect(urls).toEqual(["http://127.0.0.1:19000/#token=my-token"]);
+  });
 });
