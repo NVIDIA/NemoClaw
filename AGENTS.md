@@ -25,7 +25,6 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 | `test/` | JavaScript (ESM) | Root-level integration tests (Vitest) |
 | `test/e2e/` | Bash/JS | End-to-end tests (Brev cloud instances) |
 | `docs/` | Markdown (MyST) | User-facing docs (Sphinx) |
-| `k8s/` | YAML | Kubernetes deployment manifests |
 
 ## Quick Reference
 
