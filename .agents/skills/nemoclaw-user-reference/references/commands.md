@@ -204,7 +204,7 @@ $ nemoclaw my-assistant logs [--follow]
 
 ### `nemoclaw <name> destroy`
 
-Stop the NIM container and delete the sandbox.
+Stop the NIM container, remove the host-side Docker image built during onboard, and delete the sandbox.
 This removes the sandbox from the registry.
 
 > **Warning:** This command permanently deletes the sandbox **and its persistent volume**.
@@ -323,7 +323,7 @@ For new installs, the agent session index is refreshed so the agent discovers th
 ### `nemoclaw <name> rebuild`
 
 Upgrade a sandbox to the current agent version while preserving workspace state.
-The command backs up workspace state, destroys the old sandbox, recreates it with the current image via `onboard --resume`, and restores workspace state into the new sandbox.
+The command backs up workspace state, destroys the old sandbox (including its host-side Docker image), recreates it with the current image via `onboard --resume`, and restores workspace state into the new sandbox.
 Credentials are stripped from backups before storage.
 
 ```console
@@ -483,6 +483,22 @@ $ nemoclaw credentials reset NVIDIA_API_KEY
 | Flag | Description |
 |------|-------------|
 | `--yes`, `-y` | Skip the confirmation prompt |
+
+### `nemoclaw gc`
+
+Remove orphaned sandbox Docker images from the host.
+Each `nemoclaw onboard` builds an `openshell/sandbox-from:<timestamp>` image (~765 MB).
+The `destroy` and `rebuild` commands clean up the image automatically, but images from older NemoClaw versions or interrupted operations may remain.
+This command lists all `openshell/sandbox-from:*` images, cross-references the sandbox registry, and removes any that are no longer associated with a registered sandbox.
+
+```console
+$ nemoclaw gc [--dry-run] [--yes|--force]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | List orphaned images without removing them |
+| `--yes`, `--force` | Skip the confirmation prompt |
 
 ### `nemoclaw uninstall`
 
