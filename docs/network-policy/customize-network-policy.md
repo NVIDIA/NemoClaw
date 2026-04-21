@@ -179,6 +179,17 @@ The `openshell policy set --policy <file> <sandbox-name>` command operates on ra
 accept the `preset:` metadata block used in preset YAML files. Use `nemoclaw <name> policy-add` for
 presets.
 :::
+For scripted workflows, `policy-add` and `policy-remove` accept the preset name as a positional argument:
+
+```console
+$ nemoclaw my-assistant policy-add pypi --yes
+$ nemoclaw my-assistant policy-remove pypi --yes
+```
+
+Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` to drive the same flow from an environment variable.
+See [Commands](../reference/commands.md#nemoclaw-name-policy-add) for the full flag reference.
+
+`nemoclaw <name> rebuild` reapplies every policy preset to the recreated sandbox, so presets survive an agent-version upgrade without manual reapplication.
 
 ## Related Topics
 
