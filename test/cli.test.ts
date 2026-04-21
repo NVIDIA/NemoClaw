@@ -14,7 +14,7 @@ function run(args) {
   return runWithEnv(args);
 }
 
-function runWithEnv(args, env = {}, timeout = 10000) {
+function runWithEnv(args, env = {}, timeout = Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000)) {
   try {
     const out = execSync(`node "${CLI}" ${args}`, {
       encoding: "utf-8",
@@ -293,6 +293,66 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(fs.readFileSync(markerFile, "utf8")).toContain("logs alpha --tail");
     expect(fs.readFileSync(markerFile, "utf8")).not.toContain("--follow");
+  });
+
+  it("uses named sandbox exec for bridge status helpers", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-messaging-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const markerFile = path.join(home, "openshell.log");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+            messagingChannels: ["telegram"],
+            agent: "hermes",
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        'printf \'%s\\n\' "$*" >> "$marker_file"',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+        '  if [ "$8" = "tail -n 200 /tmp/gateway.log 2>/dev/null | grep -cE \\"getUpdates conflict|409[[:space:]:]+Conflict\\" || true" ]; then',
+        "    echo 1",
+        "    exit 0",
+        "  fi",
+        '  if [ "$8" = "tail -n 10 /tmp/gateway.log 2>/dev/null" ]; then',
+        "    echo 'getUpdates conflict'",
+        "    exit 0",
+        "  fi",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("status", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    const log = fs.readFileSync(markerFile, "utf8");
+    expect(r.code).toBe(0);
+    expect(log).toContain(
+      'sandbox exec -n alpha -- sh -c tail -n 200 /tmp/gateway.log 2>/dev/null | grep -cE "getUpdates conflict|409[[:space:]:]+Conflict" || true',
+    );
+    expect(log).toContain("sandbox exec -n alpha -- sh -c tail -n 10 /tmp/gateway.log 2>/dev/null");
+    expect(log).not.toContain("sandbox exec alpha sh -c");
   });
 
   it("destroys the gateway runtime when the last sandbox is removed", () => {
@@ -1518,7 +1578,7 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      10000,
+      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
     );
 
     expect(r.code).toBe(0);
@@ -1526,7 +1586,7 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("gateway identity drift after restart")).toBeTruthy();
     const saved = JSON.parse(fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"));
     expect(saved.sandboxes.alpha).toBeTruthy();
-  }, 10000);
+  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
 
   it("recovers status after gateway runtime is reattached", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-recover-status-"));
@@ -1740,14 +1800,14 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      10000,
+      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
     );
 
     expect(r.code).toBe(0);
     expect(r.out.includes("Recovered NemoClaw gateway runtime")).toBeFalsy();
     expect(r.out.includes("Could not verify sandbox 'alpha'")).toBeTruthy();
     expect(r.out.includes("verify the active gateway")).toBeTruthy();
-  }, 10000);
+  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
 
   it("matches ANSI-decorated gateway transport errors when printing lifecycle hints", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-ansi-transport-hint-"));
@@ -1804,12 +1864,12 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      10000,
+      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
     );
 
     expect(r.code).toBe(0);
     expect(r.out.includes("current gateway/runtime is not reachable")).toBeTruthy();
-  }, 10000);
+  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
 
   it("matches ANSI-decorated gateway auth errors when printing lifecycle hints", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-ansi-auth-hint-"));
@@ -1866,14 +1926,14 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      10000,
+      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
     );
 
     expect(r.code).toBe(0);
     expect(
       r.out.includes("Verify the active gateway and retry after re-establishing the runtime."),
     ).toBeTruthy();
-  }, 10000);
+  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
 
   it("explains unrecoverable gateway trust rotation after restart", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-identity-drift-"));
@@ -1929,7 +1989,7 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      10000,
+      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
     );
     expect(statusResult.code).toBe(0);
     expect(statusResult.out.includes("gateway trust material rotated after restart")).toBeTruthy();
@@ -1940,7 +2000,9 @@ describe("CLI dispatch", () => {
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
     expect(connectResult.code).toBe(1);
-    expect(connectResult.out.includes("gateway trust material rotated after restart")).toBeTruthy();
+    // After the auto-recovery attempt (clear stale host keys + retry), the
+    // fake openshell still returns the handshake error, so recovery fails.
+    expect(connectResult.out.includes("Could not reconnect")).toBeTruthy();
     expect(connectResult.out.includes("Recreate this sandbox")).toBeTruthy();
   });
 
@@ -2006,7 +2068,7 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      10000,
+      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
     );
     expect(statusResult.code).toBe(0);
     expect(
@@ -2025,7 +2087,7 @@ describe("CLI dispatch", () => {
       connectResult.out.includes("gateway is still refusing connections after restart"),
     ).toBeTruthy();
     expect(connectResult.out.includes("If the gateway never becomes healthy")).toBeTruthy();
-  }, 10000);
+  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
 
   it("explains when the named gateway is no longer configured after restart or rebuild", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-gateway-missing-"));
@@ -2083,14 +2145,14 @@ describe("CLI dispatch", () => {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       },
-      10000,
+      Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 10000),
     );
     expect(statusResult.code).toBe(0);
     expect(
       statusResult.out.includes("gateway is no longer configured after restart/rebuild"),
     ).toBeTruthy();
     expect(statusResult.out.includes("Start the gateway again")).toBeTruthy();
-  }, 10000);
+  }, Number(process.env.NEMOCLAW_TEST_TIMEOUT || 10000));
 });
 
 describe("list shows live gateway inference", () => {

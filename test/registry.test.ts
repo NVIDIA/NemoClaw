@@ -134,6 +134,25 @@ describe("registry", () => {
     expect(data.defaultSandbox).toBe("persist");
   });
 
+  it("clearAll removes persisted sandboxes and the default pointer", () => {
+    registry.registerSandbox({ name: "alpha", model: "m1" });
+    registry.registerSandbox({ name: "beta", model: "m2" });
+    registry.setDefault("beta");
+
+    registry.clearAll();
+
+    expect(registry.listSandboxes()).toEqual({
+      sandboxes: [],
+      defaultSandbox: null,
+    });
+    expect(registry.getDefault()).toBe(null);
+    expect(registry.getSandbox("alpha")).toBe(null);
+    expect(JSON.parse(fs.readFileSync(regFile, "utf-8"))).toEqual({
+      sandboxes: {},
+      defaultSandbox: null,
+    });
+  });
+
   it("handles corrupt registry file gracefully", () => {
     fs.mkdirSync(path.dirname(regFile), { recursive: true });
     fs.writeFileSync(regFile, "NOT JSON");
