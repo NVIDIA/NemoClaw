@@ -4,7 +4,7 @@ title:
   nav: "Commands"
 description:
   main: "Full CLI reference for slash commands and standalone NemoClaw commands."
-  agent: "Lists all slash commands and standalone NemoClaw CLI commands. Use when looking up a command, checking command syntax, or browsing the CLI reference."
+  agent: "Includes the full CLI reference for slash commands and standalone NemoClaw commands. Use when looking up a specific `nemoclaw` or `/nemoclaw` subcommand, flag, argument, or exit code."
 keywords: ["nemoclaw cli commands", "nemoclaw command reference"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "nemoclaw", "cli"]
@@ -284,6 +284,49 @@ $ nemoclaw my-assistant policy-remove
 | `--dry-run` | Preview which endpoints would be removed without applying changes |
 
 Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox.
+
+### `nemoclaw <name> channels list`
+
+List the messaging channels NemoClaw knows about (`telegram`, `discord`, `slack`) with a short description.
+The command is a static reference; it does not consult credentials or the running sandbox.
+
+```console
+$ nemoclaw my-assistant channels list
+```
+
+### `nemoclaw <name> channels add <channel>`
+
+Store credentials for a messaging channel (`telegram`, `discord`, or `slack`) and rebuild the sandbox so the image picks up the new channel.
+The command prompts for any missing token, persists it under `~/.nemoclaw/credentials.json`, then asks whether to rebuild immediately.
+Running `add` for an already-configured channel simply overwrites the stored tokens — the operation is idempotent.
+
+```console
+$ nemoclaw my-assistant channels add telegram
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Validate the channel and token inputs without saving credentials or rebuilding |
+
+Slack requires both `SLACK_BOT_TOKEN` (bot user OAuth) and `SLACK_APP_TOKEN` (app-level Socket Mode token); the command prompts for each in turn.
+When `NEMOCLAW_NON_INTERACTIVE=1` is set, any missing token fails fast and no rebuild prompt is shown — instead, the change is queued and you are told to run `nemoclaw <name> rebuild` manually.
+
+### `nemoclaw <name> channels remove <channel>`
+
+Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel.
+Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt.
+
+```console
+$ nemoclaw my-assistant channels remove telegram
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Report the channel that would be removed without clearing credentials or rebuilding |
+
+As with `channels add`, `NEMOCLAW_NON_INTERACTIVE=1` skips the rebuild prompt and queues the change for a manual `nemoclaw <name> rebuild`.
+
+Host-side removal is the supported path because `/sandbox/.openclaw/openclaw.json` is read-only at runtime; `openclaw channels remove` cannot modify the baked config from inside the sandbox.
 
 ### `nemoclaw <name> skill install <path>`
 

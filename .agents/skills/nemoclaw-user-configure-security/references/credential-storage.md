@@ -110,4 +110,4 @@ On the next run, NemoClaw prompts again unless the credential is supplied throug
 Other NemoClaw host-side state also lives under `~/.nemoclaw/`, such as sandbox registry metadata.
 These files are operational state, not provider secrets, but they should still remain in a user-owned home directory.
 
-For the broader sandbox security model and operational trade-offs, see Security Best Practices (see the `nemoclaw-user-configure-security` skill) and Architecture (see the `nemoclaw-user-reference` skill).
+For the broader sandbox security model and operational trade-offs, see Security Best Practices (use the `nemoclaw-user-configure-security` skill) and Architecture (use the `nemoclaw-user-reference` skill).

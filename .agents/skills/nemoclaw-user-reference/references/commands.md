@@ -59,7 +59,7 @@ $ NEMOCLAW_SINGLE_SESSION=1 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
-Credentials are stored in `~/.nemoclaw/credentials.json`. For file permissions, plaintext storage behavior, and hardening guidance, see Credential Storage (see the `nemoclaw-user-configure-security` skill).
+Credentials are stored in `~/.nemoclaw/credentials.json`. For file permissions, plaintext storage behavior, and hardening guidance, see Credential Storage (use the `nemoclaw-user-configure-security` skill).
 The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
 
 After provider selection, the wizard prompts for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
@@ -72,7 +72,7 @@ Three tiers are available:
 | Open | Broad access across third-party services including messaging and productivity. |
 
 After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access.
-For details on tiers and the presets each includes, see Network Policies (see the `nemoclaw-user-reference` skill).
+For details on tiers and the presets each includes, see Network Policies (use the `nemoclaw-user-reference` skill).
 
 In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `balanced`):
 
@@ -208,8 +208,8 @@ Stop the NIM container and delete the sandbox.
 This removes the sandbox from the registry.
 
 > **Warning:** This command permanently deletes the sandbox **and its persistent volume**.
-> All workspace files (see the `nemoclaw-user-workspace` skill) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
-> Back up your workspace first with `nemoclaw <name> snapshot create` or see Backup and Restore (see the `nemoclaw-user-workspace` skill).
+> All workspace files (use the `nemoclaw-user-workspace` skill) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
+> Back up your workspace first with `nemoclaw <name> snapshot create` or see Backup and Restore (use the `nemoclaw-user-workspace` skill).
 > If you want to upgrade the sandbox while preserving state, use `nemoclaw <name> rebuild` instead.
 
 ```console
@@ -258,6 +258,49 @@ $ nemoclaw my-assistant policy-remove
 | `--dry-run` | Preview which endpoints would be removed without applying changes |
 
 Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox.
+
+### `nemoclaw <name> channels list`
+
+List the messaging channels NemoClaw knows about (`telegram`, `discord`, `slack`) with a short description.
+The command is a static reference; it does not consult credentials or the running sandbox.
+
+```console
+$ nemoclaw my-assistant channels list
+```
+
+### `nemoclaw <name> channels add <channel>`
+
+Store credentials for a messaging channel (`telegram`, `discord`, or `slack`) and rebuild the sandbox so the image picks up the new channel.
+The command prompts for any missing token, persists it under `~/.nemoclaw/credentials.json`, then asks whether to rebuild immediately.
+Running `add` for an already-configured channel simply overwrites the stored tokens — the operation is idempotent.
+
+```console
+$ nemoclaw my-assistant channels add telegram
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Validate the channel and token inputs without saving credentials or rebuilding |
+
+Slack requires both `SLACK_BOT_TOKEN` (bot user OAuth) and `SLACK_APP_TOKEN` (app-level Socket Mode token); the command prompts for each in turn.
+When `NEMOCLAW_NON_INTERACTIVE=1` is set, any missing token fails fast and no rebuild prompt is shown — instead, the change is queued and you are told to run `nemoclaw <name> rebuild` manually.
+
+### `nemoclaw <name> channels remove <channel>`
+
+Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel.
+Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt.
+
+```console
+$ nemoclaw my-assistant channels remove telegram
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Report the channel that would be removed without clearing credentials or rebuilding |
+
+As with `channels add`, `NEMOCLAW_NON_INTERACTIVE=1` skips the rebuild prompt and queues the change for a manual `nemoclaw <name> rebuild`.
+
+Host-side removal is the supported path because `/sandbox/.openclaw/openclaw.json` is read-only at runtime; `openclaw channels remove` cannot modify the baked config from inside the sandbox.
 
 ### `nemoclaw <name> skill install <path>`
 
