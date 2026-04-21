@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { readConfigFile, writeConfigFile } from "./config-io";
+import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 
 export interface SandboxEntry {
   name: string;
@@ -14,8 +14,12 @@ export interface SandboxEntry {
   provider?: string | null;
   gpuEnabled?: boolean;
   policies?: string[];
+  policyTier?: string | null;
   agent?: string | null;
   dangerouslySkipPermissions?: boolean;
+  agentVersion?: string | null;
+  providerCredentialHashes?: Record<string, string>;
+  messagingChannels?: string[];
 }
 
 export interface SandboxRegistry {
@@ -32,7 +36,7 @@ export const LOCK_MAX_RETRIES = 120;
 
 /** Acquire an advisory lock using mkdir (atomic on POSIX). */
 export function acquireLock(): void {
-  fs.mkdirSync(path.dirname(REGISTRY_FILE), { recursive: true, mode: 0o700 });
+  ensureConfigDir(path.dirname(REGISTRY_FILE));
   const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
   for (let i = 0; i < LOCK_MAX_RETRIES; i++) {
     try {
@@ -158,9 +162,13 @@ export function registerSandbox(entry: SandboxEntry): void {
       provider: entry.provider || null,
       gpuEnabled: entry.gpuEnabled || false,
       policies: entry.policies || [],
+      policyTier: entry.policyTier || null,
       agent: entry.agent || null,
       dangerouslySkipPermissions:
         entry.dangerouslySkipPermissions === true ? true : undefined,
+      agentVersion: entry.agentVersion || null,
+      providerCredentialHashes: entry.providerCredentialHashes || undefined,
+      messagingChannels: entry.messagingChannels || [],
     };
     if (!data.defaultSandbox) {
       data.defaultSandbox = entry.name;

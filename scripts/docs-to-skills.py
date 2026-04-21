@@ -447,12 +447,15 @@ def rewrite_doc_paths(
         if raw_path.startswith(("http://", "https://", "#", "mailto:")):
             return match.group(0)
 
+        # Strip fragment anchors before checking extension
+        path_no_frag = raw_path.split("#")[0]
+
         # Skip non-doc files
-        if not raw_path.endswith(".md") and not raw_path.endswith(".html"):
+        if not path_no_frag.endswith(".md") and not path_no_frag.endswith(".html"):
             return match.group(0)
 
         # Resolve relative path against the source doc's directory
-        resolved = (source_dir / raw_path).resolve()
+        resolved = (source_dir / path_no_frag).resolve()
         try:
             rel_to_repo = resolved.relative_to(repo_root)
         except ValueError:
@@ -978,6 +981,8 @@ def generate_skill(
                 for item_line in cleaned.split("\n"):
                     stripped = item_line.strip()
                     if stripped.startswith("- "):
+                        if prereq_items and not prereq_items[-1].startswith("- "):
+                            prereq_items.append("")
                         norm = stripped.lower().strip("- .")
                         if norm not in seen_prereqs:
                             seen_prereqs.add(norm)

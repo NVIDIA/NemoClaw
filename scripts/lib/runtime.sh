@@ -235,12 +235,30 @@ select_openshell_cluster_container() {
   return 1
 }
 
+_validate_port() {
+  local name="$1" value="$2"
+  case "$value" in
+    '' | *[!0-9]*)
+      printf 'Invalid %s=%s (expected 1024-65535)\n' "$name" "$value" >&2
+      return 1
+      ;;
+  esac
+  [ "$value" -ge 1024 ] && [ "$value" -le 65535 ] || {
+    printf 'Invalid %s=%s (expected 1024-65535)\n' "$name" "$value" >&2
+    return 1
+  }
+}
+
 get_local_provider_base_url() {
   local provider="${1:-}"
 
+  local vllm_port="${NEMOCLAW_VLLM_PORT:-8000}"
+  local ollama_port="${NEMOCLAW_OLLAMA_PORT:-11434}"
+  _validate_port NEMOCLAW_VLLM_PORT "$vllm_port" || return 1
+  _validate_port NEMOCLAW_OLLAMA_PORT "$ollama_port" || return 1
   case "$provider" in
-    vllm-local) printf 'http://host.openshell.internal:8000/v1\n' ;;
-    ollama-local) printf 'http://host.openshell.internal:11434/v1\n' ;;
+    vllm-local) printf 'http://host.openshell.internal:%s/v1\n' "$vllm_port" ;;
+    ollama-local) printf 'http://host.openshell.internal:%s/v1\n' "$ollama_port" ;;
     *) return 1 ;;
   esac
 }
@@ -248,15 +266,66 @@ get_local_provider_base_url() {
 check_local_provider_health() {
   local provider="${1:-}"
 
+  local vllm_port="${NEMOCLAW_VLLM_PORT:-8000}"
+  local ollama_port="${NEMOCLAW_OLLAMA_PORT:-11434}"
+  _validate_port NEMOCLAW_VLLM_PORT "$vllm_port" || return 1
+  _validate_port NEMOCLAW_OLLAMA_PORT "$ollama_port" || return 1
   case "$provider" in
     vllm-local)
-      curl -sf http://localhost:8000/v1/models >/dev/null 2>&1
+      curl -sf "http://localhost:${vllm_port}/v1/models" >/dev/null 2>&1
       ;;
     ollama-local)
-      curl -sf http://localhost:11434/api/tags >/dev/null 2>&1
+      curl -sf "http://localhost:${ollama_port}/api/tags" >/dev/null 2>&1
       ;;
     *)
       return 1
       ;;
   esac
+}
+
+# ── Kubelet conflict detection ────────────────────────────────────
+# Returns 0 if a conflicting kubelet is detected, 1 otherwise.
+# Sets KUBELET_CONFLICT_DETAIL to a human-readable description.
+# See: https://github.com/NVIDIA/NemoClaw/issues/431
+detect_kubelet_conflict() {
+  KUBELET_CONFLICT_DETAIL=""
+
+  # Kubelet conflicts only apply on Linux (cgroup namespace sharing).
+  [ "$(uname -s)" = "Linux" ] || return 1
+
+  if pgrep -x kubelet >/dev/null 2>&1 || pgrep -x kubelite >/dev/null 2>&1 || pgrep -x k3s >/dev/null 2>&1; then
+    KUBELET_CONFLICT_DETAIL="kubelet process detected"
+    return 0
+  fi
+
+  if command -v microk8s >/dev/null 2>&1; then
+    if microk8s status 2>/dev/null | grep -q "microk8s is running"; then
+      KUBELET_CONFLICT_DETAIL="MicroK8s is running"
+      return 0
+    fi
+  fi
+
+  if systemctl is-active --quiet k3s 2>/dev/null || systemctl is-active --quiet k3s-agent 2>/dev/null; then
+    KUBELET_CONFLICT_DETAIL="k3s service is active"
+    return 0
+  fi
+
+  return 1
+}
+
+# Emit standardized warning for kubelet conflicts.
+warn_kubelet_conflict() {
+  local detail="${1:-${KUBELET_CONFLICT_DETAIL:-}}"
+  warn "⚠️  Conflicting Kubernetes detected: $detail"
+  warn ""
+  warn "The gateway runs k3s inside Docker with cgroupns=host, which will"
+  warn "conflict with the host kubelet over /sys/fs/cgroup/kubepods."
+  warn "This causes all pods to enter CrashLoopBackOff."
+  warn ""
+  warn "Options:"
+  warn "  1. Stop the host Kubernetes first:"
+  warn "     sudo microk8s stop        # for MicroK8s"
+  warn "     sudo systemctl stop k3s   # for k3s"
+  warn "     sudo systemctl stop kubelet  # for kubeadm"
+  warn "  2. Continue anyway (gateway will likely fail)"
 }

@@ -73,6 +73,39 @@ $ openshell inference set --provider compatible-anthropic-endpoint --model <mode
 
 If the provider itself needs to change, rerun `nemoclaw onboard`.
 
+#### Switching from Responses API to Chat Completions
+
+If onboarding selected `/v1/responses` but the agent fails at runtime (for
+example, because the backend does not emit the streaming events OpenClaw
+requires), re-run onboarding so the wizard re-probes the endpoint and bakes
+the correct API path into the image:
+
+```console
+$ nemoclaw onboard
+```
+
+Select the same provider and endpoint again.
+The updated streaming probe will detect incomplete `/v1/responses` support
+and select `/v1/chat/completions` automatically.
+
+For the compatible-endpoint provider, NemoClaw uses `/v1/chat/completions` by
+default, so no env var is required to keep the safe path.
+To opt in to `/v1/responses` for a backend you have verified end to end, set
+`NEMOCLAW_PREFERRED_API` before onboarding:
+
+```console
+$ NEMOCLAW_PREFERRED_API=openai-responses nemoclaw onboard
+```
+
+:::{note}
+`NEMOCLAW_INFERENCE_API_OVERRIDE` patches the config at container startup but
+does not update the Dockerfile ARG baked into the image.
+If you recreate the sandbox without the override env var, the image reverts to
+the original API path.
+A fresh `nemoclaw onboard` is the reliable fix because it updates both the
+session and the baked image.
+:::
+
 ## Cross-Provider Switching
 
 Switching to a different provider family (for example, from NVIDIA Endpoints to Anthropic) requires updating both the gateway route and the sandbox config.
@@ -92,11 +125,38 @@ $ nemoclaw onboard --resume --recreate-sandbox
 ```
 
 The entrypoint patches `openclaw.json` at container startup with the override values.
-No image rebuild is needed.
+You do not need to rebuild the image.
 Remove the env vars and recreate the sandbox to revert to the original model.
 
 `NEMOCLAW_INFERENCE_API_OVERRIDE` accepts `openai-completions` (for NVIDIA, OpenAI, Gemini, compatible endpoints) or `anthropic-messages` (for Anthropic and Anthropic-compatible endpoints).
 This variable is only needed when switching between provider families.
+
+## Tune Model Metadata
+
+The sandbox image bakes model metadata (context window, max output tokens, and reasoning mode) into `openclaw.json` at build time.
+To change these values, set the corresponding environment variables before running `nemoclaw onboard` so they patch into the Dockerfile before the image builds.
+
+| Variable | Values | Default |
+|---|---|---|
+| `NEMOCLAW_CONTEXT_WINDOW` | Positive integer (tokens) | `131072` |
+| `NEMOCLAW_MAX_TOKENS` | Positive integer (tokens) | `4096` |
+| `NEMOCLAW_REASONING` | `true` or `false` | `false` |
+
+Invalid values are ignored, and the default bakes into the image.
+
+```console
+$ export NEMOCLAW_CONTEXT_WINDOW=65536
+$ export NEMOCLAW_MAX_TOKENS=8192
+$ export NEMOCLAW_REASONING=true
+$ nemoclaw onboard
+```
+
+These variables are build-time settings.
+If you change them on an existing sandbox, recreate the sandbox so the new values bake into the image:
+
+```console
+$ nemoclaw onboard --resume --recreate-sandbox
+```
 
 ## Verify the Active Model
 

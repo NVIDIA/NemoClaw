@@ -320,15 +320,33 @@ baseline_response=$($TIMEOUT_CMD ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
     -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
   2>&1) || true
 
+# Retry baseline inference up to 3 times — live models are not deterministic
+# and the gateway proxy can return unexpected responses on first attempt. (#1969)
 baseline_content=""
-if [ -n "$baseline_response" ]; then
-  baseline_content=$(echo "$baseline_response" | parse_chat_content 2>/dev/null) || true
-fi
-
-if grep -qi "PONG" <<<"$baseline_content"; then
+pong_ok=false
+for pong_attempt in 1 2 3; do
+  baseline_content=""
+  if [ -n "$baseline_response" ]; then
+    baseline_content=$(echo "$baseline_response" | parse_chat_content 2>/dev/null) || true
+  fi
+  if grep -qi "PONG" <<<"$baseline_content"; then
+    pong_ok=true
+    break
+  fi
+  info "Baseline attempt ${pong_attempt}/3: got '${baseline_content:0:80}', retrying in 5s..."
+  [ "$pong_attempt" -lt 3 ] || break
+  sleep 5
+  # shellcheck disable=SC2029
+  baseline_response=$($TIMEOUT_CMD ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
+    "curl -s --max-time 60 https://inference.local/v1/chat/completions \
+      -H 'Content-Type: application/json' \
+      -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
+    2>&1) || true
+done
+if $pong_ok; then
   pass "[LIVE] Baseline: model responded with PONG through sandbox"
 else
-  fail "[LIVE] Baseline: expected PONG, got: ${baseline_content:0:200}"
+  fail "[LIVE] Baseline: expected PONG after 3 attempts, got: ${baseline_content:0:200}"
   info "Raw response: ${baseline_response:0:300}"
   info "Cannot establish baseline — aborting (survival test meaningless without it)"
   cleanup_ssh
@@ -552,13 +570,25 @@ fi
 pass "SSH config available after restart"
 
 # 8a: Raw SSH connectivity — the #888/#1086 handshake test
-if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "echo alive" >/dev/null 2>&1; then
-  pass "SSH into sandbox works after restart (no handshake failure — #888/#1086)"
+# The sandbox SSH agent may take a few seconds to become reachable after
+# the gateway reports healthy (especially with newer OpenClaw versions that
+# do more startup work). Retry up to 30 seconds before declaring failure.
+SSH_OK=0
+for ssh_attempt in $(seq 1 6); do
+  if ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "echo alive" >/dev/null 2>&1; then
+    SSH_OK=1
+    break
+  fi
+  [ "$ssh_attempt" -lt 6 ] && sleep 5
+done
+
+if [ "$SSH_OK" -eq 1 ]; then
+  pass "SSH into sandbox works after restart (attempt $ssh_attempt, no handshake failure — #888/#1086)"
 else
   fail "SSH into sandbox FAILED after restart — handshake verification likely failed (#888/#1086)"
   info "This is the core bug: gateway regenerated secrets, sandbox has stale ones"
-  cleanup_ssh
-  # Still try to get logs for diagnosis
+  # Do NOT call cleanup_ssh here — subsequent phases need the config file
+  # to attempt marker reads and produce meaningful diagnostics.
   nemoclaw "$SANDBOX_NAME" logs 2>&1 | grep -i "handshake" | head -5 || true
 fi
 
@@ -621,17 +651,34 @@ post_response=$($TIMEOUT_CMD ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
     -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
   2>&1) || true
 
+# Retry post-restart inference up to 3 times. (#1969)
 post_content=""
-if [ -n "$post_response" ]; then
-  post_content=$(echo "$post_response" | parse_chat_content 2>/dev/null) || true
-fi
-
-if grep -qi "PONG" <<<"$post_content"; then
+pong_ok=false
+for pong_attempt in 1 2 3; do
+  post_content=""
+  if [ -n "$post_response" ]; then
+    post_content=$(echo "$post_response" | parse_chat_content 2>/dev/null) || true
+  fi
+  if grep -qi "PONG" <<<"$post_content"; then
+    pong_ok=true
+    break
+  fi
+  info "Post-restart attempt ${pong_attempt}/3: got '${post_content:0:80}', retrying in 5s..."
+  [ "$pong_attempt" -lt 3 ] || break
+  sleep 5
+  # shellcheck disable=SC2029
+  post_response=$($TIMEOUT_CMD ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
+    "curl -s --max-time 60 https://inference.local/v1/chat/completions \
+      -H 'Content-Type: application/json' \
+      -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
+    2>&1) || true
+done
+if $pong_ok; then
   pass "[LIVE] Post-restart: model responded with PONG through sandbox"
   info "Full path proven: user → sandbox → openshell gateway (resumed) → NVIDIA Endpoints → response"
   info "This proves #859's ask: reliable non-destructive gateway lifecycle with working inference"
 else
-  fail "[LIVE] Post-restart: expected PONG, got: ${post_content:0:200}"
+  fail "[LIVE] Post-restart: expected PONG after 3 attempts, got: ${post_content:0:200}"
   info "Raw response: ${post_response:0:300}"
 fi
 

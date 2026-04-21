@@ -7,6 +7,8 @@
  * Supports subcommands:
  *   /nemoclaw status   - show sandbox/blueprint/inference state
  *   /nemoclaw eject    - rollback to host installation
+ *   /nemoclaw shields  - show shields status (read-only)
+ *   /nemoclaw config   - show sandbox config (read-only, redacted)
  *   /nemoclaw          - show help
  */
 
@@ -17,6 +19,8 @@ import {
   describeOnboardProvider,
   loadOnboardConfig,
 } from "../onboard/config.js";
+import { slashShieldsStatus } from "./shields-status.js";
+import { slashConfigShow } from "./config-show.js";
 
 export function handleSlashCommand(
   ctx: PluginCommandContext,
@@ -31,6 +35,10 @@ export function handleSlashCommand(
       return slashEject();
     case "onboard":
       return slashOnboard();
+    case "shields":
+      return slashShieldsStatus();
+    case "config":
+      return slashConfigShow();
     default:
       return slashHelp();
   }
@@ -45,10 +53,14 @@ function slashHelp(): PluginCommandResult {
       "",
       "Subcommands:",
       "  `status`  - Show sandbox, blueprint, and inference state",
+      "  `shields` - Show shields status (up/down, timeout, policy)",
+      "  `config`  - Show sandbox configuration (credentials redacted)",
       "  `eject`   - Show rollback instructions",
       "  `onboard` - Show onboarding status and instructions",
       "",
       "For full management use the NemoClaw CLI:",
+      "  `nemoclaw <name> shields down|up|status`",
+      "  `nemoclaw <name> config get`",
       "  `nemoclaw <name> status`",
       "  `nemoclaw <name> connect`",
       "  `nemoclaw <name> logs`",
@@ -78,6 +90,13 @@ function slashStatus(): PluginCommandResult {
 
   if (state.migrationSnapshot) {
     lines.push("", `Rollback snapshot: ${state.migrationSnapshot}`);
+  }
+
+  if (state.lastRebuildAt) {
+    lines.push("", `Last rebuild: ${state.lastRebuildAt}`);
+    if (state.lastRebuildBackupPath) {
+      lines.push(`Rebuild backup: ${state.lastRebuildBackupPath}`);
+    }
   }
 
   return { text: lines.join("\n") };

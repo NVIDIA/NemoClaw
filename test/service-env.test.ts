@@ -176,7 +176,7 @@ describe("service environment", () => {
       expect(src).toContain("XDG_RUNTIME_DIR=/tmp/.runtime");
       // Tool-specific redirects
       expect(src).toContain("GNUPGHOME=/tmp/.gnupg");
-      expect(src).toContain("PYTHONHISTFILE=/tmp/.python_history");
+      expect(src).toContain("PYTHON_HISTORY=/tmp/.python_history");
       expect(src).toContain("npm_config_prefix=/tmp/npm-global");
     });
 
@@ -352,7 +352,7 @@ describe("service environment", () => {
         expect(envFile).toContain("XDG_STATE_HOME=/tmp/.local/state");
         expect(envFile).toContain("XDG_RUNTIME_DIR=/tmp/.runtime");
         expect(envFile).toContain("GNUPGHOME=/tmp/.gnupg");
-        expect(envFile).toContain("PYTHONHISTFILE=/tmp/.python_history");
+        expect(envFile).toContain("PYTHON_HISTORY=/tmp/.python_history");
         expect(envFile).toContain("npm_config_prefix=/tmp/npm-global");
       } finally {
         try {
