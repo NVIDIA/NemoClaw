@@ -350,6 +350,18 @@ The status command detects the sandbox context and reports "active (inside sandb
 
 Run `openshell sandbox list` on the host to check the underlying sandbox state.
 
+### `openclaw update` hangs or times out inside the sandbox
+
+This is expected for the current NemoClaw deployment model.
+NemoClaw installs `openclaw` into the sandbox image at build time, so the CLI is image-pinned rather than updated in place inside a running sandbox.
+
+Do not run `openclaw update` inside the sandbox.
+Instead:
+
+1. Upgrade to a NemoClaw release that includes the newer `openclaw` version.
+2. If you build NemoClaw from source, bump the pinned `openclaw` version in `Dockerfile.base` and rebuild the sandbox base image.
+3. Run `nemoclaw <name> rebuild` to recreate the sandbox with the updated image. The rebuild command automatically backs up workspace state before destroying the old sandbox and restores it afterward.
+
 ### Inference requests time out
 
 Verify that the inference provider endpoint is reachable from the host.

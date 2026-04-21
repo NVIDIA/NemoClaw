@@ -131,6 +131,33 @@ Remove the env vars and recreate the sandbox to revert to the original model.
 `NEMOCLAW_INFERENCE_API_OVERRIDE` accepts `openai-completions` (for NVIDIA, OpenAI, Gemini, compatible endpoints) or `anthropic-messages` (for Anthropic and Anthropic-compatible endpoints).
 This variable is only needed when switching between provider families.
 
+## Tune Model Metadata
+
+The sandbox image bakes model metadata (context window, max output tokens, and reasoning mode) into `openclaw.json` at build time.
+To change these values, set the corresponding environment variables before running `nemoclaw onboard` so they patch into the Dockerfile before the image builds.
+
+| Variable | Values | Default |
+|---|---|---|
+| `NEMOCLAW_CONTEXT_WINDOW` | Positive integer (tokens) | `131072` |
+| `NEMOCLAW_MAX_TOKENS` | Positive integer (tokens) | `4096` |
+| `NEMOCLAW_REASONING` | `true` or `false` | `false` |
+
+Invalid values are ignored, and the default bakes into the image.
+
+```console
+$ export NEMOCLAW_CONTEXT_WINDOW=65536
+$ export NEMOCLAW_MAX_TOKENS=8192
+$ export NEMOCLAW_REASONING=true
+$ nemoclaw onboard
+```
+
+These variables are build-time settings.
+If you change them on an existing sandbox, recreate the sandbox so the new values bake into the image:
+
+```console
+$ nemoclaw onboard --resume --recreate-sandbox
+```
+
 ## Verify the Active Model
 
 Run the status command to confirm the change:
