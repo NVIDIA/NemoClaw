@@ -274,6 +274,7 @@ async function promptOrDefault(question, envVar, defaultValue) {
 // Gateway state functions — delegated to src/lib/gateway-state.ts
 const {
   isSandboxReady,
+  parseSandboxStatus,
   hasStaleGateway,
   isSelectedGateway,
   isGatewayHealthy,
@@ -3401,8 +3402,14 @@ async function createSandbox(
 
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
-    // Destroy old sandbox
+    // Destroy old sandbox and clean up its host-side Docker image.
     runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
+    if (previousEntry?.imageTag) {
+      const rmiResult = run(["docker", "rmi", previousEntry.imageTag], { ignoreError: true, suppressOutput: true });
+      if (rmiResult.status !== 0) {
+        console.warn(`  Warning: failed to remove old sandbox image '${previousEntry.imageTag}'.`);
+      }
+    }
     registry.removeSandbox(sandboxName);
   }
 
@@ -3592,11 +3599,12 @@ async function createSandbox(
       console.warn(`    docker pull ${SANDBOX_BASE_IMAGE}:${SANDBOX_BASE_TAG}`);
     }
   }
+  const buildId = String(Date.now());
   patchStagedDockerfile(
     stagedDockerfile,
     model,
     chatUiUrl,
-    String(Date.now()),
+    buildId,
     provider,
     preferredInferenceApi,
     webSearchConfig,
@@ -3762,6 +3770,7 @@ async function createSandbox(
     gpuEnabled: !!gpu,
     agent: agent ? agent.name : null,
     agentVersion: fromDockerfile ? null : effectiveAgent.expectedVersion || null,
+    imageTag: `openshell/sandbox-from:${buildId}`,
     dangerouslySkipPermissions: dangerouslySkipPermissions || undefined,
     providerCredentialHashes:
       Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
@@ -6579,6 +6588,7 @@ module.exports = {
   printSandboxCreateRecoveryHints,
   providerExistsInGateway,
   parsePolicyPresetEnv,
+  parseSandboxStatus,
   pruneStaleSandboxEntry,
   repairRecordedSandbox,
   recoverGatewayRuntime,

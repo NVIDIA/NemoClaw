@@ -161,7 +161,8 @@ See [Environment Variables](commands.md#environment-variables) for the full list
 ### Running multiple sandboxes simultaneously
 
 Each sandbox requires its own dashboard port.
-If you onboard a second sandbox without overriding the port, onboarding fails because port `18789` is already claimed by the first sandbox.
+If you onboard a second sandbox without overriding the port, onboarding fails with a clear error because port `18789` is already forwarded to the first sandbox.
+`onboard` checks `openshell forward list` before starting a new forward, so a second onboard cannot silently take over the first sandbox's port.
 
 Assign a distinct port to each sandbox at onboard time:
 
@@ -331,6 +332,10 @@ Follow these steps to reconnect.
    $ nemoclaw <name> connect
    ```
 
+   The gateway usually rotates its SSH host keys across a reboot.
+   `connect` detects the resulting identity drift, prunes the stale `openshell-*` entries from `~/.ssh/known_hosts`, and retries automatically.
+   You do not need to edit `known_hosts` by hand or re-run `nemoclaw onboard` in this case.
+
 1. Start host auxiliary services (if needed).
 
    If you use the cloudflared tunnel started by `nemoclaw start`, start it again:
@@ -466,6 +471,18 @@ $ nemoclaw <sandbox> channels remove <telegram|discord|slack>
 
 `channels add` stores credentials under `~/.nemoclaw/credentials.json` and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `nemoclaw <sandbox> rebuild`.
+
+### `openclaw config set` or `unset` is blocked inside the sandbox
+
+This is expected.
+The sandbox's OpenClaw configuration (`/sandbox/.openclaw/openclaw.json`) is baked into the container image at build time and mounted read-only at runtime.
+NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw config set` and `openclaw config unset` and prints an actionable error instead of letting the call fail with a raw permission error.
+
+Rebuild the sandbox from the host to change its OpenClaw configuration:
+
+```console
+$ nemoclaw <sandbox> rebuild
+```
 
 ### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
 
