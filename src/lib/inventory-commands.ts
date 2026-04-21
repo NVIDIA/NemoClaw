@@ -29,6 +29,8 @@ export interface ListSandboxesCommandDeps {
   recoverRegistryEntries: () => Promise<RecoveryResult>;
   getLiveInference: () => GatewayInference | null;
   loadLastSession: () => { sandboxName?: string | null } | null;
+  /** Detect active SSH sessions for a sandbox. Returns session count or null if unavailable. */
+  getActiveSessionCount?: (sandboxName: string) => number | null;
   log?: (message?: string) => void;
 }
 
@@ -92,7 +94,9 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
     const provider = sb.provider || "unknown";
     const gpu = sb.gpuEnabled ? "GPU" : "CPU";
     const presets = sb.policies && sb.policies.length > 0 ? sb.policies.join(", ") : "none";
-    log(`    ${sb.name}${def}`);
+    const sessionCount = deps.getActiveSessionCount ? deps.getActiveSessionCount(sb.name) : null;
+    const connected = sessionCount !== null && sessionCount > 0 ? " ●" : "";
+    log(`    ${sb.name}${def}${connected}`);
     log(`      model: ${model}  provider: ${provider}  ${gpu}  policies: ${presets}`);
   }
   log("");

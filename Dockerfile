@@ -244,7 +244,7 @@ _allowed_ids = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_AL
 _discord_guilds = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_DISCORD_GUILDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
 _token_keys = {'discord': 'token', 'telegram': 'botToken', 'slack': 'botToken'}; \
 _env_keys = {'discord': 'DISCORD_BOT_TOKEN', 'telegram': 'TELEGRAM_BOT_TOKEN', 'slack': 'SLACK_BOT_TOKEN'}; \
-_ch_cfg = {ch: {'accounts': {'default': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, **({'proxy': proxy_url} if ch == 'telegram' else {}), **({'groupPolicy': 'open'} if ch == 'telegram' else {}), **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
+_ch_cfg = {ch: {'accounts': {'default': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, **({'appToken': 'openshell:resolve:env:SLACK_APP_TOKEN'} if ch == 'slack' else {}), **({'proxy': proxy_url} if ch == 'telegram' else {}), **({'groupPolicy': 'open'} if ch == 'telegram' else {}), **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
 _ch_cfg['discord'].update({'groupPolicy': 'allowlist', 'guilds': _discord_guilds}) if 'discord' in _ch_cfg and _discord_guilds else None; \
 parsed = urlparse(chat_ui_url); \
 chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \

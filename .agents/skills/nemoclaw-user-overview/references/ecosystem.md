@@ -86,6 +86,6 @@ Use the following table to decide when to use NemoClaw versus OpenShell.
 
 ## Related topics
 
-- Overview (see the `nemoclaw-user-overview` skill) contains what NemoClaw is, capabilities, benefits, and use cases.
-- How It Works (see the `nemoclaw-user-overview` skill) describes how NemoClaw runs, plugin, blueprint, sandbox creation, routing, protection layers.
-- Architecture (see the `nemoclaw-user-reference` skill) shows the repository structure and technical diagrams.
+- Overview (use the `nemoclaw-user-overview` skill) contains what NemoClaw is, capabilities, benefits, and use cases.
+- How It Works (use the `nemoclaw-user-overview` skill) describes how NemoClaw runs, plugin, blueprint, sandbox creation, routing, protection layers.
+- Architecture (use the `nemoclaw-user-reference` skill) shows the repository structure and technical diagrams.

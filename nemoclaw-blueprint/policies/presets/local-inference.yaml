@@ -17,6 +17,13 @@ network_policies:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
       - host: host.openshell.internal
+        port: 11435
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: host.openshell.internal
         port: 8000
         protocol: rest
         enforcement: enforce

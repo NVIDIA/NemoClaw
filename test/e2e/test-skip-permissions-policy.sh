@@ -279,6 +279,12 @@ else
   fail "Config directory mode should be 700 (got: ${DIR_PERMS})"
 fi
 
+if [ "$(echo "$DIR_PERMS" | awk '{print $2}')" = "sandbox:sandbox" ]; then
+  pass "Config directory owned by sandbox:sandbox"
+else
+  fail "Config directory should be owned by sandbox:sandbox (got: ${DIR_PERMS})"
+fi
+
 # ══════════════════════════════════════════════════════════════════
 # Phase 4: Verify outbound HTTPS from inside sandbox
 # ══════════════════════════════════════════════════════════════════

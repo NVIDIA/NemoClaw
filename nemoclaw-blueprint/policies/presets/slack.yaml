@@ -30,14 +30,18 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
-      # Socket Mode WebSocket — requires CONNECT tunnel to avoid
-      # HTTP idle timeout killing the persistent connection. See #409.
+      # Socket Mode WebSocket — pure L4 CONNECT tunnel. OpenShell v0.0.15+
+      # auto-terminates TLS unconditionally (NVIDIA/OpenShell#544), which
+      # also applies to WSS. tls: skip restores the pre-v0.0.15 pass-
+      # through behaviour needed here.
       - host: wss-primary.slack.com
         port: 443
         access: full
+        tls: skip
       - host: wss-backup.slack.com
         port: 443
         access: full
+        tls: skip
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }

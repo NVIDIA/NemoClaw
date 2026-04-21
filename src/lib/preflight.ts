@@ -188,14 +188,23 @@ function parseDockerInfoSummary(info = ""): string | undefined {
 function readDockerDefaultCgroupnsMode(
   readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
 ): "host" | "private" | "unknown" {
-  try {
-    const raw = readFileImpl("/etc/docker/daemon.json", "utf-8");
-    const parsed = JSON.parse(raw) as { ["default-cgroupns-mode"]?: unknown };
-    const mode = parsed["default-cgroupns-mode"];
-    return mode === "host" || mode === "private" ? mode : "unknown";
-  } catch {
-    return "unknown";
+  const paths = [
+    "/etc/docker/daemon.json",
+    "/home/rootless/.config/docker/daemon.json",
+  ];
+  for (const filePath of paths) {
+    try {
+      const raw = readFileImpl(filePath, "utf-8");
+      const parsed = JSON.parse(raw) as {
+        ["default-cgroupns-mode"]?: unknown;
+      };
+      const mode = parsed["default-cgroupns-mode"];
+      if (mode === "host" || mode === "private") return mode;
+    } catch {
+      // Try next path
+    }
   }
+  return "unknown";
 }
 
 function isHeadlessLikely(env: NodeJS.ProcessEnv): boolean {
@@ -517,9 +526,10 @@ export async function checkPortAvailable(
     if (typeof o.lsofOutput === "string") {
       lsofOut = o.lsofOutput;
     } else {
+      // "command -v" is a shell builtin — must go through bash.
       const hasLsof = runCapture("command -v lsof", { ignoreError: true });
       if (hasLsof) {
-        lsofOut = runCapture(`lsof -i :${p} -sTCP:LISTEN -P -n 2>/dev/null`, {
+        lsofOut = runCapture(["lsof", "-i", `:${p}`, "-sTCP:LISTEN", "-P", "-n"], {
           ignoreError: true,
         });
       }
@@ -541,7 +551,7 @@ export async function checkPortAvailable(
       // the owning process).
       if (!o.lsofOutput) {
         const sudoOut: string | undefined = runCapture(
-          `sudo -n lsof -i :${p} -sTCP:LISTEN -P -n 2>/dev/null`,
+          ["sudo", "-n", "lsof", "-i", `:${p}`, "-sTCP:LISTEN", "-P", "-n"],
           { ignoreError: true },
         );
         if (typeof sudoOut === "string") {
@@ -593,7 +603,7 @@ export function getMemoryInfo(opts?: GetMemoryInfoOpts): MemoryInfo | null {
 
   if (platform === "darwin") {
     try {
-      const memBytes = parseInt(runCapture("sysctl -n hw.memsize", { ignoreError: true }), 10);
+      const memBytes = parseInt(runCapture(["sysctl", "-n", "hw.memsize"], { ignoreError: true }), 10);
       if (!memBytes || isNaN(memBytes)) return null;
       const totalRamMB = Math.floor(memBytes / 1024 / 1024);
       // macOS does not use traditional swap files in the same way
@@ -640,7 +650,7 @@ function getExistingSwapResult(mem: MemoryInfo): SwapResult | null {
   }
 
   try {
-    runCapture("sudo swapon /swapfile", { ignoreError: false });
+    runCapture(["sudo", "swapon", "/swapfile"], { ignoreError: false });
     return { ok: true, totalMB: mem.totalMB + 4096, swapCreated: true };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -653,6 +663,7 @@ function getExistingSwapResult(mem: MemoryInfo): SwapResult | null {
 
 function checkSwapDiskSpace(): SwapResult | null {
   try {
+    // Pipe requires a shell: df ... | tail -1
     const dfOut = runCapture("df / --output=avail -k 2>/dev/null | tail -1", {
       ignoreError: true,
     });
@@ -673,7 +684,7 @@ function checkSwapDiskSpace(): SwapResult | null {
 function writeManagedSwapMarker(): void {
   const nemoclawDir = path.join(os.homedir(), ".nemoclaw");
   if (!fs.existsSync(nemoclawDir)) {
-    runCapture(`mkdir -p ${nemoclawDir}`, { ignoreError: true });
+    runCapture(["mkdir", "-p", nemoclawDir], { ignoreError: true });
   }
 
   try {
@@ -685,8 +696,8 @@ function writeManagedSwapMarker(): void {
 
 function cleanupPartialSwap(): void {
   try {
-    runCapture("sudo swapoff /swapfile 2>/dev/null || true", { ignoreError: true });
-    runCapture("sudo rm -f /swapfile", { ignoreError: true });
+    runCapture(["sudo", "swapoff", "/swapfile"], { ignoreError: true });
+    runCapture(["sudo", "rm", "-f", "/swapfile"], { ignoreError: true });
   } catch {
     // Best effort cleanup
   }
@@ -694,12 +705,13 @@ function cleanupPartialSwap(): void {
 
 function createSwapfile(mem: MemoryInfo): SwapResult {
   try {
-    runCapture("sudo dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none", {
+    runCapture(["sudo", "dd", "if=/dev/zero", "of=/swapfile", "bs=1M", "count=4096", "status=none"], {
       ignoreError: false,
     });
-    runCapture("sudo chmod 600 /swapfile", { ignoreError: false });
-    runCapture("sudo mkswap /swapfile", { ignoreError: false });
-    runCapture("sudo swapon /swapfile", { ignoreError: false });
+    runCapture(["sudo", "chmod", "600", "/swapfile"], { ignoreError: false });
+    runCapture(["sudo", "mkswap", "/swapfile"], { ignoreError: false });
+    runCapture(["sudo", "swapon", "/swapfile"], { ignoreError: false });
+    // Shell required: grep || echo | tee pipeline
     runCapture(
       "grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab",
       { ignoreError: false },
