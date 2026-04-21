@@ -2564,12 +2564,7 @@ async function preflight() {
       // Fall back to the Landlock-enforcement floor (also MIN_VERSION in
       // scripts/install-openshell.sh) if the blueprint cannot be read.
       const minOpenshellVersion = getBlueprintMinOpenshellVersion() ?? "0.0.29";
-      const parts = currentVersion.split(".").map(Number);
-      const minParts = minOpenshellVersion.split(".").map(Number);
-      const needsUpgrade =
-        parts[0] < minParts[0] ||
-        (parts[0] === minParts[0] && parts[1] < minParts[1]) ||
-        (parts[0] === minParts[0] && parts[1] === minParts[1] && parts[2] < minParts[2]);
+      const needsUpgrade = !versionGte(currentVersion, minOpenshellVersion);
       if (needsUpgrade) {
         console.log(
           `  openshell ${currentVersion} is below minimum required version. Upgrading...`,
