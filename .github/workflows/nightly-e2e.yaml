@@ -256,6 +256,34 @@ jobs:
           path: test-sandbox-operations-*.log
           if-no-files-found: ignore
 
+  # ── Dashboard reachability ───────────────────────────────────
+  # Validates the OpenClaw dashboard is reachable from the host on the
+  # forwarded port after onboard: port bound, HTTP 200, HTML body signature.
+  dashboard-reachability-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run dashboard reachability E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_POLICY_TIER: "open"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-dashboard-reachability.sh
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-reachability-test-log
+          path: test-dashboard-reachability-*.log
+          if-no-files-found: ignore
+
   # ── Inference routing (credential isolation + error classification) ──
   # TC-INF-05: real API key absent from sandbox env/process/filesystem
   # TC-INF-06: invalid API key → classified credential error (PR-safe)
@@ -572,6 +600,7 @@ jobs:
         hermes-e2e,
         skip-permissions-e2e,
         sandbox-operations-e2e,
+        dashboard-reachability-e2e,
         inference-routing-e2e,
         network-policy-e2e,
         deployment-services-e2e,
