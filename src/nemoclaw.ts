@@ -731,11 +731,11 @@ async function getReconciledSandboxGatewayState(sandboxName) {
   return lookup;
 }
 
-async function ensureLiveSandboxOrExit(sandboxName) {
+async function ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase = false } = {}) {
   const lookup = await getReconciledSandboxGatewayState(sandboxName);
   if (lookup.state === "present") {
     const phase = parseSandboxPhase(lookup.output || "");
-    if (phase && phase !== "Ready") {
+    if (!allowNonReadyPhase && phase && phase !== "Ready") {
       console.error(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
       console.error(
         "  This usually happens when a process crash inside the sandbox prevented clean startup.",
@@ -1201,7 +1201,7 @@ async function listSandboxes() {
 
 async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false } = {}) {
   const { isSandboxReady, parseSandboxStatus } = require("./lib/onboard");
-  await ensureLiveSandboxOrExit(sandboxName);
+  await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
 
   // Version staleness check — warn but don't block
   try {
