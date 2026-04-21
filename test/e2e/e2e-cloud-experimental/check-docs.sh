@@ -141,7 +141,7 @@ run_cli_check() {
   # shellcheck disable=SC2016
   # log text: backticks are documentation markers, not command substitution
   log '[cli]        vs: docs/reference/commands.md (### `nemoclaw …` headings only)'
-  log "[cli] excluded: openshell, /nemoclaw slash, deprecated nemoclaw setup (not in --help)"
+  log "[cli] excluded: openshell, /nemoclaw slash, deprecated aliases (setup, setup-spark), onboard --from subsection"
 
   log "[cli] phase 1/2: extract normalized usage lines from --help"
   NO_COLOR=1 "$NODE" "$CLI_JS" --help 2>&1 | LC_ALL=C perl -CS -ne '
@@ -156,6 +156,10 @@ run_cli_check() {
       while ($c =~ s/\s+<[^>]+>\s*$//) {}
       my $k = "nemoclaw $c";
       $k =~ s/^nemoclaw debug.*/nemoclaw debug/;
+      # Skip deprecated aliases and subsection commands that have no ### heading
+      next if $k eq "nemoclaw setup";
+      next if $k eq "nemoclaw setup-spark";
+      next if $k =~ /^nemoclaw onboard --/;
       print "$k\n";
     }
   ' | LC_ALL=C sort -u >"$_tmp/help.txt"

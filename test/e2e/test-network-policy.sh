@@ -142,28 +142,15 @@ preflight() {
   log "Pre-flight complete"
 }
 
-# Apply a network policy preset using expect to handle interactive prompts.
+# Apply a network policy preset.
+# Uses the direct CLI form (`policy-add <preset> --yes`) which works in both
+# interactive and non-interactive (NEMOCLAW_NON_INTERACTIVE=1) modes.
 apply_preset() {
   local preset_name="$1"
-  local preset_list preset_num
-  preset_list=$(nemoclaw "$SANDBOX_NAME" policy-add </dev/null 2>&1) || true
-  preset_num=$(echo "$preset_list" | grep -oE '[0-9]+\) . '"$preset_name" | grep -oE '^[0-9]+') || true
-  if [[ -z "$preset_num" ]]; then
-    log "  Could not find '$preset_name' in preset list"
-    return 1
-  fi
-  log "  Applying preset '$preset_name' (#$preset_num) via expect..."
+  log "  Applying preset '$preset_name' via policy-add --yes..."
   local exit_code=0
   set +e
-  expect <<EOF 2>&1 | tee -a "$LOG_FILE"
-set timeout 30
-spawn nemoclaw $SANDBOX_NAME policy-add
-expect "Choose preset*"
-send "$preset_num\r"
-expect "*Y/n*"
-send "Y\r"
-expect eof
-EOF
+  nemoclaw "$SANDBOX_NAME" policy-add "$preset_name" --yes 2>&1 | tee -a "$LOG_FILE"
   exit_code=${PIPESTATUS[0]}
   set -e
   sleep 3
@@ -339,23 +326,8 @@ fetch('$target_url', {signal: AbortSignal.timeout(15000)})
   log "  Before dry-run: $before"
 
   log "  Step 2: Running policy-add --dry-run slack..."
-  local slack_list slack_num
-  slack_list=$(nemoclaw "$SANDBOX_NAME" policy-add --dry-run </dev/null 2>&1) || true
-  slack_num=$(echo "$slack_list" | grep -oE '[0-9]+\) . slack ' | grep -oE '^[0-9]+') || true
-  if [[ -z "$slack_num" ]]; then
-    fail "TC-NET-04: Setup" "Could not find slack in preset list"
-    return
-  fi
   local dry_output
-  dry_output=$(
-    expect <<EOF 2>&1
-set timeout 15
-spawn nemoclaw $SANDBOX_NAME policy-add --dry-run
-expect "Choose preset*"
-send "$slack_num\r"
-expect eof
-EOF
-  ) || true
+  dry_output=$(nemoclaw "$SANDBOX_NAME" policy-add slack --dry-run 2>&1) || true
   log "  Dry-run output: ${dry_output:0:300}"
 
   if echo "$dry_output" | grep -qiE "slack\.com|dry.run|no changes"; then
