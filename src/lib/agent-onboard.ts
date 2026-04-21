@@ -8,12 +8,12 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { spawnSync } from "child_process";
 
 import { ROOT, run } from "./runner";
 import { loadAgent, resolveAgentName, type AgentDefinition } from "./agent-defs";
 import { getProviderSelectionConfig } from "./inference-config";
 import * as onboardSession from "./onboard-session";
+import { sleepSeconds } from "./wait";
 
 export interface OnboardContext {
   step: (current: number, total: number, message: string) => void;
@@ -102,7 +102,7 @@ export function getAgentPermissivePolicyPath(agent: AgentDefinition): string | n
 }
 
 function sleep(seconds: number): void {
-  spawnSync("sleep", [String(seconds)]);
+  sleepSeconds(seconds);
 }
 
 /**
