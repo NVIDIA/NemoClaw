@@ -78,11 +78,20 @@ onboard_sandbox() {
     return 1
   fi
 
-  if ! nemoclaw list 2>/dev/null | grep -Fqw -- "$name"; then
+  if ! sandbox_exists "$name"; then
     log "  [onboard_sandbox] Sandbox '$name' not found in nemoclaw list after onboard"
     return 1
   fi
   return 0
+}
+
+# ── Exact sandbox-name match helper ──────────────────────────────────────────
+# `nemoclaw list` prints one indented sandbox name per line (optionally followed
+# by " *" for the default). `grep -Fw` word-boundary matches still accept
+# hyphenated prefixes (e.g. "test-dash" matches "test-dash-old"), so we match
+# the first whitespace-delimited field exactly instead.
+sandbox_exists() {
+  nemoclaw list 2>/dev/null | awk -v n="$1" '$1==n { found=1; exit } END { exit !found }'
 }
 
 # ── Resolve repo root ────────────────────────────────────────────────────────
@@ -98,6 +107,11 @@ fi
 
 # ── Install NemoClaw if not present ──────────────────────────────────────────
 install_nemoclaw() {
+  # Use an ephemeral, test-only install-sandbox name so cleanup can never
+  # destroy a user's real 'my-assistant' sandbox when this script is run
+  # locally outside CI.
+  local install_sandbox="test-dash-install-$$"
+
   if command -v nemoclaw &>/dev/null; then
     log "nemoclaw already installed: $(nemoclaw --version 2>/dev/null || echo 'unknown')"
     return 0
@@ -106,7 +120,8 @@ install_nemoclaw() {
   log "=== Installing NemoClaw via install.sh ==="
 
   local install_exit=0
-  bash "$REPO_ROOT/install.sh" --non-interactive --yes-i-accept-third-party-software \
+  NEMOCLAW_SANDBOX_NAME="$install_sandbox" \
+    bash "$REPO_ROOT/install.sh" --non-interactive --yes-i-accept-third-party-software \
     2>&1 | tee -a "$LOG_FILE" || install_exit=$?
 
   if [ -f "$HOME/.bashrc" ]; then
@@ -134,9 +149,7 @@ install_nemoclaw() {
 
   log "nemoclaw installed: $(nemoclaw --version 2>/dev/null || echo 'unknown')"
 
-  local install_sandbox
-  install_sandbox="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
-  if nemoclaw list 2>/dev/null | grep -Fqw -- "$install_sandbox"; then
+  if sandbox_exists "$install_sandbox"; then
     log "Destroying install sandbox '$install_sandbox'..."
     nemoclaw "$install_sandbox" destroy --yes 2>/dev/null || true
   fi
@@ -167,7 +180,7 @@ preflight() {
     rm -f "$HOME/.nemoclaw/onboard.lock"
   fi
 
-  if nemoclaw list 2>/dev/null | grep -Fqw -- "$SANDBOX"; then
+  if sandbox_exists "$SANDBOX"; then
     log "Cleaning up leftover sandbox: $SANDBOX"
     nemoclaw "$SANDBOX" destroy --yes 2>/dev/null || true
   fi
@@ -284,7 +297,7 @@ teardown() {
   log ""
   log "=== Teardown ==="
   openshell forward stop "$DASHBOARD_PORT" 2>/dev/null || true
-  if nemoclaw list 2>/dev/null | grep -Fqw -- "$SANDBOX"; then
+  if sandbox_exists "$SANDBOX"; then
     log "Destroying sandbox '$SANDBOX'..."
     nemoclaw "$SANDBOX" destroy --yes 2>/dev/null || true
   fi
