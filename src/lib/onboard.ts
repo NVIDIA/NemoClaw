@@ -465,7 +465,9 @@ function getInstalledOpenshellVersion(versionOutput = null) {
   if (match) return match[1];
   // Fallback: read the sidecar version file written by install-openshell.sh for
   // binaries that self-report an unparseable string (e.g. openshell 0.0.29 → "m-dev").
-  if (!versionOutput && openshellBin) {
+  // Also applies when versionOutput is provided but unparseable (e.g. passed from
+  // runCaptureOpenshell at the blueprint version gate).
+  if (openshellBin) {
     try {
       const sidecar = path.join(path.dirname(openshellBin), ".openshell-installed-version");
       const sidecarMatch = fs.readFileSync(sidecar, "utf-8").trim().match(/([0-9]+\.[0-9]+\.[0-9]+)/);

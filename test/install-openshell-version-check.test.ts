@@ -22,36 +22,40 @@ function writeExecutable(target: string, contents: string) {
  */
 function runWithInstalledVersion(version: string) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-ver-"));
-  const fakeBin = path.join(tmp, "bin");
-  fs.mkdirSync(fakeBin);
+  try {
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
 
-  // Fake openshell that reports the given version
-  writeExecutable(
-    path.join(fakeBin, "openshell"),
-    `#!/usr/bin/env bash
+    // Fake openshell that reports the given version
+    writeExecutable(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then echo "openshell ${version}"; exit 0; fi
 exit 99`,
-  );
+    );
 
-  // Stub curl to fail so the install path exits without doing real network I/O
-  writeExecutable(
-    path.join(fakeBin, "curl"),
-    `#!/usr/bin/env bash
+    // Stub curl to fail so the install path exits without doing real network I/O
+    writeExecutable(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
 echo "curl stub: not available in test" >&2
 exit 1`,
-  );
+    );
 
-  // Stub gh CLI similarly
-  writeExecutable(
-    path.join(fakeBin, "gh"),
-    `#!/usr/bin/env bash
+    // Stub gh CLI similarly
+    writeExecutable(
+      path.join(fakeBin, "gh"),
+      `#!/usr/bin/env bash
 exit 1`,
-  );
+    );
 
-  return spawnSync("bash", [SCRIPT], {
-    env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
-    encoding: "utf8",
-  });
+    return spawnSync("bash", [SCRIPT], {
+      env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
+      encoding: "utf8",
+    });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 describe("install-openshell.sh version check", () => {
@@ -94,85 +98,97 @@ describe("install-openshell.sh version check", () => {
 
   it("exits cleanly when openshell reports m-dev but sidecar records 0.0.29", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-mdev-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
+    try {
+      const fakeBin = path.join(tmp, "bin");
+      fs.mkdirSync(fakeBin);
 
-    // Fake openshell that reports "m-dev" (as openshell 0.0.29 does in practice)
-    writeExecutable(
-      path.join(fakeBin, "openshell"),
-      `#!/usr/bin/env bash
+      // Fake openshell that reports "m-dev" (as openshell 0.0.29 does in practice)
+      writeExecutable(
+        path.join(fakeBin, "openshell"),
+        `#!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then echo "openshell m-dev"; exit 0; fi
 exit 99`,
-    );
+      );
 
-    // Sidecar file written by a previous install
-    fs.writeFileSync(path.join(fakeBin, ".openshell-installed-version"), "0.0.29\n");
+      // Sidecar file written by a previous install
+      fs.writeFileSync(path.join(fakeBin, ".openshell-installed-version"), "0.0.29\n");
 
-    writeExecutable(path.join(fakeBin, "curl"), `#!/usr/bin/env bash\nexit 1`);
-    writeExecutable(path.join(fakeBin, "gh"), `#!/usr/bin/env bash\nexit 1`);
+      writeExecutable(path.join(fakeBin, "curl"), `#!/usr/bin/env bash\nexit 1`);
+      writeExecutable(path.join(fakeBin, "gh"), `#!/usr/bin/env bash\nexit 1`);
 
-    const result = spawnSync("bash", [SCRIPT], {
-      env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
-      encoding: "utf8",
-    });
-    expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/already installed.*0\.0\.29/);
+      const result = spawnSync("bash", [SCRIPT], {
+        env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
+        encoding: "utf8",
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(/already installed.*0\.0\.29/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("triggers upgrade when openshell reports m-dev and sidecar records 0.0.26", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-mdev-old-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
+    try {
+      const fakeBin = path.join(tmp, "bin");
+      fs.mkdirSync(fakeBin);
 
-    writeExecutable(
-      path.join(fakeBin, "openshell"),
-      `#!/usr/bin/env bash
+      writeExecutable(
+        path.join(fakeBin, "openshell"),
+        `#!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then echo "openshell m-dev"; exit 0; fi
 exit 99`,
-    );
+      );
 
-    // Sidecar from an older install that pre-dates the Landlock fix
-    fs.writeFileSync(path.join(fakeBin, ".openshell-installed-version"), "0.0.26\n");
+      // Sidecar from an older install that pre-dates the Landlock fix
+      fs.writeFileSync(path.join(fakeBin, ".openshell-installed-version"), "0.0.26\n");
 
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash\necho "curl stub" >&2\nexit 1`,
-    );
-    writeExecutable(path.join(fakeBin, "gh"), `#!/usr/bin/env bash\nexit 1`);
+      writeExecutable(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash\necho "curl stub" >&2\nexit 1`,
+      );
+      writeExecutable(path.join(fakeBin, "gh"), `#!/usr/bin/env bash\nexit 1`);
 
-    const result = spawnSync("bash", [SCRIPT], {
-      env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
-      encoding: "utf8",
-    });
-    expect(result.status).not.toBe(0);
-    expect(result.stdout).toMatch(/below minimum.*upgrading/);
+      const result = spawnSync("bash", [SCRIPT], {
+        env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
+        encoding: "utf8",
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toMatch(/below minimum.*upgrading/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("proceeds to install when openshell is not present", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-noop-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
+    try {
+      const fakeBin = path.join(tmp, "bin");
+      fs.mkdirSync(fakeBin);
 
-    // No openshell binary — just stub curl/gh to fail fast
-    writeExecutable(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
+      // No openshell binary — just stub curl/gh to fail fast
+      writeExecutable(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
 echo "curl stub: not available in test" >&2
 exit 1`,
-    );
-    writeExecutable(
-      path.join(fakeBin, "gh"),
-      `#!/usr/bin/env bash
+      );
+      writeExecutable(
+        path.join(fakeBin, "gh"),
+        `#!/usr/bin/env bash
 exit 1`,
-    );
+      );
 
-    const result = spawnSync("bash", [SCRIPT], {
-      env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
-      encoding: "utf8",
-    });
+      const result = spawnSync("bash", [SCRIPT], {
+        env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
+        encoding: "utf8",
+      });
 
-    // Should attempt install (not exit 0 early) and fail at the download step
-    expect(result.stdout).toMatch(/Installing openshell CLI/);
-    expect(result.status).not.toBe(0);
+      // Should attempt install (not exit 0 early) and fail at the download step
+      expect(result.stdout).toMatch(/Installing openshell CLI/);
+      expect(result.status).not.toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
