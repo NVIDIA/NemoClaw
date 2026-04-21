@@ -79,6 +79,7 @@ const providerModels = require("./provider-models");
 const sandboxCreateStream = require("./sandbox-create-stream");
 const validationRecovery = require("./validation-recovery");
 const webSearch = require("./web-search");
+const { buildSubprocessEnv } = require("./subprocess-env");
 
 /**
  * Create a temp file inside a directory with a cryptographically random name.
@@ -2699,30 +2700,29 @@ async function createSandbox(
   // See: crates/openshell-sandbox/src/secrets.rs (placeholder rewriting),
   //      crates/openshell-router/src/backend.rs (inference auth injection).
   //
-  // TODO: migrate this blocklist to the shared allowlist in
-  // src/lib/subprocess-env.ts once the sandbox create path has been validated
-  // end-to-end with the stricter filtering. The allowlist rejects unknown
-  // env vars by default, which is safer but needs careful rollout.
+  // KUBECONFIG / SSH_AUTH_SOCK — the generic allowlist includes these for host-side
+  // subprocesses (gateway start, openshell CLI) but the sandbox should
+  // never have access to the host's Kubernetes cluster or SSH agent.
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
-  const blockedSandboxEnvNames = new Set([
-    // Derived from REMOTE_PROVIDER_CONFIG to prevent drift
-    ...Object.values(REMOTE_PROVIDER_CONFIG)
-      .map((cfg) => cfg.credentialEnv)
-      .filter(Boolean),
-    // Additional credentials not in REMOTE_PROVIDER_CONFIG
-    "BEDROCK_API_KEY",
-    "DISCORD_BOT_TOKEN",
-    "HEYGEN_ACCESS_TOKEN",
-    "HEYGEN_API_KEY",
-    "HEYGEN_REFRESH_TOKEN",
-    "SLACK_BOT_TOKEN",
-    "SLACK_APP_TOKEN",
-    "TELEGRAM_BOT_TOKEN",
-    webSearch.BRAVE_API_KEY_ENV,
-  ]);
-  const sandboxEnv = Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !blockedSandboxEnvNames.has(name)),
-  );
+  // Pass the configured dashboard port into the sandbox so nemoclaw-start.sh
+  // can unconditionally override CHAT_UI_URL even when the Docker image was
+  // built with a different default. Without this, the baked-in Docker ENV
+  // value takes precedence and the gateway starts on the wrong port. (#1925)
+  if (process.env.NEMOCLAW_DASHBOARD_PORT) {
+    envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", String(DASHBOARD_PORT)));
+  }
+  if (webSearchConfig?.fetchEnabled) {
+    const braveKey =
+      getCredential(webSearch.BRAVE_API_KEY_ENV) || process.env[webSearch.BRAVE_API_KEY_ENV];
+    if (braveKey) {
+      envArgs.push(formatEnvAssignment(webSearch.BRAVE_API_KEY_ENV, braveKey));
+    }
+  }
+  const sandboxEnv = buildSubprocessEnv();
+  // Remove host-infrastructure credentials that the generic allowlist
+  // permits for host-side processes but that must not enter the sandbox.
+  delete sandboxEnv.KUBECONFIG;
+  delete sandboxEnv.SSH_AUTH_SOCK;
   // Run without piping through awk — the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe

@@ -95,6 +95,7 @@ selectFromList(items, options)
 }
 
 describe("policies", () => {
+  // Must match nemoclaw-blueprint/policies/presets/*.yaml (one entry per file basename).
   const EXPECTED_PRESET_NAMES = [
     "brave",
     "brew",
