@@ -155,7 +155,10 @@ To apply a preset to a running sandbox:
 $ nemoclaw <name> policy-add
 ```
 
-Note that preset selection is an interactive prompt; any positional arguments for presets are ignored.
+:::{note}
+Preset selection is interactive.
+Positional preset arguments are ignored.
+:::
 
 For example, to interactively add PyPI access to a running sandbox:
 
