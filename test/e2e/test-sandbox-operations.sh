@@ -540,7 +540,7 @@ test_sbx_10_multi_sandbox_metadata() {
   require_sandbox "$SANDBOX_A" "TC-SBX-10" || return
 
   log "  Onboarding second sandbox '$SANDBOX_B'..."
-  if ! onboard_sandbox "$SANDBOX_B"; then
+  if ! CHAT_UI_URL="http://127.0.0.1:18790" onboard_sandbox "$SANDBOX_B"; then
     fail "TC-SBX-10: Multi-Sandbox" "Sandbox '$SANDBOX_B' failed to onboard"
     return
   fi

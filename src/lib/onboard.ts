@@ -6190,6 +6190,7 @@ async function onboard(opts = {}) {
       if (webSearchConfig) {
         note("  [resume] Reusing Brave Search configuration already baked into the sandbox.");
       }
+      selectedMessagingChannels = session?.messagingChannels ?? [];
       skippedStepMessage("sandbox", sandboxName);
     } else {
       if (resume && session?.steps?.sandbox?.status === "complete") {
