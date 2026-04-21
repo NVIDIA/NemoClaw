@@ -172,6 +172,17 @@ describe("onboard session", () => {
     expect(loaded.metadata.token).toBeUndefined();
   });
 
+  it("drops non-string gatewayName during normalization", () => {
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({ version: 1, metadata: { gatewayName: 123 } }),
+    );
+    const loaded = session.loadSession();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.metadata.gatewayName).toBe("nemoclaw");
+  });
+
   it("returns null for corrupt session data", () => {
     fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
     fs.writeFileSync(session.SESSION_FILE, "not-json");
@@ -325,6 +336,40 @@ describe("onboard session", () => {
     expect(loaded.steps.inference.error).not.toContain("sk-secret-value");
     expect(loaded.steps.inference.error).not.toContain("ghp_1234567890123456789012345");
     expect(loaded.failure.message).toBe(loaded.steps.inference.error);
+  });
+
+  it("round-trips null messagingChannels through normalizeSession", () => {
+    const created = session.createSession();
+    expect(created.messagingChannels).toBeNull();
+    const saved = session.saveSession(created);
+    const loaded = session.loadSession();
+    expect(saved.messagingChannels).toBeNull();
+    expect(loaded.messagingChannels).toBeNull();
+  });
+
+  it("round-trips messagingChannels=['telegram'] through normalizeSession", () => {
+    const created = session.createSession({ messagingChannels: ["telegram"] });
+    expect(created.messagingChannels).toEqual(["telegram"]);
+    const saved = session.saveSession(created);
+    const loaded = session.loadSession();
+    expect(saved.messagingChannels).toEqual(["telegram"]);
+    expect(loaded.messagingChannels).toEqual(["telegram"]);
+  });
+
+  it("filterSafeUpdates preserves messagingChannels field", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      messagingChannels: ["slack", "discord"],
+    });
+
+    const loaded = session.loadSession();
+    expect(loaded.messagingChannels).toEqual(["slack", "discord"]);
+  });
+
+  it("createSession with messagingChannels override", () => {
+    const created = session.createSession({ messagingChannels: ["telegram", "slack"] });
+    expect(created.messagingChannels).toEqual(["telegram", "slack"]);
+    expect(created.provider).toBeNull();
   });
 
   it("summarizes the session for debug output", () => {

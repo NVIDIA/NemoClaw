@@ -19,14 +19,18 @@ What it does:
   2. Classifies each page by content type (how_to, concept, reference,
      get_started) using the frontmatter `content.type` field.
   3. Groups pages into skills using one of three strategies:
-       - smart (default): groups by directory, merges concept pages as
-         context for procedure pages in the same directory.
+       - smart (default): groups by directory; concept and reference pages
+         in the same directory ride along as reference files next to any
+         procedure pages.
        - grouped: groups all pages in the same parent directory.
        - individual: each doc page becomes its own skill.
   4. Generates a skill directory per group containing:
-       - SKILL.md with frontmatter (name, description, trigger keywords),
-         procedural steps, context sections, and a Related Skills section.
-       - references/ with detailed concept and reference content for
+       - SKILL.md with frontmatter (name, description), prerequisites,
+         procedural steps, a References section that links to the full
+         concept/reference files, and a Related Skills section. Concept
+         and reference bodies are not inlined, so SKILL.md stays small
+         and nothing is truncated mid-table or mid-code-fence.
+       - references/ with the full concept and reference content for
          progressive disclosure (loaded by the agent on demand).
   5. Resolves all relative doc paths to repo-root-relative paths, and
      converts cross-references between docs into skill-to-skill pointers
@@ -465,7 +469,7 @@ def rewrite_doc_paths(
         rel_str = str(rel_to_repo)
         if rel_str in doc_to_skill:
             skill_name = doc_to_skill[rel_str]
-            return f"{link_text} (see the `{skill_name}` skill)"
+            return f"{link_text} (use the `{skill_name}` skill)"
 
         # Fall back to repo-root-relative path
         return f"[{link_text}]({rel_to_repo})"
@@ -536,6 +540,90 @@ def extract_related_skills(text: str) -> tuple[str, list[str]]:
     # Clean up any leftover blank lines from removed sections
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned, entries
+
+
+def _split_description_trigger(desc: str) -> tuple[str, str]:
+    """Split a page description into (covers, trigger) halves.
+
+    Doc frontmatter tends to phrase ``description.agent`` as
+    ``"<what it covers>. Use when <trigger>."`` (or ``"Use for ..."``).
+    Splitting on that marker lets the References section lead each
+    bullet with the *when* so the agent sees the activation trigger
+    before the descriptive text — the pattern the skill-creation
+    best-practices guide recommends for progressive disclosure.
+
+    Returns ``(covers, trigger)`` where ``trigger`` starts with
+    ``"when "`` or ``"for "`` (no leading ``"Use "``), or an empty
+    string when no marker is found. Trailing periods are stripped from
+    both halves so callers can add punctuation as needed.
+    """
+    text = (desc or "").strip()
+    if not text:
+        return "", ""
+
+    lowest_idx = -1
+    for marker in (". Use when ", ". Use for "):
+        idx = text.find(marker)
+        if idx != -1 and (lowest_idx == -1 or idx < lowest_idx):
+            lowest_idx = idx
+    if lowest_idx == -1:
+        return text.rstrip("."), ""
+
+    covers = text[:lowest_idx].strip().rstrip(".")
+    # Len of ". Use " is 6; keep the "when ..." / "for ..." tail.
+    trigger = text[lowest_idx + 6 :].strip().rstrip(".")
+    return covers, trigger
+
+
+_WARNING_BLOCK_RE = re.compile(
+    r":::\{warning\}(?:[ \t]+([^\n]+))?\n(.*?)\n:::",
+    re.DOTALL,
+)
+
+
+def _extract_gotchas(pages: list[DocPage]) -> list[str]:
+    """Pull ``:::{warning}`` admonitions out of the source pages.
+
+    Returns a list of markdown bullets suitable for a top-level
+    ``## Gotchas`` section. The admonition stays in place inline, but
+    surfacing its first sentence up front means the agent sees the
+    correction before it picks a path through the steps — per the
+    best-practices guide, gotchas are highest-value when they live
+    above the procedures they correct.
+
+    Uses the admonition's inline title when present; otherwise leads
+    with the first sentence of the body. Deduplicates across pages so
+    repeated warnings collapse to one bullet.
+    """
+    bullets: list[str] = []
+    seen: set[str] = set()
+    for page in pages:
+        for m in _WARNING_BLOCK_RE.finditer(page.body):
+            title = (m.group(1) or "").strip().rstrip(".!?")
+            body = m.group(2).strip()
+            # Strip any directive metadata lines such as ``:class: ...``
+            body_lines = [
+                ln
+                for ln in body.split("\n")
+                if not re.match(r"^\s*:[a-z_-]+:", ln)
+            ]
+            body = "\n".join(body_lines).strip()
+            if not body:
+                continue
+            first = re.split(r"(?<=[.!?])\s+", body, maxsplit=1)[0].strip()
+            # Collapse intra-sentence whitespace — source docs wrap at ~80
+            # chars, so without this the bullet breaks across lines.
+            first = re.sub(r"\s+", " ", first)
+            if title:
+                bullet = f"- **{title}.** {first}"
+            else:
+                bullet = f"- {first}"
+            key = bullet.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            bullets.append(bullet)
+    return bullets
 
 
 def _safe_truncation_point(lines: list[str], target: int) -> int:
@@ -663,8 +751,6 @@ NOUN_STOP = {
     "disable",
     "manage",
     "works",
-    "agent",
-    "agents",
 }
 
 PROJECT_STOP = set()  # Populated at runtime from --prefix
@@ -790,22 +876,55 @@ def _brand_case(text: str) -> str:
 def build_skill_description(name: str, pages: list[DocPage]) -> str:
     """Build the description field for the skill frontmatter.
 
-    When a page supplies ``description.agent``, its text is used verbatim.
-    Legacy flat descriptions are still converted to third-person voice.
+    Uses the lead page's ``description.agent`` (or third-person-normalized
+    legacy ``description``) verbatim, then merges every page's frontmatter
+    ``keywords`` list into a single ``Trigger keywords - ...`` clause so
+    the host surfaces the skill on matching user queries. The ``## References``
+    section inside SKILL.md already lists every reference file the skill
+    ships, so that information is not duplicated in the description.
+
     Keeps description under 1024 characters.
     """
-    descriptions = [
-        d if is_agent else _to_third_person(d)
-        for d, is_agent in ((p.description, p.description_is_agent) for p in pages if p.description)
-    ]
-    if descriptions:
-        combined = " ".join(d.rstrip().rstrip(".") + "." for d in descriptions)
-    else:
-        combined = f"Documentation-derived skill for {name.replace('-', ' ')}."
+    if not pages:
+        return f"Documentation-derived skill for {name.replace('-', ' ')}."
 
-    if len(combined) > 1024:
-        combined = combined[:1020] + "..."
-    return combined
+    lead = pages[0]
+    if lead.description:
+        lead_desc = (
+            lead.description
+            if lead.description_is_agent
+            else _to_third_person(lead.description)
+        )
+        lead_desc = lead_desc.rstrip().rstrip(".") + "."
+    else:
+        lead_desc = f"Documentation-derived skill for {name.replace('-', ' ')}."
+
+    # Merge keywords from every page, preserving lead-page order and
+    # deduplicating case-insensitively.
+    seen_keywords: set[str] = set()
+    merged_keywords: list[str] = []
+    for page in pages:
+        for kw in page.keywords or []:
+            kw_clean = str(kw).strip()
+            if not kw_clean:
+                continue
+            key = kw_clean.lower()
+            if key in seen_keywords:
+                continue
+            seen_keywords.add(key)
+            merged_keywords.append(kw_clean)
+    if merged_keywords:
+        lead_desc += " Trigger keywords - " + ", ".join(merged_keywords) + "."
+
+    if len(lead_desc) > 1024:
+        print(
+            f"  warning: description for skill '{name}' truncated from "
+            f"{len(lead_desc)} to 1023 characters; consider shortening the "
+            f"lead page's description.agent or removing redundant keywords",
+            file=sys.stderr,
+        )
+        lead_desc = lead_desc[:1020] + "..."
+    return lead_desc
 
 
 def yaml_scalar(value: str) -> str:
@@ -940,36 +1059,27 @@ def generate_skill(
     lines.append(markdown_spdx_header().rstrip("\n"))
     lines.append("")
 
-    # Title
-    skill_title = _brand_case(name.replace("-", " ").title())
+    # Title — prefer the lead page's frontmatter `title.page` (or H1)
+    # verbatim so the SKILL.md heading matches the source doc instead of
+    # echoing the auto-generated, prefix-laden skill name.
+    if pages and pages[0].title:
+        skill_title = pages[0].title
+    else:
+        skill_title = _brand_case(name.replace("-", " ").title())
     lines.append(f"# {skill_title}")
     lines.append("")
 
-    # Summary from the first page's description
-    if pages[0].description:
-        lines.append(pages[0].description)
+    # Gotchas — surface :::{warning} admonitions from the source procedure
+    # pages at the top so the agent sees non-obvious corrections before it
+    # commits to a path through the steps. The warnings stay in place
+    # inline; this section is a directed summary, not a replacement.
+    gotchas = _extract_gotchas(procedures)
+    if gotchas:
+        lines.append("## Gotchas")
         lines.append("")
-
-    # Context section from concept pages
-    if context_pages:
-        lines.append("## Context")
+        for g in gotchas:
+            lines.append(g)
         lines.append("")
-        for cp in context_pages:
-            body = _clean(cp.body, cp)
-            h1_match = re.match(r"^#\s+.+\n+", body)
-            if h1_match:
-                body = body[h1_match.end() :]
-            # Trim to keep SKILL.md concise; full content goes to references/
-            body_lines = body.split("\n")
-            if len(body_lines) > 60:
-                cut = _safe_truncation_point(body_lines, 60)
-                trimmed = "\n".join(body_lines[:cut])
-                ref_name = cp.path.stem + ".md"
-                trimmed += f"\n\n*Full details in `references/{ref_name}`.*"
-                lines.append(trimmed)
-            else:
-                lines.append(body)
-            lines.append("")
 
     # Prerequisites (merged from all procedure pages, deduplicated)
     prereq_items: list[str] = []
@@ -1029,16 +1139,6 @@ def generate_skill(
             lines.append(cleaned_content)
             lines.append("")
 
-    # Reference pages go to references/ but get a pointer in SKILL.md
-    if reference_pages:
-        lines.append("## Reference")
-        lines.append("")
-        for rp in reference_pages:
-            ref_name = rp.path.stem + ".md"
-            title = rp.title or _brand_case(rp.path.stem.replace("-", " ").title())
-            lines.append(f"- [{title}](references/{ref_name})")
-        lines.append("")
-
     # Build Related Skills from collected sections + any remaining in body
     raw_md = "\n".join(lines)
     raw_md, body_related = extract_related_skills(raw_md)
@@ -1061,6 +1161,30 @@ def generate_skill(
         if key not in seen_skills:
             seen_skills.add(key)
             merged_entries.append(entry)
+
+    # References section — point at the full concept/reference files that
+    # ship alongside SKILL.md. Each bullet leads with the activation
+    # trigger from description.agent (the "Use when ..." clause) so the
+    # agent can decide on-sight whether to load the file, which is how
+    # progressive disclosure is supposed to work.
+    ref_section_pages = context_pages + reference_pages
+    if ref_section_pages:
+        lines.append("")
+        lines.append("## References")
+        lines.append("")
+        for rp in ref_section_pages:
+            ref_name = rp.path.stem + ".md"
+            file_link = f"[references/{ref_name}](references/{ref_name})"
+            covers, trigger = _split_description_trigger(rp.description or "")
+            if trigger:
+                bullet = f"- **Load {file_link}** {trigger}."
+                if covers:
+                    bullet += f" {covers}."
+            elif covers:
+                bullet = f"- **{file_link}** — {covers}."
+            else:
+                bullet = f"- {file_link}"
+            lines.append(bullet)
 
     if merged_entries:
         lines.append("")
@@ -1173,6 +1297,9 @@ EXCLUDED_PATTERNS = {
     "LICENSE.md",
     "license.md",
     "index.md",
+    # Maintainer-only content consumed directly by skills/dashboards;
+    # not user-facing documentation.
+    "triage-instructions.md",
 }
 
 

@@ -20,7 +20,7 @@ const SELECT_FROM_LIST_ITEMS = [
   { name: "pypi", description: "Python Package Index (PyPI) access" },
 ];
 
-function runPolicyAdd(confirmAnswer, extraArgs = []) {
+function runPolicyAdd(confirmAnswer, extraArgs = [], envOverrides = {}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-add-"));
   const scriptPath = path.join(tmpDir, "policy-add-check.js");
   const script = String.raw`
@@ -60,6 +60,7 @@ setImmediate(() => {
     env: {
       ...process.env,
       HOME: tmpDir,
+      ...envOverrides,
     },
   });
 }
@@ -155,10 +156,11 @@ describe("policies", () => {
       }
     });
 
-    it("local-inference preset targets host.openshell.internal on Ollama and vLLM ports", () => {
+    it("local-inference preset targets host.openshell.internal on Ollama, proxy, and vLLM ports", () => {
       const content = policies.loadPreset("local-inference");
       expect(content).toContain("host.openshell.internal");
       expect(content).toContain("port: 11434");
+      expect(content).toContain("port: 11435");
       expect(content).toContain("port: 8000");
     });
 
@@ -605,12 +607,26 @@ describe("policies", () => {
       }
     });
 
-    it("messaging REST presets do not pin deprecated tls termination", () => {
-      for (const name of ["discord", "slack", "telegram"]) {
-        const content = policies.loadPreset(name);
+    it("messaging WebSocket presets keep tls: skip on gateway endpoints", () => {
+      const cases = [
+        { preset: "discord", pattern: /host:\s*gateway\.discord\.gg[\s\S]*?tls:\s*skip/ },
+        { preset: "slack", pattern: /host:\s*wss-primary\.slack\.com[\s\S]*?tls:\s*skip/ },
+        { preset: "slack", pattern: /host:\s*wss-backup\.slack\.com[\s\S]*?tls:\s*skip/ },
+      ];
+
+      for (const { preset, pattern } of cases) {
+        const content = policies.loadPreset(preset);
         expect(content).toBeTruthy();
-        expect(content.includes("tls: terminate")).toBe(false);
+        expect(content).toMatch(pattern);
       }
+    });
+
+    it("telegram REST preset uses tls: terminate for L7 proxy", () => {
+      const content = policies.loadPreset("telegram");
+      expect(content).toBeTruthy();
+      expect(content).toMatch(
+        /host:\s*api\.telegram\.org[\s\S]*?protocol:\s*rest[\s\S]*?tls:\s*terminate/,
+      );
     });
 
     it("pypi preset allows HEAD for pip lazy-wheel metadata checks", () => {
@@ -889,10 +905,43 @@ selectForRemoval(items, options)
       expect(result.stdout).toMatch(/Endpoints that would be opened: pypi\.org/);
       expect(result.stdout).toMatch(/--dry-run: no changes applied\./);
     });
+
+    it("accepts a preset name with --yes for headless use", () => {
+      const result = runPolicyAdd("n", ["pypi", "--yes"]);
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim());
+      expect(calls.some((call) => call.type === "prompt")).toBeFalsy();
+      expect(calls).toContainEqual({
+        type: "apply",
+        sandboxName: "test-sandbox",
+        presetName: "pypi",
+      });
+    });
+
+    it("honors non-interactive mode when a preset name is provided", () => {
+      const result = runPolicyAdd("n", ["pypi"], { NEMOCLAW_NON_INTERACTIVE: "1" });
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim());
+      expect(calls.some((call) => call.type === "prompt")).toBeFalsy();
+      expect(calls).toContainEqual({
+        type: "apply",
+        sandboxName: "test-sandbox",
+        presetName: "pypi",
+      });
+    });
+
+    it("fails fast in non-interactive mode without a preset name", () => {
+      const result = runPolicyAdd("y", [], { NEMOCLAW_NON_INTERACTIVE: "1" });
+
+      expect(result.status).not.toBe(0);
+      expect(`${result.stdout}${result.stderr}`).toMatch(/Non-interactive mode requires a preset name/);
+    });
   });
 
   describe("policy-remove confirmation", () => {
-    function runPolicyRemove(confirmAnswer, extraArgs = []) {
+    function runPolicyRemove(confirmAnswer, extraArgs = [], envOverrides = {}) {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-remove-"));
       const scriptPath = path.join(tmpDir, "policy-remove-check.js");
       const script = String.raw`
@@ -933,6 +982,7 @@ setImmediate(() => {
         env: {
           ...process.env,
           HOME: tmpDir,
+          ...envOverrides,
         },
       });
     }
@@ -974,6 +1024,39 @@ setImmediate(() => {
       expect(calls.some((call) => call.type === "remove")).toBeFalsy();
       expect(result.stdout).toMatch(/Endpoints that would be removed: pypi\.org/);
       expect(result.stdout).toMatch(/--dry-run: no changes applied\./);
+    });
+
+    it("accepts a preset name with --yes for scripted removal", () => {
+      const result = runPolicyRemove("n", ["pypi", "--yes"]);
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim());
+      expect(calls.some((call) => call.type === "prompt")).toBeFalsy();
+      expect(calls).toContainEqual({
+        type: "remove",
+        sandboxName: "test-sandbox",
+        presetName: "pypi",
+      });
+    });
+
+    it("honors non-interactive mode when removing an explicit preset", () => {
+      const result = runPolicyRemove("n", ["pypi"], { NEMOCLAW_NON_INTERACTIVE: "1" });
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim());
+      expect(calls.some((call) => call.type === "prompt")).toBeFalsy();
+      expect(calls).toContainEqual({
+        type: "remove",
+        sandboxName: "test-sandbox",
+        presetName: "pypi",
+      });
+    });
+
+    it("fails fast in non-interactive mode without a preset name", () => {
+      const result = runPolicyRemove("y", [], { NEMOCLAW_NON_INTERACTIVE: "1" });
+
+      expect(result.status).not.toBe(0);
+      expect(`${result.stdout}${result.stderr}`).toMatch(/Non-interactive mode requires a preset name/);
     });
   });
 });
