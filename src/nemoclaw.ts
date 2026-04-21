@@ -44,7 +44,7 @@ const policies = require("./lib/policies");
 const shields = require("./lib/shields");
 const sandboxConfig = require("./lib/sandbox-config");
 const { parseGatewayInference } = require("./lib/inference-config");
-const { probeLocalProviderHealth } = require("./lib/local-inference");
+const { probeProviderHealth } = require("./lib/inference-health");
 const { getVersion } = require("./lib/version");
 const onboardSession = require("./lib/onboard-session");
 const { parseLiveSandboxNames } = require("./lib/runtime-recovery");
@@ -69,6 +69,20 @@ const sandboxState = require("./lib/sandbox-state");
 const { ensureOllamaAuthProxy } = require("./lib/onboard");
 const skillInstall = require("./lib/skill-install");
 const { parseSandboxPhase } = require("./lib/gateway-state");
+const {
+  getActiveSandboxSessions,
+  createSystemDeps: createSessionDeps,
+} = require("./lib/sandbox-session-state");
+
+import {
+  KNOWN_CHANNELS,
+  clearChannelTokens,
+  getChannelDef,
+  getChannelTokenKeys,
+  knownChannelNames,
+  persistChannelTokens,
+} from "./lib/sandbox-channels";
+import { isNonInteractive } from "./lib/onboard";
 
 // ── Global commands ──────────────────────────────────────────────
 
@@ -1065,6 +1079,10 @@ async function credentialsCommand(args) {
   process.exit(1);
 }
 
+/**
+ * Inspect gateway logs for known Telegram conflict signatures without blocking
+ * the broader status command when the probe cannot run.
+ */
 function checkMessagingBridgeHealth(sandboxName, channels) {
   // Only Telegram currently emits a recognizable conflict signature in the
   // gateway log. Discord/Slack have similar single-consumer constraints but
@@ -1076,7 +1094,7 @@ function checkMessagingBridgeHealth(sandboxName, channels) {
   try {
     const result = spawnSync(
       getOpenshellBinary(),
-      ["sandbox", "exec", sandboxName, "sh", "-c", script],
+      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-c", script],
       { encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] },
     );
     const count = Number.parseInt((result.stdout || "").trim(), 10);
@@ -1124,12 +1142,15 @@ function backfillAndFindOverlaps() {
   }
 }
 
+/**
+ * Read a short tail of the gateway log for degraded messaging diagnostics.
+ */
 function readGatewayLog(sandboxName) {
   const { spawnSync } = require("child_process");
   try {
     const result = spawnSync(
       getOpenshellBinary(),
-      ["sandbox", "exec", sandboxName, "sh", "-c", "tail -n 10 /tmp/gateway.log 2>/dev/null"],
+      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-c", "tail -n 10 /tmp/gateway.log 2>/dev/null"],
       { encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] },
     );
     const output = (result.stdout || "").trim();
@@ -1154,11 +1175,36 @@ function showStatus() {
 }
 
 async function listSandboxes() {
+  const opsBinList = resolveOpenshell();
+  const sessionDeps = opsBinList ? createSessionDeps(opsBinList) : null;
+
+  // Cache the SSH process probe once for all sandboxes — avoids spawning ps
+  // per sandbox row. The getSshProcesses() call is the expensive part (5s timeout).
+  let cachedSshOutput: string | null | undefined;
+  const getCachedSshOutput = () => {
+    if (cachedSshOutput === undefined && sessionDeps) {
+      cachedSshOutput = sessionDeps.getSshProcesses();
+    }
+    return cachedSshOutput ?? null;
+  };
+
   await listSandboxesCommand({
     recoverRegistryEntries: () => recoverRegistryEntries(),
     getLiveInference: () =>
       parseGatewayInference(captureOpenshell(["inference", "get"], { ignoreError: true }).output),
     loadLastSession: () => onboardSession.loadSession(),
+    getActiveSessionCount: sessionDeps
+      ? (name) => {
+          try {
+            const sshOutput = getCachedSshOutput();
+            if (sshOutput === null) return null;
+            const { parseSshProcesses } = require("./lib/sandbox-session-state");
+            return parseSshProcesses(sshOutput, name).length;
+          } catch {
+            return null;
+          }
+        }
+      : undefined,
     log: console.log,
   });
 }
@@ -1178,6 +1224,22 @@ async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false 
     }
   } catch {
     /* non-fatal — don't block connect on version check failure */
+  }
+
+  // Active session hint — inform if already connected in another terminal
+  try {
+    const opsBinConnect = resolveOpenshell();
+    if (opsBinConnect) {
+      const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBinConnect));
+      if (sessionResult.detected && sessionResult.sessions.length > 0) {
+        const count = sessionResult.sessions.length;
+        console.log(
+          `  ${D}Note: ${count} existing SSH session${count > 1 ? "s" : ""} to '${sandboxName}' detected (another terminal).${R}`,
+        );
+      }
+    }
+  } catch {
+    /* non-fatal — don't block connect on session detection failure */
   }
 
   // Check both the CLI flag and the registry for dangerously-skip-permissions.
@@ -1232,11 +1294,13 @@ async function sandboxConnect(sandboxName, { dangerouslySkipPermissions = false 
     !["1", "true"].includes(String(process.env.NEMOCLAW_NO_CONNECT_HINT || ""))
   ) {
     console.log("");
+    const agentName = sb?.agent || "openclaw";
+    const agentCmd = agentName === "openclaw" ? "openclaw tui" : agentName;
     console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
     console.log(
-      `  ${D}Inside the sandbox, run \`openclaw tui\` to start chatting with the agent.${R}`,
+      `  ${D}Inside the sandbox, run \`${agentCmd}\` to start chatting with the agent.${R}`,
     );
-    console.log(`  ${D}Type \`exit\` (or Ctrl-D) to return to the host shell.${R}`);
+    console.log(`  ${D}Type \`/exit\` to leave the chat, then \`exit\` to return to the host shell.${R}`);
     console.log("");
   }
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
@@ -1255,23 +1319,44 @@ async function sandboxStatus(sandboxName) {
   );
   const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
   const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
-  const localInferenceHealth =
-    typeof currentProvider === "string" ? probeLocalProviderHealth(currentProvider) : null;
+  const inferenceHealth =
+    typeof currentProvider === "string" ? probeProviderHealth(currentProvider) : null;
   if (sb) {
     console.log("");
     console.log(`  Sandbox: ${sb.name}`);
     console.log(`    Model:    ${currentModel}`);
     console.log(`    Provider: ${currentProvider}`);
-    if (localInferenceHealth) {
-      console.log(
-        `    Inference: ${localInferenceHealth.ok ? `${G}healthy${R}` : `${_RD}unreachable${R}`} (${localInferenceHealth.endpoint})`,
-      );
-      if (!localInferenceHealth.ok) {
-        console.log(`      ${localInferenceHealth.detail}`);
+    if (inferenceHealth) {
+      if (!inferenceHealth.probed) {
+        console.log(`    Inference: ${D}not probed${R} (${inferenceHealth.detail})`);
+      } else if (inferenceHealth.ok) {
+        console.log(
+          `    Inference: ${G}healthy${R} (${inferenceHealth.endpoint})`,
+        );
+      } else {
+        console.log(
+          `    Inference: ${_RD}unreachable${R} (${inferenceHealth.endpoint})`,
+        );
+        console.log(`      ${inferenceHealth.detail}`);
       }
     }
     console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
+
+    // Active session indicator
+    try {
+      const opsBinStatus = resolveOpenshell();
+      if (opsBinStatus) {
+        const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBinStatus));
+        if (sessionResult.detected) {
+          const count = sessionResult.sessions.length;
+          console.log(`    Connected: ${count > 0 ? `${G}yes${R} (${count} session${count > 1 ? "s" : ""})` : "no"}`);
+        }
+      }
+    } catch {
+      /* non-fatal */
+    }
+
     if (sb.dangerouslySkipPermissions) {
       console.log(`    Permissions: dangerously-skip-permissions (shields permanently down)`);
     } else if (shields.isShieldsDown(sandboxName)) {
@@ -1461,10 +1546,34 @@ function sandboxLogs(sandboxName, follow) {
 
 async function sandboxPolicyAdd(sandboxName, args = []) {
   const dryRun = args.includes("--dry-run");
+  const skipConfirm =
+    args.includes("--yes") || args.includes("--force") || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
 
-  const answer = await policies.selectFromList(allPresets, { applied });
+  const presetArg = args.find((arg) => !arg.startsWith("-"));
+  let answer = null;
+  if (presetArg) {
+    const normalized = presetArg.trim().toLowerCase();
+    const preset = allPresets.find((item) => item.name === normalized);
+    if (!preset) {
+      console.error(`  Unknown preset '${presetArg}'.`);
+      console.error(`  Valid presets: ${allPresets.map((item) => item.name).join(", ")}`);
+      process.exit(1);
+    }
+    if (applied.includes(preset.name)) {
+      console.error(`  Preset '${preset.name}' is already applied.`);
+      process.exit(1);
+    }
+    answer = preset.name;
+  } else {
+    if (process.env.NEMOCLAW_NON_INTERACTIVE === "1") {
+      console.error("  Non-interactive mode requires a preset name.");
+      console.error("  Usage: nemoclaw <sandbox> policy-add <preset> [--yes] [--dry-run]");
+      process.exit(1);
+    }
+    answer = await policies.selectFromList(allPresets, { applied });
+  }
   if (!answer) return;
 
   const presetContent = policies.loadPreset(answer);
@@ -1480,23 +1589,164 @@ async function sandboxPolicyAdd(sandboxName, args = []) {
     return;
   }
 
-  const confirm = await askPrompt(`  Apply '${answer}' to sandbox '${sandboxName}'? [Y/n]: `);
-  if (confirm.toLowerCase() === "n") return;
+  if (!skipConfirm) {
+    const confirm = await askPrompt(`  Apply '${answer}' to sandbox '${sandboxName}'? [Y/n]: `);
+    if (confirm.toLowerCase() === "n") return;
+  }
 
   policies.applyPreset(sandboxName, answer);
 }
 
 function sandboxPolicyList(sandboxName) {
   const allPresets = policies.listPresets();
-  const applied = policies.getAppliedPresets(sandboxName);
+  const registryPresets = policies.getAppliedPresets(sandboxName);
+
+  // getGatewayPresets returns null when gateway is unreachable, or an
+  // array of matched preset names when reachable (possibly empty).
+  const gatewayPresets = policies.getGatewayPresets(sandboxName);
 
   console.log("");
   console.log(`  Policy presets for sandbox '${sandboxName}':`);
   allPresets.forEach((p) => {
-    const marker = applied.includes(p.name) ? "●" : "○";
-    console.log(`    ${marker} ${p.name} — ${p.description}`);
+    const inRegistry = registryPresets.includes(p.name);
+    const inGateway = gatewayPresets ? gatewayPresets.includes(p.name) : null;
+
+    let marker;
+    let suffix = "";
+    if (inGateway === null) {
+      // Gateway unreachable — fall back to registry-only display
+      marker = inRegistry ? "●" : "○";
+    } else if (inRegistry && inGateway) {
+      marker = "●";
+    } else if (!inRegistry && !inGateway) {
+      marker = "○";
+    } else if (inGateway && !inRegistry) {
+      marker = "●";
+      suffix = " (active on gateway, missing from local state)";
+    } else {
+      // inRegistry && !inGateway
+      marker = "○";
+      suffix = " (recorded locally, not active on gateway)";
+    }
+    console.log(`    ${marker} ${p.name} — ${p.description}${suffix}`);
   });
+
+  if (gatewayPresets === null) {
+    console.log("");
+    console.log("  ⚠ Could not query gateway — showing local state only.");
+  }
   console.log("");
+}
+
+// ── Messaging channels ───────────────────────────────────────────
+
+function sandboxChannelsList(sandboxName) {
+  console.log("");
+  console.log(`  Known messaging channels for sandbox '${sandboxName}':`);
+  for (const [name, channel] of Object.entries(KNOWN_CHANNELS)) {
+    console.log(`    ${name} — ${channel.description}`);
+  }
+  console.log("");
+}
+
+async function promptAndRebuild(sandboxName, actionDesc) {
+  if (isNonInteractive()) {
+    console.log("");
+    console.log(
+      `  Change queued. Run 'nemoclaw ${sandboxName} rebuild' to apply (${actionDesc}).`,
+    );
+    return;
+  }
+  const answer = (await askPrompt(`  Rebuild '${sandboxName}' now to apply? [Y/n]: `))
+    .trim()
+    .toLowerCase();
+  if (answer === "n" || answer === "no") {
+    console.log(
+      `  Run 'nemoclaw ${sandboxName} rebuild' when you are ready to apply (${actionDesc}).`,
+    );
+    return;
+  }
+  await sandboxRebuild(sandboxName, ["--yes"]);
+}
+
+async function sandboxChannelsAdd(sandboxName, args = []) {
+  const dryRun = args.includes("--dry-run");
+  const channelArg = args.find((arg) => !arg.startsWith("-"));
+  if (!channelArg) {
+    console.error("  Usage: nemoclaw <sandbox> channels add <channel> [--dry-run]");
+    console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
+    process.exit(1);
+  }
+
+  const channel = getChannelDef(channelArg);
+  if (!channel) {
+    console.error(`  Unknown channel '${channelArg}'.`);
+    console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
+    process.exit(1);
+  }
+
+  if (dryRun) {
+    console.log(`  --dry-run: would enable channel '${channelArg}' for '${sandboxName}'.`);
+    return;
+  }
+
+  const tokenKeys = getChannelTokenKeys(channel);
+  const acquired = {};
+  for (const envKey of tokenKeys) {
+    const isPrimary = envKey === channel.envKey;
+    const help = isPrimary ? channel.help : channel.appTokenHelp;
+    const label = isPrimary ? channel.label : channel.appTokenLabel;
+    const existing = getCredential(envKey);
+    if (existing) {
+      acquired[envKey] = existing;
+      continue;
+    }
+    if (isNonInteractive()) {
+      console.error(`  Missing ${envKey} for channel '${channelArg}'.`);
+      console.error(
+        `  Set ${envKey} in the environment or via 'nemoclaw credentials' before running in non-interactive mode.`,
+      );
+      process.exit(1);
+    }
+    console.log("");
+    console.log(`  ${help}`);
+    const token = (await askPrompt(`  ${label}: `, { secret: true })).trim();
+    if (!token) {
+      console.error(`  Aborted — no value entered for ${envKey}.`);
+      process.exit(1);
+    }
+    acquired[envKey] = token;
+  }
+
+  persistChannelTokens(acquired);
+  console.log(`  ${G}✓${R} Saved ${channelArg} credentials.`);
+  await promptAndRebuild(sandboxName, `add '${channelArg}'`);
+}
+
+async function sandboxChannelsRemove(sandboxName, args = []) {
+  const dryRun = args.includes("--dry-run");
+  const channelArg = args.find((arg) => !arg.startsWith("-"));
+  if (!channelArg) {
+    console.error("  Usage: nemoclaw <sandbox> channels remove <channel> [--dry-run]");
+    console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
+    process.exit(1);
+  }
+
+  const channel = getChannelDef(channelArg);
+  if (!channel) {
+    console.error(`  Unknown channel '${channelArg}'.`);
+    console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
+    process.exit(1);
+  }
+
+  if (dryRun) {
+    console.log(`  --dry-run: would remove channel '${channelArg}' for '${sandboxName}'.`);
+    return;
+  }
+
+  clearChannelTokens(channel);
+  console.log(`  ${G}✓${R} Cleared stored ${channelArg} credentials.`);
+  await promptAndRebuild(sandboxName, `remove '${channelArg}'`);
 }
 
 /**
@@ -1655,10 +1905,34 @@ async function sandboxSkillInstall(sandboxName, args = []) {
 
 async function sandboxPolicyRemove(sandboxName, args = []) {
   const dryRun = args.includes("--dry-run");
+  const skipConfirm =
+    args.includes("--yes") || args.includes("--force") || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   const allPresets = policies.listPresets();
   const applied = policies.getAppliedPresets(sandboxName);
 
-  const answer = await policies.selectForRemoval(allPresets, { applied });
+  const presetArg = args.find((arg) => !arg.startsWith("-"));
+  let answer = null;
+  if (presetArg) {
+    const normalized = presetArg.trim().toLowerCase();
+    const preset = allPresets.find((item) => item.name === normalized);
+    if (!preset) {
+      console.error(`  Unknown preset '${presetArg}'.`);
+      console.error(`  Valid presets: ${allPresets.map((item) => item.name).join(", ")}`);
+      process.exit(1);
+    }
+    if (!applied.includes(preset.name)) {
+      console.error(`  Preset '${preset.name}' is not applied.`);
+      process.exit(1);
+    }
+    answer = preset.name;
+  } else {
+    if (process.env.NEMOCLAW_NON_INTERACTIVE === "1") {
+      console.error("  Non-interactive mode requires a preset name.");
+      console.error("  Usage: nemoclaw <sandbox> policy-remove <preset> [--yes] [--dry-run]");
+      process.exit(1);
+    }
+    answer = await policies.selectForRemoval(allPresets, { applied });
+  }
   if (!answer) return;
 
   const presetContent = policies.loadPreset(answer);
@@ -1674,8 +1948,10 @@ async function sandboxPolicyRemove(sandboxName, args = []) {
     return;
   }
 
-  const confirm = await askPrompt(`  Remove '${answer}' from sandbox '${sandboxName}'? [Y/n]: `);
-  if (confirm.toLowerCase() === "n") return;
+  if (!skipConfirm) {
+    const confirm = await askPrompt(`  Remove '${answer}' from sandbox '${sandboxName}'? [Y/n]: `);
+    if (confirm.toLowerCase() === "n") return;
+  }
 
   if (!policies.removePreset(sandboxName, answer)) {
     process.exit(1);
@@ -1701,8 +1977,28 @@ function cleanupSandboxServices(sandboxName, { stopHostServices = false } = {}) 
 
 async function sandboxDestroy(sandboxName, args = []) {
   const skipConfirm = args.includes("--yes") || args.includes("--force");
+
+  // Active session detection — enrich the confirmation prompt if sessions are active
+  let activeSessionCount = 0;
+  const opsBin = resolveOpenshell();
+  if (opsBin) {
+    try {
+      const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBin));
+      if (sessionResult.detected) {
+        activeSessionCount = sessionResult.sessions.length;
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
   if (!skipConfirm) {
     console.log(`  ${YW}Destroy sandbox '${sandboxName}'?${R}`);
+    if (activeSessionCount > 0) {
+      const plural = activeSessionCount > 1 ? "sessions" : "session";
+      console.log(`  ${YW}⚠  Active SSH ${plural} detected (${activeSessionCount} connection${activeSessionCount > 1 ? "s" : ""})${R}`);
+      console.log(`  Destroying will terminate ${activeSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`);
+    }
     console.log("  This will permanently delete the sandbox and all workspace files inside it.");
     console.log("  This cannot be undone.");
     const answer = await askPrompt("  Type 'yes' to confirm, or press Enter to cancel [y/N]: ");
@@ -1781,6 +2077,21 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
         throw new Error(msg);
       }
     : (_msg, code = 1) => process.exit(code);
+
+  // Active session detection — enrich the confirmation prompt if sessions are active
+  let rebuildActiveSessionCount = 0;
+  const opsBinRebuild = resolveOpenshell();
+  if (opsBinRebuild) {
+    try {
+      const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBinRebuild));
+      if (sessionResult.detected) {
+        rebuildActiveSessionCount = sessionResult.sessions.length;
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
   const sb = registry.getSandbox(sandboxName);
   if (!sb) {
     console.error(`  Sandbox '${sandboxName}' not found in registry.`);
@@ -1812,6 +2123,12 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
   console.log("");
 
   if (!skipConfirm) {
+    if (rebuildActiveSessionCount > 0) {
+      const plural = rebuildActiveSessionCount > 1 ? "sessions" : "session";
+      console.log(`  ${YW}⚠  Active SSH ${plural} detected (${rebuildActiveSessionCount} connection${rebuildActiveSessionCount > 1 ? "s" : ""})${R}`);
+      console.log(`  Rebuilding will terminate ${rebuildActiveSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`);
+      console.log("");
+    }
     console.log("  This will:");
     console.log("    1. Back up workspace state");
     console.log("    2. Destroy and recreate the sandbox with the current image");
@@ -1942,6 +2259,40 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
     console.error(`  Manual restore available from: ${backup.manifest.backupPath}`);
   } else {
     console.log(`  ${G}\u2713${R} State restored (${restore.restoredDirs.length} directories)`);
+  }
+
+  // Step 5.5: Restore policy presets (#1952)
+  // Policy presets live in the gateway policy engine, not the sandbox filesystem.
+  // They are lost when the sandbox is destroyed and recreated. Re-apply any
+  // presets that were captured in the backup manifest.
+  const savedPresets = backup.manifest.policyPresets || [];
+  if (savedPresets.length > 0) {
+    console.log("");
+    console.log("  Restoring policy presets...");
+    log(`Policy presets to restore: [${savedPresets.join(",")}]`);
+    const restoredPresets: string[] = [];
+    const failedPresets: string[] = [];
+    for (const presetName of savedPresets) {
+      try {
+        log(`Applying preset: ${presetName}`);
+        const applied = policies.applyPreset(sandboxName, presetName);
+        if (applied) {
+          restoredPresets.push(presetName);
+        } else {
+          failedPresets.push(presetName);
+        }
+      } catch (err) {
+        log(`Failed to apply preset '${presetName}': ${err.message || err}`);
+        failedPresets.push(presetName);
+      }
+    }
+    if (restoredPresets.length > 0) {
+      console.log(`  ${G}\u2713${R} Policy presets restored: ${restoredPresets.join(", ")}`);
+    }
+    if (failedPresets.length > 0) {
+      console.error(`  ${YW}\u26a0${R} Failed to restore presets: ${failedPresets.join(", ")}`);
+      console.error(`    Re-apply manually with: nemoclaw ${sandboxName} policy-add`);
+    }
   }
 
   // Step 6: Post-restore agent-specific migration
@@ -2296,9 +2647,14 @@ function help() {
     nemoclaw <name> skill install <path>  Deploy a skill directory to the sandbox
 
   ${G}Policy Presets:${R}
-    nemoclaw <name> policy-add       Add a network or filesystem policy preset ${D}(--dry-run to preview)${R}
-    nemoclaw <name> policy-remove    Remove an applied policy preset ${D}(--dry-run to preview)${R}
+    nemoclaw <name> policy-add [preset]    Add a network or filesystem policy preset ${D}(--yes, --dry-run)${R}
+    nemoclaw <name> policy-remove [preset] Remove an applied policy preset ${D}(--yes, --dry-run)${R}
     nemoclaw <name> policy-list      List presets ${D}(● = applied)${R}
+
+  ${G}Messaging Channels:${R}
+    nemoclaw <name> channels list            List supported messaging channels
+    nemoclaw <name> channels add <channel>   Save credentials and rebuild ${D}(telegram|discord|slack)${R}
+    nemoclaw <name> channels remove <channel> Clear credentials and rebuild
 
   ${G}Compatibility Commands:${R}
     nemoclaw setup                   Deprecated alias for ${B}nemoclaw onboard${R}
@@ -2422,7 +2778,7 @@ const [cmd, ...args] = process.argv.slice(2);
   // command, attempt recovery — the sandbox may still be live with a stale registry.
   if (
     !registry.getSandbox(cmd) &&
-    ["connect", "skill", "shields", "config", ""].includes(args[0] || "")
+    ["connect", "skill", "shields", "config", "channels", ""].includes(args[0] || "")
   ) {
     validateName(cmd, "sandbox name");
     await recoverRegistryEntries({ requestedSandboxName: cmd });
@@ -2514,6 +2870,31 @@ const [cmd, ...args] = process.argv.slice(2);
         }
         break;
       }
+      case "channels": {
+        const channelsSub = actionArgs[0];
+        const channelsArgs = actionArgs.slice(1);
+        switch (channelsSub) {
+          case "list":
+          case undefined:
+          case "":
+            sandboxChannelsList(cmd);
+            break;
+          case "add":
+            await sandboxChannelsAdd(cmd, channelsArgs);
+            break;
+          case "remove":
+            await sandboxChannelsRemove(cmd, channelsArgs);
+            break;
+          default:
+            console.error(`  Unknown channels subcommand: ${channelsSub}`);
+            console.error("  Usage: nemoclaw <name> channels <list|add|remove> [args]");
+            console.error("    list                  List supported messaging channels");
+            console.error("    add <channel>         Store credentials and rebuild the sandbox");
+            console.error("    remove <channel>      Clear credentials and rebuild the sandbox");
+            process.exit(1);
+        }
+        break;
+      }
       case "config": {
         const configSub = actionArgs[0];
         switch (configSub) {
@@ -2557,7 +2938,7 @@ const [cmd, ...args] = process.argv.slice(2);
       default:
         console.error(`  Unknown action: ${action}`);
         console.error(
-          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, rebuild, shields, config, destroy`,
+          `  Valid actions: connect, status, logs, policy-add, policy-remove, policy-list, skill, snapshot, rebuild, shields, config, channels, destroy`,
         );
         process.exit(1);
     }

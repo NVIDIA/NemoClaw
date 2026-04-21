@@ -384,6 +384,59 @@ jobs:
           path: test-inference-routing-*.log
           if-no-files-found: ignore
 
+  # ── Network policy E2E ───────────────────────────────────────
+  # TC-NET-01..07, TC-NET-09: deny-by-default, whitelist, live policy-add,
+  # dry-run, hot-reload, inference exemption, permissive mode, SSRF validation.
+  network-policy-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run network policy E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash test/e2e/test-network-policy.sh
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: network-policy-test-log
+          path: test-network-policy-*.log
+          if-no-files-found: ignore
+
+  # ── Deployment & Services E2E ────────────────────────────────
+  # TC-STATE-02: backup-workspace.sh lifecycle (backup → destroy → restore)
+  # TC-DEPLOY-01: nemoclaw start/stop (cloudflared tunnel)
+  # TC-DEPLOY-03: uninstall --keep-openshell (destructive, runs last in script)
+  deployment-services-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run deployment services E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash test/e2e/test-deployment-services.sh
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-services-test-log
+          path: test-deployment-services-*.log
+          if-no-files-found: ignore
+
   # ── Snapshot commands E2E ────────────────────────────────────
   # Validates snapshot create/list/restore lifecycle: create a snapshot,
   # list it, delete state, restore from snapshot, verify state recovered.
@@ -584,8 +637,8 @@ jobs:
 
   notify-on-failure:
     runs-on: ubuntu-latest
-    needs: [cloud-e2e, cloud-experimental-e2e, messaging-providers-e2e, token-rotation-e2e, sandbox-survival-e2e, hermes-e2e, skip-permissions-e2e, sandbox-operations-e2e, inference-routing-e2e, snapshot-commands-e2e, shields-config-e2e, rebuild-openclaw-e2e, upgrade-stale-sandbox-e2e, rebuild-hermes-e2e, gpu-e2e]
-    if: ${{ always() && (needs.cloud-e2e.result == 'failure' || needs.cloud-experimental-e2e.result == 'failure' || needs.messaging-providers-e2e.result == 'failure' || needs.token-rotation-e2e.result == 'failure' || needs.sandbox-survival-e2e.result == 'failure' || needs.hermes-e2e.result == 'failure' || needs.skip-permissions-e2e.result == 'failure' || needs.sandbox-operations-e2e.result == 'failure' || needs.inference-routing-e2e.result == 'failure' || needs.snapshot-commands-e2e.result == 'failure' || needs.shields-config-e2e.result == 'failure' || needs.rebuild-openclaw-e2e.result == 'failure' || needs.upgrade-stale-sandbox-e2e.result == 'failure' || needs.rebuild-hermes-e2e.result == 'failure' || needs.gpu-e2e.result == 'failure') }}
+    needs: [cloud-e2e, cloud-experimental-e2e, messaging-providers-e2e, token-rotation-e2e, sandbox-survival-e2e, hermes-e2e, skip-permissions-e2e, sandbox-operations-e2e, inference-routing-e2e, network-policy-e2e, deployment-services-e2e, snapshot-commands-e2e, shields-config-e2e, rebuild-openclaw-e2e, upgrade-stale-sandbox-e2e, rebuild-hermes-e2e, gpu-e2e]
+    if: ${{ always() && (needs.cloud-e2e.result == 'failure' || needs.cloud-experimental-e2e.result == 'failure' || needs.messaging-providers-e2e.result == 'failure' || needs.token-rotation-e2e.result == 'failure' || needs.sandbox-survival-e2e.result == 'failure' || needs.hermes-e2e.result == 'failure' || needs.skip-permissions-e2e.result == 'failure' || needs.sandbox-operations-e2e.result == 'failure' || needs.inference-routing-e2e.result == 'failure' || needs.network-policy-e2e.result == 'failure' || needs.deployment-services-e2e.result == 'failure' || needs.snapshot-commands-e2e.result == 'failure' || needs.shields-config-e2e.result == 'failure' || needs.rebuild-openclaw-e2e.result == 'failure' || needs.upgrade-stale-sandbox-e2e.result == 'failure' || needs.rebuild-hermes-e2e.result == 'failure' || needs.gpu-e2e.result == 'failure') }}
     permissions:
       issues: write
     steps:

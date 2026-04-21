@@ -243,6 +243,48 @@ describe("nemoclaw-start configure guard blocks --local (#2016)", () => {
   });
 });
 
+describe("nemoclaw-start configure guard blocks config set/unset (#1973)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("adds a config) case that matches only set and unset subcommands", () => {
+    expect(src).toMatch(/config\)\s+case "\$2" in\s+set \| unset\)/);
+  });
+
+  it("prints an actionable error quoting the invoked subcommand and returns 1", () => {
+    expect(src).toContain("'openclaw config $2' cannot modify config inside the sandbox");
+    expect(src).toMatch(/set \| unset\)[\s\S]*?return 1/);
+  });
+
+  it("redirects users to nemoclaw onboard --resume", () => {
+    expect(src).toMatch(/set \| unset\)[\s\S]*?nemoclaw onboard --resume/);
+  });
+
+  it("does not block immutable subcommands (get, list) — they fall through to the real binary", () => {
+    // The config) arm only enumerates mutating subcommands. Read-only ones are
+    // not matched, so execution falls through to `command openclaw "$@"` below.
+    expect(src).not.toMatch(/config\)\s+case "\$2" in[\s\S]*?\b(get|list|show|view)\)/);
+    expect(src).toContain('command openclaw "$@"');
+  });
+});
+
+describe("nemoclaw-start configure guard blocks channels mutators (#2097)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("adds a channels) case that allows read-only subcommands through", () => {
+    expect(src).toMatch(/channels\)\s+case "\$2" in\s+list \| "" \| -h \| --help\)/);
+  });
+
+  it("blocks mutating channels subcommands with an actionable error and return 1", () => {
+    expect(src).toContain("'openclaw channels $2' cannot modify channels inside the sandbox");
+    expect(src).toMatch(/channels\)[\s\S]*?\*\)[\s\S]*?return 1/);
+  });
+
+  it("redirects users to the host-side channels commands", () => {
+    expect(src).toMatch(/channels\)[\s\S]*?nemoclaw <sandbox> channels add/);
+    expect(src).toMatch(/channels\)[\s\S]*?nemoclaw <sandbox> channels remove/);
+  });
+});
+
 describe("runtime model override (#759)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 

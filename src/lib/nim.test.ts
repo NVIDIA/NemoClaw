@@ -32,6 +32,24 @@ function loadNimWithMockedRunner(runCapture: Mock) {
   };
 }
 
+/** Check if an argv array or legacy shell command contains a specific argument. */
+function hasArg(cmd: string | string[], arg: string): boolean {
+  return Array.isArray(cmd) ? cmd.includes(arg) : cmd.includes(arg);
+}
+
+function hasCurlTimeoutArgs(cmd: string | string[]): boolean {
+  if (!Array.isArray(cmd)) {
+    return (
+      cmd.includes("curl") &&
+      cmd.includes("--connect-timeout 5") &&
+      cmd.includes("--max-time 5")
+    );
+  }
+  const connectTimeout = cmd.indexOf("--connect-timeout");
+  const maxTime = cmd.indexOf("--max-time");
+  return cmd[0] === "curl" && cmd[connectTimeout + 1] === "5" && cmd[maxTime + 1] === "5";
+}
+
 describe("nim", () => {
   describe("listModels", () => {
     it("returns 5 models", () => {
@@ -176,12 +194,27 @@ describe("nim", () => {
     });
   });
 
-  describe("nimStatusByName", () => {
-    /** Check if an argv array contains a specific element. */
-    function hasArg(cmd: string | string[], arg: string): boolean {
-      return Array.isArray(cmd) ? cmd.includes(arg) : cmd.includes(arg);
-    }
+  describe("waitForNimHealth", () => {
+    it("bounds curl health probes with connect and total timeouts", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models")) return '{"data":[]}';
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
 
+      try {
+        expect(nimModule.waitForNimHealth(9000, 1)).toBe(true);
+        const commands = runCapture.mock.calls.map(([c]: [string | string[]]) => c);
+
+        expect(commands.some((c) => c[0] === "curl" && hasCurlTimeoutArgs(c))).toBe(true);
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("nimStatusByName", () => {
     it("uses provided port directly", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
@@ -205,6 +238,7 @@ describe("nim", () => {
         expect(commands.some((c) => c.includes("http://127.0.0.1:9000/v1/models"))).toBe(
           true,
         );
+        expect(commands.some((c) => c[0] === "curl" && hasCurlTimeoutArgs(c))).toBe(true);
       } finally {
         restore();
       }
@@ -263,6 +297,125 @@ describe("nim", () => {
         const st = nimModule.nimStatusByName("foo");
         expect(st).toMatchObject({ running: false, healthy: false, container: "foo", state: "exited" });
         expect(runCapture.mock.calls).toHaveLength(1);
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("isNgcLoggedIn", () => {
+    const fs = require("fs");
+    const os = require("os");
+
+    function mockDockerConfig(config: string | null) {
+      const origReadFileSync = fs.readFileSync;
+      const origHomedir = os.homedir;
+      os.homedir = () => "/mock-home";
+      if (config === null) {
+        fs.readFileSync = () => { throw new Error("ENOENT"); };
+      } else {
+        fs.readFileSync = (p: string, ...args: unknown[]) => {
+          if (typeof p === "string" && p.includes(".docker/config.json")) return config;
+          return origReadFileSync(p, ...args);
+        };
+      }
+      return () => {
+        fs.readFileSync = origReadFileSync;
+        os.homedir = origHomedir;
+      };
+    }
+
+    it("returns true when credHelpers has nvcr.io", () => {
+      const restore = mockDockerConfig(JSON.stringify({ credHelpers: { "nvcr.io": "secretservice" } }));
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(true);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns true when auths has nvcr.io with auth field", () => {
+      const restore = mockDockerConfig(JSON.stringify({ auths: { "nvcr.io": { auth: "dXNlcjpwYXNz" } } }));
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(true);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns true when auths has https://nvcr.io with auth field", () => {
+      const restore = mockDockerConfig(
+        JSON.stringify({ auths: { "https://nvcr.io": { auth: "dXNlcjpwYXNz" } } }),
+      );
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(true);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when auths has nvcr.io but empty entry", () => {
+      const restore = mockDockerConfig(JSON.stringify({ auths: { "nvcr.io": {} } }));
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when config file is missing", () => {
+      const restore = mockDockerConfig(null);
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when config has malformed JSON", () => {
+      const restore = mockDockerConfig("not json");
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when auths is empty and no credHelpers", () => {
+      const restore = mockDockerConfig(JSON.stringify({ auths: {} }));
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns true when empty nvcr.io marker exists and credsStore is set (Docker Desktop)", () => {
+      const restore = mockDockerConfig(
+        JSON.stringify({ credsStore: "desktop", auths: { "nvcr.io": {} } }),
+      );
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(true);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when credsStore is set but no nvcr.io marker (not logged in)", () => {
+      const restore = mockDockerConfig(
+        JSON.stringify({ credsStore: "desktop", auths: {} }),
+      );
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when empty nvcr.io marker exists but no credsStore", () => {
+      const restore = mockDockerConfig(JSON.stringify({ auths: { "nvcr.io": {} } }));
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
       } finally {
         restore();
       }

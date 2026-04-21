@@ -4,7 +4,7 @@ title:
   nav: "Deploy to Remote GPU"
 description:
   main: "Run NemoClaw on a remote GPU instance and understand the legacy Brev compatibility flow."
-  agent: "Explains how to run NemoClaw on a remote GPU instance, including the deprecated Brev compatibility path and the preferred installer plus onboard flow."
+  agent: "Explains how to run NemoClaw on a remote GPU instance, including the deprecated Brev compatibility path and the preferred installer plus onboard flow. Use when deploying NemoClaw to a remote VM, onboarding a Brev instance, or migrating away from the legacy `nemoclaw deploy` wrapper."
 keywords: ["deploy nemoclaw remote gpu", "nemoclaw brev cloud deployment"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "deployment", "gpu", "nemoclaw"]
@@ -83,7 +83,7 @@ $ nemoclaw deploy <instance-name>
 SSH to the instance and run the OpenShell TUI to monitor activity and approve network requests:
 
 ```console
-$ ssh <instance-name> 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell term'
+$ ssh <instance-name> 'cd ~/nemoclaw && set -a && . .env && set +a && openshell term'
 ```
 
 ## Verify Inference

@@ -228,6 +228,12 @@ else
   fail "Config directory should be mode 700 after shields down: ${DIR_PERMS_DOWN}"
 fi
 
+if [ "$(echo "$DIR_PERMS_DOWN" | awk '{print $2}')" = "sandbox:sandbox" ]; then
+  pass "Config directory owned by sandbox:sandbox after shields down"
+else
+  fail "Config directory should be owned by sandbox:sandbox: ${DIR_PERMS_DOWN}"
+fi
+
 # ══════════════════════════════════════════════════════════════════
 # Phase 4: config get — read-only inspection
 # ══════════════════════════════════════════════════════════════════
