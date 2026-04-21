@@ -18,6 +18,9 @@ export interface SandboxEntry {
   agent?: string | null;
   dangerouslySkipPermissions?: boolean;
   agentVersion?: string | null;
+  imageTag?: string | null;
+  providerCredentialHashes?: Record<string, string>;
+  messagingChannels?: string[];
 }
 
 export interface SandboxRegistry {
@@ -165,6 +168,9 @@ export function registerSandbox(entry: SandboxEntry): void {
       dangerouslySkipPermissions:
         entry.dangerouslySkipPermissions === true ? true : undefined,
       agentVersion: entry.agentVersion || null,
+      imageTag: entry.imageTag || null,
+      providerCredentialHashes: entry.providerCredentialHashes || undefined,
+      messagingChannels: entry.messagingChannels || [],
     };
     if (!data.defaultSandbox) {
       data.defaultSandbox = entry.name;

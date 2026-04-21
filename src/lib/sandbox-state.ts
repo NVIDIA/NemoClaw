@@ -13,9 +13,12 @@ import { spawnSync } from "child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
@@ -49,6 +52,7 @@ export interface RebuildManifest {
   writableDir: string;
   backupPath: string;
   blueprintDigest: string | null;
+  policyPresets?: string[];
   instances?: InstanceBackup[];
 }
 
@@ -71,6 +75,214 @@ export interface RestoreResult {
   success: boolean;
   restoredDirs: string[];
   failedDirs: string[];
+}
+
+export interface TarValidationResult {
+  safe: boolean;
+  entries: string[];
+  violations: string[];
+}
+
+export interface SafeExtractResult {
+  success: boolean;
+  error?: string;
+}
+
+// ── Safe tar extraction ──────────────────────────────────────────
+
+/**
+ * Normalize a host path for safe comparison.
+ * Mirrors migration-state.ts normalizeHostPath().
+ */
+function normalizeHostPath(input: string): string {
+  const resolved = path.resolve(input);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+/**
+ * Check whether candidatePath is within rootPath after normalization.
+ * Mirrors migration-state.ts isWithinRoot().
+ */
+function isWithinRoot(candidatePath: string, rootPath: string): boolean {
+  const candidate = normalizeHostPath(candidatePath);
+  const root = normalizeHostPath(rootPath);
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+/**
+ * List tar entries and validate every path is within targetDir.
+ * Rejects absolute paths, path traversal (..), and null bytes.
+ */
+export function validateTarEntries(
+  tarBuffer: Buffer,
+  targetDir: string,
+): TarValidationResult {
+  const result = spawnSync("tar", ["-tf", "-"], {
+    input: tarBuffer,
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+    timeout: 60000,
+  });
+
+  if (result.status !== 0) {
+    return {
+      safe: false,
+      entries: [],
+      violations: [`tar listing failed (exit ${result.status}): ${(result.stderr || "").substring(0, 200)}`],
+    };
+  }
+
+  const entries = (result.stdout || "")
+    .trim()
+    .split("\n")
+    .filter((e) => e.length > 0);
+  const violations: string[] = [];
+
+  for (const entry of entries) {
+    // Reject null bytes (null byte injection)
+    if (entry.includes("\0")) {
+      violations.push(`null byte in entry: ${JSON.stringify(entry)}`);
+      continue;
+    }
+
+    // Reject absolute paths
+    if (entry.startsWith("/")) {
+      violations.push(`absolute path: ${entry}`);
+      continue;
+    }
+
+    // Resolve the entry relative to targetDir and check containment
+    const resolved = path.resolve(targetDir, entry);
+    if (!isWithinRoot(resolved, targetDir)) {
+      violations.push(`path traversal: ${entry}`);
+    }
+  }
+
+  return { safe: violations.length === 0, entries, violations };
+}
+
+/**
+ * Walk a directory and return violations for any symlinks whose
+ * resolved targets escape rootPath.
+ */
+function auditExtractedSymlinks(dirPath: string, rootPath: string): string[] {
+  const violations: string[] = [];
+  if (!existsSync(dirPath)) return violations;
+
+  const walk = (current: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const fullPath = path.join(current, entry.name);
+      try {
+        const stat = lstatSync(fullPath);
+        if (stat.isSymbolicLink()) {
+          const linkTarget = readlinkSync(fullPath);
+          const resolvedTarget = path.resolve(path.dirname(fullPath), linkTarget);
+          if (!isWithinRoot(resolvedTarget, rootPath)) {
+            violations.push(`symlink escape: ${fullPath} -> ${linkTarget} (resolves to ${resolvedTarget})`);
+          }
+        } else if (stat.isDirectory()) {
+          walk(fullPath);
+        }
+      } catch {
+        /* skip unreadable entries */
+      }
+    }
+  };
+  walk(dirPath);
+  return violations;
+}
+
+/**
+ * Detect hard-link entries in a tar archive using verbose listing.
+ * Hard links are rejected entirely — sandbox state backups have no
+ * legitimate reason to contain them, and they can be used to reference
+ * files outside the extraction root.
+ */
+export function rejectHardLinks(tarBuffer: Buffer): string[] {
+  const result = spawnSync("tar", ["-tvf", "-"], {
+    input: tarBuffer,
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+    timeout: 60000,
+  });
+
+  if (result.status !== 0) {
+    return [`tar verbose listing failed (exit ${result.status})`];
+  }
+
+  const violations: string[] = [];
+  const lines = (result.stdout || "").trim().split("\n").filter((l) => l.length > 0);
+
+  for (const line of lines) {
+    // Both GNU tar and bsdtar prefix hard-link entries with 'h' in verbose mode
+    // and include " link to " in the line.
+    if (line.startsWith("h") || / link to /.test(line)) {
+      violations.push(`hard link: ${line.trim()}`);
+    }
+  }
+
+  return violations;
+}
+
+/**
+ * SECURITY: Validate tar contents, extract with safety flags, then
+ * audit for symlink escapes. Nukes the extraction on any violation.
+ */
+export function safeTarExtract(
+  tarBuffer: Buffer,
+  targetDir: string,
+): SafeExtractResult {
+  // Phase 1a: Validate entry paths before extraction
+  const validation = validateTarEntries(tarBuffer, targetDir);
+  if (!validation.safe) {
+    return {
+      success: false,
+      error: `tar entry validation failed: ${validation.violations.join("; ")}`,
+    };
+  }
+
+  // Phase 1b: Reject hard links (not detectable via tar -tf, require verbose listing)
+  const hardLinkViolations = rejectHardLinks(tarBuffer);
+  if (hardLinkViolations.length > 0) {
+    return {
+      success: false,
+      error: `hard link rejected: ${hardLinkViolations.join("; ")}`,
+    };
+  }
+
+  // Phase 2: Extract with --no-same-owner to prevent ownership manipulation
+  const extractResult = spawnSync(
+    "tar",
+    ["-xf", "-", "--no-same-owner", "-C", targetDir],
+    { input: tarBuffer, stdio: ["pipe", "pipe", "pipe"], timeout: 60000 },
+  );
+
+  if (extractResult.status !== 0) {
+    return {
+      success: false,
+      error: `tar extraction failed (exit ${extractResult.status}): ${(extractResult.stderr?.toString() || "").substring(0, 200)}`,
+    };
+  }
+
+  // Phase 3: Post-extraction symlink audit (symlink targets are not
+  // visible in `tar -tf` output, so we must check after extraction)
+  const symlinkViolations = auditExtractedSymlinks(targetDir, targetDir);
+  if (symlinkViolations.length > 0) {
+    // Nuke the extraction — do not leave attacker-controlled symlinks on host
+    try {
+      rmSync(targetDir, { recursive: true, force: true });
+      mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+    } catch {
+      /* best effort cleanup */
+    }
+    return {
+      success: false,
+      error: `post-extraction symlink audit failed: ${symlinkViolations.join("; ")}`,
+    };
+  }
+
+  return { success: true };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -186,6 +398,14 @@ export function backupSandboxState(sandboxName: string): BackupResult {
   const backupPath = path.join(REBUILD_BACKUPS_DIR, sandboxName, timestamp);
   mkdirSync(backupPath, { recursive: true, mode: 0o700 });
 
+  // Capture applied policy presets from the registry so they can be
+  // re-applied after rebuild. Presets live in the gateway policy engine,
+  // not on the sandbox filesystem, so they are lost on destroy/recreate.
+  const policyPresets: string[] = sb?.policies && sb.policies.length > 0
+    ? [...sb.policies]
+    : [];
+  _log(`policyPresets from registry: [${policyPresets.join(",")}]`);
+
   const manifest: RebuildManifest = {
     version: MANIFEST_VERSION,
     sandboxName,
@@ -197,6 +417,7 @@ export function backupSandboxState(sandboxName: string): BackupResult {
     writableDir,
     backupPath,
     blueprintDigest: computeBlueprintDigest(),
+    policyPresets,
   };
 
   const backedUpDirs: string[] = [];
@@ -259,15 +480,12 @@ export function backupSandboxState(sandboxName: string): BackupResult {
     _log(`SSH+tar download: exit=${result.status}, stdout=${result.stdout ? result.stdout.length + " bytes" : "null"}, stderr=${(result.stderr?.toString() || "").substring(0, 200)}`);
 
     if (result.status === 0 && result.stdout && result.stdout.length > 0) {
-      // Extract tar locally
-      const extractResult = spawnSync(
-        "tar",
-        ["-xf", "-", "-C", backupPath],
-        { input: result.stdout, stdio: ["pipe", "pipe", "pipe"], timeout: 60000 },
-      );
-      if (extractResult.status === 0) {
+      // SECURITY: Validate tar entries, extract safely, audit symlinks
+      const extractResult = safeTarExtract(result.stdout, backupPath);
+      if (extractResult.success) {
         backedUpDirs.push(...existingDirs);
       } else {
+        _log(`SECURITY: tar extraction blocked: ${extractResult.error}`);
         failedDirs.push(...existingDirs);
       }
     } else {

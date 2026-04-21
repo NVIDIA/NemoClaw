@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import sys
 from datetime import date
 from pathlib import Path
@@ -12,7 +13,17 @@ project = "NVIDIA NemoClaw Developer Guide"
 this_year = date.today().year
 copyright = f"{this_year}, NVIDIA Corporation"
 author = "NVIDIA Corporation"
-release = "latest"
+
+# Read the preferred version from versions1.json so the version switcher
+# can match it.  versions1.json is the source of truth for the switcher
+# dropdown; reading from it keeps conf.py in sync automatically.
+_versions = json.loads((Path(__file__).parent / "versions1.json").read_text())
+_preferred = [v["version"] for v in _versions if v.get("preferred")]
+assert len(_preferred) == 1, (
+    f"docs/versions1.json must have exactly one entry with preferred: true; found {len(_preferred)}"
+)
+release = _preferred[0]
+
 
 extensions = [
     "myst_parser",
@@ -125,3 +136,12 @@ html_theme_options = {
 }
 
 html_baseurl = "https://docs.nvidia.com/nemoclaw/latest/"
+
+# Keep project.json in sync with the resolved release version so the
+# static copy served alongside the docs always reports the correct version.
+# Write only when the contents change so sphinx-autobuild does not detect
+# a self-induced source change and rebuild in an infinite loop.
+_project_json = Path(__file__).parent / "project.json"
+_project_json_contents = json.dumps({"name": "nemoclaw", "version": release}) + "\n"
+if not _project_json.exists() or _project_json.read_text() != _project_json_contents:
+    _project_json.write_text(_project_json_contents)

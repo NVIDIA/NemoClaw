@@ -172,7 +172,16 @@ else
     exit 1
   fi
 fi
-CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${_DASHBOARD_PORT}}"
+# When NEMOCLAW_DASHBOARD_PORT is explicitly set (injected at sandbox create time
+# via envArgs in onboard.ts), unconditionally override CHAT_UI_URL so the gateway
+# starts on the configured port even if the Docker image has a different value
+# baked in. Without this, the Docker ENV takes precedence and the gateway listens
+# on the wrong port while the SSH tunnel forwards the custom port. (#1925)
+if [ -n "${NEMOCLAW_DASHBOARD_PORT:-}" ]; then
+  CHAT_UI_URL="http://127.0.0.1:${_DASHBOARD_PORT}"
+else
+  CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${_DASHBOARD_PORT}}"
+fi
 PUBLIC_PORT="$_DASHBOARD_PORT"
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
@@ -233,7 +242,7 @@ apply_model_override() {
     return 1
   fi
 
-  local model_override="$NEMOCLAW_MODEL_OVERRIDE"
+  local model_override="${NEMOCLAW_MODEL_OVERRIDE:-}"
   local api_override="${NEMOCLAW_INFERENCE_API_OVERRIDE:-}"
 
   # SECURITY: Validate inputs — reject control characters and enforce length limit.
@@ -392,6 +401,86 @@ PYCORS
   printf '[config] Config hash recomputed after CORS override\n' >&2
 }
 
+# ── Slack token placeholder resolution ────────────────────────────
+# Resolves openshell:resolve:env:SLACK_* placeholders in openclaw.json at
+# container startup, before chattr +i locks the file. This ensures Bolt's
+# in-process token validation (appToken must start with xapp-) succeeds even
+# before the L7 proxy can intercept HTTP calls.
+# Same trust model as apply_model_override: host-set env vars, root-only,
+# applied before Landlock/chattr +i, hash recomputed. Tokens are unset from
+# the process env after patching so they are not visible inside the sandbox.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/2085
+
+apply_slack_token_override() {
+  [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
+
+  # SECURITY: Only root can write to /sandbox/.openclaw (root:root 444).
+  if [ "$(id -u)" -ne 0 ]; then
+    printf '[SECURITY] Slack token override ignored — requires root (non-root mode cannot write to config)\n' >&2
+    return 0
+  fi
+
+  local config_file="/sandbox/.openclaw/openclaw.json"
+  local hash_file="/sandbox/.openclaw/.config-hash"
+
+  # SECURITY: Refuse to write through symlinks to prevent symlink-following attacks.
+  if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing Slack token override — config or hash path is a symlink\n' >&2
+    return 1
+  fi
+
+  # SECURITY: Validate token prefixes — reject anything that doesn't look like a real Slack token.
+  case "${SLACK_BOT_TOKEN}" in
+    xoxb-*) ;;
+    *)
+      printf '[channels] SLACK_BOT_TOKEN does not start with xoxb- — skipping Slack placeholder resolution\n' >&2
+      return 0
+      ;;
+  esac
+
+  if [ -n "${SLACK_APP_TOKEN:-}" ]; then
+    case "$SLACK_APP_TOKEN" in
+      xapp-*) ;;
+      *)
+        printf '[channels] SLACK_APP_TOKEN does not start with xapp- — skipping Slack placeholder resolution\n' >&2
+        return 0
+        ;;
+    esac
+  else
+    printf '[channels] Warning: SLACK_BOT_TOKEN is set but SLACK_APP_TOKEN is missing — Socket Mode requires both tokens\n' >&2
+  fi
+
+  printf '[channels] Resolving Slack token placeholders in openclaw.json\n' >&2
+
+  SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN" \
+    SLACK_APP_TOKEN="${SLACK_APP_TOKEN:-}" \
+    python3 - "$config_file" <<'PYSLACK'
+import json, os, sys
+
+config_file = sys.argv[1]
+bot_token = os.environ["SLACK_BOT_TOKEN"]
+app_token = os.environ.get("SLACK_APP_TOKEN", "")
+placeholder_prefix = "openshell:resolve:env:"
+
+with open(config_file) as f:
+    cfg = json.load(f)
+
+slack = cfg.get("channels", {}).get("slack", {})
+default_acct = slack.get("accounts", {}).get("default", {})
+
+if default_acct.get("botToken", "").startswith(placeholder_prefix):
+    default_acct["botToken"] = bot_token
+if app_token and default_acct.get("appToken", "").startswith(placeholder_prefix):
+    default_acct["appToken"] = app_token
+
+with open(config_file, "w") as f:
+    json.dump(cfg, f, indent=2)
+PYSLACK
+
+  (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
+  printf '[channels] Config hash recomputed after Slack token override\n' >&2
+}
+
 _read_gateway_token() {
   python3 - <<'PYTOKEN'
 import json
@@ -476,15 +565,49 @@ openclaw() {
       echo "This rebuilds the sandbox with your updated settings." >&2
       return 1
       ;;
+    config)
+      case "$2" in
+        set | unset)
+          echo "Error: 'openclaw config $2' cannot modify config inside the sandbox." >&2
+          echo "The sandbox config is read-only (Landlock enforced) for security." >&2
+          echo "" >&2
+          echo "To change your configuration, exit the sandbox and run:" >&2
+          echo "  nemoclaw onboard --resume" >&2
+          echo "" >&2
+          echo "This rebuilds the sandbox with your updated settings." >&2
+          return 1
+          ;;
+      esac
+      ;;
+    channels)
+      case "$2" in
+        list | "" | -h | --help) ;;
+        *)
+          echo "Error: 'openclaw channels $2' cannot modify channels inside the sandbox." >&2
+          echo "The sandbox config is read-only (Landlock enforced) for security." >&2
+          echo "" >&2
+          echo "To add or remove messaging channels, exit the sandbox and run:" >&2
+          echo "  nemoclaw <sandbox> channels add <telegram|discord|slack>" >&2
+          echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack>" >&2
+          echo "" >&2
+          echo "These stage the change and rebuild the sandbox to apply it." >&2
+          return 1
+          ;;
+      esac
+      ;;
     agent)
-      # Warn when --local is used — it bypasses gateway protections including
-      # secret scanning, network policy, and inference auth. Ref: #1632
+      # Block --local inside sandbox — it bypasses gateway protections and can
+      # crash the container's main process, bricking the sandbox. Ref: #1632, #2016
       local _arg
       for _arg in "$@"; do
         if [ "$_arg" = "--local" ]; then
-          echo "[SECURITY] Warning: 'openclaw agent --local' bypasses the NemoClaw gateway." >&2
-          echo "[SECURITY] Secret scanning, network policy, and inference auth are NOT enforced in local mode." >&2
-          break
+          echo "Error: 'openclaw agent --local' is not supported inside NemoClaw sandboxes." >&2
+          echo "The --local flag bypasses the gateway's security protections (secret scanning," >&2
+          echo "network policy, inference auth) and can crash the sandbox." >&2
+          echo "" >&2
+          echo "Instead, run without --local to use the gateway's managed inference route:" >&2
+          echo "  openclaw agent --agent main -m \"hello\"" >&2
+          return 1
         fi
       done
       ;;
@@ -506,6 +629,11 @@ GUARD
     elif [ -w "$rc_file" ] || [ -w "$(dirname "$rc_file")" ]; then
       printf '\n%s\n' "$snippet" >>"$rc_file"
     fi
+  done
+  # Final lock after all rc-file mutations (export_gateway_token + this
+  # function) are complete so Landlock read_only enforcement holds.
+  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
+    [ -f "$rc_file" ] && chmod 444 "$rc_file"
   done
 }
 
@@ -587,14 +715,16 @@ harden_auth_profiles() {
 
 configure_messaging_channels() {
   # Channel entries are baked into openclaw.json at image build time via
-  # NEMOCLAW_MESSAGING_CHANNELS_B64 (see Dockerfile). Placeholder tokens
-  # (openshell:resolve:env:*) flow through to API calls where the L7 proxy
-  # rewrites them with real secrets at egress. Real tokens are never visible
-  # inside the sandbox.
+  # NEMOCLAW_MESSAGING_CHANNELS_B64 (see Dockerfile).
   #
-  # Runtime patching of /sandbox/.openclaw/openclaw.json is not possible:
-  # Landlock enforces read-only on /sandbox/.openclaw/ at the kernel level,
-  # regardless of DAC (file ownership/chmod). Writes fail with EPERM.
+  # Telegram/Discord: placeholder tokens (openshell:resolve:env:*) flow through
+  # to API calls where the L7 proxy rewrites them with real secrets at egress.
+  # Real tokens are never visible inside the sandbox for these channels.
+  #
+  # Slack: apply_slack_token_override (runs before this function) resolves
+  # SLACK_BOT_TOKEN/SLACK_APP_TOKEN placeholders directly into openclaw.json so
+  # Bolt's in-process token validation passes. Both env vars are unset before the
+  # gateway starts (root path) so they do not leak into the sandbox process env.
   [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || [ -n "${DISCORD_BOT_TOKEN:-}" ] || [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
 
   echo "[channels] Messaging channels active (baked at build time):" >&2
@@ -732,6 +862,18 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 
+# axios + NODE_USE_ENV_PROXY double-proxy fix (NemoClaw#2109).
+# Node.js 22 sets NODE_USE_ENV_PROXY=1 in the OpenShell base image, which
+# intercepts all https.request() calls and handles proxy via CONNECT tunnel.
+# axios also reads HTTPS_PROXY, causing a double-proxy conflict that produces
+# malformed URLs (https://host:3128/) rejected by the L7 proxy.
+# The preload script disables axios's own proxy handling so NODE_USE_ENV_PROXY
+# takes over — the correct path for all other Node.js HTTP clients.
+_AXIOS_FIX_SCRIPT="/opt/nemoclaw-blueprint/scripts/axios-proxy-fix.js"
+if [ -f "$_AXIOS_FIX_SCRIPT" ] && [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_AXIOS_FIX_SCRIPT"
+fi
+
 # OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
 # time a user connects via `openshell sandbox connect`.  The connect path spawns
 # `/bin/bash -i` (interactive, non-login), which sources ~/.bashrc — NOT
@@ -762,6 +904,12 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 PROXYEOF
+  # axios double-proxy fix: also expose NODE_OPTIONS in connect sessions so that
+  # interactive shells and user commands started via `openshell sandbox connect`
+  # also benefit from the preload. (NemoClaw#2109)
+  if [ -f "$_AXIOS_FIX_SCRIPT" ] && [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
+    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_AXIOS_FIX_SCRIPT\""
+  fi
   # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
   echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'
   for _redir in "${_TOOL_REDIRECTS[@]}"; do
@@ -810,6 +958,14 @@ if [ "$(id -u)" -ne 0 ]; then
   fi
   apply_model_override
   apply_cors_override
+  apply_slack_token_override
+  # SECURITY: apply_slack_token_override is a no-op when non-root.
+  # If SLACK_BOT_TOKEN is still set here the placeholder was never resolved —
+  # Bolt will crash with invalid_auth at startup. Fail fast with a clear message.
+  if [ -n "${SLACK_BOT_TOKEN:-}" ]; then
+    printf '[SECURITY] Slack Socket Mode requires a root container — SLACK_BOT_TOKEN is set but token placeholder resolution needs root. Run the container as root or remove SLACK_BOT_TOKEN.\n' >&2
+    exit 1
+  fi
   export_gateway_token
   install_configure_guard
   configure_messaging_channels
@@ -892,7 +1048,7 @@ if [ "$(id -u)" -ne 0 ]; then
   chmod 600 /tmp/auto-pair.log
 
   # Start gateway in background, auto-pair, then wait
-  nohup "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
+  nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
   trap cleanup SIGTERM SIGINT
@@ -909,6 +1065,7 @@ fi
 verify_config_integrity
 apply_model_override
 apply_cors_override
+apply_slack_token_override
 export_gateway_token
 install_configure_guard
 
@@ -916,6 +1073,11 @@ install_configure_guard
 # Must run AFTER integrity check (to detect build-time tampering) and
 # BEFORE chattr +i (which locks the config permanently).
 configure_messaging_channels
+
+# SECURITY: Slack tokens were resolved into openclaw.json by apply_slack_token_override.
+# Unset here — before any gosu sandbox child — so neither the sandbox user nor
+# the gateway inherits them from the process environment.
+unset SLACK_BOT_TOKEN SLACK_APP_TOKEN
 
 # Write auth profile as sandbox user (needs writable .openclaw-data)
 # and recursively re-tighten any auth-profiles.json files under ~/.openclaw.
@@ -951,7 +1113,7 @@ harden_openclaw_symlinks
 # SECURITY: The sandbox user cannot kill this process because it runs
 # under a different UID. The fake-HOME attack no longer works because
 # the agent cannot restart the gateway with a tampered config.
-nohup gosu gateway "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
+nohup gosu gateway "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
 GATEWAY_PID=$!
 echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
 trap cleanup SIGTERM SIGINT

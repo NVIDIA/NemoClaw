@@ -11,6 +11,7 @@
  * time.
  */
 
+import { execFileSync } from "node:child_process";
 import { handleSlashCommand } from "./commands/slash.js";
 import {
   describeOnboardEndpoint,
@@ -18,6 +19,31 @@ import {
   loadOnboardConfig,
 } from "./onboard/config.js";
 import { scanForSecrets, isMemoryPath } from "./security/secret-scanner.js";
+
+// Resolve live inference config from OpenShell as a fallback when the
+// onboard config file is not available (e.g. when running inside the
+// sandbox). Returns empty strings if the probe fails.
+function probeOpenShellInference(): { endpoint: string; provider: string; model: string } {
+  try {
+    const raw = execFileSync("openshell", ["inference", "get", "--json"], {
+      encoding: "utf-8",
+      timeout: 3000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const parsed = JSON.parse(raw) as {
+      provider?: string;
+      model?: string;
+      endpoint?: string;
+    };
+    return {
+      endpoint: parsed.endpoint ?? parsed.provider ?? "",
+      provider: parsed.provider ?? "",
+      model: parsed.model ?? "",
+    };
+  } catch {
+    return { endpoint: "", provider: "", model: "" };
+  }
+}
 
 // ---------------------------------------------------------------------------
 // OpenClaw Plugin SDK compatible types (mirrors openclaw/plugin-sdk)
@@ -151,8 +177,10 @@ export interface NemoClawConfig {
 
 function activeModelEntries(
   onboardCfg: ReturnType<typeof loadOnboardConfig>,
+  fallbackModel = "",
 ): ModelProviderEntry[] {
-  if (!onboardCfg?.model) {
+  const activeModel = onboardCfg?.model ?? fallbackModel;
+  if (!activeModel) {
     return [
       {
         id: "nvidia/nemotron-3-super-120b-a12b",
@@ -183,8 +211,8 @@ function activeModelEntries(
 
   return [
     {
-      id: `inference/${onboardCfg.model}`,
-      label: onboardCfg.model,
+      id: `inference/${activeModel}`,
+      label: activeModel,
       contextWindow: 131072,
       maxOutput: 8192,
     },
@@ -194,6 +222,7 @@ function activeModelEntries(
 function registeredProviderForConfig(
   onboardCfg: ReturnType<typeof loadOnboardConfig>,
   providerCredentialEnv: string,
+  fallbackModel = "",
 ): ProviderPlugin {
   const authLabel =
     providerCredentialEnv === "NVIDIA_API_KEY"
@@ -205,7 +234,7 @@ function registeredProviderForConfig(
     label: "Managed Inference Route",
     aliases: ["inference-local", "nemoclaw"],
     envVars: [providerCredentialEnv],
-    models: { chat: activeModelEntries(onboardCfg) },
+    models: { chat: activeModelEntries(onboardCfg, fallbackModel) },
     auth: [
       {
         type: "bearer",
@@ -264,12 +293,29 @@ export default function register(api: OpenClawPluginApi): void {
 
   // 2. Register nvidia-nim provider — use onboard config if available
   const onboardCfg = loadOnboardConfig();
-  const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
-  api.registerProvider(registeredProviderForConfig(onboardCfg, providerCredentialEnv));
 
-  const bannerEndpoint = onboardCfg ? describeOnboardEndpoint(onboardCfg) : "build.nvidia.com";
-  const bannerProvider = onboardCfg ? describeOnboardProvider(onboardCfg) : "NVIDIA Endpoints";
-  const bannerModel = onboardCfg?.model ?? "nvidia/nemotron-3-super-120b-a12b";
+  // Prefer onboard config; fall back to live OpenShell inference state when
+  // the config file is unavailable (e.g. inside the sandbox). Only resort to
+  // hardcoded defaults if both lookups fail.
+  let bannerEndpoint = onboardCfg ? describeOnboardEndpoint(onboardCfg) : "";
+  let bannerProvider = onboardCfg ? describeOnboardProvider(onboardCfg) : "";
+  let bannerModel = onboardCfg?.model ?? "";
+  let probedModel = "";
+
+  if (!bannerEndpoint || !bannerProvider || !bannerModel) {
+    const probed = probeOpenShellInference();
+    if (!bannerEndpoint) bannerEndpoint = probed.endpoint;
+    if (!bannerProvider) bannerProvider = probed.provider;
+    if (!bannerModel) bannerModel = probed.model;
+    probedModel = probed.model;
+  }
+
+  if (!bannerEndpoint) bannerEndpoint = "build.nvidia.com";
+  if (!bannerProvider) bannerProvider = "NVIDIA Endpoints";
+  if (!bannerModel) bannerModel = "nvidia/nemotron-3-super-120b-a12b";
+
+  const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
+  api.registerProvider(registeredProviderForConfig(onboardCfg, providerCredentialEnv, probedModel));
 
   // 3. Register before_tool_call hook to block secrets in memory writes (#1233)
   // NOTE: This relies on OpenClaw's before_tool_call plugin hook contract
