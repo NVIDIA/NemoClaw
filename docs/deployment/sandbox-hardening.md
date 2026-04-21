@@ -4,7 +4,7 @@ title:
   nav: "Sandbox Hardening"
 description:
   main: "Security hardening measures applied to the NemoClaw sandbox container image."
-  agent: "Describes security hardening measures applied to the NemoClaw sandbox container image. Use when reviewing container security, Docker capabilities, process limits, or sandbox hardening controls."
+  agent: "Includes the sandbox container image hardening reference, covering Docker capabilities and process limits. Use when reviewing sandbox image security controls, auditing capability drops, or looking up the runtime resource limits."
 keywords: ["nemoclaw sandbox hardening", "container security", "docker capabilities", "process limits"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["nemoclaw", "sandboxing", "security"]

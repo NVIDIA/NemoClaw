@@ -17,12 +17,13 @@ const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
 const { validateName } = require("./runner");
-const { stripCredentials } = require("./credential-filter");
+const credentialFilter: typeof import("./credential-filter") = require("./credential-filter");
+const { stripCredentials, isConfigObject, isConfigValue } = credentialFilter;
 const { appendAuditEntry } = require("./shields-audit");
-const {
-  runOpenshellCommand,
-  captureOpenshellCommand,
-} = require("./openshell");
+
+type ConfigObject = import("./credential-filter").ConfigObject;
+type ConfigValue = import("./credential-filter").ConfigValue;
+const { runOpenshellCommand, captureOpenshellCommand } = require("./openshell");
 
 const K3S_CONTAINER = "openshell-cluster-nemoclaw";
 
@@ -90,44 +91,61 @@ function getOpenshellBinary(): string {
   return process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
 }
 
-function extractDotpath(obj: unknown, dotpath: string): unknown {
+function extractDotpath(obj: ConfigValue, dotpath: string): ConfigValue | undefined {
   const keys = dotpath.split(".");
-  let current: unknown = obj;
+  let current: ConfigValue = obj;
   for (const key of keys) {
-    if (current == null || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[key];
+    if (current == null) return undefined;
+    if (Array.isArray(current)) {
+      const index = Number(key);
+      if (!Number.isInteger(index) || index < 0) return undefined;
+      current = current[index];
+      continue;
+    }
+    if (!isConfigObject(current)) return undefined;
+    current = current[key];
   }
   return current;
 }
 
-function setDotpath(obj: Record<string, unknown>, dotpath: string, value: unknown): void {
-  const keys = dotpath.split(".");
-  let current: Record<string, unknown> = obj;
-  for (let i = 0; i < keys.length - 1; i++) {
-    const key = keys[i];
-    if (current[key] == null || typeof current[key] !== "object" || Array.isArray(current[key])) {
-      current[key] = {};
-    }
-    current = current[key] as Record<string, unknown>;
+function ensureConfigObjectKey(record: ConfigObject, key: string): ConfigObject {
+  const existing = record[key];
+  if (isConfigObject(existing)) {
+    return existing;
   }
-  current[keys[keys.length - 1]] = value;
+
+  const created: ConfigObject = {};
+  record[key] = created;
+  return created;
+}
+
+function setDotpath(obj: ConfigObject, dotpath: string, value: ConfigValue): void {
+  const keys = dotpath.split(".");
+  const leafKey = keys.pop();
+  if (!leafKey) return;
+
+  let current = obj;
+  for (const key of keys) {
+    current = ensureConfigObjectKey(current, key);
+  }
+  current[leafKey] = value;
 }
 
 /**
  * Parse a config file's raw text according to its format.
  */
-function parseConfig(raw: string, format: string): Record<string, unknown> {
-  if (format === "yaml") {
-    const YAML = require("yaml");
-    return YAML.parse(raw) as Record<string, unknown>;
+function parseConfig(raw: string, format: string): ConfigObject {
+  const parsed = format === "yaml" ? require("yaml").parse(raw) : JSON.parse(raw);
+  if (!isConfigObject(parsed)) {
+    throw new Error("Config is not an object.");
   }
-  return JSON.parse(raw) as Record<string, unknown>;
+  return parsed;
 }
 
 /**
  * Serialize a config object according to its format.
  */
-function serializeConfig(config: Record<string, unknown>, format: string): string {
+function serializeConfig(config: ConfigObject, format: string): string {
   if (format === "yaml") {
     const YAML = require("yaml");
     return YAML.stringify(config);
@@ -136,14 +154,28 @@ function serializeConfig(config: Record<string, unknown>, format: string): strin
 }
 
 /**
+ * Parse a CLI-provided config value as JSON when possible, otherwise keep it
+ * as a string literal.
+ */
+function parseCliConfigValue(rawValue: string): ConfigValue {
+  try {
+    const parsed: unknown = JSON.parse(rawValue);
+    return isConfigValue(parsed) ? parsed : rawValue;
+  } catch {
+    return rawValue;
+  }
+}
+
+/**
  * Read the agent's config from a running sandbox.
  * Resolves the correct config path based on the agent type.
  */
-function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Record<string, unknown> {
+function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): ConfigObject {
   const binary = getOpenshellBinary();
   let raw: string;
   try {
-    const result = captureOpenshellCommand(binary,
+    const result = captureOpenshellCommand(
+      binary,
       ["sandbox", "exec", "--name", sandboxName, "--", "cat", target.configPath],
       { ignoreError: true, errorLine: console.error, exit: (code: number) => process.exit(code) },
     );
@@ -171,10 +203,7 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Reco
 // URL validation (lightweight SSRF check for config set)
 // ---------------------------------------------------------------------------
 
-const PRIVATE_IP_PREFIXES = [
-  "127.", "10.", "0.", "169.254.",
-  "192.168.",
-];
+const PRIVATE_IP_PREFIXES = ["127.", "10.", "0.", "169.254.", "192.168."];
 
 const PRIVATE_IP_172_RE = /^172\.(1[6-9]|2[0-9]|3[01])\./;
 
@@ -202,7 +231,7 @@ function validateUrlValue(value: string): void {
   if (isPrivateIp(parsed.hostname)) {
     throw new Error(
       `URL points to private/internal address "${parsed.hostname}". ` +
-      `This could expose internal services to the sandbox.`,
+        `This could expose internal services to the sandbox.`,
     );
   }
 }
@@ -220,14 +249,11 @@ function configGet(sandboxName: string, opts: ConfigGetOpts = {}): void {
   validateName(sandboxName, "sandbox name");
 
   const target = resolveAgentConfig(sandboxName);
-  let config: unknown = readSandboxConfig(sandboxName, target);
-
-  // Strip credentials before display
-  config = stripCredentials(config);
+  let config: ConfigValue = stripCredentials(readSandboxConfig(sandboxName, target));
 
   // Remove gateway section for openclaw (contains auth tokens)
-  if (config && typeof config === "object" && !Array.isArray(config)) {
-    delete (config as Record<string, unknown>).gateway;
+  if (isConfigObject(config)) {
+    delete config.gateway;
   }
 
   // Extract dotpath if specified
@@ -282,16 +308,13 @@ function configSet(sandboxName: string, opts: ConfigSetOpts = {}): void {
   const config = readSandboxConfig(sandboxName, target);
 
   // 2. Parse and validate value
-  let parsedValue: unknown;
-  try {
-    parsedValue = JSON.parse(opts.value);
-  } catch {
-    // Not valid JSON — treat as string literal
-    parsedValue = opts.value;
-  }
+  const parsedValue = parseCliConfigValue(opts.value);
 
   // 3. Validate URLs for SSRF
-  if (typeof parsedValue === "string" && (parsedValue.startsWith("http://") || parsedValue.startsWith("https://"))) {
+  if (
+    typeof parsedValue === "string" &&
+    (parsedValue.startsWith("http://") || parsedValue.startsWith("https://"))
+  ) {
     try {
       validateUrlValue(parsedValue);
     } catch (err: unknown) {
@@ -326,19 +349,49 @@ function configSet(sandboxName: string, opts: ConfigSetOpts = {}): void {
   // 8. Write config to sandbox via kubectl exec (bypasses Landlock)
   console.log(`  Writing config to sandbox (${target.configPath})...`);
   const content = fs.readFileSync(tmpFile, "utf-8");
-  execFileSync("docker", [
-    "exec", "-i", K3S_CONTAINER,
-    "kubectl", "exec", "-n", "openshell", sandboxName, "-c", "agent", "-i", "--",
-    "sh", "-c", `cat > ${target.configPath}`,
-  ], { input: content, stdio: ["pipe", "pipe", "pipe"], timeout: 15000 });
+  execFileSync(
+    "docker",
+    [
+      "exec",
+      "-i",
+      K3S_CONTAINER,
+      "kubectl",
+      "exec",
+      "-n",
+      "openshell",
+      sandboxName,
+      "-c",
+      "agent",
+      "-i",
+      "--",
+      "sh",
+      "-c",
+      `cat > ${target.configPath}`,
+    ],
+    { input: content, stdio: ["pipe", "pipe", "pipe"], timeout: 15000 },
+  );
 
   // 9. Fix ownership via kubectl exec (bypasses Landlock)
   try {
-    execFileSync("docker", [
-      "exec", K3S_CONTAINER,
-      "kubectl", "exec", "-n", "openshell", sandboxName, "-c", "agent", "--",
-      "chown", "sandbox:sandbox", target.configPath,
-    ], { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 });
+    execFileSync(
+      "docker",
+      [
+        "exec",
+        K3S_CONTAINER,
+        "kubectl",
+        "exec",
+        "-n",
+        "openshell",
+        sandboxName,
+        "-c",
+        "agent",
+        "--",
+        "chown",
+        "sandbox:sandbox",
+        target.configPath,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
+    );
   } catch {
     // Best effort — chown failure is non-fatal
   }
@@ -365,9 +418,11 @@ function configSet(sandboxName: string, opts: ConfigSetOpts = {}): void {
   if (opts.restart) {
     console.log("  Restarting sandbox agent process...");
     const restartBinary = getOpenshellBinary();
-    const result = captureOpenshellCommand(restartBinary, [
-      "sandbox", "exec", "--name", sandboxName, "--", "kill", "-HUP", "1",
-    ], { ignoreError: true, errorLine: console.error, exit: (code: number) => process.exit(code) });
+    const result = captureOpenshellCommand(
+      restartBinary,
+      ["sandbox", "exec", "--name", sandboxName, "--", "kill", "-HUP", "1"],
+      { ignoreError: true, errorLine: console.error, exit: (code: number) => process.exit(code) },
+    );
 
     if (result.status !== 0) {
       console.error("  Could not signal the sandbox process to reload.");
@@ -407,7 +462,9 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
   }
 
   if (session.sandboxName && session.sandboxName !== sandboxName) {
-    console.error(`  Onboard session is for sandbox '${session.sandboxName}', not '${sandboxName}'.`);
+    console.error(
+      `  Onboard session is for sandbox '${session.sandboxName}', not '${sandboxName}'.`,
+    );
     process.exit(1);
   }
 
@@ -456,26 +513,38 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
   // 5. Update the openshell provider
   console.log("  Updating openshell provider...");
   const binary = getOpenshellBinary();
-  const result = runOpenshellCommand(binary, [
-    "provider", "update", providerName, "--credential", credentialEnv,
-  ], {
-    env: { [credentialEnv]: newToken },
-    ignoreError: true,
-    errorLine: console.error,
-    exit: (code: number) => process.exit(code),
-  });
-
-  if (result.status !== 0) {
-    const providerType = session.providerType || "generic";
-    const createResult = runOpenshellCommand(binary, [
-      "provider", "create", "--name", providerName, "--type", providerType,
-      "--credential", credentialEnv,
-    ], {
+  const result = runOpenshellCommand(
+    binary,
+    ["provider", "update", providerName, "--credential", credentialEnv],
+    {
       env: { [credentialEnv]: newToken },
       ignoreError: true,
       errorLine: console.error,
       exit: (code: number) => process.exit(code),
-    });
+    },
+  );
+
+  if (result.status !== 0) {
+    const providerType = session.providerType || "generic";
+    const createResult = runOpenshellCommand(
+      binary,
+      [
+        "provider",
+        "create",
+        "--name",
+        providerName,
+        "--type",
+        providerType,
+        "--credential",
+        credentialEnv,
+      ],
+      {
+        env: { [credentialEnv]: newToken },
+        ignoreError: true,
+        errorLine: console.error,
+        exit: (code: number) => process.exit(code),
+      },
+    );
 
     if (createResult.status !== 0) {
       console.error("  Failed to update provider. You may need to re-onboard.");

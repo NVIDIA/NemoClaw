@@ -134,21 +134,30 @@ error() {
 ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
 
 verify_downloaded_script() {
-  local file="$1" label="${2:-script}"
+  local file="$1" label="${2:-script}" expected_hash="${3:-}"
   if [ ! -s "$file" ]; then
-    error "$label installer download is empty or missing"
+    error "$label download is empty or missing"
   fi
   if ! head -1 "$file" | grep -qE '^#!.*(sh|bash)'; then
-    error "$label installer does not start with a shell shebang — possible download corruption"
+    error "$label does not start with a shell shebang — possible download corruption"
   fi
-  local hash
+  local actual_hash=""
   if command -v sha256sum >/dev/null 2>&1; then
-    hash="$(sha256sum "$file" | awk '{print $1}')"
+    actual_hash="$(sha256sum "$file" | awk '{print $1}')"
   elif command -v shasum >/dev/null 2>&1; then
-    hash="$(shasum -a 256 "$file" | awk '{print $1}')"
+    actual_hash="$(shasum -a 256 "$file" | awk '{print $1}')"
   fi
-  if [ -n "${hash:-}" ]; then
-    info "$label installer SHA-256: $hash"
+  if [ -n "$expected_hash" ]; then
+    if [ -z "$actual_hash" ]; then
+      error "No SHA-256 tool available — cannot verify $label integrity"
+    fi
+    if [ "$actual_hash" != "$expected_hash" ]; then
+      rm -f "$file"
+      error "$label integrity check failed\n  Expected: $expected_hash\n  Actual:   $actual_hash"
+    fi
+    info "$label integrity verified (SHA-256: ${actual_hash:0:16}…)"
+  elif [ -n "$actual_hash" ]; then
+    info "$label SHA-256: $actual_hash"
   fi
 }
 
@@ -260,9 +269,19 @@ print_done() {
       printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$(detect_shell_profile)"
     fi
     printf "  %s$%s nemoclaw %s connect\n" "$C_GREEN" "$C_RESET" "$sandbox_name"
-    if [[ "$agent_name" == "openclaw" || -z "$agent_name" ]]; then
-      printf "  %ssandbox@%s$%s openclaw tui\n" "$C_GREEN" "$sandbox_name" "$C_RESET"
-    fi
+    local agent_cmd
+    case "$agent_name" in
+      hermes)
+        agent_cmd="hermes"
+        ;;
+      "" | openclaw)
+        agent_cmd="openclaw tui"
+        ;;
+      *)
+        agent_cmd="$agent_name"
+        ;;
+    esac
+    printf "  %ssandbox@%s$%s %s\n" "$C_GREEN" "$sandbox_name" "$C_RESET" "$agent_cmd"
   elif [[ "$NEMOCLAW_READY_NOW" == true ]]; then
     printf "  ${C_GREEN}NemoClaw CLI is installed.${C_RESET}\n"
     printf "  ${C_DIM}Onboarding has not run yet.${C_RESET}\n"
@@ -689,6 +708,9 @@ install_nodejs() {
 # 2. Ollama
 # ---------------------------------------------------------------------------
 OLLAMA_MIN_VERSION="0.18.0"
+# IMPORTANT: update OLLAMA_INSTALL_SHA256 when changing OLLAMA_MIN_VERSION
+# Pattern: pin hash and verify, same as NVM_SHA256 above (line ~656).
+OLLAMA_INSTALL_SHA256="25f64b810b947145095956533e1bdf56eacea2673c55a7e586be4515fc882c9f"
 
 get_ollama_version() {
   # `ollama --version` outputs something like "ollama version 0.18.0"
@@ -732,7 +754,7 @@ install_or_upgrade_ollama() {
         tmpdir="$(mktemp -d)"
         trap 'rm -rf "$tmpdir"' EXIT
         curl -fsSL https://ollama.com/install.sh -o "$tmpdir/install_ollama.sh"
-        verify_downloaded_script "$tmpdir/install_ollama.sh" "Ollama"
+        verify_downloaded_script "$tmpdir/install_ollama.sh" "Ollama" "$OLLAMA_INSTALL_SHA256"
         sh "$tmpdir/install_ollama.sh"
       )
       info "Ollama upgraded to $(get_ollama_version)"
@@ -745,7 +767,7 @@ install_or_upgrade_ollama() {
         tmpdir="$(mktemp -d)"
         trap 'rm -rf "$tmpdir"' EXIT
         curl -fsSL https://ollama.com/install.sh -o "$tmpdir/install_ollama.sh"
-        verify_downloaded_script "$tmpdir/install_ollama.sh" "Ollama"
+        verify_downloaded_script "$tmpdir/install_ollama.sh" "Ollama" "$OLLAMA_INSTALL_SHA256"
         sh "$tmpdir/install_ollama.sh"
       )
       info "Ollama installed: v$(get_ollama_version)"
@@ -911,6 +933,9 @@ install_nemoclaw() {
   local repo_root package_json
   repo_root="$(resolve_repo_root)"
   package_json="${repo_root}/package.json"
+  # Tell prepare not to run npm link — the installer handles linking explicitly.
+  export NEMOCLAW_INSTALLING=1
+
   if is_source_checkout "$repo_root"; then
     info "NemoClaw package.json found in the selected source checkout — installing from source…"
     NEMOCLAW_SOURCE_ROOT="$repo_root"

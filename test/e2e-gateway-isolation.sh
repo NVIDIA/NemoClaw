@@ -63,10 +63,11 @@ info "1. Gateway user exists with separate UID"
 OUT=$(run_as_root "id gateway && id sandbox")
 GW_UID=$(echo "$OUT" | grep "^uid=" | head -1 | sed 's/uid=\([0-9]*\).*/\1/')
 SB_UID=$(echo "$OUT" | grep "^uid=" | tail -1 | sed 's/uid=\([0-9]*\).*/\1/')
-if [ -n "$GW_UID" ] && [ -n "$SB_UID" ] && [ "$GW_UID" != "$SB_UID" ]; then
+SB_GID=$(echo "$OUT" | grep "^uid=" | tail -1 | sed 's/.*gid=\([0-9]*\).*/\1/')
+if [ -n "$GW_UID" ] && [ -n "$SB_UID" ] && [ -n "$SB_GID" ] && [ "$GW_UID" != "$SB_UID" ]; then
   pass "gateway (uid=$GW_UID) and sandbox (uid=$SB_UID) are different users"
 else
-  fail "gateway and sandbox UIDs not distinct: $OUT"
+  fail "gateway and sandbox IDs not distinct or incomplete: $OUT"
 fi
 
 # ── Test 2: openclaw.json is not writable by sandbox user ────────
@@ -368,10 +369,12 @@ fi
 
 # ── Test 25: Non-root mode executes without gosu ──────────────────
 # The entrypoint detects uid != 0, skips gosu, and execs the command directly.
-# Verifies the non-root fallback path works after read-only /sandbox (#804).
+# Use the image's actual sandbox uid/gid here: the system-assigned sandbox uid
+# is not guaranteed to be 1000 on every runner, and the non-root fallback is
+# designed to run as that sandbox user.
 
 info "25. Non-root mode executes command without gosu"
-OUT=$(docker run --rm --user 1000:1000 "$IMAGE" echo "NON_ROOT_EXEC_OK" 2>&1 || true)
+OUT=$(docker run --rm --user "${SB_UID}:${SB_GID}" "$IMAGE" echo "NON_ROOT_EXEC_OK" 2>&1 || true)
 if echo "$OUT" | grep -q "NON_ROOT_EXEC_OK"; then
   pass "non-root mode executed command directly (no gosu)"
 else

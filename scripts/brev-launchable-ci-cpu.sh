@@ -249,6 +249,17 @@ npm run build 2>&1 | tail -3
 cd "$NEMOCLAW_CLONE_DIR"
 info "Plugin built"
 
+# Create the global nemoclaw symlink once during setup. This runs here
+# (before any test) so the cold-path npm link cost is absorbed by the
+# launchable's own readiness window rather than a later test's tight
+# execSync timeout. When the test suite rsyncs PR branch code over this
+# clone, a subsequent `npm link` is a fast no-op against the existing
+# symlink. See PR #1888 regression commentary.
+info "Linking nemoclaw CLI globally..."
+sudo npm link 2>&1 | tail -3
+sudo chown -R "$TARGET_USER":"$TARGET_USER" "$NEMOCLAW_CLONE_DIR"
+info "nemoclaw CLI linked"
+
 # ══════════════════════════════════════════════════════════════════════
 # 6. Pre-pull Docker images
 # ══════════════════════════════════════════════════════════════════════
