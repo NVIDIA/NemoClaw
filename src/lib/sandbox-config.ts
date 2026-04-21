@@ -17,8 +17,12 @@ const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
 const { validateName } = require("./runner");
-const { stripCredentials } = require("./credential-filter");
+const credentialFilter: typeof import("./credential-filter") = require("./credential-filter");
+const { stripCredentials, isConfigObject } = credentialFilter;
 const { appendAuditEntry } = require("./shields-audit");
+
+type ConfigObject = import("./credential-filter").ConfigObject;
+type ConfigValue = import("./credential-filter").ConfigValue;
 const {
   runOpenshellCommand,
   captureOpenshellCommand,
@@ -90,12 +94,19 @@ function getOpenshellBinary(): string {
   return process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
 }
 
-function extractDotpath(obj: unknown, dotpath: string): unknown {
+function extractDotpath(obj: ConfigValue, dotpath: string): ConfigValue | undefined {
   const keys = dotpath.split(".");
-  let current: unknown = obj;
+  let current: ConfigValue = obj;
   for (const key of keys) {
-    if (current == null || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[key];
+    if (current == null) return undefined;
+    if (Array.isArray(current)) {
+      const index = Number(key);
+      if (!Number.isInteger(index) || index < 0) return undefined;
+      current = current[index];
+      continue;
+    }
+    if (!isConfigObject(current)) return undefined;
+    current = current[key];
   }
   return current;
 }
@@ -116,12 +127,12 @@ function setDotpath(obj: Record<string, unknown>, dotpath: string, value: unknow
 /**
  * Parse a config file's raw text according to its format.
  */
-function parseConfig(raw: string, format: string): Record<string, unknown> {
-  if (format === "yaml") {
-    const YAML = require("yaml");
-    return YAML.parse(raw) as Record<string, unknown>;
+function parseConfig(raw: string, format: string): ConfigObject {
+  const parsed = format === "yaml" ? require("yaml").parse(raw) : JSON.parse(raw);
+  if (!isConfigObject(parsed)) {
+    throw new Error("Config is not an object.");
   }
-  return JSON.parse(raw) as Record<string, unknown>;
+  return parsed;
 }
 
 /**
@@ -139,7 +150,7 @@ function serializeConfig(config: Record<string, unknown>, format: string): strin
  * Read the agent's config from a running sandbox.
  * Resolves the correct config path based on the agent type.
  */
-function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Record<string, unknown> {
+function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): ConfigObject {
   const binary = getOpenshellBinary();
   let raw: string;
   try {
@@ -220,14 +231,11 @@ function configGet(sandboxName: string, opts: ConfigGetOpts = {}): void {
   validateName(sandboxName, "sandbox name");
 
   const target = resolveAgentConfig(sandboxName);
-  let config: unknown = readSandboxConfig(sandboxName, target);
-
-  // Strip credentials before display
-  config = stripCredentials(config);
+  let config: ConfigValue = stripCredentials(readSandboxConfig(sandboxName, target));
 
   // Remove gateway section for openclaw (contains auth tokens)
-  if (config && typeof config === "object" && !Array.isArray(config)) {
-    delete (config as Record<string, unknown>).gateway;
+  if (isConfigObject(config)) {
+    delete config.gateway;
   }
 
   // Extract dotpath if specified
