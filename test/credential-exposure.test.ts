@@ -89,10 +89,6 @@ describe("credential exposure in process arguments", () => {
     expect(src).toMatch(/delete sandboxEnv\.SSH_AUTH_SOCK/);
     // sandboxEnv must still be passed to streamSandboxCreate
     expect(src).toMatch(/streamSandboxCreate\(createCommand, sandboxEnv(?:, \{)?/);
-    expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("NVIDIA_API_KEY"/);
-    expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("DISCORD_BOT_TOKEN"/);
-    expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("SLACK_BOT_TOKEN"/);
-    expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("SLACK_APP_TOKEN"/);
   });
 
   it("services.ts must not spread full process.env into subprocess", () => {

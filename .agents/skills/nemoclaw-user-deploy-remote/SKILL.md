@@ -71,7 +71,7 @@ $ nemoclaw deploy <instance-name>
 SSH to the instance and run the OpenShell TUI to monitor activity and approve network requests:
 
 ```console
-$ ssh <instance-name> 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell term'
+$ ssh <instance-name> 'cd ~/nemoclaw && set -a && . .env && set +a && openshell term'
 ```
 
 ## Step 5: Verify Inference
@@ -178,6 +178,14 @@ Complete the rest of the wizard so the blueprint can create OpenShell providers 
 Channel entries in `/sandbox/.openclaw/openclaw.json` are fixed at image build time. Landlock keeps that path read-only at runtime, so you cannot patch messaging config inside a running sandbox.
 
 If you add or change `TELEGRAM_BOT_TOKEN` (or toggle channels) after a sandbox already exists, you typically need to run `nemoclaw onboard` again so the image and provider attachments are rebuilt with the new settings.
+
+NemoClaw stores a SHA-256 hash of each messaging token in the sandbox registry at creation time.
+When you re-run `nemoclaw onboard --non-interactive` with a new token, NemoClaw detects the change, backs up workspace state, deletes the sandbox, recreates it with the new credential, and restores the backup.
+This makes credential rotation safe to script.
+
+Telegram, Discord, and Slack each allow only one active consumer per bot token.
+If you enable a messaging channel and another sandbox already uses the same token, onboard prompts you to confirm before continuing in interactive mode and exits non-zero in non-interactive mode.
+`nemoclaw status` also reports cross-sandbox overlaps so you can resolve duplicates before messages start dropping.
 
 For a full first-time flow, refer to Quickstart (see the `nemoclaw-user-get-started` skill).
 

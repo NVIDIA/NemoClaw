@@ -65,7 +65,7 @@ _TOOL_REDIRECTS=(
   'GIT_CONFIG_GLOBAL=/tmp/.gitconfig'
   'GNUPGHOME=/tmp/.gnupg'
   'PYTHONUSERBASE=/tmp/.local'
-  'PYTHONHISTFILE=/tmp/.python_history'
+  'PYTHON_HISTORY=/tmp/.python_history'
   'CLAUDE_CONFIG_DIR=/tmp/.claude'
   'npm_config_prefix=/tmp/npm-global'
 )
@@ -172,7 +172,16 @@ else
     exit 1
   fi
 fi
-CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${_DASHBOARD_PORT}}"
+# When NEMOCLAW_DASHBOARD_PORT is explicitly set (injected at sandbox create time
+# via envArgs in onboard.ts), unconditionally override CHAT_UI_URL so the gateway
+# starts on the configured port even if the Docker image has a different value
+# baked in. Without this, the Docker ENV takes precedence and the gateway listens
+# on the wrong port while the SSH tunnel forwards the custom port. (#1925)
+if [ -n "${NEMOCLAW_DASHBOARD_PORT:-}" ]; then
+  CHAT_UI_URL="http://127.0.0.1:${_DASHBOARD_PORT}"
+else
+  CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${_DASHBOARD_PORT}}"
+fi
 PUBLIC_PORT="$_DASHBOARD_PORT"
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
@@ -476,15 +485,33 @@ openclaw() {
       echo "This rebuilds the sandbox with your updated settings." >&2
       return 1
       ;;
+    config)
+      case "$2" in
+        set | unset)
+          echo "Error: 'openclaw config $2' cannot modify config inside the sandbox." >&2
+          echo "The sandbox config is read-only (Landlock enforced) for security." >&2
+          echo "" >&2
+          echo "To change your configuration, exit the sandbox and run:" >&2
+          echo "  nemoclaw onboard --resume" >&2
+          echo "" >&2
+          echo "This rebuilds the sandbox with your updated settings." >&2
+          return 1
+          ;;
+      esac
+      ;;
     agent)
-      # Warn when --local is used — it bypasses gateway protections including
-      # secret scanning, network policy, and inference auth. Ref: #1632
+      # Block --local inside sandbox — it bypasses gateway protections and can
+      # crash the container's main process, bricking the sandbox. Ref: #1632, #2016
       local _arg
       for _arg in "$@"; do
         if [ "$_arg" = "--local" ]; then
-          echo "[SECURITY] Warning: 'openclaw agent --local' bypasses the NemoClaw gateway." >&2
-          echo "[SECURITY] Secret scanning, network policy, and inference auth are NOT enforced in local mode." >&2
-          break
+          echo "Error: 'openclaw agent --local' is not supported inside NemoClaw sandboxes." >&2
+          echo "The --local flag bypasses the gateway's security protections (secret scanning," >&2
+          echo "network policy, inference auth) and can crash the sandbox." >&2
+          echo "" >&2
+          echo "Instead, run without --local to use the gateway's managed inference route:" >&2
+          echo "  openclaw agent --agent main -m \"hello\"" >&2
+          return 1
         fi
       done
       ;;
@@ -506,6 +533,11 @@ GUARD
     elif [ -w "$rc_file" ] || [ -w "$(dirname "$rc_file")" ]; then
       printf '\n%s\n' "$snippet" >>"$rc_file"
     fi
+  done
+  # Final lock after all rc-file mutations (export_gateway_token + this
+  # function) are complete so Landlock read_only enforcement holds.
+  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
+    [ -f "$rc_file" ] && chmod 444 "$rc_file"
   done
 }
 
@@ -892,7 +924,7 @@ if [ "$(id -u)" -ne 0 ]; then
   chmod 600 /tmp/auto-pair.log
 
   # Start gateway in background, auto-pair, then wait
-  nohup "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
+  nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
   trap cleanup SIGTERM SIGINT
@@ -951,7 +983,7 @@ harden_openclaw_symlinks
 # SECURITY: The sandbox user cannot kill this process because it runs
 # under a different UID. The fake-HOME attack no longer works because
 # the agent cannot restart the gateway with a tampered config.
-nohup gosu gateway "$OPENCLAW" gateway run >/tmp/gateway.log 2>&1 &
+nohup gosu gateway "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
 GATEWAY_PID=$!
 echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
 trap cleanup SIGTERM SIGINT

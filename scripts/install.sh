@@ -134,27 +134,53 @@ error() {
 ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
 
 verify_downloaded_script() {
-  local file="$1" label="${2:-script}"
+  local file="$1" label="${2:-script}" expected_hash="${3:-}"
   if [ ! -s "$file" ]; then
-    error "$label installer download is empty or missing"
+    error "$label download is empty or missing"
   fi
   if ! head -1 "$file" | grep -qE '^#!.*(sh|bash)'; then
-    error "$label installer does not start with a shell shebang — possible download corruption"
+    error "$label does not start with a shell shebang — possible download corruption"
   fi
-  local hash
+  local actual_hash=""
   if command -v sha256sum >/dev/null 2>&1; then
-    hash="$(sha256sum "$file" | awk '{print $1}')"
+    actual_hash="$(sha256sum "$file" | awk '{print $1}')"
   elif command -v shasum >/dev/null 2>&1; then
-    hash="$(shasum -a 256 "$file" | awk '{print $1}')"
+    actual_hash="$(shasum -a 256 "$file" | awk '{print $1}')"
   fi
-  if [ -n "${hash:-}" ]; then
-    info "$label installer SHA-256: $hash"
+  if [ -n "$expected_hash" ]; then
+    if [ -z "$actual_hash" ]; then
+      error "No SHA-256 tool available — cannot verify $label integrity"
+    fi
+    if [ "$actual_hash" != "$expected_hash" ]; then
+      rm -f "$file"
+      error "$label integrity check failed\n  Expected: $expected_hash\n  Actual:   $actual_hash"
+    fi
+    info "$label integrity verified (SHA-256: ${actual_hash:0:16}…)"
+  elif [ -n "$actual_hash" ]; then
+    info "$label SHA-256: $actual_hash"
   fi
 }
 
 resolve_default_sandbox_name() {
   local registry_file="${HOME}/.nemoclaw/sandboxes.json"
   local sandbox_name="${NEMOCLAW_SANDBOX_NAME:-}"
+
+  # Prefer the sandbox name from the current onboard session — it reflects
+  # the sandbox just created, whereas sandboxes.json may hold a stale default
+  # from a previous gateway that no longer exists (#1839).
+  local session_file="${HOME}/.nemoclaw/onboard-session.json"
+  if [[ -z "$sandbox_name" && -f "$session_file" ]] && command_exists node; then
+    sandbox_name="$(
+      node -e '
+        const fs = require("fs");
+        try {
+          const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+          const name = data.sandboxName || "";
+          process.stdout.write(name);
+        } catch {}
+      ' "$session_file" 2>/dev/null || true
+    )"
+  fi
 
   if [[ -z "$sandbox_name" && -f "$registry_file" ]] && command_exists node; then
     sandbox_name="$(
@@ -292,6 +318,7 @@ usage() {
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
+  printf "    NEMOCLAW_SINGLE_SESSION=1     Abort if active sandbox sessions exist\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
   printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
   printf "    NEMOCLAW_PROVIDER             build | openai | anthropic | anthropicCompatible\n"
@@ -671,6 +698,9 @@ install_nodejs() {
 # 2. Ollama
 # ---------------------------------------------------------------------------
 OLLAMA_MIN_VERSION="0.18.0"
+# IMPORTANT: update OLLAMA_INSTALL_SHA256 when changing OLLAMA_MIN_VERSION
+# Pattern: pin hash and verify, same as NVM_SHA256 above (line ~656).
+OLLAMA_INSTALL_SHA256="25f64b810b947145095956533e1bdf56eacea2673c55a7e586be4515fc882c9f"
 
 get_ollama_version() {
   # `ollama --version` outputs something like "ollama version 0.18.0"
@@ -714,7 +744,7 @@ install_or_upgrade_ollama() {
         tmpdir="$(mktemp -d)"
         trap 'rm -rf "$tmpdir"' EXIT
         curl -fsSL https://ollama.com/install.sh -o "$tmpdir/install_ollama.sh"
-        verify_downloaded_script "$tmpdir/install_ollama.sh" "Ollama"
+        verify_downloaded_script "$tmpdir/install_ollama.sh" "Ollama" "$OLLAMA_INSTALL_SHA256"
         sh "$tmpdir/install_ollama.sh"
       )
       info "Ollama upgraded to $(get_ollama_version)"
@@ -727,7 +757,7 @@ install_or_upgrade_ollama() {
         tmpdir="$(mktemp -d)"
         trap 'rm -rf "$tmpdir"' EXIT
         curl -fsSL https://ollama.com/install.sh -o "$tmpdir/install_ollama.sh"
-        verify_downloaded_script "$tmpdir/install_ollama.sh" "Ollama"
+        verify_downloaded_script "$tmpdir/install_ollama.sh" "Ollama" "$OLLAMA_INSTALL_SHA256"
         sh "$tmpdir/install_ollama.sh"
       )
       info "Ollama installed: v$(get_ollama_version)"
@@ -1203,11 +1233,56 @@ main() {
   install_nemoclaw
   verify_nemoclaw
 
+  # Pre-upgrade safety: back up all sandbox state before onboarding (which may
+  # upgrade OpenShell). If the upgrade destroys sandbox contents, the backups
+  # in ~/.nemoclaw/rebuild-backups/ let the user recover via `nemoclaw <name> rebuild`.
+  # Check the registry file directly to avoid shelling out to nemoclaw (which
+  # may be a stub in test environments).
+  local _reg_file="${HOME}/.nemoclaw/sandboxes.json"
+  if [ -f "$_reg_file" ] && command_exists nemoclaw && command_exists openshell; then
+    local _has_sandboxes
+    _has_sandboxes="$(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(len(d.get('sandboxes', {})))
+except Exception:
+    print(0)
+" "$_reg_file" 2>/dev/null || echo 0)"
+    if [ "$_has_sandboxes" -gt 0 ]; then
+      info "Backing up $_has_sandboxes sandbox(es) before upgrade…"
+      nemoclaw backup-all 2>&1 || warn "Pre-upgrade backup failed (non-fatal). Continuing."
+    fi
+  fi
+
   step 3 "Onboarding"
   if command_exists nemoclaw; then
+    if [[ -f "${HOME}/.nemoclaw/sandboxes.json" ]] && node -e '
+      const fs = require("fs");
+      try {
+        const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+        const count = Object.keys(data.sandboxes || {}).length;
+        process.exit(count > 0 ? 0 : 1);
+      } catch {
+        process.exit(1);
+      }
+    ' "${HOME}/.nemoclaw/sandboxes.json"; then
+      warn "Existing sandbox sessions detected. Onboarding may disrupt running agents."
+      if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
+        error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with 'nemoclaw <name> destroy' before reinstalling."
+      fi
+      warn "Consider destroying existing sessions with 'nemoclaw <name> destroy' first."
+      warn "Set NEMOCLAW_SINGLE_SESSION=1 to abort the installer when sessions are active."
+    fi
     if run_installer_host_preflight; then
       run_onboard
       ONBOARD_RAN=true
+      # After onboard, check for stale sandboxes that need rebuilding (#1904).
+      # Uses --auto so it runs non-interactively in piped/CI contexts.
+      if [ "${_has_sandboxes:-0}" -gt 0 ] 2>/dev/null && command_exists nemoclaw; then
+        info "Checking for sandboxes that need upgrading…"
+        nemoclaw upgrade-sandboxes --auto 2>&1 || warn "Sandbox upgrade check failed (non-fatal)."
+      fi
     else
       warn "Skipping onboarding until the host prerequisites above are fixed."
     fi

@@ -30,7 +30,7 @@ $ openshell term
 For a remote sandbox, pass the instance name:
 
 ```console
-$ ssh my-gpu-box 'cd /home/ubuntu/nemoclaw && . .env && openshell term'
+$ ssh my-gpu-box 'cd ~/nemoclaw && . .env && openshell term'
 ```
 
 The TUI displays the sandbox state, active inference provider, and a live feed of network activity.
@@ -84,6 +84,12 @@ If you only need one of the built-in presets, use `nemoclaw <name> policy-add` i
 
 ```console
 $ nemoclaw my-assistant policy-add
+```
+
+To remove a previously applied preset, use `nemoclaw <name> policy-remove`:
+
+```console
+$ nemoclaw my-assistant policy-remove
 ```
 
 Use a manual YAML edit when you need to allow custom hosts that are not covered by a preset, such as an internal API or a weather service.

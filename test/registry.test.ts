@@ -97,6 +97,20 @@ describe("registry", () => {
     expect(registry.getDefault()).toBe("y");
   });
 
+  it("getDefault falls back when defaultSandbox points to a stale name", () => {
+    registry.registerSandbox({ name: "alive" });
+    const data = registry.load();
+    data.defaultSandbox = "deleted-sandbox";
+    registry.save(data);
+    expect(registry.getDefault()).toBe("alive");
+  });
+
+  it("getDefault returns null when registry is empty with stale pointer", () => {
+    const data = { sandboxes: {}, defaultSandbox: "ghost" };
+    registry.save(data);
+    expect(registry.getDefault()).toBe(null);
+  });
+
   it("removeSandbox last sandbox sets default to null", () => {
     registry.registerSandbox({ name: "only" });
     registry.removeSandbox("only");
@@ -118,6 +132,25 @@ describe("registry", () => {
     const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
     expect(data.sandboxes.persist.model).toBe("m1");
     expect(data.defaultSandbox).toBe("persist");
+  });
+
+  it("clearAll removes persisted sandboxes and the default pointer", () => {
+    registry.registerSandbox({ name: "alpha", model: "m1" });
+    registry.registerSandbox({ name: "beta", model: "m2" });
+    registry.setDefault("beta");
+
+    registry.clearAll();
+
+    expect(registry.listSandboxes()).toEqual({
+      sandboxes: [],
+      defaultSandbox: null,
+    });
+    expect(registry.getDefault()).toBe(null);
+    expect(registry.getSandbox("alpha")).toBe(null);
+    expect(JSON.parse(fs.readFileSync(regFile, "utf-8"))).toEqual({
+      sandboxes: {},
+      defaultSandbox: null,
+    });
   });
 
   it("handles corrupt registry file gracefully", () => {
