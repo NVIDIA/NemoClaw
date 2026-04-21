@@ -876,12 +876,21 @@ describe("CLI dispatch", () => {
         "  echo '  Phase: Ready'",
         "  exit 0",
         "fi",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "connect" ] && [ "$3" = "alpha" ]; then',
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"list\" ]; then",
+        "  echo 'alpha   Ready   2m ago'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"connect\" ] && [ \"$3\" = \"alpha\" ]; then",
         "  exit 0",
         "fi",
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "sleep"),
+      ["#!/usr/bin/env bash", "exit 0"].join("\n"),
+      { mode: 0o755 }
     );
 
     const r = runWithEnv("alpha connect", {
@@ -894,6 +903,150 @@ describe("CLI dispatch", () => {
     expect(calls).toContain("sandbox get alpha");
     expect(calls).toContain("sandbox connect alpha");
     expect(calls.some((call) => call.startsWith("forward start --background 18789"))).toBe(false);
+  });
+
+  it("waits for sandbox readiness before connecting", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-wait-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const markerFile = path.join(home, "openshell-calls");
+    const stateFile = path.join(home, "sandbox-list-count");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        `state_file=${JSON.stringify(stateFile)}`,
+        "printf '%s\\n' \"$*\" >> \"$marker_file\"",
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        "  echo 'Sandbox:'",
+        "  echo",
+        "  echo '  Id: abc'",
+        "  echo '  Name: alpha'",
+        "  echo '  Namespace: openshell'",
+        "  echo '  Phase: Pending'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"list\" ]; then",
+        "  count=$(cat \"$state_file\" 2>/dev/null || echo 0)",
+        "  count=$((count + 1))",
+        "  echo \"$count\" > \"$state_file\"",
+        "  if [ \"$count\" -eq 1 ]; then",
+        "    echo 'alpha   ContainerCreating   10s ago'",
+        "  else",
+        "    echo 'alpha   Ready   20s ago'",
+        "  fi",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"connect\" ] && [ \"$3\" = \"alpha\" ]; then",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "sleep"),
+      ["#!/usr/bin/env bash", "exit 0"].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const r = runWithEnv("alpha connect", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out.includes("Waiting for sandbox 'alpha' to be ready")).toBeTruthy();
+    expect(r.out.includes("Sandbox is ready. Connecting")).toBeTruthy();
+    const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
+    expect(calls).toContain("sandbox get alpha");
+    expect(calls.filter((call) => call === "sandbox list").length).toBeGreaterThanOrEqual(2);
+    expect(calls).toContain("sandbox connect alpha");
+  });
+
+  it("prints recovery guidance when readiness polling hits a terminal sandbox state", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-failed-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const markerFile = path.join(home, "openshell-calls");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 }
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        "printf '%s\\n' \"$*\" >> \"$marker_file\"",
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"get\" ] && [ \"$3\" = \"alpha\" ]; then",
+        "  echo 'Sandbox:'",
+        "  echo",
+        "  echo '  Id: abc'",
+        "  echo '  Name: alpha'",
+        "  echo '  Namespace: openshell'",
+        "  echo '  Phase: Failed'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"list\" ]; then",
+        "  echo 'alpha   Failed   1m ago'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"sandbox\" ] && [ \"$2\" = \"connect\" ] && [ \"$3\" = \"alpha\" ]; then",
+        "  echo 'should-not-connect' >> \"$marker_file\"",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const r = runWithEnv("alpha connect", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out.includes("Sandbox 'alpha' is in 'Failed' state")).toBeTruthy();
+    expect(r.out.includes("nemoclaw alpha logs --follow")).toBeTruthy();
+    expect(r.out.includes("nemoclaw alpha status")).toBeTruthy();
+    const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
+    expect(calls).toContain("sandbox get alpha");
+    expect(calls).toContain("sandbox list");
+    expect(calls).not.toContain("should-not-connect");
   });
 
   it("removes stale registry entries when connect targets a missing live sandbox", () => {
@@ -1025,7 +1178,8 @@ describe("CLI dispatch", () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-        "  echo 'No sandboxes found.'",
+        "  echo 'NAME           STATUS     AGE'",
+        "  echo 'alpha          Ready      2m ago'",
         "  exit 0",
         "fi",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
@@ -1366,7 +1520,8 @@ describe("CLI dispatch", () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-        "  echo 'No sandboxes found.'",
+        "  echo 'NAME           STATUS     AGE'",
+        "  echo 'alpha          Ready      2m ago'",
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
