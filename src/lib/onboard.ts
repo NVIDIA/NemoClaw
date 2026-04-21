@@ -964,6 +964,112 @@ function pruneStaleSandboxEntry(sandboxName) {
   return liveExists;
 }
 
+function findSelectionConfigPath(dir) {
+  if (!dir || !fs.existsSync(dir)) return null;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const found = findSelectionConfigPath(fullPath);
+      if (found) return found;
+      continue;
+    }
+    if (entry.name === "config.json") {
+      return fullPath;
+    }
+  }
+  return null;
+}
+
+function readSandboxSelectionConfig(sandboxName) {
+  if (!sandboxName) return null;
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-selection-"));
+  try {
+    const result = runOpenshell(
+      ["sandbox", "download", sandboxName, "/sandbox/.nemoclaw/config.json", `${tmpDir}${path.sep}`],
+      { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
+    );
+    if (result.status !== 0) return null;
+    const configPath = findSelectionConfigPath(tmpDir);
+    if (!configPath) return null;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      return null;
+    }
+  } catch {
+    return null;
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+}
+
+function getSelectionDrift(sandboxName, requestedProvider, requestedModel) {
+  const existing = readSandboxSelectionConfig(sandboxName);
+  if (!existing) {
+    return {
+      changed: true,
+      providerChanged: false,
+      modelChanged: false,
+      existingProvider: null,
+      existingModel: null,
+      unknown: true,
+    };
+  }
+
+  const existingProvider = typeof existing.provider === "string" ? existing.provider : null;
+  const existingModel = typeof existing.model === "string" ? existing.model : null;
+  if (!existingProvider || !existingModel) {
+    return {
+      changed: true,
+      providerChanged: false,
+      modelChanged: false,
+      existingProvider,
+      existingModel,
+      unknown: true,
+    };
+  }
+
+  const providerChanged = Boolean(
+    existingProvider && requestedProvider && existingProvider !== requestedProvider,
+  );
+  const modelChanged = Boolean(existingModel && requestedModel && existingModel !== requestedModel);
+
+  return {
+    changed: providerChanged || modelChanged,
+    providerChanged,
+    modelChanged,
+    existingProvider,
+    existingModel,
+    unknown: false,
+  };
+}
+
+async function confirmRecreateForSelectionDrift(sandboxName, drift, requestedProvider, requestedModel) {
+  const currentProvider = drift.existingProvider || "unknown";
+  const currentModel = drift.existingModel || "unknown";
+  const nextProvider = requestedProvider || "unknown";
+  const nextModel = requestedModel || "unknown";
+
+  console.log(`  Sandbox '${sandboxName}' exists but requested inference selection changed.`);
+  console.log(`  Current:   provider=${currentProvider}  model=${currentModel}`);
+  console.log(`  Requested: provider=${nextProvider}  model=${nextModel}`);
+  console.log("  Recreating the sandbox is required to apply this change to the running OpenClaw UI.");
+
+  if (isNonInteractive()) {
+    note("  [non-interactive] Recreating sandbox due to provider/model drift.");
+    return true;
+  }
+
+  const answer = await prompt(`  Recreate sandbox '${sandboxName}' now? [y/N]: `);
+  return isAffirmativeAnswer(answer);
+}
+
 function buildSandboxConfigSyncScript(selectionConfig) {
   // openclaw.json is immutable (root:root 444, Landlock read-only) — never
   // write to it at runtime.  Model routing is handled by the host-side
@@ -3285,6 +3391,8 @@ async function createSandbox(
     const needsProviderMigration =
       hasMessagingTokens &&
       messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
+    const selectionDrift = getSelectionDrift(sandboxName, provider, model);
+    const confirmedSelectionDrift = selectionDrift.changed && !selectionDrift.unknown;
 
     // Detect whether any messaging credential has been rotated since the
     // sandbox was created. Provider credentials are resolved once at sandbox
@@ -3296,37 +3404,60 @@ async function createSandbox(
     if (!isRecreateSandbox() && !needsProviderMigration && !credentialRotation.changed) {
       if (isNonInteractive()) {
         if (existingSandboxState === "ready") {
-          // Upsert messaging providers even on reuse so credential changes take
-          // effect without requiring a full sandbox recreation.
-          upsertMessagingProviders(messagingTokenDefs);
-          note(`  [non-interactive] Sandbox '${sandboxName}' exists and is ready — reusing it`);
-          note("  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to force recreation.");
-          ensureDashboardForward(sandboxName, chatUiUrl);
-          return sandboxName;
+          if (confirmedSelectionDrift) {
+            note("  [non-interactive] Recreating sandbox due to provider/model drift.");
+          } else {
+            // Upsert messaging providers even on reuse so credential changes take
+            // effect without requiring a full sandbox recreation.
+            upsertMessagingProviders(messagingTokenDefs);
+            if (selectionDrift.unknown) {
+              note(
+                "  [non-interactive] Existing provider/model selection is unreadable; reusing sandbox.",
+              );
+              note(
+                "  [non-interactive] Set NEMOCLAW_RECREATE_SANDBOX=1 (or --recreate-sandbox) to force recreation.",
+              );
+            } else {
+              note(`  [non-interactive] Sandbox '${sandboxName}' exists and is ready — reusing it`);
+              note(
+                "  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to force recreation.",
+              );
+            }
+            ensureDashboardForward(sandboxName, chatUiUrl);
+            return sandboxName;
+          }
+        } else {
+          console.error(`  Sandbox '${sandboxName}' already exists but is not ready.`);
+          console.error("  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to overwrite.");
+          process.exit(1);
         }
-        console.error(`  Sandbox '${sandboxName}' already exists but is not ready.`);
-        console.error("  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to overwrite.");
-        process.exit(1);
-      }
-
-      if (existingSandboxState === "ready") {
-        console.log(`  Sandbox '${sandboxName}' already exists.`);
-        console.log("  Choosing 'n' will delete the existing sandbox and create a new one.");
-        const answer = await promptOrDefault("  Reuse existing sandbox? [Y/n]: ", null, "y");
-        const normalizedAnswer = answer.trim().toLowerCase();
-        if (normalizedAnswer !== "n" && normalizedAnswer !== "no") {
-          upsertMessagingProviders(messagingTokenDefs);
-          ensureDashboardForward(sandboxName, chatUiUrl);
-          return sandboxName;
+      } else if (existingSandboxState === "ready") {
+        if (confirmedSelectionDrift) {
+          const confirmed = await confirmRecreateForSelectionDrift(
+            sandboxName,
+            selectionDrift,
+            provider,
+            model,
+          );
+          if (!confirmed) {
+            console.error("  Aborted. Existing sandbox left unchanged.");
+            process.exit(1);
+          }
+        } else {
+          console.log(`  Sandbox '${sandboxName}' already exists.`);
+          console.log("  Choosing 'n' will delete the existing sandbox and create a new one.");
+          const answer = await promptOrDefault("  Reuse existing sandbox? [Y/n]: ", null, "y");
+          const normalizedAnswer = answer.trim().toLowerCase();
+          if (normalizedAnswer !== "n" && normalizedAnswer !== "no") {
+            upsertMessagingProviders(messagingTokenDefs);
+            ensureDashboardForward(sandboxName, chatUiUrl);
+            return sandboxName;
+          }
         }
       } else {
         console.log(`  Sandbox '${sandboxName}' exists but is not ready.`);
         console.log("  Selecting 'n' will abort onboarding.");
-        const answer = await promptOrDefault(
-          "  Delete it and create a new one? [Y/n]: ",
-          null,
-          "y",
-        );
+        const answer = await promptOrDefault("  Delete it and create a new one? [Y/n]: ", null, "y");
         const normalizedAnswer = answer.trim().toLowerCase();
         if (normalizedAnswer === "n" || normalizedAnswer === "no") {
           console.log("  Aborting onboarding.");
@@ -3380,6 +3511,8 @@ async function createSandbox(
     if (needsProviderMigration) {
       console.log(`  Sandbox '${sandboxName}' exists but messaging providers are not attached.`);
       console.log("  Recreating to ensure credentials flow through the provider pipeline.");
+    } else if (confirmedSelectionDrift) {
+      note(`  Sandbox '${sandboxName}' exists — recreating to apply model/provider change.`);
     } else if (credentialRotation.changed) {
       // Message already printed above during backup.
     } else if (existingSandboxState === "ready") {

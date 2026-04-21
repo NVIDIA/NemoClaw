@@ -2227,6 +2227,10 @@ const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
@@ -3324,10 +3328,34 @@ const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
+  const commandString = Array.isArray(command) ? command.join(" ") : String(command);
+  if (_n(command).includes("sandbox download")) {
+    const parts = commandString.match(/'([^']*)'/g) || [];
+    const downloadDir = Array.isArray(command)
+      ? String(command[command.length - 1] || "")
+      : parts.length
+        ? parts[parts.length - 1].slice(1, -1)
+        : null;
+    if (downloadDir) {
+      fs.mkdirSync(downloadDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(downloadDir, "config.json"),
+        JSON.stringify({ provider: "nvidia-prod", model: "gpt-5.4" }),
+      );
+    }
+  }
   commands.push({ command: _n(command), env: opts.env || null });
+  return { status: 0 };
+};
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: _n([file, ...args]), file, args, env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -3340,6 +3368,18 @@ registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
 
 // Mock prompt to return "y" (reuse)
 credentials.prompt = async () => "y";
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  commands.push({ command: args[1]?.[1] || String(args[0]), env: args[2]?.env || null });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
 
 const { createSandbox } = require(${onboardPath});
 
@@ -3395,7 +3435,7 @@ const { createSandbox } = require(${onboardPath});
   );
 
   it(
-    "interactive mode deletes and recreates sandbox when user declines reuse",
+    "interactive mode deletes and recreates sandbox when user confirms drift recreate",
     { timeout: 60_000 },
     async () => {
       const repoRoot = path.join(import.meta.dirname, "..");
@@ -3421,10 +3461,32 @@ const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
+  const commandString = Array.isArray(command) ? command.join(" ") : String(command);
+  if (_n(command).includes("sandbox download")) {
+    const parts = commandString.match(/'([^']*)'/g) || [];
+    const downloadDir = Array.isArray(command)
+      ? String(command[command.length - 1] || "")
+      : parts.length
+        ? parts[parts.length - 1].slice(1, -1)
+        : null;
+    if (downloadDir) {
+      fs.mkdirSync(downloadDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(downloadDir, "config.json"),
+        JSON.stringify({ provider: "openai-prod", model: "gpt-4o" }),
+      );
+    }
+  }
   commands.push({ command: _n(command), env: opts.env || null });
+  return { status: 0 };
+};
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ type: "runFile", command: _n([file, ...args]), file, args, env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -3441,8 +3503,8 @@ registry.removeSandbox = () => true;
 const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "preflight.js"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
-// Mock prompt to return "n" (decline reuse)
-credentials.prompt = async () => "n";
+// Mock prompt to return "y" (confirm recreate)
+credentials.prompt = async () => "y";
 
 childProcess.spawn = (...args) => {
   const child = new EventEmitter();
@@ -3494,16 +3556,16 @@ const { createSandbox } = require(${onboardPath});
       const payload = JSON.parse(payloadLine);
 
       assert.ok(
-        payload.commands.some((entry) => entry.command.includes("sandbox delete")),
-        "should delete existing sandbox when user declines reuse",
+        payload.commands.some((entry) => /sandbox.*delete/.test(String(entry.command))),
+        "should delete existing sandbox when user confirms recreate",
       );
       assert.ok(
-        payload.commands.some((entry) => entry.command.includes("sandbox create")),
-        "should create a new sandbox when user declines reuse",
+        payload.commands.some((entry) => /sandbox.*create/.test(String(entry.command))),
+        "should create a new sandbox when user confirms recreate",
       );
       assert.ok(
-        result.stdout.includes("already exists"),
-        "should show 'already exists' message before prompting",
+        result.stdout.includes("requested inference selection changed"),
+        "should show drift warning before prompting",
       );
     },
   );
@@ -3635,6 +3697,34 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(result.stdout.includes("not ready"), "should mention sandbox is not ready");
     },
   );
+  it("detects provider/model drift and avoids silent reuse", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    assert.match(source, /const selectionDrift = getSelectionDrift\(sandboxName, provider, model\);/);
+    assert.match(
+      source,
+      /const confirmedSelectionDrift = selectionDrift\.changed && !selectionDrift\.unknown;/,
+    );
+    assert.match(source, /unknown:\s*true/);
+    assert.match(source, /if \(confirmedSelectionDrift\)/);
+    assert.match(source, /Recreating sandbox due to provider\/model drift/);
+    assert.match(
+      source,
+      /Sandbox '\$\{sandboxName\}' exists — recreating to apply model\/provider change\./,
+    );
+  });
+
+  it("prompts before destructive recreate when drift is detected in interactive mode", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    assert.match(source, /async function confirmRecreateForSelectionDrift/);
+    assert.match(source, /Recreate sandbox '\$\{sandboxName\}' now\? \[y\/N\]:/);
+    assert.match(source, /Aborted\. Existing sandbox left unchanged\./);
+  });
 
   it("upsertProvider creates a new provider and returns ok on success", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
