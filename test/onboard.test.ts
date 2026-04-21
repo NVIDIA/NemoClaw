@@ -4832,6 +4832,54 @@ const { setupMessagingChannels } = require(${onboardPath});
     },
   );
 
+  it("Slack bot token format regex rejects obvious bogus tokens and accepts valid ones (#1912)", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const onboardPath = path.join(repoRoot, "dist", "lib", "onboard.js");
+    delete require.cache[onboardPath];
+    const { MESSAGING_CHANNELS } = require(onboardPath);
+    const slack = MESSAGING_CHANNELS.find((c) => c.name === "slack");
+
+    assert.ok(slack, "slack messaging channel definition present");
+    assert.ok(slack.tokenFormat instanceof RegExp, "slack.tokenFormat is a regex");
+    assert.ok(
+      typeof slack.tokenFormatHint === "string" && slack.tokenFormatHint.length > 0,
+      "slack.tokenFormatHint set",
+    );
+
+    // Bogus tokens from the bug report and other common misentries — must be rejected.
+    // gitleaks-allow below: intentionally pasted fake prefixes to prove they don't match.
+    const invalid = [
+      "abcd",
+      "",
+      "xoxb",
+      "xoxb-",
+      "xoxp-" + "test-user-token", // gitleaks:allow
+      "xapp-" + "test-app-token", // gitleaks:allow
+      "Bearer xoxb-fake",
+      "xoxb-fake with space",
+    ];
+    for (const token of invalid) {
+      assert.ok(
+        !slack.tokenFormat.test(token),
+        `expected ${JSON.stringify(token)} to be rejected as Slack bot token`,
+      );
+    }
+
+    // Syntactically valid bot tokens — must be accepted. Values are
+    // intentionally obvious test strings to avoid tripping gitleaks.
+    const valid = [
+      "xoxb-test-slack-token-value",
+      "xoxb-fake-bot-token",
+      "xoxb-A",
+    ];
+    for (const token of valid) {
+      assert.ok(
+        slack.tokenFormat.test(token),
+        `expected ${JSON.stringify(token)} to be accepted as Slack bot token`,
+      );
+    }
+  });
+
   it("uses the custom Dockerfile parent directory as build context when --from is given", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-dockerfile-"));

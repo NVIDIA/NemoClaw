@@ -7190,6 +7190,7 @@ module.exports = {
   runCaptureOpenshell,
   setupInference,
   setupMessagingChannels,
+  MESSAGING_CHANNELS,
   setupNim,
   formatOnboardConfigSummary,
   isInferenceRouteReady,
