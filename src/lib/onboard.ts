@@ -119,6 +119,12 @@ const DIM = USE_COLOR ? "\x1b[2m" : "";
 const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN = null;
 const GATEWAY_NAME = "nemoclaw";
+const GATEWAY_BOOTSTRAP_SECRET_NAMES = [
+  "openshell-server-tls",
+  "openshell-server-client-ca",
+  "openshell-client-tls",
+  "openshell-ssh-handshake",
+];
 const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
 
 /**
@@ -2227,6 +2233,182 @@ function destroyGateway() {
   );
 }
 
+function getGatewayClusterContainerState() {
+  const containerName = getGatewayClusterContainerName();
+  const state = runCapture(
+    `docker inspect --type container --format '{{.State.Status}}{{if .State.Health}} {{.State.Health.Status}}{{end}}' ${shellQuote(containerName)} 2>/dev/null`,
+    { ignoreError: true },
+  )
+    .trim()
+    .toLowerCase();
+  return state || "missing";
+}
+
+function getGatewayHealthWaitConfig(_startStatus = 0, containerState = "") {
+  const isArm64 = process.arch === "arm64";
+  const standardCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 12);
+  const standardInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", isArm64 ? 10 : 5);
+  const extendedCount = envInt("NEMOCLAW_GATEWAY_START_POLL_COUNT", standardCount);
+  const extendedInterval = envInt("NEMOCLAW_GATEWAY_START_POLL_INTERVAL", standardInterval);
+  const normalizedState = String(containerState || "")
+    .trim()
+    .toLowerCase();
+  const normalizedContainerState = normalizedState || "missing";
+  const useExtendedWait = normalizedContainerState !== "missing";
+
+  return {
+    count: useExtendedWait ? extendedCount : standardCount,
+    interval: useExtendedWait ? extendedInterval : standardInterval,
+    extended: useExtendedWait,
+    containerState: normalizedContainerState,
+  };
+}
+
+function getGatewayClusterContainerName() {
+  return `openshell-cluster-${GATEWAY_NAME}`;
+}
+
+function getGatewayLocalEndpoint() {
+  return `https://127.0.0.1:${GATEWAY_PORT}`;
+}
+
+function getGatewayBootstrapRepairPlan(missingSecrets = []) {
+  const allowed = new Set(GATEWAY_BOOTSTRAP_SECRET_NAMES);
+  const normalized = [...new Set((missingSecrets || []).map((name) => String(name).trim()).filter(Boolean))]
+    .filter((name) => allowed.has(name));
+  const missing = new Set(normalized);
+  const needsClientBundle =
+    missing.has("openshell-server-client-ca") || missing.has("openshell-client-tls");
+
+  return {
+    missingSecrets: normalized,
+    needsRepair: normalized.length > 0,
+    needsServerTls: missing.has("openshell-server-tls"),
+    needsClientBundle,
+    needsHandshake: missing.has("openshell-ssh-handshake"),
+  };
+}
+
+function buildGatewayBootstrapSecretsScript(missingSecrets = []) {
+  const plan = getGatewayBootstrapRepairPlan(missingSecrets);
+  if (!plan.needsRepair) return "exit 0";
+
+  return `
+set -eu
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+kubectl get namespace openshell >/dev/null 2>&1
+kubectl -n openshell get statefulset/openshell >/dev/null 2>&1
+TMPDIR="$(mktemp -d)"
+cleanup() {
+  rm -rf "$TMPDIR"
+}
+trap cleanup EXIT
+if ${plan.needsServerTls ? "true" : "false"}; then
+  cat >"$TMPDIR/server-ext.cnf" <<'EOF'
+subjectAltName=DNS:openshell,DNS:openshell.openshell,DNS:openshell.openshell.svc,DNS:openshell.openshell.svc.cluster.local,DNS:localhost,IP:127.0.0.1
+extendedKeyUsage=serverAuth
+EOF
+  openssl req -nodes -newkey rsa:2048 -keyout "$TMPDIR/server.key" -out "$TMPDIR/server.csr" -subj "/CN=openshell.openshell.svc.cluster.local" >/dev/null 2>&1
+  openssl x509 -req -in "$TMPDIR/server.csr" -signkey "$TMPDIR/server.key" -out "$TMPDIR/server.crt" -days 3650 -sha256 -extfile "$TMPDIR/server-ext.cnf" >/dev/null 2>&1
+  kubectl create secret tls -n openshell openshell-server-tls --cert="$TMPDIR/server.crt" --key="$TMPDIR/server.key" --dry-run=client -o yaml | kubectl apply -f -
+fi
+if ${plan.needsClientBundle ? "true" : "false"}; then
+  cat >"$TMPDIR/client-ext.cnf" <<'EOF'
+extendedKeyUsage=clientAuth
+EOF
+  openssl req -x509 -nodes -newkey rsa:2048 -keyout "$TMPDIR/client-ca.key" -out "$TMPDIR/client-ca.crt" -subj "/CN=openshell-client-ca" -days 3650 >/dev/null 2>&1
+  openssl req -nodes -newkey rsa:2048 -keyout "$TMPDIR/client.key" -out "$TMPDIR/client.csr" -subj "/CN=openshell-client" >/dev/null 2>&1
+  openssl x509 -req -in "$TMPDIR/client.csr" -CA "$TMPDIR/client-ca.crt" -CAkey "$TMPDIR/client-ca.key" -CAcreateserial -out "$TMPDIR/client.crt" -days 3650 -sha256 -extfile "$TMPDIR/client-ext.cnf" >/dev/null 2>&1
+  kubectl create secret generic -n openshell openshell-server-client-ca --from-file=ca.crt="$TMPDIR/client-ca.crt" --dry-run=client -o yaml | kubectl apply -f -
+  kubectl create secret generic -n openshell openshell-client-tls --from-file=tls.crt="$TMPDIR/client.crt" --from-file=tls.key="$TMPDIR/client.key" --from-file=ca.crt="$TMPDIR/client-ca.crt" --dry-run=client -o yaml | kubectl apply -f -
+fi
+if ${plan.needsHandshake ? "true" : "false"}; then
+  kubectl create secret generic -n openshell openshell-ssh-handshake --from-literal=secret="$(openssl rand -hex 32)" --dry-run=client -o yaml | kubectl apply -f -
+fi
+`;
+}
+
+function runGatewayClusterCapture(script, opts = {}) {
+  const containerName = getGatewayClusterContainerName();
+  return runCapture(
+    `docker exec ${shellQuote(containerName)} sh -lc ${shellQuote(script)}`,
+    opts,
+  );
+}
+
+function runGatewayCluster(script, opts = {}) {
+  const containerName = getGatewayClusterContainerName();
+  return run(
+    `docker exec ${shellQuote(containerName)} sh -lc ${shellQuote(script)}`,
+    opts,
+  );
+}
+
+function listMissingGatewayBootstrapSecrets() {
+  const output = runGatewayClusterCapture(
+    `
+set -eu
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+kubectl get namespace openshell >/dev/null 2>&1 || exit 0
+kubectl -n openshell get statefulset/openshell >/dev/null 2>&1 || exit 0
+for name in ${GATEWAY_BOOTSTRAP_SECRET_NAMES.map((name) => shellQuote(name)).join(" ")}; do
+  kubectl -n openshell get secret "$name" >/dev/null 2>&1 || printf '%s\\n' "$name"
+done
+`,
+    { ignoreError: true },
+  );
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function gatewayClusterHealthcheckPassed() {
+  const result = runGatewayCluster("/usr/local/bin/cluster-healthcheck.sh", {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  return result.status === 0;
+}
+
+function repairGatewayBootstrapSecrets() {
+  const missingSecrets = listMissingGatewayBootstrapSecrets();
+  const plan = getGatewayBootstrapRepairPlan(missingSecrets);
+  if (!plan.needsRepair) return { repaired: false, missingSecrets };
+
+  console.log(
+    `  OpenShell bootstrap secrets missing: ${plan.missingSecrets.join(", ")}. Repairing...`,
+  );
+  const repairResult = runGatewayCluster(buildGatewayBootstrapSecretsScript(plan.missingSecrets), {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  const remainingSecrets = listMissingGatewayBootstrapSecrets();
+  if (repairResult.status === 0 && remainingSecrets.length === 0) {
+    console.log("  ✓ OpenShell bootstrap secrets created");
+    return { repaired: true, missingSecrets: remainingSecrets };
+  }
+  return { repaired: false, missingSecrets: remainingSecrets };
+}
+
+function attachGatewayMetadataIfNeeded({ forceRefresh = false } = {}) {
+  const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], { ignoreError: true });
+  // runCaptureOpenshell may return stale-but-present gateway metadata. When
+  // hasStaleGateway(gwInfo) is truthy we skip runOpenshell unless a repair
+  // flow explicitly forces a refresh after recreating bootstrap secrets.
+  if (!forceRefresh && hasStaleGateway(gwInfo)) return true;
+
+  const addResult = runOpenshell(
+    ["gateway", "add", "--local", "--name", GATEWAY_NAME, getGatewayLocalEndpoint()],
+    { ignoreError: true, suppressOutput: true },
+  );
+  if (addResult.status === 0) {
+    console.log("  ✓ Gateway metadata reattached");
+    return true;
+  }
+  return false;
+}
+
 async function ensureNamedCredential(envName, label, helpUrl = null) {
   let key = getCredential(envName);
   if (key) {
@@ -2723,17 +2905,28 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
           }
         }
         console.log("  Waiting for gateway health...");
+        const healthWait = getGatewayHealthWaitConfig(
+          startResult.status,
+          getGatewayClusterContainerState(),
+        );
+        if (healthWait.extended) {
+          console.log(
+            `  Gateway container is still ${healthWait.containerState}; allowing up to ${
+              healthWait.count * healthWait.interval
+            }s for first-time startup.`,
+          );
+        }
 
-        // ARM64 (e.g. Raspberry Pi) needs more time: k3s takes 90-180s to init
-        const isArm64 = process.arch === "arm64";
-        // After openshell gateway start returns (container HEALTHY at Layer 1),
-        // poll application-layer connectivity (Layer 2: gRPC, TLS, port mapping).
-        // 60s default gives enough buffer for gRPC init and TLS handshake. (#1830)
-        const healthPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 12);
-        const healthPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", isArm64 ? 10 : 5);
+        const healthPollCount = healthWait.count;
+        const healthPollInterval = healthWait.interval;
         for (let i = 0; i < healthPollCount; i++) {
-          // Ensure the gateway is selected before each probe (non-TTY environments
-          // like ARM64 may not have it selected automatically)
+          const repairResult = repairGatewayBootstrapSecrets();
+          if (repairResult.repaired) {
+            attachGatewayMetadataIfNeeded({ forceRefresh: true });
+          } else if (gatewayClusterHealthcheckPassed()) {
+            attachGatewayMetadataIfNeeded();
+          }
+          // Ensure the gateway remains selected before each probe.
           runCaptureOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
           const status = runCaptureOpenshell(["status"], { ignoreError: true });
           const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
@@ -2857,9 +3050,23 @@ async function recoverGatewayRuntime() {
   }
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
 
-  const recoveryPollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 10);
-  const recoveryPollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
+  const recoveryWait = getGatewayHealthWaitConfig(
+    startResult.status,
+    getGatewayClusterContainerState(),
+  );
+  const recoveryPollCount = recoveryWait.extended
+    ? recoveryWait.count
+    : envInt("NEMOCLAW_HEALTH_POLL_COUNT", 10);
+  const recoveryPollInterval = recoveryWait.extended
+    ? recoveryWait.interval
+    : envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
   for (let i = 0; i < recoveryPollCount; i++) {
+    const repairResult = repairGatewayBootstrapSecrets();
+    if (repairResult.repaired) {
+      attachGatewayMetadataIfNeeded({ forceRefresh: true });
+    } else if (gatewayClusterHealthcheckPassed()) {
+      attachGatewayMetadataIfNeeded();
+    }
     status = runCaptureOpenshell(["status"], { ignoreError: true });
     if (status.includes("Connected") && isSelectedGateway(status)) {
       process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
@@ -6324,6 +6531,7 @@ async function onboard(opts = {}) {
 
 module.exports = {
   buildProviderArgs,
+  buildGatewayBootstrapSecretsScript,
   buildSandboxConfigSyncScript,
   compactText,
   copyBuildContextDir,
@@ -6333,7 +6541,11 @@ module.exports = {
   ensureValidatedBraveSearchCredential,
   formatEnvAssignment,
   getFutureShellPathHint,
+  getGatewayBootstrapRepairPlan,
+  getGatewayLocalEndpoint,
   getGatewayStartEnv,
+  getGatewayClusterContainerState,
+  getGatewayHealthWaitConfig,
   getGatewayReuseState,
   getNavigationChoice,
   getSandboxInferenceConfig,
