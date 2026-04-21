@@ -129,7 +129,8 @@ Dynamic changes apply a policy update to a running sandbox without restarting it
 
 Create a YAML file with the endpoints to add.
 Follow the same format as the baseline policy in `nemoclaw-blueprint/policies/openclaw-sandbox.yaml`.
-The file must include the mandatory `version` field (e.g., `version: 1`) to be accepted by the OpenShell parser.
+Add a top-level `version` field (for example, `version: 1`).
+OpenShell rejects policy YAML that omits this field.
 
 ### Apply the Policy
 
@@ -187,7 +188,8 @@ To apply a preset to a running sandbox:
 $ nemoclaw <name> policy-add
 ```
 
-Note that preset selection is an interactive prompt; any positional arguments for presets are ignored.
+> **Note:** Preset selection is interactive.
+> Positional preset arguments are ignored.
 
 For example, to interactively add PyPI access to a running sandbox:
 
