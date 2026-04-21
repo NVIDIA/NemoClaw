@@ -29,6 +29,8 @@ default_install_hook_types:
   - pre-commit
   - commit-msg
   - pre-push
+  - post-merge
+  - post-checkout
 
 repos:
   # ── Priority 0: general file fixers ───────────────────────────────────────
@@ -249,6 +251,22 @@ repos:
         always_run: true
         pass_filenames: false
         stages: [pre-push]
+        priority: 10
+
+  # ── post-merge / post-checkout: warn about stale compiled dist/ ───────────
+  # See #1958 — dist/ is gitignored, so git pull / checkout can leave stale
+  # compiled output. This hook warns the developer immediately after the git
+  # operation so they rebuild before hitting cryptic runtime errors.
+  # The hook always exits 0 — it never blocks a git operation.
+  - repo: local
+    hooks:
+      - id: stale-dist-check
+        name: Warn if dist/ is older than src/
+        entry: npx tsx scripts/check-stale-dist.ts
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [post-merge, post-checkout]
         priority: 10
 
   # ── Priority 20: project-level checks (coverage + ratchet) ─────────────────
