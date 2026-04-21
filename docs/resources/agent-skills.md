@@ -1,6 +1,6 @@
 ---
 title:
-  page: "Agent Skills for AI Coding Assistants"
+  page: "NemoClaw Agent Skills for Your AI Coding Assistant"
   nav: "Agent Skills"
 description:
   main: "NemoClaw ships agent skills that let AI coding assistants guide you through installation, configuration, and operation."
@@ -20,7 +20,7 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# NemoClaw Agent Skills for AI Coding Assistants
+# NemoClaw Agent Skills for Your AI Coding Assistant
 
 NemoClaw ships agent skills that are generated directly from this documentation.
 Each skill is a converted version of one or more doc pages, structured so AI coding assistants can consume it as context.

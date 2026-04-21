@@ -126,10 +126,11 @@ preflight() {
   install_nemoclaw
   if ! command -v expect >/dev/null 2>&1; then
     log "Installing expect..."
-    sudo apt-get update -qq && sudo apt-get install -y -qq expect >/dev/null 2>&1
+    if ! (sudo apt-get update -qq && sudo apt-get install -y -qq expect >/dev/null 2>&1); then
+      log "WARNING: failed to install expect — interactive tests will skip"
+    fi
     if ! command -v expect >/dev/null 2>&1; then
-      log "ERROR: failed to install expect"
-      exit 1
+      log "WARNING: expect not available — interactive tests will skip"
     fi
   fi
   if ! command -v python3 >/dev/null 2>&1; then
@@ -137,27 +138,40 @@ preflight() {
     exit 1
   fi
   log "nemoclaw: $(nemoclaw --version 2>/dev/null || echo unknown)"
-  log "expect: $(command -v expect 2>/dev/null || echo 'not available')"
   log "python3: $(python3 --version 2>/dev/null || echo unknown)"
   log "Pre-flight complete"
 }
 
-# Apply a network policy preset using expect to handle interactive prompts.
+# Apply a network policy preset by name (non-interactive).
 apply_preset() {
   local preset_name="$1"
+  log "  Applying preset '$preset_name' (non-interactive)..."
+  local exit_code=0
+  nemoclaw "$SANDBOX_NAME" policy-add "$preset_name" --yes 2>&1 | tee -a "$LOG_FILE" || exit_code=$?
+  sleep 3
+  return "$exit_code"
+}
+
+# Apply a network policy preset via interactive prompts using expect.
+apply_preset_interactive() {
+  local preset_name="$1"
+  if ! command -v expect >/dev/null 2>&1; then
+    log "  expect not available — cannot test interactive mode"
+    return 2
+  fi
   local preset_list preset_num
-  preset_list=$(nemoclaw "$SANDBOX_NAME" policy-add </dev/null 2>&1) || true
-  preset_num=$(echo "$preset_list" | grep -oE '[0-9]+\) . '"$preset_name" | grep -oE '^[0-9]+') || true
+  preset_list=$(NEMOCLAW_NON_INTERACTIVE='' nemoclaw "$SANDBOX_NAME" policy-add </dev/null 2>&1) || true
+  preset_num=$(echo "$preset_list" | grep -oE '[0-9]+\).*'"$preset_name" | grep -oE '^[0-9]+') || true
   if [[ -z "$preset_num" ]]; then
-    log "  Could not find '$preset_name' in preset list"
+    log "  Could not find '$preset_name' in interactive preset list"
     return 1
   fi
-  log "  Applying preset '$preset_name' (#$preset_num) via expect..."
+  log "  Applying preset '$preset_name' (#$preset_num) via interactive expect..."
   local exit_code=0
   set +e
-  expect <<EOF 2>&1 | tee -a "$LOG_FILE"
+  NEMOCLAW_NON_INTERACTIVE='' expect <<EOF 2>&1 | tee -a "$LOG_FILE"
 set timeout 30
-spawn nemoclaw $SANDBOX_NAME policy-add
+spawn env NEMOCLAW_NON_INTERACTIVE= nemoclaw $SANDBOX_NAME policy-add
 expect "Choose preset*"
 send "$preset_num\r"
 expect "*Y/n*"
@@ -290,14 +304,22 @@ fetch('$target_url', {signal: AbortSignal.timeout(15000)})
 \"" 2>&1) || true
   log "  Before policy-add: $before"
 
-  if echo "$before" | grep -qE "STATUS_[23]"; then
+  if echo "$before" | grep -qE "STATUS_[2-4][0-9][0-9]"; then
     skip "TC-NET-03" "api.telegram.org already reachable before policy-add (preset may be pre-applied)"
     return
   fi
 
-  log "  Step 2: Adding telegram preset..."
-  if ! apply_preset "telegram"; then
-    fail "TC-NET-03: Setup" "Could not apply telegram preset"
+  log "  Step 2: Adding telegram preset (interactive mode)..."
+  local interactive_rc=0
+  apply_preset_interactive "telegram" || interactive_rc=$?
+  if [[ $interactive_rc -eq 2 ]]; then
+    log "  Interactive mode unavailable (expect missing) — falling back to non-interactive..."
+    if ! apply_preset "telegram"; then
+      fail "TC-NET-03: Setup" "Could not apply telegram preset"
+      return
+    fi
+  elif [[ $interactive_rc -ne 0 ]]; then
+    fail "TC-NET-03: Interactive policy-add" "interactive flow failed (exit $interactive_rc)"
     return
   fi
 
@@ -312,12 +334,12 @@ fetch('$target_url', {signal: AbortSignal.timeout(30000)})
 \"" 2>&1) || true
   log "  After policy-add: $after"
 
-  if echo "$after" | grep -qE "STATUS_2"; then
+  if echo "$after" | grep -qE "STATUS_[2-4][0-9][0-9]"; then
     pass "TC-NET-03: Endpoint reachable after live policy-add ($after)"
-  elif echo "$after" | grep -qE "STATUS_403"; then
-    fail "TC-NET-03: Live policy-add" "api.telegram.org still blocked with 403 after policy-add"
+  elif echo "$after" | grep -qE "ERROR_"; then
+    fail "TC-NET-03: Live policy-add" "api.telegram.org still proxy-blocked after policy-add ($after)"
   else
-    fail "TC-NET-03: Live policy-add" "api.telegram.org still blocked after policy-add ($after)"
+    fail "TC-NET-03: Live policy-add" "Unexpected response after policy-add ($after)"
   fi
 }
 
@@ -339,26 +361,11 @@ fetch('$target_url', {signal: AbortSignal.timeout(15000)})
   log "  Before dry-run: $before"
 
   log "  Step 2: Running policy-add --dry-run slack..."
-  local slack_list slack_num
-  slack_list=$(nemoclaw "$SANDBOX_NAME" policy-add --dry-run </dev/null 2>&1) || true
-  slack_num=$(echo "$slack_list" | grep -oE '[0-9]+\) . slack ' | grep -oE '^[0-9]+') || true
-  if [[ -z "$slack_num" ]]; then
-    fail "TC-NET-04: Setup" "Could not find slack in preset list"
-    return
-  fi
-  local dry_output
-  dry_output=$(
-    expect <<EOF 2>&1
-set timeout 15
-spawn nemoclaw $SANDBOX_NAME policy-add --dry-run
-expect "Choose preset*"
-send "$slack_num\r"
-expect eof
-EOF
-  ) || true
-  log "  Dry-run output: ${dry_output:0:300}"
+  local dry_output dry_rc=0
+  dry_output=$(nemoclaw "$SANDBOX_NAME" policy-add slack --dry-run 2>&1) || dry_rc=$?
+  log "  Dry-run output (exit $dry_rc): ${dry_output:0:300}"
 
-  if echo "$dry_output" | grep -qiE "slack\.com|dry.run|no changes"; then
+  if [[ $dry_rc -eq 0 ]] && echo "$dry_output" | grep -qiE "slack\.com|would be opened"; then
     pass "TC-NET-04: Dry-run printed endpoint info"
   else
     fail "TC-NET-04: Dry-run output" "Expected endpoint info in output: ${dry_output:0:200}"

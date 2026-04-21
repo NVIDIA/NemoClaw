@@ -1,14 +1,16 @@
 ---
 name: "nemoclaw-user-get-started"
-description: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time. There are additional Windows-only prerequisites before the Quickstart to install NemoClaw on Windows."
+description: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time. Trigger keywords - nemoclaw quickstart, install nemoclaw openclaw sandbox, nemoclaw windows wsl2 setup, nemoclaw install windows docker desktop."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# NemoClaw User Get Started
+# NemoClaw Quickstart: Install, Launch, and Run Your First Agent
 
-Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time.
+## Gotchas
+
+- **OpenShell lifecycle.** For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
 
 ## Prerequisites
 
@@ -88,15 +90,15 @@ curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uni
 | `--keep-openshell` | Leave the `openshell` binary installed.              |
 | `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
 
-For troubleshooting installation or onboarding issues, see the Troubleshooting guide (see the `nemoclaw-user-reference` skill).
+For troubleshooting installation or onboarding issues, see the Troubleshooting guide (use the `nemoclaw-user-reference` skill).
 
-## Reference
+## References
 
-- [Windows Prerequisites for NemoClaw](references/windows-setup.md)
+- **Load [references/windows-setup.md](references/windows-setup.md)** when installing NemoClaw on Windows, enabling WSL 2, configuring Docker Desktop for Windows, or troubleshooting a Windows-specific install error. Includes Windows-only prerequisites that must be completed before the Quickstart.
 
 ## Related Skills
 
-- `nemoclaw-user-configure-inference` — Switch inference providers to use a different model or endpoint
-- `nemoclaw-user-manage-policy` — Approve or deny network requests when the agent tries to reach external hosts
-- `nemoclaw-user-deploy-remote` — Deploy to a remote GPU instance for always-on operation
-- `nemoclaw-user-monitor-sandbox` — Monitor sandbox activity through the OpenShell TUI
+- `nemoclaw-user-configure-inference` — Switch inference providers (use the `nemoclaw-user-configure-inference` skill) to use a different model or endpoint
+- `nemoclaw-user-manage-policy` — Approve or deny network requests (use the `nemoclaw-user-manage-policy` skill) when the agent tries to reach external hosts
+- `nemoclaw-user-deploy-remote` — Deploy to a remote GPU instance (use the `nemoclaw-user-deploy-remote` skill) for always-on operation
+- `nemoclaw-user-monitor-sandbox` — Monitor sandbox activity (use the `nemoclaw-user-monitor-sandbox` skill) through the OpenShell TUI

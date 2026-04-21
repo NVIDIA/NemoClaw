@@ -32,6 +32,24 @@ function loadNimWithMockedRunner(runCapture: Mock) {
   };
 }
 
+/** Check if an argv array or legacy shell command contains a specific argument. */
+function hasArg(cmd: string | string[], arg: string): boolean {
+  return Array.isArray(cmd) ? cmd.includes(arg) : cmd.includes(arg);
+}
+
+function hasCurlTimeoutArgs(cmd: string | string[]): boolean {
+  if (!Array.isArray(cmd)) {
+    return (
+      cmd.includes("curl") &&
+      cmd.includes("--connect-timeout 5") &&
+      cmd.includes("--max-time 5")
+    );
+  }
+  const connectTimeout = cmd.indexOf("--connect-timeout");
+  const maxTime = cmd.indexOf("--max-time");
+  return cmd[0] === "curl" && cmd[connectTimeout + 1] === "5" && cmd[maxTime + 1] === "5";
+}
+
 describe("nim", () => {
   describe("listModels", () => {
     it("returns 5 models", () => {
@@ -176,12 +194,27 @@ describe("nim", () => {
     });
   });
 
-  describe("nimStatusByName", () => {
-    /** Check if an argv array contains a specific element. */
-    function hasArg(cmd: string | string[], arg: string): boolean {
-      return Array.isArray(cmd) ? cmd.includes(arg) : cmd.includes(arg);
-    }
+  describe("waitForNimHealth", () => {
+    it("bounds curl health probes with connect and total timeouts", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models")) return '{"data":[]}';
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
 
+      try {
+        expect(nimModule.waitForNimHealth(9000, 1)).toBe(true);
+        const commands = runCapture.mock.calls.map(([c]: [string | string[]]) => c);
+
+        expect(commands.some((c) => c[0] === "curl" && hasCurlTimeoutArgs(c))).toBe(true);
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("nimStatusByName", () => {
     it("uses provided port directly", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
@@ -205,6 +238,7 @@ describe("nim", () => {
         expect(commands.some((c) => c.includes("http://127.0.0.1:9000/v1/models"))).toBe(
           true,
         );
+        expect(commands.some((c) => c[0] === "curl" && hasCurlTimeoutArgs(c))).toBe(true);
       } finally {
         restore();
       }

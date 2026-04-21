@@ -2,7 +2,9 @@
 title:
   page: "Backup and Restore Workspace Files"
   nav: "Backup & Restore"
-description: "How to back up and restore OpenClaw workspace files before destructive operations."
+description:
+  main: "How to back up and restore OpenClaw workspace files before destructive operations."
+  agent: "Backs up and restores OpenClaw workspace files before destructive operations such as sandbox rebuilds. Use when downloading workspace files from a sandbox, uploading restored files into a new sandbox, or preserving sandbox state across rebuilds."
 keywords: ["nemoclaw backup", "nemoclaw restore", "workspace backup", "openshell sandbox download upload"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "workspace", "backup"]

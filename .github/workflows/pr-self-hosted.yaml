@@ -1,0 +1,119 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Self-hosted runner PR workflow — triggered by copy-pr-bot.
+#
+# copy-pr-bot pushes PR code to pull-request/<number> branches only after
+# a maintainer has vetted the changes (or the author is a trusted NVIDIA
+# employee with signed commits). This ensures community PRs never run on
+# self-hosted runners without explicit maintainer approval.
+#
+# Lightweight checks (lint, unit tests) still run on GitHub-hosted runners
+# via the regular pr.yaml workflow, which triggers on pull_request events.
+#
+# See: https://docs.gha-runners.nvidia.com/platform/onboarding/pull-request-testing/
+
+name: pr-self-hosted
+
+on:
+  push:
+    branches:
+      - "pull-request/[0-9]+"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  get-pr-info:
+    runs-on: ubuntu-latest
+    outputs:
+      pr-info: ${{ steps.get-pr-info.outputs.pr-info }}
+    steps:
+      - id: get-pr-info
+        uses: nv-gha-runners/get-pr-info@090577647b8ddc4e06e809e264f7881650ecdccf # main
+
+  build-sandbox-images:
+    runs-on: linux-amd64-cpu4
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Pull base image from GHCR (fall back to local build)
+        run: |
+          if docker pull ghcr.io/nvidia/nemoclaw/sandbox-base:latest 2>/dev/null; then
+            echo "BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest" >> "$GITHUB_ENV"
+          else
+            echo "::warning::GHCR base image not available, building locally"
+            docker build -f Dockerfile.base -t nemoclaw-sandbox-base-local .
+            echo "BASE_IMAGE=nemoclaw-sandbox-base-local" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build production image
+        run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production .
+
+      - name: Build sandbox test image (fixtures layered on production)
+        run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production -t nemoclaw-sandbox-test .
+
+      - name: Save images to tarballs
+        run: |
+          docker save nemoclaw-sandbox-test | gzip > /tmp/sandbox-test-image.tar.gz
+          docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz
+
+      - name: Upload sandbox test image
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sandbox-test-image
+          path: /tmp/sandbox-test-image.tar.gz
+          retention-days: 1
+
+      - name: Upload isolation image
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: isolation-image
+          path: /tmp/isolation-image.tar.gz
+          retention-days: 1
+
+  test-e2e-sandbox:
+    runs-on: linux-amd64-cpu4
+    timeout-minutes: 15
+    needs: build-sandbox-images
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Download image artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: sandbox-test-image
+          path: /tmp
+
+      - name: Load image
+        run: gunzip -c /tmp/sandbox-test-image.tar.gz | docker load
+
+      - name: Run sandbox E2E tests
+        run: docker run --rm -v "${{ github.workspace }}/test:/opt/test" nemoclaw-sandbox-test /opt/test/e2e-test.sh
+
+  test-e2e-gateway-isolation:
+    runs-on: linux-amd64-cpu4
+    timeout-minutes: 15
+    needs: build-sandbox-images
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Download image artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: isolation-image
+          path: /tmp
+
+      - name: Load image
+        run: gunzip -c /tmp/isolation-image.tar.gz | docker load
+
+      - name: Run gateway isolation E2E tests
+        run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh

@@ -14,7 +14,9 @@ describe("nemoclaw-start non-root fallback", () => {
 
     expect(src).toMatch(/if \[ "\$\(id -u\)" -ne 0 \]; then/);
     expect(src).toMatch(/touch \/tmp\/gateway\.log/);
-    expect(src).toMatch(/nohup "\$OPENCLAW" gateway run --port "\$\{_DASHBOARD_PORT\}" >\/tmp\/gateway\.log 2>&1 &/);
+    expect(src).toMatch(
+      /nohup "\$OPENCLAW" gateway run --port "\$\{_DASHBOARD_PORT\}" >\/tmp\/gateway\.log 2>&1 &/,
+    );
   });
 
   it("exits on config integrity failure in non-root mode", () => {
@@ -267,6 +269,24 @@ describe("nemoclaw-start configure guard blocks config set/unset (#1973)", () =>
   });
 });
 
+describe("nemoclaw-start configure guard blocks channels mutators (#2097)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("adds a channels) case that allows read-only subcommands through", () => {
+    expect(src).toMatch(/channels\)\s+case "\$2" in\s+list \| "" \| -h \| --help\)/);
+  });
+
+  it("blocks mutating channels subcommands with an actionable error and return 1", () => {
+    expect(src).toContain("'openclaw channels $2' cannot modify channels inside the sandbox");
+    expect(src).toMatch(/channels\)[\s\S]*?\*\)[\s\S]*?return 1/);
+  });
+
+  it("redirects users to the host-side channels commands", () => {
+    expect(src).toMatch(/channels\)[\s\S]*?nemoclaw <sandbox> channels add/);
+    expect(src).toMatch(/channels\)[\s\S]*?nemoclaw <sandbox> channels remove/);
+  });
+});
+
 describe("runtime model override (#759)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -302,7 +322,8 @@ describe("runtime model override (#759)", () => {
     expect(fn).toBeTruthy();
     // Guard checks all override env vars before returning early
     expect(fn[1]).toContain("NEMOCLAW_MODEL_OVERRIDE");
-    expect(fn[1]).toContain("|| return 0");
+    // shfmt may format `|| return 0` as a standalone `return 0` on its own line
+    expect(fn[1]).toMatch(/\|\|\s*return 0|^\s*return 0/m);
   });
 
   it("supports optional NEMOCLAW_INFERENCE_API_OVERRIDE for cross-provider switches", () => {

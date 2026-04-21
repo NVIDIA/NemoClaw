@@ -130,7 +130,7 @@ Alternatively, override the conflicting port with an environment variable instea
 $ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
 ```
 
-See Environment Variables (see the `nemoclaw-user-reference` skill) for the full list of port overrides.
+See Environment Variables (use the `nemoclaw-user-reference` skill) for the full list of port overrides.
 
 ### Running multiple sandboxes simultaneously
 
@@ -317,7 +317,7 @@ Follow these steps to reconnect.
 
 > **If the sandbox does not recover:** If the sandbox remains missing after restarting the gateway, run `nemoclaw onboard` to recreate it.
 > The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox. Workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
-> Back up your workspace first by following the instructions at Back Up and Restore (see the `nemoclaw-user-workspace` skill).
+> Back up your workspace first by following the instructions at Back Up and Restore (use the `nemoclaw-user-workspace` skill).
 
 ### Sandbox is running an outdated agent version
 
@@ -417,7 +417,25 @@ This is expected behavior.
 Changing or exporting it later does not rewrite the baked `openclaw.json` inside an existing sandbox.
 
 If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration.
-For the security trade-offs, refer to Security Best Practices (see the `nemoclaw-user-configure-security` skill).
+For the security trade-offs, refer to Security Best Practices (use the `nemoclaw-user-configure-security` skill).
+
+### `openclaw channels add` or `remove` is blocked inside the sandbox
+
+This is expected.
+The messaging channel list is frozen into the sandbox's container image when the image is built during `nemoclaw onboard` or `nemoclaw rebuild` (the selected channel names are passed to the `docker build` as `NEMOCLAW_MESSAGING_CHANNELS_B64` and written into `/sandbox/.openclaw/openclaw.json` as part of the image).
+At runtime the sandbox mounts that path read-only and layers Landlock + filesystem hardening on top, so `openclaw channels` commands that mutate the config cannot write there.
+NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw channels <add|remove>` and prints an actionable error pointing at the host-side commands below, instead of letting the call fail deep in the binary with a raw `EACCES` trace.
+
+Run the equivalent host-side command instead:
+
+```console
+$ nemoclaw <sandbox> channels list
+$ nemoclaw <sandbox> channels add <telegram|discord|slack>
+$ nemoclaw <sandbox> channels remove <telegram|discord|slack>
+```
+
+`channels add` stores credentials under `~/.nemoclaw/credentials.json` and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
+In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `nemoclaw <sandbox> rebuild`.
 
 ### `openclaw doctor --fix` cannot repair Discord channel config inside the sandbox
 
@@ -524,7 +542,7 @@ $ openshell term
 ```
 
 To permanently allow an endpoint, add it to the network policy.
-Refer to Customize the Network Policy (see the `nemoclaw-user-manage-policy` skill) for details.
+Refer to Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill) for details.
 
 ### Dashboard not reachable after setting `NEMOCLAW_DASHBOARD_PORT`
 
@@ -591,7 +609,7 @@ Use `--follow` to stream logs in real time while debugging.
 
 ## Windows Subsystem for Linux
 
-For environment setup steps, see Windows Prerequisites (see the `nemoclaw-user-get-started` skill).
+For environment setup steps, see Windows Prerequisites (use the `nemoclaw-user-get-started` skill).
 
 ### `wsl --install --no-distribution` returns Forbidden (403)
 
@@ -651,7 +669,7 @@ $ sudo systemctl stop ollama
 $ OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 ```
 
-For additional troubleshooting, see the Quickstart (see the `nemoclaw-user-get-started` skill) and Windows Setup (see the `nemoclaw-user-get-started` skill) pages.
+For additional troubleshooting, see the Quickstart (use the `nemoclaw-user-get-started` skill) and Windows Setup (use the `nemoclaw-user-get-started` skill) pages.
 
 ## Podman
 

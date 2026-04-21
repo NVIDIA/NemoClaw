@@ -150,7 +150,7 @@ OpenShell intercepts them and routes to the configured provider:
 Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA Endpoint (build.nvidia.com)
 ```
 
-Refer to Inference Options (see the `nemoclaw-user-configure-inference` skill) for provider configuration details.
+Refer to Inference Options (use the `nemoclaw-user-configure-inference` skill) for provider configuration details.
 
 ## Host-Side State and Config
 
@@ -158,7 +158,7 @@ NemoClaw keeps its operator-facing state on the host rather than inside the sand
 
 | Path | Purpose |
 |---|---|
-| `~/.nemoclaw/credentials.json` | Provider credentials saved during onboarding. Stored as plaintext JSON protected by local filesystem permissions; see Credential Storage (see the `nemoclaw-user-configure-security` skill). |
+| `~/.nemoclaw/credentials.json` | Provider credentials saved during onboarding. Stored as plaintext JSON protected by local filesystem permissions; see Credential Storage (use the `nemoclaw-user-configure-security` skill). |
 | `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata, including the default sandbox selection. |
 | `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw snapshots or restores during migration flows. |
 
