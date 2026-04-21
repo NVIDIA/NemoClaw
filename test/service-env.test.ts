@@ -396,7 +396,7 @@ describe("service environment", () => {
             .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
         ].join("\n");
         writeFileSync(tmpFile, wrapper, { mode: 0o700 });
-        const runOpts = { encoding: /** @type {const} */ ("utf-8") };
+        const runOpts = { encoding: /** @type {const} */ "utf-8" };
         execFileSync("bash", [tmpFile], runOpts);
         execFileSync("bash", [tmpFile], runOpts);
         execFileSync("bash", [tmpFile], runOpts);
@@ -623,9 +623,7 @@ describe("service environment", () => {
           { encoding: "utf-8" },
         );
         if (!persistBlock.trim()) {
-          throw new Error(
-            "sed anchors not found in nemoclaw-start.sh — test cannot run",
-          );
+          throw new Error("sed anchors not found in nemoclaw-start.sh — test cannot run");
         }
         const wrapper = [
           "#!/usr/bin/env bash",
