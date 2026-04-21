@@ -99,6 +99,7 @@ const GLOBAL_COMMANDS = new Set([
   "credentials",
   "backup-all",
   "upgrade-sandboxes",
+  "gc",
   "help",
   "--help",
   "-h",
@@ -1973,6 +1974,21 @@ function cleanupSandboxServices(sandboxName, { stopHostServices = false } = {}) 
   }
 }
 
+/**
+ * Remove the host-side Docker image that was built for a sandbox during onboard.
+ * Must be called before registry.removeSandbox() since the imageTag is stored there.
+ */
+function removeSandboxImage(sandboxName) {
+  const sb = registry.getSandbox(sandboxName);
+  if (!sb?.imageTag) return;
+  const result = run(["docker", "rmi", sb.imageTag], { ignoreError: true });
+  if (result.status === 0) {
+    console.log(`  Removed Docker image ${sb.imageTag}`);
+  } else {
+    console.warn(`  ${YW}⚠${R} Failed to remove Docker image ${sb.imageTag}; run 'nemoclaw gc' to clean up.`);
+  }
+}
+
 async function sandboxDestroy(sandboxName, args = []) {
   const skipConfirm = args.includes("--yes") || args.includes("--force");
 
@@ -2032,6 +2048,7 @@ async function sandboxDestroy(sandboxName, args = []) {
     !!registry.getSandbox(sandboxName);
 
   cleanupSandboxServices(sandboxName, { stopHostServices: shouldStopHostServices });
+  removeSandboxImage(sandboxName);
 
   const removed = registry.removeSandbox(sandboxName);
   const session = onboardSession.loadSession();
@@ -2200,6 +2217,7 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
     bail("Failed to delete sandbox.", deleteResult.status || 1);
     return;
   }
+  removeSandboxImage(sandboxName);
   registry.removeSandbox(sandboxName);
   log(
     `Registry after remove: ${JSON.stringify(registry.listSandboxes().sandboxes.map((s) => s.name))}`,
@@ -2618,6 +2636,99 @@ function backupAll() {
   }
 }
 
+// ── Garbage collection ──────────────────────────────────────────
+
+async function garbageCollectImages(args = []) {
+  const dryRun = args.includes("--dry-run");
+  const skipConfirm = args.includes("--yes") || args.includes("--force");
+
+  // 1. List all openshell/sandbox-from images on the host
+  const imagesResult = spawnSync(
+    "docker",
+    ["images", "--filter", "reference=openshell/sandbox-from", "--format", "{{.Repository}}:{{.Tag}}\t{{.Size}}"],
+    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if (imagesResult.status !== 0) {
+    console.error("  Failed to query Docker images. Is Docker running?");
+    process.exit(1);
+  }
+
+  const allImages = (imagesResult.stdout || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [tag, size] = line.split("\t");
+      return { tag, size: size || "unknown" };
+    });
+
+  if (allImages.length === 0) {
+    console.log("  No sandbox images found on the host.");
+    return;
+  }
+
+  // 2. Determine which images are in use by live or registered sandboxes
+  const registeredTags = new Set();
+  const { sandboxes } = registry.listSandboxes();
+  for (const sb of sandboxes) {
+    if (sb.imageTag) registeredTags.add(sb.imageTag);
+  }
+
+  // 3. Cross-reference to find orphans
+  const orphans = allImages.filter((img) => !registeredTags.has(img.tag));
+
+  if (orphans.length === 0) {
+    console.log(`  All ${allImages.length} sandbox image(s) are in use. Nothing to clean up.`);
+    return;
+  }
+
+  // 4. Display what will be removed
+  console.log(`  Found ${orphans.length} orphaned sandbox image(s):\n`);
+  for (const img of orphans) {
+    console.log(`    ${img.tag}  ${D}(${img.size})${R}`);
+  }
+  console.log("");
+
+  if (dryRun) {
+    console.log(`  --dry-run: would remove ${orphans.length} image(s).`);
+    return;
+  }
+
+  // 5. Confirm
+  if (!skipConfirm) {
+    const answer = await askPrompt(`  Remove ${orphans.length} orphaned image(s)? [y/N]: `);
+    if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
+      console.log("  Cancelled.");
+      return;
+    }
+  }
+
+  // 6. Remove orphans
+  let removed = 0;
+  let failed = 0;
+  for (const img of orphans) {
+    const rmiResult = spawnSync("docker", ["rmi", img.tag], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (rmiResult.status === 0) {
+      console.log(`  ${G}✓${R} Removed ${img.tag}`);
+      removed++;
+    } else {
+      const details = `${rmiResult.stderr || rmiResult.stdout || ""}`.trim();
+      console.error(
+        `  ${YW}⚠${R} Failed to remove ${img.tag}${details ? `: ${details}` : ""}`,
+      );
+      failed++;
+    }
+  }
+
+  console.log("");
+  if (removed > 0) console.log(`  ${G}✓${R} Removed ${removed} orphaned image(s).`);
+  if (failed > 0) console.log(`  ${YW}⚠${R} Failed to remove ${failed} image(s).`);
+  if (failed > 0) process.exit(1);
+}
+
 // ── Help ─────────────────────────────────────────────────────────
 
 function help() {
@@ -2679,7 +2790,8 @@ function help() {
   ${G}Upgrade:${R}
     nemoclaw upgrade-sandboxes       Detect and rebuild stale sandboxes ${D}(--check, --auto)${R}
 
-  Cleanup:
+  ${G}Cleanup:${R}
+    nemoclaw gc                      Remove orphaned sandbox Docker images ${D}(--yes|--force, --dry-run)${R}
     nemoclaw uninstall [flags]       Run uninstall.sh (local only; no remote fallback)
 
   ${G}Uninstall flags:${R}
@@ -2746,6 +2858,9 @@ const [cmd, ...args] = process.argv.slice(2);
         break;
       case "upgrade-sandboxes":
         await upgradeSandboxes(args);
+        break;
+      case "gc":
+        await garbageCollectImages(args);
         break;
       case "--version":
       case "-v": {

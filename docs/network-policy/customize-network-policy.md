@@ -155,6 +155,18 @@ $ openshell policy set --policy nemoclaw-blueprint/policies/presets/pypi.yaml my
 
 To include a preset in the baseline, merge its entries into `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.
 
+For scripted workflows, `policy-add` and `policy-remove` accept the preset name as a positional argument:
+
+```console
+$ nemoclaw my-assistant policy-add pypi --yes
+$ nemoclaw my-assistant policy-remove pypi --yes
+```
+
+Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` to drive the same flow from an environment variable.
+See [Commands](../reference/commands.md#nemoclaw-name-policy-add) for the full flag reference.
+
+`nemoclaw <name> rebuild` reapplies every policy preset to the recreated sandbox, so presets survive an agent-version upgrade without manual reapplication.
+
 ## Related Topics
 
 - [Approve or Deny Agent Network Requests](approve-network-requests.md) for real-time operator approval.
