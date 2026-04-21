@@ -462,8 +462,19 @@ function getInstalledOpenshellVersion(versionOutput = null) {
     versionOutput ?? runCapture([openshellBin, "-V"], { ignoreError: true }),
   ).trim();
   const match = output.match(/openshell\s+([0-9]+\.[0-9]+\.[0-9]+)/i);
-  if (!match) return null;
-  return match[1];
+  if (match) return match[1];
+  // Fallback: read the sidecar version file written by install-openshell.sh for
+  // binaries that self-report an unparseable string (e.g. openshell 0.0.29 → "m-dev").
+  if (!versionOutput && openshellBin) {
+    try {
+      const sidecar = path.join(path.dirname(openshellBin), ".openshell-installed-version");
+      const sidecarMatch = fs.readFileSync(sidecar, "utf-8").trim().match(/([0-9]+\.[0-9]+\.[0-9]+)/);
+      if (sidecarMatch) return sidecarMatch[1];
+    } catch {
+      // sidecar absent or unreadable — fall through
+    }
+  }
+  return null;
 }
 
 /**
@@ -2350,7 +2361,7 @@ async function preflight() {
       }
     } else {
       const parts = currentVersion.split(".").map(Number);
-      const minParts = [0, 0, 24]; // must match MIN_VERSION in scripts/install-openshell.sh
+      const minParts = [0, 0, 29]; // must match MIN_VERSION in scripts/install-openshell.sh
       const needsUpgrade =
         parts[0] < minParts[0] ||
         (parts[0] === minParts[0] && parts[1] < minParts[1]) ||

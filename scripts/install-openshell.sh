@@ -58,7 +58,14 @@ version_gte() {
 }
 
 if command -v openshell >/dev/null 2>&1; then
-  INSTALLED_VERSION="$(openshell --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo '0.0.0')"
+  INSTALLED_VERSION="$(openshell --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+  if [ -z "$INSTALLED_VERSION" ]; then
+    # Fallback: read the sidecar written by a previous install for builds that
+    # self-report an unparseable version string (e.g. openshell 0.0.29 → "m-dev").
+    _SIDECAR="$(dirname "$(command -v openshell)")/.openshell-installed-version"
+    INSTALLED_VERSION="$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' "$_SIDECAR" 2>/dev/null | head -1 || true)"
+  fi
+  [ -n "$INSTALLED_VERSION" ] || INSTALLED_VERSION="0.0.0"
   if version_gte "$INSTALLED_VERSION" "$MIN_VERSION"; then
     if ! version_gte "$MAX_VERSION" "$INSTALLED_VERSION"; then
       fail "openshell $INSTALLED_VERSION is above the maximum ($MAX_VERSION) supported by this NemoClaw release. Upgrade NemoClaw first."
@@ -132,5 +139,10 @@ elif [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || [ ! -t 0 ]; then
 else
   sudo install -m 755 "$tmpdir/openshell" "$target_dir/openshell"
 fi
+
+# Record the pinned version so that binaries with unparseable --version output
+# (e.g. openshell 0.0.29 self-reports "m-dev") can still pass the version gate
+# on subsequent runs without triggering a redundant re-download.
+echo "$PIN_VERSION" >"$target_dir/.openshell-installed-version" 2>/dev/null || true
 
 info "$("$target_dir/openshell" --version 2>&1 || echo openshell) installed"
