@@ -14,7 +14,9 @@ describe("nemoclaw-start non-root fallback", () => {
 
     expect(src).toMatch(/if \[ "\$\(id -u\)" -ne 0 \]; then/);
     expect(src).toMatch(/touch \/tmp\/gateway\.log/);
-    expect(src).toMatch(/nohup "\$OPENCLAW" gateway run >\/tmp\/gateway\.log 2>&1 &/);
+    expect(src).toMatch(
+      /nohup "\$OPENCLAW" gateway run --port "\$\{_DASHBOARD_PORT\}" >\/tmp\/gateway\.log 2>&1 &/,
+    );
   });
 
   it("exits on config integrity failure in non-root mode", () => {
@@ -204,6 +206,87 @@ describe("nemoclaw-start configure guard (#1114)", () => {
   });
 });
 
+describe("nemoclaw-start configure guard blocks --local (#2016)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("blocks openclaw agent --local with a hard error and return 1", () => {
+    const guardBlock = src.match(
+      /install_configure_guard\(\) \{([\s\S]*?)^validate_openclaw_symlinks/m,
+    );
+    expect(guardBlock).toBeTruthy();
+    const body = guardBlock[1];
+    // Must contain the agent) case that checks for --local
+    expect(body).toContain("agent)");
+    expect(body).toContain('"--local"');
+    // Must print an error (not a warning) and return 1
+    expect(body).toMatch(/echo "Error:.*--local.*not supported inside NemoClaw sandboxes/);
+    expect(body).toMatch(/return 1/);
+    // Must NOT contain the old warning pattern
+    expect(body).not.toContain("[SECURITY] Warning");
+  });
+
+  it("suggests the correct alternative command without --local", () => {
+    const guardBlock = src.match(
+      /install_configure_guard\(\) \{([\s\S]*?)^validate_openclaw_symlinks/m,
+    );
+    expect(guardBlock).toBeTruthy();
+    expect(guardBlock[1]).toContain("openclaw agent --agent main");
+  });
+
+  it("allows openclaw agent without --local to pass through", () => {
+    const guardBlock = src.match(
+      /install_configure_guard\(\) \{([\s\S]*?)^validate_openclaw_symlinks/m,
+    );
+    expect(guardBlock).toBeTruthy();
+    const body = guardBlock[1];
+    // The agent) case only returns 1 inside the --local check.
+    // After the for loop, execution falls through to `command openclaw "$@"`.
+    expect(body).toContain('command openclaw "$@"');
+  });
+});
+
+describe("nemoclaw-start configure guard blocks config set/unset (#1973)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("adds a config) case that matches only set and unset subcommands", () => {
+    expect(src).toMatch(/config\)\s+case "\$2" in\s+set \| unset\)/);
+  });
+
+  it("prints an actionable error quoting the invoked subcommand and returns 1", () => {
+    expect(src).toContain("'openclaw config $2' cannot modify config inside the sandbox");
+    expect(src).toMatch(/set \| unset\)[\s\S]*?return 1/);
+  });
+
+  it("redirects users to nemoclaw onboard --resume", () => {
+    expect(src).toMatch(/set \| unset\)[\s\S]*?nemoclaw onboard --resume/);
+  });
+
+  it("does not block immutable subcommands (get, list) — they fall through to the real binary", () => {
+    // The config) arm only enumerates mutating subcommands. Read-only ones are
+    // not matched, so execution falls through to `command openclaw "$@"` below.
+    expect(src).not.toMatch(/config\)\s+case "\$2" in[\s\S]*?\b(get|list|show|view)\)/);
+    expect(src).toContain('command openclaw "$@"');
+  });
+});
+
+describe("nemoclaw-start configure guard blocks channels mutators (#2097)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("adds a channels) case that allows read-only subcommands through", () => {
+    expect(src).toMatch(/channels\)\s+case "\$2" in\s+list \| "" \| -h \| --help\)/);
+  });
+
+  it("blocks mutating channels subcommands with an actionable error and return 1", () => {
+    expect(src).toContain("'openclaw channels $2' cannot modify channels inside the sandbox");
+    expect(src).toMatch(/channels\)[\s\S]*?\*\)[\s\S]*?return 1/);
+  });
+
+  it("redirects users to the host-side channels commands", () => {
+    expect(src).toMatch(/channels\)[\s\S]*?nemoclaw <sandbox> channels add/);
+    expect(src).toMatch(/channels\)[\s\S]*?nemoclaw <sandbox> channels remove/);
+  });
+});
+
 describe("runtime model override (#759)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -239,7 +322,8 @@ describe("runtime model override (#759)", () => {
     expect(fn).toBeTruthy();
     // Guard checks all override env vars before returning early
     expect(fn[1]).toContain("NEMOCLAW_MODEL_OVERRIDE");
-    expect(fn[1]).toContain("|| return 0");
+    // shfmt may format `|| return 0` as a standalone `return 0` on its own line
+    expect(fn[1]).toMatch(/\|\|\s*return 0|^\s*return 0/m);
   });
 
   it("supports optional NEMOCLAW_INFERENCE_API_OVERRIDE for cross-provider switches", () => {
@@ -500,5 +584,47 @@ describe("nemoclaw-start signal handling", () => {
 
   it("captures AUTO_PAIR_PID from background process", () => {
     expect(src).toMatch(/AUTO_PAIR_PID=\$!/);
+  });
+});
+
+describe("nemoclaw-start CHAT_UI_URL override for configurable dashboard port (#1925)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("unconditionally sets CHAT_UI_URL when NEMOCLAW_DASHBOARD_PORT is injected", () => {
+    // When the var is present (injected via envArgs in onboard.ts), the gateway
+    // must use the configured port even if the Docker image has a different
+    // CHAT_UI_URL baked in as a Docker ENV directive.
+    const overrideBlock = src.match(
+      /if \[ -n "\$\{NEMOCLAW_DASHBOARD_PORT:-\}" \]; then([\s\S]*?)else/,
+    );
+    expect(overrideBlock).toBeTruthy();
+    // Plain assignment — the Docker ENV value cannot take precedence
+    expect(overrideBlock[1]).toContain('CHAT_UI_URL="http://127.0.0.1:${_DASHBOARD_PORT}"');
+    // Must NOT use :- in this branch — that would let the baked-in Docker ENV win
+    // and restart the gateway on the wrong port (#1925)
+    expect(overrideBlock[1]).not.toMatch(/CHAT_UI_URL=.*:-/);
+  });
+
+  it("falls back to baked-in CHAT_UI_URL when NEMOCLAW_DASHBOARD_PORT is absent", () => {
+    // When no port override was injected (default install), honour whatever
+    // CHAT_UI_URL was baked into the Docker image at onboard time.
+    const ifElseBlock = src.match(
+      /if \[ -n "\$\{NEMOCLAW_DASHBOARD_PORT:-\}" \]; then[\s\S]*?else([\s\S]*?)fi/,
+    );
+    expect(ifElseBlock).toBeTruthy();
+    expect(ifElseBlock[1]).toContain(
+      'CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${_DASHBOARD_PORT}}"',
+    );
+  });
+
+  it("passes --port to openclaw gateway run in root path (gosu gateway) (#1925)", () => {
+    // The root path (run as root, then gosu'd to the gateway user) must also
+    // pass --port so the gateway binds to the configured port. Without this,
+    // a user with NEMOCLAW_DASHBOARD_PORT set would get a gateway on 18789
+    // even though the SSH tunnel forwards the custom port.
+    const rootBlock = src.split(/# ── Root path/)[1] || "";
+    expect(rootBlock).toMatch(
+      /nohup gosu gateway "\$OPENCLAW" gateway run --port "\$\{_DASHBOARD_PORT\}" >\/tmp\/gateway\.log 2>&1 &/,
+    );
   });
 });

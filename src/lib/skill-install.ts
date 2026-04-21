@@ -274,9 +274,13 @@ export function postInstall(
   ctx: SshContext,
   paths: SkillPaths,
   localSkillDir: string,
-  opts: { skipRefresh?: boolean } = {},
+  opts: {
+    skipRefresh?: boolean;
+    sshExecImpl?: typeof sshExec;
+  } = {},
 ): { success: boolean; messages: string[] } {
   const messages: string[] = [];
+  const runSsh = opts.sshExecImpl ?? sshExec;
 
   if (paths.isOpenClaw) {
     // Mirror to $HOME/.openclaw/skills/ — OpenClaw resolves skills from
@@ -295,7 +299,7 @@ export function postInstall(
         // mirrorDir contains $HOME which must expand, so we use double
         // quotes (not shellQuote). Safe because validateRelativePath
         // restricts filenames to [A-Za-z0-9._-/] before we reach here.
-        const result = sshExec(
+        const result = runSsh(
           ctx,
           `mkdir -p "${mirrorSubdir}" && cat > "${mirrorFile}"`,
           { input: content },
@@ -309,11 +313,10 @@ export function postInstall(
       }
     }
 
-    // Clear sessions.json so OpenClaw re-discovers skills on next session.
-    // Skip on updates — the agent already knows the skill, and clearing
-    // sessions would destroy chat history unnecessarily.
+    // Clear sessions.json so OpenClaw re-discovers skills on the next
+    // session even after an in-place skill update.
     if (paths.sessionFile && !opts.skipRefresh) {
-      const refreshResult = sshExec(ctx, `printf '{}' > ${shellQuote(paths.sessionFile)}`);
+      const refreshResult = runSsh(ctx, `printf '{}' > ${shellQuote(paths.sessionFile)}`);
       if (!refreshResult || refreshResult.status !== 0) {
         messages.push("Warning: failed to clear sessions (agent may need manual restart)");
       }

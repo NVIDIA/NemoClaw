@@ -88,7 +88,44 @@ type CandidateRoot = {
   required: boolean;
 };
 
-type OpenClawConfigDocument = Record<string, unknown>;
+type UnknownRecord = { [key: string]: unknown };
+type OpenClawConfigDocument = UnknownRecord;
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function readTrimmedString(value: unknown): string | null {
+  const trimmed = readString(value)?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function readRecord(value: unknown): UnknownRecord | null {
+  return isRecord(value) ? value : null;
+}
+
+function readRecordKey(
+  record: UnknownRecord | null | undefined,
+  key: string,
+): UnknownRecord | null {
+  return readRecord(record?.[key]);
+}
+
+function readArrayKey(record: UnknownRecord | null | undefined, key: string): unknown[] | null {
+  const value = record?.[key];
+  return Array.isArray(value) ? value : null;
+}
+
+function parseConfigDocument(value: unknown, context: string): OpenClawConfigDocument {
+  if (!isRecord(value)) {
+    throw new Error(`${context} is not a JSON object.`);
+  }
+  return value;
+}
 
 function resolveHostHome(env: NodeJS.ProcessEnv = process.env): string {
   const fallbackHome = env.HOME?.trim() || env.USERPROFILE?.trim() || os.homedir();
@@ -148,11 +185,7 @@ function loadConfigDocument(configPath: string): OpenClawConfigDocument | null {
     return null;
   }
   const raw = readFileSync(configPath, "utf-8");
-  const parsed: unknown = JSON5.parse(raw);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`Config at ${configPath} is not a JSON object.`);
-  }
-  return parsed as OpenClawConfigDocument;
+  return parseConfigDocument(JSON5.parse(raw), `Config at ${configPath}`);
 }
 
 function collectSymlinkPaths(rootPath: string): string[] {
@@ -196,8 +229,9 @@ function registerRoot(
     sandboxGroup: string;
     required: boolean;
   },
+  env: NodeJS.ProcessEnv = process.env,
 ): void {
-  const resolvedPath = resolveUserPath(params.pathValue);
+  const resolvedPath = resolveUserPath(params.pathValue, env);
   const normalized = normalizeHostPath(resolvedPath);
   const existing = rootMap.get(normalized);
   if (existing) {
@@ -229,95 +263,93 @@ function defaultWorkspacePath(env: NodeJS.ProcessEnv = process.env): string {
 function collectExternalRoots(
   config: OpenClawConfigDocument | null,
   stateDir: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): { roots: MigrationExternalRoot[]; warnings: string[]; errors: string[] } {
   const warnings: string[] = [];
   const errors: string[] = [];
   const rootMap = new Map<string, CandidateRoot>();
 
-  const agents = config?.["agents"];
-  const agentDefaults =
-    agents && typeof agents === "object" && !Array.isArray(agents)
-      ? (agents as Record<string, unknown>)["defaults"]
-      : undefined;
-  const agentList =
-    agents && typeof agents === "object" && !Array.isArray(agents)
-      ? (agents as Record<string, unknown>)["list"]
-      : undefined;
-  const skills = config?.["skills"];
-  const skillLoad =
-    skills && typeof skills === "object" && !Array.isArray(skills)
-      ? (skills as Record<string, unknown>)["load"]
-      : undefined;
+  const agents = readRecordKey(config, "agents");
+  const agentDefaults = readRecordKey(agents, "defaults");
+  const agentList = readArrayKey(agents, "list");
+  const skillLoad = readRecordKey(readRecordKey(config, "skills"), "load");
 
-  const defaultsWorkspace =
-    agentDefaults && typeof agentDefaults === "object" && !Array.isArray(agentDefaults)
-      ? (agentDefaults as Record<string, unknown>)["workspace"]
-      : undefined;
-  const defaultWorkspace =
-    typeof defaultsWorkspace === "string" && defaultsWorkspace.trim()
-      ? defaultsWorkspace.trim()
-      : defaultWorkspacePath();
-  registerRoot(rootMap, {
-    pathValue: defaultWorkspace,
-    kind: "workspace",
-    label: "default-workspace",
-    bindingPath: "agents.defaults.workspace",
-    sandboxGroup: "workspaces",
-    required: typeof defaultsWorkspace === "string" && defaultsWorkspace.trim().length > 0,
-  });
+  const defaultsWorkspace = readTrimmedString(agentDefaults?.workspace);
+  const defaultWorkspace = defaultsWorkspace ?? defaultWorkspacePath(env);
+  registerRoot(
+    rootMap,
+    {
+      pathValue: defaultWorkspace,
+      kind: "workspace",
+      label: "default-workspace",
+      bindingPath: "agents.defaults.workspace",
+      sandboxGroup: "workspaces",
+      required: typeof defaultsWorkspace === "string" && defaultsWorkspace.trim().length > 0,
+    },
+    env,
+  );
 
-  if (Array.isArray(agentList)) {
+  if (agentList) {
     agentList.forEach((entry, index) => {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      const agent = readRecord(entry);
+      if (!agent) {
         return;
       }
-      const agent = entry as Record<string, unknown>;
-      const agentId =
-        typeof agent["id"] === "string" && agent["id"].trim()
-          ? agent["id"].trim()
-          : `agent-${String(index)}`;
+      const agentId = readTrimmedString(agent.id) ?? `agent-${String(index)}`;
+      const workspace = readTrimmedString(agent.workspace);
+      const agentDir = readTrimmedString(agent.agentDir);
 
-      if (typeof agent["workspace"] === "string" && agent["workspace"].trim()) {
-        registerRoot(rootMap, {
-          pathValue: agent["workspace"].trim(),
-          kind: "workspace",
-          label: `${agentId}-workspace`,
-          bindingPath: `agents.list[${String(index)}].workspace`,
-          sandboxGroup: "workspaces",
-          required: true,
-        });
+      if (workspace) {
+        registerRoot(
+          rootMap,
+          {
+            pathValue: workspace,
+            kind: "workspace",
+            label: `${agentId}-workspace`,
+            bindingPath: `agents.list[${String(index)}].workspace`,
+            sandboxGroup: "workspaces",
+            required: true,
+          },
+          env,
+        );
       }
 
-      if (typeof agent["agentDir"] === "string" && agent["agentDir"].trim()) {
-        registerRoot(rootMap, {
-          pathValue: agent["agentDir"].trim(),
-          kind: "agentDir",
-          label: `${agentId}-agent-dir`,
-          bindingPath: `agents.list[${String(index)}].agentDir`,
-          sandboxGroup: "agent-dirs",
-          required: true,
-        });
+      if (agentDir) {
+        registerRoot(
+          rootMap,
+          {
+            pathValue: agentDir,
+            kind: "agentDir",
+            label: `${agentId}-agent-dir`,
+            bindingPath: `agents.list[${String(index)}].agentDir`,
+            sandboxGroup: "agent-dirs",
+            required: true,
+          },
+          env,
+        );
       }
     });
   }
 
-  const extraDirs =
-    skillLoad && typeof skillLoad === "object" && !Array.isArray(skillLoad)
-      ? (skillLoad as Record<string, unknown>)["extraDirs"]
-      : undefined;
-  if (Array.isArray(extraDirs)) {
+  const extraDirs = readArrayKey(skillLoad, "extraDirs");
+  if (extraDirs) {
     extraDirs.forEach((entry, index) => {
-      if (typeof entry !== "string" || !entry.trim()) {
+      const extraDir = readTrimmedString(entry);
+      if (!extraDir) {
         return;
       }
-      registerRoot(rootMap, {
-        pathValue: entry.trim(),
-        kind: "skillsExtraDir",
-        label: `skills-extra-${String(index + 1)}`,
-        bindingPath: `skills.load.extraDirs[${String(index)}]`,
-        sandboxGroup: "skills",
-        required: true,
-      });
+      registerRoot(
+        rootMap,
+        {
+          pathValue: extraDir,
+          kind: "skillsExtraDir",
+          label: `skills-extra-${String(index + 1)}`,
+          bindingPath: `skills.load.extraDirs[${String(index)}]`,
+          sandboxGroup: "skills",
+          required: true,
+        },
+        env,
+      );
     });
   }
 
@@ -413,29 +445,16 @@ export function detectHostOpenClaw(env: NodeJS.ProcessEnv = process.env): HostOp
     errors.push(`Failed to parse OpenClaw config at ${configPath}: ${msg}`);
   }
 
-  const rootInfo = collectExternalRoots(config, stateDir);
+  const rootInfo = collectExternalRoots(config, stateDir, env);
   warnings.push(...rootInfo.warnings);
   errors.push(...rootInfo.errors);
 
-  const workspaceDir =
-    config &&
-    typeof config["agents"] === "object" &&
-    config["agents"] &&
-    !Array.isArray(config["agents"]) &&
-    typeof (
-      (config["agents"] as Record<string, unknown>)["defaults"] as
-        | Record<string, unknown>
-        | undefined
-    )?.["workspace"] === "string"
-      ? resolveUserPath(
-          (
-            ((config["agents"] as Record<string, unknown>)["defaults"] as Record<string, unknown>)[
-              "workspace"
-            ] as string
-          ).trim(),
-          env,
-        )
-      : defaultWorkspacePath(env);
+  const defaultsWorkspace = readTrimmedString(
+    readRecordKey(readRecordKey(config, "agents"), "defaults")?.workspace,
+  );
+  const workspaceDir = defaultsWorkspace
+    ? resolveUserPath(defaultsWorkspace, env)
+    : defaultWorkspacePath(env);
 
   const extensionsDir = existsSync(path.join(stateDir, "extensions"))
     ? path.join(stateDir, "extensions")
@@ -521,9 +540,10 @@ function stripCredentials(obj: unknown): unknown {
   if (obj === null || obj === undefined) return obj;
   if (typeof obj !== "object") return obj;
   if (Array.isArray(obj)) return obj.map(stripCredentials);
+  if (!isRecord(obj)) return obj;
 
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+  const result: UnknownRecord = {};
+  for (const [key, value] of Object.entries(obj)) {
     if (isCredentialField(key)) {
       result[key] = "[STRIPPED_BY_MIGRATION]";
     } else {
@@ -538,13 +558,11 @@ function stripCredentials(obj: unknown): unknown {
  * config section (contains auth tokens — regenerated by sandbox entrypoint).
  */
 function sanitizeConfigFile(configPath: string): void {
-  if (!existsSync(configPath)) return;
-  const raw = readFileSync(configPath, "utf-8");
-  const parsed: unknown = JSON5.parse(raw);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
-  const config = parsed as Record<string, unknown>;
-  delete config["gateway"];
-  const sanitized = stripCredentials(config) as Record<string, unknown>;
+  const config = loadConfigDocument(configPath);
+  if (!config) return;
+  delete config.gateway;
+  const sanitized = stripCredentials(config);
+  if (!isRecord(sanitized)) return;
   writeFileSync(configPath, JSON.stringify(sanitized, null, 2));
   chmodSync(configPath, 0o600);
 }
@@ -588,7 +606,10 @@ function resolveConfigSourcePath(manifest: SnapshotManifest, snapshotDir: string
   return path.join(snapshotDir, "openclaw", "openclaw.json");
 }
 
-function setConfigValue(
+const UNSAFE_PROPERTY_NAMES = new Set(["__proto__", "constructor", "prototype"]);
+
+/** @visibleForTesting */
+export function setConfigValue(
   document: Record<string, unknown>,
   configPath: string,
   value: string,
@@ -596,6 +617,12 @@ function setConfigValue(
   const tokens = configPath.match(/[^.[\]]+/g);
   if (!tokens || tokens.length === 0) {
     throw new Error(`Invalid config path: ${configPath}`);
+  }
+
+  for (const token of tokens) {
+    if (UNSAFE_PROPERTY_NAMES.has(token)) {
+      throw new Error(`Unsafe config path segment '${token}' in ${configPath}`);
+    }
   }
 
   let current: unknown = document;

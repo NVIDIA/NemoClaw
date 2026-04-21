@@ -4,7 +4,7 @@ title:
   nav: "Network Policies"
 description:
   main: "Baseline network policy, filesystem rules, and operator approval flow."
-  agent: "Documents baseline network policy, filesystem rules, and operator approval flow. Use when reviewing default network policies, understanding egress controls, or looking up the approval flow."
+  agent: "Covers the baseline network policy, filesystem rules, and operator approval flow. Use when looking up a specific default endpoint, filesystem path, or the runtime approval sequence NemoClaw applies on blocked requests."
 keywords: ["nemoclaw network policy", "sandbox egress control operator approval"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "network_policy", "security"]
@@ -80,7 +80,7 @@ The following endpoint groups are allowed by default:
 
 * - `npm_registry`
   - `registry.npmjs.org:443`
-  - `/usr/local/bin/openclaw`, `/usr/local/bin/npm`, `/usr/local/bin/node`
+  - `/usr/local/bin/openclaw` only (openclaw plugins install)
   - GET only
 
 :::
@@ -92,6 +92,32 @@ GitHub access (`github.com`, `api.github.com`) is not included in the baseline p
 Apply the `github` preset during onboarding if your agent needs GitHub access.
 See [Customize the Network Policy](../network-policy/customize-network-policy.md).
 :::
+
+(policy-tiers)=
+
+## Policy Tiers
+
+During onboarding, the wizard prompts for a policy tier that determines the default set of presets applied on top of the baseline policy.
+The baseline policy is always applied regardless of the selected tier.
+
+| Tier | Presets included | Description |
+|------|------------------|-------------|
+| Restricted | None | Base sandbox only. No third-party network access beyond inference and core agent tooling. |
+| Balanced (default) | npm, pypi, huggingface, brew, brave | Full dev tooling and web search. No messaging platform access. |
+| Open | npm, pypi, huggingface, brew, brave, slack, discord, telegram, jira, outlook | Broad access across third-party services including messaging and productivity. |
+
+After selecting a tier, a combined preset and access-mode screen lets you include or exclude individual presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
+Tier-default presets are pre-selected; additional presets can be added from the full list.
+
+Tier definitions are stored in `nemoclaw-blueprint/policies/tiers.yaml`.
+
+In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER`:
+
+```console
+$ NEMOCLAW_POLICY_TIER=open nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
+
+If the value does not match a known tier, onboarding exits with an error listing the valid options.
 
 ### Inference
 

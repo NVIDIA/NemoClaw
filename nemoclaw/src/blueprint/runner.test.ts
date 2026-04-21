@@ -73,7 +73,7 @@ vi.mock("execa", () => ({
 
 vi.mock("./ssrf.js", () => ({
   // eslint-disable-next-line @typescript-eslint/require-await
-  validateEndpointUrl: vi.fn(async (url: string) => url),
+  validateEndpointUrl: vi.fn(async (url: string) => ({ url, pinnedUrl: url })),
 }));
 
 const { validateEndpointUrl } = await import("./ssrf.js");
@@ -428,6 +428,60 @@ describe("runner", () => {
       );
       if (!providerCall) throw new Error("provider create call not found");
       expect(providerCall[1]).not.toContain("--credential");
+    });
+
+    it("does not leak parent secrets into subprocess env", async () => {
+      const prevMyApiKey = process.env.MY_API_KEY;
+      const prevGithubToken = process.env.GITHUB_TOKEN;
+      const prevAwsKey = process.env.AWS_ACCESS_KEY_ID;
+      const prevNvidiaKey = process.env.NVIDIA_API_KEY;
+      const prevProxy = process.env.HTTPS_PROXY;
+      const prevOsDebug = process.env.OPENSHELL_DEBUG;
+      process.env.MY_API_KEY = "secret-key-123";
+      process.env.GITHUB_TOKEN = "ghp_leaked";
+      process.env.AWS_ACCESS_KEY_ID = "AKIA_leaked";
+      process.env.NVIDIA_API_KEY = "nvapi-leaked";
+      process.env.HTTPS_PROXY = "http://proxy.corp:8080";
+      process.env.OPENSHELL_DEBUG = "1";
+      try {
+        await actionApply("default", minimalBlueprint());
+
+        const providerCall = mockExeca.mock.calls.find(
+          (c) => Array.isArray(c[1]) && c[1].includes("provider"),
+        );
+        if (!providerCall) throw new Error("provider create call not found");
+        const subEnv = providerCall[2].env;
+
+        // The explicitly injected credential must be present
+        expect(subEnv.OPENAI_API_KEY).toBe("secret-key-123");
+
+        // Secrets from the parent process must NOT be present
+        expect(subEnv).not.toHaveProperty("GITHUB_TOKEN");
+        expect(subEnv).not.toHaveProperty("AWS_ACCESS_KEY_ID");
+        expect(subEnv).not.toHaveProperty("NVIDIA_API_KEY");
+        expect(subEnv).not.toHaveProperty("MY_API_KEY");
+
+        // Allowed system vars should still be present
+        expect(subEnv).toHaveProperty("PATH");
+        expect(subEnv).toHaveProperty("HOME");
+
+        // Proxy, TLS, and openshell vars must pass through
+        expect(subEnv.HTTPS_PROXY).toBe("http://proxy.corp:8080");
+        expect(subEnv.OPENSHELL_DEBUG).toBe("1");
+      } finally {
+        if (prevMyApiKey === undefined) delete process.env.MY_API_KEY;
+        else process.env.MY_API_KEY = prevMyApiKey;
+        if (prevGithubToken === undefined) delete process.env.GITHUB_TOKEN;
+        else process.env.GITHUB_TOKEN = prevGithubToken;
+        if (prevAwsKey === undefined) delete process.env.AWS_ACCESS_KEY_ID;
+        else process.env.AWS_ACCESS_KEY_ID = prevAwsKey;
+        if (prevNvidiaKey === undefined) delete process.env.NVIDIA_API_KEY;
+        else process.env.NVIDIA_API_KEY = prevNvidiaKey;
+        if (prevProxy === undefined) delete process.env.HTTPS_PROXY;
+        else process.env.HTTPS_PROXY = prevProxy;
+        if (prevOsDebug === undefined) delete process.env.OPENSHELL_DEBUG;
+        else process.env.OPENSHELL_DEBUG = prevOsDebug;
+      }
     });
 
     it("falls back to credential_default when env var is unset", async () => {

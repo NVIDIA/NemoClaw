@@ -1,14 +1,17 @@
 ---
 name: "nemoclaw-user-deploy-remote"
-description: "Explains how to run NemoClaw on a remote GPU instance, including the deprecated Brev compatibility path and the preferred installer plus onboard flow. Describes security hardening measures applied to the NemoClaw sandbox container image. Use when reviewing container security, Docker capabilities, process limits, or sandbox hardening controls. Explains how Telegram reaches the sandboxed OpenClaw agent through OpenShell-managed processes and onboarding-time channel configuration. Use when setting up Telegram, a chat interface, or messaging integration without relying on nemoclaw start for bridges."
+description: "Explains how to run NemoClaw on a remote GPU instance, including the deprecated Brev compatibility path and the preferred installer plus onboard flow. Use when deploying NemoClaw to a remote VM, onboarding a Brev instance, or migrating away from the legacy `nemoclaw deploy` wrapper. Trigger keywords - deploy nemoclaw remote gpu, nemoclaw brev cloud deployment, nemoclaw sandbox hardening, container security, docker capabilities, process limits, nemoclaw telegram, telegram bot openclaw agent, openshell channel messaging."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# NemoClaw User Deploy Remote
+# Deploy NemoClaw to a Remote GPU Instance with Brev
 
-Explains how to run NemoClaw on a remote GPU instance, including the deprecated Brev compatibility path and the preferred installer plus onboard flow.
+## Gotchas
+
+- The `nemoclaw deploy` command is deprecated.
+- On Brev, set `CHAT_UI_URL` in the launchable environment configuration so it is available when the installer builds the sandbox image.
 
 ## Prerequisites
 
@@ -71,7 +74,7 @@ $ nemoclaw deploy <instance-name>
 SSH to the instance and run the OpenShell TUI to monitor activity and approve network requests:
 
 ```console
-$ ssh <instance-name> 'cd /home/ubuntu/nemoclaw && set -a && . .env && set +a && openshell term'
+$ ssh <instance-name> 'cd ~/nemoclaw && set -a && . .env && set +a && openshell term'
 ```
 
 ## Step 5: Verify Inference
@@ -139,7 +142,7 @@ Telegram, Discord, and Slack reach your agent through OpenShell-managed processe
 NemoClaw configures those channels during `nemoclaw onboard`. Tokens are registered with OpenShell providers, channel configuration is baked into the sandbox image, and runtime delivery stays under OpenShell control.
 
 `nemoclaw start` does not start Telegram (or other chat bridges). It only starts optional host services such as the cloudflared tunnel when that binary is present.
-For details, refer to Commands (see the `nemoclaw-user-reference` skill).
+For details, refer to Commands (use the `nemoclaw-user-reference` skill).
 
 ## Step 9: Create a Telegram Bot
 
@@ -179,12 +182,20 @@ Channel entries in `/sandbox/.openclaw/openclaw.json` are fixed at image build t
 
 If you add or change `TELEGRAM_BOT_TOKEN` (or toggle channels) after a sandbox already exists, you typically need to run `nemoclaw onboard` again so the image and provider attachments are rebuilt with the new settings.
 
-For a full first-time flow, refer to Quickstart (see the `nemoclaw-user-get-started` skill).
+NemoClaw stores a SHA-256 hash of each messaging token in the sandbox registry at creation time.
+When you re-run `nemoclaw onboard --non-interactive` with a new token, NemoClaw detects the change, backs up workspace state, deletes the sandbox, recreates it with the new credential, and restores the backup.
+This makes credential rotation safe to script.
+
+Telegram, Discord, and Slack each allow only one active consumer per bot token.
+If you enable a messaging channel and another sandbox already uses the same token, onboard prompts you to confirm before continuing in interactive mode and exits non-zero in non-interactive mode.
+`nemoclaw status` also reports cross-sandbox overlaps so you can resolve duplicates before messages start dropping.
+
+For a full first-time flow, refer to Quickstart (use the `nemoclaw-user-get-started` skill).
 
 ## Step 12: Confirm Delivery
 
 After the sandbox is running, send a message to your bot in Telegram.
-If something fails, use `openshell term` on the host, check gateway logs, and verify network policy allows the Telegram API (see Customize the Network Policy (see the `nemoclaw-user-manage-policy` skill) and the `telegram` preset).
+If something fails, use `openshell term` on the host, check gateway logs, and verify network policy allows the Telegram API (see Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill) and the `telegram` preset).
 
 ## Step 13: `nemoclaw start` (cloudflared Only)
 
@@ -195,11 +206,11 @@ It does not affect Telegram connectivity.
 $ nemoclaw start
 ```
 
-## Reference
+## References
 
-- [Sandbox Image Hardening](references/sandbox-hardening.md)
+- **Load [references/sandbox-hardening.md](references/sandbox-hardening.md)** when reviewing sandbox image security controls, auditing capability drops, or looking up the runtime resource limits. Includes the sandbox container image hardening reference, covering Docker capabilities and process limits.
 
 ## Related Skills
 
-- `nemoclaw-user-monitor-sandbox` — Monitor Sandbox Activity for sandbox monitoring tools
-- `nemoclaw-user-reference` — Commands for the full `deploy` command reference
+- `nemoclaw-user-monitor-sandbox` — Monitor Sandbox Activity (use the `nemoclaw-user-monitor-sandbox` skill) for sandbox monitoring tools
+- `nemoclaw-user-reference` — Commands (use the `nemoclaw-user-reference` skill) for the full `deploy` command reference

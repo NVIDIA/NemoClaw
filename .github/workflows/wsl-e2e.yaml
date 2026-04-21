@@ -1,0 +1,208 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: wsl-e2e
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "bin/**"
+      - "nemoclaw/**"
+      - "scripts/**"
+      - "test/**"
+      - ".github/workflows/wsl-e2e.yaml"
+      - "package.json"
+      - "vitest.config.ts"
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wsl-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wsl-e2e:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      WSL_DISTRO: Ubuntu
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-wsl"
+    steps:
+      - name: Force LF line endings for checkout
+        shell: powershell
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve workspace path for WSL
+        shell: powershell
+        run: |
+          $winPath = "${{ github.workspace }}"
+          $drive = $winPath.Substring(0,1).ToLower()
+          $rest = $winPath.Substring(2).Replace('\','/')
+          $wslPath = "/mnt/$drive$rest"
+          "WSL_WORKDIR=$wslPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "WSL_WORKDIR=$wslPath"
+
+      - name: Ensure Ubuntu WSL exists
+        shell: powershell
+        run: |
+          wsl --list --verbose 2>&1 | Out-Default
+          # Native commands do not throw in PowerShell; check LASTEXITCODE.
+          $null = wsl -d $env:WSL_DISTRO -- echo ok 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host 'Ubuntu not found - installing via wsl --install'
+            wsl --install -d $env:WSL_DISTRO --no-launch --web-download
+            if ($LASTEXITCODE -ne 0) {
+              throw ('wsl --install failed with exit code ' + $LASTEXITCODE)
+            }
+            # The first launch initialises the distro with the default root user.
+            wsl -d $env:WSL_DISTRO -- bash -c 'echo distro initialised'
+            if ($LASTEXITCODE -ne 0) {
+              throw ('distro first-launch failed with exit code ' + $LASTEXITCODE)
+            }
+          } else {
+            Write-Host 'Ubuntu already available'
+          }
+          wsl --set-default $env:WSL_DISTRO
+          if ($LASTEXITCODE -ne 0) {
+            throw ('wsl --set-default failed with exit code ' + $LASTEXITCODE)
+          }
+
+      - name: Verify WSL
+        shell: powershell
+        run: |
+          wsl -d $env:WSL_DISTRO -- bash -lc "uname -a"
+          wsl -d $env:WSL_DISTRO -- bash -lc "cat /etc/os-release"
+
+      - name: Install Ubuntu dependencies
+        shell: powershell
+        run: |
+          $script = @'
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y bash ca-certificates curl git jq lsb-release make python3 python3-pip rsync tar unzip xz-utils
+          '@
+          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
+          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
+          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
+          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+
+      - name: Install Node.js 22 in WSL
+        shell: powershell
+        run: |
+          $script = @'
+          set -euo pipefail
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y nodejs
+          node --version
+          npm --version
+          '@
+          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
+          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
+          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
+          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+
+      - name: Install project dependencies and build plugin
+        shell: powershell
+        run: |
+          $script = @"
+          set -euo pipefail
+          cd '$env:WSL_WORKDIR'
+          npm install --ignore-scripts
+          npm run build:cli
+          cd nemoclaw
+          npm install --ignore-scripts
+          npm run build
+          "@
+          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
+          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
+          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
+          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+
+      - name: Detect Docker availability in WSL
+        id: docker
+        shell: powershell
+        run: |
+          $script = @'
+          if docker info >/dev/null 2>&1; then
+            echo DOCKER_OK=1
+          else
+            echo DOCKER_OK=0
+          fi
+          '@
+          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
+          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
+          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
+          $result = wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+          if ($result -match 'DOCKER_OK=1') {
+            'docker_ok=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host 'Docker is available in WSL'
+          } else {
+            'docker_ok=false' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host 'Docker is not available in WSL; full E2E will be skipped'
+          }
+
+      - name: Run WSL compatibility test suite
+        shell: powershell
+        run: |
+          $script = @"
+          set -euo pipefail
+          cd '$env:WSL_WORKDIR'
+          export NEMOCLAW_EXEC_TIMEOUT=30000
+          export NEMOCLAW_TEST_TIMEOUT=60000
+          npx vitest run --testTimeout 60000
+          "@
+          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
+          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
+          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
+          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+
+      - name: Run WSL full E2E
+        if: steps.docker.outputs.docker_ok == 'true'
+        shell: powershell
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $script = @"
+          set -euo pipefail
+          cd '$env:WSL_WORKDIR'
+          export NVIDIA_API_KEY='$env:NVIDIA_API_KEY'
+          export GITHUB_TOKEN='$env:GITHUB_TOKEN'
+          export NEMOCLAW_NON_INTERACTIVE='$env:NEMOCLAW_NON_INTERACTIVE'
+          export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE='$env:NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE'
+          export NEMOCLAW_RECREATE_SANDBOX='$env:NEMOCLAW_RECREATE_SANDBOX'
+          export NEMOCLAW_SANDBOX_NAME='$env:NEMOCLAW_SANDBOX_NAME'
+          bash test/e2e/test-full-e2e.sh
+          "@
+          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
+          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
+          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
+          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+
+      - name: Explain skipped full E2E
+        if: steps.docker.outputs.docker_ok != 'true'
+        shell: powershell
+        run: |
+          Write-Host 'Skipping WSL full E2E because Docker is unavailable on this runner.'
+          Write-Host 'The workflow still validated the NemoClaw build and test flow inside Ubuntu WSL.'
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wsl-e2e-install-log
+          path: |
+            C:\Users\runneradmin\AppData\Local\Temp\nemoclaw-e2e-install.log
+          if-no-files-found: ignore

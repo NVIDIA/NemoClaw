@@ -32,6 +32,24 @@ function loadNimWithMockedRunner(runCapture: Mock) {
   };
 }
 
+/** Check if an argv array or legacy shell command contains a specific argument. */
+function hasArg(cmd: string | string[], arg: string): boolean {
+  return Array.isArray(cmd) ? cmd.includes(arg) : cmd.includes(arg);
+}
+
+function hasCurlTimeoutArgs(cmd: string | string[]): boolean {
+  if (!Array.isArray(cmd)) {
+    return (
+      cmd.includes("curl") &&
+      cmd.includes("--connect-timeout 5") &&
+      cmd.includes("--max-time 5")
+    );
+  }
+  const connectTimeout = cmd.indexOf("--connect-timeout");
+  const maxTime = cmd.indexOf("--max-time");
+  return cmd[0] === "curl" && cmd[connectTimeout + 1] === "5" && cmd[maxTime + 1] === "5";
+}
+
 describe("nim", () => {
   describe("listModels", () => {
     it("returns 5 models", () => {
@@ -93,10 +111,11 @@ describe("nim", () => {
     });
 
     it("detects GB10 unified-memory GPUs as Spark-capable NVIDIA devices", () => {
-      const runCapture = vi.fn((cmd: string) => {
-        if (cmd.includes("memory.total")) return "";
-        if (cmd.includes("query-gpu=name")) return "NVIDIA GB10";
-        if (cmd.includes("free -m")) return "131072";
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd.some((a: string) => a.includes("memory.total"))) return "";
+        if (cmd.some((a: string) => a.includes("query-gpu=name"))) return "NVIDIA GB10";
+        if (cmd[0] === "free" && cmd[1] === "-m") return "              total        used        free      shared  buff/cache   available\nMem:         131072       10240       90000        1024       30832      119808\nSwap:             0           0           0";
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
@@ -118,10 +137,11 @@ describe("nim", () => {
     });
 
     it("detects Orin unified-memory GPUs without marking them as Spark", () => {
-      const runCapture = vi.fn((cmd: string) => {
-        if (cmd.includes("memory.total")) return "";
-        if (cmd.includes("query-gpu=name")) return "NVIDIA Jetson AGX Orin";
-        if (cmd.includes("free -m")) return "32768";
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd.some((a: string) => a.includes("memory.total"))) return "";
+        if (cmd.some((a: string) => a.includes("query-gpu=name"))) return "NVIDIA Jetson AGX Orin";
+        if (cmd[0] === "free" && cmd[1] === "-m") return "              total        used        free      shared  buff/cache   available\nMem:          32768        5120       20000         512       7148       27136\nSwap:             0           0           0";
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
@@ -143,10 +163,11 @@ describe("nim", () => {
     });
 
     it("marks low-memory unified-memory NVIDIA devices as not NIM-capable", () => {
-      const runCapture = vi.fn((cmd: string) => {
-        if (cmd.includes("memory.total")) return "";
-        if (cmd.includes("query-gpu=name")) return "NVIDIA Xavier";
-        if (cmd.includes("free -m")) return "4096";
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd.some((a: string) => a.includes("memory.total"))) return "";
+        if (cmd.some((a: string) => a.includes("query-gpu=name"))) return "NVIDIA Xavier";
+        if (cmd[0] === "free" && cmd[1] === "-m") return "              total        used        free      shared  buff/cache   available\nMem:           4096        1024        2048         256       1024        2816\nSwap:             0           0           0";
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
@@ -173,18 +194,39 @@ describe("nim", () => {
     });
   });
 
+  describe("waitForNimHealth", () => {
+    it("bounds curl health probes with connect and total timeouts", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models")) return '{"data":[]}';
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        expect(nimModule.waitForNimHealth(9000, 1)).toBe(true);
+        const commands = runCapture.mock.calls.map(([c]: [string | string[]]) => c);
+
+        expect(commands.some((c) => c[0] === "curl" && hasCurlTimeoutArgs(c))).toBe(true);
+      } finally {
+        restore();
+      }
+    });
+  });
+
   describe("nimStatusByName", () => {
     it("uses provided port directly", () => {
-      const runCapture = vi.fn((cmd: string) => {
-        if (cmd.includes("docker inspect")) return "running";
-        if (cmd.includes("http://localhost:9000/v1/models")) return '{"data":[]}';
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "docker" && cmd.includes("inspect")) return "running";
+        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models")) return '{"data":[]}';
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
 
       try {
         const st = nimModule.nimStatusByName("foo", 9000);
-        const commands = runCapture.mock.calls.map(([cmd]: [string]) => cmd);
+        const commands = runCapture.mock.calls.map(([c]: [string | string[]]) => c);
 
         expect(st).toMatchObject({
           running: true,
@@ -192,10 +234,11 @@ describe("nim", () => {
           container: "foo",
           state: "running",
         });
-        expect(commands.some((cmd: string) => cmd.includes("docker port"))).toBe(false);
-        expect(commands.some((cmd: string) => cmd.includes("http://localhost:9000/v1/models"))).toBe(
+        expect(commands.some((c) => c[0] === "docker" && c.includes("port"))).toBe(false);
+        expect(commands.some((c) => c.includes("http://127.0.0.1:9000/v1/models"))).toBe(
           true,
         );
+        expect(commands.some((c) => c[0] === "curl" && hasCurlTimeoutArgs(c))).toBe(true);
       } finally {
         restore();
       }
@@ -203,20 +246,21 @@ describe("nim", () => {
 
     it("uses published docker port when no port is provided", () => {
       for (const mapping of ["0.0.0.0:9000", "127.0.0.1:9000", "[::]:9000", ":::9000"]) {
-        const runCapture = vi.fn((cmd: string) => {
-          if (cmd.includes("docker inspect")) return "running";
-          if (cmd.includes("docker port")) return mapping;
-          if (cmd.includes("http://localhost:9000/v1/models")) return '{"data":[]}';
+        const runCapture = vi.fn((cmd: string | string[]) => {
+          if (!Array.isArray(cmd)) throw new Error("expected argv array");
+          if (cmd[0] === "docker" && cmd.includes("inspect")) return "running";
+          if (cmd[0] === "docker" && cmd.includes("port")) return mapping;
+          if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models")) return '{"data":[]}';
           return "";
         });
         const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
 
         try {
           const st = nimModule.nimStatusByName("foo");
-          const commands = runCapture.mock.calls.map(([cmd]: [string]) => cmd);
+          const commands = runCapture.mock.calls.map(([c]: [string | string[]]) => c);
 
           expect(st).toMatchObject({ running: true, healthy: true, container: "foo", state: "running" });
-          expect(commands.some((cmd: string) => cmd.includes("docker port"))).toBe(true);
+          expect(commands.some((c) => c[0] === "docker" && c.includes("port"))).toBe(true);
         } finally {
           restore();
         }
@@ -224,10 +268,11 @@ describe("nim", () => {
     });
 
     it("falls back to 8000 when docker port lookup fails", () => {
-      const runCapture = vi.fn((cmd: string) => {
-        if (cmd.includes("docker inspect")) return "running";
-        if (cmd.includes("docker port")) return "";
-        if (cmd.includes("http://localhost:8000/v1/models")) return '{"data":[]}';
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "docker" && cmd.includes("inspect")) return "running";
+        if (cmd[0] === "docker" && cmd.includes("port")) return "";
+        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:8000/v1/models")) return '{"data":[]}';
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
@@ -241,8 +286,9 @@ describe("nim", () => {
     });
 
     it("does not run health check when container is not running", () => {
-      const runCapture = vi.fn((cmd: string) => {
-        if (cmd.includes("docker inspect")) return "exited";
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "docker" && cmd.includes("inspect")) return "exited";
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
@@ -251,6 +297,125 @@ describe("nim", () => {
         const st = nimModule.nimStatusByName("foo");
         expect(st).toMatchObject({ running: false, healthy: false, container: "foo", state: "exited" });
         expect(runCapture.mock.calls).toHaveLength(1);
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("isNgcLoggedIn", () => {
+    const fs = require("fs");
+    const os = require("os");
+
+    function mockDockerConfig(config: string | null) {
+      const origReadFileSync = fs.readFileSync;
+      const origHomedir = os.homedir;
+      os.homedir = () => "/mock-home";
+      if (config === null) {
+        fs.readFileSync = () => { throw new Error("ENOENT"); };
+      } else {
+        fs.readFileSync = (p: string, ...args: unknown[]) => {
+          if (typeof p === "string" && p.includes(".docker/config.json")) return config;
+          return origReadFileSync(p, ...args);
+        };
+      }
+      return () => {
+        fs.readFileSync = origReadFileSync;
+        os.homedir = origHomedir;
+      };
+    }
+
+    it("returns true when credHelpers has nvcr.io", () => {
+      const restore = mockDockerConfig(JSON.stringify({ credHelpers: { "nvcr.io": "secretservice" } }));
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(true);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns true when auths has nvcr.io with auth field", () => {
+      const restore = mockDockerConfig(JSON.stringify({ auths: { "nvcr.io": { auth: "dXNlcjpwYXNz" } } }));
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(true);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns true when auths has https://nvcr.io with auth field", () => {
+      const restore = mockDockerConfig(
+        JSON.stringify({ auths: { "https://nvcr.io": { auth: "dXNlcjpwYXNz" } } }),
+      );
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(true);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when auths has nvcr.io but empty entry", () => {
+      const restore = mockDockerConfig(JSON.stringify({ auths: { "nvcr.io": {} } }));
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when config file is missing", () => {
+      const restore = mockDockerConfig(null);
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when config has malformed JSON", () => {
+      const restore = mockDockerConfig("not json");
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when auths is empty and no credHelpers", () => {
+      const restore = mockDockerConfig(JSON.stringify({ auths: {} }));
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns true when empty nvcr.io marker exists and credsStore is set (Docker Desktop)", () => {
+      const restore = mockDockerConfig(
+        JSON.stringify({ credsStore: "desktop", auths: { "nvcr.io": {} } }),
+      );
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(true);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when credsStore is set but no nvcr.io marker (not logged in)", () => {
+      const restore = mockDockerConfig(
+        JSON.stringify({ credsStore: "desktop", auths: {} }),
+      );
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns false when empty nvcr.io marker exists but no credsStore", () => {
+      const restore = mockDockerConfig(JSON.stringify({ auths: { "nvcr.io": {} } }));
+      try {
+        expect(nim.isNgcLoggedIn()).toBe(false);
       } finally {
         restore();
       }

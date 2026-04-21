@@ -151,7 +151,30 @@ if command -v npm >/dev/null 2>&1 && [[ -n "$node_major" ]] && ((node_major >= 2
   info "Node.js already installed: $(node --version)"
 else
   info "Installing Node.js 22..."
-  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - >/dev/null 2>&1
+  # IMPORTANT: update NODESOURCE_SHA256 when changing setup_22.x URL
+  NODESOURCE_URL="https://deb.nodesource.com/setup_22.x"
+  NODESOURCE_SHA256="575583bbac2fccc0b5edd0dbc03e222d9f9dc8d724da996d22754d6411104fd1"
+  ns_tmp="$(mktemp)"
+  curl -fsSL "$NODESOURCE_URL" -o "$ns_tmp" \
+    || {
+      rm -f "$ns_tmp"
+      fail "Failed to download NodeSource installer"
+    }
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual_hash="$(sha256sum "$ns_tmp" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual_hash="$(shasum -a 256 "$ns_tmp" | awk '{print $1}')"
+  else
+    warn "No SHA-256 tool found — skipping NodeSource integrity check"
+    actual_hash="$NODESOURCE_SHA256"
+  fi
+  if [[ "$actual_hash" != "$NODESOURCE_SHA256" ]]; then
+    rm -f "$ns_tmp"
+    fail "NodeSource installer integrity check failed\n  Expected: $NODESOURCE_SHA256\n  Actual:   $actual_hash"
+  fi
+  info "NodeSource installer integrity verified"
+  sudo -E bash "$ns_tmp" >/dev/null 2>&1
+  rm -f "$ns_tmp"
   wait_for_apt_lock
   retry 3 10 "install nodejs" sudo apt-get install -y -qq nodejs >/dev/null 2>&1
   info "Node.js $(node --version) installed"
@@ -225,6 +248,17 @@ npm install 2>&1 | tail -3
 npm run build 2>&1 | tail -3
 cd "$NEMOCLAW_CLONE_DIR"
 info "Plugin built"
+
+# Create the global nemoclaw symlink once during setup. This runs here
+# (before any test) so the cold-path npm link cost is absorbed by the
+# launchable's own readiness window rather than a later test's tight
+# execSync timeout. When the test suite rsyncs PR branch code over this
+# clone, a subsequent `npm link` is a fast no-op against the existing
+# symlink. See PR #1888 regression commentary.
+info "Linking nemoclaw CLI globally..."
+sudo npm link 2>&1 | tail -3
+sudo chown -R "$TARGET_USER":"$TARGET_USER" "$NEMOCLAW_CLONE_DIR"
+info "nemoclaw CLI linked"
 
 # ══════════════════════════════════════════════════════════════════════
 # 6. Pre-pull Docker images
