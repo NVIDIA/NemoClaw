@@ -72,24 +72,45 @@ export function isConfigObject(value: unknown): value is ConfigObject {
 }
 
 /**
+ * Narrow an unknown value to a JSON-like configuration value.
+ */
+export function isConfigValue(value: unknown): value is ConfigValue {
+  if (value === null || value === undefined) return true;
+  if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.every((entry) => isConfigValue(entry));
+  }
+  if (!isConfigObject(value)) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return false;
+  }
+
+  return Object.values(value).every((entry) => isConfigValue(entry));
+}
+
+/**
  * Recursively strip credential fields from a JSON-like object.
  * Returns a new object with sensitive values replaced by a placeholder.
  */
-export function stripCredentials(obj: ConfigValue): ConfigValue {
+export function stripCredentials<T extends ConfigValue>(obj: T): T {
   if (obj === null || obj === undefined) return obj;
   if (typeof obj !== "object") return obj;
-  if (Array.isArray(obj)) return obj.map(stripCredentials);
+  if (Array.isArray(obj)) {
+    return obj.map((value) => stripCredentials(value)) as T;
+  }
   if (!isConfigObject(obj)) return obj;
 
   const result: ConfigObject = {};
   for (const [key, value] of Object.entries(obj)) {
-    if (isCredentialField(key)) {
-      result[key] = CREDENTIAL_PLACEHOLDER;
-    } else {
-      result[key] = stripCredentials(value);
-    }
+    result[key] = isCredentialField(key) ? CREDENTIAL_PLACEHOLDER : stripCredentials(value);
   }
-  return result;
+  return result as T;
 }
 
 /**
@@ -105,8 +126,9 @@ export function sanitizeConfigFile(configPath: string): void {
     return; // Not valid JSON — skip (may be YAML for Hermes)
   }
   if (!isConfigObject(parsed)) return;
-  delete parsed.gateway;
-  const sanitized = stripCredentials(parsed);
+
+  const { gateway: _gateway, ...config } = parsed;
+  const sanitized = stripCredentials(config);
   writeFileSync(configPath, JSON.stringify(sanitized, null, 2));
   chmodSync(configPath, 0o600);
 }

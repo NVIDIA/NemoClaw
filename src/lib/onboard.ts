@@ -1901,7 +1901,7 @@ function killStaleProxy(): void {
   }
 }
 
-function startOllamaAuthProxy(): void {
+function startOllamaAuthProxy(): boolean {
   const crypto = require("crypto");
   killStaleProxy();
 
@@ -1912,8 +1912,12 @@ function startOllamaAuthProxy(): void {
   const pid = spawnOllamaAuthProxy(ollamaProxyToken);
   sleep(1);
   if (!isOllamaProxyProcess(pid)) {
-    console.error(`  Warning: Ollama auth proxy did not start on :${OLLAMA_PROXY_PORT}`);
+    console.error(`  Error: Ollama auth proxy failed to start on :${OLLAMA_PROXY_PORT}`);
+    console.error(`  Containers will not be able to reach Ollama without the proxy.`);
+    console.error(`  Check if port ${OLLAMA_PROXY_PORT} is already in use: lsof -ti :${OLLAMA_PROXY_PORT}`);
+    return false;
   }
+  return true;
 }
 
 /**
@@ -4144,7 +4148,9 @@ async function setupNim(gpu) {
           // WSL2 doesn't need the proxy — Docker can reach the host directly.
           console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
         } else {
-          startOllamaAuthProxy();
+          if (!startOllamaAuthProxy()) {
+            process.exit(1);
+          }
           console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`);
         }
         provider = "ollama-local";
@@ -4204,7 +4210,9 @@ async function setupNim(gpu) {
         // Shell required: backgrounding (&), env var prefix, output redirection.
         run(`OLLAMA_HOST=0.0.0.0:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
         sleep(2);
-        startOllamaAuthProxy();
+        if (!startOllamaAuthProxy()) {
+          process.exit(1);
+        }
         console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`);
         provider = "ollama-local";
         credentialEnv = "OPENAI_API_KEY";

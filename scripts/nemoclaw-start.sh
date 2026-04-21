@@ -534,6 +534,11 @@ GUARD
       printf '\n%s\n' "$snippet" >>"$rc_file"
     fi
   done
+  # Final lock after all rc-file mutations (export_gateway_token + this
+  # function) are complete so Landlock read_only enforcement holds.
+  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
+    [ -f "$rc_file" ] && chmod 444 "$rc_file"
+  done
 }
 
 validate_openclaw_symlinks() {
