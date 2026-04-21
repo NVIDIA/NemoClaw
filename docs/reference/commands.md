@@ -4,7 +4,7 @@ title:
   nav: "Commands"
 description:
   main: "Full CLI reference for slash commands and standalone NemoClaw commands."
-  agent: "Lists all slash commands and standalone NemoClaw CLI commands. Use when looking up a command, checking command syntax, or browsing the CLI reference."
+  agent: "Includes the full CLI reference for slash commands and standalone NemoClaw commands. Use when looking up a specific `nemoclaw` or `/nemoclaw` subcommand, flag, argument, or exit code."
 keywords: ["nemoclaw cli commands", "nemoclaw command reference"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "nemoclaw", "cli"]

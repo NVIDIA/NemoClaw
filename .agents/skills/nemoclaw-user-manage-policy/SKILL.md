@@ -1,14 +1,12 @@
 ---
 name: "nemoclaw-user-manage-policy"
-description: "Reviews and approves blocked agent network requests in the TUI. Use when approving or denying sandbox egress requests, managing blocked network calls, or using the approval TUI. Adds, removes, or modifies allowed endpoints in the sandbox policy. Use when customizing network policy, changing egress rules, or configuring sandbox endpoint access."
+description: "Reviews and approves blocked agent network requests in the TUI. Use when approving or denying sandbox egress requests, managing blocked network calls, or using the approval TUI. Trigger keywords - nemoclaw approve network requests, sandbox egress approval tui, customize nemoclaw network policy, sandbox egress policy configuration."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# NemoClaw User Manage Policy
-
-Reviews and approves blocked agent network requests in the TUI. Use when approving or denying sandbox egress requests, managing blocked network calls, or using the approval TUI.
+# Approve or Deny NemoClaw Agent Network Requests
 
 ## Prerequisites
 
@@ -163,7 +161,7 @@ This is useful when you want to test a destination before deciding whether it be
 NemoClaw ships preset policy files for common integrations in `nemoclaw-blueprint/policies/presets/`.
 Apply a preset as-is or use it as a starting template for a custom policy.
 
-During onboarding, the policy tier (see the `nemoclaw-user-reference` skill) you select determines which presets are enabled by default.
+During onboarding, the policy tier (use the `nemoclaw-user-reference` skill) you select determines which presets are enabled by default.
 You can add or remove individual presets in the interactive preset screen that follows tier selection.
 
 Available presets:
@@ -192,7 +190,7 @@ To include a preset in the baseline, merge its entries into `openclaw-sandbox.ya
 
 ## Related Skills
 
-- `nemoclaw-user-reference` — Network Policies for the full baseline policy reference
-- `nemoclaw-user-monitor-sandbox` — Monitor Sandbox Activity for general sandbox monitoring
+- `nemoclaw-user-reference` — Network Policies (use the `nemoclaw-user-reference` skill) for the full baseline policy reference
+- `nemoclaw-user-monitor-sandbox` — Monitor Sandbox Activity (use the `nemoclaw-user-monitor-sandbox` skill) for general sandbox monitoring
 - OpenShell [Policy Schema](https://docs.nvidia.com/openshell/latest/reference/policy-schema.html) for the full YAML policy schema reference.
 - OpenShell [Sandbox Policies](https://docs.nvidia.com/openshell/latest/sandboxes/policies.html) for applying, iterating, and debugging policies at the OpenShell layer.

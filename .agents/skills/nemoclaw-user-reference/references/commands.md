@@ -59,7 +59,7 @@ $ NEMOCLAW_SINGLE_SESSION=1 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
-Credentials are stored in `~/.nemoclaw/credentials.json`. For file permissions, plaintext storage behavior, and hardening guidance, see Credential Storage (see the `nemoclaw-user-configure-security` skill).
+Credentials are stored in `~/.nemoclaw/credentials.json`. For file permissions, plaintext storage behavior, and hardening guidance, see Credential Storage (use the `nemoclaw-user-configure-security` skill).
 The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
 
 After provider selection, the wizard prompts for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
@@ -72,7 +72,7 @@ Three tiers are available:
 | Open | Broad access across third-party services including messaging and productivity. |
 
 After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access.
-For details on tiers and the presets each includes, see Network Policies (see the `nemoclaw-user-reference` skill).
+For details on tiers and the presets each includes, see Network Policies (use the `nemoclaw-user-reference` skill).
 
 In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `balanced`):
 
@@ -208,8 +208,8 @@ Stop the NIM container and delete the sandbox.
 This removes the sandbox from the registry.
 
 > **Warning:** This command permanently deletes the sandbox **and its persistent volume**.
-> All workspace files (see the `nemoclaw-user-workspace` skill) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
-> Back up your workspace first with `nemoclaw <name> snapshot create` or see Backup and Restore (see the `nemoclaw-user-workspace` skill).
+> All workspace files (use the `nemoclaw-user-workspace` skill) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
+> Back up your workspace first with `nemoclaw <name> snapshot create` or see Backup and Restore (use the `nemoclaw-user-workspace` skill).
 > If you want to upgrade the sandbox while preserving state, use `nemoclaw <name> rebuild` instead.
 
 ```console

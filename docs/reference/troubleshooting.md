@@ -4,7 +4,7 @@ title:
   nav: "Troubleshooting"
 description:
   main: "Diagnose and resolve common NemoClaw installation, onboarding, and runtime issues."
-  agent: "Diagnoses and resolves common NemoClaw installation, onboarding, and runtime issues. Use when troubleshooting errors, debugging sandbox problems, or resolving setup failures."
+  agent: "Lists fixes for common installation, onboarding, and runtime issues. Use when diagnosing a reported NemoClaw error, a failed onboard, or unexpected sandbox behavior."
 keywords: ["nemoclaw troubleshooting", "nemoclaw debug sandbox issues"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "troubleshooting", "nemoclaw"]
