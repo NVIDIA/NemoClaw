@@ -2520,8 +2520,13 @@ function sandboxSnapshot(sandboxName, subArgs) {
       console.log(`  Creating snapshot of '${sandboxName}'${label}...`);
       const result = sandboxState.backupSandboxState(sandboxName, { name: opts.name });
       if (result.success) {
-        const v = formatSnapshotVersion(result.manifest);
-        const nameSuffix = result.manifest.name ? ` name=${result.manifest.name}` : "";
+        // Virtual snapshotVersion is only assigned by listBackups, so re-resolve
+        // the just-created snapshot by its timestamp to get a valid v<N>.
+        const entry =
+          sandboxState.findBackup(sandboxName, result.manifest.timestamp).match ??
+          result.manifest;
+        const v = formatSnapshotVersion(entry);
+        const nameSuffix = entry.name ? ` name=${entry.name}` : "";
         console.log(
           `  ${G}\u2713${R} Snapshot ${v}${nameSuffix} created (${result.backedUpDirs.length} directories)`,
         );
