@@ -67,6 +67,7 @@ const sandboxVersion = require("./lib/sandbox-version");
 const sandboxState = require("./lib/sandbox-state");
 const { ensureOllamaAuthProxy } = require("./lib/onboard");
 const skillInstall = require("./lib/skill-install");
+const { sleepSeconds } = require("./lib/wait");
 const { parseSandboxPhase } = require("./lib/gateway-state");
 const {
   getActiveSandboxSessions,
@@ -332,7 +333,7 @@ function checkAndRecoverSandboxProcesses(sandboxName, { quiet = false } = {}) {
   const recovered = recoverSandboxProcesses(sandboxName);
   if (recovered) {
     // Wait for gateway to bind its HTTP port before declaring success
-    spawnSync("sleep", ["3"]);
+    sleepSeconds(3);
     if (isSandboxGatewayRunning(sandboxName) !== true) {
       // Gateway process started but HTTP endpoint never came up
       if (!quiet) {

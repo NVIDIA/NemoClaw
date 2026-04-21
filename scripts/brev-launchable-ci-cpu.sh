@@ -242,6 +242,13 @@ cd "$NEMOCLAW_CLONE_DIR"
 npm install --ignore-scripts 2>&1 | tail -3
 info "Root deps installed"
 
+# --ignore-scripts above skips the `prepare` lifecycle which normally
+# builds dist/ (via `build:cli`). Build it explicitly — bin/nemoclaw.js
+# does `require("../dist/nemoclaw")` and needs the compiled output.
+info "Building CLI (dist/)..."
+npm run build:cli 2>&1 | tail -3
+info "CLI built"
+
 info "Building TypeScript plugin..."
 cd "$NEMOCLAW_CLONE_DIR/nemoclaw"
 npm install 2>&1 | tail -3
@@ -249,16 +256,15 @@ npm run build 2>&1 | tail -3
 cd "$NEMOCLAW_CLONE_DIR"
 info "Plugin built"
 
-# Create the global nemoclaw symlink once during setup. This runs here
-# (before any test) so the cold-path npm link cost is absorbed by the
-# launchable's own readiness window rather than a later test's tight
-# execSync timeout. When the test suite rsyncs PR branch code over this
-# clone, a subsequent `npm link` is a fast no-op against the existing
-# symlink. See PR #1888 regression commentary.
-info "Linking nemoclaw CLI globally..."
-sudo npm link 2>&1 | tail -3
-sudo chown -R "$TARGET_USER":"$TARGET_USER" "$NEMOCLAW_CLONE_DIR"
-info "nemoclaw CLI linked"
+# Expose the nemoclaw CLI on PATH. Earlier this was `sudo npm link`, but
+# on cold CPU Brev that routinely hangs inside npm's global-prefix
+# housekeeping and `sudo chown -R node_modules` traversal (≥20 min in
+# CI). npm link just creates two symlinks in the end; do them directly
+# so setup stays deterministic and fast.
+info "Linking nemoclaw CLI (direct symlink)..."
+sudo ln -sf "$NEMOCLAW_CLONE_DIR/bin/nemoclaw.js" /usr/local/bin/nemoclaw
+sudo chmod +x "$NEMOCLAW_CLONE_DIR/bin/nemoclaw.js"
+info "nemoclaw CLI linked at /usr/local/bin/nemoclaw"
 
 # ══════════════════════════════════════════════════════════════════════
 # 6. Pre-pull Docker images
