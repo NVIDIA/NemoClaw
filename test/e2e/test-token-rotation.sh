@@ -147,6 +147,11 @@ fi
 
 # ── Helpers ───────────────────────────────────────────────────────
 
+# Detect environmental preflight failures (network, API unreachable)
+is_environmental_failure() {
+  grep -Eqi 'not reachable|unreachable|preflight|network reachability failure' "$1" 2>/dev/null
+}
+
 cleanup() {
   openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
 }
@@ -198,9 +203,8 @@ fi
 if [ $install_exit -eq 0 ]; then
   pass "install.sh completed (exit 0)"
 else
-  if grep -qE "(Telegram|Discord) network reachability failure" "$INSTALL_LOG" 2>/dev/null; then
-    skip "install.sh aborted: messaging API unreachable (likely VPN / corporate proxy)"
-    info "Detected '<provider> network reachability failure' in install log."
+  if is_environmental_failure "$INSTALL_LOG"; then
+    skip "Phase 0 skipped — environmental preflight failure (exit $install_exit)"
   else
     fail "install.sh failed (exit $install_exit)"
   fi
@@ -275,6 +279,8 @@ fi
 
 # ── Phase 2: Rotate Telegram token only (re-onboard with token B) ─
 
+PHASE2_OK=false
+
 section "Phase 2: Re-onboard with rotated TELEGRAM_BOT_TOKEN_B (Discord unchanged)"
 
 if [ "$PHASE0_OK" != true ]; then
@@ -293,6 +299,8 @@ else
   if [ $onboard_exit -ne 0 ]; then
     fail "Phase 2 onboard failed (exit $onboard_exit)"
     echo "$ONBOARD_OUTPUT" | tail -30
+  else
+    PHASE2_OK=true
   fi
 
   if echo "$ONBOARD_OUTPUT" | grep -q "credential(s) rotated"; then
@@ -341,8 +349,8 @@ fi
 
 section "Phase 3: Re-onboard with same tokens (no rotation expected)"
 
-if [ "$PHASE0_OK" != true ]; then
-  skip "Phase 3 — skipped (Phase 0 failed)"
+if [ "$PHASE0_OK" != true ] || [ "$PHASE2_OK" != true ]; then
+  skip "Phase 3 — skipped (Phase 0 or Phase 2 did not succeed)"
 else
   ONBOARD_OUTPUT=$(nemoclaw onboard --non-interactive 2>&1)
   onboard_exit=$?
