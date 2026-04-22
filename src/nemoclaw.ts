@@ -1579,7 +1579,7 @@ function sandboxLogs(sandboxName, follow) {
     stdio: "inherit",
     ignoreError: true,
   });
-  if (result.status !== 0 && !isMissingSandboxDeleteResult(`${result.stdout || ""}${result.stderr || ""}`)) {
+  if (result.status !== 0) {
     console.error(`  Command failed (exit ${result.status}): openshell ${args.join(" ")}`);
   }
   exitWithSpawnResult(result);
