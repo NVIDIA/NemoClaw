@@ -110,6 +110,7 @@ The wizard prompts for a sandbox name.
 Names must follow RFC 1123 subdomain rules: lowercase alphanumeric characters and hyphens only, and must start and end with an alphanumeric character.
 Uppercase letters are automatically lowercased.
 Names that match global CLI commands (`status`, `list`, `debug`, etc.) are rejected to avoid routing conflicts.
+Use `--agent <name>` to target a specific installed agent profile during onboarding.
 
 If you enable Slack during onboarding, the wizard collects both the Bot Token (`SLACK_BOT_TOKEN`) and the App-Level Token (`SLACK_APP_TOKEN`).
 Socket Mode requires both tokens.
@@ -119,6 +120,11 @@ If you enable Discord during onboarding, the wizard can also prompt for a Discor
 NemoClaw bakes those values into the sandbox image as Discord guild workspace config so the bot can respond in the selected server, not just in DMs.
 If you leave the Discord User ID blank, the guild config omits the user allowlist and any member of the configured server can message the bot.
 Guild responses remain mention-gated by default unless you opt into all-message replies.
+
+If you run onboarding again with the same sandbox name and choose a different inference provider or model, NemoClaw detects the drift and recreates the sandbox so the running OpenClaw UI matches your selection.
+In interactive mode, the wizard asks for confirmation before delete and recreate.
+In non-interactive mode, NemoClaw recreates automatically when the stored selection is readable and differs; if NemoClaw cannot read the stored selection, NemoClaw reuses by default.
+Set `NEMOCLAW_RECREATE_SANDBOX=1` to force recreation even when no drift is detected.
 
 Before creating the gateway, the wizard runs preflight checks.
 It verifies that Docker is reachable, warns on untested runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
@@ -149,6 +155,7 @@ If a `--resume` is attempted with a different `--from` path than the original se
 ### `nemoclaw list`
 
 List all registered sandboxes with their model, provider, and policy presets.
+Sandboxes with an active SSH session are marked with a `●` indicator so you can tell at a glance which sandbox you are already connected to in another terminal.
 
 ```console
 $ nemoclaw list
@@ -169,9 +176,18 @@ $ nemoclaw deploy <instance-name>
 ### `nemoclaw <name> connect`
 
 Connect to a sandbox by name.
-On a TTY, a one-shot hint prints before dropping into the sandbox shell, reminding you to run `openclaw tui` inside.
+If the sandbox is not yet in the `Ready` phase, `connect` polls `openshell sandbox list` every few seconds and prints the current phase. This gives you progress output right after onboarding, when the 2.4 GB image is still pulling, instead of a silent hang.
+Control the wait budget with `NEMOCLAW_CONNECT_TIMEOUT` (integer seconds, default `120`). When the deadline expires, `connect` exits non-zero with the last-seen phase.
+
+On a TTY, a one-shot hint prints before dropping into the sandbox shell.
+The hint is agent-aware. It names the correct TUI command for the sandbox's agent and reminds you to use `/exit` to leave the chat before `exit` returns you to the host shell.
 Set `NEMOCLAW_NO_CONNECT_HINT=1` to suppress the hint in scripted workflows.
 If the sandbox is running an outdated agent version, a non-blocking warning prints before connecting with a `nemoclaw <name> rebuild` hint.
+If another terminal is already connected to the sandbox, `connect` prints a note with the number of existing sessions before proceeding. Multiple concurrent sessions are allowed.
+
+After a host reboot, the OpenShell gateway rotates its SSH host keys.
+`connect` detects the resulting identity drift, prunes stale `openshell-*` entries from `~/.ssh/known_hosts`, and retries automatically.
+You no longer need to re-run `nemoclaw onboard` after a reboot in this case.
 
 ```console
 $ nemoclaw my-assistant connect
@@ -180,8 +196,20 @@ $ nemoclaw my-assistant connect
 ### `nemoclaw <name> status`
 
 Show sandbox status, health, and inference configuration.
-For local Ollama and local vLLM routes, the command also probes the host-side health endpoint and reports whether the backend is reachable.
-If the backend is down, the output includes an `Inference: unreachable` line with the local URL and a remediation hint.
+
+The command probes every inference provider and reports one of three states on the `Inference` line:
+
+| State | Meaning |
+|-------|---------|
+| `healthy` | The provider endpoint returned a reachable response. |
+| `unreachable` | The probe failed. The output includes the endpoint URL and a remediation hint. |
+| `not probed` | The endpoint URL is not known (for example, `compatible-*` providers). |
+
+Local providers (Ollama, vLLM) probe the host-side health endpoint.
+Remote providers (NVIDIA Endpoints, OpenAI, Anthropic, Gemini) use a lightweight reachability check; any HTTP response, including `401` or `403`, counts as reachable.
+No API keys are sent.
+
+A `Connected` line reports whether the sandbox has any active SSH sessions and, if so, how many.
 
 The Policy section displays the live enforced policy (fetched via `openshell policy get --full`), which reflects presets added or removed after sandbox creation.
 If the sandbox is running an outdated agent version, the output includes an `Update` line with the available version and a `nemoclaw <name> rebuild` hint.
@@ -204,13 +232,16 @@ $ nemoclaw my-assistant logs [--follow]
 
 ### `nemoclaw <name> destroy`
 
-Stop the NIM container and delete the sandbox.
+Stop the NIM container, remove the host-side Docker image built during onboard, and delete the sandbox.
 This removes the sandbox from the registry.
 
 > **Warning:** This command permanently deletes the sandbox **and its persistent volume**.
 > All workspace files (use the `nemoclaw-user-workspace` skill) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
 > Back up your workspace first with `nemoclaw <name> snapshot create` or see Backup and Restore (use the `nemoclaw-user-workspace` skill).
 > If you want to upgrade the sandbox while preserving state, use `nemoclaw <name> rebuild` instead.
+
+If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds.
+Pass `--yes` or `--force` to skip the prompt in scripted workflows.
 
 ```console
 $ nemoclaw my-assistant destroy
@@ -226,8 +257,19 @@ Before applying, the command shows which endpoints the preset would open and pro
 $ nemoclaw my-assistant policy-add
 ```
 
+To apply a specific preset without the interactive picker, pass its name as a positional argument:
+
+```console
+$ nemoclaw my-assistant policy-add pypi --yes
+```
+
+The positional form is required in scripted workflows.
+Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` if you want the same behavior from an environment variable.
+If the preset name is unknown or already applied, the command exits non-zero with a clear error.
+
 | Flag | Description |
 |------|-------------|
+| `--yes`, `--force` | Skip the confirmation prompt (requires a preset name) |
 | `--dry-run` | Preview the endpoints a preset would open without applying changes |
 
 Use `--dry-run` to audit a preset before applying it:
@@ -239,6 +281,8 @@ $ nemoclaw my-assistant policy-add --dry-run
 ### `nemoclaw <name> policy-list`
 
 List available policy presets and show which ones are applied to the sandbox.
+The command cross-references the local registry against the live gateway state (via `openshell policy get`), so it flags presets that are applied in one place but not the other.
+This catches desync caused by external edits to the gateway policy or stale registry entries after a manual rollback.
 
 ```console
 $ nemoclaw my-assistant policy-list
@@ -253,8 +297,18 @@ The command lists only the presets currently applied, prompts you to select one,
 $ nemoclaw my-assistant policy-remove
 ```
 
+To remove a specific preset non-interactively, pass its name as a positional argument:
+
+```console
+$ nemoclaw my-assistant policy-remove pypi --yes
+```
+
+Set `NEMOCLAW_NON_INTERACTIVE=1` as an alternative to `--yes`.
+If the preset is unknown or not currently applied, the command exits non-zero with a clear error.
+
 | Flag | Description |
 |------|-------------|
+| `--yes`, `--force` | Skip the confirmation prompt (requires a preset name) |
 | `--dry-run` | Preview which endpoints would be removed without applying changes |
 
 Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox.
@@ -323,8 +377,9 @@ For new installs, the agent session index is refreshed so the agent discovers th
 ### `nemoclaw <name> rebuild`
 
 Upgrade a sandbox to the current agent version while preserving workspace state.
-The command backs up workspace state, destroys the old sandbox, recreates it with the current image via `onboard --resume`, and restores workspace state into the new sandbox.
+The command backs up workspace state, destroys the old sandbox (including its host-side Docker image), recreates it with the current image via `onboard --resume`, and restores workspace state into the new sandbox.
 Credentials are stripped from backups before storage.
+Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
 
 ```console
 $ nemoclaw my-assistant rebuild [--yes] [--verbose]
@@ -334,6 +389,9 @@ $ nemoclaw my-assistant rebuild [--yes] [--verbose]
 |------|-------------|
 | `--yes`, `--force` | Skip the confirmation prompt |
 | `--verbose` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
+
+If another terminal has an active SSH session to the sandbox, `rebuild` prints an active-session warning and requires confirmation before destroying the sandbox.
+Pass `--yes` or `--force` to skip the prompt in scripted workflows.
 
 The sandbox must be running for the backup step to succeed.
 After restore, the command runs `openclaw doctor --fix` for cross-version structure repair.
@@ -483,6 +541,22 @@ $ nemoclaw credentials reset NVIDIA_API_KEY
 | Flag | Description |
 |------|-------------|
 | `--yes`, `-y` | Skip the confirmation prompt |
+
+### `nemoclaw gc`
+
+Remove orphaned sandbox Docker images from the host.
+Each `nemoclaw onboard` builds an `openshell/sandbox-from:<timestamp>` image (~765 MB).
+The `destroy` and `rebuild` commands clean up the image automatically, but images from older NemoClaw versions or interrupted operations may remain.
+This command lists all `openshell/sandbox-from:*` images, cross-references the sandbox registry, and removes any that are no longer associated with a registered sandbox.
+
+```console
+$ nemoclaw gc [--dry-run] [--yes|--force]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | List orphaned images without removing them |
+| `--yes`, `--force` | Skip the confirmation prompt |
 
 ### `nemoclaw uninstall`
 

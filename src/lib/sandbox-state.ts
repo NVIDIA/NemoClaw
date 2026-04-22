@@ -13,9 +13,12 @@ import { spawnSync } from "child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
@@ -51,6 +54,17 @@ export interface RebuildManifest {
   blueprintDigest: string | null;
   policyPresets?: string[];
   instances?: InstanceBackup[];
+  // Optional user-provided label for `snapshot restore <name>`.
+  name?: string;
+}
+
+// Manifest enriched with a virtual version number computed at list time.
+// Versions are position-based (v1 = oldest by timestamp) and NOT persisted,
+// so they can shift if snapshots are deleted.
+export type SnapshotEntry = RebuildManifest & { snapshotVersion: number };
+
+export interface BackupOptions {
+  name?: string | null;
 }
 
 export interface InstanceBackup {
@@ -63,15 +77,228 @@ export interface InstanceBackup {
 
 export interface BackupResult {
   success: boolean;
-  manifest: RebuildManifest;
+  // Only set once the backup has been written to disk — absent on
+  // precondition failures like an invalid --name.
+  manifest?: RebuildManifest;
   backedUpDirs: string[];
   failedDirs: string[];
+  // Set when the failure is a precondition (e.g. duplicate --name) rather
+  // than a mid-backup error. CLI surfaces this to the user verbatim.
+  error?: string;
 }
 
 export interface RestoreResult {
   success: boolean;
   restoredDirs: string[];
   failedDirs: string[];
+}
+
+export interface TarValidationResult {
+  safe: boolean;
+  entries: string[];
+  violations: string[];
+}
+
+export interface SafeExtractResult {
+  success: boolean;
+  error?: string;
+}
+
+// ── Safe tar extraction ──────────────────────────────────────────
+
+/**
+ * Normalize a host path for safe comparison.
+ * Mirrors migration-state.ts normalizeHostPath().
+ */
+function normalizeHostPath(input: string): string {
+  const resolved = path.resolve(input);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+/**
+ * Check whether candidatePath is within rootPath after normalization.
+ * Mirrors migration-state.ts isWithinRoot().
+ */
+function isWithinRoot(candidatePath: string, rootPath: string): boolean {
+  const candidate = normalizeHostPath(candidatePath);
+  const root = normalizeHostPath(rootPath);
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+/**
+ * List tar entries and validate every path is within targetDir.
+ * Rejects absolute paths, path traversal (..), and null bytes.
+ */
+export function validateTarEntries(
+  tarBuffer: Buffer,
+  targetDir: string,
+): TarValidationResult {
+  const result = spawnSync("tar", ["-tf", "-"], {
+    input: tarBuffer,
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+    timeout: 60000,
+  });
+
+  if (result.status !== 0) {
+    return {
+      safe: false,
+      entries: [],
+      violations: [`tar listing failed (exit ${result.status}): ${(result.stderr || "").substring(0, 200)}`],
+    };
+  }
+
+  const entries = (result.stdout || "")
+    .trim()
+    .split("\n")
+    .filter((e) => e.length > 0);
+  const violations: string[] = [];
+
+  for (const entry of entries) {
+    // Reject null bytes (null byte injection)
+    if (entry.includes("\0")) {
+      violations.push(`null byte in entry: ${JSON.stringify(entry)}`);
+      continue;
+    }
+
+    // Reject absolute paths
+    if (entry.startsWith("/")) {
+      violations.push(`absolute path: ${entry}`);
+      continue;
+    }
+
+    // Resolve the entry relative to targetDir and check containment
+    const resolved = path.resolve(targetDir, entry);
+    if (!isWithinRoot(resolved, targetDir)) {
+      violations.push(`path traversal: ${entry}`);
+    }
+  }
+
+  return { safe: violations.length === 0, entries, violations };
+}
+
+/**
+ * Walk a directory and return violations for any symlinks whose
+ * resolved targets escape rootPath.
+ */
+function auditExtractedSymlinks(dirPath: string, rootPath: string): string[] {
+  const violations: string[] = [];
+  if (!existsSync(dirPath)) return violations;
+
+  const walk = (current: string): void => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const fullPath = path.join(current, entry.name);
+      try {
+        const stat = lstatSync(fullPath);
+        if (stat.isSymbolicLink()) {
+          const linkTarget = readlinkSync(fullPath);
+          const resolvedTarget = path.resolve(path.dirname(fullPath), linkTarget);
+          if (!isWithinRoot(resolvedTarget, rootPath)) {
+            violations.push(`symlink escape: ${fullPath} -> ${linkTarget} (resolves to ${resolvedTarget})`);
+          }
+        } else if (stat.isDirectory()) {
+          walk(fullPath);
+        }
+      } catch {
+        /* skip unreadable entries */
+      }
+    }
+  };
+  walk(dirPath);
+  return violations;
+}
+
+/**
+ * Detect hard-link entries in a tar archive using verbose listing.
+ * Hard links are rejected entirely — sandbox state backups have no
+ * legitimate reason to contain them, and they can be used to reference
+ * files outside the extraction root.
+ */
+export function rejectHardLinks(tarBuffer: Buffer): string[] {
+  const result = spawnSync("tar", ["-tvf", "-"], {
+    input: tarBuffer,
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+    timeout: 60000,
+  });
+
+  if (result.status !== 0) {
+    return [`tar verbose listing failed (exit ${result.status})`];
+  }
+
+  const violations: string[] = [];
+  const lines = (result.stdout || "").trim().split("\n").filter((l) => l.length > 0);
+
+  for (const line of lines) {
+    // Both GNU tar and bsdtar prefix hard-link entries with 'h' in verbose mode
+    // and include " link to " in the line.
+    if (line.startsWith("h") || / link to /.test(line)) {
+      violations.push(`hard link: ${line.trim()}`);
+    }
+  }
+
+  return violations;
+}
+
+/**
+ * SECURITY: Validate tar contents, extract with safety flags, then
+ * audit for symlink escapes. Nukes the extraction on any violation.
+ */
+export function safeTarExtract(
+  tarBuffer: Buffer,
+  targetDir: string,
+): SafeExtractResult {
+  // Phase 1a: Validate entry paths before extraction
+  const validation = validateTarEntries(tarBuffer, targetDir);
+  if (!validation.safe) {
+    return {
+      success: false,
+      error: `tar entry validation failed: ${validation.violations.join("; ")}`,
+    };
+  }
+
+  // Phase 1b: Reject hard links (not detectable via tar -tf, require verbose listing)
+  const hardLinkViolations = rejectHardLinks(tarBuffer);
+  if (hardLinkViolations.length > 0) {
+    return {
+      success: false,
+      error: `hard link rejected: ${hardLinkViolations.join("; ")}`,
+    };
+  }
+
+  // Phase 2: Extract with --no-same-owner to prevent ownership manipulation
+  const extractResult = spawnSync(
+    "tar",
+    ["-xf", "-", "--no-same-owner", "-C", targetDir],
+    { input: tarBuffer, stdio: ["pipe", "pipe", "pipe"], timeout: 60000 },
+  );
+
+  if (extractResult.status !== 0) {
+    return {
+      success: false,
+      error: `tar extraction failed (exit ${extractResult.status}): ${(extractResult.stderr?.toString() || "").substring(0, 200)}`,
+    };
+  }
+
+  // Phase 3: Post-extraction symlink audit (symlink targets are not
+  // visible in `tar -tf` output, so we must check after extraction)
+  const symlinkViolations = auditExtractedSymlinks(targetDir, targetDir);
+  if (symlinkViolations.length > 0) {
+    // Nuke the extraction — do not leave attacker-controlled symlinks on host
+    try {
+      rmSync(targetDir, { recursive: true, force: true });
+      mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+    } catch {
+      /* best effort cleanup */
+    }
+    return {
+      success: false,
+      error: `post-extraction symlink audit failed: ${symlinkViolations.join("; ")}`,
+    };
+  }
+
+  return { success: true };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -169,13 +396,37 @@ function _log(msg: string): void {
   if (_verbose()) console.error(`  [sandbox-state ${new Date().toISOString()}] ${msg}`);
 }
 
+// ── Naming / versioning helpers ────────────────────────────────────
+
+const VERSION_SELECTOR_RE = /^v(\d+)$/i;
+const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
+
+export function validateSnapshotName(name: string): string | null {
+  if (!NAME_RE.test(name)) {
+    return (
+      `Invalid snapshot name '${name}'. Use 1–63 chars from [A-Za-z0-9._-], ` +
+      `starting with an alphanumeric.`
+    );
+  }
+  if (VERSION_SELECTOR_RE.test(name)) {
+    return (
+      `Snapshot name '${name}' conflicts with the auto-assigned version format ` +
+      `(v<N>). Pick a different name.`
+    );
+  }
+  return null;
+}
+
 // ── Backup ─────────────────────────────────────────────────────────
 
 /**
  * Back up all state directories from a running sandbox.
  * Uses the agent manifest to determine which directories contain state.
  */
-export function backupSandboxState(sandboxName: string): BackupResult {
+export function backupSandboxState(
+  sandboxName: string,
+  options: BackupOptions = {},
+): BackupResult {
   const sb = registry.getSandbox(sandboxName);
   const agentName = sb?.agent || "openclaw";
   const agent = loadAgent(agentName);
@@ -183,6 +434,34 @@ export function backupSandboxState(sandboxName: string): BackupResult {
   const stateDirs = agent.stateDirs;
   _log(`backupSandboxState: agent=${agentName}, writableDir=${writableDir}, stateDirs=[${stateDirs.join(",")}]`);
 
+  // Validate user-supplied name and check for conflicts BEFORE creating any
+  // files on disk.
+  const existingBackups = listBackups(sandboxName);
+  // Preserve empty strings so `--name ""` hits validateSnapshotName and fails
+  // with a clear error instead of silently creating an unnamed snapshot.
+  const providedName = options.name ?? null;
+  if (providedName !== null) {
+    const validationError = validateSnapshotName(providedName);
+    if (validationError) {
+      return {
+        success: false,
+        backedUpDirs: [],
+        failedDirs: [],
+        error: validationError,
+      };
+    }
+    const conflict = existingBackups.find((b) => b.name === providedName);
+    if (conflict) {
+      return {
+        success: false,
+        backedUpDirs: [],
+        failedDirs: [],
+        error:
+          `Snapshot name '${providedName}' already exists for '${sandboxName}' ` +
+          `(at ${conflict.timestamp}). Pick a different name or delete the existing snapshot.`,
+      };
+    }
+  }
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backupPath = path.join(REBUILD_BACKUPS_DIR, sandboxName, timestamp);
   mkdirSync(backupPath, { recursive: true, mode: 0o700 });
@@ -207,6 +486,7 @@ export function backupSandboxState(sandboxName: string): BackupResult {
     backupPath,
     blueprintDigest: computeBlueprintDigest(),
     policyPresets,
+    ...(providedName !== null ? { name: providedName } : {}),
   };
 
   const backedUpDirs: string[] = [];
@@ -269,15 +549,12 @@ export function backupSandboxState(sandboxName: string): BackupResult {
     _log(`SSH+tar download: exit=${result.status}, stdout=${result.stdout ? result.stdout.length + " bytes" : "null"}, stderr=${(result.stderr?.toString() || "").substring(0, 200)}`);
 
     if (result.status === 0 && result.stdout && result.stdout.length > 0) {
-      // Extract tar locally
-      const extractResult = spawnSync(
-        "tar",
-        ["-xf", "-", "-C", backupPath],
-        { input: result.stdout, stdio: ["pipe", "pipe", "pipe"], timeout: 60000 },
-      );
-      if (extractResult.status === 0) {
+      // SECURITY: Validate tar entries, extract safely, audit symlinks
+      const extractResult = safeTarExtract(result.stdout, backupPath);
+      if (extractResult.success) {
         backedUpDirs.push(...existingDirs);
       } else {
+        _log(`SECURITY: tar extraction blocked: ${extractResult.error}`);
         failedDirs.push(...existingDirs);
       }
     } else {
@@ -425,28 +702,76 @@ function readManifest(backupPath: string): RebuildManifest | null {
 // ── Listing ────────────────────────────────────────────────────────
 
 /**
- * List available backups for a sandbox, newest first.
+ * List available backups for a sandbox, newest first, each enriched with a
+ * virtual `snapshotVersion` number.
+ *
+ * Version numbers are position-based (v1 = oldest by timestamp, vN = newest)
+ * and computed fresh on every call — they are NOT persisted, so deleting a
+ * snapshot will re-number everything newer than it.
  */
-export function listBackups(sandboxName: string): RebuildManifest[] {
+export function listBackups(sandboxName: string): SnapshotEntry[] {
   const dir = path.join(REBUILD_BACKUPS_DIR, sandboxName);
   if (!existsSync(dir)) return [];
 
-  const entries = readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .sort((a, b) => b.name.localeCompare(a.name));
+  const rawEntries = readdirSync(dir, { withFileTypes: true }).filter((e) =>
+    e.isDirectory(),
+  );
 
   const manifests: RebuildManifest[] = [];
-  for (const entry of entries) {
+  for (const entry of rawEntries) {
     const m = readManifest(path.join(dir, entry.name));
     if (m) manifests.push(m);
   }
-  return manifests;
+
+  // Assign version numbers by timestamp-ascending position (v1 = oldest).
+  const asc = [...manifests].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  const numbered: SnapshotEntry[] = asc.map((m, i) => ({
+    ...m,
+    snapshotVersion: i + 1,
+  }));
+
+  // Return newest-first for display.
+  return numbered.reverse();
 }
 
 /**
  * Get the most recent backup for a sandbox, or null.
  */
-export function getLatestBackup(sandboxName: string): RebuildManifest | null {
+export function getLatestBackup(sandboxName: string): SnapshotEntry | null {
   const backups = listBackups(sandboxName);
   return backups[0] || null;
+}
+
+export interface SnapshotMatchResult {
+  match: SnapshotEntry | null;
+}
+
+/**
+ * Resolve a user-supplied snapshot selector to a single backup.
+ *
+ * Selector precedence:
+ *   1. `v<N>` — exact (virtual) snapshotVersion match (case-insensitive)
+ *   2. exact user-assigned name match
+ *   3. exact timestamp match
+ */
+export function findBackup(
+  sandboxName: string,
+  selector: string,
+): SnapshotMatchResult {
+  const backups = listBackups(sandboxName);
+
+  const versionMatch = VERSION_SELECTOR_RE.exec(selector);
+  if (versionMatch) {
+    const wanted = Number.parseInt(versionMatch[1], 10);
+    const hit = backups.find((b) => b.snapshotVersion === wanted);
+    return { match: hit ?? null };
+  }
+
+  const byName = backups.find((b) => b.name === selector);
+  if (byName) return { match: byName };
+
+  const byExactTimestamp = backups.find((b) => b.timestamp === selector);
+  if (byExactTimestamp) return { match: byExactTimestamp };
+
+  return { match: null };
 }
