@@ -154,6 +154,12 @@ run_cli_check() {
       $c =~ s/\s*\[[^\]]*\]\s*$//;
       $c =~ s/\s*--output\s+FILE\s*$//;
       while ($c =~ s/\s+<[^>]+>\s*$//) {}
+      # Strip residual description text after last arg (single-space separated,
+      # starts with a capitalized word — e.g. "Remove an applied policy preset")
+      $c =~ s/\s+[A-Z][a-z].*$//;
+      # Re-strip trailing <arg>/[arg] exposed by description removal
+      $c =~ s/\s*\[[^\]]*\]\s*$//;
+      while ($c =~ s/\s+<[^>]+>\s*$//) {}
       my $k = "nemoclaw $c";
       $k =~ s/^nemoclaw debug.*/nemoclaw debug/;
       print "$k\n";
@@ -169,7 +175,13 @@ run_cli_check() {
   log '[cli] phase 2/2: extract ### `nemoclaw …` headings from commands reference'
   # Allow optional MyST suffix on the same line, e.g. ### `nemoclaw onboard` {#anchor}
   grep -E '^### `nemoclaw ' "$COMMANDS_MD" | LC_ALL=C perl -CS -ne '
-    if (/^### `([^`]+)`\s*(?:\{[^}]+\})?\s*$/) { print "$1\n"; }
+    if (/^### `([^`]+)`\s*(?:\{[^}]+\})?\s*$/) {
+      my $c = $1;
+      # Strip trailing <arg> and [arg] placeholders (same as help side)
+      $c =~ s/\s*\[[^\]]*\]\s*$//;
+      while ($c =~ s/\s+<[^>]+>\s*$//) {}
+      print "$c\n";
+    }
   ' | LC_ALL=C sort -u >"$_tmp/doc.txt"
 
   local _n_doc
