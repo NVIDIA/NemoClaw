@@ -1883,10 +1883,16 @@ async function sandboxDestroy(sandboxName, args = []) {
     }
   }
 
-  console.log(`  Stopping NIM for '${sandboxName}'...`);
   const sb = registry.getSandbox(sandboxName);
-  if (sb && sb.nimContainer) nim.stopNimContainerByName(sb.nimContainer);
-  else nim.stopNimContainer(sandboxName);
+  if (sb && sb.nimContainer) {
+    console.log(`  Stopping NIM for '${sandboxName}'...`);
+    nim.stopNimContainerByName(sb.nimContainer);
+  } else {
+    // Best-effort cleanup of convention-named NIM containers that may not
+    // be recorded in the registry (e.g. older sandboxes).  Suppress output
+    // so the user doesn't see "No such container" noise when no NIM exists.
+    nim.stopNimContainer(sandboxName, { silent: true });
+  }
 
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
@@ -2061,8 +2067,13 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
   log(
     `Registry entry: agent=${sbMeta?.agent}, agentVersion=${sbMeta?.agentVersion}, nimContainer=${sbMeta?.nimContainer}`,
   );
-  if (sbMeta && sbMeta.nimContainer) nim.stopNimContainerByName(sbMeta.nimContainer);
-  else nim.stopNimContainer(sandboxName);
+  if (sbMeta && sbMeta.nimContainer) {
+    log(`Stopping NIM container: ${sbMeta.nimContainer}`);
+    nim.stopNimContainerByName(sbMeta.nimContainer);
+  } else {
+    // Best-effort cleanup — see comment in sandboxDestroy.
+    nim.stopNimContainer(sandboxName, { silent: true });
+  }
 
   log(`Running: openshell sandbox delete ${sandboxName}`);
   const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
@@ -2094,10 +2105,16 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
     `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}`,
   );
 
+  // Sync the session's agent field with the registry so onboard --resume
+  // rebuilds the correct sandbox type.  Without this, a stale session.agent
+  // from a previous onboard of a *different* agent type would be picked up
+  // by resolveAgentName() and the wrong Dockerfile would be used.  (#2201)
+  const rebuildAgent = sb.agent || null;
   onboardSession.updateSession((s) => {
     s.sandboxName = sandboxName;
     s.resumable = true;
     s.status = "in_progress";
+    s.agent = rebuildAgent;
     return s;
   });
   process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
@@ -2116,6 +2133,7 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
     resume: true,
     nonInteractive: true,
     recreateSandbox: true,
+    agent: rebuildAgent,
   });
 
   log("onboard() returned successfully");
