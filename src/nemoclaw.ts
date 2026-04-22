@@ -92,6 +92,7 @@ const GLOBAL_COMMANDS = new Set([
   "deploy",
   "setup",
   "setup-spark",
+  "setup-jetson",
   "start",
   "stop",
   "tunnel",
@@ -915,6 +916,15 @@ async function setupSpark(args = []) {
     ...buildOnboardCommandDeps(args),
     kind: "setup-spark",
   });
+}
+
+function setupJetson() {
+  if (process.platform !== "linux") {
+    console.error("setup-jetson is for NVIDIA Jetson (Linux). Use 'nemoclaw setup' for macOS.");
+    process.exit(1);
+  }
+  // setup-jetson.sh configures Docker runtime + iptables-legacy for Jetson.
+  run(`sudo bash "${path.join(ROOT, "scripts", "setup-jetson.sh")}"`);
 }
 
 async function deploy(instanceName) {
@@ -2968,6 +2978,7 @@ function help() {
     ${B}nemoclaw onboard${R}                 Configure inference endpoint and credentials
     nemoclaw onboard ${D}--from <Dockerfile>${R}  Use a custom Dockerfile for the sandbox image
                                     ${D}(non-interactive: ${NOTICE_ACCEPT_FLAG} or ${NOTICE_ACCEPT_ENV}=1)${R}
+    nemoclaw setup-jetson            Set up on Jetson ${D}(Docker runtime + iptables-legacy)${R}
 
   ${G}Sandbox Management:${R}
     ${B}nemoclaw list${R}                    List all sandboxes
@@ -3073,6 +3084,9 @@ const [cmd, ...args] = process.argv.slice(2);
         break;
       case "setup-spark":
         await setupSpark(args);
+        break;
+      case "setup-jetson":
+        setupJetson();
         break;
       case "deploy":
         await deploy(args[0]);

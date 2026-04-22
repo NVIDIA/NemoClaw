@@ -30,6 +30,7 @@ export interface GpuDetection {
   nimCapable: boolean;
   unifiedMemory?: boolean;
   spark?: boolean;
+  jetson?: boolean;
 }
 
 export interface NimStatus {
@@ -117,6 +118,9 @@ export function detectGpu(): GpuDetection | null {
       const count = unifiedGpuNames.length;
       const perGpuMB = count > 0 ? Math.floor(totalMemoryMB / count) : totalMemoryMB;
       const isSpark = unifiedGpuNames.some((name: string) => /GB10/i.test(name));
+      const isJetson =
+        unifiedGpuNames.some((name: string) => /orin|thor|xavier/i.test(name)) &&
+        !unifiedGpuNames.some((name: string) => /geforce|rtx|quadro/i.test(name));
       return {
         type: "nvidia",
         name: unifiedGpuNames[0],
@@ -126,6 +130,35 @@ export function detectGpu(): GpuDetection | null {
         nimCapable: canRunNimWithMemory(totalMemoryMB),
         unifiedMemory: true,
         spark: isSpark,
+        jetson: isJetson,
+      };
+    }
+  } catch {
+    /* ignored */
+  }
+
+  // Jetson fallback: /proc/device-tree/model (for cases where nvidia-smi is absent)
+  try {
+    const dtModel = runCapture("cat /proc/device-tree/model 2>/dev/null | tr -d '\\0'", {
+      ignoreError: true,
+    });
+    if (dtModel && /jetson/i.test(dtModel)) {
+      let totalMemoryMB = 0;
+      try {
+        const memLine = runCapture("free -m | awk '/Mem:/ {print $2}'", { ignoreError: true });
+        if (memLine) totalMemoryMB = parseInt(memLine.trim(), 10) || 0;
+      } catch {
+        /* ignored */
+      }
+      return {
+        type: "nvidia",
+        name: dtModel.trim(),
+        count: 1,
+        totalMemoryMB,
+        perGpuMB: totalMemoryMB,
+        nimCapable: false,
+        unifiedMemory: true,
+        jetson: true,
       };
     }
   } catch {

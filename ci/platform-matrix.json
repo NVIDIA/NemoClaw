@@ -45,6 +45,14 @@
       "notes": "Requires WSL2 with Docker Desktop backend."
     },
     {
+      "name": "Jetson (Orin Nano, Orin NX, AGX Orin, Xavier)",
+      "runtimes": ["Docker"],
+      "status": "tested",
+      "prd_priority": "P1",
+      "ci_tested": false,
+      "notes": "Run `sudo nemoclaw setup-jetson` before onboarding. See [commands reference](../reference/commands.md#nemoclaw-setup-jetson)."
+    },
+    {
       "name": "DGX Station",
       "runtimes": ["Docker"],
       "status": "deferred",

@@ -602,6 +602,16 @@ This command remains as a compatibility alias to `nemoclaw onboard`.
 $ nemoclaw setup-spark
 ```
 
+### `nemoclaw setup-jetson`
+
+Set up NemoClaw on NVIDIA Jetson devices (Orin Nano, Orin NX, AGX Orin, Xavier).
+This command configures the NVIDIA container runtime for Docker and applies iptables-legacy fixes required by Jetson's Tegra kernel.
+Run with `sudo` on the Jetson host.
+
+```console
+$ sudo nemoclaw setup-jetson
+```
+
 ### `nemoclaw debug`
 
 Collect diagnostics for bug reports.

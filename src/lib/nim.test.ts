@@ -180,6 +180,7 @@ describe("nim", () => {
           nimCapable: false,
           unifiedMemory: true,
           spark: false,
+          jetson: true,
         });
       } finally {
         restore();
@@ -420,5 +421,46 @@ describe("nim", () => {
         restore();
       }
     });
+  });
+
+  it("detects Jetson Orin and sets jetson flag", () => {
+    const runCapture = vi.fn((cmd: string | string[]) => {
+      if (!Array.isArray(cmd)) throw new Error("expected argv array");
+      if (cmd.some((a: string) => a.includes("memory.total"))) return "";
+      if (cmd.some((a: string) => a.includes("query-gpu=name"))) return "Orin";
+      if (cmd[0] === "free" && cmd[1] === "-m")
+        return "              total        used        free      shared  buff/cache   available\nMem:           7627        1024        5000         256       1603        6347\nSwap:             0           0           0";
+      return "";
+    });
+    const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+    try {
+      const gpu = nimModule.detectGpu();
+      expect(gpu).toMatchObject({ type: "nvidia", jetson: true, unifiedMemory: true });
+    } finally {
+      restore();
+    }
+  });
+
+  it("detects Jetson via /proc/device-tree/model fallback", () => {
+    const runCapture = vi.fn((cmd: string | string[]) => {
+      if (Array.isArray(cmd)) {
+        if (cmd.some((a: string) => a.includes("memory.total"))) return "";
+        if (cmd.some((a: string) => a.includes("query-gpu=name"))) return "";
+        if (cmd[0] === "free" && cmd[1] === "-m")
+          return "              total        used        free      shared  buff/cache   available\nMem:           7627        1024        5000         256       1603        6347\nSwap:             0           0           0";
+        return "";
+      }
+      // String commands (Jetson fallback path uses shell pipeline strings)
+      if (cmd.includes("device-tree/model")) return "NVIDIA Jetson Orin Nano Super Developer Kit";
+      if (cmd.includes("free -m")) return "7627";
+      return "";
+    });
+    const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+    try {
+      const gpu = nimModule.detectGpu();
+      expect(gpu).toMatchObject({ type: "nvidia", jetson: true });
+    } finally {
+      restore();
+    }
   });
 });

@@ -25,11 +25,13 @@ export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
 export const DEFAULT_OLLAMA_MODEL = "nemotron-3-nano:30b";
 export const SMALL_OLLAMA_MODEL = "qwen2.5:7b";
 export const LARGE_OLLAMA_MIN_MEMORY_MB = 32768;
+export const DEFAULT_OLLAMA_MODEL_JETSON = "nemotron-3-nano:4b";
 
 export type RunCaptureFn = (cmd: string | string[], opts?: { ignoreError?: boolean }) => string;
 
 export interface GpuInfo {
   totalMemoryMB: number;
+  jetson?: boolean;
 }
 
 export interface ValidationResult {
@@ -272,6 +274,11 @@ export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
 }
 
 export function getBootstrapOllamaModelOptions(gpu: GpuInfo | null): string[] {
+  // Jetson: fall back to the 4B model that fits in 8GB unified memory
+  // instead of the 30B default which would OOM.
+  if (gpu && gpu.jetson) {
+    return [DEFAULT_OLLAMA_MODEL_JETSON];
+  }
   const options = [SMALL_OLLAMA_MODEL];
   if (gpu && gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB) {
     options.push(DEFAULT_OLLAMA_MODEL);
@@ -287,6 +294,10 @@ export function getDefaultOllamaModel(
   if (models.length === 0) {
     const bootstrap = getBootstrapOllamaModelOptions(gpu);
     return bootstrap[0];
+  }
+  if (gpu && gpu.jetson) {
+    if (models.includes(DEFAULT_OLLAMA_MODEL_JETSON)) return DEFAULT_OLLAMA_MODEL_JETSON;
+    return models[0];
   }
   return models.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : models[0];
 }

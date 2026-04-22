@@ -50,6 +50,8 @@ import {
   summarizeProbeFailure,
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
+  getGatewayImageTag,
+  patchGatewayImageForJetson,
 } from "../dist/lib/onboard";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context";
 import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
@@ -5362,5 +5364,170 @@ const { createSandbox } = require(${onboardPath});
       patchPos > pullPos,
       "pullAndResolveBaseImageDigest must be called BEFORE patchStagedDockerfile — regression #1904",
     );
+  });
+
+  it("exports getGatewayImageTag and patchGatewayImageForJetson as functions", () => {
+    assert.equal(typeof getGatewayImageTag, "function");
+    assert.equal(typeof patchGatewayImageForJetson, "function");
+  });
+
+  it("patchGatewayImageForJetson skips rebuild when image is already patched (idempotency)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-jetson-patch-idem-"));
+    const scriptPath = path.join(tmpDir, "jetson-patch-idempotent.js");
+    const fakeBin = path.join(tmpDir, "bin");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\necho 0.0.10\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const commands = [];
+runner.run = (command, opts = {}) => {
+  commands.push({ command, type: "run" });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  commands.push({ command, type: "runCapture" });
+  if (command.includes("openshell --version")) return "0.0.10";
+  if (command.includes("docker inspect") && command.includes("jetson-patched")) return "true";
+  return "";
+};
+
+const { patchGatewayImageForJetson } = require(${onboardPath});
+patchGatewayImageForJetson();
+
+const buildCalls = commands.filter(c => c.command && c.command.includes("docker build"));
+console.log(JSON.stringify({ buildCalls: buildCalls.length, totalCommands: commands.length }));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+    });
+
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+    const output = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.equal(output.buildCalls, 0, "docker build should NOT be called when already patched");
+  });
+
+  it("patchGatewayImageForJetson builds image when not yet patched", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-jetson-patch-build-"));
+    const scriptPath = path.join(tmpDir, "jetson-patch-build.js");
+    const fakeBin = path.join(tmpDir, "bin");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\necho 0.0.10\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const commands = [];
+runner.run = (command, opts = {}) => {
+  commands.push({ command, type: "run" });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  commands.push({ command, type: "runCapture" });
+  if (command.includes("openshell --version")) return "0.0.10";
+  if (command.includes("docker inspect") && command.includes("jetson-patched")) return "";
+  return "";
+};
+
+const { patchGatewayImageForJetson } = require(${onboardPath});
+patchGatewayImageForJetson();
+
+const buildCalls = commands.filter(c => c.command && c.command.includes("docker build"));
+const buildCmd = buildCalls.length > 0 ? buildCalls[0].command : "";
+console.log(JSON.stringify({
+  buildCalls: buildCalls.length,
+  usesShellQuote: buildCmd.includes("'ghcr.io/nvidia/openshell/cluster:0.0.10'"),
+  hasImage: buildCmd.includes("ghcr.io/nvidia/openshell/cluster:0.0.10"),
+}));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+    });
+
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+    const output = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.equal(output.buildCalls, 1, "docker build should be called once");
+    assert.ok(output.hasImage, "docker build should reference the correct image tag");
+    assert.ok(output.usesShellQuote, "docker build should use shellQuote for image name");
+  });
+
+  it("patchGatewayImageForJetson cleans up temp directory even on build failure", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-jetson-patch-cleanup-"));
+    const scriptPath = path.join(tmpDir, "jetson-patch-cleanup.js");
+    const fakeBin = path.join(tmpDir, "bin");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const fsPath = JSON.stringify("fs");
+    const osPath = JSON.stringify("os");
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\necho 0.0.10\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const fs = require(${fsPath});
+const nodeOs = require(${osPath});
+const runner = require(${runnerPath});
+
+runner.run = (command) => {
+  if (command.includes("docker build")) {
+    throw new Error("simulated docker build failure");
+  }
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (command.includes("openshell --version")) return "0.0.10";
+  if (command.includes("docker inspect") && command.includes("jetson-patched")) return "";
+  return "";
+};
+
+const { patchGatewayImageForJetson } = require(${onboardPath});
+
+const tmpBefore = fs.readdirSync(nodeOs.tmpdir()).filter(d => d.startsWith("nemoclaw-jetson-"));
+
+let threw = false;
+try {
+  patchGatewayImageForJetson();
+} catch (e) {
+  threw = true;
+}
+
+const tmpAfter = fs.readdirSync(nodeOs.tmpdir()).filter(d => d.startsWith("nemoclaw-jetson-"));
+const newDirs = tmpAfter.filter(d => !tmpBefore.includes(d));
+console.log(JSON.stringify({ threw, leakedDirs: newDirs.length }));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+    });
+
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+    const output = JSON.parse(result.stdout.trim().split("\n").pop());
+    assert.ok(output.threw, "should have thrown on docker build failure");
+    assert.equal(output.leakedDirs, 0, "temp directory should be cleaned up after failure");
   });
 });

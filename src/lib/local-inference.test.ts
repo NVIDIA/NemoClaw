@@ -9,6 +9,7 @@ import {
   DEFAULT_OLLAMA_MODEL,
   LARGE_OLLAMA_MIN_MEMORY_MB,
   OLLAMA_CONTAINER_PORT,
+  DEFAULT_OLLAMA_MODEL_JETSON,
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
@@ -26,6 +27,8 @@ import {
   validateOllamaModel,
   validateLocalProvider,
 } from "../../dist/lib/local-inference";
+
+const FAKE_JETSON_GPU = { type: "nvidia", totalMemoryMB: 7627, jetson: true, unifiedMemory: true };
 
 describe("local inference helpers", () => {
   it("returns the expected base URL for vllm-local", () => {
@@ -318,5 +321,15 @@ describe("local inference helpers", () => {
 
   it("treats non-JSON probe output as success once the model responds", () => {
     expect(validateOllamaModel("nemotron-3-nano:30b", () => "ok")).toEqual({ ok: true });
+  });
+
+  it("returns jetson 4b model as default on jetson when available", () => {
+    const list = "nemotron-3-nano:4b  abc  2.8 GB  now\nqwen3:32b  def  20 GB  now";
+    expect(getDefaultOllamaModel(FAKE_JETSON_GPU, () => list)).toBe(DEFAULT_OLLAMA_MODEL_JETSON);
+  });
+
+  it("falls back to jetson 4b model when ollama list is empty on jetson", () => {
+    expect(getBootstrapOllamaModelOptions(FAKE_JETSON_GPU)).toEqual([DEFAULT_OLLAMA_MODEL_JETSON]);
+    expect(getDefaultOllamaModel(FAKE_JETSON_GPU, () => "")).toBe(DEFAULT_OLLAMA_MODEL_JETSON);
   });
 });
