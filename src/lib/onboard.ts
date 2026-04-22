@@ -3303,6 +3303,37 @@ async function promptValidatedSandboxName() {
 
 // ── Step 5: Sandbox ──────────────────────────────────────────────
 
+/**
+ * Render the configuration summary shown before the destructive sandbox build.
+ * Extracted from confirmOnboardConfiguration() for direct unit testing — see #2165.
+ */
+function formatOnboardConfigSummary({
+  provider,
+  model,
+  webSearchConfig,
+  enabledChannels,
+  sandboxName,
+}) {
+  const bar = `  ${"─".repeat(50)}`;
+  const messaging =
+    Array.isArray(enabledChannels) && enabledChannels.length > 0
+      ? enabledChannels.join(", ")
+      : "none";
+  const webSearch = webSearchConfig && webSearchConfig.fetchEnabled === true ? "enabled" : "disabled";
+  return [
+    "",
+    bar,
+    "  Review configuration",
+    bar,
+    `  Provider:      ${provider ?? "(unset)"}`,
+    `  Model:         ${model ?? "(unset)"}`,
+    `  Web search:    ${webSearch}`,
+    `  Messaging:     ${messaging}`,
+    `  Sandbox name:  ${sandboxName}`,
+    bar,
+  ].join("\n");
+}
+
 // eslint-disable-next-line complexity
 async function createSandbox(
   gpu,
@@ -3322,6 +3353,24 @@ async function createSandbox(
     sandboxNameOverride ?? (await promptValidatedSandboxName()),
     "sandbox name",
   );
+
+  // Show a review summary and a Y/n gate before any destructive action
+  // (docker build, provider creation, credential persistence). Non-interactive
+  // runs opt out of the gate — they still see the summary for log clarity.
+  // See #2165.
+  console.log(formatOnboardConfigSummary({
+    provider, model, webSearchConfig, enabledChannels, sandboxName,
+  }));
+  if (!isNonInteractive() && !dangerouslySkipPermissions) {
+    const answer = (await promptOrDefault("  Apply this configuration? [Y/n]: ", null, "y"))
+      .trim()
+      .toLowerCase();
+    if (answer === "n" || answer === "no") {
+      console.log("  Aborted. Re-run `nemoclaw onboard` to start over.");
+      process.exit(0);
+    }
+  }
+
   const effectivePort = agent ? agent.forwardPort : CONTROL_UI_PORT;
   const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${effectivePort}`;
 
@@ -6834,6 +6883,7 @@ module.exports = {
   setupInference,
   setupMessagingChannels,
   setupNim,
+  formatOnboardConfigSummary,
   isInferenceRouteReady,
   isNonInteractive,
   isOpenclawReady,

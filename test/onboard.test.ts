@@ -5364,4 +5364,51 @@ const { createSandbox } = require(${onboardPath});
       "pullAndResolveBaseImageDigest must be called BEFORE patchStagedDockerfile — regression #1904",
     );
   });
+
+  it("formatOnboardConfigSummary renders all collected fields (#2165)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const onboardPath = path.join(repoRoot, "dist", "lib", "onboard.js");
+    delete require.cache[onboardPath];
+    const { formatOnboardConfigSummary } = require(onboardPath);
+
+    const summary = formatOnboardConfigSummary({
+      provider: "gemini-api",
+      model: "gemini-2.5-flash",
+      webSearchConfig: { fetchEnabled: true },
+      enabledChannels: ["telegram", "slack"],
+      sandboxName: "my-assistant",
+    });
+
+    assert.ok(summary.includes("Review configuration"), "summary has review heading");
+    assert.ok(summary.includes("gemini-api"), "summary includes provider");
+    assert.ok(summary.includes("gemini-2.5-flash"), "summary includes model");
+    assert.ok(summary.includes("enabled"), "summary includes web-search enabled");
+    assert.ok(summary.includes("telegram, slack"), "summary lists enabled channels");
+    assert.ok(summary.includes("my-assistant"), "summary shows sandbox name");
+
+    // No messaging, no web search → "none" / "disabled"
+    const bareSummary = formatOnboardConfigSummary({
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      webSearchConfig: null,
+      enabledChannels: [],
+      sandboxName: "test",
+    });
+    assert.ok(bareSummary.includes("Messaging:     none"), "empty channels renders as 'none'");
+    assert.ok(
+      bareSummary.includes("Web search:    disabled"),
+      "null webSearch renders as 'disabled'",
+    );
+
+    // Missing provider/model → "(unset)" placeholder, not "undefined"
+    const orphanSummary = formatOnboardConfigSummary({
+      provider: null,
+      model: null,
+      webSearchConfig: null,
+      enabledChannels: null,
+      sandboxName: "orphan",
+    });
+    assert.ok(!orphanSummary.includes("undefined"), "null fields never render as 'undefined'");
+    assert.ok(orphanSummary.includes("(unset)"), "null fields fall back to '(unset)'");
+  });
 });
