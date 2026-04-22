@@ -4228,6 +4228,12 @@ async function setupNim(gpu) {
           }
         }
 
+        // Hydrate from saved credentials (~/.nemoclaw/credentials.json)
+        // before checking env, so rebuild and other non-interactive callers
+        // can resolve keys stored during the original interactive onboard.
+        // See #2273.
+        hydrateCredentialEnv(credentialEnv);
+
         if (selected.key === "build") {
           // Allow NEMOCLAW_PROVIDER_KEY as a fallback for NVIDIA_API_KEY
           const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();

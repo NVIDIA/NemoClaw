@@ -2312,6 +2312,43 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
     }
   }
 
+  // Step 0: Preflight — verify recreate preconditions BEFORE destroying
+  // anything.  The most common rebuild failure is a missing provider
+  // credential when onboard runs in non-interactive mode.  Checking now
+  // lets us abort with the sandbox still intact.  See #2273.
+  const session = onboardSession.loadSession();
+  if (session && session.sandboxName && session.sandboxName !== sandboxName) {
+    log(`Preflight warning: session belongs to '${session.sandboxName}', not '${sandboxName}'`);
+    console.log(
+      `  ${D}Note: onboard session belongs to '${session.sandboxName}', not '${sandboxName}'. ` +
+      `Provider/credential info may be stale.${R}`,
+    );
+  }
+  const rebuildCredentialEnv = session?.credentialEnv || null;
+  if (rebuildCredentialEnv) {
+    const credentialValue = getCredential(rebuildCredentialEnv);
+    log(`Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`);
+    if (!credentialValue) {
+      console.error("");
+      console.error(`  ${_RD}Rebuild preflight failed:${R} provider credential not found.`);
+      console.error(`  The non-interactive recreate step requires ${rebuildCredentialEnv},`);
+      console.error("  but it is not set in the environment or saved in ~/.nemoclaw/credentials.json.");
+      console.error("");
+      console.error("  To fix, do one of:");
+      console.error(`    export ${rebuildCredentialEnv}=<your-key>`);
+      console.error("    nemoclaw onboard          # re-enter the key interactively");
+      console.error("");
+      console.error("  Sandbox is untouched — no data was lost.");
+      bail(`Missing credential: ${rebuildCredentialEnv}`);
+      return;
+    }
+  } else {
+    // No credentialEnv in session — local inference (Ollama/vLLM) or
+    // session was lost.  Either way, skip the credential preflight;
+    // onboard will handle it.
+    log("Preflight credential check: no credentialEnv in session (local inference or missing session)");
+  }
+
   // Step 1: Ensure sandbox is live for backup
   log("Checking sandbox liveness: openshell sandbox list");
   const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
@@ -2424,16 +2461,77 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
   const storedFromDockerfile = sessionAfter?.metadata?.fromDockerfile || null;
   log(`Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile} })`);
 
+  // Intercept process.exit during onboard so we can attempt rollback
+  // instead of dying with the sandbox destroyed.  onboard() has ~87
+  // process.exit() calls that would otherwise kill the process with no
+  // chance to recover.  See #2273.
+  //
+  // NOTE: Throwing from the overridden process.exit unwinds onboard's
+  // call stack, which skips process.once("exit") listeners (lock
+  // release, build context cleanup, session failure marking).  We
+  // manually release the lock and mark the session failed in the
+  // onboardFailed block below.  Full fix is tracked in #2306 (extract
+  // rebuild-specific recreate path that throws instead of exiting).
   const { onboard } = require("./lib/onboard");
-  await onboard({
-    resume: true,
-    nonInteractive: true,
-    recreateSandbox: true,
-    agent: rebuildAgent,
-    fromDockerfile: storedFromDockerfile,
-  });
+  let onboardFailed = false;
+  let onboardExitCode = 1;
+  const _savedExit = process.exit;
+  process.exit = ((code) => {
+    onboardFailed = true;
+    onboardExitCode = typeof code === "number" ? code : 1;
+    // Throw a sentinel to unwind the onboard call stack.
+    // The catch block below handles it.
+    const err = new Error(`onboard exited with code ${onboardExitCode}`);
+    err.name = "RebuildOnboardExit";
+    throw err;
+  }) as typeof process.exit;
 
-  log("onboard() returned successfully");
+  try {
+    await onboard({
+      resume: true,
+      nonInteractive: true,
+      recreateSandbox: true,
+      agent: rebuildAgent,
+      fromDockerfile: storedFromDockerfile,
+    });
+    log("onboard() returned successfully");
+  } catch (err) {
+    onboardFailed = true;
+    if (err?.name !== "RebuildOnboardExit") {
+      log(`onboard() threw: ${err?.message || err}`);
+    }
+  } finally {
+    process.exit = _savedExit;
+  }
+
+  if (onboardFailed) {
+    // Clean up onboard's internal state that normally runs in
+    // process.once("exit") listeners — those never fire because we
+    // threw from the overridden process.exit instead of actually
+    // exiting.  Without this the onboard lock file stays on disk and
+    // blocks the next onboard/rebuild invocation.
+    try { onboardSession.releaseOnboardLock(); } catch { /* best effort */ }
+    try {
+      const failedStep = onboardSession.loadSession()?.lastStepStarted;
+      if (failedStep) {
+        onboardSession.markStepFailed(failedStep, "Rebuild recreate failed");
+      }
+    } catch { /* best effort */ }
+
+    console.error("");
+    console.error(`  ${_RD}Recreate failed after sandbox was destroyed.${R}`);
+    console.error(`  Backup is preserved at: ${backup.manifest.backupPath}`);
+    console.error("");
+    console.error("  To recover manually:");
+    console.error(`    1. Fix the issue above (missing credential, Docker problem, etc.)`);
+    console.error(`    2. Run: nemoclaw onboard --resume`);
+    console.error(`       This will recreate sandbox '${sandboxName}'.`);
+    console.error(`    3. Then restore your workspace state:`);
+    console.error(`       nemoclaw ${sandboxName} snapshot restore ${backup.manifest.backupPath}`);
+    console.error("");
+    bail(`Recreate failed (sandbox destroyed). Backup: ${backup.manifest.backupPath}`, onboardExitCode);
+    return;
+  }
 
   // Step 5: Restore
   console.log("");
