@@ -3097,7 +3097,7 @@ async function startGatewayWithOptions(_gpu, { exitOnFailure = true } = {}) {
           console.log(
             `  Gateway start attempt ${err.attemptNumber} failed. ${err.retriesLeft} retries left...`,
           );
-          if (err.retriesLeft > 0 && exitOnFailure) {
+          if (exitOnFailure) {
             destroyGateway();
           }
         },
