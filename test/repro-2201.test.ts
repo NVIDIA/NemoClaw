@@ -3,111 +3,220 @@
 
 /**
  * Reproduction test for issue #2201:
- *   `nemoclaw rebuild` builds the wrong sandbox type because it does not
- *   sync the session's agent field with the registry entry for the sandbox
- *   being rebuilt.
+ *   `nemoclaw rebuild` builds the wrong sandbox type because it picks up
+ *   the agent from the onboard session — which belongs to whichever
+ *   sandbox was onboarded *last* — instead of the registry entry for the
+ *   sandbox being rebuilt.
  *
- * Scenario: user onboards sandbox A (openclaw) then sandbox B (hermes).
- * The onboard session now has agent="hermes". When user runs
- * `nemoclaw A rebuild`, sandboxRebuild() updates session.sandboxName
- * but NOT session.agent. The onboard() call then resolves agent from
- * the stale session and builds hermes instead of openclaw.
+ * Real-world scenario (from the bug report):
+ *   1. User onboards "openclaw" (agent=null, i.e. default openclaw)
+ *   2. User onboards "hermes"  (agent="hermes")
+ *      → session now has agent="hermes", sandboxName="hermes"
+ *   3. User runs `nemoclaw openclaw rebuild`
+ *      → rebuild calls onboard --resume, which reads session.agent="hermes"
+ *      → builds hermes Dockerfile instead of openclaw  ← BUG
  *
- * This test verifies the bug by calling resolveAgentName() with the
- * session state that sandboxRebuild() would produce, and checking
- * whether it returns the correct agent for the sandbox being rebuilt.
+ * This test runs the real CLI (`nemoclaw <name> rebuild --yes`) with fake
+ * openshell/ssh binaries.  Both sandboxes exist in the registry, but the
+ * session points to the one that was onboarded last.  After rebuild, the
+ * session file is checked to verify the agent was synced from the registry.
+ *
+ * Without the fix the session keeps the stale agent → wrong Dockerfile.
+ * With the fix the session is overwritten with the registry agent.
  */
 
-import { describe, it, expect } from "vitest";
-import path from "node:path";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const AGENT_DEFS_PATH = path.join(REPO_ROOT, "dist", "lib", "agent-defs.js");
+const NODE_BIN = path.dirname(process.execPath);   // need node on PATH for shebangs
+const tmpFixtures: string[] = [];
+
+afterEach(() => {
+  for (const dir of tmpFixtures.splice(0)) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* */ }
+  }
+});
 
 /**
- * Run a CJS script in a subprocess and return stdout/stderr/status.
+ * Set up a temp HOME that mirrors the reporter's scenario:
+ *
+ *   - Two sandboxes in the registry (rebuildTarget + lastOnboarded)
+ *   - The onboard session left over from whichever sandbox was onboarded
+ *     last (lastOnboarded), so session.agent ≠ rebuildTarget's agent
+ *   - We then run `nemoclaw <rebuildTarget> rebuild --yes`
+ *
+ * @param rebuildTarget  - sandbox being rebuilt and its registry agent
+ * @param lastOnboarded  - sandbox that was onboarded last (owns the session)
  */
-function runScript(body: string): { stdout: string; stderr: string; status: number | null } {
-  const preamble = `const agentDefs = require(${JSON.stringify(AGENT_DEFS_PATH)});\n`;
-  const result = spawnSync(process.execPath, ["-e", preamble + body], {
-    cwd: REPO_ROOT,
-    encoding: "utf-8",
+function createFixture({
+  rebuildTarget,
+  lastOnboarded,
+}: {
+  rebuildTarget: { name: string; agent: string | null };
+  lastOnboarded: { name: string; agent: string | null };
+}) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2201-"));
+  tmpFixtures.push(tmpDir);
+  const nemoclawDir = path.join(tmpDir, ".nemoclaw");
+  fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
+
+  // ── Registry — both sandboxes exist ───────────────────────────
+  fs.writeFileSync(
+    path.join(nemoclawDir, "sandboxes.json"),
+    JSON.stringify({
+      defaultSandbox: rebuildTarget.name,
+      sandboxes: {
+        [rebuildTarget.name]: {
+          name: rebuildTarget.name, model: "m", provider: "p",
+          gpuEnabled: false, policies: [],
+          agent: rebuildTarget.agent,
+        },
+        [lastOnboarded.name]: {
+          name: lastOnboarded.name, model: "m", provider: "p",
+          gpuEnabled: false, policies: [],
+          agent: lastOnboarded.agent,
+        },
+      },
+    }),
+    { mode: 0o600 },
+  );
+
+  // ── Session left over from the last onboard (lastOnboarded) ───
+  fs.writeFileSync(
+    path.join(nemoclawDir, "onboard-session.json"),
+    JSON.stringify({
+      version: 1, sessionId: "s", resumable: true, status: "complete",
+      mode: "interactive", startedAt: "2026-01-01", updatedAt: "2026-01-01",
+      lastStepStarted: null, lastCompletedStep: "inference", failure: null,
+      agent: lastOnboarded.agent, sandboxName: lastOnboarded.name,
+      provider: "p", model: "m", endpointUrl: null, credentialEnv: null,
+      preferredInferenceApi: null, nimContainer: null, webSearchConfig: null,
+      policyPresets: [], messagingChannels: null,
+      metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+      steps: {
+        preflight:  { status: "complete", startedAt: null, completedAt: null, error: null },
+        gateway:    { status: "complete", startedAt: null, completedAt: null, error: null },
+        sandbox:    { status: "complete", startedAt: null, completedAt: null, error: null },
+        provider_selection: { status: "complete", startedAt: null, completedAt: null, error: null },
+        inference:  { status: "complete", startedAt: null, completedAt: null, error: null },
+        openclaw:   { status: "pending", startedAt: null, completedAt: null, error: null },
+        agent_setup:{ status: "pending", startedAt: null, completedAt: null, error: null },
+        policies:   { status: "pending", startedAt: null, completedAt: null, error: null },
+      },
+    }),
+    { mode: 0o600 },
+  );
+
+  const sandboxName = rebuildTarget.name;
+
+  // ── Dummy workspace dir for the fake ssh tar call ─────────────
+  const workspaceDir = path.join(tmpDir, "fake-sandbox-root", "workspace");
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  fs.writeFileSync(path.join(workspaceDir, ".keep"), "");
+
+  // ── Fake openshell ────────────────────────────────────────────
+  const sshConfig = [
+    `Host openshell-${sandboxName}`,
+    "  HostName 127.0.0.1",
+    "  Port 2222",
+    "  User sandbox",
+    "  StrictHostKeyChecking no",
+    "  UserKnownHostsFile /dev/null",
+  ].join("\\n");
+
+  fs.writeFileSync(
+    path.join(tmpDir, "openshell"),
+    `#!/usr/bin/env node
+const a = process.argv.slice(2);
+if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
+process.exit(0);
+`,
+    { mode: 0o755 },
+  );
+
+  // ── Fake ssh ──────────────────────────────────────────────────
+  // backupSandboxState makes two ssh calls:
+  //   1. dir-existence check (command has "[ -d") → print "workspace"
+  //   2. tar download (command has "tar") → produce a real tar archive
+  const fakeRoot = path.join(tmpDir, "fake-sandbox-root");
+  fs.writeFileSync(
+    path.join(tmpDir, "ssh"),
+    `#!/usr/bin/env node
+const cmd = process.argv[process.argv.length - 1] || "";
+if (cmd.includes("[ -d")) {
+  process.stdout.write("workspace\\n");
+  process.exit(0);
+}
+if (cmd.includes("tar")) {
+  const { spawnSync } = require("child_process");
+  const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(fakeRoot)}, "workspace"], {
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  return { stdout: result.stdout || "", stderr: result.stderr || "", status: result.status };
+  if (r.stdout) process.stdout.write(r.stdout);
+  process.exit(r.status || 0);
+}
+process.exit(0);
+`,
+    { mode: 0o755 },
+  );
+
+  return { tmpDir, nemoclawDir, sandboxName };
 }
 
-describe("Issue #2201: rebuild uses wrong agent from stale session", () => {
-  it("resolveAgentName returns correct agent when rebuild syncs session.agent", () => {
-    // After the fix: sandboxRebuild() sets session.agent = sb.agent || null
-    // before calling onboard(). For an openclaw sandbox, sb.agent is null,
-    // so session.agent is set to null, and resolveAgentName returns "openclaw".
-    const result = runScript(`
-      // After fix: rebuild syncs session.agent from registry (sb.agent || null)
-      // For an openclaw sandbox, sb.agent is null → session.agent = null
-      const session = { agent: null };
+function runRebuild(fixture: ReturnType<typeof createFixture>) {
+  return spawnSync(
+    process.execPath,
+    [path.join(REPO_ROOT, "bin", "nemoclaw.js"), fixture.sandboxName, "rebuild", "--yes"],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        HOME: fixture.tmpDir,
+        PATH: fixture.tmpDir + ":" + NODE_BIN + ":/usr/bin:/bin",
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_NO_CONNECT_HINT: "1",
+        NO_COLOR: "1",
+      },
+      timeout: 30_000,
+    },
+  );
+}
 
-      const resolved = agentDefs.resolveAgentName({ agentFlag: null, session });
-      process.stdout.write(resolved);
-    `);
+function readSessionAgent(fixture: ReturnType<typeof createFixture>): unknown {
+  const p = path.join(fixture.nemoclawDir, "onboard-session.json");
+  return JSON.parse(fs.readFileSync(p, "utf-8")).agent;
+}
 
-    // FIX: resolveAgentName returns "openclaw" because session.agent is null
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe("openclaw");
-  });
+describe("Issue #2201: rebuild syncs agent from registry, not stale session", () => {
+  it("rebuild openclaw after hermes was onboarded last (reporter scenario)",
+    { timeout: 60_000 }, () => {
+      // Exact scenario from the bug report: user has openclaw + hermes,
+      // hermes was onboarded last, then runs `nemoclaw openclaw rebuild`.
+      const f = createFixture({
+        rebuildTarget: { name: "openclaw", agent: null },
+        lastOnboarded: { name: "hermes",   agent: "hermes" },
+      });
+      runRebuild(f);
+      // With fix: session.agent = null (synced from openclaw registry entry)
+      // Without fix: session.agent stays "hermes" (from hermes onboard)
+      expect(readSessionAgent(f)).toBeNull();
+    });
 
-  it("resolveAgentName returns stale agent when session.agent is not synced", () => {
-    // Without the fix: if rebuild does NOT update session.agent,
-    // a stale session from a previous hermes onboard leaks through.
-    const result = runScript(`
-      // Stale session: agent=hermes left over from onboarding a different sandbox
-      const session = { agent: "hermes" };
-
-      // No agentFlag, no env var — resolveAgentName falls through to session.agent
-      const resolved = agentDefs.resolveAgentName({ agentFlag: null, session });
-      process.stdout.write(resolved);
-    `);
-
-    expect(result.status).toBe(0);
-    // This demonstrates the pre-fix bug: returns "hermes" instead of "openclaw"
-    expect(result.stdout).toBe("hermes");
-  });
-
-  it("resolveAgentName would return correct agent if rebuild set session.agent to hermes", () => {
-    // Rebuilding a hermes sandbox: registry has sb.agent="hermes",
-    // rebuild should set session.agent="hermes"
-    const result = runScript(`
-      const session = { agent: "hermes" };
-      const resolved = agentDefs.resolveAgentName({ agentFlag: null, session });
-      process.stdout.write(resolved);
-    `);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe("hermes"); // correct: hermes sandbox rebuilds as hermes
-  });
-
-  it("rebuild session update includes agent field (fix verification)", () => {
-    // Read the sandboxRebuild function and verify the session update
-    // sets the agent field from the registry — proving the fix is present.
-    const fs = require("node:fs");
-    const nemoclawSrc = fs.readFileSync(
-      path.join(REPO_ROOT, "src", "nemoclaw.ts"),
-      "utf-8",
-    );
-
-    // Find the rebuild session update block
-    // Pattern: updateSession((s) => { s.sandboxName = ...; s.resumable = true; s.status = ...; s.agent = ... })
-    const rebuildUpdateMatch = nemoclawSrc.match(
-      /sandboxRebuild[\s\S]*?onboardSession\.updateSession\(\(s\)\s*=>\s*\{([^}]+)\}/,
-    );
-
-    expect(rebuildUpdateMatch).not.toBeNull();
-    const updateBody = rebuildUpdateMatch![1];
-
-    // The update sets sandboxName, resumable, status, AND agent (#2201 fix)
-    expect(updateBody).toContain("s.sandboxName");
-    expect(updateBody).toContain("s.resumable");
-    expect(updateBody).toContain("s.status");
-    expect(updateBody).toContain("s.agent"); // FIX: agent is now synced from registry
-  });
+  it("rebuild hermes after openclaw was onboarded last (reverse scenario)",
+    { timeout: 60_000 }, () => {
+      const f = createFixture({
+        rebuildTarget: { name: "hermes",   agent: "hermes" },
+        lastOnboarded: { name: "openclaw", agent: null },
+      });
+      runRebuild(f);
+      // With fix: session.agent = "hermes" (synced from hermes registry entry)
+      // Without fix: session.agent stays null (from openclaw onboard)
+      expect(readSessionAgent(f)).toBe("hermes");
+    });
 });
