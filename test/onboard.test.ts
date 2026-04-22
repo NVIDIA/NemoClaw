@@ -420,6 +420,24 @@ describe("onboard helpers", () => {
     ).toEqual({ kind: "model", retry: "model" });
   });
 
+  it("classifies TLS certificate errors as transport", () => {
+    expect(
+      classifyValidationFailure({
+        message: "transport error: invalid peer certificate: UnknownIssuer",
+      }),
+    ).toEqual({ kind: "transport", retry: "retry" });
+    expect(
+      classifyValidationFailure({
+        message: "SSL certificate problem: unable to get local issuer certificate",
+      }),
+    ).toEqual({ kind: "transport", retry: "retry" });
+    expect(
+      classifyValidationFailure({
+        message: "TLS handshake failure",
+      }),
+    ).toEqual({ kind: "transport", retry: "retry" });
+  });
+
   it("detects tool-calling responses payloads conservatively", () => {
     expect(
       hasResponsesToolCall(
