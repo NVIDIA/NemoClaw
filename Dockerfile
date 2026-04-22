@@ -41,6 +41,34 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 WORKDIR /opt/nemoclaw
 RUN npm ci --omit=dev
 
+# Upgrade OpenClaw if the base image is stale.
+#
+# The GHCR base image (sandbox-base:latest) may lag behind the version pinned
+# in Dockerfile.base. When that happens the fetch-guard patches below fail
+# because the target functions don't exist in the older OpenClaw. Rather than
+# silently skipping patches (leaving the sandbox unpatched), upgrade OpenClaw
+# in-place so every build gets the version the patches expect.
+#
+# The minimum required version comes from nemoclaw-blueprint/blueprint.yaml
+# (already COPYed to /opt/nemoclaw-blueprint/ above).
+# hadolint ignore=DL3059,DL4006
+RUN set -eu; \
+    MIN_VER=$(grep -m 1 'min_openclaw_version' /opt/nemoclaw-blueprint/blueprint.yaml | awk '{print $2}' | tr -d '"'); \
+    [ -n "$MIN_VER" ] || { echo "ERROR: Could not parse min_openclaw_version from blueprint.yaml" >&2; exit 1; }; \
+    CUR_VER=$(openclaw --version 2>/dev/null | awk '{print $2}' || echo "0.0.0"); \
+    if [ "$(printf '%s\n%s' "$MIN_VER" "$CUR_VER" | sort -V | head -n1)" = "$MIN_VER" ]; then \
+        echo "INFO: OpenClaw $CUR_VER is current (>= $MIN_VER), no upgrade needed"; \
+    else \
+        echo "INFO: Base image has OpenClaw $CUR_VER, upgrading to $MIN_VER (minimum required)"; \
+        # npm 10's atomic-move install can hit EROFS on overlayfs when the
+        # prior install spans multiple image layers (e.g. openclaw was
+        # baked into sandbox-base, then we upgrade on top here). Clearing
+        # at the shell level first gives npm a clean slate and avoids the
+        # rmdir failure inside npm's own install path.
+        rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
+        npm install -g --no-audit --no-fund --no-progress "openclaw@${MIN_VER}"; \
+    fi
+
 # Patch OpenClaw media fetch for proxy-only sandbox (NVIDIA/NemoClaw#1755).
 #
 # NemoClaw forces all sandbox egress through the OpenShell L7 proxy
@@ -89,23 +117,31 @@ RUN npm ci --omit=dev
 #   target hostname allowlist for the proxy hostname check (or exposes config
 #   to disable the check).
 #
+# SYNC WITH OPENCLAW: these patches grep for specific exports and function
+# definitions in the compiled OpenClaw dist (withStrictGuardedFetchMode,
+# assertExplicitProxyAllowed). If OpenClaw renames, removes, or restructures
+# either symbol in a future release, the grep will fail and the build will
+# abort. When bumping OPENCLAW_VERSION, verify both symbols still exist in
+# the new dist and update the regex / sed replacement accordingly.
+#
 # Both patches fail-close: if grep finds no targets, the build aborts so
 # the next maintainer reviewing an OPENCLAW_VERSION bump knows to revisit.
 # hadolint ignore=SC2016,DL3059,DL4006
 RUN set -eu; \
+    OC_DIST=/usr/local/lib/node_modules/openclaw/dist; \
     # --- Patch 1: rewrite fetch-guard export --- \
-    fg_export="$(grep -RIlE --include='*.js' 'export \{[^}]*withStrictGuardedFetchMode as [a-z]' /usr/local/lib/node_modules/openclaw/dist/)"; \
+    fg_export="$(grep -RIlE --include='*.js' 'export \{[^}]*withStrictGuardedFetchMode as [a-z]' "$OC_DIST")"; \
     test -n "$fg_export"; \
     for f in $fg_export; do \
         grep -q 'withTrustedEnvProxyGuardedFetchMode' "$f" || { echo "ERROR: $f missing withTrustedEnvProxyGuardedFetchMode"; exit 1; }; \
     done; \
     printf '%s\n' "$fg_export" | xargs sed -i -E 's|withStrictGuardedFetchMode as ([a-z])|withTrustedEnvProxyGuardedFetchMode as \1|g'; \
-    if grep -REq --include='*.js' 'withStrictGuardedFetchMode as [a-z]' /usr/local/lib/node_modules/openclaw/dist/; then echo "ERROR: Patch 1 left strict-mode export alias" >&2; exit 1; fi; \
+    if grep -REq --include='*.js' 'withStrictGuardedFetchMode as [a-z]' "$OC_DIST"; then echo "ERROR: Patch 1 left strict-mode export alias" >&2; exit 1; fi; \
     # --- Patch 2: neutralize assertExplicitProxyAllowed --- \
-    fg_assert="$(grep -RIlE --include='*.js' 'async function assertExplicitProxyAllowed' /usr/local/lib/node_modules/openclaw/dist/)"; \
+    fg_assert="$(grep -RIlE --include='*.js' 'async function assertExplicitProxyAllowed' "$OC_DIST")"; \
     test -n "$fg_assert"; \
     printf '%s\n' "$fg_assert" | xargs sed -i -E 's|(async function assertExplicitProxyAllowed\([^)]*\) \{)|\1 if (process.env.OPENSHELL_SANDBOX === "1") return; /* nemoclaw: env-gated bypass, see Dockerfile */ |'; \
-    grep -REq --include='*.js' 'assertExplicitProxyAllowed\([^)]*\) \{ if \(process\.env\.OPENSHELL_SANDBOX === "1"\) return; /\* nemoclaw' /usr/local/lib/node_modules/openclaw/dist/
+    grep -REq --include='*.js' 'assertExplicitProxyAllowed\([^)]*\) \{ if \(process\.env\.OPENSHELL_SANDBOX === "1"\) return; /\* nemoclaw' "$OC_DIST"
 
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
@@ -126,6 +162,9 @@ ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b
 ARG CHAT_UI_URL=http://127.0.0.1:18789
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
+ARG NEMOCLAW_CONTEXT_WINDOW=131072
+ARG NEMOCLAW_MAX_TOKENS=4096
+ARG NEMOCLAW_REASONING=false
 ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
 # Base64-encoded JSON list of messaging channel names to pre-configure
 # (e.g. ["discord","telegram"]). Channels are added with placeholder tokens
@@ -166,6 +205,9 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     CHAT_UI_URL=${CHAT_UI_URL} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
+    NEMOCLAW_CONTEXT_WINDOW=${NEMOCLAW_CONTEXT_WINDOW} \
+    NEMOCLAW_MAX_TOKENS=${NEMOCLAW_MAX_TOKENS} \
+    NEMOCLAW_REASONING=${NEMOCLAW_REASONING} \
     NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
@@ -183,6 +225,17 @@ USER sandbox
 # No runtime writes to openclaw.json are needed or possible.
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 # Auth token is generated per build so each image has a unique token.
+#
+# Temporary workaround for NemoClaw#1738: the OpenClaw Discord extension's
+# gateway uses `ws` (via @buape/carbon), which ignores HTTPS_PROXY/HTTP_PROXY
+# env vars and opens a direct TCP socket to gateway.discord.gg. Sandbox netns
+# blocks direct egress, so the WSS handshake never reaches Discord and the
+# bot loops on close-code 1006. Baking `accounts.default.proxy` into
+# openclaw.json feeds DiscordAccountConfig.proxy, which the gateway plugin
+# threads through to the `ws` `agent` option, routing the upgrade through
+# the OpenShell proxy. Mirror of the Telegram treatment immediately below.
+# Remove once OpenClaw lands an env-var-honouring fix for the Discord
+# gateway equivalent to openclaw/openclaw#62878 (Slack Socket Mode).
 RUN python3 -c "\
 import base64, json, os, secrets; \
 from urllib.parse import urlparse; \
@@ -193,13 +246,16 @@ provider_key = os.environ['NEMOCLAW_PROVIDER_KEY']; \
 primary_model_ref = os.environ['NEMOCLAW_PRIMARY_MODEL_REF']; \
 inference_base_url = os.environ['NEMOCLAW_INFERENCE_BASE_URL']; \
 inference_api = os.environ['NEMOCLAW_INFERENCE_API']; \
+context_window = int(os.environ.get('NEMOCLAW_CONTEXT_WINDOW', '131072')); \
+max_tokens = int(os.environ.get('NEMOCLAW_MAX_TOKENS', '4096')); \
+reasoning = os.environ.get('NEMOCLAW_REASONING', 'false') == 'true'; \
 inference_compat = json.loads(base64.b64decode(os.environ['NEMOCLAW_INFERENCE_COMPAT_B64']).decode('utf-8')); \
 msg_channels = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_CHANNELS_B64', 'W10=') or 'W10=').decode('utf-8')); \
 _allowed_ids = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_MESSAGING_ALLOWED_IDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
 _discord_guilds = json.loads(base64.b64decode(os.environ.get('NEMOCLAW_DISCORD_GUILDS_B64', 'e30=') or 'e30=').decode('utf-8')); \
 _token_keys = {'discord': 'token', 'telegram': 'botToken', 'slack': 'botToken'}; \
 _env_keys = {'discord': 'DISCORD_BOT_TOKEN', 'telegram': 'TELEGRAM_BOT_TOKEN', 'slack': 'SLACK_BOT_TOKEN'}; \
-_ch_cfg = {ch: {'accounts': {'default': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, **({'proxy': proxy_url} if ch == 'telegram' else {}), **({'groupPolicy': 'open'} if ch == 'telegram' else {}), **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
+_ch_cfg = {ch: {'accounts': {'default': {_token_keys[ch]: f'openshell:resolve:env:{_env_keys[ch]}', 'enabled': True, **({'appToken': 'openshell:resolve:env:SLACK_APP_TOKEN'} if ch == 'slack' else {}), **({'proxy': proxy_url} if ch in ('telegram', 'discord') else {}), **({'groupPolicy': 'open'} if ch == 'telegram' else {}), **({'dmPolicy': 'allowlist', 'allowFrom': _allowed_ids[ch]} if ch in _allowed_ids and _allowed_ids[ch] else {})}}} for ch in msg_channels if ch in _token_keys}; \
 _ch_cfg['discord'].update({'groupPolicy': 'allowlist', 'guilds': _discord_guilds}) if 'discord' in _ch_cfg and _discord_guilds else None; \
 parsed = urlparse(chat_ui_url); \
 chat_origin = f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else 'http://127.0.0.1:18789'; \
@@ -212,13 +268,14 @@ providers = { \
         'baseUrl': inference_base_url, \
         'apiKey': 'unused', \
         'api': inference_api, \
-        'models': [{**({'compat': inference_compat} if inference_compat else {}), 'id': model, 'name': primary_model_ref, 'reasoning': False, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': 131072, 'maxTokens': 4096}] \
+        'models': [{**({'compat': inference_compat} if inference_compat else {}), 'id': model, 'name': primary_model_ref, 'reasoning': reasoning, 'input': ['text'], 'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0}, 'contextWindow': context_window, 'maxTokens': max_tokens}] \
     } \
 }; \
 config = { \
     'agents': {'defaults': {'model': {'primary': primary_model_ref}}}, \
     'models': {'mode': 'merge', 'providers': providers}, \
     'channels': dict({'defaults': {'configWrites': False}}, **_ch_cfg), \
+    'update': {'checkOnStart': False}, \
     'gateway': { \
         'mode': 'local', \
         'controlUi': { \

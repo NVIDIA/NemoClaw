@@ -6,7 +6,7 @@ NemoClaw ships with deny-by-default security controls across four layers: networ
 You can tune every control, but each change shifts the risk profile.
 This page documents every configurable knob, its default, what it protects, the concrete risk of relaxing it, and a recommendation for common use cases.
 
-For background on how the layers fit together, refer to How It Works (see the `nemoclaw-user-overview` skill).
+For background on how the layers fit together, refer to How It Works (use the `nemoclaw-user-overview` skill).
 
 <!-- TODO: uncomment after the OpenShell docs are published
 :::{seealso}
@@ -264,7 +264,7 @@ The entrypoint drops these capabilities: `cap_net_raw`, `cap_dac_override`, `cap
 The entrypoint keeps these because it needs them for privilege separation using gosu: `cap_chown`, `cap_setuid`, `cap_setgid`, `cap_fowner`, `cap_kill`.
 
 This is best-effort: if `capsh` is not available or `CAP_SETPCAP` is not in the bounding set, the entrypoint logs a warning and continues with the default capability set.
-For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose (see Sandbox Hardening (see the `nemoclaw-user-deploy-remote` skill)).
+For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose (see Sandbox Hardening (use the `nemoclaw-user-deploy-remote` skill)).
 
 | Aspect | Detail |
 |---|---|
@@ -526,10 +526,10 @@ The following patterns weaken security without providing meaningful benefit.
 
 ## Related Topics
 
-- Network Policies (see the `nemoclaw-user-reference` skill) for the full baseline policy reference.
-- Customize the Network Policy (see the `nemoclaw-user-manage-policy` skill) for static and dynamic policy changes.
-- Approve or Deny Network Requests (see the `nemoclaw-user-manage-policy` skill) for the operator approval flow.
-- Sandbox Hardening (see the `nemoclaw-user-deploy-remote` skill) for container-level security measures.
-- Inference Options (see the `nemoclaw-user-configure-inference` skill) for provider configuration details.
-- How It Works (see the `nemoclaw-user-overview` skill) for the protection layer architecture.
+- Network Policies (use the `nemoclaw-user-reference` skill) for the full baseline policy reference.
+- Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill) for static and dynamic policy changes.
+- Approve or Deny Network Requests (use the `nemoclaw-user-manage-policy` skill) for the operator approval flow.
+- Sandbox Hardening (use the `nemoclaw-user-deploy-remote` skill) for container-level security measures.
+- Inference Options (use the `nemoclaw-user-configure-inference` skill) for provider configuration details.
+- How It Works (use the `nemoclaw-user-overview` skill) for the protection layer architecture.
 <!-- - OpenShell [Security Best Practices](https://docs.nvidia.com/openshell/latest/security/best-practices.html) for the platform-level controls reference, including network namespace isolation, seccomp filters, SSRF protection, TLS termination, and gateway authentication. -->

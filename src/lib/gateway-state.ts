@@ -26,16 +26,31 @@ export type GatewayReuseState =
 
 export type SandboxState = "ready" | "not_ready" | "missing";
 
+function parseSandboxRow(output: string, sandboxName: string): string[] | null {
+  if (typeof output !== "string") return null;
+  const clean = stripAnsi(output);
+  for (const line of clean.split("\n")) {
+    const cols = line.trim().split(/\s+/);
+    if (cols[0] === sandboxName) return cols;
+  }
+  return null;
+}
+
+export function parseSandboxStatus(output: string, sandboxName: string): string | null {
+  const cols = parseSandboxRow(output, sandboxName);
+  return cols && cols.length >= 2 ? cols[1] : null;
+}
+
 /**
  * Check if a sandbox is in Ready state from `openshell sandbox list` output.
  * Strips ANSI codes and exact-matches the sandbox name in the first column.
+ * Checks all columns for "Ready" (not just column 2) because the column
+ * layout of `openshell sandbox list` varies across OpenShell versions.
  */
 export function isSandboxReady(output: string, sandboxName: string): boolean {
-  const clean = stripAnsi(output);
-  return clean.split("\n").some((l) => {
-    const cols = l.trim().split(/\s+/);
-    return cols[0] === sandboxName && cols.includes("Ready") && !cols.includes("NotReady");
-  });
+  const cols = parseSandboxRow(output, sandboxName);
+  if (!cols) return false;
+  return cols.includes("Ready") && !cols.includes("NotReady");
 }
 
 /**
@@ -59,7 +74,10 @@ export function getReportedGatewayName(output = ""): string | null {
 }
 
 export function isGatewayConnected(statusOutput = ""): boolean {
-  return typeof statusOutput === "string" && statusOutput.includes("Connected");
+  return (
+    typeof statusOutput === "string" &&
+    (statusOutput.includes("Connected") || statusOutput.includes("Server Status"))
+  );
 }
 
 export function hasActiveGatewayInfo(activeGatewayInfoOutput = ""): boolean {
@@ -80,11 +98,20 @@ export function isGatewayHealthy(
   activeGatewayInfoOutput = "",
 ): boolean {
   const namedGatewayKnown = hasStaleGateway(gwInfoOutput);
-  if (!namedGatewayKnown || !isGatewayConnected(statusOutput)) return false;
-
   const activeGatewayName =
     getReportedGatewayName(statusOutput) || getReportedGatewayName(activeGatewayInfoOutput);
-  return activeGatewayName === GATEWAY_NAME;
+  const connected = isGatewayConnected(statusOutput);
+  const activeInfo = hasActiveGatewayInfo(activeGatewayInfoOutput);
+
+  // Primary path: status reports connected and gateway name matches
+  if (connected && activeGatewayName === GATEWAY_NAME) return true;
+
+  // Fallback: status is empty (ARM64/non-TTY) but gateway info confirms
+  // the named gateway exists and has an active endpoint
+  const statusEmpty = typeof statusOutput === 'string' && stripAnsi(statusOutput).trim().length === 0;
+  if (statusEmpty && namedGatewayKnown && activeInfo && activeGatewayName === GATEWAY_NAME) return true;
+
+  return false;
 }
 
 export function getGatewayReuseState(
@@ -111,6 +138,13 @@ export function getGatewayReuseState(
     return "active-unnamed";
   }
   return "missing";
+}
+
+export function parseSandboxPhase(getOutput: string): string | null {
+  if (typeof getOutput !== "string") return null;
+  const clean = stripAnsi(getOutput);
+  const match = clean.match(/^\s*Phase:\s+(\S+)/m);
+  return match ? match[1] : null;
 }
 
 export function getSandboxStateFromOutputs(

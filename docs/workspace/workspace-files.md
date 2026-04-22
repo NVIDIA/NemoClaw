@@ -2,7 +2,9 @@
 title:
   page: "Workspace Files"
   nav: "Workspace Files"
-description: "What workspace personality and configuration files are, where they live, and how they persist across sandbox restarts."
+description:
+  main: "What workspace personality and configuration files are, where they live, and how they persist across sandbox restarts."
+  agent: "Explains what workspace personality and configuration files are, where they live, and how they persist across sandbox restarts. Use when users ask about `SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, or other workspace files, or when preparing to back up or restore workspace state."
 keywords: ["nemoclaw workspace files", "soul.md", "user.md", "identity.md", "agents.md", "sandbox persistence"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "workspace", "persistence"]

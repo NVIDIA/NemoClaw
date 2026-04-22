@@ -4,7 +4,7 @@ title:
   nav: "Network Policies"
 description:
   main: "Baseline network policy, filesystem rules, and operator approval flow."
-  agent: "Documents baseline network policy, filesystem rules, and operator approval flow. Use when reviewing default network policies, understanding egress controls, or looking up the approval flow."
+  agent: "Covers the baseline network policy, filesystem rules, and operator approval flow. Use when looking up a specific default endpoint, filesystem path, or the runtime approval sequence NemoClaw applies on blocked requests."
 keywords: ["nemoclaw network policy", "sandbox egress control operator approval"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "network_policy", "security"]

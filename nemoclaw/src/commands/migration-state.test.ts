@@ -306,6 +306,21 @@ describe("commands/migration-state", () => {
       expect(result.externalRoots.some((r) => r.kind === "skillsExtraDir")).toBe(true);
     });
 
+    it("resolves external roots against the provided env", () => {
+      const env = { HOME: "/home/user", OPENCLAW_HOME: "/custom/home" };
+      addDir("/custom/home/.openclaw");
+      addFile(
+        "/custom/home/.openclaw/openclaw.json",
+        JSON.stringify({
+          skills: { load: { extraDirs: ["~/skills-extra"] } },
+        }),
+      );
+      addDir("/custom/home/skills-extra");
+
+      const result = detectHostOpenClaw(env);
+      expect(result.externalRoots[0]?.sourcePath).toBe("/custom/home/skills-extra");
+    });
+
     it("warns about symlinks in workspace", () => {
       const env = { HOME: "/home/user" };
       addDir("/home/user/.openclaw");

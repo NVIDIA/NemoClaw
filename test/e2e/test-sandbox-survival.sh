@@ -248,6 +248,12 @@ if ! command -v openshell >/dev/null 2>&1; then
 fi
 
 OPENSHELL_VERSION=$(openshell --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+# Fallback: some OpenShell builds (e.g. 0.0.29) report "m-dev" instead of a
+# parseable semver. Read the sidecar file written by install-openshell.sh.
+if [ -z "$OPENSHELL_VERSION" ]; then
+  _SIDECAR="$(dirname "$(command -v openshell)")/.openshell-installed-version"
+  OPENSHELL_VERSION=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' "$_SIDECAR" 2>/dev/null | head -1 || true)
+fi
 if version_gte "$OPENSHELL_VERSION" "$MIN_OPENSHELL"; then
   pass "openshell $OPENSHELL_VERSION >= $MIN_OPENSHELL (gateway resume + SSH secret + state persistence)"
 else
@@ -320,15 +326,33 @@ baseline_response=$($TIMEOUT_CMD ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
     -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
   2>&1) || true
 
+# Retry baseline inference up to 3 times — live models are not deterministic
+# and the gateway proxy can return unexpected responses on first attempt. (#1969)
 baseline_content=""
-if [ -n "$baseline_response" ]; then
-  baseline_content=$(echo "$baseline_response" | parse_chat_content 2>/dev/null) || true
-fi
-
-if grep -qi "PONG" <<<"$baseline_content"; then
+pong_ok=false
+for pong_attempt in 1 2 3; do
+  baseline_content=""
+  if [ -n "$baseline_response" ]; then
+    baseline_content=$(echo "$baseline_response" | parse_chat_content 2>/dev/null) || true
+  fi
+  if grep -qi "PONG" <<<"$baseline_content"; then
+    pong_ok=true
+    break
+  fi
+  info "Baseline attempt ${pong_attempt}/3: got '${baseline_content:0:80}', retrying in 5s..."
+  [ "$pong_attempt" -lt 3 ] || break
+  sleep 5
+  # shellcheck disable=SC2029
+  baseline_response=$($TIMEOUT_CMD ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
+    "curl -s --max-time 60 https://inference.local/v1/chat/completions \
+      -H 'Content-Type: application/json' \
+      -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
+    2>&1) || true
+done
+if $pong_ok; then
   pass "[LIVE] Baseline: model responded with PONG through sandbox"
 else
-  fail "[LIVE] Baseline: expected PONG, got: ${baseline_content:0:200}"
+  fail "[LIVE] Baseline: expected PONG after 3 attempts, got: ${baseline_content:0:200}"
   info "Raw response: ${baseline_response:0:300}"
   info "Cannot establish baseline — aborting (survival test meaningless without it)"
   cleanup_ssh
@@ -633,17 +657,34 @@ post_response=$($TIMEOUT_CMD ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
     -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
   2>&1) || true
 
+# Retry post-restart inference up to 3 times. (#1969)
 post_content=""
-if [ -n "$post_response" ]; then
-  post_content=$(echo "$post_response" | parse_chat_content 2>/dev/null) || true
-fi
-
-if grep -qi "PONG" <<<"$post_content"; then
+pong_ok=false
+for pong_attempt in 1 2 3; do
+  post_content=""
+  if [ -n "$post_response" ]; then
+    post_content=$(echo "$post_response" | parse_chat_content 2>/dev/null) || true
+  fi
+  if grep -qi "PONG" <<<"$post_content"; then
+    pong_ok=true
+    break
+  fi
+  info "Post-restart attempt ${pong_attempt}/3: got '${post_content:0:80}', retrying in 5s..."
+  [ "$pong_attempt" -lt 3 ] || break
+  sleep 5
+  # shellcheck disable=SC2029
+  post_response=$($TIMEOUT_CMD ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
+    "curl -s --max-time 60 https://inference.local/v1/chat/completions \
+      -H 'Content-Type: application/json' \
+      -d '{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":100}'" \
+    2>&1) || true
+done
+if $pong_ok; then
   pass "[LIVE] Post-restart: model responded with PONG through sandbox"
   info "Full path proven: user → sandbox → openshell gateway (resumed) → NVIDIA Endpoints → response"
   info "This proves #859's ask: reliable non-destructive gateway lifecycle with working inference"
 else
-  fail "[LIVE] Post-restart: expected PONG, got: ${post_content:0:200}"
+  fail "[LIVE] Post-restart: expected PONG after 3 attempts, got: ${post_content:0:200}"
   info "Raw response: ${post_response:0:300}"
 fi
 

@@ -14,7 +14,9 @@ describe("nemoclaw-start non-root fallback", () => {
 
     expect(src).toMatch(/if \[ "\$\(id -u\)" -ne 0 \]; then/);
     expect(src).toMatch(/touch \/tmp\/gateway\.log/);
-    expect(src).toMatch(/nohup "\$OPENCLAW" gateway run --port "\$\{_DASHBOARD_PORT\}" >\/tmp\/gateway\.log 2>&1 &/);
+    expect(src).toMatch(
+      /nohup "\$OPENCLAW" gateway run --port "\$\{_DASHBOARD_PORT\}" >\/tmp\/gateway\.log 2>&1 &/,
+    );
   });
 
   it("exits on config integrity failure in non-root mode", () => {
@@ -48,9 +50,10 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(nonRootBlock).toBeTruthy();
     const block = nonRootBlock[1];
 
-    // Only check top-level echo lines that are NOT inside { } > file redirects.
+    // Only check top-level echo lines that are NOT inside { } > file redirects
+    // or { } | helper piped redirects (e.g., emit_sandbox_sourced_file).
     // Filter out lines inside brace-group redirects (proxy-env.sh, etc.)
-    const braceStripped = block.replace(/\{[\s\S]*?\}\s*>\s*"[^"]*"/g, "");
+    const braceStripped = block.replace(/\{[\s\S]*?\}\s*(?:>\s*"[^"]*"|[|]\s*\w+[^\n]*)/g, "");
     const echoLines = braceStripped.match(/^\s*echo\s+.+$/gm) || [];
     expect(echoLines.length).toBeGreaterThan(0);
     for (const line of echoLines) {
@@ -204,6 +207,87 @@ describe("nemoclaw-start configure guard (#1114)", () => {
   });
 });
 
+describe("nemoclaw-start configure guard blocks --local (#2016)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("blocks openclaw agent --local with a hard error and return 1", () => {
+    const guardBlock = src.match(
+      /install_configure_guard\(\) \{([\s\S]*?)^validate_openclaw_symlinks/m,
+    );
+    expect(guardBlock).toBeTruthy();
+    const body = guardBlock[1];
+    // Must contain the agent) case that checks for --local
+    expect(body).toContain("agent)");
+    expect(body).toContain('"--local"');
+    // Must print an error (not a warning) and return 1
+    expect(body).toMatch(/echo "Error:.*--local.*not supported inside NemoClaw sandboxes/);
+    expect(body).toMatch(/return 1/);
+    // Must NOT contain the old warning pattern
+    expect(body).not.toContain("[SECURITY] Warning");
+  });
+
+  it("suggests the correct alternative command without --local", () => {
+    const guardBlock = src.match(
+      /install_configure_guard\(\) \{([\s\S]*?)^validate_openclaw_symlinks/m,
+    );
+    expect(guardBlock).toBeTruthy();
+    expect(guardBlock[1]).toContain("openclaw agent --agent main");
+  });
+
+  it("allows openclaw agent without --local to pass through", () => {
+    const guardBlock = src.match(
+      /install_configure_guard\(\) \{([\s\S]*?)^validate_openclaw_symlinks/m,
+    );
+    expect(guardBlock).toBeTruthy();
+    const body = guardBlock[1];
+    // The agent) case only returns 1 inside the --local check.
+    // After the for loop, execution falls through to `command openclaw "$@"`.
+    expect(body).toContain('command openclaw "$@"');
+  });
+});
+
+describe("nemoclaw-start configure guard blocks config set/unset (#1973)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("adds a config) case that matches only set and unset subcommands", () => {
+    expect(src).toMatch(/config\)\s+case "\$2" in\s+set \| unset\)/);
+  });
+
+  it("prints an actionable error quoting the invoked subcommand and returns 1", () => {
+    expect(src).toContain("'openclaw config $2' cannot modify config inside the sandbox");
+    expect(src).toMatch(/set \| unset\)[\s\S]*?return 1/);
+  });
+
+  it("redirects users to nemoclaw onboard --resume", () => {
+    expect(src).toMatch(/set \| unset\)[\s\S]*?nemoclaw onboard --resume/);
+  });
+
+  it("does not block immutable subcommands (get, list) — they fall through to the real binary", () => {
+    // The config) arm only enumerates mutating subcommands. Read-only ones are
+    // not matched, so execution falls through to `command openclaw "$@"` below.
+    expect(src).not.toMatch(/config\)\s+case "\$2" in[\s\S]*?\b(get|list|show|view)\)/);
+    expect(src).toContain('command openclaw "$@"');
+  });
+});
+
+describe("nemoclaw-start configure guard blocks channels mutators (#2097)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("adds a channels) case that allows read-only subcommands through", () => {
+    expect(src).toMatch(/channels\)\s+case "\$2" in\s+list \| "" \| -h \| --help\)/);
+  });
+
+  it("blocks mutating channels subcommands with an actionable error and return 1", () => {
+    expect(src).toContain("'openclaw channels $2' cannot modify channels inside the sandbox");
+    expect(src).toMatch(/channels\)[\s\S]*?\*\)[\s\S]*?return 1/);
+  });
+
+  it("redirects users to the host-side channels commands", () => {
+    expect(src).toMatch(/channels\)[\s\S]*?nemoclaw <sandbox> channels add/);
+    expect(src).toMatch(/channels\)[\s\S]*?nemoclaw <sandbox> channels remove/);
+  });
+});
+
 describe("runtime model override (#759)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -239,7 +323,9 @@ describe("runtime model override (#759)", () => {
     expect(fn).toBeTruthy();
     // Guard checks all override env vars before returning early
     expect(fn[1]).toContain("NEMOCLAW_MODEL_OVERRIDE");
-    expect(fn[1]).toContain("|| return 0");
+    expect(fn[1]).toContain("NEMOCLAW_REASONING");
+    // shfmt may format `|| return 0` as a standalone `return 0` on its own line
+    expect(fn[1]).toMatch(/\|\|\s*return 0|^\s*return 0/m);
   });
 
   it("supports optional NEMOCLAW_INFERENCE_API_OVERRIDE for cross-provider switches", () => {
@@ -324,6 +410,16 @@ describe("runtime model override (#759)", () => {
     expect(guard).toContain("NEMOCLAW_MAX_TOKENS");
     expect(guard).toContain("NEMOCLAW_REASONING");
   });
+
+  it("accesses NEMOCLAW_MODEL_OVERRIDE with :- fallback to avoid unbound variable under set -u", () => {
+    // NEMOCLAW_CONTEXT_WINDOW/MAX_TOKENS/REASONING are baked into the image ENV and are always
+    // non-empty, so the guard fires even when the operator never passes NEMOCLAW_MODEL_OVERRIDE.
+    // Without the :- fallback, set -euo pipefail would abort the entrypoint on every container
+    // start where only a context-window or reasoning override was intended.
+    const fn = src.match(/apply_model_override\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("${NEMOCLAW_MODEL_OVERRIDE:-}");
+  });
 });
 
 describe("runtime CORS origin override (#719)", () => {
@@ -342,7 +438,7 @@ describe("runtime CORS origin override (#719)", () => {
     );
 
     const rootBlock = src.match(
-      /# ── Root path[\s\S]*?apply_model_override\n\s*apply_cors_override\n\s*export_gateway_token/,
+      /# ── Root path[\s\S]*?apply_model_override\n\s*apply_cors_override\n\s*apply_slack_token_override\n\s*export_gateway_token/,
     );
     expect(rootBlock).toBeTruthy();
   });
@@ -384,6 +480,115 @@ describe("runtime CORS origin override (#719)", () => {
     const fn = src.match(/apply_cors_override\(\) \{([\s\S]*?)^}/m);
     expect(fn).toBeTruthy();
     expect(fn[1]).toContain("control characters");
+  });
+});
+
+describe("Slack token placeholder resolution (#2085)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("defines apply_slack_token_override function", () => {
+    expect(src).toContain("apply_slack_token_override()");
+    expect(src).toContain("SLACK_BOT_TOKEN");
+    expect(src).toContain("SLACK_APP_TOKEN");
+  });
+
+  it("calls apply_slack_token_override after apply_cors_override in both paths", () => {
+    const nonRootBlock = src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)# ── Root path/);
+    expect(nonRootBlock).toBeTruthy();
+    expect(nonRootBlock[1]).toMatch(
+      /apply_cors_override[\s\S]*?apply_slack_token_override[\s\S]*?export_gateway_token/,
+    );
+
+    const rootBlock = src.match(
+      /# ── Root path[\s\S]*?apply_cors_override\n\s*apply_slack_token_override\n\s*export_gateway_token/,
+    );
+    expect(rootBlock).toBeTruthy();
+  });
+
+  it("is a no-op when SLACK_BOT_TOKEN is not set", () => {
+    const fn = src.match(/apply_slack_token_override\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toMatch(/\[ -n "\$\{SLACK_BOT_TOKEN:-\}" \] \|\| return 0/);
+  });
+
+  it("only applies override in root mode, fails fast when non-root and token is set", () => {
+    const fn = src.match(/apply_slack_token_override\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toMatch(/id -u.*-ne 0/);
+    expect(fn[1]).toContain("requires a root container");
+    // Non-root with SLACK_BOT_TOKEN set must return 1 (not silently skip)
+    expect(fn[1]).toMatch(/requires a root container[\s\S]*?return 1/);
+  });
+
+  it("guards against symlink attacks", () => {
+    const fn = src.match(/apply_slack_token_override\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain('-L "$config_file"');
+    expect(fn[1]).toContain("Refusing Slack token override");
+  });
+
+  it("validates botToken prefix is xoxb-", () => {
+    const fn = src.match(/apply_slack_token_override\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("xoxb-");
+    expect(fn[1]).toContain("does not start with xoxb-");
+  });
+
+  it("validates appToken prefix is xapp-", () => {
+    const fn = src.match(/apply_slack_token_override\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("xapp-");
+    expect(fn[1]).toContain("does not start with xapp-");
+  });
+
+  it("warns when SLACK_BOT_TOKEN is set but SLACK_APP_TOKEN is missing", () => {
+    const fn = src.match(/apply_slack_token_override\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("SLACK_APP_TOKEN is missing");
+    expect(fn[1]).toContain("Socket Mode requires both tokens");
+  });
+
+  it("recomputes config hash after override", () => {
+    const fn = src.match(/apply_slack_token_override\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("sha256sum openclaw.json");
+    expect(fn[1]).toContain("config-hash");
+  });
+
+  it("resolves openshell:resolve:env: placeholders via Python", () => {
+    const fn = src.match(/apply_slack_token_override\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toContain("openshell:resolve:env:");
+    expect(fn[1]).toContain("botToken");
+    expect(fn[1]).toContain("appToken");
+  });
+
+  it("unsets SLACK_BOT_TOKEN and SLACK_APP_TOKEN before first gosu sandbox call in root path", () => {
+    // unset must appear after configure_messaging_channels and before the first gosu sandbox child
+    const block = src.match(/configure_messaging_channels\n([\s\S]*?)gosu sandbox bash/);
+    expect(block).toBeTruthy();
+    expect(block[1]).toContain("unset SLACK_BOT_TOKEN SLACK_APP_TOKEN");
+  });
+
+  it("fails fast when SLACK_BOT_TOKEN is set in non-root mode", () => {
+    // Fail-fast is now folded into apply_slack_token_override itself.
+    const fn = src.match(/apply_slack_token_override\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    // Function must return 1 (not 0) when non-root and SLACK_BOT_TOKEN is set
+    expect(fn[1]).toMatch(/id -u.*-ne 0[\s\S]*?requires a root container[\s\S]*?return 1/);
+
+    // The non-root call site must not have a separate post-call SLACK_BOT_TOKEN check
+    const nonRootBlock = src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then([\s\S]*?)# ── Root path/);
+    expect(nonRootBlock).toBeTruthy();
+    expect(nonRootBlock[1]).not.toMatch(
+      /apply_slack_token_override[\s\S]*?if \[ -n "\$\{SLACK_BOT_TOKEN/,
+    );
+  });
+
+  it("passes tokens via env prefix, not as positional args", () => {
+    const fn = src.match(/apply_slack_token_override\(\) \{([\s\S]*?)^}/m);
+    expect(fn).toBeTruthy();
+    expect(fn[1]).toMatch(/SLACK_BOT_TOKEN="\$SLACK_BOT_TOKEN" \\/);
   });
 });
 

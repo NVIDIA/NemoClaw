@@ -10,6 +10,7 @@ export interface SandboxEntry {
   gpuEnabled?: boolean;
   policies?: string[] | null;
   messagingChannels?: string[] | null;
+  agent?: string | null;
 }
 
 export interface MessagingBridgeHealth {
@@ -28,6 +29,8 @@ export interface ListSandboxesCommandDeps {
   recoverRegistryEntries: () => Promise<RecoveryResult>;
   getLiveInference: () => GatewayInference | null;
   loadLastSession: () => { sandboxName?: string | null } | null;
+  /** Detect active SSH sessions for a sandbox. Returns session count or null if unavailable. */
+  getActiveSessionCount?: (sandboxName: string) => number | null;
   log?: (message?: string) => void;
 }
 
@@ -45,6 +48,7 @@ export interface ShowStatusCommandDeps {
     channels: string[],
   ) => MessagingBridgeHealth[];
   backfillAndFindOverlaps?: () => MessagingOverlap[];
+  readGatewayLog?: (sandboxName: string) => string | null;
   log?: (message?: string) => void;
 }
 
@@ -90,7 +94,9 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
     const provider = sb.provider || "unknown";
     const gpu = sb.gpuEnabled ? "GPU" : "CPU";
     const presets = sb.policies && sb.policies.length > 0 ? sb.policies.join(", ") : "none";
-    log(`    ${sb.name}${def}`);
+    const sessionCount = deps.getActiveSessionCount ? deps.getActiveSessionCount(sb.name) : null;
+    const connected = sessionCount !== null && sessionCount > 0 ? " ●" : "";
+    log(`    ${sb.name}${def}${connected}`);
     log(`      model: ${model}  provider: ${provider}  ${gpu}  policies: ${presets}`);
   }
   log("");
@@ -150,6 +156,18 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
         log(
           "    Another sandbox is likely polling with the same bot token. See docs/reference/troubleshooting.md.",
         );
+
+        // Surface gateway log tail for Hermes sandboxes when messaging is degraded.
+        if (deps.readGatewayLog && defaultEntry?.agent === "hermes") {
+          const logTail = deps.readGatewayLog(defaultSandbox);
+          if (logTail) {
+            log("");
+            log("  Messaging gateway log (last 10 lines):");
+            for (const line of logTail.split("\n")) {
+              log(`    ${line}`);
+            }
+          }
+        }
       }
     }
   }

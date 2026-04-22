@@ -122,6 +122,43 @@ describe("onboard session", () => {
     expect(loaded.metadata.token).toBeUndefined();
   });
 
+  it("persists messagingChannels across save/load roundtrips", () => {
+    const created = session.createSession();
+    created.messagingChannels = ["telegram", "slack"];
+    session.saveSession(created);
+
+    const loaded = session.loadSession();
+    expect(loaded.messagingChannels).toEqual(["telegram", "slack"]);
+  });
+
+  it("filters non-string entries out of persisted messagingChannels", () => {
+    const created = session.createSession();
+    created.messagingChannels = ["telegram", 42, null, "discord"];
+    session.saveSession(created);
+
+    const loaded = session.loadSession();
+    expect(loaded.messagingChannels).toEqual(["telegram", "discord"]);
+  });
+
+  it("defaults messagingChannels to null for fresh sessions", () => {
+    const fresh = session.createSession();
+    expect(fresh.messagingChannels).toBeNull();
+  });
+
+  it("persists and clears web search config through safe session updates", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      webSearchConfig: { fetchEnabled: true },
+    });
+
+    let loaded = session.loadSession();
+    expect(loaded.webSearchConfig).toEqual({ fetchEnabled: true });
+
+    session.completeSession({ webSearchConfig: null });
+    loaded = session.loadSession();
+    expect(loaded.webSearchConfig).toBeNull();
+  });
+
   it("does not clear existing metadata when updates omit whitelisted metadata fields", () => {
     session.saveSession(session.createSession({ metadata: { gatewayName: "nemoclaw" } }));
     session.markStepComplete("provider_selection", {
@@ -133,6 +170,17 @@ describe("onboard session", () => {
     const loaded = session.loadSession();
     expect(loaded.metadata.gatewayName).toBe("nemoclaw");
     expect(loaded.metadata.token).toBeUndefined();
+  });
+
+  it("drops non-string gatewayName during normalization", () => {
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({ version: 1, metadata: { gatewayName: 123 } }),
+    );
+    const loaded = session.loadSession();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.metadata.gatewayName).toBe("nemoclaw");
   });
 
   it("returns null for corrupt session data", () => {
@@ -290,6 +338,40 @@ describe("onboard session", () => {
     expect(loaded.failure.message).toBe(loaded.steps.inference.error);
   });
 
+  it("round-trips null messagingChannels through normalizeSession", () => {
+    const created = session.createSession();
+    expect(created.messagingChannels).toBeNull();
+    const saved = session.saveSession(created);
+    const loaded = session.loadSession();
+    expect(saved.messagingChannels).toBeNull();
+    expect(loaded.messagingChannels).toBeNull();
+  });
+
+  it("round-trips messagingChannels=['telegram'] through normalizeSession", () => {
+    const created = session.createSession({ messagingChannels: ["telegram"] });
+    expect(created.messagingChannels).toEqual(["telegram"]);
+    const saved = session.saveSession(created);
+    const loaded = session.loadSession();
+    expect(saved.messagingChannels).toEqual(["telegram"]);
+    expect(loaded.messagingChannels).toEqual(["telegram"]);
+  });
+
+  it("filterSafeUpdates preserves messagingChannels field", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      messagingChannels: ["slack", "discord"],
+    });
+
+    const loaded = session.loadSession();
+    expect(loaded.messagingChannels).toEqual(["slack", "discord"]);
+  });
+
+  it("createSession with messagingChannels override", () => {
+    const created = session.createSession({ messagingChannels: ["telegram", "slack"] });
+    expect(created.messagingChannels).toEqual(["telegram", "slack"]);
+    expect(created.provider).toBeNull();
+  });
+
   it("summarizes the session for debug output", () => {
     session.saveSession(session.createSession({ sandboxName: "my-assistant" }));
     session.markStepStarted("preflight");
@@ -309,6 +391,20 @@ describe("onboard session", () => {
     session.markStepFailed("provider_selection", "Bearer abcdefghijklmnopqrstuvwxyz");
     const summary = session.summarizeForDebug();
 
+    expect(summary.failure.message).toContain("Bearer <REDACTED>");
+    expect(summary.failure.message).not.toContain("abcdefghijklmnopqrstuvwxyz");
+  });
+
+  it("re-sanitizes in-memory failures in debug summaries", () => {
+    const rawSession = session.createSession({
+      failure: {
+        step: "provider_selection",
+        message: "Bearer abcdefghijklmnopqrstuvwxyz",
+        recordedAt: "2026-04-01T00:00:00.000Z",
+      },
+    });
+
+    const summary = session.summarizeForDebug(rawSession);
     expect(summary.failure.message).toContain("Bearer <REDACTED>");
     expect(summary.failure.message).not.toContain("abcdefghijklmnopqrstuvwxyz");
   });

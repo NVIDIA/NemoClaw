@@ -412,6 +412,22 @@ function bootstrapLaunchable(elapsed) {
     return { remoteDir: resolvedRemoteDir, needsOnboard: false };
   }
 
+  // Rebuild CLI dist/ for our branch. The rsync above excludes dist/, so
+  // without this step bin/nemoclaw.js would `require("../dist/nemoclaw")`
+  // against the launchable's main-branch build and crash with
+  // MODULE_NOT_FOUND if main differs from the PR branch. `npm install
+  // --ignore-scripts` skipped the `prepare` lifecycle that normally runs
+  // `build:cli`, so do it explicitly.
+  console.log(`[${elapsed()}] Building CLI (dist/) for PR branch...`);
+  ssh(
+    `source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${resolvedRemoteDir} && npm run build:cli`,
+    {
+      timeout: 120_000,
+      stream: true,
+    },
+  );
+  console.log(`[${elapsed()}] CLI built`);
+
   // Rebuild TS plugin for our branch (reinstall plugin deps in case they changed)
   console.log(`[${elapsed()}] Building TypeScript plugin...`);
   ssh(
@@ -423,15 +439,17 @@ function bootstrapLaunchable(elapsed) {
   );
   console.log(`[${elapsed()}] Plugin built`);
 
-  // Install nemoclaw CLI.
-  // Use `sudo npm link` because Node.js is installed system-wide via
-  // nodesource (global prefix is /usr), so creating the global symlink
-  // requires elevated permissions.
-  console.log(`[${elapsed()}] Installing nemoclaw CLI (npm link)...`);
+  // Expose the nemoclaw CLI on PATH. The launchable setup script already
+  // creates /usr/local/bin/nemoclaw → $NEMOCLAW_CLONE_DIR/bin/nemoclaw.js
+  // as a direct symlink, and rsync above preserves that path, so this is
+  // an idempotent re-link to make local dev runs (that skip the launchable)
+  // still work. Avoid `sudo npm link` on cold CPU Brev — it routinely
+  // hangs inside npm's global-prefix housekeeping.
+  console.log(`[${elapsed()}] Linking nemoclaw CLI (direct symlink)...`);
   ssh(
-    `source ~/.nvm/nvm.sh 2>/dev/null || true && cd ${resolvedRemoteDir} && sudo npm link && sudo chown -R $(whoami):$(whoami) ${resolvedRemoteDir}`,
+    `sudo ln -sf ${resolvedRemoteDir}/bin/nemoclaw.js /usr/local/bin/nemoclaw && sudo chmod +x ${resolvedRemoteDir}/bin/nemoclaw.js`,
     {
-      timeout: 120_000,
+      timeout: 30_000,
       stream: true,
     },
   );

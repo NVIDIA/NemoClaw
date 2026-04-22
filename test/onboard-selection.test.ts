@@ -35,13 +35,20 @@ while [ "$#" -gt 0 ]; do
     *) url="$1"; shift ;;
   esac
 done
-if echo "$url" | grep -q '/models$'; then
+# Also extract auth from ?key= query parameter (Gemini uses this instead of Bearer header)
+url_auth=""
+if echo "$url" | grep -q '[?&]key='; then
+  url_auth=$(echo "$url" | sed 's/.*[?&]key=\\([^&]*\\).*/\\1/')
+fi
+# Strip query params for URL path matching
+url_path=$(echo "$url" | sed 's/?.*//')
+if echo "$url_path" | grep -q '/models$'; then
   body='{"data":[${models.map((model) => `{"id":"${model}"}`).join(",")}]}'
   status="200"
-elif echo "$auth" | grep -q '${goodToken}' && echo "$url" | grep -q '/responses$'; then
+elif (echo "$auth" | grep -q '${goodToken}' || echo "$url_auth" | grep -q '${goodToken}') && echo "$url_path" | grep -q '/responses$'; then
   body='{"id":"resp_123"}'
   status="200"
-elif echo "$auth" | grep -q '${goodToken}' && echo "$url" | grep -q '/chat/completions$'; then
+elif (echo "$auth" | grep -q '${goodToken}' || echo "$url_auth" | grep -q '${goodToken}') && echo "$url_path" | grep -q '/chat/completions$'; then
   body='{"id":"chatcmpl-123"}'
   status="200"
 fi
@@ -483,7 +490,7 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
-if echo "$url" | grep -q '/chat/completions$'; then
+if echo "$url" | grep -q '/chat/completions'; then
   status="200"
   body='{"choices":[{"message":{"content":"OK"}}]}'
 fi
@@ -604,6 +611,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
   return "";
 };
 
@@ -701,6 +709,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
   return "";
 };
 
@@ -804,6 +813,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("ollama list")) return "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
   return "";
 };
 
@@ -914,6 +924,7 @@ runner.runCapture = (command) => {
   if (cmd.includes("ollama list")) return "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
   return "";
 };
 
@@ -3059,6 +3070,7 @@ nimMod.pullNimImage = () => {};
 nimMod.containerName = () => "nemoclaw-nim-test";
 nimMod.startNimContainerByName = () => "container-123";
 nimMod.waitForNimHealth = () => true;
+nimMod.isNgcLoggedIn = () => true;
 
 // Select option 7 (nim-local), then model 1
 const answers = ["7", "1"];
