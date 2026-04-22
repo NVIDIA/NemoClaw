@@ -4666,7 +4666,7 @@ async function setupNim(gpu) {
       } else if (selected.key === "install-ollama") {
         if (process.platform === "darwin") {
           console.log("  Installing Ollama via Homebrew...");
-          run(["brew", "install", "ollama"]);
+          run(["brew", "install", "ollama"], { ignoreError: true });
         } else {
           console.log("  Installing Ollama via official installer...");
           run("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh");
