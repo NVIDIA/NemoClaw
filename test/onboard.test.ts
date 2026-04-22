@@ -50,6 +50,7 @@ import {
   summarizeProbeFailure,
   shouldIncludeBuildContextPath,
   writeSandboxConfigSyncFile,
+  formatOnboardConfigSummary,
 } from "../dist/lib/onboard";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox-build-context";
 import { buildWebSearchDockerConfig } from "../dist/lib/web-search";
@@ -5366,11 +5367,6 @@ const { createSandbox } = require(${onboardPath});
   });
 
   it("formatOnboardConfigSummary renders all collected fields (#2165)", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const onboardPath = path.join(repoRoot, "dist", "lib", "onboard.js");
-    delete require.cache[onboardPath];
-    const { formatOnboardConfigSummary } = require(onboardPath);
-
     const summary = formatOnboardConfigSummary({
       provider: "gemini-api",
       model: "gemini-2.5-flash",
