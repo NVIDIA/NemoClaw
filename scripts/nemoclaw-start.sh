@@ -973,6 +973,19 @@ if [ -f "$_AXIOS_FIX_SCRIPT" ] && [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
   export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_AXIOS_FIX_SCRIPT"
 fi
 
+# WebSocket CONNECT tunnel fix (NemoClaw#1570).
+# The `ws` library calls https.request() for wss:// WebSocket upgrades.
+# EnvHttpProxyAgent (NODE_USE_ENV_PROXY=1) sends a forward proxy request
+# instead of CONNECT — rejected by the L7 proxy with 400. Without
+# NODE_USE_ENV_PROXY, ws goes direct — blocked by sandbox netns.
+# The preload patches https.request() to inject a CONNECT tunnel agent for
+# WebSocket upgrade requests. Activates whenever HTTPS_PROXY is set (the
+# script itself guards on the env var).
+_WS_FIX_SCRIPT="/opt/nemoclaw-blueprint/scripts/ws-proxy-fix.js"
+if [ -f "$_WS_FIX_SCRIPT" ]; then
+  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_WS_FIX_SCRIPT"
+fi
+
 # OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
 # time a user connects via `openshell sandbox connect`.  The connect path spawns
 # `/bin/bash -i` (interactive, non-login), which sources ~/.bashrc — NOT
@@ -1007,6 +1020,10 @@ PROXYEOF
   # also benefit from the preload. (NemoClaw#2109)
   if [ -f "$_AXIOS_FIX_SCRIPT" ] && [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_AXIOS_FIX_SCRIPT\""
+  fi
+  # WebSocket CONNECT tunnel fix for connect sessions. (NemoClaw#1570)
+  if [ -f "$_WS_FIX_SCRIPT" ]; then
+    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WS_FIX_SCRIPT\""
   fi
   # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
   echo '# Tool cache redirects — /sandbox is Landlock read-only (#804)'

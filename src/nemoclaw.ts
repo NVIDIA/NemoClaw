@@ -2417,7 +2417,12 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
   log(
     `Env: NEMOCLAW_SANDBOX_NAME=${process.env.NEMOCLAW_SANDBOX_NAME}, NEMOCLAW_RECREATE_SANDBOX=${process.env.NEMOCLAW_RECREATE_SANDBOX}`,
   );
-  log("Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true })");
+
+  // Forward the stored --from Dockerfile path so onboard --resume uses the
+  // same custom image.  Without this, the conflict check rejects the resume
+  // because requestedFrom (null) !== recordedFrom (the stored path).  (#2301)
+  const storedFromDockerfile = sessionAfter?.metadata?.fromDockerfile || null;
+  log(`Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile} })`);
 
   const { onboard } = require("./lib/onboard");
   await onboard({
@@ -2425,6 +2430,7 @@ async function sandboxRebuild(sandboxName, args = [], opts = {}) {
     nonInteractive: true,
     recreateSandbox: true,
     agent: rebuildAgent,
+    fromDockerfile: storedFromDockerfile,
   });
 
   log("onboard() returned successfully");
