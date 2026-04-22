@@ -712,6 +712,74 @@ const {
 
 // validateNvidiaApiKeyValue — see validation import above
 
+// Module-level flag and buffer for deferred credential persistence.
+//
+// When `deferCredentialPersistence` is true, replaceNamedCredential prompts
+// the user and populates process.env as usual but does NOT write the key to
+// credentials.json. The env name is recorded in `pendingDeferredCredentials`
+// so a later flush call can persist it after the user has confirmed the
+// configuration at the review gate. See #2221.
+//
+// This keeps an aborted onboard from leaving API keys on disk that the user
+// never agreed to commit. If deferCredentialPersistence is false (default),
+// replaceNamedCredential behaves exactly as before: immediate persistence.
+let deferCredentialPersistence = false;
+let deferredCredentialsFlushed = false;
+const pendingDeferredCredentials = new Set<string>();
+
+function beginDeferredCredentialPersistence() {
+  deferCredentialPersistence = true;
+  deferredCredentialsFlushed = false;
+  pendingDeferredCredentials.clear();
+}
+
+function flushDeferredCredentials() {
+  for (const envName of pendingDeferredCredentials) {
+    const value = process.env[envName];
+    if (typeof value === "string" && value.length > 0) {
+      saveCredential(envName, value);
+    }
+  }
+  if (pendingDeferredCredentials.size > 0) {
+    deferredCredentialsFlushed = true;
+  }
+  pendingDeferredCredentials.clear();
+  // Leave deferCredentialPersistence flag armed so later iterations of the
+  // inference retry loop (if setupInference rejects the key and the user
+  // re-enters one) also defer. The caller clears the flag via
+  // endDeferredCredentialPersistence() after the loop breaks successfully.
+}
+
+function endDeferredCredentialPersistence() {
+  pendingDeferredCredentials.clear();
+  deferCredentialPersistence = false;
+  deferredCredentialsFlushed = false;
+}
+
+function discardDeferredCredentials() {
+  for (const envName of pendingDeferredCredentials) {
+    delete process.env[envName];
+  }
+  pendingDeferredCredentials.clear();
+  deferCredentialPersistence = false;
+}
+
+// Remove a single still-staged credential when the user abandons the
+// provider it was collected for. Leaves the deferral flag armed so the
+// next selection can stage fresh credentials. Called from setupNim's
+// selectionLoop when the user navigates back after entering a key.
+function discardStagedCredential(envName: string | null) {
+  if (!envName) return;
+  if (pendingDeferredCredentials.has(envName)) {
+    pendingDeferredCredentials.delete(envName);
+    delete process.env[envName];
+  }
+}
+
+function haveDeferredCredentialsBeenFlushed() {
+  return deferredCredentialsFlushed;
+}
+
 async function replaceNamedCredential(
   envName: string,
   label: string,
@@ -735,11 +803,21 @@ async function replaceNamedCredential(
       console.error(validationError);
       continue;
     }
-    saveCredential(envName, key);
-    process.env[envName] = key;
-    console.log("");
-    console.log(`  Key saved to ~/.nemoclaw/credentials.json (mode 600)`);
-    console.log("");
+    if (deferCredentialPersistence) {
+      // Hold in memory + process.env; flushDeferredCredentials() will write
+      // to ~/.nemoclaw/credentials.json after the review gate confirms.
+      pendingDeferredCredentials.add(envName);
+      process.env[envName] = key;
+      console.log("");
+      console.log(`  Key held in memory; will be saved to ~/.nemoclaw/credentials.json on confirm.`);
+      console.log("");
+    } else {
+      saveCredential(envName, key);
+      process.env[envName] = key;
+      console.log("");
+      console.log(`  Key saved to ~/.nemoclaw/credentials.json (mode 600)`);
+      console.log("");
+    }
     return key;
   }
 }
@@ -3007,6 +3085,7 @@ function formatOnboardConfigSummary({
   enabledChannels = null,
   sandboxName,
   notes = [],
+  credentialStorageState = null,
 }: OnboardConfigSummary): string {
   const bar = `  ${"─".repeat(50)}`;
   const messaging =
@@ -3015,8 +3094,12 @@ function formatOnboardConfigSummary({
       : "none";
   const webSearch =
     webSearchConfig && webSearchConfig.fetchEnabled === true ? "enabled" : "disabled";
+  const storageSuffix =
+    credentialStorageState === "deferred"
+      ? "(held in memory — will be saved to ~/.nemoclaw/credentials.json on confirm)"
+      : "(stored in ~/.nemoclaw/credentials.json)";
   const apiKeyLine = credentialEnv
-    ? `  API key:       ${credentialEnv} (stored in ~/.nemoclaw/credentials.json)`
+    ? `  API key:       ${credentialEnv} ${storageSuffix}`
     : `  API key:       (not required for ${provider ?? "this provider"})`;
   const noteLines = (Array.isArray(notes) ? notes : [])
     .filter((n) => typeof n === "string" && n.length > 0)
@@ -3902,7 +3985,17 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
   }
 
   if (options.length > 1) {
+    // If the user navigates back after staging a credential for the
+    // previously-chosen provider, that entry would otherwise remain in
+    // pendingDeferredCredentials and be flushed to disk on confirm along
+    // with the final selection. Discard it before each new iteration so
+    // only the credential for the confirmed provider survives.
+    let stagedCredentialEnvThisIteration = null;
     selectionLoop: while (true) {
+      if (stagedCredentialEnvThisIteration) {
+        discardStagedCredential(stagedCredentialEnvThisIteration);
+        stagedCredentialEnvThisIteration = null;
+      }
       let selected: ProviderChoice | undefined;
 
       if (isNonInteractive()) {
@@ -4044,6 +4137,34 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
               console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
               process.exit(1);
             }
+          } else if (deferCredentialPersistence) {
+            // Deferral active: route the NVIDIA key prompt through
+            // replaceNamedCredential so saveCredential is held until the
+            // gate confirms. credentials.ts's ensureApiKey always writes
+            // immediately, which would bypass the gate for NVIDIA users.
+            // Fancy onboarding box is preserved inline before the prompt.
+            if (!getCredential("NVIDIA_API_KEY")) {
+              console.log("");
+              console.log("  ┌─────────────────────────────────────────────────────────────────┐");
+              console.log("  │  NVIDIA API Key required                                        │");
+              console.log("  │                                                                 │");
+              console.log("  │  1. Go to https://build.nvidia.com/settings/api-keys            │");
+              console.log("  │  2. Sign in with your NVIDIA account                            │");
+              console.log("  │  3. Click 'Generate API Key' button                             │");
+              console.log("  │  4. Paste the key below (starts with nvapi-)                    │");
+              console.log("  └─────────────────────────────────────────────────────────────────┘");
+              await replaceNamedCredential(
+                "NVIDIA_API_KEY",
+                "NVIDIA API Key",
+                REMOTE_PROVIDER_CONFIG.build.helpUrl,
+                validateNvidiaApiKeyValue,
+              );
+              if (pendingDeferredCredentials.has("NVIDIA_API_KEY")) {
+                stagedCredentialEnvThisIteration = "NVIDIA_API_KEY";
+              }
+            } else {
+              process.env.NVIDIA_API_KEY = getCredential("NVIDIA_API_KEY");
+            }
           } else {
             await ensureApiKey();
           }
@@ -4080,6 +4201,9 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>): Promise<{
               remoteConfig.label + " API key",
               remoteConfig.helpUrl,
             );
+            if (credentialEnv && pendingDeferredCredentials.has(credentialEnv)) {
+              stagedCredentialEnvThisIteration = credentialEnv;
+            }
           }
           const _envModelRemote = (process.env.NEMOCLAW_MODEL || "").trim();
           const defaultModel = requestedModel || _envModelRemote || remoteConfig.defaultModel;
@@ -6661,6 +6785,15 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     let nimContainer = session?.nimContainer || null;
     let webSearchConfig = session?.webSearchConfig || null;
     let forceProviderSelection = false;
+    // Hold credential-prompt writes in memory until the user confirms at the
+    // review gate further down in this loop. If the user aborts, the keys
+    // never hit ~/.nemoclaw/credentials.json. Non-interactive and
+    // dangerouslySkipPermissions flows skip the gate, so they skip the
+    // deferral too (they implicitly opted into persistence). See #2221.
+    const deferInferenceCredentials = !isNonInteractive() && !dangerouslySkipPermissions;
+    if (deferInferenceCredentials) {
+      beginDeferredCredentialPersistence();
+    }
     while (true) {
       const resumeProviderSelection =
         !forceProviderSelection &&
@@ -6730,6 +6863,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           enabledChannels: selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
           sandboxName,
           notes: ["Sandbox build takes ~6 minutes on this host."],
+          credentialStorageState:
+            deferInferenceCredentials &&
+            credentialEnv &&
+            pendingDeferredCredentials.has(credentialEnv)
+              ? "deferred"
+              : "persisted",
         }),
       );
       console.log("  Web search and messaging channels will be prompted next.");
@@ -6738,13 +6877,33 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           .trim()
           .toLowerCase();
         if (answer === "n" || answer === "no") {
+          // Drop deferred credential writes — any keys staged in this
+          // iteration won't reach ~/.nemoclaw/credentials.json. If a PREVIOUS
+          // iteration already confirmed and flushed (e.g. user accepted
+          // iteration 1 but setupInference failed, forcing a retry, then
+          // aborted at iteration 2's gate), those earlier credentials are
+          // already on disk and cannot be unwritten here. Tell the truth.
+          const priorFlush = haveDeferredCredentialsBeenFlushed();
+          discardDeferredCredentials();
           console.log("  Aborted. Re-run `nemoclaw onboard` to start over.");
-          console.log("  Credentials entered so far are stored in ~/.nemoclaw/credentials.json —");
-          console.log(
-            "  clear them with `nemoclaw credentials reset <KEY>` if you no longer want them.",
-          );
+          if (priorFlush) {
+            console.log(
+              "  Note: credentials confirmed in an earlier attempt are already in ~/.nemoclaw/credentials.json;",
+            );
+            console.log(
+              "  use `nemoclaw credentials reset <KEY>` to clear specific entries.",
+            );
+          } else {
+            console.log("  No credentials were persisted to disk.");
+          }
           process.exit(0);
         }
+      }
+      // User confirmed — flush any credentials that were collected in deferred
+      // mode during this iteration of the retry loop so setupInference below
+      // and any downstream code that re-reads credentials.json see the values.
+      if (deferInferenceCredentials) {
+        flushDeferredCredentials();
       }
 
       startRecordedStep("inference", { sandboxName, provider, model });
@@ -6768,6 +6927,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         toSessionUpdates({ sandboxName, provider, model, nimContainer }),
       );
       break;
+    }
+    // Loop broke successfully — disarm the deferred-credential machinery so
+    // later prompts (Brave, messaging tokens) use the normal immediate-write
+    // path. Those live under their own gate-adjacent ordering and don't need
+    // deferral. See #2221.
+    if (deferInferenceCredentials) {
+      endDeferredCredentialPersistence();
     }
 
     const sandboxReuseState = getSandboxReuseState(sandboxName);
@@ -7022,6 +7188,10 @@ module.exports = {
   MESSAGING_CHANNELS,
   setupNim,
   formatOnboardConfigSummary,
+  beginDeferredCredentialPersistence,
+  flushDeferredCredentials,
+  discardDeferredCredentials,
+  endDeferredCredentialPersistence,
   isInferenceRouteReady,
   isNonInteractive,
   isOpenclawReady,
