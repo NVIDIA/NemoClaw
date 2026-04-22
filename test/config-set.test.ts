@@ -175,5 +175,59 @@ describe("config set helpers", () => {
     it("rejects IPv6 loopback", () => {
       expect(() => validateUrlValue("http://[::1]:8080")).toThrow(/private/i);
     });
+
+    // --- Newly covered ranges (previously bypassed) ---
+
+    it("rejects CGNAT shared address space (100.64.0.0/10, RFC 6598)", () => {
+      expect(() => validateUrlValue("http://100.64.0.1:8080")).toThrow(/private/i);
+      expect(() => validateUrlValue("http://100.100.100.100:80")).toThrow(/private/i);
+      expect(() => validateUrlValue("http://100.127.255.254:80")).toThrow(/private/i);
+    });
+
+    it("allows public IPs above CGNAT range (100.128.x.x)", () => {
+      expect(() => validateUrlValue("http://100.128.0.1:80")).not.toThrow();
+    });
+
+    it("rejects benchmark testing range (198.18.0.0/15, RFC 2544)", () => {
+      expect(() => validateUrlValue("http://198.18.0.1:80")).toThrow(/private/i);
+      expect(() => validateUrlValue("http://198.19.255.254:80")).toThrow(/private/i);
+    });
+
+    it("allows public IPs above benchmark range (198.20.x.x)", () => {
+      expect(() => validateUrlValue("http://198.20.0.1:80")).not.toThrow();
+    });
+
+    it("rejects IPv6 unique-local addresses (fc00::/7)", () => {
+      expect(() => validateUrlValue("http://[fc00::1]:8080")).toThrow(/private/i);
+      expect(() => validateUrlValue("http://[fd12:3456:789a::1]:80")).toThrow(/private/i);
+    });
+
+    it("rejects IPv6 link-local addresses (fe80::/10)", () => {
+      expect(() => validateUrlValue("http://[fe80::1]:8080")).toThrow(/private/i);
+    });
+
+    it("rejects IPv6 multicast addresses (ff00::/8)", () => {
+      expect(() => validateUrlValue("http://[ff02::1]:8080")).toThrow(/private/i);
+    });
+
+    it("rejects IPv4-mapped IPv6 loopback (::ffff:127.0.0.1)", () => {
+      expect(() => validateUrlValue("http://[::ffff:127.0.0.1]:8080")).toThrow(/private/i);
+    });
+
+    it("rejects IPv4-mapped IPv6 private (::ffff:10.0.0.1)", () => {
+      expect(() => validateUrlValue("http://[::ffff:10.0.0.1]:8080")).toThrow(/private/i);
+    });
+
+    it("rejects IPv4-mapped IPv6 CGNAT (::ffff:100.64.0.1)", () => {
+      expect(() => validateUrlValue("http://[::ffff:100.64.0.1]:80")).toThrow(/private/i);
+    });
+
+    it("allows public IPv6 addresses", () => {
+      expect(() => validateUrlValue("http://[2001:db8::1]:8080")).not.toThrow();
+    });
+
+    it("allows 172.32.x.x (above private 172.16-31 range)", () => {
+      expect(() => validateUrlValue("http://172.32.0.1:80")).not.toThrow();
+    });
   });
 });

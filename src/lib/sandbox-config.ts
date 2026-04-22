@@ -218,19 +218,144 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
 }
 
 // ---------------------------------------------------------------------------
-// URL validation (lightweight SSRF check for config set)
+// URL validation (SSRF check for config set)
+//
+// Comprehensive private/reserved IP detection aligned with the canonical
+// implementation in nemoclaw/src/blueprint/ssrf.ts. Covers all RFC-defined
+// private, loopback, link-local, CGNAT, and reserved address ranges for
+// both IPv4 and IPv6, including IPv4-mapped IPv6 addresses.
+//
+// Ref: https://github.com/NVIDIA/NemoClaw/issues/XXXX
 // ---------------------------------------------------------------------------
 
-const PRIVATE_IP_PREFIXES = ["127.", "10.", "0.", "169.254.", "192.168."];
+import { isIPv4, isIPv6 } from "node:net";
 
-const PRIVATE_IP_172_RE = /^172\.(1[6-9]|2[0-9]|3[01])\./;
+interface CidrRange {
+  network: Uint8Array;
+  prefixLen: number;
+}
 
-function isPrivateIp(hostname: string): boolean {
-  if (hostname === "localhost" || hostname === "[::1]") return true;
-  for (const prefix of PRIVATE_IP_PREFIXES) {
-    if (hostname.startsWith(prefix)) return true;
+function parseIPv4Bytes(addr: string): Uint8Array {
+  const parts = addr.split(".");
+  return new Uint8Array(parts.map(Number));
+}
+
+function parseIPv6Bytes(addr: string): Uint8Array {
+  // Handle IPv4-mapped notation (e.g., ::ffff:127.0.0.1)
+  const lastColon = addr.lastIndexOf(":");
+  const tail = addr.slice(lastColon + 1);
+  if (tail.includes(".")) {
+    const ipv4Parts = tail.split(".").map(Number);
+    const hi = ((ipv4Parts[0] << 8) | ipv4Parts[1]).toString(16);
+    const lo = ((ipv4Parts[2] << 8) | ipv4Parts[3]).toString(16);
+    return parseIPv6Bytes(addr.slice(0, lastColon + 1) + hi + ":" + lo);
   }
-  if (PRIVATE_IP_172_RE.test(hostname)) return true;
+
+  // Expand :: notation to full 8 groups
+  let groups: string[];
+  if (addr.includes("::")) {
+    const [left, right] = addr.split("::");
+    const leftGroups = left ? left.split(":") : [];
+    const rightGroups = right ? right.split(":") : [];
+    const missing = 8 - leftGroups.length - rightGroups.length;
+    groups = [...leftGroups, ...Array<string>(missing).fill("0"), ...rightGroups];
+  } else {
+    groups = addr.split(":");
+  }
+
+  const bytes = new Uint8Array(16);
+  for (let i = 0; i < 8; i++) {
+    const val = parseInt(groups[i], 16);
+    bytes[i * 2] = (val >> 8) & 0xff;
+    bytes[i * 2 + 1] = val & 0xff;
+  }
+  return bytes;
+}
+
+function cidr4(addr: string, prefixLen: number): CidrRange {
+  return { network: parseIPv4Bytes(addr), prefixLen };
+}
+
+function cidr6(addr: string, prefixLen: number): CidrRange {
+  return { network: parseIPv6Bytes(addr), prefixLen };
+}
+
+/**
+ * All RFC-defined private, loopback, link-local, and reserved address ranges.
+ * Aligned with nemoclaw/src/blueprint/ssrf.ts PRIVATE_NETWORKS.
+ */
+const PRIVATE_NETWORKS: CidrRange[] = [
+  cidr4("0.0.0.0", 8),       // "This network" (RFC 1122)
+  cidr4("127.0.0.0", 8),     // Loopback (RFC 1122)
+  cidr4("10.0.0.0", 8),      // Private (RFC 1918)
+  cidr4("172.16.0.0", 12),   // Private (RFC 1918)
+  cidr4("192.168.0.0", 16),  // Private (RFC 1918)
+  cidr4("169.254.0.0", 16),  // Link-local (RFC 3927)
+  cidr4("100.64.0.0", 10),   // CGNAT shared address space (RFC 6598)
+  cidr4("198.18.0.0", 15),   // Benchmark testing (RFC 2544)
+  cidr6("::1", 128),         // IPv6 loopback
+  cidr6("::", 128),           // IPv6 unspecified
+  cidr6("fc00::", 7),         // IPv6 unique local (RFC 4193)
+  cidr6("fe80::", 10),        // IPv6 link-local (RFC 4291)
+  cidr6("ff00::", 8),         // IPv6 multicast (RFC 4291)
+];
+
+function ipInCidr(ipBytes: Uint8Array, range: CidrRange): boolean {
+  if (ipBytes.length !== range.network.length) return false;
+
+  const fullBytes = Math.floor(range.prefixLen / 8);
+  const remainingBits = range.prefixLen % 8;
+
+  for (let i = 0; i < fullBytes; i++) {
+    if (ipBytes[i] !== range.network[i]) return false;
+  }
+
+  if (remainingBits > 0) {
+    const mask = 0xff << (8 - remainingBits);
+    if ((ipBytes[fullBytes] & mask) !== (range.network[fullBytes] & mask)) return false;
+  }
+
+  return true;
+}
+
+function isIPv4Mapped(bytes: Uint8Array): boolean {
+  return (
+    bytes.length === 16 &&
+    bytes[10] === 0xff &&
+    bytes[11] === 0xff &&
+    bytes.slice(0, 10).every((b) => b === 0)
+  );
+}
+
+/**
+ * Check whether an IP address or hostname falls within a private/reserved
+ * network range. Handles IPv4, IPv6, and IPv4-mapped IPv6 addresses.
+ *
+ * The hostname parameter comes from URL.hostname which wraps IPv6
+ * addresses in brackets (e.g. "[::1]") — these are stripped before matching.
+ */
+function isPrivateIp(hostname: string): boolean {
+  if (hostname === "localhost") return true;
+
+  // URL.hostname wraps IPv6 in brackets — strip them for matching
+  const addr = hostname.replace(/^\[|\]$/g, "");
+
+  if (isIPv4(addr)) {
+    const ipBytes = parseIPv4Bytes(addr);
+    return PRIVATE_NETWORKS.some((range) => ipInCidr(ipBytes, range));
+  }
+
+  if (isIPv6(addr)) {
+    const ipBytes = parseIPv6Bytes(addr);
+    // IPv4-mapped IPv6 (::ffff:x.x.x.x) — extract the embedded IPv4
+    // and check against IPv4 ranges
+    if (isIPv4Mapped(ipBytes)) {
+      const ipv4Bytes = ipBytes.slice(12);
+      return PRIVATE_NETWORKS.some((range) => ipInCidr(ipv4Bytes, range));
+    }
+    return PRIVATE_NETWORKS.some((range) => ipInCidr(ipBytes, range));
+  }
+
   return false;
 }
 
