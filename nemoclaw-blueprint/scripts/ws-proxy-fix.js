@@ -76,11 +76,15 @@ const _PATCHED = Symbol.for("nemoclaw.wsProxyFix");
                 path: `${targetHost}:${targetPort}`,
                 headers: { Host: `${targetHost}:${targetPort}` },
             });
-            connectReq.on("connect", (_res, socket) => {
+            connectReq.on("connect", (_res, socket, head) => {
                 if (_res.statusCode !== 200) {
                     socket.destroy();
                     callback(new Error(`ws-proxy-fix: CONNECT ${targetHost}:${targetPort} via proxy failed (${_res.statusCode})`));
                     return;
+                }
+                // Preserve any bytes already buffered from the tunnel before TLS.
+                if (head && head.length > 0) {
+                    socket.unshift(head);
                 }
                 const tlsSocket = node_tls_1.default.connect({
                     socket,

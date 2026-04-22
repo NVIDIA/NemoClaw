@@ -96,7 +96,7 @@ interface ReqOpts extends https.RequestOptions {
 
       connectReq.on(
         "connect",
-        (_res: http.IncomingMessage, socket: net.Socket) => {
+        (_res: http.IncomingMessage, socket: net.Socket, head: Buffer) => {
           if (_res.statusCode !== 200) {
             socket.destroy();
             callback(
@@ -105,6 +105,10 @@ interface ReqOpts extends https.RequestOptions {
               ),
             );
             return;
+          }
+          // Preserve any bytes already buffered from the tunnel before TLS.
+          if (head && head.length > 0) {
+            socket.unshift(head);
           }
           const tlsSocket = tls.connect({
             socket,
