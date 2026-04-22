@@ -3306,13 +3306,23 @@ async function promptValidatedSandboxName() {
 /**
  * Render the configuration summary shown before the destructive sandbox build.
  * Extracted from confirmOnboardConfiguration() for direct unit testing — see #2165.
+ *
+ * Fields:
+ * - credentialEnv:    env-var name of the API key (e.g. "NVIDIA_API_KEY").
+ *                     Rendered with the fixed credentials.json location so
+ *                     users can see where the key was stored.
+ * - notes:            additional bullet lines shown under the summary
+ *                     (e.g. "~6 minutes on this host"). Each note rendered
+ *                     as "Note: <text>" so it's visually distinct.
  */
 function formatOnboardConfigSummary({
   provider,
   model,
+  credentialEnv = null,
   webSearchConfig,
   enabledChannels,
   sandboxName,
+  notes = [],
 }) {
   const bar = `  ${"─".repeat(50)}`;
   const messaging =
@@ -3320,6 +3330,12 @@ function formatOnboardConfigSummary({
       ? enabledChannels.join(", ")
       : "none";
   const webSearch = webSearchConfig && webSearchConfig.fetchEnabled === true ? "enabled" : "disabled";
+  const apiKeyLine = credentialEnv
+    ? `  API key:       ${credentialEnv} (stored in ~/.nemoclaw/credentials.json)`
+    : `  API key:       (not required for ${provider ?? "this provider"})`;
+  const noteLines = (Array.isArray(notes) ? notes : [])
+    .filter((n) => typeof n === "string" && n.length > 0)
+    .map((n) => `  Note:          ${n}`);
   return [
     "",
     bar,
@@ -3327,9 +3343,11 @@ function formatOnboardConfigSummary({
     bar,
     `  Provider:      ${provider ?? "(unset)"}`,
     `  Model:         ${model ?? "(unset)"}`,
+    apiKeyLine,
     `  Web search:    ${webSearch}`,
     `  Messaging:     ${messaging}`,
     `  Sandbox name:  ${sandboxName}`,
+    ...noteLines,
     bar,
   ].join("\n");
 }
@@ -6675,10 +6693,12 @@ async function onboard(opts = {}) {
         formatOnboardConfigSummary({
           provider,
           model,
+          credentialEnv,
           webSearchConfig,
           enabledChannels:
             selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
           sandboxName,
+          notes: ["Sandbox build takes ~6 minutes on this host."],
         }),
       );
       console.log("  Web search and messaging channels will be prompted next.");
