@@ -864,12 +864,16 @@ if echo "$dc_ws_tunnel" | grep -q "HELLO op=10"; then
   pass "M13d: Received Discord Hello (opcode 10) with heartbeat interval"
 elif echo "$dc_ws_tunnel" | grep -q "UPGRADED"; then
   fail "M13d: Upgraded but never received Discord Hello"
+else
+  skip "M13d: WebSocket upgrade did not complete"
 fi
 
 if echo "$dc_ws_tunnel" | grep -q "HEARTBEAT_ACK op=11"; then
   pass "M13e: Sent Heartbeat, received ACK (opcode 11) — full round-trip verified"
 elif echo "$dc_ws_tunnel" | grep -q "SENT_HEARTBEAT"; then
   fail "M13e: Sent Heartbeat but never received ACK"
+else
+  skip "M13e: Heartbeat exchange did not occur"
 fi
 
 # M14 (negative): curl should be blocked by binary restriction
