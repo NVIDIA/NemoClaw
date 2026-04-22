@@ -223,6 +223,39 @@ jobs:
           fi
           gh pr comment ${{ inputs.pr_number }} --repo ${{ github.repository }} --body "$BODY"
 
+      # Collect debugging artifacts from the Brev VM on failure before the
+      # instance gets torn down. Captures the onboard log, sandbox list,
+      # docker state, and gateway status so downstream onboard failures are
+      # diagnosable without re-running with keep_alive=true.
+      - name: Collect Brev debug bundle on failure
+        if: failure()
+        continue-on-error: true
+        run: |
+          INSTANCE="e2e-pr-${{ inputs.pr_number || github.run_id }}"
+          mkdir -p brev-debug-bundle
+          brev refresh >/dev/null 2>&1 || true
+          ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR \
+              -o ConnectTimeout=10 "${INSTANCE}" \
+              'set +e
+               mkdir -p /tmp/nc-debug
+               cp /tmp/nemoclaw-onboard.log /tmp/nc-debug/ 2>/dev/null || true
+               timeout 15s openshell sandbox list  > /tmp/nc-debug/sandbox-list.txt 2>&1
+               timeout 15s openshell gateway status > /tmp/nc-debug/gateway-status.txt 2>&1
+               timeout 15s docker ps -a             > /tmp/nc-debug/docker-ps.txt 2>&1
+               timeout 30s tar -C /tmp -czf /tmp/nc-debug.tar.gz nc-debug
+              ' || true
+          scp -o StrictHostKeyChecking=no -o LogLevel=ERROR \
+              "${INSTANCE}:/tmp/nc-debug.tar.gz" brev-debug-bundle/ 2>/dev/null || true
+          ls -la brev-debug-bundle/ || true
+
+      - name: Upload Brev debug bundle on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: brev-debug-bundle
+          path: brev-debug-bundle/
+          if-no-files-found: ignore
+
       - name: Upload test logs
         if: failure()
         uses: actions/upload-artifact@v4
