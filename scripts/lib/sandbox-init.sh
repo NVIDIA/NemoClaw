@@ -38,16 +38,12 @@ _SANDBOX_INIT_LOADED=1
 # This is an accepted limitation documented in the OpenShell security model.
 #
 # See also: https://github.com/NVIDIA/NemoClaw/issues/2181
-# Future: adopt s6-overlay fix-attrs.d/ for declarative enforcement.
 # ─────────────────────────────────────────────────────────────────
 
 # ── Secure file helpers ──────────────────────────────────────────
 # Centralized primitives for creating files that cross trust boundaries
 # in /tmp. Using these helpers instead of ad-hoc chmod/chown ensures
 # consistent security posture and prevents the class of bug in #2181.
-#
-# Future: these map directly to s6-overlay fix-attrs.d/ entries when
-# the entrypoint is decomposed.
 
 # Write a file that the sandbox user can SOURCE but not MODIFY.
 # Reads content from stdin. Caller usage:
