@@ -1,16 +1,6 @@
----
-name: "nemoclaw-user-skills-coding"
-description: "Describes the agent skills shipped with NemoClaw and how to access them by cloning the repository. Use when users ask about AI agent support, coding assistant integration, or the .agents/skills/ directory."
----
-
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-
-# NemoClaw User Skills Coding
-
-Describes the agent skills shipped with NemoClaw and how to access them by cloning the repository. Use when users ask about AI agent support, coding assistant integration, or the .agents/skills/ directory.
-
-## Context
+# NemoClaw Agent Skills for Your AI Coding Assistant
 
 NemoClaw ships agent skills that are generated directly from this documentation.
 Each skill is a converted version of one or more doc pages, structured so AI coding assistants can consume it as context.
@@ -72,5 +62,22 @@ Examples of questions your assistant can answer with these skills:
 |----------|-----------------|
 | "How do I install NemoClaw?" | `nemoclaw-user-get-started` |
 | "Switch my inference provider to Ollama." | `nemoclaw-user-configure-inference` |
+| "A network request was blocked. How do I approve it?" | `nemoclaw-user-manage-policy` |
+| "Show me the sandbox logs." | `nemoclaw-user-monitor-sandbox` |
+| "How do I deploy NemoClaw to a remote GPU?" | `nemoclaw-user-deploy-remote` |
+| "What security controls can I configure?" | `nemoclaw-user-configure-security` |
+| "Back up my agent workspace files." | `nemoclaw-user-workspace` |
+| "What CLI commands are available?" | `nemoclaw-user-reference` |
 
-*Full details in `references/agent-skills.md`.*
+You can also reference a skill directly by name if you know which one you need.
+
+## AI Coding Assistants that You Can Use with NemoClaw Skills
+
+The NemoClaw agent skills follow the [Agent Skills best practices](https://agentskills.io/skill-creation/best-practices) and the [Claude Skills best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices).
+The following table shows how each AI coding assistant can use the NemoClaw skills.
+
+| Assistant | Skill discovery |
+|-----------|----------------|
+| Cursor | Reads `AGENTS.md` at the project root, which references `.agents/skills/`. |
+| Claude Code | Follows the `.claude/skills/` symlink, which points to `.agents/skills/`. |
+| Other assistants | Point the assistant to `.agents/skills/` if it supports project-level skill loading. |
