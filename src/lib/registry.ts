@@ -21,6 +21,7 @@ export interface SandboxEntry {
   imageTag?: string | null;
   providerCredentialHashes?: Record<string, string>;
   messagingChannels?: string[];
+  disabledChannels?: string[];
 }
 
 export interface SandboxRegistry {
@@ -171,6 +172,10 @@ export function registerSandbox(entry: SandboxEntry): void {
       imageTag: entry.imageTag || null,
       providerCredentialHashes: entry.providerCredentialHashes || undefined,
       messagingChannels: entry.messagingChannels || [],
+      disabledChannels:
+        Array.isArray(entry.disabledChannels) && entry.disabledChannels.length > 0
+          ? [...entry.disabledChannels]
+          : undefined,
     };
     if (!data.defaultSandbox) {
       data.defaultSandbox = entry.name;
@@ -227,5 +232,24 @@ export function setDefault(name: string): boolean {
 export function clearAll(): void {
   withLock(() => {
     save({ sandboxes: {}, defaultSandbox: null });
+  });
+}
+
+export function getDisabledChannels(name: string): string[] {
+  const data = load();
+  return data.sandboxes[name]?.disabledChannels ?? [];
+}
+
+export function setChannelDisabled(name: string, channel: string, disabled: boolean): boolean {
+  return withLock(() => {
+    const data = load();
+    const entry = data.sandboxes[name];
+    if (!entry) return false;
+    const current = new Set(entry.disabledChannels ?? []);
+    if (disabled) current.add(channel);
+    else current.delete(channel);
+    entry.disabledChannels = current.size > 0 ? Array.from(current).sort() : undefined;
+    save(data);
+    return true;
   });
 }

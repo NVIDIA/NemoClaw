@@ -1,10 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createRequire } from "node:module";
 import { describe, it, expect } from "vitest";
 
 // Build must run before these tests (imports from dist/)
-const { extractDotpath, setDotpath, validateUrlValue, resolveAgentConfig } = require("../dist/lib/sandbox-config");
+const require = createRequire(import.meta.url);
+const {
+  extractDotpath,
+  isRecognizedConfigPath,
+  setDotpath,
+  validateUrlValue,
+  resolveAgentConfig,
+} = require("../dist/lib/sandbox-config");
 
 describe("resolveAgentConfig", () => {
   it("returns openclaw defaults for unknown sandbox", () => {
@@ -77,6 +85,47 @@ describe("config set helpers", () => {
       const obj: Record<string, unknown> = { a: { existing: true } };
       setDotpath(obj, "a.newKey", "added");
       expect(obj.a).toEqual({ existing: true, newKey: "added" });
+    });
+  });
+
+  describe("isRecognizedConfigPath", () => {
+    it("accepts an existing top-level key", () => {
+      expect(isRecognizedConfigPath({ version: 1 }, "version")).toBe(true);
+    });
+
+    it("accepts an existing nested key path", () => {
+      expect(
+        isRecognizedConfigPath(
+          { agents: { defaults: { model: { primary: "gpt-5.4" } } } },
+          "agents.defaults.model.primary",
+        ),
+      ).toBe(true);
+    });
+
+    it("accepts existing keys whose value is null", () => {
+      expect(isRecognizedConfigPath({ provider: { endpoint: null } }, "provider.endpoint")).toBe(true);
+    });
+
+    it("rejects an unknown top-level key", () => {
+      expect(isRecognizedConfigPath({ version: 1 }, "inference.endpoint")).toBe(false);
+    });
+
+    it("rejects an unknown nested key", () => {
+      expect(
+        isRecognizedConfigPath(
+          { agents: { defaults: { model: { primary: "gpt-5.4" } } } },
+          "agents.defaults.model.secondary",
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects malformed dotpaths", () => {
+      expect(isRecognizedConfigPath({ version: 1 }, "agents..defaults")).toBe(false);
+    });
+
+    it("rejects prototype-inherited keys", () => {
+      expect(isRecognizedConfigPath({}, "toString")).toBe(false);
+      expect(isRecognizedConfigPath({ safe: {} }, "safe.constructor")).toBe(false);
     });
   });
 

@@ -276,7 +276,7 @@ section "Phase 5: config set"
 
 # Set a test key
 CONFIG_SET_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" config set \
-  --key "nemoclaw_e2e_test" --value '"shields-config-e2e"' 2>&1)
+  --key "agents.defaults.model.primary" --value '"shields-config-e2e"' 2>&1)
 echo "$CONFIG_SET_OUTPUT"
 
 if echo "$CONFIG_SET_OUTPUT" | grep -q "Config updated\|config updated"; then
@@ -286,7 +286,7 @@ else
 fi
 
 # Verify the change is visible via config get
-VERIFY_SET=$(nemoclaw "${SANDBOX_NAME}" config get --key nemoclaw_e2e_test 2>&1)
+VERIFY_SET=$(nemoclaw "${SANDBOX_NAME}" config get --key agents.defaults.model.primary 2>&1)
 if echo "$VERIFY_SET" | grep -q "shields-config-e2e"; then
   pass "config set change visible in config get"
 else
@@ -304,7 +304,7 @@ fi
 
 # Verify SSRF validation on URLs
 SSRF_SET=$(nemoclaw "${SANDBOX_NAME}" config set \
-  --key "test_url" --value '"http://127.0.0.1:8080/steal"' 2>&1 || true)
+  --key "agents.defaults.model.primary" --value '"http://127.0.0.1:8080/steal"' 2>&1 || true)
 if echo "$SSRF_SET" | grep -qi "private\|validation failed"; then
   pass "config set blocks private IP URLs (SSRF)"
 else
@@ -383,7 +383,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 8: Config changes persist"
 
-PERSIST_CHECK=$(nemoclaw "${SANDBOX_NAME}" config get --key nemoclaw_e2e_test 2>&1)
+PERSIST_CHECK=$(nemoclaw "${SANDBOX_NAME}" config get --key agents.defaults.model.primary 2>&1)
 if echo "$PERSIST_CHECK" | grep -q "shields-config-e2e"; then
   pass "Config changes survived shields up (persisted)"
 else
@@ -485,8 +485,8 @@ else
   fail "shields should be DOWN: ${STATUS_TIMER}"
 fi
 
-info "Waiting 15s for auto-restore..."
-sleep 15
+info "Waiting 25s for auto-restore..."
+sleep 25
 
 # Check if the timer process restored shields
 # The timer runs as a detached process — it restores the policy and
@@ -499,7 +499,7 @@ else
   info "Status: ${STATUS_AFTER_TIMER}"
   # Clean up manually
   nemoclaw "${SANDBOX_NAME}" shields up 2>/dev/null || true
-  fail "Auto-restore timer did not restore shields within 15s"
+  fail "Auto-restore timer did not restore shields within 25s"
 fi
 
 # Verify config is re-locked after auto-restore

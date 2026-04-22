@@ -44,6 +44,14 @@ function kubectlExec(sandboxName: string, cmd: string[]): void {
   ], { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 });
 }
 
+function kubectlExecCapture(sandboxName: string, cmd: string[]): string {
+  return execFileSync("docker", [
+    "exec", K3S_CONTAINER,
+    "kubectl", "exec", "-n", "openshell", sandboxName, "-c", "agent", "--",
+    ...cmd,
+  ], { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 }).toString().trim();
+}
+
 // Re-export for tests and external consumers
 const MAX_TIMEOUT_SECONDS = MAX_SECONDS;
 const DEFAULT_TIMEOUT_SECONDS = DEFAULT_SECONDS;
@@ -130,17 +138,114 @@ function killTimer(sandboxName: string): void {
 //
 // Sets permissions to sandbox:sandbox 0600/0700, matching what OpenClaw
 // writes natively (mode 384 = 0o600). This keeps `openclaw doctor` happy.
+//
+// Note on chattr: The entrypoint (nemoclaw-start.sh) sets chattr +i on the
+// .openclaw DIRECTORY and its SYMLINKS, but NOT on openclaw.json itself.
+// The chattr -i here is best-effort — it may silently fail if kubectl exec
+// lacks CAP_LINUX_IMMUTABLE or if the file was never immutable. That's fine:
+// the file becomes writable through the permissive policy (disables Landlock
+// read_only) + chown/chmod below.
 // ---------------------------------------------------------------------------
 
 function unlockAgentConfig(sandboxName: string, target: { configPath: string; configDir: string }): void {
+  const errors: string[] = [];
+  try { kubectlExec(sandboxName, ["chattr", "-i", target.configPath]); } catch { errors.push("chattr -i"); }
+  try { kubectlExec(sandboxName, ["chown", "sandbox:sandbox", target.configPath]); } catch { errors.push("chown config file"); }
+  try { kubectlExec(sandboxName, ["chmod", "600", target.configPath]); } catch { errors.push("chmod 600 config file"); }
+  try { kubectlExec(sandboxName, ["chown", "sandbox:sandbox", target.configDir]); } catch { errors.push("chown config dir"); }
+  try { kubectlExec(sandboxName, ["chmod", "700", target.configDir]); } catch { errors.push("chmod 700 config dir"); }
+  if (errors.length > 0) {
+    console.error(`  Warning: Some unlock operations failed: ${errors.join(", ")}. Config may remain read-only.`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Config lock — shared between shields-up, auto-restore timer, and rollback
+//
+// Each operation runs independently so a single failure does not skip the
+// rest. After all attempts, we verify the actual on-disk state and throw
+// if the config is not properly locked.
+//
+// The config file's protection comes from three layers:
+//   1. Landlock read_only path — kernel-level, restored by policy snapshot
+//   2. UNIX permissions — 444 root:root (mandatory, verified here)
+//   3. chattr +i immutable bit — defense-in-depth (best-effort)
+//
+// Layer 3 is best-effort because the entrypoint (nemoclaw-start.sh) only
+// sets chattr +i on the .openclaw directory and its symlinks, not on
+// openclaw.json itself. kubectl exec may also lack CAP_LINUX_IMMUTABLE.
+// The file was never immutable via chattr, so failing to set it is not a
+// regression — layers 1+2 are sufficient. We still attempt it in case the
+// runtime environment supports it.
+// ---------------------------------------------------------------------------
+
+function lockAgentConfig(sandboxName: string, target: { configPath: string; configDir: string }): void {
+  const errors: string[] = [];
+
+  try { kubectlExec(sandboxName, ["chmod", "444", target.configPath]); }
+  catch { errors.push("chmod 444 config file"); }
+
+  try { kubectlExec(sandboxName, ["chown", "root:root", target.configPath]); }
+  catch { errors.push("chown root:root config file"); }
+
+  try { kubectlExec(sandboxName, ["chmod", "755", target.configDir]); }
+  catch { errors.push("chmod 755 config dir"); }
+
+  try { kubectlExec(sandboxName, ["chown", "root:root", target.configDir]); }
+  catch { errors.push("chown root:root config dir"); }
+
+  // Best-effort: the config file was never chattr +i'd by the entrypoint
+  // (only the directory and symlinks were). kubectl exec may also lack
+  // CAP_LINUX_IMMUTABLE. Track the result so verification doesn't require
+  // something that was never there.
+  let chattrSucceeded = true;
+  try { kubectlExec(sandboxName, ["chattr", "+i", target.configPath]); }
+  catch {
+    chattrSucceeded = false;
+  }
+
+  if (errors.length > 0) {
+    console.error(`  Some lock operations failed: ${errors.join(", ")}`);
+  }
+
+  // Verify the lock actually took effect.
+  // Mode + ownership are mandatory (layers 1+2 depend on them).
+  // Immutable bit is only verified if chattr succeeded above.
+  const issues: string[] = [];
   try {
-    kubectlExec(sandboxName, ["chattr", "-i", target.configPath]);
-    kubectlExec(sandboxName, ["chown", "sandbox:sandbox", target.configPath]);
-    kubectlExec(sandboxName, ["chmod", "600", target.configPath]);
-    kubectlExec(sandboxName, ["chown", "sandbox:sandbox", target.configDir]);
-    kubectlExec(sandboxName, ["chmod", "700", target.configDir]);
-  } catch {
-    console.error("  Warning: Could not unlock config file. Config may remain read-only.");
+    const perms = kubectlExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", target.configPath]);
+    const [mode, owner] = perms.split(" ");
+    if (!/^4[0-4][0-4]$/.test(mode)) issues.push(`file mode=${mode} (expected 444)`);
+    if (owner !== "root:root") issues.push(`file owner=${owner} (expected root:root)`);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    issues.push(`file stat failed: ${msg}`);
+  }
+
+  try {
+    const dirPerms = kubectlExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", target.configDir]);
+    const [dirMode, dirOwner] = dirPerms.split(" ");
+    if (dirMode !== "755") issues.push(`dir mode=${dirMode} (expected 755)`);
+    if (dirOwner !== "root:root") issues.push(`dir owner=${dirOwner} (expected root:root)`);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    issues.push(`dir stat failed: ${msg}`);
+  }
+
+  if (chattrSucceeded) {
+    try {
+      const attrs = kubectlExecCapture(sandboxName, ["lsattr", "-d", target.configPath]);
+      // lsattr format: "----i---------e----- /path/to/file"
+      // First whitespace-delimited token is the flags field.
+      const [flags] = attrs.trim().split(/\s+/, 1);
+      if (!flags.includes("i")) issues.push("immutable bit not set");
+    } catch {
+      // lsattr may not be available on all images — skip
+    }
+  }
+
+  if (issues.length > 0) {
+    throw new Error(`Config not locked: ${issues.join(", ")}`);
   }
 }
 
@@ -250,7 +355,7 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
   const actualScript = fs.existsSync(timerScriptJs) ? timerScriptJs : timerScript;
 
   try {
-    const child = fork(actualScript, [sandboxName, snapshotPath, restoreAt.toISOString()], {
+    const child = fork(actualScript, [sandboxName, snapshotPath, restoreAt.toISOString(), target.configPath, target.configDir], {
       detached: true,
       stdio: ["ignore", "ignore", "ignore", "ipc"],
     });
@@ -273,22 +378,32 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`  Cannot start auto-restore timer: ${message}`);
     console.error("  Rolling back — restoring policy from snapshot...");
-    try {
-      run(buildPolicySetCommand(snapshotPath, sandboxName), { ignoreError: true });
-      kubectlExec(sandboxName, ["chmod", "444", target.configPath]);
-      kubectlExec(sandboxName, ["chown", "root:root", target.configPath]);
-      kubectlExec(sandboxName, ["chattr", "+i", target.configPath]);
-    } catch {
-      // Best effort rollback
+    const rollbackResult = run(buildPolicySetCommand(snapshotPath, sandboxName), { ignoreError: true });
+    let rollbackLocked = false;
+    if (rollbackResult.status === 0) {
+      try {
+        lockAgentConfig(sandboxName, target);
+        rollbackLocked = true;
+      } catch {
+        console.error("  Warning: Rollback re-lock could not be verified. Check config manually.");
+      }
+    } else {
+      console.error("  Warning: Policy restore failed during rollback.");
     }
-    saveShieldsState(sandboxName, {
-      shieldsDown: false,
-      shieldsDownAt: null,
-      shieldsDownTimeout: null,
-      shieldsDownReason: null,
-      shieldsDownPolicy: null,
-    });
-    console.error("  Shields restored to UP. The sandbox was never left unguarded.");
+    if (rollbackLocked) {
+      saveShieldsState(sandboxName, {
+        shieldsDown: false,
+        shieldsDownAt: null,
+        shieldsDownTimeout: null,
+        shieldsDownReason: null,
+        shieldsDownPolicy: null,
+      });
+      console.error("  Shields restored to UP. The sandbox was never left unguarded.");
+    } else {
+      // Leave state as shieldsDown: true — don't lie about protection level
+      console.error("  Shields remain DOWN — manual intervention required.");
+      console.error(`  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`);
+    }
     process.exit(1);
   }
 
@@ -351,16 +466,18 @@ function shieldsUp(sandboxName: string): void {
   // 2b. Re-lock config file to read-only.
   //     Restore the Dockerfile's original permissions and immutable bit.
   //     Uses kubectl exec to bypass Landlock (same as shields down).
+  //     Each operation runs independently and the result is verified.
+  //     If verification fails, shields remain DOWN — we do not lie about state.
   const target = resolveAgentConfig(sandboxName);
   console.log(`  Locking ${target.agentName} config (${target.configPath})...`);
   try {
-    kubectlExec(sandboxName, ["chmod", "444", target.configPath]);
-    kubectlExec(sandboxName, ["chown", "root:root", target.configPath]);
-    kubectlExec(sandboxName, ["chmod", "755", target.configDir]);
-    kubectlExec(sandboxName, ["chown", "root:root", target.configDir]);
-    kubectlExec(sandboxName, ["chattr", "+i", target.configPath]);
-  } catch {
-    console.error("  Warning: Could not re-lock config file.");
+    lockAgentConfig(sandboxName, target);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`  ERROR: ${message}`);
+    console.error("  Shields remain DOWN — manual intervention required.");
+    console.error(`  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`);
+    process.exit(1);
   }
 
   // 3. Calculate duration
@@ -537,6 +654,7 @@ export {
   shieldsStatus,
   isShieldsDown,
   parseDuration,
+  lockAgentConfig,
   MAX_TIMEOUT_SECONDS,
   DEFAULT_TIMEOUT_SECONDS,
 };
