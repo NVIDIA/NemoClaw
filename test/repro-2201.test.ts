@@ -55,9 +55,11 @@ afterEach(() => {
 function createFixture({
   rebuildTarget,
   lastOnboarded,
+  fromDockerfile = null,
 }: {
   rebuildTarget: { name: string; agent: string | null };
   lastOnboarded: { name: string; agent: string | null };
+  fromDockerfile?: string | null;
 }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2201-"));
   tmpFixtures.push(tmpDir);
@@ -96,7 +98,7 @@ function createFixture({
       provider: "p", model: "m", endpointUrl: null, credentialEnv: null,
       preferredInferenceApi: null, nimContainer: null, webSearchConfig: null,
       policyPresets: [], messagingChannels: null,
-      metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+      metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile },
       steps: {
         preflight:  { status: "complete", startedAt: null, completedAt: null, error: null },
         gateway:    { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -188,9 +190,13 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
   );
 }
 
-function readSessionAgent(fixture: ReturnType<typeof createFixture>): unknown {
+function readSession(fixture: ReturnType<typeof createFixture>): Record<string, unknown> {
   const p = path.join(fixture.nemoclawDir, "onboard-session.json");
-  return JSON.parse(fs.readFileSync(p, "utf-8")).agent;
+  return JSON.parse(fs.readFileSync(p, "utf-8"));
+}
+
+function readSessionAgent(fixture: ReturnType<typeof createFixture>): unknown {
+  return readSession(fixture).agent;
 }
 
 describe("Issue #2201: rebuild syncs agent from registry, not stale session", () => {
@@ -218,5 +224,25 @@ describe("Issue #2201: rebuild syncs agent from registry, not stale session", ()
       // With fix: session.agent = "hermes" (synced from hermes registry entry)
       // Without fix: session.agent stays null (from openclaw onboard)
       expect(readSessionAgent(f)).toBe("hermes");
+    });
+});
+
+describe("Issue #2301: rebuild forwards stored --from Dockerfile to onboard", () => {
+  it("rebuild does not hit fromDockerfile conflict when session has a stored --from path",
+    { timeout: 60_000 }, () => {
+      // Scenario: user onboarded with --from /path/to/Dockerfile, then
+      // runs rebuild.  Without the fix, onboard's conflict check sees
+      // requestedFrom=null vs recordedFrom="/path/to/Dockerfile" and
+      // exits with a conflict error.
+      const f = createFixture({
+        rebuildTarget: { name: "openclaw", agent: null },
+        lastOnboarded: { name: "openclaw", agent: null },
+        fromDockerfile: "/tmp/custom/Dockerfile",
+      });
+      const result = runRebuild(f);
+      // Without fix: exits with "Session was started with --from ..."
+      // With fix: rebuild proceeds past conflict check (may still fail
+      // later in the fake-env backup step — that's expected with stubs).
+      expect(result.stderr).not.toMatch(/Session was started with --from/);
     });
 });

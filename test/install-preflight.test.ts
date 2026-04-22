@@ -1531,6 +1531,27 @@ fi`,
     expect(gitCalls).not.toMatch(/clone/);
     expect(gitCalls).not.toMatch(/fetch/);
   });
+
+  // Issue #2178 — when nvm installs a new Node, the user's parent shell still
+  // resolves `node` to the old version until the shell is reloaded. The
+  // installer's upgrade path must surface this loudly and adjacent to the
+  // "Node.js installed" line, not only in the generic bottom-of-output Next
+  // block where it's easy to miss.
+  it("install_nodejs upgrade path emits a Node-specific shell-reload hint", () => {
+    const script = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
+    const installNodejs = script.match(/install_nodejs\(\)\s*\{[\s\S]*?\n\}/);
+    expect(installNodejs).not.toBeNull();
+    const body = installNodejs![0];
+    // Anchor to the actual warn/printf calls (not the comment) so the test
+    // fails if the executable statements are removed. A child process can't
+    // mutate the parent's PATH, so the honest fix is printing the exact
+    // command the user can run in their existing shell (no exec tricks —
+    // those create a nested shell that masks the problem; see PR #2298).
+    expect(body).toMatch(/\n\s*warn\s+"Your current shell may still resolve/);
+    // Single-quoted printf avoids bash expansion of $NVM_DIR / $HOME in the
+    // printed text — the user gets a literal, env-aware command to paste.
+    expect(body).toMatch(/\n\s*printf\s+'[^']*NVM_DIR:-\$HOME\/\.nvm[^']*nvm use 22/);
+  });
 });
 
 // ---------------------------------------------------------------------------
