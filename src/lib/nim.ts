@@ -288,15 +288,22 @@ export function waitForNimHealth(port = VLLM_PORT, timeout = 300): boolean {
   return false;
 }
 
-export function stopNimContainer(sandboxName: string): void {
+export function stopNimContainer(
+  sandboxName: string,
+  { silent = false }: { silent?: boolean } = {},
+): void {
   const name = containerName(sandboxName);
-  stopNimContainerByName(name);
+  stopNimContainerByName(name, { silent });
 }
 
-export function stopNimContainerByName(name: string): void {
-  console.log(`  Stopping NIM container: ${name}`);
-  run(["docker", "stop", name], { ignoreError: true });
-  run(["docker", "rm", name], { ignoreError: true });
+export function stopNimContainerByName(
+  name: string,
+  { silent = false }: { silent?: boolean } = {},
+): void {
+  if (!silent) console.log(`  Stopping NIM container: ${name}`);
+  const stdio = silent ? ["ignore", "ignore", "ignore"] : undefined;
+  run(["docker", "stop", name], { ignoreError: true, ...(stdio && { stdio }) });
+  run(["docker", "rm", name], { ignoreError: true, ...(stdio && { stdio }) });
 }
 
 export function nimStatus(sandboxName: string, port?: number): NimStatus {

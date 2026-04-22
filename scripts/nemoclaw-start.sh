@@ -31,6 +31,27 @@
 
 set -euo pipefail
 
+# ── /tmp trust boundary map ──────────────────────────────────────
+# Files in /tmp that cross user boundaries. Every file sourced by
+# .bashrc/.profile MUST be root-owned 444 in root mode.
+#
+# File                         Owner      Mode  Writer   Reader    Sourced?
+# /tmp/nemoclaw-proxy-env.sh   root       444   root     sandbox   YES (.bashrc/.profile)
+# /tmp/gateway.log             gateway    600   gateway  gateway   no
+# /tmp/auto-pair.log           sandbox    600   sandbox  sandbox   no
+# /tmp/.npm-cache/             sandbox    755   sandbox  sandbox   no (tool data)
+# /tmp/.cache/                 sandbox    755   sandbox  sandbox   no (tool data)
+# /tmp/.config/                sandbox    755   sandbox  sandbox   no (tool data)
+# /tmp/.gnupg/                 sandbox    700   sandbox  sandbox   no (key data)
+#
+# In non-root mode privilege separation is disabled — all files are
+# owned by sandbox. chmod 444 is best-effort (owner can chmod back).
+# This is an accepted limitation documented in the OpenShell security model.
+#
+# See also: https://github.com/NVIDIA/NemoClaw/issues/2181
+# Future: adopt s6-overlay fix-attrs.d/ for declarative enforcement.
+# ─────────────────────────────────────────────────────────────────
+
 # Harden: limit process count to prevent fork bombs (ref: #809)
 # Best-effort: some container runtimes (e.g., brev) restrict ulimit
 # modification, returning "Invalid argument". Warn but don't block startup.
@@ -93,6 +114,75 @@ else
     /tmp/npm-global
   install -d -m 700 /tmp/.gnupg
 fi
+
+# ── Secure file helpers ──────────────────────────────────────────
+# Centralized primitives for creating files that cross trust boundaries
+# in /tmp. Using these helpers instead of ad-hoc chmod/chown ensures
+# consistent security posture and prevents the class of bug in #2181.
+#
+# Future: these map directly to s6-overlay fix-attrs.d/ entries when
+# the entrypoint is decomposed.
+
+# Write a file that the sandbox user can SOURCE but not MODIFY.
+# Reads content from stdin. Caller usage:
+#   emit_sandbox_sourced_file /path <<'EOF'
+#   export FOO="bar"
+#   EOF
+#
+# Root mode:  root:root 444 — sandbox cannot chmod (not owner).
+# Non-root:   sandbox:sandbox 444 — best-effort (owner can chmod back;
+#             accepted limitation since privilege separation is disabled).
+emit_sandbox_sourced_file() {
+  local path="$1"
+  # Remove any pre-existing file/symlink to prevent symlink-following attacks.
+  # rm -f works because: root can remove anything; in non-root mode the owner
+  # can remove their own file in sticky-bit /tmp.
+  rm -f "$path" 2>/dev/null || true
+  cat >"$path"
+  if [ "$(id -u)" -eq 0 ]; then
+    chown root:root "$path"
+  fi
+  chmod 444 "$path"
+}
+
+# Verify that trust-boundary files in /tmp have the expected permissions
+# BEFORE handing off to the sandbox user. Call this after all init work
+# and before launching services. Defence-in-depth: catches regressions
+# even if a new file is added without using the helper above.
+validate_tmp_permissions() {
+  local failed=0
+
+  # Files sourced by sandbox (.bashrc/.profile) — must not be writable.
+  # Single-entry loop is intentional — designed to grow as new sourced files
+  # are added (e.g., mediator config). See trust boundary map above.
+  # shellcheck disable=SC2043
+  for f in /tmp/nemoclaw-proxy-env.sh; do
+    [ -f "$f" ] || continue
+    local perms owner
+    perms="$(stat -c '%a' "$f" 2>/dev/null || stat -f '%Lp' "$f" 2>/dev/null || echo "unknown")"
+    owner="$(stat -c '%U' "$f" 2>/dev/null || stat -f '%Su' "$f" 2>/dev/null || echo "unknown")"
+    if [ "$(id -u)" -eq 0 ] && { [ "$owner" != "root" ] || [ "$perms" != "444" ]; }; then
+      echo "[SECURITY] $f has unsafe permissions: owner=$owner mode=$perms (expected root:444)" >&2
+      failed=1
+    elif [ "$(id -u)" -ne 0 ] && [ "$perms" != "444" ]; then
+      echo "[SECURITY] $f has unsafe permissions: mode=$perms (expected 444)" >&2
+      failed=1
+    fi
+  done
+
+  # Restricted log files — must be 600
+  for f in /tmp/gateway.log /tmp/auto-pair.log; do
+    [ -f "$f" ] || continue
+    local perms
+    perms="$(stat -c '%a' "$f" 2>/dev/null || stat -f '%Lp' "$f" 2>/dev/null || echo "unknown")"
+    if [ "$perms" != "600" ]; then
+      echo "[SECURITY] $f has unexpected permissions: mode=$perms (expected 600)" >&2
+      failed=1
+    fi
+  done
+
+  return $failed
+}
 
 # ── Drop unnecessary Linux capabilities ──────────────────────────
 # CIS Docker Benchmark 5.3: containers should not run with default caps.
@@ -415,9 +505,11 @@ apply_slack_token_override() {
   [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
 
   # SECURITY: Only root can write to /sandbox/.openclaw (root:root 444).
+  # Non-root with SLACK_BOT_TOKEN set means the placeholder can never be resolved —
+  # Bolt will crash with invalid_auth. Fail fast rather than silently skip.
   if [ "$(id -u)" -ne 0 ]; then
-    printf '[SECURITY] Slack token override ignored — requires root (non-root mode cannot write to config)\n' >&2
-    return 0
+    printf '[SECURITY] Slack Socket Mode requires a root container — SLACK_BOT_TOKEN is set but token placeholder resolution needs root. Run the container as root or remove SLACK_BOT_TOKEN.\n' >&2
+    return 1
   fi
 
   local config_file="/sandbox/.openclaw/openclaw.json"
@@ -455,26 +547,33 @@ apply_slack_token_override() {
   SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN" \
     SLACK_APP_TOKEN="${SLACK_APP_TOKEN:-}" \
     python3 - "$config_file" <<'PYSLACK'
-import json, os, sys
+import json, os, re, sys
 
 config_file = sys.argv[1]
 bot_token = os.environ["SLACK_BOT_TOKEN"]
 app_token = os.environ.get("SLACK_APP_TOKEN", "")
-placeholder_prefix = "openshell:resolve:env:"
+# json.dumps produces a quoted string; strip the outer quotes to get a
+# JSON-safe value that can be spliced directly into the existing string literal.
+bot_token_json = json.dumps(bot_token)[1:-1]
+app_token_json = json.dumps(app_token)[1:-1]
 
 with open(config_file) as f:
-    cfg = json.load(f)
+    content = f.read()
 
-slack = cfg.get("channels", {}).get("slack", {})
-default_acct = slack.get("accounts", {}).get("default", {})
-
-if default_acct.get("botToken", "").startswith(placeholder_prefix):
-    default_acct["botToken"] = bot_token
-if app_token and default_acct.get("appToken", "").startswith(placeholder_prefix):
-    default_acct["appToken"] = app_token
+content = re.sub(
+    r'("botToken"\s*:\s*")openshell:resolve:env:SLACK_BOT_TOKEN(")',
+    lambda m: m.group(1) + bot_token_json + m.group(2),
+    content,
+)
+if app_token:
+    content = re.sub(
+        r'("appToken"\s*:\s*")openshell:resolve:env:SLACK_APP_TOKEN(")',
+        lambda m: m.group(1) + app_token_json + m.group(2),
+        content,
+    )
 
 with open(config_file, "w") as f:
-    json.dump(cfg, f, indent=2)
+    f.write(content)
 PYSLACK
 
   (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file")
@@ -883,17 +982,16 @@ fi
 # config to /tmp/nemoclaw-proxy-env.sh. The pre-built .bashrc and .profile
 # source this file automatically.
 #
-# SECURITY: /tmp has the sticky bit, so when running as root the sandbox user
-# cannot delete or replace this root-owned file. In non-root mode privilege
-# separation is already disabled, so this is an accepted limitation.
+# SECURITY: The proxy-env file is written via emit_sandbox_sourced_file()
+# which ensures root:root 444 in root mode (sandbox cannot modify) and
+# best-effort 444 in non-root mode. The /tmp sticky bit prevents the
+# sandbox user from deleting or replacing the root-owned file.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/2181
 #
 # Both uppercase and lowercase variants are required: Node.js undici prefers
 # lowercase (no_proxy) over uppercase (NO_PROXY) when both are set.
 # curl/wget use uppercase.  gRPC C-core uses lowercase.
 _PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
-# Remove any pre-existing file/symlink to prevent symlink-following attacks,
-# then write a fresh file.
-rm -f "$_PROXY_ENV_FILE" 2>/dev/null || true
 {
   cat <<PROXYEOF
 # Proxy configuration (overrides narrow OpenShell defaults on connect)
@@ -915,8 +1013,7 @@ PROXYEOF
   for _redir in "${_TOOL_REDIRECTS[@]}"; do
     echo "export ${_redir?}"
   done
-} >"$_PROXY_ENV_FILE"
-chmod 644 "$_PROXY_ENV_FILE"
+} | emit_sandbox_sourced_file "$_PROXY_ENV_FILE"
 
 # Forward SIGTERM/SIGINT to child processes for graceful shutdown.
 # This script is PID 1 — without a trap, signals interrupt wait and
@@ -959,13 +1056,6 @@ if [ "$(id -u)" -ne 0 ]; then
   apply_model_override
   apply_cors_override
   apply_slack_token_override
-  # SECURITY: apply_slack_token_override is a no-op when non-root.
-  # If SLACK_BOT_TOKEN is still set here the placeholder was never resolved —
-  # Bolt will crash with invalid_auth at startup. Fail fast with a clear message.
-  if [ -n "${SLACK_BOT_TOKEN:-}" ]; then
-    printf '[SECURITY] Slack Socket Mode requires a root container — SLACK_BOT_TOKEN is set but token placeholder resolution needs root. Run the container as root or remove SLACK_BOT_TOKEN.\n' >&2
-    exit 1
-  fi
   export_gateway_token
   install_configure_guard
   configure_messaging_channels
@@ -1047,6 +1137,9 @@ if [ "$(id -u)" -ne 0 ]; then
   touch /tmp/auto-pair.log
   chmod 600 /tmp/auto-pair.log
 
+  # Defence-in-depth: verify /tmp file permissions before launching services.
+  validate_tmp_permissions
+
   # Start gateway in background, auto-pair, then wait
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
@@ -1108,6 +1201,9 @@ validate_openclaw_symlinks
 # as root; the sandbox user cannot remove the flag.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/1019
 harden_openclaw_symlinks
+
+# Defence-in-depth: verify /tmp file permissions before launching services.
+validate_tmp_permissions
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs

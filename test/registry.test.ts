@@ -183,6 +183,42 @@ describe("registry", () => {
     const { sandboxes } = registry.listSandboxes();
     expect(sandboxes.length).toBe(0);
   });
+
+  it("setChannelDisabled toggles a channel on and off for a sandbox", () => {
+    registry.registerSandbox({ name: "s1" });
+    expect(registry.getDisabledChannels("s1")).toEqual([]);
+
+    expect(registry.setChannelDisabled("s1", "telegram", true)).toBe(true);
+    expect(registry.getDisabledChannels("s1")).toEqual(["telegram"]);
+
+    expect(registry.setChannelDisabled("s1", "discord", true)).toBe(true);
+    expect(registry.getDisabledChannels("s1")).toEqual(["discord", "telegram"]);
+
+    registry.setChannelDisabled("s1", "telegram", false);
+    expect(registry.getDisabledChannels("s1")).toEqual(["discord"]);
+  });
+
+  it("setChannelDisabled clears the disabledChannels field when empty", () => {
+    registry.registerSandbox({ name: "s1" });
+    registry.setChannelDisabled("s1", "telegram", true);
+    registry.setChannelDisabled("s1", "telegram", false);
+    const persisted = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(persisted.sandboxes.s1.disabledChannels).toBeUndefined();
+  });
+
+  it("setChannelDisabled returns false when sandbox is missing", () => {
+    expect(registry.setChannelDisabled("missing", "telegram", true)).toBe(false);
+  });
+
+  it("registerSandbox preserves disabledChannels when re-registering", () => {
+    registry.registerSandbox({ name: "s1" });
+    registry.setChannelDisabled("s1", "telegram", true);
+    registry.registerSandbox({
+      name: "s1",
+      disabledChannels: registry.getDisabledChannels("s1"),
+    });
+    expect(registry.getDisabledChannels("s1")).toEqual(["telegram"]);
+  });
 });
 
 describe("atomic writes", () => {

@@ -476,6 +476,22 @@ ensure_nvm_loaded() {
   fi
 }
 
+# Resolve the active npm global bin without letting a host nvm install
+# override an already-working node/npm on PATH.
+resolve_npm_bin() {
+  if ! command -v npm >/dev/null 2>&1; then
+    ensure_nvm_loaded
+  fi
+
+  command -v npm >/dev/null 2>&1 || return 1
+
+  local npm_prefix
+  npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+  [[ -n "$npm_prefix" ]] || return 1
+
+  printf '%s/bin\n' "$npm_prefix"
+}
+
 detect_shell_profile() {
   local profile="$HOME/.bashrc"
   case "$(basename "${SHELL:-}")" in
@@ -500,14 +516,39 @@ detect_shell_profile() {
   printf "%s" "$profile"
 }
 
+# Check whether npm link can write to the active prefix targets.
+npm_link_targets_writable() {
+  local npm_prefix="$1"
+  local npm_bin_dir npm_lib_dir
+
+  [ -n "$npm_prefix" ] || return 1
+
+  npm_bin_dir="$npm_prefix/bin"
+  npm_lib_dir="$npm_prefix/lib/node_modules"
+
+  if [ -d "$npm_bin_dir" ]; then
+    [ -w "$npm_bin_dir" ] || return 1
+  elif [ ! -w "$npm_prefix" ]; then
+    return 1
+  fi
+
+  if [ -d "$npm_lib_dir" ]; then
+    [ -w "$npm_lib_dir" ] || return 1
+  elif [ -d "$npm_prefix/lib" ]; then
+    [ -w "$npm_prefix/lib" ] || return 1
+  elif [ ! -w "$npm_prefix" ]; then
+    return 1
+  fi
+
+  return 0
+}
+
 # Refresh PATH so that npm global bin is discoverable.
 # After nvm installs Node.js the global bin lives under the nvm prefix,
 # which may not yet be on PATH in the current session.
 refresh_path() {
-  ensure_nvm_loaded
-
   local npm_bin
-  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  npm_bin="$(resolve_npm_bin)" || true
   if [[ -n "$npm_bin" && -d "$npm_bin" && ":$PATH:" != *":$npm_bin:"* ]]; then
     export PATH="$npm_bin:$PATH"
   fi
@@ -519,7 +560,7 @@ refresh_path() {
 
 ensure_nemoclaw_shim() {
   local npm_bin shim_path node_path node_dir cli_path
-  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  npm_bin="$(resolve_npm_bin)" || true
   shim_path="${NEMOCLAW_SHIM_DIR}/nemoclaw"
 
   if [[ -z "$npm_bin" || ! -x "$npm_bin/nemoclaw" ]]; then
@@ -1017,7 +1058,7 @@ verify_nemoclaw() {
   fi
 
   local npm_bin
-  npm_bin="$(npm config get prefix 2>/dev/null)/bin" || true
+  npm_bin="$(resolve_npm_bin)" || true
 
   if [[ -n "$npm_bin" && -x "$npm_bin/nemoclaw" ]]; then
     if is_real_nemoclaw_cli "$npm_bin/nemoclaw"; then

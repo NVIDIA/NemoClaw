@@ -248,6 +248,12 @@ if ! command -v openshell >/dev/null 2>&1; then
 fi
 
 OPENSHELL_VERSION=$(openshell --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+# Fallback: some OpenShell builds (e.g. 0.0.29) report "m-dev" instead of a
+# parseable semver. Read the sidecar file written by install-openshell.sh.
+if [ -z "$OPENSHELL_VERSION" ]; then
+  _SIDECAR="$(dirname "$(command -v openshell)")/.openshell-installed-version"
+  OPENSHELL_VERSION=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' "$_SIDECAR" 2>/dev/null | head -1 || true)
+fi
 if version_gte "$OPENSHELL_VERSION" "$MIN_OPENSHELL"; then
   pass "openshell $OPENSHELL_VERSION >= $MIN_OPENSHELL (gateway resume + SSH secret + state persistence)"
 else
