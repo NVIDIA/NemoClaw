@@ -153,6 +153,29 @@ describe("registry", () => {
     });
   });
 
+  it("stores imageTag at registration time", () => {
+    registry.registerSandbox({
+      name: "tagged",
+      imageTag: "openshell/sandbox-from:1776766054",
+    });
+    const sb = registry.getSandbox("tagged");
+    expect(sb.imageTag).toBe("openshell/sandbox-from:1776766054");
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes.tagged.imageTag).toBe("openshell/sandbox-from:1776766054");
+  });
+
+  it("imageTag defaults to null when not provided", () => {
+    registry.registerSandbox({ name: "no-tag" });
+    const sb = registry.getSandbox("no-tag");
+    expect(sb.imageTag).toBe(null);
+  });
+
+  it("imageTag can be updated via updateSandbox", () => {
+    registry.registerSandbox({ name: "updatable" });
+    registry.updateSandbox("updatable", { imageTag: "openshell/sandbox-from:9999" });
+    expect(registry.getSandbox("updatable").imageTag).toBe("openshell/sandbox-from:9999");
+  });
+
   it("handles corrupt registry file gracefully", () => {
     fs.mkdirSync(path.dirname(regFile), { recursive: true });
     fs.writeFileSync(regFile, "NOT JSON");

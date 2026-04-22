@@ -5,6 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { sleepSeconds } from "./wait";
+
 export interface DeployCredentials {
   NVIDIA_API_KEY?: string | null;
   OPENAI_API_KEY?: string | null;
@@ -333,7 +335,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
       return fail([`  Timed out waiting for Brev instance readiness for ${name}`], error, exit);
     }
     stdoutWrite(".");
-    spawnSync("sleep", ["3"]);
+    sleepSeconds(3);
   }
 
   // ── SSH trust-on-first-use (TOFU) ──────────────────────────────
@@ -371,7 +373,7 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
       );
     }
     stdoutWrite(".");
-    spawnSync("sleep", ["3"]);
+    sleepSeconds(3);
   }
 
   const sshOpts = buildSshOpts(knownHostsFile, shellQuote);

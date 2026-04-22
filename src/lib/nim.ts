@@ -6,6 +6,8 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { run, runCapture } = require("./runner");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const { sleepSeconds } = require("./wait");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const nimImages = require("../../bin/lib/nim-images.json");
 
 import { VLLM_PORT } from "./ports";
@@ -261,9 +263,18 @@ export function waitForNimHealth(port = VLLM_PORT, timeout = 300): boolean {
 
   while ((Date.now() - start) / 1000 < timeout) {
     try {
-      const result = runCapture(["curl", "-sf", `http://127.0.0.1:${hostPort}/v1/models`], {
-        ignoreError: true,
-      });
+      const result = runCapture(
+        [
+          "curl",
+          "-sf",
+          "--connect-timeout",
+          "5",
+          "--max-time",
+          "5",
+          `http://127.0.0.1:${hostPort}/v1/models`,
+        ],
+        { ignoreError: true },
+      );
       if (result) {
         console.log("  NIM is healthy.");
         return true;
@@ -271,8 +282,7 @@ export function waitForNimHealth(port = VLLM_PORT, timeout = 300): boolean {
     } catch {
       /* ignored */
     }
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require("child_process").spawnSync("sleep", [String(intervalSec)]);
+    sleepSeconds(intervalSec);
   }
   console.error(`  NIM did not become healthy within ${timeout}s.`);
   return false;
@@ -313,7 +323,15 @@ export function nimStatusByName(name: string, port?: number): NimStatus {
         resolvedHostPort = m ? Number(m[1]) : VLLM_PORT;
       }
       const health = runCapture(
-        ["curl", "-sf", `http://127.0.0.1:${resolvedHostPort}/v1/models`],
+        [
+          "curl",
+          "-sf",
+          "--connect-timeout",
+          "5",
+          "--max-time",
+          "5",
+          `http://127.0.0.1:${resolvedHostPort}/v1/models`,
+        ],
         { ignoreError: true },
       );
       healthy = !!health;

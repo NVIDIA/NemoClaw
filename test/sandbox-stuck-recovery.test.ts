@@ -64,7 +64,7 @@ if (args[0] === "sandbox" && args[1] === "get" && args[2] === ${JSON.stringify(s
 }
 
 if (args[0] === "sandbox" && args[1] === "list") {
-  process.stdout.write("${sandboxName}\\n");
+  process.stdout.write("${sandboxName}   ${phase}   1m ago\\n");
   process.exit(0);
 }
 
@@ -97,7 +97,12 @@ process.exit(0);
   return { tmpDir, sandboxName };
 }
 
-function runCli(tmpDir: string, sandboxName: string, subcommand: string) {
+function runCli(
+  tmpDir: string,
+  sandboxName: string,
+  subcommand: string,
+  extraEnv: Record<string, string> = {},
+) {
   const repoRoot = path.join(import.meta.dirname, "..");
   return spawnSync(
     process.execPath,
@@ -110,6 +115,7 @@ function runCli(tmpDir: string, sandboxName: string, subcommand: string) {
         HOME: tmpDir,
         PATH: "/usr/bin:/bin",
         NEMOCLAW_NO_CONNECT_HINT: "1",
+        ...extraEnv,
       },
       timeout: Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 15_000),
     },
@@ -118,18 +124,39 @@ function runCli(tmpDir: string, sandboxName: string, subcommand: string) {
 
 describe("sandbox stuck in non-Ready phase (#2016)", () => {
   it(
-    "connect exits with error and recovery hint when sandbox is stuck in Provisioning",
+    "connect times out with guidance when sandbox is stuck in Provisioning",
     { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000) },
     () => {
       const { tmpDir, sandboxName } = setupFixture("stuck-sandbox", "Provisioning");
+
+      // Short connect timeout so the test doesn't wait 120s. Provisioning
+      // is not a terminal state, so the readiness poll introduced in #466
+      // waits until NEMOCLAW_CONNECT_TIMEOUT elapses.
+      const result = runCli(tmpDir, sandboxName, "connect", {
+        NEMOCLAW_CONNECT_TIMEOUT: "3",
+      });
+      expect(result.status).not.toBe(0);
+
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain(`Waiting for sandbox '${sandboxName}' to be ready`);
+      expect(combined).toContain("Timed out");
+      expect(combined).toContain("NEMOCLAW_CONNECT_TIMEOUT");
+    },
+  );
+
+  it(
+    "connect exits immediately with recovery hint when sandbox is in a terminal failure state",
+    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000) },
+    () => {
+      const { tmpDir, sandboxName } = setupFixture("failed-sandbox", "Failed");
 
       const result = runCli(tmpDir, sandboxName, "connect");
       expect(result.status).not.toBe(0);
 
       const combined = (result.stdout || "") + (result.stderr || "");
-      expect(combined).toContain("stuck in 'Provisioning' phase");
-      expect(combined).toContain("process crash inside the sandbox");
-      expect(combined).toContain(`nemoclaw ${sandboxName} rebuild --yes`);
+      expect(combined).toContain("is in 'Failed' state");
+      expect(combined).toContain(`nemoclaw ${sandboxName} logs --follow`);
+      expect(combined).toContain(`nemoclaw ${sandboxName} status`);
     },
   );
 

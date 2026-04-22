@@ -4,7 +4,7 @@ title:
   nav: "Windows Prerequisites"
 description:
   main: "Complete these steps on Windows before running the NemoClaw Quickstart: enable WSL 2, install Ubuntu, and configure Docker Desktop."
-  agent: "There are additional Windows-only prerequisites before the Quickstart to install NemoClaw on Windows."
+  agent: "Includes Windows-only prerequisites that must be completed before the Quickstart. Use when installing NemoClaw on Windows, enabling WSL 2, configuring Docker Desktop for Windows, or troubleshooting a Windows-specific install error."
 keywords: ["nemoclaw windows wsl2 setup", "nemoclaw install windows docker desktop"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "sandboxing", "nemoclaw", "windows", "wsl"]

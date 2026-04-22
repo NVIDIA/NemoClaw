@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Verifies the pinned NemoClaw installer SHA-256 in k8s/nemoclaw-k8s.yaml
-# still matches the upstream script at https://www.nvidia.com/nemoclaw.sh.
+# Verifies pinned installer SHA-256 hashes still match upstream scripts.
+# Checked: Ollama installer.
 # Runs on every PR and push to main, plus a weekly scheduled check.
 
 name: installer-hash-check
@@ -29,5 +29,5 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Verify installer hash is current
+      - name: Verify installer hashes are current
         run: bash scripts/check-installer-hash.sh
