@@ -64,8 +64,8 @@ PASS=0
 FAIL=0
 SKIP=0
 TOTAL=0
-INSTALL_OK=1
 PREREQS_OK=1
+PHASE0_OK=true
 
 pass() {
   ((PASS++))
@@ -198,7 +198,6 @@ fi
 if [ $install_exit -eq 0 ]; then
   pass "install.sh completed (exit 0)"
 else
-  INSTALL_OK=0
   if grep -qE "(Telegram|Discord) network reachability failure" "$INSTALL_LOG" 2>/dev/null; then
     skip "install.sh aborted: messaging API unreachable (likely VPN / corporate proxy)"
     info "Detected '<provider> network reachability failure' in install log."
@@ -207,35 +206,33 @@ else
   fi
   info "Last 30 lines of install log:"
   tail -30 "$INSTALL_LOG" 2>/dev/null || true
+  PHASE0_OK=false
 fi
 
-# Verify tools are on PATH
-if [ "$INSTALL_OK" = "1" ]; then
+if [ "$PHASE0_OK" = true ]; then
+  # Verify tools are on PATH
   if ! command -v openshell >/dev/null 2>&1; then
     fail "openshell not found on PATH after install"
-    exit 1
+    PHASE0_OK=false
+  else
+    pass "openshell installed ($(openshell --version 2>&1 || echo unknown))"
   fi
-  pass "openshell installed ($(openshell --version 2>&1 || echo unknown))"
 
-  if ! command -v nemoclaw >/dev/null 2>&1; then
+  if [ "$PHASE0_OK" = true ] && ! command -v nemoclaw >/dev/null 2>&1; then
     fail "nemoclaw not found on PATH after install"
-    exit 1
+    PHASE0_OK=false
+  elif [ "$PHASE0_OK" = true ]; then
+    pass "nemoclaw installed at $(command -v nemoclaw)"
   fi
-  pass "nemoclaw installed at $(command -v nemoclaw)"
 fi
 
-if [ "$INSTALL_OK" != "1" ]; then
-  section "Skipping verification phases — initial install did not complete"
-  skip "Phase 1: Verify first onboard results"
-  skip "Phase 2: Re-onboard with rotated TELEGRAM_BOT_TOKEN_B"
-  skip "Phase 3: Re-onboard with same tokens (after Telegram rotation)"
-  skip "Phase 4: Re-onboard with rotated DISCORD_BOT_TOKEN_B"
-  skip "Phase 5: Re-onboard with same tokens (after Discord rotation)"
+# ── Phase 1: Verify first onboard with token A ──────────────────
+
+section "Phase 1: Verify first onboard results"
+
+if [ "$PHASE0_OK" != true ]; then
+  skip "Phase 1 — skipped (Phase 0 failed)"
 else
-  # ── Phase 1: Verify first onboard with token A ──────────────────
-
-  section "Phase 1: Verify first onboard results"
-
   if openshell sandbox list 2>/dev/null | grep -q "$SANDBOX_NAME"; then
     pass "Sandbox $SANDBOX_NAME created and running"
   else
@@ -274,11 +271,15 @@ process.exit('DISCORD_BOT_TOKEN' in h ? 0 : 1);
   else
     fail "Discord credential hash not found for $SANDBOX_NAME in registry"
   fi
+fi
 
-  # ── Phase 2: Rotate Telegram token only (re-onboard with token B) ─
+# ── Phase 2: Rotate Telegram token only (re-onboard with token B) ─
 
-  section "Phase 2: Re-onboard with rotated TELEGRAM_BOT_TOKEN_B (Discord unchanged)"
+section "Phase 2: Re-onboard with rotated TELEGRAM_BOT_TOKEN_B (Discord unchanged)"
 
+if [ "$PHASE0_OK" != true ]; then
+  skip "Phase 2 — skipped (Phase 0 failed)"
+else
   export TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN_B"
   export DISCORD_BOT_TOKEN="$DISCORD_BOT_TOKEN_A"
   # Determinism: clear ambient SLACK_* so onboard doesn't add an extra
@@ -334,11 +335,15 @@ process.exit('DISCORD_BOT_TOKEN' in h ? 0 : 1);
   else
     fail "Sandbox not running after Telegram rotation"
   fi
+fi
 
-  # ── Phase 3: Re-onboard with same tokens (no change) ─────────────
+# ── Phase 3: Re-onboard with same tokens (no change) ─────────────
 
-  section "Phase 3: Re-onboard with same tokens (no rotation expected)"
+section "Phase 3: Re-onboard with same tokens (no rotation expected)"
 
+if [ "$PHASE0_OK" != true ]; then
+  skip "Phase 3 — skipped (Phase 0 failed)"
+else
   ONBOARD_OUTPUT=$(nemoclaw onboard --non-interactive 2>&1)
   onboard_exit=$?
 
@@ -354,11 +359,15 @@ process.exit('DISCORD_BOT_TOKEN' in h ? 0 : 1);
     info "Onboard output:"
     echo "$ONBOARD_OUTPUT" | tail -20
   fi
+fi
 
-  # ── Phase 4: Rotate Discord token only (re-onboard with token B) ─
+# ── Phase 4: Rotate Discord token only (re-onboard with token B) ─
 
-  section "Phase 4: Re-onboard with rotated DISCORD_BOT_TOKEN_B (Telegram unchanged)"
+section "Phase 4: Re-onboard with rotated DISCORD_BOT_TOKEN_B (Telegram unchanged)"
 
+if [ "$PHASE0_OK" != true ]; then
+  skip "Phase 4 — skipped (Phase 0 failed)"
+else
   export TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN_B"
   export DISCORD_BOT_TOKEN="$DISCORD_BOT_TOKEN_B"
   # Determinism: clear ambient SLACK_* so onboard doesn't add an extra
@@ -411,11 +420,15 @@ process.exit('DISCORD_BOT_TOKEN' in h ? 0 : 1);
   else
     fail "Sandbox not running after Discord rotation"
   fi
+fi
 
-  # ── Phase 5: Re-onboard with same tokens (no change) ─────────────
+# ── Phase 5: Re-onboard with same tokens (no change) ─────────────
 
-  section "Phase 5: Re-onboard with same tokens (no rotation expected)"
+section "Phase 5: Re-onboard with same tokens (no rotation expected)"
 
+if [ "$PHASE0_OK" != true ]; then
+  skip "Phase 5 — skipped (Phase 0 failed)"
+else
   ONBOARD_OUTPUT=$(nemoclaw onboard --non-interactive 2>&1)
   onboard_exit=$?
 
