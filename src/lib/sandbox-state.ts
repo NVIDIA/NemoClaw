@@ -226,7 +226,9 @@ export function backupSandboxState(
   // Validate user-supplied name and check for conflicts BEFORE creating any
   // files on disk.
   const existingBackups = listBackups(sandboxName);
-  const providedName = (options.name ?? null) || null;
+  // Preserve empty strings so `--name ""` hits validateSnapshotName and fails
+  // with a clear error instead of silently creating an unnamed snapshot.
+  const providedName = options.name ?? null;
   if (providedName !== null) {
     const validationError = validateSnapshotName(providedName);
     if (validationError) {

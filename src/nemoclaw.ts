@@ -2688,9 +2688,9 @@ function help() {
     nemoclaw <name> connect          Shell into a running sandbox
     nemoclaw <name> status           Sandbox health + NIM status
     nemoclaw <name> logs ${D}[--follow]${R}  Stream sandbox logs
-    nemoclaw <name> snapshot create   Create a snapshot of sandbox state
+    nemoclaw <name> snapshot create   Create a snapshot of sandbox state ${D}([--name <label>] to tag it)${R}
     nemoclaw <name> snapshot list     List available snapshots
-    nemoclaw <name> snapshot restore  Restore state from a snapshot ${D}([timestamp] for specific)${R}
+    nemoclaw <name> snapshot restore  Restore state from a snapshot ${D}([v<N>|name|timestamp], omit for latest)${R}
     nemoclaw <name> rebuild          Upgrade sandbox to current agent version ${D}(--yes to skip prompt)${R}
     nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
 

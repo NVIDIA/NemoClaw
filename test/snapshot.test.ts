@@ -13,7 +13,10 @@ import path from "node:path";
 import { describe, it, expect, afterAll, beforeEach } from "vitest";
 
 // Override HOME BEFORE importing sandbox-state — it reads process.env.HOME
-// at module-load time to compute REBUILD_BACKUPS_DIR.
+// at module-load time to compute REBUILD_BACKUPS_DIR. Captured original is
+// restored in afterAll so sibling tests running in the same worker don't
+// inherit a deleted temp directory.
+const ORIGINAL_HOME = process.env.HOME;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snap-naming-"));
 process.env.HOME = TMP_HOME;
 
@@ -46,6 +49,11 @@ function writeBackup(sandboxName, dirName, overrides = {}) {
 }
 
 afterAll(() => {
+  if (ORIGINAL_HOME === undefined) {
+    delete process.env.HOME;
+  } else {
+    process.env.HOME = ORIGINAL_HOME;
+  }
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
 });
 
