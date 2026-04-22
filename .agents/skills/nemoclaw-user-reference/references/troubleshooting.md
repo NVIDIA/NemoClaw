@@ -342,6 +342,28 @@ $ nemoclaw <name> snapshot create
 $ nemoclaw <name> rebuild
 ```
 
+### `docker pull ... && docker restart ...` does not upgrade a macOS install
+
+For NemoClaw-managed environments, Docker pull/restart commands are not the upgrade path.
+
+- `docker pull ghcr.io/nvidia/nemoclaw:latest` targets the wrong image for current sandbox upgrades.
+- Restarting `openshell-cluster-nemoclaw` only restarts the OpenShell cluster container; it does not rebuild your agent sandbox image.
+
+Use NemoClaw's upgrade workflow instead:
+
+```console
+$ nemoclaw upgrade-sandboxes --check
+$ nemoclaw upgrade-sandboxes
+```
+
+For a single sandbox:
+
+```console
+$ nemoclaw <name> rebuild
+```
+
+If you need to upgrade the NemoClaw CLI itself, rerun the installer and then rerun `nemoclaw upgrade-sandboxes --check`.
+
 ### Sandbox shows as stopped
 
 The sandbox may have been stopped or deleted.

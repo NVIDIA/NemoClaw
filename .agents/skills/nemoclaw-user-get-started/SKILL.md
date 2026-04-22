@@ -56,7 +56,33 @@ Logs:        nemoclaw my-assistant logs --follow
 [INFO]  === Installation complete ===
 ```
 
-## Step 2: Chat with the Agent
+## Step 2: Upgrade an Existing Installation
+
+For NemoClaw-managed installs (including macOS with Docker Desktop or Colima), use NemoClaw commands to upgrade sandboxes.
+Do not rely on restarting OpenShell containers directly.
+
+Check whether any sandbox is stale:
+
+```bash
+nemoclaw upgrade-sandboxes --check
+```
+
+If stale sandboxes are reported, rebuild them in place while preserving workspace state:
+
+```bash
+nemoclaw upgrade-sandboxes
+```
+
+If you prefer to upgrade a single sandbox explicitly:
+
+```bash
+nemoclaw <name> rebuild
+```
+
+> **Note:** `docker pull ghcr.io/nvidia/nemoclaw:latest` and restarting `openshell-cluster-nemoclaw` do not upgrade a NemoClaw sandbox.
+> Those steps only refresh host-side images/containers; they do not rebuild the sandbox image that your agent is running.
+
+## Step 3: Chat with the Agent
 
 Connect to the sandbox, then chat with the agent through the TUI or the CLI.
 
@@ -76,7 +102,7 @@ Alternatively, send a single message and print the response:
 openclaw agent --agent main --local -m "hello" --session-id test
 ```
 
-## Step 3: Uninstall
+## Step 4: Uninstall
 
 To remove NemoClaw and all resources created during setup, run the uninstall script:
 
