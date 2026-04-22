@@ -22,8 +22,8 @@ describe("nemoclaw-start non-root fallback", () => {
   it("exits on config integrity failure in non-root mode", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-    // Non-root block must call verify_config_integrity and exit 1 on failure
-    expect(src).toMatch(/if ! verify_config_integrity; then\s+.*exit 1/s);
+    // Non-root block must call verify_config_integrity (with config dir) and exit 1 on failure
+    expect(src).toMatch(/if ! verify_config_integrity\b.*; then\s+.*exit 1/s);
     // Must not contain the old "proceeding anyway" fallback
     expect(src).not.toMatch(/proceeding anyway/i);
   });
@@ -50,9 +50,11 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(nonRootBlock).toBeTruthy();
     const block = nonRootBlock[1];
 
-    // Only check top-level echo lines that are NOT inside { } > file redirects.
-    // Filter out lines inside brace-group redirects (proxy-env.sh, etc.)
-    const braceStripped = block.replace(/\{[\s\S]*?\}\s*>\s*"[^"]*"/g, "");
+    // Only check top-level echo lines that are NOT inside { } > file redirects
+    // or { } | emit_sandbox_sourced_file pipe patterns (proxy-env.sh, etc.)
+    const braceStripped = block
+      .replace(/\{[\s\S]*?\}\s*>\s*"[^"]*"/g, "")
+      .replace(/\{[\s\S]*?\}\s*\|\s*emit_sandbox_sourced_file\b[^\n]*/g, "");
     const echoLines = braceStripped.match(/^\s*echo\s+.+$/gm) || [];
     expect(echoLines.length).toBeGreaterThan(0);
     for (const line of echoLines) {
@@ -535,51 +537,32 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
 describe("nemoclaw-start signal handling", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-  it("defines cleanup() as a single top-level function", () => {
-    const matches = src.match(/^cleanup\(\)/gm);
-    expect(matches).toHaveLength(1);
+  it("uses shared cleanup_on_signal from sandbox-init.sh", () => {
+    // cleanup_on_signal is provided by sandbox-init.sh; the entrypoint
+    // must NOT define its own cleanup() — it uses the shared version.
+    const localCleanup = src.match(/^cleanup\(\)/gm);
+    expect(localCleanup).toBeNull();
+    // Must reference cleanup_on_signal in trap registrations
+    expect(src).toContain("trap cleanup_on_signal SIGTERM SIGINT");
   });
 
-  it("cleanup() forwards SIGTERM to both GATEWAY_PID and AUTO_PAIR_PID", () => {
-    const cleanup = src.match(/cleanup\(\) \{[\s\S]*?^}/m)?.[0];
-    expect(cleanup).toBeDefined();
-    expect(cleanup).toMatch(/kill -TERM "\$GATEWAY_PID"/);
-    expect(cleanup).toMatch(/kill -TERM "\$AUTO_PAIR_PID"/);
-  });
-
-  it("cleanup() waits for both child processes", () => {
-    const cleanup = src.match(/cleanup\(\) \{[\s\S]*?^}/m)?.[0];
-    expect(cleanup).toMatch(/wait "\$GATEWAY_PID"/);
-    expect(cleanup).toMatch(/wait "\$AUTO_PAIR_PID"/);
-  });
-
-  it("cleanup() exits with the gateway exit status", () => {
-    const cleanup = src.match(/cleanup\(\) \{[\s\S]*?^}/m)?.[0];
-    expect(cleanup).toMatch(/exit "\$gateway_status"/);
-  });
-
-  it("registers trap before start_auto_pair in non-root path", () => {
-    // trap must appear before start_auto_pair within the non-root block.
-    // Use the Root path comment as boundary instead of ^fi$ which matches
-    // nested fi inside helper functions.
+  it("sets SANDBOX_CHILD_PIDS and SANDBOX_WAIT_PID before trap in non-root path", () => {
     const nonRootBlock = src.match(/if \[ "\$\(id -u\)" -ne 0 \]; then[\s\S]*?# ── Root path/)?.[0];
     expect(nonRootBlock).toBeDefined();
-    const trapIdx = nonRootBlock.indexOf("trap cleanup SIGTERM SIGINT");
-    // Match the call site "start_auto_pair\n" (not the function definition "start_auto_pair() {")
-    const autoIdx = nonRootBlock.search(/^\s*start_auto_pair\s*$/m);
-    expect(trapIdx).toBeGreaterThan(-1);
-    expect(autoIdx).toBeGreaterThan(-1);
-    expect(trapIdx).toBeLessThan(autoIdx);
+    expect(nonRootBlock).toContain("SANDBOX_CHILD_PIDS=");
+    expect(nonRootBlock).toContain("SANDBOX_WAIT_PID=");
+    const pidsIdx = nonRootBlock.indexOf("SANDBOX_CHILD_PIDS=");
+    const trapIdx = nonRootBlock.indexOf("trap cleanup_on_signal");
+    expect(pidsIdx).toBeLessThan(trapIdx);
   });
 
-  it("registers trap before start_auto_pair in root path", () => {
-    // In the root path (after the non-root block), trap must precede start_auto_pair
+  it("sets SANDBOX_CHILD_PIDS and SANDBOX_WAIT_PID before trap in root path", () => {
     const rootBlock = src.split(/# ── Root path/)[1] || "";
-    const trapIdx = rootBlock.indexOf("trap cleanup SIGTERM SIGINT");
-    const autoIdx = rootBlock.indexOf("start_auto_pair");
-    expect(trapIdx).toBeGreaterThan(-1);
-    expect(autoIdx).toBeGreaterThan(-1);
-    expect(trapIdx).toBeLessThan(autoIdx);
+    expect(rootBlock).toContain("SANDBOX_CHILD_PIDS=");
+    expect(rootBlock).toContain("SANDBOX_WAIT_PID=");
+    const pidsIdx = rootBlock.indexOf("SANDBOX_CHILD_PIDS=");
+    const trapIdx = rootBlock.indexOf("trap cleanup_on_signal");
+    expect(pidsIdx).toBeLessThan(trapIdx);
   });
 
   it("captures AUTO_PAIR_PID from background process", () => {
