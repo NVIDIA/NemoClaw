@@ -6627,6 +6627,43 @@ async function onboard(opts = {}) {
         break;
       }
 
+      // Prompt for the sandbox name and show the review gate BEFORE
+      // setupInference runs upsertProvider / `inference set` on the gateway.
+      // On retry (inferenceResult.retry === "selection") the user is re-prompted
+      // for provider/model above and sees this gate again with the new config.
+      // See #2221 (CodeRabbit).
+      if (!sandboxName) {
+        sandboxName = await promptValidatedSandboxName();
+      }
+      console.log(
+        formatOnboardConfigSummary({
+          provider,
+          model,
+          credentialEnv,
+          webSearchConfig,
+          enabledChannels:
+            selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
+          sandboxName,
+          notes: ["Sandbox build takes ~6 minutes on this host."],
+        }),
+      );
+      console.log("  Web search and messaging channels will be prompted next.");
+      if (!isNonInteractive() && !dangerouslySkipPermissions) {
+        const answer = (await promptOrDefault("  Apply this configuration? [Y/n]: ", null, "y"))
+          .trim()
+          .toLowerCase();
+        if (answer === "n" || answer === "no") {
+          console.log("  Aborted. Re-run `nemoclaw onboard` to start over.");
+          console.log(
+            "  Credentials entered so far are stored in ~/.nemoclaw/credentials.json —",
+          );
+          console.log(
+            "  clear them with `nemoclaw credentials reset <KEY>` if you no longer want them.",
+          );
+          process.exit(0);
+        }
+      }
+
       startRecordedStep("inference", { sandboxName, provider, model });
       const inferenceResult = await setupInference(
         sandboxName,
@@ -6679,45 +6716,6 @@ async function onboard(opts = {}) {
           }
         }
       }
-      // Prompt for the sandbox name before configureWebSearch and
-      // setupMessagingChannels so the review gate below can run BEFORE any
-      // credentials for Brave Search or messaging tokens are persisted.
-      // Scope note: inference credentials collected in the earlier step are
-      // already on disk; clear them with `nemoclaw credentials reset <KEY>`
-      // if the user aborts. See #2165 (reporter) and #2221 (CodeRabbit).
-      if (!sandboxName) {
-        sandboxName = await promptValidatedSandboxName();
-      }
-
-      console.log(
-        formatOnboardConfigSummary({
-          provider,
-          model,
-          credentialEnv,
-          webSearchConfig,
-          enabledChannels:
-            selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
-          sandboxName,
-          notes: ["Sandbox build takes ~6 minutes on this host."],
-        }),
-      );
-      console.log("  Web search and messaging channels will be prompted next.");
-      if (!isNonInteractive() && !dangerouslySkipPermissions) {
-        const answer = (await promptOrDefault("  Apply this configuration? [Y/n]: ", null, "y"))
-          .trim()
-          .toLowerCase();
-        if (answer === "n" || answer === "no") {
-          console.log("  Aborted. Re-run `nemoclaw onboard` to start over.");
-          console.log(
-            "  Inference credentials entered so far are stored in ~/.nemoclaw/credentials.json —",
-          );
-          console.log(
-            "  clear them with `nemoclaw credentials reset <KEY>` if you no longer want them.",
-          );
-          process.exit(0);
-        }
-      }
-
       let nextWebSearchConfig = webSearchConfig;
       if (nextWebSearchConfig) {
         note("  [resume] Revalidating Brave Search configuration for sandbox recreation.");
