@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 version: "0.1.0"
-min_openshell_version: "0.0.24"
-max_openshell_version: "0.0.26"
+min_openshell_version: "0.0.29"
+max_openshell_version: "0.0.29"
 min_openclaw_version: "2026.4.2"
 # Mirrors the components.sandbox.image manifest digest below. Lets a
 # downstream consumer (or release tooling) verify the blueprint declares

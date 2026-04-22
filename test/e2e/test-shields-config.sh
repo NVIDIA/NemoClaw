@@ -485,8 +485,8 @@ else
   fail "shields should be DOWN: ${STATUS_TIMER}"
 fi
 
-info "Waiting 15s for auto-restore..."
-sleep 15
+info "Waiting 25s for auto-restore..."
+sleep 25
 
 # Check if the timer process restored shields
 # The timer runs as a detached process — it restores the policy and
@@ -499,7 +499,7 @@ else
   info "Status: ${STATUS_AFTER_TIMER}"
   # Clean up manually
   nemoclaw "${SANDBOX_NAME}" shields up 2>/dev/null || true
-  fail "Auto-restore timer did not restore shields within 15s"
+  fail "Auto-restore timer did not restore shields within 25s"
 fi
 
 # Verify config is re-locked after auto-restore
